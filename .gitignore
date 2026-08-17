@@ -1,0 +1,83 @@
+# Secrets. Nothing in this block ever enters a commit, at any point, for any
+# reason. Losing the upload keystore without Play App Signing enrolled means
+# the app can never be updated again, so it lives on the server in a 0600 file
+# with a copy held offline, never here.
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+key.properties
+keystore.properties
+service-account*.json
+play-service-account*.json
+google-services.json
+.env
+.env.*
+!.env.example
+secrets/
+*.secret
+
+# Build output
+build/
+dist/
+out/
+target/
+*.apk
+*.aab
+*.aar
+*.dex
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Dart and Flutter
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock.bak
+coverage/
+doc/api/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-store/
+*.tsbuildinfo
+
+# Gradle and Android
+.gradle/
+local.properties
+captures/
+.cxx/
+*.iml
+.externalNativeBuild/
+
+# Go
+vendor/
+*.test
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local scratch. Anything a run wants to keep goes in a tracked file with a
+# reason, not here.
+scratch/
+tmp/
+*.log
