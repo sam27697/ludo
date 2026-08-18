@@ -37,8 +37,37 @@ run_gate() {
 # 1. Static analysis and formatting. First because it is free and because a
 # tree that does not analyse cleanly is not worth running tests against.
 gate_static() {
-  echo "no toolchain in the tree yet; stack decision pending"
-  return 77
+  local dart=""
+  if command -v dart >/dev/null 2>&1; then
+    dart="$(command -v dart)"
+  elif [ -n "${DART_SDK:-}" ] && [ -x "$DART_SDK/bin/dart" ]; then
+    dart="$DART_SDK/bin/dart"
+  elif [ -x /workspace/toolchains/dart-sdk/bin/dart ]; then
+    dart=/workspace/toolchains/dart-sdk/bin/dart
+  fi
+
+  if [ -z "$dart" ]; then
+    echo "no Dart SDK found on PATH, in \$DART_SDK, or at /workspace/toolchains/dart-sdk"
+    return 77
+  fi
+
+  local out rc
+  out="$("$dart" analyze --fatal-infos --fatal-warnings "$ROOT" 2>&1)"; rc=$?
+  if [ $rc -ne 0 ]; then
+    echo "$out"
+    return 1
+  fi
+
+  local fmt_out fmt_rc
+  fmt_out="$("$dart" format --output=none --set-exit-if-changed "$ROOT" 2>&1)"; fmt_rc=$?
+  if [ $fmt_rc -ne 0 ]; then
+    echo "$fmt_out"
+    return 1
+  fi
+
+  echo "$out"
+  echo "$fmt_out"
+  return 0
 }
 
 # 2. Rules unit tests. Every numbered rule in docs/RULES.md, plus section 7's
