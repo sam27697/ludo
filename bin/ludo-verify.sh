@@ -34,22 +34,32 @@ run_gate() {
   return 0
 }
 
+# Resolve the Dart SDK binary the same way for every gate that needs it: PATH
+# first, then $DART_SDK, then the toolchain path this environment installs it
+# at. Prints the resolved path on stdout and returns 1 if none is found, so
+# callers write `dart="$(resolve_dart)" || { ...; return 77; }`.
+resolve_dart() {
+  if command -v dart >/dev/null 2>&1; then
+    command -v dart
+    return 0
+  elif [ -n "${DART_SDK:-}" ] && [ -x "$DART_SDK/bin/dart" ]; then
+    echo "$DART_SDK/bin/dart"
+    return 0
+  elif [ -x /workspace/toolchains/dart-sdk/bin/dart ]; then
+    echo /workspace/toolchains/dart-sdk/bin/dart
+    return 0
+  fi
+  return 1
+}
+
 # 1. Static analysis and formatting. First because it is free and because a
 # tree that does not analyse cleanly is not worth running tests against.
 gate_static() {
-  local dart=""
-  if command -v dart >/dev/null 2>&1; then
-    dart="$(command -v dart)"
-  elif [ -n "${DART_SDK:-}" ] && [ -x "$DART_SDK/bin/dart" ]; then
-    dart="$DART_SDK/bin/dart"
-  elif [ -x /workspace/toolchains/dart-sdk/bin/dart ]; then
-    dart=/workspace/toolchains/dart-sdk/bin/dart
-  fi
-
-  if [ -z "$dart" ]; then
+  local dart
+  dart="$(resolve_dart)" || {
     echo "no Dart SDK found on PATH, in \$DART_SDK, or at /workspace/toolchains/dart-sdk"
     return 77
-  fi
+  }
 
   local out rc
   out="$("$dart" analyze --fatal-infos --fatal-warnings "$ROOT" 2>&1)"; rc=$?
@@ -73,16 +83,47 @@ gate_static() {
 # 2. Rules unit tests. Every numbered rule in docs/RULES.md, plus section 7's
 # list of the ones a naive implementation gets wrong.
 gate_rules() {
-  echo "no engine yet"
-  return 77
+  local dart
+  dart="$(resolve_dart)" || {
+    echo "no Dart SDK found on PATH, in \$DART_SDK, or at /workspace/toolchains/dart-sdk"
+    return 77
+  }
+
+  local pkg="$ROOT/packages/ludo_engine"
+  local rules_dir="$pkg/test/rules"
+  if [ ! -d "$rules_dir" ] || [ -z "$(find "$rules_dir" -name '*_test.dart' -print -quit 2>/dev/null)" ]; then
+    echo "no rule tests yet (packages/ludo_engine/test/rules/ missing or empty)"
+    return 77
+  fi
+
+  local out rc
+  out="$(cd "$pkg" && "$dart" test test/rules/ 2>&1)"; rc=$?
+  echo "$out"
+  [ $rc -eq 0 ] && return 0
+  return 1
 }
 
 # 3. The golden corpus. N complete games recorded as seed, intentions and a
 # final state hash. The engine replays them and the hashes must match. A hash
 # change is a defect until someone proves it was an intended rule change.
 gate_golden() {
-  echo "no corpus yet"
-  return 77
+  local dart
+  dart="$(resolve_dart)" || {
+    echo "no Dart SDK found on PATH, in \$DART_SDK, or at /workspace/toolchains/dart-sdk"
+    return 77
+  }
+
+  local pkg="$ROOT/packages/ludo_engine"
+  if [ ! -f "$pkg/test/golden/corpus.jsonl" ]; then
+    echo "no corpus yet"
+    return 77
+  fi
+
+  local out rc
+  out="$(cd "$pkg" && "$dart" test test/golden_replay_test.dart 2>&1)"; rc=$?
+  echo "$out"
+  [ $rc -eq 0 ] && return 0
+  return 1
 }
 
 # 4. Protocol conformance. Every message type against docs/PROTOCOL.md, and the
