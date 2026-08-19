@@ -47,11 +47,28 @@ class RulesConfig {
 }
 
 class GameConfig {
+  GameConfig({
+    required List<int> seats,
+    this.rules = const RulesConfig(),
+    required this.seed,
+  }) : seats = List<int>.unmodifiable(seats);
+
   final List<int> seats;     // occupied seat indices, ascending, unique, length 2..4
   final RulesConfig rules;
   final int seed;            // 64-bit, from the server CSPRNG, never sent to a client
 }
 ```
+
+The constructor is named, not positional, and it copies `seats` into an
+unmodifiable list. `GameConfig` is not `const`, because that defensive copy
+cannot be made in a const constructor and a shared mutable `seats` list held by
+a caller would be a way to change a game's configuration after `newGame`
+validated it. `rules` defaults to `const RulesConfig()`, which is the table of
+defaults in `docs/RULES.md`.
+
+`GameConfig`, `RulesConfig` and `GameState` all define `==` and `hashCode` by
+value. Identity equality would make two structurally identical states compare
+unequal, which would quietly break any test that rebuilds an expected state.
 
 `seats` is the seat indices actually in play, ascending: `[0,2]` for two
 players, `[0,1,2]` for three, `[0,1,2,3]` for four. Rule 2 of `docs/RULES.md`
