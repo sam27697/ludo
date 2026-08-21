@@ -86,7 +86,10 @@ class Room {
   final DateTime createdAt;
 
   /// 2, 3 or 4. The configured seat count, not the current occupancy.
-  final int players;
+  /// Mutable: the host may change it while `state` is LOBBY, per
+  /// `docs/PROTOCOL.md` section 3, which re-seats every occupied seat onto
+  /// the canonical set for the new count.
+  int players;
 
   final RulesConfig rules;
 

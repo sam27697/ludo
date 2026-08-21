@@ -1,10 +1,11 @@
 // docs/PROTOCOL.md section 2. The room code: short, dictatable, and drawn
-// from an alphabet with the visually confusable characters removed (no
-// 0/O, no 1/I/L).
+// from an alphabet with the visually confusable characters removed: no
+// 0/O, no 1/I. L is kept on purpose -- with 1 gone there is nothing left for
+// it to be confused with, and dropping it would leave 31 symbols, not 32.
 
 import 'dart:math';
 
-/// 32 symbols. No `0`/`O`, no `1`/`I`/`L`.
+/// 32 symbols. No `0`/`O`, no `1`/`I`. `L` is deliberate, see above.
 const String roomCodeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 const int roomCodeLength = 6;

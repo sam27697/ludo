@@ -36,7 +36,9 @@ There are exactly two secrets in this protocol and they are different things.
 
 - **Room code.** Short, human-readable, dictatable over a phone call. It is the
   capability to *join* a room. 6 characters from the alphabet
-  `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` — 32 symbols, no `0`/`O`, no `1`/`I`/`L`.
+  `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` — 32 symbols. `0`, `O`, `1` and `I` are
+  all excluded. `L` is kept deliberately: with `1` gone there is nothing left
+  for it to be confused with, and dropping it would leave 31 symbols.
   Generated from a CSPRNG, never sequential, never derived from a counter or a
   timestamp. That is 32^6, about 1.07e9 codes; combined with the rate limits in
   section 7 it is not enumerable.

@@ -87,6 +87,18 @@ class StartFailure extends StartResult {
   final ProtocolError error;
 }
 
+sealed class SetPlayersResult {}
+
+class SetPlayersOk extends SetPlayersResult {
+  SetPlayersOk({required this.room});
+  final Room room;
+}
+
+class SetPlayersFailure extends SetPlayersResult {
+  SetPlayersFailure(this.error);
+  final ProtocolError error;
+}
+
 sealed class LeaveResult {}
 
 class LeaveOk extends LeaveResult {
@@ -193,12 +205,12 @@ class RoomRegistry {
     if (room == null) {
       return JoinFailure(ProtocolError.noSuchRoom);
     }
+    if (room.state != RoomState.lobby) {
+      return JoinFailure(ProtocolError.roomStarted);
+    }
     final String? trimmedName = _validName(name);
     if (trimmedName == null) {
       return JoinFailure(ProtocolError.badField);
-    }
-    if (room.state != RoomState.lobby) {
-      return JoinFailure(ProtocolError.roomStarted);
     }
     final Set<int> taken = room.seats.map((Seat s) => s.seat).toSet();
     final List<int> free = _seatIndicesFor(room.players)
@@ -242,13 +254,13 @@ class RoomRegistry {
     if (seat == null) {
       return StartFailure(ProtocolError.badSeatToken);
     }
-    if (room.state != RoomState.lobby) {
-      return StartFailure(ProtocolError.roomStarted);
-    }
     if (seat.seat != room.hostSeat) {
       return StartFailure(ProtocolError.notHost);
     }
-    if (room.seats.length < 2) {
+    if (room.state != RoomState.lobby) {
+      return StartFailure(ProtocolError.roomStarted);
+    }
+    if (room.seats.length != room.players) {
       return StartFailure(ProtocolError.notEnoughPlayers);
     }
     final List<int> seatIndices = room.seats.map((Seat s) => s.seat).toList()
@@ -264,6 +276,61 @@ class RoomRegistry {
     room.game = engine.newGame(config);
     room.state = RoomState.playing;
     return StartOk(room: room);
+  }
+
+  /// Changes the configured player count of a LOBBY room and re-seats
+  /// everyone already present onto the canonical seat set for the new
+  /// count, per `docs/RULES.md` rule 2a and `docs/PROTOCOL.md` section 3.
+  ///
+  /// Every seat keeps its `name`, its `seatToken` and its `connected` flag
+  /// across the re-seat; only the seat index moves. The seat currently at
+  /// the lowest index takes the lowest index of the new set, and so on,
+  /// preserving join order.
+  SetPlayersResult setPlayers({
+    required String code,
+    required String seatToken,
+    required int players,
+  }) {
+    final Room? room = _rooms[code];
+    if (room == null) {
+      return SetPlayersFailure(ProtocolError.noSuchRoom);
+    }
+    final Seat? callerSeat = _findSeat(room, seatToken);
+    if (callerSeat == null) {
+      return SetPlayersFailure(ProtocolError.badSeatToken);
+    }
+    if (room.state != RoomState.lobby) {
+      return SetPlayersFailure(ProtocolError.roomStarted);
+    }
+    if (callerSeat.seat != room.hostSeat) {
+      return SetPlayersFailure(ProtocolError.notHost);
+    }
+    if (players != 2 && players != 3 && players != 4) {
+      return SetPlayersFailure(ProtocolError.badField);
+    }
+    if (players < room.seats.length) {
+      return SetPlayersFailure(ProtocolError.notEnoughPlayers);
+    }
+
+    final List<int> newIndices = _seatIndicesFor(players);
+    final List<Seat> ordered = List<Seat>.of(room.seats)
+      ..sort((Seat a, Seat b) => a.seat.compareTo(b.seat));
+    final List<Seat> reseated = <Seat>[
+      for (int i = 0; i < ordered.length; i++)
+        Seat(
+          seat: newIndices[i],
+          name: ordered[i].name,
+          seatToken: ordered[i].seatToken,
+          connected: ordered[i].connected,
+        ),
+    ];
+
+    room.players = players;
+    room.seats = reseated;
+    room.hostSeat =
+        reseated.firstWhere((Seat s) => s.seatToken == seatToken).seat;
+
+    return SetPlayersOk(room: room);
   }
 
   LeaveResult leaveRoom({required String code, required String seatToken}) {
