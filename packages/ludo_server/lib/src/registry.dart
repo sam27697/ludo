@@ -228,6 +228,7 @@ class RoomRegistry {
     room.seats = <Seat>[...room.seats, seat]
       ..sort((Seat a, Seat b) => a.seat.compareTo(b.seat));
     _refreshIdleTracking(room);
+    room.seq++;
     return JoinOk(room: room, seat: seat);
   }
 
@@ -240,8 +241,12 @@ class RoomRegistry {
     if (seat == null) {
       return ResumeFailure(ProtocolError.badSeatToken);
     }
+    final bool reconnected = !seat.connected;
     seat.connected = true;
     _refreshIdleTracking(room);
+    if (reconnected) {
+      room.seq++;
+    }
     return ResumeOk(room: room, seat: seat);
   }
 
@@ -275,6 +280,7 @@ class RoomRegistry {
     );
     room.game = engine.newGame(config);
     room.state = RoomState.playing;
+    room.seq++;
     return StartOk(room: room);
   }
 
@@ -329,6 +335,7 @@ class RoomRegistry {
     room.seats = reseated;
     room.hostSeat =
         reseated.firstWhere((Seat s) => s.seatToken == seatToken).seat;
+    room.seq++;
 
     return SetPlayersOk(room: room);
   }
@@ -357,6 +364,7 @@ class RoomRegistry {
       // free. Either way the seat is simply marked not connected.
       seat.connected = false;
     }
+    room.seq++;
     return LeaveOk(room: room, seat: seat);
   }
 
@@ -373,10 +381,14 @@ class RoomRegistry {
     if (seat == null) {
       return;
     }
+    if (seat.connected == connected) {
+      return;
+    }
     seat.connected = connected;
     if (room.state == RoomState.lobby) {
       _refreshIdleTracking(room);
     }
+    room.seq++;
   }
 
   int reap() {

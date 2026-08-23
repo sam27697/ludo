@@ -80,10 +80,19 @@ class Room {
     required this.hostSeat,
     required this.seats,
     required this.game,
+    this.seq = 0,
   });
 
   final String code;
   final DateTime createdAt;
+
+  /// Monotonic, starts at 0 on creation, incremented by exactly one by the
+  /// registry on every successful state-changing call
+  /// (`docs/PROTOCOL.md` section 6). Never resets, never decrements, is not
+  /// derived from the clock or from a random source. This is the wire
+  /// layer's whole desync-detection mechanism: a push carries `room.seq` and
+  /// a client that sees a gap knows it missed one and must `resume`.
+  int seq;
 
   /// 2, 3 or 4. The configured seat count, not the current occupancy.
   /// Mutable: the host may change it while `state` is LOBBY, per

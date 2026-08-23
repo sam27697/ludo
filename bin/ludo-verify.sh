@@ -194,6 +194,44 @@ gate_golden() {
   return 1
 }
 
+# 3b. The server test suite: room and registry conformance tests under
+# packages/ludo_server/test/. Not protocol conformance -- that is gate_protocol,
+# still a stub -- this is the registry and room logic exercised directly.
+gate_server() {
+  local dart
+  dart="$(resolve_dart)" || {
+    echo "no Dart SDK found on PATH, in \$DART_SDK, or at /workspace/toolchains/dart-sdk"
+    return 77
+  }
+
+  local test_dir="$ROOT/packages/ludo_server/test"
+  if [ ! -d "$test_dir" ] || [ -z "$(find "$test_dir" -name '*_test.dart' -print -quit 2>/dev/null)" ]; then
+    echo "no server tests yet (packages/ludo_server/test/ missing or empty)"
+    return 77
+  fi
+
+  local out rc
+  out="$("$dart" test packages/ludo_server/test/ 2>&1)"; rc=$?
+
+  # Pull the pass/fail count straight from the runner's own final summary
+  # line ("+N: All tests passed." or "+N -M: Some tests failed.") instead of
+  # hardcoding an expected total, so a suite that grows never needs this file
+  # touched.
+  local summary passed failed total
+  summary="$(printf '%s\n' "$out" | grep -oE '\+[0-9]+( -[0-9]+)?: (All tests passed|Some tests failed)' | tail -n1)"
+  passed="$(printf '%s' "$summary" | grep -oE '^\+[0-9]+' | tr -d '+')"
+  failed="$(printf '%s' "$summary" | grep -oE ' -[0-9]+' | tr -d ' -')"
+  [ -z "$passed" ] && passed=0
+  [ -z "$failed" ] && failed=0
+  total=$((passed + failed))
+
+  echo "$out"
+  echo "server($passed/$total)"
+
+  [ $rc -eq 0 ] && return 0
+  return 1
+}
+
 # 4. Protocol conformance. Every message type against docs/PROTOCOL.md, and the
 # malformed cases: out of turn, replayed move id, a move for another seat's
 # token, unknown room, full room, expired room, oversized payload, garbage.
@@ -257,6 +295,7 @@ run_gate static     gate_static
 run_gate purity     gate_purity
 run_gate rules      gate_rules
 run_gate golden     gate_golden
+run_gate server     gate_server
 run_gate protocol   gate_protocol
 run_gate simulator  gate_simulator
 run_gate artifact   gate_artifact
