@@ -1,0 +1,15 @@
+name: ludo_server
+description: Authoritative Ludo game server.
+publish_to: none
+environment:
+  sdk: ^3.5.0
+resolution: workspace
+
+dependencies:
+  ludo_engine:
+    path: ../ludo_engine
+  shelf: ^1.4.0
+  shelf_web_socket: ^3.0.0
+
+dev_dependencies:
+  test: ^1.25.0
