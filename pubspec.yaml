@@ -1,0 +1,8 @@
+name: ludo_workspace
+publish_to: none
+environment:
+  sdk: ^3.5.0
+
+workspace:
+  - packages/ludo_engine
+  - packages/ludo_server

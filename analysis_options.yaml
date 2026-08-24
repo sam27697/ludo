@@ -1,0 +1,46 @@
+# Shared analyzer configuration for every package in the workspace. Member
+# packages include this file rather than repeating it. Written out explicitly
+# rather than pulling in package:lints, so the rule set does not change under
+# us when an upstream package publishes a new default.
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    unused_import: error
+    dead_code: error
+    todo: ignore
+
+linter:
+  rules:
+    - always_declare_return_types
+    - avoid_empty_else
+    - avoid_init_to_null
+    - avoid_relative_lib_imports
+    - avoid_return_types_on_setters
+    - avoid_shadowing_type_parameters
+    - avoid_types_as_parameter_names
+    - camel_case_types
+    - constant_identifier_names
+    - control_flow_in_finally
+    - empty_catches
+    - empty_constructor_bodies
+    - file_names
+    - hash_and_equals
+    - library_prefixes
+    - no_duplicate_case_values
+    - non_constant_identifier_names
+    - null_check_on_nullable_type_parameter
+    - overridden_fields
+    - package_prefixed_library_names
+    - prefer_final_fields
+    - prefer_final_locals
+    - prefer_is_empty
+    - prefer_is_not_empty
+    - prefer_single_quotes
+    - prefer_typing_uninitialized_variables
+    - unnecessary_new
+    - unnecessary_null_in_if_null_operators
+    - unrelated_type_equality_checks
+    - valid_regexps
