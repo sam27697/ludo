@@ -22,9 +22,15 @@ that would reverse it.
 Layout:
 
     packages/ludo_engine/    pure rules, the thing that must never diverge
-    apps/server/             authoritative server
-    apps/client/             Flutter app
+    packages/ludo_server/    authoritative server
+    packages/ludo_client/    Flutter app
     pubspec.yaml             workspace root
+
+Every member sits under `packages/`, including the two that are applications.
+An earlier draft of this file put the server and the client under `apps/`. That
+split buys nothing here: a pub workspace member is a package whether or not it
+has a `bin/`, and one directory keeps the `workspace:` list and every relative
+`include:` uniform. Settled 2026-08-18 run 2, when the scaffold was built.
 
 ## Why
 

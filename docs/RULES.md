@@ -145,6 +145,16 @@ also safe, trivially, because no opponent can reach it.
     different seat sends that token home: its `progress` returns to `-1`.
 28. Capture requires exactly one opponent token on the destination. Two or more
     is a block and the move was already illegal under rule 22.
+28a. That reasoning holds only while `blocks` is on. With `blocks` off, rule 22
+    never fires, the move is legal, and rule 28 still requires exactly one
+    opponent token — so a destination holding two or more tokens of one seat is
+    landed on and **nothing is captured**. Turning blocks off therefore does not
+    make stacking worthless: it converts a hard block into a shelter that cannot
+    be captured, and the arriving token stands on the square alongside them.
+    This is deliberate. Rule 27 counts tokens, and it counts them the same way
+    whatever the toggles say; the alternative is a `blocks` toggle that silently
+    changes what capture means, which is worse. Say it in the UI rather than
+    special-casing it in the engine.
 29. A capture cannot happen on a safe square. A move that would end on a safe
     square holding one opponent token is legal, and both tokens then stand on
     that square together, neither captured. This is the single most commonly

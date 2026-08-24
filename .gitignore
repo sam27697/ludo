@@ -81,3 +81,10 @@ desktop.ini
 scratch/
 tmp/
 *.log
+
+# Pub workspace. The root pubspec.lock is the single resolution for the whole
+# workspace and is committed so the engine resolves identically for the server
+# and, later, the client. Pub workspaces do not normally leave a pubspec.lock
+# next to a member package, but ignore it there too in case one is ever
+# resolved standalone (pubspec_overrides.yaml, `dart pub -C`, and similar).
+packages/*/pubspec.lock

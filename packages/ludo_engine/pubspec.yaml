@@ -1,0 +1,9 @@
+name: ludo_engine
+description: Pure Ludo rules engine. No I/O, no framework, no networking.
+publish_to: none
+environment:
+  sdk: ^3.5.0
+resolution: workspace
+
+dev_dependencies:
+  test: ^1.25.0
