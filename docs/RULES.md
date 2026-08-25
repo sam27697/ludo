@@ -65,6 +65,11 @@ also safe, trivially, because no opponent can reach it.
 2. Seats are assigned by join order. Two players take seats 0 and 2, so they
    sit opposite. Three players take seats 0, 1 and 2. Four players take 0, 1, 2
    and 3.
+2a. The seat set is fixed by the number of players **actually in the game**, not
+   by whatever count the room was created with. A game of two is always seated 0
+   and 2, never 0 and 1, however the room got down to two. A server that starts
+   a game on a partly filled room breaks this rule, so a game may only start
+   from a full room.
 3. Every token starts at `progress = -1`.
 4. Turn order is ascending seat index, wrapping to the lowest occupied seat.
    The host's seat moves first.

@@ -36,7 +36,9 @@ There are exactly two secrets in this protocol and they are different things.
 
 - **Room code.** Short, human-readable, dictatable over a phone call. It is the
   capability to *join* a room. 6 characters from the alphabet
-  `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` — 32 symbols, no `0`/`O`, no `1`/`I`/`L`.
+  `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` — 32 symbols. `0`, `O`, `1` and `I` are
+  all excluded. `L` is kept deliberately: with `1` gone there is nothing left
+  for it to be confused with, and dropping it would leave 31 symbols.
   Generated from a CSPRNG, never sequential, never derived from a counter or a
   timestamp. That is 32^6, about 1.07e9 codes; combined with the rate limits in
   section 7 it is not enumerable.
@@ -58,7 +60,10 @@ seat is not reassignable by anything a third party can observe.
       +----- empty for 10 min, or 60 min total ---------------------+
 
 - **LOBBY.** Created by the host. Accepts joins up to the configured player
-  count. Only the host may start it, and only when at least 2 seats are filled.
+  count. Only the host may start it, and only when **every configured seat is
+  filled**. The host may change the player count while in LOBBY, down to no
+  fewer than the seats currently occupied; doing so re-seats everyone onto the
+  canonical seat set for the new count.
 - **PLAYING.** No new seats. A disconnected seat stays in the game and its turns
   are played by the timer under rule 15 of `docs/RULES.md`.
 - **FINISHED.** Terminal. The final state is served to anyone reconnecting, for
@@ -74,7 +79,8 @@ seat is not reassignable by anything a third party can observe.
 | `create_room` | `{ "name": string, "players": 2\|3\|4, "rules": RulesConfig }` | Answered by `room`. Caller becomes host and takes the first seat. |
 | `join_room` | `{ "code": string, "name": string }` | Answered by `room` or an `error`. |
 | `resume` | `{ "code": string, "seat_token": string }` | Answered by `room` with the full current state. Works in LOBBY, PLAYING and FINISHED. |
-| `start_game` | `{ }` | Host only. LOBBY only. At least 2 seats filled. |
+| `start_game` | `{ }` | Host only. LOBBY only. Every configured seat filled. |
+| `set_players` | `{ "players": 2\|3\|4 }` | Host only. LOBBY only. Not below current occupancy. Re-seats everyone onto the canonical set for the new count and answers with `room`. |
 | `roll` | `{ }` | Only the seat whose turn it is, only when the turn is awaiting a roll. |
 | `move` | `{ "token": 0..3 }` | Only the seat whose turn it is, only when a roll is pending a selection. |
 | `leave_room` | `{ }` | Voluntary. In LOBBY it frees the seat. In PLAYING it does not: the seat remains and is played by the timer. |
@@ -167,7 +173,7 @@ Every error is one of these codes. A code is never invented at a call site.
 | `ROOM_FULL` | every seat is taken. |
 | `ROOM_STARTED` | join attempted on a room that is not in LOBBY. |
 | `NOT_HOST` | `start_game` from a non-host. |
-| `NOT_ENOUGH_PLAYERS` | `start_game` with fewer than 2 seats filled. |
+| `NOT_ENOUGH_PLAYERS` | `start_game` with an empty seat still in the room, or `set_players` below the current occupancy. |
 | `NOT_YOUR_TURN` | an action from a seat that is not on turn. |
 | `WRONG_PHASE` | `roll` when a move is pending, or `move` when a roll is pending. |
 | `ILLEGAL_MOVE` | the token is not in the `legal` list for the current roll. |
