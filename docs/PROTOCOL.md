@@ -114,13 +114,33 @@ different games.
 | `moved` | `{ "seat": int, "token": int, "from": int, "to": int, "captured": [{"seat":int,"token":int}], "extra_roll": bool }` |
 | `turn_passed` | `{ "seat": int, "reason": "no_legal_move"\|"three_sixes" }` |
 | `turn` | `{ "seat": int, "deadline_ms": int }` |
-| `game_over` | `{ "winner": int }` |
+| `game_over` | `{ "winner": int, "seed": int }`. The seed is published here and only here, after play, so the `seed_commit` from `game_started` can be checked against it. |
 | `error` | `{ "code": string, "message": string }`, with `re` set when it answers a specific message. |
 | `pong` | `{ }` |
 
 `deadline_ms` is milliseconds remaining, not an absolute timestamp. Four phones
 do not agree on the wall clock and the client must not be asked to reconcile
 them.
+
+**Every state-changing push carries `seq` in its `d`, in addition to the fields
+listed above.** The table gives each message's own fields and does not repeat
+`seq` on every row. Section 6 states that `seq` is mandatory on every
+state-changing push and that sentence is the normative one: a client detects a
+gap by comparing the `seq` of what arrives against its own, so a delta that
+carries no `seq` is a delta the client cannot place, and one such message
+desynchronises the client permanently.
+
+Carrying `seq`: `room`, `player_joined`, `player_left`, `presence`,
+`game_started`, `rolled`, `moved`, `turn_passed`, `turn`, `game_over`.
+
+Not carrying `seq`: `error` and `pong`, neither of which changes state, and
+`seat_assigned`, which is not itself a state change and is always immediately
+followed on the same socket by a `room` whose snapshot carries the `seq`.
+
+The value is always read from the room's own counter at the moment the push is
+built. It is never counted per connection: one counter per socket looks right in
+every single-client test and is wrong the moment two clients share a room, which
+is the only case `seq` exists for.
 
 The deltas (`moved`, `rolled`, `turn_passed`) exist so the client can animate.
 They are not the source of truth. A client that has missed anything sends
@@ -157,6 +177,22 @@ every delta and renders only snapshots; the deltas are an optimisation.
   play. The seed itself is published in `game_over`. This costs nothing and it
   means a player who suspects the dice can check afterwards that they were
   fixed before the game started rather than chosen during it.
+
+  **The hash is SHA-256, lowercase hex, over the UTF-8 bytes of the seed's
+  decimal representation with no sign, no padding and no separator**, so that
+  `seed_commit == sha256(seed.toString())`. It is deliberately not the engine's
+  `stateHash`, which is FNV-1a and is a checksum, not a commitment: FNV-1a
+  collisions are cheap to construct, so a server that had committed with it
+  could still choose a different seed afterwards and produce one that matched.
+  A commitment that does not bind the committer proves nothing, and this field
+  exists only to prove something. The seed is 64-bit and comes from the server
+  CSPRNG, so the commitment does not reveal it in advance either.
+
+  The hash covers the seed alone and nothing else. Hashing the initial game
+  state instead would bind the room configuration into the commitment as well,
+  which sounds stronger and is worse: the configuration is already public to
+  everyone in the room, and a client checking the commitment afterwards would
+  have to reconstruct that whole state exactly rather than hash one integer.
 
 ## 7. Errors
 
