@@ -83,7 +83,7 @@ seat is not reassignable by anything a third party can observe.
 | `set_players` | `{ "players": 2\|3\|4 }` | Host only. LOBBY only. Not below current occupancy. Re-seats everyone onto the canonical set for the new count and answers with `room`. |
 | `roll` | `{ }` | Only the seat whose turn it is, only when the turn is awaiting a roll. |
 | `move` | `{ "token": 0..3 }` | Only the seat whose turn it is, only when a roll is pending a selection. |
-| `leave_room` | `{ }` | Voluntary. In LOBBY it frees the seat. In PLAYING it does not: the seat remains and is played by the timer. |
+| `leave_room` | `{ }` | Voluntary. In LOBBY it frees the seat. In PLAYING it does not: the seat remains and is played by the timer. Answered on the leaving socket by the same `player_left` (LOBBY) or `presence` (PLAYING) frame the rest of the room receives, with `re` set. The leaver is told what everyone else was told, not a snapshot of a room it is no longer in. |
 | `ping` | `{ }` | Answered by `pong`. |
 
 `name` is a display name: 1 to 24 characters after trimming, no control
@@ -221,6 +221,35 @@ Every inbound message is validated in this order and rejected at the first
 failure, before any state is touched: size, JSON parse, `v`, `t`, `id` shape,
 rate limit, room exists, seat authorised, phase correct, payload fields, rule
 legality. Reject, never repair.
+
+**"Before any state is touched" outranks the ordering**, and the two pull
+against each other for the messages that carry a room code. For `join_room` and
+`resume` the room-exists and seat-authorised steps are not separate checks the
+server can run early: they are performed by the registry call, and that same
+call is the mutation. Validating the payload after it would mean seating a
+player and then rejecting the message that seated them. So for those two, the
+whole payload is validated first, and the ladder position of "room exists" is
+satisfied by the registry call being the first thing that touches state.
+
+For `start_game`, `set_players`, `leave_room`, `roll` and `move`, which carry no
+room code and no seat token, the connection's own stored identity is the room
+and seat, so checking it costs nothing and touches nothing. **The identity check
+runs before payload validation for those five**, exactly as the ladder reads: a
+socket that is in no room gets `BAD_SEAT_TOKEN` for any of them, whatever its
+payload looks like.
+
+One field is exempt in every direction. A `code` or `seat_token` whose JSON type
+is wrong — not a string at all — is `BAD_FIELD` immediately, because no lookup
+can be attempted with it. A `code` that is a string but malformed is **not**
+pre-validated: it goes to the registry as received, so a malformed code and a
+well-formed code for a room that does not exist both come back `NO_SUCH_ROOM`.
+A client fuzzing the code space must not be able to tell "badly shaped" from
+"shaped fine but nobody is home".
+
+`re` on an outbound frame is only ever an `id` that passed the `id` shape check.
+When a message is rejected at or before that step there is no usable `id`, and
+the error frame carries no `re`. The server never echoes an unvalidated string
+back into a field the envelope rules constrain.
 
 Rate limits, per connection unless stated:
 
