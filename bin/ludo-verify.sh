@@ -80,6 +80,74 @@ gate_static() {
   return 0
 }
 
+# 1b. Rule 37: the engine has no clock, no network, no file access, no process
+# or platform state, and no global mutable state. That is a property of the
+# source text, not of behaviour, so it is a grep gate over the engine's lib/,
+# not a test. Scans only packages/ludo_engine/lib/ -- the server legitimately
+# uses sockets and clocks.
+gate_purity() {
+  local pkg_lib="$ROOT/packages/ludo_engine/lib"
+  if [ ! -d "$pkg_lib" ]; then
+    echo "no packages/ludo_engine/lib yet"
+    return 77
+  fi
+
+  local files
+  files="$(find "$pkg_lib" -name '*.dart' | sort)"
+  if [ -z "$files" ]; then
+    echo "no dart sources under packages/ludo_engine/lib"
+    return 77
+  fi
+
+  # Clock, network, filesystem, process and platform references, plus a bare
+  # dart:math (the engine's dice are SplitMix64 over an injected seed; a
+  # dart:math Random anywhere in lib/ is the exact bug this gate exists to
+  # catch). Word-bounded so it does not fire on a longer identifier that
+  # merely contains one of these as a substring.
+  local forbidden
+  forbidden='\bDateTime\.now\b|\bStopwatch\b|\bTimer\b|\bFuture\.delayed\b|\bsleep\b|\bdart:io\b|\bdart:isolate\b|\bdart:ffi\b|\bdart:js\b|\bdart:html\b|\bdart:math\b|\bHttpClient\b|\bSocket\b|\bWebSocket\b|\bFile\(|\bDirectory\(|\bProcess\.|\bPlatform\.|\bRandom\(|\bRandom\.secure\b'
+
+  # A top-level declaration (column 0) that assigns and is neither const nor
+  # final nor one of the keywords that start a type, import or directive.
+  # Anything left is a mutable global: two games in one server process would
+  # share it.
+  local mutable_top_level
+  mutable_top_level='^(?!(?:const|final|class|abstract|enum|mixin|extension|typedef|import|export|part|library|void|sealed|base|interface|factory)\b)[A-Za-z_][^(=;]*=(?![=>])'
+
+  local violations=""
+  local f stripped hit
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    # Strip line comments before matching, so a mention of a forbidden name
+    # inside a comment does not fail the gate. No block comments are in use
+    # under lib/ today; if that changes this gate needs to change with it.
+    stripped="$(sed -E 's#//.*##' "$f")"
+
+    hit="$(printf '%s\n' "$stripped" | grep -nP "$forbidden" || true)"
+    if [ -n "$hit" ]; then
+      violations="$violations
+${f#"$ROOT"/}: forbidden reference
+$(printf '%s\n' "$hit" | sed 's/^/  line /')"
+    fi
+
+    hit="$(printf '%s\n' "$stripped" | grep -nP "$mutable_top_level" || true)"
+    if [ -n "$hit" ]; then
+      violations="$violations
+${f#"$ROOT"/}: top-level mutable variable
+$(printf '%s\n' "$hit" | sed 's/^/  line /')"
+    fi
+  done <<< "$files"
+
+  if [ -n "$violations" ]; then
+    echo "rule 37 violations:"
+    echo "$violations"
+    return 1
+  fi
+
+  echo "no clock, network, filesystem, process/platform or dart:math reference, and no top-level mutable state, under packages/ludo_engine/lib/"
+  return 0
+}
+
 # 2. Rules unit tests. Every numbered rule in docs/RULES.md, plus section 7's
 # list of the ones a naive implementation gets wrong.
 gate_rules() {
@@ -122,6 +190,44 @@ gate_golden() {
   local out rc
   out="$(cd "$pkg" && "$dart" test test/golden_replay_test.dart 2>&1)"; rc=$?
   echo "$out"
+  [ $rc -eq 0 ] && return 0
+  return 1
+}
+
+# 3b. The server test suite: room and registry conformance tests under
+# packages/ludo_server/test/. Not protocol conformance -- that is gate_protocol,
+# still a stub -- this is the registry and room logic exercised directly.
+gate_server() {
+  local dart
+  dart="$(resolve_dart)" || {
+    echo "no Dart SDK found on PATH, in \$DART_SDK, or at /workspace/toolchains/dart-sdk"
+    return 77
+  }
+
+  local test_dir="$ROOT/packages/ludo_server/test"
+  if [ ! -d "$test_dir" ] || [ -z "$(find "$test_dir" -name '*_test.dart' -print -quit 2>/dev/null)" ]; then
+    echo "no server tests yet (packages/ludo_server/test/ missing or empty)"
+    return 77
+  fi
+
+  local out rc
+  out="$("$dart" test packages/ludo_server/test/ 2>&1)"; rc=$?
+
+  # Pull the pass/fail count straight from the runner's own final summary
+  # line ("+N: All tests passed." or "+N -M: Some tests failed.") instead of
+  # hardcoding an expected total, so a suite that grows never needs this file
+  # touched.
+  local summary passed failed total
+  summary="$(printf '%s\n' "$out" | grep -oE '\+[0-9]+( -[0-9]+)?: (All tests passed|Some tests failed)' | tail -n1)"
+  passed="$(printf '%s' "$summary" | grep -oE '^\+[0-9]+' | tr -d '+')"
+  failed="$(printf '%s' "$summary" | grep -oE ' -[0-9]+' | tr -d ' -')"
+  [ -z "$passed" ] && passed=0
+  [ -z "$failed" ] && failed=0
+  total=$((passed + failed))
+
+  echo "$out"
+  echo "server($passed/$total)"
+
   [ $rc -eq 0 ] && return 0
   return 1
 }
@@ -186,8 +292,10 @@ echo
 run_gate specs      gate_specs
 run_gate secrets    gate_secrets
 run_gate static     gate_static
+run_gate purity     gate_purity
 run_gate rules      gate_rules
 run_gate golden     gate_golden
+run_gate server     gate_server
 run_gate protocol   gate_protocol
 run_gate simulator  gate_simulator
 run_gate artifact   gate_artifact
