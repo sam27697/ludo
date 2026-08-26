@@ -6,6 +6,9 @@
 // see. `rngState` and `config.seed` never appear below, on purpose: sending
 // either would hand a client every future roll.
 
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:ludo_engine/ludo_engine.dart' as engine;
 
 import 'room.dart';
@@ -96,43 +99,43 @@ Map<String, Object?> buildSeatAssigned(Seat seat) {
   };
 }
 
-/// `player_joined`, section 5.
-Map<String, Object?> buildPlayerJoined(Seat seat) {
+/// `player_joined`, section 5. `seq` is read from `room.seq` at the moment
+/// the push is built, per section 5's "carrying `seq`" list.
+Map<String, Object?> buildPlayerJoined(Seat seat, int seq) {
   return <String, Object?>{
     'seat': seat.seat,
     'name': seat.name,
+    'seq': seq,
   };
 }
 
 /// `player_left`, section 5.
-Map<String, Object?> buildPlayerLeft(int seat) {
-  return <String, Object?>{'seat': seat};
+Map<String, Object?> buildPlayerLeft(int seat, int seq) {
+  return <String, Object?>{'seat': seat, 'seq': seq};
 }
 
 /// `presence`, section 5.
-Map<String, Object?> buildPresence(int seat, bool connected) {
-  return <String, Object?>{'seat': seat, 'connected': connected};
+Map<String, Object?> buildPresence(int seat, bool connected, int seq) {
+  return <String, Object?>{'seat': seat, 'connected': connected, 'seq': seq};
 }
 
-/// `game_started`, section 5: `{ "turn": int, "seed_commit": string }`.
+/// `game_started`, section 5: `{ "turn": int, "seed_commit": string }`, plus
+/// `seq`, now on the "carrying `seq`" list.
 ///
-/// `seed_commit` is explicitly listed under this order's "Out of scope" as
-/// order 008's, and `docs/PROTOCOL.md` describes it precisely as "a hash of
-/// the game seed" -- not of the full state. No algorithm for hashing the
-/// seed alone is given anywhere in the frozen docs, and this file may not
-/// invent one. What is used here is `engine.stateHash` applied to the state
-/// `newGame` produced, which is already normatively specified in
-/// `docs/ENGINE_API.md` section 8 for a different purpose. Every field that
-/// hash covers at that exact moment is a deterministic function of
-/// `(config, seed)`, `config` is already public to everyone in the room, and
-/// the seed itself appears verbatim in the hashed JSON twice (`config.seed`
-/// and the initial `rngState`), so the hash does bind the seed the way
-/// `seed_commit` needs to. It is not what the sentence in section 6
-/// literally says, and that gap is called out in this order's report rather
-/// than silently papered over; order 008 owns getting this exactly right.
-Map<String, Object?> buildGameStarted(engine.GameState freshGame) {
+/// `seed_commit` is pinned by section 6: SHA-256, lowercase hex, over the
+/// UTF-8 bytes of the seed's decimal representation, so that
+/// `seed_commit == sha256(seed.toString())`. It is deliberately not
+/// `engine.stateHash`, which is FNV-1a and a checksum rather than a
+/// commitment -- collisions are cheap to construct, so a server committing
+/// with a checksum could still pick a different seed afterwards that
+/// happened to match.
+Map<String, Object?> buildGameStarted(engine.GameState freshGame, int seq) {
+  final String seedCommit = crypto.sha256
+      .convert(utf8.encode(freshGame.config.seed.toString()))
+      .toString();
   return <String, Object?>{
     'turn': freshGame.currentSeat,
-    'seed_commit': engine.stateHash(freshGame),
+    'seed_commit': seedCommit,
+    'seq': seq,
   };
 }

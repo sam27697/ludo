@@ -97,9 +97,12 @@ class EnvelopeOk extends EnvelopeResult {
 /// A ladder failure below the frame-size step. [closeConnection] is true
 /// only for `PROTOCOL_VERSION` (`TOO_LARGE` is handled separately, before
 /// JSON is even attempted, because the point is to never hand an oversized
-/// frame to `jsonDecode`). [re] is the id to answer with, if one could be
-/// recovered from the raw JSON even though it was not yet shape-validated;
-/// null when no usable id is available.
+/// frame to `jsonDecode`). [re] is the id to answer with, and it is only ever
+/// an `id` that itself passed the shape check -- section 7: "`re` on an
+/// outbound frame is only ever an `id` that passed the `id` shape check." A
+/// server reply never echoes an unvalidated string back into a field the
+/// envelope rules constrain, so a client cannot use the `v` or `t` failure
+/// paths to smuggle an oversized or out-of-alphabet value into `re`.
 class EnvelopeError extends EnvelopeResult {
   EnvelopeError({
     required this.error,
@@ -144,12 +147,15 @@ EnvelopeResult parseEnvelope(String text) {
   }
   final Map<String, Object?> envelope = decoded;
 
-  // Recovered only for correlation, before it is shape-validated. Section 1
-  // does not promise `re` on a `PROTOCOL_VERSION` or `BAD_TYPE` reply, but a
-  // client that included a plausible id benefits from getting it back, and
-  // nothing is leaked by echoing a string the client itself sent.
+  // Recovered only for correlation, and only when it already passes the `id`
+  // shape check -- section 7: "`re` on an outbound frame is only ever an
+  // `id` that passed the `id` shape check." A `v` or `t` failure must not
+  // become a channel for reflecting an arbitrary, unvalidated client string
+  // into `re`; a well-formed id benefits from being echoed, and nothing else
+  // does.
   final Object? rawId = envelope['id'];
-  final String? recoveredId = rawId is String ? rawId : null;
+  final String? recoveredId =
+      rawId is String && isWellFormedMessageId(rawId) ? rawId : null;
 
   final Object? v = envelope['v'];
   if (v is! int || v != 1) {
@@ -256,7 +262,8 @@ String defaultErrorMessage(ProtocolError error) {
 /// characters, well inside the 8 to 64 range and drawn from the same
 /// alphabet the id shape check requires.
 String generateMessageId(Random random) {
-  final List<int> bytes = List<int>.generate(16, (int _) => random.nextInt(256));
+  final List<int> bytes =
+      List<int>.generate(16, (int _) => random.nextInt(256));
   final String encoded = base64Url.encode(bytes);
   final int padStart = encoded.indexOf('=');
   return padStart == -1 ? encoded : encoded.substring(0, padStart);
