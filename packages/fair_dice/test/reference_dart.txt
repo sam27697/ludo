@@ -1,0 +1,113 @@
+// Reference implementation of the verifiable dice scheme, written to produce
+// test vectors. Deliberately dumb and literal: this is the oracle an
+// implementation is checked against, so it optimises for being obviously
+// correct, not for speed.
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:crypto/crypto.dart';
+
+const int chainLength = 4096;
+const int rejectionThreshold = 4294967292; // 2^32 - (2^32 mod 6)
+
+String hex(List<int> b) =>
+    b.map((x) => x.toRadixString(16).padLeft(2, '0')).join();
+
+List<int> unhex(String s) {
+  final out = <int>[];
+  for (var i = 0; i < s.length; i += 2) {
+    out.add(int.parse(s.substring(i, i + 2), radix: 16));
+  }
+  return out;
+}
+
+/// s[N] is the server secret; s[k-1] = SHA256(s[k]); s[0] is the commitment.
+List<List<int>> buildChain(List<int> serverSecret, int n) {
+  final chain = List<List<int>>.filled(n + 1, const <int>[]);
+  chain[n] = serverSecret;
+  for (var k = n; k > 0; k--) {
+    chain[k - 1] = sha256.convert(chain[k]).bytes;
+  }
+  return chain;
+}
+
+/// One die face for roll [k], die index [d], from link [sk] of the chain.
+/// Returns the face and how many 32-bit words were rejected getting there.
+(int face, int rejected) die(
+  List<int> sk,
+  String gameId,
+  String clientSeeds,
+  int k,
+  int d,
+) {
+  var round = 0;
+  var rejected = 0;
+  while (true) {
+    final suffix = round == 0 ? '' : '|r$round';
+    final msg = '$gameId|$clientSeeds|$k|$d$suffix';
+    final mac = Hmac(sha256, sk).convert(utf8.encode(msg)).bytes;
+    for (var w = 0; w < 8; w++) {
+      final u = (mac[w * 4] << 24) |
+          (mac[w * 4 + 1] << 16) |
+          (mac[w * 4 + 2] << 8) |
+          mac[w * 4 + 3];
+      if (u < rejectionThreshold) return ((u % 6) + 1, rejected);
+      rejected++;
+    }
+    round++;
+  }
+}
+
+void main() {
+  // Fixed, obviously-not-random secret so the vectors are reproducible.
+  final serverSecret =
+      unhex('00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f');
+  final chain = buildChain(serverSecret, chainLength);
+
+  const gameId = '7f3a9c1e5b2d4068';
+  const clientSeeds = '0:alice-seed|2:bob-seed';
+
+  final vectors = <String, Object?>{
+    'scheme': 'ludo-fair-dice/1',
+    'chain_length': chainLength,
+    'server_secret': hex(serverSecret),
+    'chain_commit': hex(chain[0]),
+    'game_id': gameId,
+    'client_seeds': clientSeeds,
+    'rolls': <Object?>[],
+    'backgammon_rolls': <Object?>[],
+  };
+
+  for (final k in <int>[1, 2, 3, 17, 100, 4096]) {
+    final (face, rejected) = die(chain[k], gameId, clientSeeds, k, 0);
+    (vectors['rolls'] as List).add(<String, Object?>{
+      'k': k,
+      'reveal': hex(chain[k]),
+      'parent': hex(chain[k - 1]),
+      'die': face,
+      'words_rejected': rejected,
+    });
+  }
+
+  // The same scheme with two dice, which is all backgammon needs.
+  for (final k in <int>[1, 2, 7]) {
+    final (a, _) = die(chain[k], gameId, clientSeeds, k, 0);
+    final (b, _) = die(chain[k], gameId, clientSeeds, k, 1);
+    (vectors['backgammon_rolls'] as List).add(<String, Object?>{
+      'k': k,
+      'reveal': hex(chain[k]),
+      'dice': <int>[a, b],
+    });
+  }
+
+  // Distribution sanity: 60000 draws off one chain should sit near 10000 each.
+  final counts = List<int>.filled(7, 0);
+  for (var k = 1; k <= 4096; k++) {
+    for (var d = 0; d < 15; d++) {
+      final (f, _) = die(chain[k], gameId, clientSeeds, k, d);
+      counts[f]++;
+    }
+  }
+  vectors['distribution_61440_draws'] = counts.sublist(1);
+
+  print(const JsonEncoder.withIndent('  ').convert(vectors));
+}
