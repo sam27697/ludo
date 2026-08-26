@@ -35,6 +35,14 @@ class _SlidingWindow {
     _hits.removeWhere((DateTime t) => now.difference(t) >= window);
     return _hits.length;
   }
+
+  /// Drops stale hits and reports whether the window is now empty, so a
+  /// caller doing periodic housekeeping can remove the entry entirely
+  /// instead of keeping one per IP that has ever connected forever.
+  bool pruneAndIsEmpty(DateTime now, Duration window) {
+    _hits.removeWhere((DateTime t) => now.difference(t) >= window);
+    return _hits.isEmpty;
+  }
 }
 
 /// Every rate limiter `docs/PROTOCOL.md` section 7 describes, keyed the way
@@ -45,9 +53,12 @@ class RateLimiter {
 
   final Clock _clock;
 
-  final Map<String, _SlidingWindow> _createRoomByIp = <String, _SlidingWindow>{};
-  final Map<String, _SlidingWindow> _joinOrResumeByIp = <String, _SlidingWindow>{};
-  final Map<Object, _SlidingWindow> _messagesByConnection = <Object, _SlidingWindow>{};
+  final Map<String, _SlidingWindow> _createRoomByIp =
+      <String, _SlidingWindow>{};
+  final Map<String, _SlidingWindow> _joinOrResumeByIp =
+      <String, _SlidingWindow>{};
+  final Map<Object, _SlidingWindow> _messagesByConnection =
+      <Object, _SlidingWindow>{};
 
   /// True if this `create_room` may proceed. Counts the attempt either way,
   /// per connection scoped by IP.
@@ -72,8 +83,8 @@ class RateLimiter {
   /// whatever the caller uses to identify one socket; it is never
   /// interpreted, only used as a map key.
   MessageRateOutcome recordMessage(Object connectionKey) {
-    final _SlidingWindow window =
-        _messagesByConnection.putIfAbsent(connectionKey, () => _SlidingWindow());
+    final _SlidingWindow window = _messagesByConnection.putIfAbsent(
+        connectionKey, () => _SlidingWindow());
     final int count = window.recordAndCount(_clock.now, _messageWindow);
     if (count >= _messageCloseLimit) {
       return MessageRateOutcome.mustClose;
@@ -89,5 +100,25 @@ class RateLimiter {
   /// never be looked at again.
   void forget(Object connectionKey) {
     _messagesByConnection.remove(connectionKey);
+  }
+
+  /// Periodic housekeeping for the two IP-keyed maps, which have no
+  /// per-connection disconnect event to hang a cleanup on the way
+  /// [forget] does for `_messagesByConnection`: an IP that stops sending
+  /// keeps an entry with an empty hit list forever unless something prunes
+  /// it. Meant to be driven from the same once-a-minute timer that drives
+  /// `RoomRegistry.reap()`, not from the hot path -- every call here is a
+  /// full scan of both maps, which is cheap once a minute and wrong on
+  /// every append.
+  void prune() {
+    final DateTime now = _clock.now;
+    _createRoomByIp.removeWhere(
+      (String ip, _SlidingWindow window) =>
+          window.pruneAndIsEmpty(now, _createRoomWindow),
+    );
+    _joinOrResumeByIp.removeWhere(
+      (String ip, _SlidingWindow window) =>
+          window.pruneAndIsEmpty(now, _joinOrResumeWindow),
+    );
   }
 }

@@ -142,7 +142,8 @@ class Connection {
     // Step 7: the blanket per-connection rate limit. Every message type
     // pays this, including ping.
     final MessageRateOutcome rate = rateLimiter.recordMessage(this);
-    if (rate == MessageRateOutcome.limited || rate == MessageRateOutcome.mustClose) {
+    if (rate == MessageRateOutcome.limited ||
+        rate == MessageRateOutcome.mustClose) {
       _log(type: envelope.type, id: envelope.id, outcome: 'RATE_LIMITED');
       _sendError(ProtocolError.rateLimited, re: envelope.id);
       if (rate == MessageRateOutcome.mustClose) {
@@ -296,7 +297,7 @@ class Connection {
     hub.broadcast(
       code: ok.room.code,
       type: 'player_joined',
-      data: buildPlayerJoined(ok.seat),
+      data: buildPlayerJoined(ok.seat, ok.room.seq),
       exceptConn: this,
     );
     _log(
@@ -341,12 +342,21 @@ class Connection {
     final Connection? displaced = hub.attach(code: ok.room.code, conn: this);
 
     _send(type: 'room', data: buildRoomSnapshot(ok.room), re: envelope.id);
-    hub.broadcast(
-      code: ok.room.code,
-      type: 'presence',
-      data: buildPresence(ok.seat.seat, true),
-      exceptConn: this,
-    );
+    // A takeover -- this socket resuming a seat that was already connected,
+    // handled below via `displaced` -- flips nothing on the seat itself, and
+    // the registry only moves `seq` on a real flip (registry.dart's own
+    // `reconnected` local). Broadcasting `presence` anyway would put a `seq`
+    // on the wire the room already used, which after respec 1 reads to a
+    // client as a repeat rather than an advance and triggers a needless
+    // resume against a merely flapping socket.
+    if (ok.reconnected) {
+      hub.broadcast(
+        code: ok.room.code,
+        type: 'presence',
+        data: buildPresence(ok.seat.seat, true, ok.room.seq),
+        exceptConn: this,
+      );
+    }
     _log(
       type: envelope.type,
       id: envelope.id,
@@ -365,12 +375,16 @@ class Connection {
   }
 
   void _handleStartGame(ParsedEnvelope envelope) {
-    if (envelope.data.isNotEmpty) {
-      _reject(envelope, ProtocolError.badField);
-      return;
-    }
+    // docs/PROTOCOL.md section 7: the identity check runs before payload
+    // validation for the five socket-identified messages, because checking
+    // it costs nothing and touches nothing, and a socket in no room gets
+    // BAD_SEAT_TOKEN whatever its payload looks like.
     if (!_hasIdentity) {
       _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    if (envelope.data.isNotEmpty) {
+      _reject(envelope, ProtocolError.badField);
       return;
     }
 
@@ -381,7 +395,8 @@ class Connection {
       return;
     }
     final StartOk ok = result as StartOk;
-    final Map<String, Object?> data = buildGameStarted(ok.room.game!);
+    final Map<String, Object?> data =
+        buildGameStarted(ok.room.game!, ok.room.seq);
 
     _send(type: 'game_started', data: data, re: envelope.id);
     hub.broadcast(
@@ -400,13 +415,15 @@ class Connection {
   }
 
   void _handleSetPlayers(ParsedEnvelope envelope) {
+    // docs/PROTOCOL.md section 7: identity before payload for the five
+    // socket-identified messages.
+    if (!_hasIdentity) {
+      _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
     const Set<String> allowedKeys = <String>{'players'};
     if (!envelope.data.keys.every(allowedKeys.contains)) {
       _reject(envelope, ProtocolError.badField);
-      return;
-    }
-    if (!_hasIdentity) {
-      _reject(envelope, ProtocolError.badSeatToken);
       return;
     }
 
@@ -445,12 +462,14 @@ class Connection {
   }
 
   void _handleLeaveRoom(ParsedEnvelope envelope) {
-    if (envelope.data.isNotEmpty) {
-      _reject(envelope, ProtocolError.badField);
-      return;
-    }
+    // docs/PROTOCOL.md section 7: identity before payload for the five
+    // socket-identified messages.
     if (!_hasIdentity) {
       _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    if (envelope.data.isNotEmpty) {
+      _reject(envelope, ProtocolError.badField);
       return;
     }
 
@@ -471,8 +490,8 @@ class Connection {
     seatToken = null;
 
     final Map<String, Object?> data = stillSeated
-        ? buildPresence(seatIndex, false)
-        : buildPlayerLeft(seatIndex);
+        ? buildPresence(seatIndex, false, ok.room.seq)
+        : buildPlayerLeft(seatIndex, ok.room.seq);
     final String pushType = stillSeated ? 'presence' : 'player_left';
 
     _send(type: pushType, data: data, re: envelope.id);
@@ -507,15 +526,16 @@ class Connection {
   }
 
   /// `rules`, the wire-level object of `docs/PROTOCOL.md` section 4. Absent
-  /// entirely is fine (defaults apply); present but the wrong JSON type, or
-  /// with any key outside `blocks`/`capture_bonus`/`turn_seconds`, or with
-  /// one of those keys present at the wrong type, is `BAD_FIELD` -- an
-  /// unknown key here is exactly what stops two clients from silently
-  /// disagreeing about the rules they think they are playing.
+  /// entirely is fine (defaults apply, and that case never reaches this
+  /// method: the caller only calls it when the key is present). Present but
+  /// the wrong JSON type -- including an explicit JSON `null`, which is not
+  /// a `Map` any more than a string or a number is -- or with any key
+  /// outside `blocks`/`capture_bonus`/`turn_seconds`, or with one of those
+  /// keys present at the wrong type, is `BAD_FIELD`. An unknown key here is
+  /// exactly what stops two clients from silently disagreeing about the
+  /// rules they think they are playing, and a present-but-null `rules` gets
+  /// no special exemption from that.
   RulesConfig? _parseRules(Object? raw) {
-    if (raw == null) {
-      return const RulesConfig();
-    }
     if (raw is! Map<String, Object?>) {
       return null;
     }
@@ -640,7 +660,15 @@ class Connection {
     hub.detach(this);
     rateLimiter.forget(this);
     if (roomCode != null && seatToken != null) {
-      registry.setConnected(
+      // A takeover already cleared this connection's identity before
+      // closing it (`_handleResume`), so a socket that reaches here with a
+      // non-null identity is a genuine drop, not the losing side of a
+      // takeover. `setConnected` reports whether it actually flipped the
+      // flag -- false when the seat was already marked disconnected, or the
+      // room or seat is gone -- and only a real flip gets broadcast: a
+      // `presence` with no change behind it would carry a `seq` the room
+      // already used.
+      final bool flipped = registry.setConnected(
         code: roomCode!,
         seatToken: seatToken!,
         connected: false,
@@ -654,11 +682,13 @@ class Connection {
         }
       }
       if (room != null && seat != null) {
-        hub.broadcast(
-          code: room.code,
-          type: 'presence',
-          data: buildPresence(seat.seat, false),
-        );
+        if (flipped) {
+          hub.broadcast(
+            code: room.code,
+            type: 'presence',
+            data: buildPresence(seat.seat, false, room.seq),
+          );
+        }
         _log(
           type: '-',
           id: '-',

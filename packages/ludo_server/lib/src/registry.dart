@@ -65,9 +65,15 @@ class JoinFailure extends JoinResult {
 sealed class ResumeResult {}
 
 class ResumeOk extends ResumeResult {
-  ResumeOk({required this.room, required this.seat});
+  ResumeOk({required this.room, required this.seat, required this.reconnected});
   final Room room;
   final Seat seat;
+
+  /// True when this call flipped the seat from disconnected to connected.
+  /// False for a takeover of a seat that was already connected -- the wire
+  /// layer uses this to decide whether a `presence` push actually describes
+  /// a change, since the registry only advances `seq` on a real flip.
+  final bool reconnected;
 }
 
 class ResumeFailure extends ResumeResult {
@@ -247,7 +253,7 @@ class RoomRegistry {
     if (reconnected) {
       room.seq++;
     }
-    return ResumeOk(room: room, seat: seat);
+    return ResumeOk(room: room, seat: seat, reconnected: reconnected);
   }
 
   StartResult startGame({required String code, required String seatToken}) {
@@ -368,27 +374,33 @@ class RoomRegistry {
     return LeaveOk(room: room, seat: seat);
   }
 
-  void setConnected({
+  /// Returns true when this call actually flipped the seat's `connected`
+  /// flag, false on any of the three early returns (no such room, no such
+  /// seat, or the flag already held the requested value). Existing callers
+  /// that predate this return value are free to ignore it; only the wire
+  /// layer's presence-broadcast decision needs it.
+  bool setConnected({
     required String code,
     required String seatToken,
     required bool connected,
   }) {
     final Room? room = _rooms[code];
     if (room == null) {
-      return;
+      return false;
     }
     final Seat? seat = _findSeat(room, seatToken);
     if (seat == null) {
-      return;
+      return false;
     }
     if (seat.connected == connected) {
-      return;
+      return false;
     }
     seat.connected = connected;
     if (room.state == RoomState.lobby) {
       _refreshIdleTracking(room);
     }
     room.seq++;
+    return true;
   }
 
   int reap() {
