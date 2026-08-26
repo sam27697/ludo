@@ -1,0 +1,86 @@
+{
+  "scheme": "ludo-fair-dice/1",
+  "chain_length": 4096,
+  "server_secret": "00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f",
+  "chain_commit": "4b871c475275752379eceb6bcb00f855d4dbc4231e43081924f7ea52135efcbe",
+  "game_id": "7f3a9c1e5b2d4068",
+  "client_seeds": "0:alice-seed|2:bob-seed",
+  "rolls": [
+    {
+      "k": 1,
+      "reveal": "5187a31a21e561dd91798c4641381afab4e229b6b28b9ed040d2ef61d4c8eac0",
+      "parent": "4b871c475275752379eceb6bcb00f855d4dbc4231e43081924f7ea52135efcbe",
+      "die": 6,
+      "words_rejected": 0
+    },
+    {
+      "k": 2,
+      "reveal": "2181ae443ee0898c4237cfde714858b2d0c78f58d5c1be605572616fc63b43d1",
+      "parent": "5187a31a21e561dd91798c4641381afab4e229b6b28b9ed040d2ef61d4c8eac0",
+      "die": 1,
+      "words_rejected": 0
+    },
+    {
+      "k": 3,
+      "reveal": "c1fbe6f7d1157e18e9f06ab5cac22a1c6d5a63551370e9be3b3553776812073f",
+      "parent": "2181ae443ee0898c4237cfde714858b2d0c78f58d5c1be605572616fc63b43d1",
+      "die": 1,
+      "words_rejected": 0
+    },
+    {
+      "k": 17,
+      "reveal": "1e151f8499b23d7eec1c257019188c9c3cba8f75a281d1610db6bbc594ed4f31",
+      "parent": "9f099f7117e59d782a4bcb4d60e74b952622290943bc16cb7c6e79b2f59d75d3",
+      "die": 4,
+      "words_rejected": 0
+    },
+    {
+      "k": 100,
+      "reveal": "77f8a0aecad0d2c5f392632df31830d5f6433eafe4790219380519f082ae0cff",
+      "parent": "96396bcf42db32e59fc730f2862248a7ec9f033f6f5158051031d2cb47d6047a",
+      "die": 4,
+      "words_rejected": 0
+    },
+    {
+      "k": 4096,
+      "reveal": "00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f",
+      "parent": "0c27bbaa345e7915ea7873bc293bc2938d5390af1bb4b2ded388477702c58ed2",
+      "die": 5,
+      "words_rejected": 0
+    }
+  ],
+  "backgammon_rolls": [
+    {
+      "k": 1,
+      "reveal": "5187a31a21e561dd91798c4641381afab4e229b6b28b9ed040d2ef61d4c8eac0",
+      "dice": [
+        6,
+        1
+      ]
+    },
+    {
+      "k": 2,
+      "reveal": "2181ae443ee0898c4237cfde714858b2d0c78f58d5c1be605572616fc63b43d1",
+      "dice": [
+        1,
+        4
+      ]
+    },
+    {
+      "k": 7,
+      "reveal": "5f895ab6f58b4a33fdfd728620c525447f3147a4b5f80be2b4b40113f4872153",
+      "dice": [
+        2,
+        4
+      ]
+    }
+  ],
+  "distribution_61440_draws": [
+    10393,
+    10181,
+    10039,
+    10324,
+    9978,
+    10525
+  ]
+}

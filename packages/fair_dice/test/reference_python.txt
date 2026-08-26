@@ -1,0 +1,60 @@
+# Independent second implementation, written from the same spec, in a
+# different language, to cross-check the Dart one. If these two disagree the
+# spec is ambiguous.
+import hashlib, hmac, json, sys
+
+CHAIN_LENGTH = 4096
+REJECT = 4294967292
+
+def build_chain(secret, n):
+    chain = [None] * (n + 1)
+    chain[n] = secret
+    for k in range(n, 0, -1):
+        chain[k - 1] = hashlib.sha256(chain[k]).digest()
+    return chain
+
+def die(sk, game_id, client_seeds, k, d):
+    rnd, rejected = 0, 0
+    while True:
+        suffix = '' if rnd == 0 else '|r%d' % rnd
+        msg = '%s|%s|%d|%d%s' % (game_id, client_seeds, k, d, suffix)
+        mac = hmac.new(sk, msg.encode('utf-8'), hashlib.sha256).digest()
+        for w in range(8):
+            u = int.from_bytes(mac[w*4:w*4+4], 'big')
+            if u < REJECT:
+                return (u % 6) + 1, rejected
+            rejected += 1
+        rnd += 1
+
+secret = bytes.fromhex('00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f')
+chain = build_chain(secret, CHAIN_LENGTH)
+GAME_ID = '7f3a9c1e5b2d4068'
+SEEDS = '0:alice-seed|2:bob-seed'
+
+out = {
+    'scheme': 'ludo-fair-dice/1',
+    'chain_length': CHAIN_LENGTH,
+    'server_secret': secret.hex(),
+    'chain_commit': chain[0].hex(),
+    'game_id': GAME_ID,
+    'client_seeds': SEEDS,
+    'rolls': [],
+    'backgammon_rolls': [],
+}
+for k in (1, 2, 3, 17, 100, 4096):
+    f, rej = die(chain[k], GAME_ID, SEEDS, k, 0)
+    out['rolls'].append({'k': k, 'reveal': chain[k].hex(),
+                         'parent': chain[k-1].hex(), 'die': f,
+                         'words_rejected': rej})
+for k in (1, 2, 7):
+    a, _ = die(chain[k], GAME_ID, SEEDS, k, 0)
+    b, _ = die(chain[k], GAME_ID, SEEDS, k, 1)
+    out['backgammon_rolls'].append({'k': k, 'reveal': chain[k].hex(),
+                                    'dice': [a, b]})
+counts = [0]*7
+for k in range(1, 4097):
+    for d in range(15):
+        f, _ = die(chain[k], GAME_ID, SEEDS, k, d)
+        counts[f] += 1
+out['distribution_61440_draws'] = counts[1:]
+print(json.dumps(out, indent=2))
