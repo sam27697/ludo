@@ -8,7 +8,7 @@ setup.
 
 Every push to this repository builds the Android app in release mode, in
 the `client` job of `.github/workflows/verify.yml`. Whether that build is
-something you can actually give to Play depends entirely on whether five
+something you can actually give to Play depends entirely on whether four
 secrets are configured on the repository (see below). If they are not, the
 job still builds and tests the app in release mode -- so a broken release
 build is still caught on every push, including pushes from a fork with no
@@ -16,7 +16,7 @@ access to secrets -- but it signs with the Flutter template's debug key and
 uploads nothing. Play rejects a debug-signed bundle, and a debug-signed
 bundle is never put where anyone could find it and try anyway.
 
-When the five secrets are configured, the job:
+When the four secrets are configured, the job:
 
 1. writes the keystore and `android/key.properties` from the secrets, inside
    that run only,
@@ -48,10 +48,19 @@ repository, and never commit anything it produces:
       -name upload \
       -passout pass:CHOOSE_A_STORE_PASSWORD
 
-The `-name upload` value is the key alias; it does not have to be `upload`,
-but whatever it is, it is `LUDO_UPLOAD_KEY_ALIAS` below. This project uses a
-single password for both the store and the key, so `storePassword` and
-`keyPassword` can be the same value, but they do not have to be.
+The `-name upload` value is the key alias, and it must be exactly `upload`,
+lower case: the workflow's `write release signing material` step writes
+`keyAlias=upload` into `key.properties` itself and does not read the alias
+from a secret. A key alias is a lookup name inside the keystore file, not a
+password, and it is not confidential, so it does not belong in GitHub's
+secret store -- if it were, GitHub would redact the literal word "upload"
+everywhere it appears in a workflow log, including in step names, which is
+exactly what an earlier version of this workflow did before that got fixed.
+If the keystore is regenerated with a different `-name`, either use `upload`
+again or update the hard-coded value in `.github/workflows/verify.yml`. This
+project uses a single password for both the store and the key, so
+`storePassword` and `keyPassword` can be the same value, but they do not
+have to be.
 
 Delete `/tmp/upload-key.pem` and `/tmp/upload-cert.pem` once
 `upload-keystore.p12` exists, or move them somewhere with the same handling
@@ -90,10 +99,15 @@ Every name is exact; the workflow will not find them under any other name.
 | `LUDO_UPLOAD_KEYSTORE_B64` | `base64 -w0 upload-keystore.p12`, the whole output |
 | `LUDO_UPLOAD_STORE_PASSWORD` | the store password chosen above |
 | `LUDO_UPLOAD_KEY_PASSWORD` | the key password chosen above |
-| `LUDO_UPLOAD_KEY_ALIAS` | the alias chosen above, `upload` if you followed this document exactly |
 | `LUDO_UPLOAD_CERT_SHA256` | the `SHA256:` fingerprint printed above, upper-case hex with colons |
 
-`LUDO_UPLOAD_KEYSTORE_B64` is the only one of the five that is not a
+The key alias is not on this list. It is not a secret, it is hard-coded as
+`upload` in the workflow, and if a `LUDO_UPLOAD_KEY_ALIAS` repository secret
+exists from an earlier setup it should be deleted -- it is unused and its
+value, the word "upload", would otherwise be redacted out of every log line
+that happens to contain it.
+
+`LUDO_UPLOAD_KEYSTORE_B64` is the only one of the four that is not a
 password. It is the keystore file itself, base64-encoded so it survives
 being stored as a single-line secret. On the machine holding
 `upload-keystore.p12`:
@@ -115,7 +129,7 @@ Once the secrets are set and a build has run:
 4. under the run summary, the artifact `ludo-release-appbundle` is listed;
    download it as a zip and unzip it to get the `.aab`.
 
-If the artifact is not there, either the five secrets are not all set, or
+If the artifact is not there, either the four secrets are not all set, or
 the certificate fingerprint check failed and the job stopped before
 uploading. Both cases are visible in the job log: the "write release
 signing material" step says outright whether the secrets are configured,
