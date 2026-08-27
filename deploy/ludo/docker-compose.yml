@@ -1,0 +1,53 @@
+# Staging service definition for ludo_server. Lives at /srv/apps/ludo/ on
+# the server, next to .env (never committed) and the repo/ checkout.
+# deploy.sh is the only thing that invokes this file; it always sets
+# LUDO_IMAGE_TAG on the command line before calling `docker compose up`, so
+# there is no `build:` section here and plain `docker compose up` on its own
+# never rebuilds or repulls anything -- the deploy script controls that.
+
+services:
+  ludo-server:
+    image: ${LUDO_IMAGE_TAG:?LUDO_IMAGE_TAG is not set -- run deploy.sh, do not call compose directly}
+    container_name: ludo-server
+    restart: unless-stopped
+
+    # Host loopback only. Docker's port publishing writes DNAT rules the
+    # host firewall never sees, so binding 0.0.0.0 here would make the
+    # container reachable from the public internet directly, bypassing the
+    # reverse proxy that terminates TLS. 8199 is the host side, matches what
+    # the reverse proxy already forwards stg.ludo.provefair.app to; 8080 is
+    # container-internal only and is private to this container's own
+    # network namespace, which is why the process inside binds 0.0.0.0:8080
+    # without contradicting the rule above.
+    ports:
+      - "127.0.0.1:8199:8080"
+
+    # Real values (PORT, TRUSTED_PROXIES) live in .env on the server and are
+    # never in this file or in the repository.
+    env_file:
+      - .env
+
+    # A structured-log-per-event server can fill a 4 GB disk if nothing
+    # caps it. 10 MB per file, 5 files kept: 50 MB ceiling for this
+    # container's logs, rotated by the daemon, never by hand.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    # Mirrors the Dockerfile HEALTHCHECK; kept here too so `docker compose
+    # ps` reflects health without needing the image's own default to be
+    # inspected separately. See the Dockerfile comment: there is no
+    # dedicated health endpoint yet, so a fixed 404 from the WebSocket
+    # upgrade handler stands in as the liveness signal.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          code=$$(curl -s -o /dev/null -w '%{http_code}'
+          http://127.0.0.1:8080/) && [ "$$code" = "404" ]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3

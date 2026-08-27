@@ -1,0 +1,66 @@
+# Build context for packages/ludo_server/Dockerfile, built from the
+# repository root because the pub workspace root has to be present (see the
+# Dockerfile's own comment on that). Everything below never needs to reach
+# the daemon: it is either irrelevant to compiling the server, or, for the
+# secret-shaped patterns, must never reach a place a build cache or an image
+# layer could retain it even after a later step deletes it.
+
+# Version control and CI. The daemon does not need history and this is not
+# CI's file to touch.
+.git/
+.github/
+
+# Dart build/tool caches. Rebuilt fresh in the build stage, and shipping a
+# host machine's .dart_tool would poison the workspace resolution done
+# inside the container with paths that do not exist there.
+.dart_tool/
+**/.dart_tool/
+.packages
+**/.packages
+build/
+**/build/
+.pub-cache/
+.pub/
+pubspec.lock.bak
+
+# Secrets and key material. Mirrors .gitignore's secret block; a build
+# context is not a commit, but the same rule applies for the same reason --
+# a file deleted in a later Dockerfile layer is still in the image, and a
+# file never sent to the daemon cannot end up in a layer at all.
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+key.properties
+keystore.properties
+service-account*.json
+play-service-account*.json
+google-services.json
+secrets/
+*.secret
+
+# Everything else that has no business in a server image build.
+docs/
+work/
+scratch/
+tmp/
+*.log
+coverage/
+doc/api/
+.idea/
+.vscode/
+node_modules/
+android/
+ios/
+
+# This deploy directory is deploy-time material for the host, not build
+# input for the image.
+deploy/
+
+# Do not send the Dockerfile-adjacent tooling files themselves twice; they
+# are already read directly by the docker build invocation.
+.dockerignore
