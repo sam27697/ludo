@@ -54,6 +54,25 @@ resolve_dart() {
 
 # 1. Static analysis and formatting. First because it is free and because a
 # tree that does not analyse cleanly is not worth running tests against.
+#
+# packages/ludo_client depends on the Flutter SDK (its pubspec.yaml pins
+# `sdk: flutter`), and a plain `dart` binary cannot resolve that dependency.
+# Measured on this machine on 2026-08-28: with a stale
+# packages/ludo_client/.dart_tool left over from an earlier `flutter pub get`
+# present, both `dart analyze` and `dart format` on the client report a clean
+# result; with it absent, `dart analyze` fails outright on the unresolved
+# imports and `dart format` reports files as needing changes that a Flutter
+# toolchain says are already correctly formatted. Either way the verdict
+# tracks host history, not the tree, so this gate does not run `dart analyze`
+# or `dart format` against packages/ludo_client at all. A real Flutter
+# toolchain analyses and formats it instead, in the `client` CI job.
+#
+# What is left to check is not a fixed path list, so a directory rename
+# cannot quietly narrow it: every directory directly under packages/ that has
+# a pubspec.yaml is discovered here, and it is Flutter-only if that pubspec
+# depends on the Flutter SDK, Dart-only otherwise. The next Flutter package
+# added to this repository is excluded the same way, automatically -- nobody
+# has to remember to update a glob in this file or in analysis_options.yaml.
 gate_static() {
   local dart
   dart="$(resolve_dart)" || {
@@ -61,15 +80,49 @@ gate_static() {
     return 77
   }
 
+  local pkg_dir
+  local -a dart_only=() flutter_only=()
+  for pkg_dir in "$ROOT"/packages/*/; do
+    pkg_dir="${pkg_dir%/}"
+    [ -f "$pkg_dir/pubspec.yaml" ] || continue
+    if grep -qE '^[[:space:]]*sdk:[[:space:]]*flutter[[:space:]]*$' "$pkg_dir/pubspec.yaml"; then
+      flutter_only+=("${pkg_dir#"$ROOT"/}")
+    else
+      dart_only+=("${pkg_dir#"$ROOT"/}")
+    fi
+  done
+
+  # A gate that checks nothing and reports green is worse than no gate. If
+  # discovery above found no Dart-only package at all -- packages/ deleted or
+  # renamed, or every package under it now depending on Flutter -- refuse to
+  # call that a pass.
+  if [ ${#dart_only[@]} -eq 0 ]; then
+    echo "no Dart-only package found under packages/ -- refusing to report a pass for analysing nothing"
+    return 1
+  fi
+
+  # Same failure mode one level down: a package this gate is supposed to
+  # cover still exists as a directory but has been emptied of Dart source.
+  local missing=""
+  for pkg_dir in "${dart_only[@]}"; do
+    if [ -z "$(find "$ROOT/$pkg_dir" -name '*.dart' -print -quit 2>/dev/null)" ]; then
+      missing="$missing $pkg_dir"
+    fi
+  done
+  if [ -n "$missing" ]; then
+    echo "Dart-only package(s) with no .dart source under them:$missing"
+    return 1
+  fi
+
   local out rc
-  out="$("$dart" analyze --fatal-infos --fatal-warnings "$ROOT" 2>&1)"; rc=$?
+  out="$("$dart" analyze --fatal-infos --fatal-warnings "${dart_only[@]}" 2>&1)"; rc=$?
   if [ $rc -ne 0 ]; then
     echo "$out"
     return 1
   fi
 
   local fmt_out fmt_rc
-  fmt_out="$("$dart" format --output=none --set-exit-if-changed "$ROOT" 2>&1)"; fmt_rc=$?
+  fmt_out="$("$dart" format --output=none --set-exit-if-changed "${dart_only[@]}" 2>&1)"; fmt_rc=$?
   if [ $fmt_rc -ne 0 ]; then
     echo "$fmt_out"
     return 1
@@ -77,6 +130,9 @@ gate_static() {
 
   echo "$out"
   echo "$fmt_out"
+  if [ ${#flutter_only[@]} -gt 0 ]; then
+    echo "excluded here, covered by the client CI job instead:${flutter_only[*]}"
+  fi
   return 0
 }
 
