@@ -12,3 +12,89 @@ jobs:
       - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1 # v1.8.0
       - run: dart pub get
       - run: bash bin/ludo-verify.sh
+
+  # packages/ludo_client is a standalone Flutter package, not a member of the
+  # root pub workspace (see packages/ludo_client/pubspec.yaml and the root
+  # pubspec.yaml for why: a Flutter package as a workspace member drags a
+  # `sdk: flutter` dependency into the workspace resolution, which breaks
+  # `dart pub get` at the root on a Dart-only machine, and the verify job
+  # above must keep working with no Flutter installed). This job builds and
+  # tests it on its own, in its own working directory, entirely separately
+  # from the Dart harness, so the two fail independently and it is obvious
+  # which one broke.
+  #
+  # The bundle this job produces is NOT upload-signed. Release signing needs
+  # a keystore, the keystore is a secret, it is not in this repository, and
+  # it never will be. A later order adds a signing config that reads the
+  # keystore from a GitHub Actions secret. Until then this job proves the
+  # app builds and ships the right SDK numbers and application id; it does
+  # not produce anything uploadable to Play.
+  client:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/ludo_client
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.47.1"
+          channel: "stable"
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter build appbundle --release
+
+      # The build output must contain an .aab, and this step fails outright
+      # if it does not, printing the path and size when it does. Found with
+      # `find` rather than a fixed path, because the exact output location is
+      # an AGP/Flutter implementation detail this repository does not own.
+      - name: locate the app bundle
+        run: |
+          set -euo pipefail
+          aab="$(find . -name '*.aab' -print -quit)"
+          if [ -z "$aab" ]; then
+            echo "no .aab found anywhere under packages/ludo_client; the release build did not produce one" >&2
+            exit 1
+          fi
+          echo "AAB_PATH=$aab" >> "$GITHUB_ENV"
+          echo "found app bundle: $aab"
+          ls -la "$aab"
+          stat --format '%n is %s bytes' "$aab"
+
+      # Assert targetSdk, minSdk and the application id from an artefact the
+      # build itself produced, not from build.gradle.kts (which only proves
+      # the file says what we wrote in it, not what actually got built). The
+      # merged manifest AGP writes under the build intermediates is plain XML
+      # and carries all three. Its exact path is an AGP implementation
+      # detail, so it is located with `find`, and this step fails loudly, not
+      # silently, if no such file exists -- a grep over a missing path must
+      # never report green having checked nothing.
+      - name: assert the shipped SDK numbers and application id
+        run: |
+          set -euo pipefail
+          manifest="$(find . -path '*intermediates*merged_manifest*/release/AndroidManifest.xml' -print -quit)"
+          if [ -z "$manifest" ]; then
+            manifest="$(find . -path '*intermediates*' -iname 'AndroidManifest.xml' | grep -i release | head -n1)"
+          fi
+          if [ -z "$manifest" ] || [ ! -f "$manifest" ]; then
+            echo "no merged manifest found under packages/ludo_client/build; cannot assert the shipped values, failing rather than passing vacuously" >&2
+            find . -iname 'AndroidManifest.xml' >&2 || true
+            exit 1
+          fi
+          echo "reading $manifest"
+          cat "$manifest"
+
+          grep -q 'package="app.fayad.ludo"' "$manifest" || {
+            echo "application id app.fayad.ludo not found in $manifest" >&2
+            exit 1
+          }
+          grep -Eq 'targetSdkVersion="36"|android:targetSdkVersion="36"' "$manifest" || {
+            echo "targetSdk 36 not found in $manifest" >&2
+            exit 1
+          }
+          grep -Eq 'minSdkVersion="24"|android:minSdkVersion="24"' "$manifest" || {
+            echo "minSdk 24 not found in $manifest" >&2
+            exit 1
+          }
+          echo "confirmed from the build's own merged manifest: applicationId=app.fayad.ludo, targetSdk=36, minSdk=24"
