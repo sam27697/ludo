@@ -1,0 +1,15 @@
+# Copy this file to key.properties in this same directory and fill in the
+# real values. key.properties is ignored by git (see .gitignore in this
+# directory and in the repository root) and must never be committed.
+#
+# storeFile is a path relative to this directory (packages/ludo_client/android),
+# not relative to the app/ subdirectory. If the keystore sits right next to
+# this file, "upload-keystore.p12" is enough.
+#
+# The keystore itself is a PKCS12 file, generated with openssl, not a JKS
+# file generated with keytool. See docs/RELEASE.md for the exact command.
+
+storeFile=upload-keystore.p12
+storePassword=REPLACE_ME
+keyAlias=REPLACE_ME
+keyPassword=REPLACE_ME
