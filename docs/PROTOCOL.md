@@ -258,6 +258,41 @@ Rate limits, per connection unless stated:
   what makes the 32^6 code space unenumerable rather than merely large.
 - any message: 30 per second, then `RATE_LIMITED`, then close at 60.
 
+### 7.1 Close codes
+
+Four errors close the connection. Until now this document said "connection
+closed" without saying with what code, and that gap produced a live defect: the
+server was written with the RFC 6455 codes 1008 and 1009, which are correct on
+the wire and are rejected by the Dart `web_socket` package underneath
+`web_socket_channel`. `checkCloseCode` there permits only **1000 or the range
+3000 to 4999**. The rejection surfaces as an asynchronous error on the sink,
+which no caller sees, so the socket is simply never closed and the client is
+left holding an open connection the server has stopped answering. A player on a
+phone waits on that socket forever rather than reconnecting.
+
+The close code is therefore part of the protocol and is pinned here. The
+4000-4999 range is reserved by RFC 6455 for application use, which is what these
+are, and it is inside what the library accepts:
+
+| Close code | Sent when | Error frame that precedes it |
+|---|---|---|
+| `4001` | frame over 8192 bytes | `TOO_LARGE` |
+| `4002` | unsupported `v` | `PROTOCOL_VERSION` |
+| `4003` | the 60-per-second ceiling | `RATE_LIMITED` |
+| `4004` | this seat was taken over by a newer socket | `BAD_SEAT_TOKEN` |
+
+Rules that go with them:
+
+- The error frame is sent **before** the close, always, so a client that reads
+  the reason does not have to infer it from the code alone.
+- A close that fails must be **observable**. Awaiting the sink's close future is
+  not enough on its own, because the failure above arrives as an unhandled
+  asynchronous error rather than as a rejected future the caller is holding. A
+  server that believes it closed a connection it did not close is worse than one
+  that never tried.
+- No other code is used. A close for any other reason is a defect, not a new
+  code invented at the call site.
+
 ## 8. Reconnection
 
 The seat survives the socket. This is a feature, not a recovery path, and it is
