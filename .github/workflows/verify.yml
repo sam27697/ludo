@@ -48,6 +48,7 @@ jobs:
           channel: "stable"
       - run: flutter pub get
       - run: flutter analyze
+      - run: dart format --output=none --set-exit-if-changed .
       - run: flutter test
 
       # Secrets cannot be referenced directly in a step's `if:` (GitHub's own
