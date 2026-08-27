@@ -1,7 +1,9 @@
-/// The in-memory room registry: codes, seat tokens, seats and the room
-/// lifecycle of `docs/PROTOCOL.md` sections 2 and 3. No WebSocket, no HTTP,
-/// no `shelf`, no timer driven by the wall clock -- that lands with the
-/// socket layer in a later order.
+/// The authoritative Ludo game server: the in-memory room registry
+/// (`docs/PROTOCOL.md` sections 2 and 3), and the wire layer on top of it --
+/// envelope parsing, the section 7 validation ladder, rate limits, the
+/// `shelf` + `shelf_web_socket` socket handling and the reap/prune
+/// housekeeping timer. The turn loop, `roll`, `move` and the 45 second timer
+/// are not here yet; that is order 008's.
 library;
 
 export 'src/clock.dart' show Clock, SystemClock, FakeClock;
@@ -35,6 +37,18 @@ export 'src/registry.dart'
         LeaveOk,
         LeaveFailure,
         RoomRegistry;
+export 'src/rate_limit.dart' show RateLimiter, MessageRateOutcome;
+export 'src/envelope.dart'
+    show
+        maxFrameBytes,
+        isWellFormedMessageId,
+        wireErrorCode,
+        knownMessageTypes,
+        parseEnvelope,
+        encodeEnvelope,
+        generateMessageId;
+export 'src/connection.dart' show Connection, RoomHub;
+export 'src/wire_server.dart' show WireServer, housekeepingInterval;
 
 // GameState is ludo_engine's, not this package's, but Room.game exposes it
 // and a caller of this package should not have to depend on ludo_engine
