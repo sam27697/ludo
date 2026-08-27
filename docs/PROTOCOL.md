@@ -83,7 +83,7 @@ seat is not reassignable by anything a third party can observe.
 | `set_players` | `{ "players": 2\|3\|4 }` | Host only. LOBBY only. Not below current occupancy. Re-seats everyone onto the canonical set for the new count and answers with `room`. |
 | `roll` | `{ }` | Only the seat whose turn it is, only when the turn is awaiting a roll. |
 | `move` | `{ "token": 0..3 }` | Only the seat whose turn it is, only when a roll is pending a selection. |
-| `leave_room` | `{ }` | Voluntary. In LOBBY it frees the seat. In PLAYING it does not: the seat remains and is played by the timer. |
+| `leave_room` | `{ }` | Voluntary. In LOBBY it frees the seat. In PLAYING it does not: the seat remains and is played by the timer. Answered on the leaving socket by the same `player_left` (LOBBY) or `presence` (PLAYING) frame the rest of the room receives, with `re` set. The leaver is told what everyone else was told, not a snapshot of a room it is no longer in. |
 | `ping` | `{ }` | Answered by `pong`. |
 
 `name` is a display name: 1 to 24 characters after trimming, no control
@@ -114,13 +114,33 @@ different games.
 | `moved` | `{ "seat": int, "token": int, "from": int, "to": int, "captured": [{"seat":int,"token":int}], "extra_roll": bool }` |
 | `turn_passed` | `{ "seat": int, "reason": "no_legal_move"\|"three_sixes" }` |
 | `turn` | `{ "seat": int, "deadline_ms": int }` |
-| `game_over` | `{ "winner": int }` |
+| `game_over` | `{ "winner": int, "seed": int }`. The seed is published here and only here, after play, so the `seed_commit` from `game_started` can be checked against it. |
 | `error` | `{ "code": string, "message": string }`, with `re` set when it answers a specific message. |
 | `pong` | `{ }` |
 
 `deadline_ms` is milliseconds remaining, not an absolute timestamp. Four phones
 do not agree on the wall clock and the client must not be asked to reconcile
 them.
+
+**Every state-changing push carries `seq` in its `d`, in addition to the fields
+listed above.** The table gives each message's own fields and does not repeat
+`seq` on every row. Section 6 states that `seq` is mandatory on every
+state-changing push and that sentence is the normative one: a client detects a
+gap by comparing the `seq` of what arrives against its own, so a delta that
+carries no `seq` is a delta the client cannot place, and one such message
+desynchronises the client permanently.
+
+Carrying `seq`: `room`, `player_joined`, `player_left`, `presence`,
+`game_started`, `rolled`, `moved`, `turn_passed`, `turn`, `game_over`.
+
+Not carrying `seq`: `error` and `pong`, neither of which changes state, and
+`seat_assigned`, which is not itself a state change and is always immediately
+followed on the same socket by a `room` whose snapshot carries the `seq`.
+
+The value is always read from the room's own counter at the moment the push is
+built. It is never counted per connection: one counter per socket looks right in
+every single-client test and is wrong the moment two clients share a room, which
+is the only case `seq` exists for.
 
 The deltas (`moved`, `rolled`, `turn_passed`) exist so the client can animate.
 They are not the source of truth. A client that has missed anything sends
@@ -158,6 +178,22 @@ every delta and renders only snapshots; the deltas are an optimisation.
   means a player who suspects the dice can check afterwards that they were
   fixed before the game started rather than chosen during it.
 
+  **The hash is SHA-256, lowercase hex, over the UTF-8 bytes of the seed's
+  decimal representation with no sign, no padding and no separator**, so that
+  `seed_commit == sha256(seed.toString())`. It is deliberately not the engine's
+  `stateHash`, which is FNV-1a and is a checksum, not a commitment: FNV-1a
+  collisions are cheap to construct, so a server that had committed with it
+  could still choose a different seed afterwards and produce one that matched.
+  A commitment that does not bind the committer proves nothing, and this field
+  exists only to prove something. The seed is 64-bit and comes from the server
+  CSPRNG, so the commitment does not reveal it in advance either.
+
+  The hash covers the seed alone and nothing else. Hashing the initial game
+  state instead would bind the room configuration into the commitment as well,
+  which sounds stronger and is worse: the configuration is already public to
+  everyone in the room, and a client checking the commitment afterwards would
+  have to reconstruct that whole state exactly rather than hash one integer.
+
 ## 7. Errors
 
 Every error is one of these codes. A code is never invented at a call site.
@@ -186,12 +222,76 @@ failure, before any state is touched: size, JSON parse, `v`, `t`, `id` shape,
 rate limit, room exists, seat authorised, phase correct, payload fields, rule
 legality. Reject, never repair.
 
+**"Before any state is touched" outranks the ordering**, and the two pull
+against each other for the messages that carry a room code. For `join_room` and
+`resume` the room-exists and seat-authorised steps are not separate checks the
+server can run early: they are performed by the registry call, and that same
+call is the mutation. Validating the payload after it would mean seating a
+player and then rejecting the message that seated them. So for those two, the
+whole payload is validated first, and the ladder position of "room exists" is
+satisfied by the registry call being the first thing that touches state.
+
+For `start_game`, `set_players`, `leave_room`, `roll` and `move`, which carry no
+room code and no seat token, the connection's own stored identity is the room
+and seat, so checking it costs nothing and touches nothing. **The identity check
+runs before payload validation for those five**, exactly as the ladder reads: a
+socket that is in no room gets `BAD_SEAT_TOKEN` for any of them, whatever its
+payload looks like.
+
+One field is exempt in every direction. A `code` or `seat_token` whose JSON type
+is wrong — not a string at all — is `BAD_FIELD` immediately, because no lookup
+can be attempted with it. A `code` that is a string but malformed is **not**
+pre-validated: it goes to the registry as received, so a malformed code and a
+well-formed code for a room that does not exist both come back `NO_SUCH_ROOM`.
+A client fuzzing the code space must not be able to tell "badly shaped" from
+"shaped fine but nobody is home".
+
+`re` on an outbound frame is only ever an `id` that passed the `id` shape check.
+When a message is rejected at or before that step there is no usable `id`, and
+the error frame carries no `re`. The server never echoes an unvalidated string
+back into a field the envelope rules constrain.
+
 Rate limits, per connection unless stated:
 
 - `create_room`: 5 per hour per IP, and 3 per hour per device.
 - `join_room` and `resume`: 20 per minute per IP. A wrong code counts. This is
   what makes the 32^6 code space unenumerable rather than merely large.
 - any message: 30 per second, then `RATE_LIMITED`, then close at 60.
+
+### 7.1 Close codes
+
+Four errors close the connection. Until now this document said "connection
+closed" without saying with what code, and that gap produced a live defect: the
+server was written with the RFC 6455 codes 1008 and 1009, which are correct on
+the wire and are rejected by the Dart `web_socket` package underneath
+`web_socket_channel`. `checkCloseCode` there permits only **1000 or the range
+3000 to 4999**. The rejection surfaces as an asynchronous error on the sink,
+which no caller sees, so the socket is simply never closed and the client is
+left holding an open connection the server has stopped answering. A player on a
+phone waits on that socket forever rather than reconnecting.
+
+The close code is therefore part of the protocol and is pinned here. The
+4000-4999 range is reserved by RFC 6455 for application use, which is what these
+are, and it is inside what the library accepts:
+
+| Close code | Sent when | Error frame that precedes it |
+|---|---|---|
+| `4001` | frame over 8192 bytes | `TOO_LARGE` |
+| `4002` | unsupported `v` | `PROTOCOL_VERSION` |
+| `4003` | the 60-per-second ceiling | `RATE_LIMITED` |
+| `4004` | this seat was taken over by a newer socket | `BAD_SEAT_TOKEN` |
+
+Rules that go with them:
+
+- The error frame is sent **before** the close, always, so a client that reads
+  the reason does not have to infer it from the code alone.
+- A close that fails must be **observable**. Awaiting the sink's close future is
+  not enough on its own, because the failure above arrives as an unhandled
+  asynchronous error rather than as a rejected future the caller is holding. A
+  server that believes it closed a connection it did not close is worse than one
+  that never tried.
+- No other code is used. A close for any other reason is a defect, not a new
+  code invented at the call site.
 
 ## 8. Reconnection
 
