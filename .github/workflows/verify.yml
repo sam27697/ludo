@@ -24,17 +24,20 @@ jobs:
   # which one broke.
   #
   # Whether the bundle this job produces is upload-signed depends entirely on
-  # whether the five LUDO_UPLOAD_* secrets below are configured on this
-  # repository. When they are, the release build signs with the real upload
-  # keystore (materialised from secrets for the duration of this job only,
-  # never committed), the resulting .aab's signer certificate is checked
-  # against LUDO_UPLOAD_CERT_SHA256, and only then is it uploaded as a
-  # workflow artifact. When they are not -- a fork build has no access to
-  # this repository's secrets -- the release build still runs with the
-  # Flutter template's debug signing config, so compilation is still proved
-  # on every push, and nothing is uploaded. A debug-signed bundle must never
-  # reach the artifact list: the next person to find it there will try to
-  # submit it to Play.
+  # whether the four LUDO_UPLOAD_* secrets below are configured on this
+  # repository (LUDO_UPLOAD_KEYSTORE_B64, LUDO_UPLOAD_STORE_PASSWORD,
+  # LUDO_UPLOAD_KEY_PASSWORD, LUDO_UPLOAD_CERT_SHA256 -- the key alias is not
+  # among them, it is the literal "upload" in the job below, not a secret).
+  # When they are set, the release build signs with the real upload keystore
+  # (materialised from secrets for the duration of this job only, never
+  # committed), the resulting .aab's signer certificate is checked against
+  # LUDO_UPLOAD_CERT_SHA256, and only then is it uploaded as a workflow
+  # artifact. When they are not -- a fork build has no access to this
+  # repository's secrets -- the release build still runs with the Flutter
+  # template's debug signing config, so compilation is still proved on every
+  # push, and nothing is uploaded. A debug-signed bundle must never reach
+  # the artifact list: the next person to find it there will try to submit
+  # it to Play.
   client:
     runs-on: ubuntu-latest
     defaults:
@@ -82,13 +85,22 @@ jobs:
       # with a redirect, never with `cat` or `echo -n "$VAR"` mixed into a
       # combined line that could show up in a shell trace. There is no
       # `set -x` anywhere in this job.
+      #
+      # keyAlias is the literal "upload", not a secret. GitHub redacts every
+      # occurrence of a secret's value anywhere in a log, including inside
+      # step names we wrote ourselves, and the alias used to be
+      # LUDO_UPLOAD_KEY_ALIAS with the value "upload" -- so step names like
+      # "check whether upload signing material is configured" rendered as
+      # "check whether *** signing material is configured". The alias is a
+      # lookup name inside a file whose passwords are the actual secrets; it
+      # carries no confidentiality of its own, and hard-coding it here is
+      # what the keystore generation in docs/RELEASE.md must produce.
       - name: write release signing material
         if: steps.signing.outputs.has_keystore == 'true'
         env:
           LUDO_UPLOAD_KEYSTORE_B64: ${{ secrets.LUDO_UPLOAD_KEYSTORE_B64 }}
           LUDO_UPLOAD_STORE_PASSWORD: ${{ secrets.LUDO_UPLOAD_STORE_PASSWORD }}
           LUDO_UPLOAD_KEY_PASSWORD: ${{ secrets.LUDO_UPLOAD_KEY_PASSWORD }}
-          LUDO_UPLOAD_KEY_ALIAS: ${{ secrets.LUDO_UPLOAD_KEY_ALIAS }}
         run: |
           set -euo pipefail
           keystore_path="android/upload-keystore.p12"
@@ -97,7 +109,7 @@ jobs:
           {
             echo "storeFile=upload-keystore.p12"
             echo "storePassword=$LUDO_UPLOAD_STORE_PASSWORD"
-            echo "keyAlias=$LUDO_UPLOAD_KEY_ALIAS"
+            echo "keyAlias=upload"
             echo "keyPassword=$LUDO_UPLOAD_KEY_PASSWORD"
           } > android/key.properties
           chmod 600 android/key.properties
@@ -105,23 +117,53 @@ jobs:
 
       - run: flutter build appbundle --release
 
-      # The build output must contain an .aab, and this step fails outright
-      # if it does not, printing the path and size when it does. Found with
-      # `find` rather than a fixed path, because the exact output location is
-      # an AGP/Flutter implementation detail this repository does not own.
+      # The build output must contain exactly one .aab at its canonical
+      # output location, and this step fails outright if it does not.
+      #
+      # build/ holds several .aab files at different pipeline stages -- in
+      # particular build/app/intermediates/**/intermediary-bundle.aab, an AGP
+      # intermediate written by the packageReleaseBundle task before signing
+      # and finalisation run, and unsigned by construction. A bare
+      # `find . -name '*.aab' -print -quit` returns whichever match the
+      # directory walk reaches first, which on a real run was that
+      # intermediate, not the bundle Play would accept -- the signature
+      # check downstream caught it as a mismatch, but only because that
+      # check exists; nothing about "locate the app bundle: success" said so
+      # on its own. Only build/app/outputs/bundle/release holds the actual
+      # shipping bundle, so this step is rooted there and nowhere else, and
+      # it fails if that directory holds zero or more than one .aab rather
+      # than guessing.
       - name: locate the app bundle
         run: |
           set -euo pipefail
-          aab="$(find . -name '*.aab' -print -quit)"
-          if [ -z "$aab" ]; then
-            echo "no .aab found anywhere under packages/ludo_client; the release build did not produce one" >&2
+          bundle_dir="build/app/outputs/bundle/release"
+          if [ ! -d "$bundle_dir" ]; then
+            echo "$bundle_dir does not exist; the release build did not produce the shipping bundle output" >&2
             exit 1
           fi
+          matches=()
+          while IFS= read -r -d '' f; do
+            matches+=("$f")
+          done < <(find "$bundle_dir" -maxdepth 1 -name '*.aab' -print0)
+          if [ "${#matches[@]}" -eq 0 ]; then
+            echo "no .aab found in $bundle_dir; the release build did not produce one" >&2
+            exit 1
+          fi
+          if [ "${#matches[@]}" -gt 1 ]; then
+            echo "more than one .aab found in $bundle_dir, refusing to guess which one ships:" >&2
+            printf '%s\n' "${matches[@]}" >&2
+            exit 1
+          fi
+          aab="${matches[0]}"
           echo "AAB_PATH=$aab" >> "$GITHUB_ENV"
           # actions/upload-artifact resolves its `path:` input from the
           # workflow's own working directory (the repository root), not from
           # this job's `defaults.run.working-directory`, so the upload step
           # further down needs the same path spelled out from the repo root.
+          # This must always be the exact same file AAB_PATH names above: it
+          # is derived from it on the same line the file was found, never
+          # rediscovered independently, so the file the signature check
+          # verifies and the file that gets uploaded cannot drift apart.
           echo "AAB_REPO_PATH=packages/ludo_client/${aab#./}" >> "$GITHUB_ENV"
           echo "found app bundle: $aab"
           ls -la "$aab"
@@ -168,11 +210,27 @@ jobs:
       # when the keystore secret is present. This step is the difference
       # between "the release build type compiles" and "this artifact is
       # signed with the key Play expects", and it is written so that it
-      # cannot pass without actually checking: a missing AAB_PATH, a missing
-      # LUDO_UPLOAD_CERT_SHA256, or a runner with no keytool all fail the
-      # job rather than silently letting the upload happen unchecked. The
-      # comparison never prints either fingerprint, expected or actual, into
-      # the log.
+      # cannot pass without actually checking. Two preconditions are checked
+      # first (AAB_PATH empty because the previous step found nothing;
+      # LUDO_UPLOAD_CERT_SHA256 unset because there would be nothing to
+      # compare against), then the four ways the certificate check itself
+      # can fail each print which one it was:
+      #   1. keytool missing              -- cannot run the check at all
+      #   2. keytool ran but errored      -- cannot read the bundle's signer
+      #   3. keytool ran, no SHA256 line  -- bundle looks unsigned
+      #   4. keytool ran, fingerprint present, mismatch -- wrong key
+      # Cases 2-3 used to share one line: `actual="$(keytool ... | grep ...)"`
+      # under `set -euo pipefail`. When grep matched nothing that whole
+      # pipeline failed as a unit and `set -e` ended the step right there,
+      # before the "no SHA-256 line" message below it could ever print --
+      # the job still failed, correctly, but with no explanation. Each
+      # command that can legitimately fail is now checked on its own, with
+      # its own message, so the step cannot die silently. The comparison
+      # never prints either fingerprint, expected or actual, into the log:
+      # the expected one is a secret and GitHub would redact it anyway, and
+      # printing the actual one on a mismatch would hand someone a value to
+      # paste into the secret to make the check stop complaining, which
+      # defeats it entirely.
       - name: verify the release bundle is signed with the expected upload certificate
         if: steps.signing.outputs.has_keystore == 'true'
         env:
@@ -191,7 +249,11 @@ jobs:
             echo "keytool is not on PATH on this runner; cannot verify the bundle's signer, refusing to upload an unverified bundle" >&2
             exit 1
           fi
-          actual="$(keytool -printcert -jarfile "$AAB_PATH" 2>&1 | grep -i 'SHA256:' | head -n1 | sed -E 's/^.*SHA256: *//' | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+          if ! cert_output="$(keytool -printcert -jarfile "$AAB_PATH" 2>&1)"; then
+            echo "keytool -printcert -jarfile exited with an error against $AAB_PATH; cannot verify the bundle's signer, refusing to upload it" >&2
+            exit 1
+          fi
+          actual="$(printf '%s\n' "$cert_output" | grep -i 'SHA256:' | head -n1 | sed -E 's/^.*SHA256: *//' | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]' || true)"
           if [ -z "$actual" ]; then
             echo "keytool -printcert -jarfile produced no SHA-256 line; the bundle appears to be unsigned, refusing to upload it" >&2
             exit 1
