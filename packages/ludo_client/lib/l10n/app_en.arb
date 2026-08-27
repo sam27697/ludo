@@ -1,0 +1,57 @@
+{
+  "@@locale": "en",
+  "appTitle": "Ludo RNG",
+  "@appTitle": {
+    "description": "The application name, shown as the window/task title and on the home screen."
+  },
+  "homeCreateRoomButton": "Create Room",
+  "@homeCreateRoomButton": {
+    "description": "Button on the home screen that starts creating a new room."
+  },
+  "homeJoinRoomButton": "Join Room",
+  "@homeJoinRoomButton": {
+    "description": "Button on the home screen that joins an existing room by code."
+  },
+  "homeRoomCodeFieldLabel": "Room code",
+  "@homeRoomCodeFieldLabel": {
+    "description": "Label of the text field where the player types a room code to join."
+  },
+  "homeRoomCodeFieldHint": "6 characters, letters and numbers",
+  "@homeRoomCodeFieldHint": {
+    "description": "Hint text under the room code field describing the expected shape of a code."
+  },
+  "homeRoomCodeInvalid": "That does not look like a room code. Check the letters and numbers and try again.",
+  "@homeRoomCodeInvalid": {
+    "description": "Error shown under the room code field when the typed code does not match the expected shape."
+  },
+  "homeLocaleToggleTooltip": "Change language",
+  "@homeLocaleToggleTooltip": {
+    "description": "Tooltip on the button that switches the app language."
+  },
+  "homeLocaleToggleLabel": "العربية",
+  "@homeLocaleToggleLabel": {
+    "description": "Label of the language toggle button, naming the language it switches to."
+  },
+  "roomScreenTitle": "Room",
+  "@roomScreenTitle": {
+    "description": "App bar title of the placeholder room screen."
+  },
+  "roomScreenCodeLabel": "Room code: {code}",
+  "@roomScreenCodeLabel": {
+    "description": "Shows the room code on the placeholder room screen.",
+    "placeholders": {
+      "code": {
+        "type": "String",
+        "example": "AB23CD"
+      }
+    }
+  },
+  "roomScreenNoCode": "No room code has been assigned yet.",
+  "@roomScreenNoCode": {
+    "description": "Shown on the placeholder room screen instead of a code when there is no server connection to assign one, such as right after tapping Create Room."
+  },
+  "roomScreenNotImplemented": "The connection to the server is not implemented yet. This screen does not do anything else right now.",
+  "@roomScreenNotImplemented": {
+    "description": "Honest placeholder text explaining that the room screen has no working connection yet."
+  }
+}

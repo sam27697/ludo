@@ -1,0 +1,15 @@
+{
+  "@@locale": "ar",
+  "appTitle": "Ludo RNG",
+  "homeCreateRoomButton": "إنشاء غرفة",
+  "homeJoinRoomButton": "الانضمام إلى غرفة",
+  "homeRoomCodeFieldLabel": "رمز الغرفة",
+  "homeRoomCodeFieldHint": "6 أحرف، حروف وأرقام",
+  "homeRoomCodeInvalid": "هذا لا يبدو رمز غرفة صحيحًا. تحقق من الحروف والأرقام وحاول مرة أخرى.",
+  "homeLocaleToggleTooltip": "تغيير اللغة",
+  "homeLocaleToggleLabel": "English",
+  "roomScreenTitle": "الغرفة",
+  "roomScreenCodeLabel": "رمز الغرفة: {code}",
+  "roomScreenNoCode": "لم يتم تعيين رمز غرفة بعد.",
+  "roomScreenNotImplemented": "الاتصال بالخادم غير مطبق بعد. لا تقوم هذه الشاشة بأي شيء آخر الآن."
+}

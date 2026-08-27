@@ -12,3 +12,266 @@ jobs:
       - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1 # v1.8.0
       - run: dart pub get
       - run: bash bin/ludo-verify.sh
+
+  # packages/ludo_client is a standalone Flutter package, not a member of the
+  # root pub workspace (see packages/ludo_client/pubspec.yaml and the root
+  # pubspec.yaml for why: a Flutter package as a workspace member drags a
+  # `sdk: flutter` dependency into the workspace resolution, which breaks
+  # `dart pub get` at the root on a Dart-only machine, and the verify job
+  # above must keep working with no Flutter installed). This job builds and
+  # tests it on its own, in its own working directory, entirely separately
+  # from the Dart harness, so the two fail independently and it is obvious
+  # which one broke.
+  #
+  # Whether the bundle this job produces is upload-signed depends entirely on
+  # whether the four LUDO_UPLOAD_* secrets below are configured on this
+  # repository (LUDO_UPLOAD_KEYSTORE_B64, LUDO_UPLOAD_STORE_PASSWORD,
+  # LUDO_UPLOAD_KEY_PASSWORD, LUDO_UPLOAD_CERT_SHA256 -- the key alias is not
+  # among them, it is the literal "upload" in the job below, not a secret).
+  # When they are set, the release build signs with the real upload keystore
+  # (materialised from secrets for the duration of this job only, never
+  # committed), the resulting .aab's signer certificate is checked against
+  # LUDO_UPLOAD_CERT_SHA256, and only then is it uploaded as a workflow
+  # artifact. When they are not -- a fork build has no access to this
+  # repository's secrets -- the release build still runs with the Flutter
+  # template's debug signing config, so compilation is still proved on every
+  # push, and nothing is uploaded. A debug-signed bundle must never reach
+  # the artifact list: the next person to find it there will try to submit
+  # it to Play.
+  client:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/ludo_client
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.47.1"
+          channel: "stable"
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: dart format --output=none --set-exit-if-changed .
+      - run: flutter test
+
+      # Secrets cannot be referenced directly in a step's `if:` (GitHub's own
+      # docs on using secrets in Actions say so explicitly); the supported
+      # way to gate steps on a secret being set is to test it once, inside a
+      # step that has the secret as an `env:`, and record the answer as a
+      # step output the later `if:` conditions can read instead. This step
+      # never prints the secret itself, only whether it is empty.
+      - name: check whether upload signing material is configured
+        id: signing
+        env:
+          LUDO_UPLOAD_KEYSTORE_B64: ${{ secrets.LUDO_UPLOAD_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -n "${LUDO_UPLOAD_KEYSTORE_B64:-}" ]; then
+            echo "has_keystore=true" >> "$GITHUB_OUTPUT"
+            echo "LUDO_UPLOAD_KEYSTORE_B64 is set; this run will sign and upload"
+          else
+            echo "has_keystore=false" >> "$GITHUB_OUTPUT"
+            echo "LUDO_UPLOAD_KEYSTORE_B64 is not set; this run builds release-mode only, unsigned, nothing will be uploaded"
+          fi
+
+      # Materialises android/key.properties and the PKCS12 keystore it
+      # points at from repository secrets, entirely inside this job's own
+      # runner filesystem, which is discarded when the job ends. Guarded on
+      # the keystore secret being non-empty so a fork build -- which never
+      # has access to this repository's secrets -- takes the unsigned
+      # fallback path in build.gradle.kts instead of failing on a missing
+      # secret. Nothing here is echoed: the keystore comes from a base64
+      # decode written straight to a file, and key.properties is written
+      # with a redirect, never with `cat` or `echo -n "$VAR"` mixed into a
+      # combined line that could show up in a shell trace. There is no
+      # `set -x` anywhere in this job.
+      #
+      # keyAlias is the literal "upload", not a secret. GitHub redacts every
+      # occurrence of a secret's value anywhere in a log, including inside
+      # step names we wrote ourselves, and the alias used to be
+      # LUDO_UPLOAD_KEY_ALIAS with the value "upload" -- so step names like
+      # "check whether upload signing material is configured" rendered as
+      # "check whether *** signing material is configured". The alias is a
+      # lookup name inside a file whose passwords are the actual secrets; it
+      # carries no confidentiality of its own, and hard-coding it here is
+      # what the keystore generation in docs/RELEASE.md must produce.
+      - name: write release signing material
+        if: steps.signing.outputs.has_keystore == 'true'
+        env:
+          LUDO_UPLOAD_KEYSTORE_B64: ${{ secrets.LUDO_UPLOAD_KEYSTORE_B64 }}
+          LUDO_UPLOAD_STORE_PASSWORD: ${{ secrets.LUDO_UPLOAD_STORE_PASSWORD }}
+          LUDO_UPLOAD_KEY_PASSWORD: ${{ secrets.LUDO_UPLOAD_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keystore_path="android/upload-keystore.p12"
+          printf '%s' "$LUDO_UPLOAD_KEYSTORE_B64" | base64 -d > "$keystore_path"
+          chmod 600 "$keystore_path"
+          {
+            echo "storeFile=upload-keystore.p12"
+            echo "storePassword=$LUDO_UPLOAD_STORE_PASSWORD"
+            echo "keyAlias=upload"
+            echo "keyPassword=$LUDO_UPLOAD_KEY_PASSWORD"
+          } > android/key.properties
+          chmod 600 android/key.properties
+          echo "wrote android/key.properties and $keystore_path; release build will sign with the upload key"
+
+      - run: flutter build appbundle --release
+
+      # The build output must contain exactly one .aab at its canonical
+      # output location, and this step fails outright if it does not.
+      #
+      # build/ holds several .aab files at different pipeline stages -- in
+      # particular build/app/intermediates/**/intermediary-bundle.aab, an AGP
+      # intermediate written by the packageReleaseBundle task before signing
+      # and finalisation run, and unsigned by construction. A bare
+      # `find . -name '*.aab' -print -quit` returns whichever match the
+      # directory walk reaches first, which on a real run was that
+      # intermediate, not the bundle Play would accept -- the signature
+      # check downstream caught it as a mismatch, but only because that
+      # check exists; nothing about "locate the app bundle: success" said so
+      # on its own. Only build/app/outputs/bundle/release holds the actual
+      # shipping bundle, so this step is rooted there and nowhere else, and
+      # it fails if that directory holds zero or more than one .aab rather
+      # than guessing.
+      - name: locate the app bundle
+        run: |
+          set -euo pipefail
+          bundle_dir="build/app/outputs/bundle/release"
+          if [ ! -d "$bundle_dir" ]; then
+            echo "$bundle_dir does not exist; the release build did not produce the shipping bundle output" >&2
+            exit 1
+          fi
+          matches=()
+          while IFS= read -r -d '' f; do
+            matches+=("$f")
+          done < <(find "$bundle_dir" -maxdepth 1 -name '*.aab' -print0)
+          if [ "${#matches[@]}" -eq 0 ]; then
+            echo "no .aab found in $bundle_dir; the release build did not produce one" >&2
+            exit 1
+          fi
+          if [ "${#matches[@]}" -gt 1 ]; then
+            echo "more than one .aab found in $bundle_dir, refusing to guess which one ships:" >&2
+            printf '%s\n' "${matches[@]}" >&2
+            exit 1
+          fi
+          aab="${matches[0]}"
+          echo "AAB_PATH=$aab" >> "$GITHUB_ENV"
+          # actions/upload-artifact resolves its `path:` input from the
+          # workflow's own working directory (the repository root), not from
+          # this job's `defaults.run.working-directory`, so the upload step
+          # further down needs the same path spelled out from the repo root.
+          # This must always be the exact same file AAB_PATH names above: it
+          # is derived from it on the same line the file was found, never
+          # rediscovered independently, so the file the signature check
+          # verifies and the file that gets uploaded cannot drift apart.
+          echo "AAB_REPO_PATH=packages/ludo_client/${aab#./}" >> "$GITHUB_ENV"
+          echo "found app bundle: $aab"
+          ls -la "$aab"
+          stat --format '%n is %s bytes' "$aab"
+
+      # Assert targetSdk, minSdk and the application id from an artefact the
+      # build itself produced, not from build.gradle.kts (which only proves
+      # the file says what we wrote in it, not what actually got built). The
+      # merged manifest AGP writes under the build intermediates is plain XML
+      # and carries all three. Its exact path is an AGP implementation
+      # detail, so it is located with `find`, and this step fails loudly, not
+      # silently, if no such file exists -- a grep over a missing path must
+      # never report green having checked nothing.
+      - name: assert the shipped SDK numbers and application id
+        run: |
+          set -euo pipefail
+          manifest="$(find . -path '*intermediates*merged_manifest*/release/AndroidManifest.xml' -print -quit)"
+          if [ -z "$manifest" ]; then
+            manifest="$(find . -path '*intermediates*' -iname 'AndroidManifest.xml' | grep -i release | head -n1)"
+          fi
+          if [ -z "$manifest" ] || [ ! -f "$manifest" ]; then
+            echo "no merged manifest found under packages/ludo_client/build; cannot assert the shipped values, failing rather than passing vacuously" >&2
+            find . -iname 'AndroidManifest.xml' >&2 || true
+            exit 1
+          fi
+          echo "reading $manifest"
+          cat "$manifest"
+
+          grep -q 'package="app.fayad.ludo"' "$manifest" || {
+            echo "application id app.fayad.ludo not found in $manifest" >&2
+            exit 1
+          }
+          grep -Eq 'targetSdkVersion="36"|android:targetSdkVersion="36"' "$manifest" || {
+            echo "targetSdk 36 not found in $manifest" >&2
+            exit 1
+          }
+          grep -Eq 'minSdkVersion="24"|android:minSdkVersion="24"' "$manifest" || {
+            echo "minSdk 24 not found in $manifest" >&2
+            exit 1
+          }
+          echo "confirmed from the build's own merged manifest: applicationId=app.fayad.ludo, targetSdk=36, minSdk=24"
+
+      # Guarded the same way the signing material was written: only runs
+      # when the keystore secret is present. This step is the difference
+      # between "the release build type compiles" and "this artifact is
+      # signed with the key Play expects", and it is written so that it
+      # cannot pass without actually checking. Two preconditions are checked
+      # first (AAB_PATH empty because the previous step found nothing;
+      # LUDO_UPLOAD_CERT_SHA256 unset because there would be nothing to
+      # compare against), then the four ways the certificate check itself
+      # can fail each print which one it was:
+      #   1. keytool missing              -- cannot run the check at all
+      #   2. keytool ran but errored      -- cannot read the bundle's signer
+      #   3. keytool ran, no SHA256 line  -- bundle looks unsigned
+      #   4. keytool ran, fingerprint present, mismatch -- wrong key
+      # Cases 2-3 used to share one line: `actual="$(keytool ... | grep ...)"`
+      # under `set -euo pipefail`. When grep matched nothing that whole
+      # pipeline failed as a unit and `set -e` ended the step right there,
+      # before the "no SHA-256 line" message below it could ever print --
+      # the job still failed, correctly, but with no explanation. Each
+      # command that can legitimately fail is now checked on its own, with
+      # its own message, so the step cannot die silently. The comparison
+      # never prints either fingerprint, expected or actual, into the log:
+      # the expected one is a secret and GitHub would redact it anyway, and
+      # printing the actual one on a mismatch would hand someone a value to
+      # paste into the secret to make the check stop complaining, which
+      # defeats it entirely.
+      - name: verify the release bundle is signed with the expected upload certificate
+        if: steps.signing.outputs.has_keystore == 'true'
+        env:
+          LUDO_UPLOAD_CERT_SHA256: ${{ secrets.LUDO_UPLOAD_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AAB_PATH:-}" ]; then
+            echo "AAB_PATH is empty; the locate-the-app-bundle step did not find a bundle, refusing to skip the signature check" >&2
+            exit 1
+          fi
+          if [ -z "${LUDO_UPLOAD_CERT_SHA256:-}" ]; then
+            echo "LUDO_UPLOAD_CERT_SHA256 is not set even though the keystore secret is present; refusing to upload a bundle whose signer cannot be checked" >&2
+            exit 1
+          fi
+          if ! command -v keytool >/dev/null 2>&1; then
+            echo "keytool is not on PATH on this runner; cannot verify the bundle's signer, refusing to upload an unverified bundle" >&2
+            exit 1
+          fi
+          if ! cert_output="$(keytool -printcert -jarfile "$AAB_PATH" 2>&1)"; then
+            echo "keytool -printcert -jarfile exited with an error against $AAB_PATH; cannot verify the bundle's signer, refusing to upload it" >&2
+            exit 1
+          fi
+          actual="$(printf '%s\n' "$cert_output" | grep -i 'SHA256:' | head -n1 | sed -E 's/^.*SHA256: *//' | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]' || true)"
+          if [ -z "$actual" ]; then
+            echo "keytool -printcert -jarfile produced no SHA-256 line; the bundle appears to be unsigned, refusing to upload it" >&2
+            exit 1
+          fi
+          expected="$(printf '%s' "$LUDO_UPLOAD_CERT_SHA256" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+          if [ "$actual" != "$expected" ]; then
+            echo "the release bundle's signer certificate does not match LUDO_UPLOAD_CERT_SHA256; it is not signed with the expected upload key, refusing to upload it" >&2
+            exit 1
+          fi
+          echo "confirmed: $AAB_PATH is signed by the expected upload certificate"
+
+      # Only reached when the keystore secret was present and the signature
+      # above checked out, so nothing that lands here is debug-signed.
+      - name: upload signed release bundle
+        if: steps.signing.outputs.has_keystore == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ludo-release-appbundle
+          path: ${{ env.AAB_REPO_PATH }}
+          if-no-files-found: error
+          retention-days: 14
