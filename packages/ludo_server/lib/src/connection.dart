@@ -33,6 +33,7 @@
 // "this socket is not in a room at all", and a socket with no seat is
 // exactly a socket for which no seat token can be authorised.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -44,6 +45,29 @@ import 'rate_limit.dart';
 import 'registry.dart';
 import 'room.dart';
 import 'snapshot.dart';
+
+/// `docs/PROTOCOL.md` section 7.1: the four close codes, and the only four
+/// this file ever passes to a socket close. The `web_socket` package
+/// underneath `web_socket_channel` accepts only 1000 or 3000-4999
+/// (`checkCloseCode`); the RFC 6455 application codes this file used to send
+/// -- 1008 and 1009 -- are correct on the wire and outside that range, so the
+/// library rejected them, and it did so from deep inside a callback nothing
+/// here was holding a future for: `channel.sink.close()` completed normally
+/// regardless, and the socket was simply never closed. These four are inside
+/// the accepted range and each is tied to exactly one call site below; no
+/// other code is invented at a call site for any other reason.
+const int closeCodeTooLarge = 4001;
+const int closeCodeProtocolVersion = 4002;
+const int closeCodeRateLimited = 4003;
+const int closeCodeSeatTakenOver = 4004;
+
+/// How long [Connection.close] waits before deciding a close did not reach
+/// the peer and logging that. The known failure mode (section 7.1 above) is
+/// an unhandled asynchronous error that arrives well after `sink.close()`'s
+/// own future has already completed, so checking `channel.closeCode`
+/// immediately would false-positive on an ordinary close that just has not
+/// finished its handshake yet.
+const Duration closeVerificationDelay = Duration(seconds: 2);
 
 /// What a `Connection` needs from the rest of the server to do anything that
 /// crosses socket boundaries: registering itself against a room so a
@@ -117,7 +141,7 @@ class Connection {
     if (bytes.length > maxFrameBytes) {
       _log(type: '-', id: '-', outcome: 'TOO_LARGE');
       _sendError(ProtocolError.tooLarge, re: null);
-      await close(code: 1009, reason: 'TOO_LARGE');
+      await close(code: closeCodeTooLarge, reason: 'TOO_LARGE');
       return;
     }
 
@@ -133,7 +157,14 @@ class Connection {
       );
       _sendError(parsed.error, re: parsed.re);
       if (parsed.closeConnection) {
-        await close(code: 1008, reason: wireErrorCode(parsed.error));
+        // The only ladder step below frame-size that closes the connection
+        // is an unsupported `v` (envelope.dart sets `closeConnection: true`
+        // only for `ProtocolError.protocolVersion`), so this is always the
+        // 4002 case of docs/PROTOCOL.md section 7.1, never a code invented
+        // for whatever `parsed.error` happens to hold.
+        await close(
+            code: closeCodeProtocolVersion,
+            reason: wireErrorCode(parsed.error));
       }
       return;
     }
@@ -147,7 +178,7 @@ class Connection {
       _log(type: envelope.type, id: envelope.id, outcome: 'RATE_LIMITED');
       _sendError(ProtocolError.rateLimited, re: envelope.id);
       if (rate == MessageRateOutcome.mustClose) {
-        await close(code: 1008, reason: 'RATE_LIMITED');
+        await close(code: closeCodeRateLimited, reason: 'RATE_LIMITED');
       }
       return;
     }
@@ -164,7 +195,15 @@ class Connection {
       case 'join_room':
         _handleJoinRoom(envelope);
       case 'resume':
-        _handleResume(envelope);
+        // Async, unlike every other arm here: it may close a displaced
+        // socket. wire_server.dart's `_pump` awaits `handleFrame` before
+        // reading the next frame off this socket specifically so two frames
+        // are never processed concurrently against this connection's
+        // mutable seat identity; failing to await here punches a hole in
+        // that on the one path that reassigns identity mid-flight, and it
+        // was also why a bad close code below used to surface as an
+        // unhandled asynchronous error nobody was holding.
+        await _handleResume(envelope);
       case 'start_game':
         _handleStartGame(envelope);
       case 'set_players':
@@ -370,7 +409,8 @@ class Connection {
       displaced.roomCode = null;
       displaced.seatToken = null;
       displaced._sendError(ProtocolError.badSeatToken, re: null);
-      await displaced.close(code: 1008, reason: 'BAD_SEAT_TOKEN');
+      await displaced.close(
+          code: closeCodeSeatTakenOver, reason: 'BAD_SEAT_TOKEN');
     }
   }
 
@@ -381,6 +421,19 @@ class Connection {
     // BAD_SEAT_TOKEN whatever its payload looks like.
     if (!_hasIdentity) {
       _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    // docs/PROTOCOL.md section 7: phase correct precedes payload fields in
+    // the ladder, and the registry call below is where that check normally
+    // lives. A lookup is a read, not a mutation, so it can run ahead of the
+    // payload check exactly like the identity check just above did. When
+    // the room has vanished entirely (reaped since this socket's last
+    // successful call) there is no phase to read here; the registry call
+    // below still answers NO_SUCH_ROOM in that case, so skipping straight to
+    // the payload check loses nothing.
+    final Room? liveRoom = registry.lookup(roomCode!);
+    if (liveRoom != null && liveRoom.state != RoomState.lobby) {
+      _reject(envelope, ProtocolError.roomStarted);
       return;
     }
     if (envelope.data.isNotEmpty) {
@@ -419,6 +472,14 @@ class Connection {
     // socket-identified messages.
     if (!_hasIdentity) {
       _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    // docs/PROTOCOL.md section 7: phase correct precedes payload fields;
+    // see the matching comment in _handleStartGame for why a lookup here is
+    // safe to run ahead of the payload check.
+    final Room? liveRoom = registry.lookup(roomCode!);
+    if (liveRoom != null && liveRoom.state != RoomState.lobby) {
+      _reject(envelope, ProtocolError.roomStarted);
       return;
     }
     const Set<String> allowedKeys = <String>{'players'};
@@ -525,16 +586,20 @@ class Connection {
     _reject(envelope, ProtocolError.wrongPhase, room: roomCode);
   }
 
-  /// `rules`, the wire-level object of `docs/PROTOCOL.md` section 4. Absent
-  /// entirely is fine (defaults apply, and that case never reaches this
-  /// method: the caller only calls it when the key is present). Present but
-  /// the wrong JSON type -- including an explicit JSON `null`, which is not
-  /// a `Map` any more than a string or a number is -- or with any key
-  /// outside `blocks`/`capture_bonus`/`turn_seconds`, or with one of those
-  /// keys present at the wrong type, is `BAD_FIELD`. An unknown key here is
-  /// exactly what stops two clients from silently disagreeing about the
-  /// rules they think they are playing, and a present-but-null `rules` gets
-  /// no special exemption from that.
+  /// `rules`, the wire-level object of `docs/PROTOCOL.md` section 4. Called
+  /// unconditionally by `_handleCreateRoom`, key present or not: a missing
+  /// key and an explicit JSON `null` both arrive here as a Dart `null`, and
+  /// this method cannot tell them apart from the value alone, so it returns
+  /// null for both. Telling them apart is the caller's job, via
+  /// `containsKey` -- a genuinely absent key falls back to
+  /// `const RulesConfig()`, while an explicit `null` is rejected as
+  /// `BAD_FIELD` right alongside every other wrong JSON type: not a `Map`
+  /// any more than a string or a number is, any key outside
+  /// `blocks`/`capture_bonus`/`turn_seconds`, or one of those keys present
+  /// at the wrong type. An unknown key here is exactly what stops two
+  /// clients from silently disagreeing about the rules they think they are
+  /// playing, and a present-but-null `rules` gets no special exemption from
+  /// that.
   RulesConfig? _parseRules(Object? raw) {
     if (raw is! Map<String, Object?>) {
       return null;
@@ -697,13 +762,70 @@ class Connection {
           seat: seat.seat,
           seq: room.seq,
         );
+      } else {
+        // The room was reaped, or this seat is no longer in it, in the
+        // window between this socket's last successful call and the
+        // disconnect reaching here. There is no `presence` to broadcast --
+        // nothing is listening in a room that no longer exists, and a seat
+        // that is not there cannot be marked disconnected -- but the event
+        // still gets one structured line like every other outcome, rather
+        // than vanishing from the log.
+        _log(
+          type: '-',
+          id: '-',
+          outcome: 'disconnect_room_gone',
+          room: roomCode,
+        );
       }
     }
     _closed = true;
   }
 
-  Future<void> close({int? code, String? reason}) async {
+  /// Closes the underlying socket with [code] and [reason], one of the four
+  /// pinned pairs in `docs/PROTOCOL.md` section 7.1. Awaiting
+  /// `channel.sink.close()` is not proof the peer ever saw a close frame:
+  /// the known failure (see the constants above) is an `ArgumentError`
+  /// thrown from inside a callback registered when the channel was created,
+  /// which nothing here holds a future for, so it never rejects this
+  /// `await` and never reaches any `catch` -- it is reported straight to
+  /// the current isolate's uncaught-error handler and this code never sees
+  /// it. The `try`/`catch` below still guards the case where a failure does
+  /// surface through this future (a different code path, a different
+  /// library version). The delayed check after it is what actually catches
+  /// the failure mode measured in production: it confirms independently,
+  /// from `channel.closeCode`, that the close really completed, and logs
+  /// when it did not.
+  Future<void> close({required int code, required String reason}) async {
     _closed = true;
-    await channel.sink.close(code, reason);
+    try {
+      await channel.sink.close(code, reason);
+    } catch (error) {
+      _log(
+        type: '-',
+        id: '-',
+        outcome: 'close_failed code=$code reason=$reason error=$error',
+      );
+      return;
+    }
+    unawaited(_confirmClosed(code: code, reason: reason));
+  }
+
+  /// Fires [closeVerificationDelay] after a close that appeared to succeed,
+  /// and logs one line if `channel.closeCode` is still null by then --
+  /// meaning the peer never actually received a close frame, whatever the
+  /// awaited future said. Deliberately not awaited by [close] itself: the
+  /// four call sites all `return` right after closing, and holding them up
+  /// for the verification delay would make every rejected frame answer two
+  /// seconds slower for no benefit.
+  Future<void> _confirmClosed(
+      {required int code, required String reason}) async {
+    await Future<void>.delayed(closeVerificationDelay);
+    if (channel.closeCode == null) {
+      _log(
+        type: '-',
+        id: '-',
+        outcome: 'close_unconfirmed code=$code reason=$reason',
+      );
+    }
   }
 }
