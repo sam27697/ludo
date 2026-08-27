@@ -61,13 +61,19 @@ const int closeCodeProtocolVersion = 4002;
 const int closeCodeRateLimited = 4003;
 const int closeCodeSeatTakenOver = 4004;
 
-/// How long [Connection.close] waits before deciding a close did not reach
-/// the peer and logging that. The known failure mode (section 7.1 above) is
-/// an unhandled asynchronous error that arrives well after `sink.close()`'s
-/// own future has already completed, so checking `channel.closeCode`
-/// immediately would false-positive on an ordinary close that just has not
-/// finished its handshake yet.
-const Duration closeVerificationDelay = Duration(seconds: 2);
+/// The exact rule `package:web_socket`'s `checkCloseCode` enforces
+/// (`package:web_socket/src/utils.dart`), duplicated here so [Connection]
+/// can apply it to itself before ever calling into that library. See the
+/// long comment on [Connection.close] for why duplicating it, rather than
+/// observing the library's own reaction to a bad call, is the only way this
+/// file can see a close fail.
+bool _isValidCloseCode(int code) =>
+    code == 1000 || (code >= 3000 && code <= 4999);
+
+/// The exact rule `package:web_socket`'s `checkCloseReason` enforces: at
+/// most 123 bytes once UTF-8 encoded, the limit RFC 6455 puts on the close
+/// frame's reason field.
+bool _isValidCloseReason(String reason) => utf8.encode(reason).length <= 123;
 
 /// What a `Connection` needs from the rest of the server to do anything that
 /// crosses socket boundaries: registering itself against a room so a
@@ -782,21 +788,76 @@ class Connection {
   }
 
   /// Closes the underlying socket with [code] and [reason], one of the four
-  /// pinned pairs in `docs/PROTOCOL.md` section 7.1. Awaiting
-  /// `channel.sink.close()` is not proof the peer ever saw a close frame:
-  /// the known failure (see the constants above) is an `ArgumentError`
-  /// thrown from inside a callback registered when the channel was created,
-  /// which nothing here holds a future for, so it never rejects this
-  /// `await` and never reaches any `catch` -- it is reported straight to
-  /// the current isolate's uncaught-error handler and this code never sees
-  /// it. The `try`/`catch` below still guards the case where a failure does
-  /// surface through this future (a different code path, a different
-  /// library version). The delayed check after it is what actually catches
-  /// the failure mode measured in production: it confirms independently,
-  /// from `channel.closeCode`, that the close really completed, and logs
-  /// when it did not.
+  /// pinned pairs in `docs/PROTOCOL.md` section 7.1.
+  ///
+  /// This used to await `channel.sink.close()` and then, after a delay,
+  /// treat a still-null `channel.closeCode` as proof the close had not
+  /// reached the peer. Measured directly against this stack
+  /// (`shelf_web_socket` 3.0.0 over `web_socket_channel` 3.0.3 over
+  /// `package:web_socket` 1.0.1): `channel.closeCode` is set in exactly one
+  /// place in that whole chain, `AdapterWebSocketChannel`'s handler for a
+  /// `CloseReceived` event, and `CloseReceived` is only ever produced from a
+  /// close code the *peer* sent. A close this side initiates never
+  /// populates it -- not eventually, not on success, not on failure -- for
+  /// a reason specific to this implementation: `IOWebSocket.close` closes
+  /// its own `_events` controller (`unawaited(_events.close())`) before it
+  /// awaits the real `dart:io` close, so by the time any close frame could
+  /// round-trip back from the peer, this side's own event stream has
+  /// already told itself it is done and the incoming `CloseReceived` case
+  /// is never reached. Confirmed with a live client on both branches: a
+  /// close with a valid code that the client demonstrably received left
+  /// `channel.closeCode` null for the full three seconds measured, exactly
+  /// as null as a close with an invalid code that the client never received
+  /// at all. `channel.sink.done` and `channel.stream`'s own "done" event
+  /// were checked too, on the theory that closing the sink might at least
+  /// signal locally: both resolve the same way regardless of whether the
+  /// peer ever saw anything, because `GuaranteeChannel` (the
+  /// `stream_channel` type backing this channel) fires its own local "done"
+  /// the instant the sink is closed, as a bookkeeping guarantee, not as a
+  /// report from the network. None of the three carries one bit of
+  /// information about whether the close reached the peer.
+  ///
+  /// The actual failure this order exists to catch -- `checkCloseCode`
+  /// throwing on 1008 and 1009, which is where this whole defect started --
+  /// throws from inside an `onDone` callback that
+  /// `AdapterWebSocketChannel`'s constructor registers on the channel
+  /// before `Connection` is ever handed the channel, so it runs in whatever
+  /// zone was current at that registration, not whatever zone is current
+  /// when this method runs later. `runZonedGuarded` wrapped around this
+  /// call does not catch it, and neither does
+  /// `Isolate.current.addErrorListener` -- both were tried against a live
+  /// reproduction of the 1009 case and neither saw the error; it reaches
+  /// only the root zone's default uncaught-error printer. There is no
+  /// future, stream, or zone hook available to code in this position that
+  /// observes that failure after the fact.
+  ///
+  /// What is available is the input to it. `checkCloseCode` and
+  /// `checkCloseReason` are pure functions of the `code` and `reason` this
+  /// method is called with, and both of those come from a short, fixed set
+  /// this file owns outright: the four constants above, and the literal
+  /// reason strings each call site passes. So the fix is to run the same
+  /// two checks ourselves, synchronously, before ever handing anything to
+  /// the library: that is strictly more information than the delayed
+  /// `closeCode` probe ever carried (which was none, on either branch), and
+  /// it is available immediately rather than guessed at two seconds later.
+  /// A rejection here is logged as `close_failed` and the library is never
+  /// called, since calling it with input already known to be invalid could
+  /// only reproduce the unobservable failure this comment describes. The
+  /// `try`/`catch` around the real call stays as defence in depth for a
+  /// failure that surfaces through the awaited future by some other path --
+  /// a different library version, a different transport -- though none is
+  /// known today.
   Future<void> close({required int code, required String reason}) async {
     _closed = true;
+    if (!_isValidCloseCode(code) || !_isValidCloseReason(reason)) {
+      _log(
+        type: '-',
+        id: '-',
+        outcome: 'close_failed code=$code reason=$reason '
+            'error=invalid close code or reason, not sent to the peer',
+      );
+      return;
+    }
     try {
       await channel.sink.close(code, reason);
     } catch (error) {
@@ -804,27 +865,6 @@ class Connection {
         type: '-',
         id: '-',
         outcome: 'close_failed code=$code reason=$reason error=$error',
-      );
-      return;
-    }
-    unawaited(_confirmClosed(code: code, reason: reason));
-  }
-
-  /// Fires [closeVerificationDelay] after a close that appeared to succeed,
-  /// and logs one line if `channel.closeCode` is still null by then --
-  /// meaning the peer never actually received a close frame, whatever the
-  /// awaited future said. Deliberately not awaited by [close] itself: the
-  /// four call sites all `return` right after closing, and holding them up
-  /// for the verification delay would make every rejected frame answer two
-  /// seconds slower for no benefit.
-  Future<void> _confirmClosed(
-      {required int code, required String reason}) async {
-    await Future<void>.delayed(closeVerificationDelay);
-    if (channel.closeCode == null) {
-      _log(
-        type: '-',
-        id: '-',
-        outcome: 'close_unconfirmed code=$code reason=$reason',
       );
     }
   }
