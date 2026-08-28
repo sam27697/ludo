@@ -367,19 +367,22 @@ class RoomRegistry {
 
   /// `set_seed`, `docs/PROTOCOL.md` section 11.2. The rejection ladder here
   /// is deliberately not the room-exists / seat-authorised / phase-correct
-  /// order every other method in this file uses: phase runs before seat
-  /// authorisation, per section 11.2's own table, so a request that is
-  /// wrong in both ways answers `WRONG_PHASE`. A room that no longer exists
-  /// at all is folded into `WRONG_PHASE` rather than `NO_SUCH_ROOM` --
-  /// section 11.2's table has no `NO_SUCH_ROOM` row for this message, and a
-  /// vanished room is certainly not a room in LOBBY.
+  /// order every other method in this file uses: room existence still runs
+  /// first, but phase then overtakes seat authorisation, per section 11.2's
+  /// own table, so a request that is wrong in both ways answers
+  /// `WRONG_PHASE` rather than `BAD_SEAT_TOKEN`. A room that no longer
+  /// exists at all -- never created, or reaped since -- answers
+  /// `NO_SUCH_ROOM`, the same as every other entry point in this file.
   SetSeedResult setSeed({
     required String code,
     required String seatToken,
     required Object? clientSeed,
   }) {
     final Room? room = _rooms[code];
-    if (room == null || room.state != RoomState.lobby) {
+    if (room == null) {
+      return SetSeedFailure(ProtocolError.noSuchRoom);
+    }
+    if (room.state != RoomState.lobby) {
       return SetSeedFailure(ProtocolError.wrongPhase);
     }
     final Seat? seat = _findSeat(room, seatToken);
