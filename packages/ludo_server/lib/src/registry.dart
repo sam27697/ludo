@@ -89,6 +89,7 @@ class StartOk extends StartResult {
   StartOk({
     required this.room,
     required this.serverSeeded,
+    required this.gameStartedSeq,
     required this.turnSeq,
     required this.nextDeadlineMs,
   });
@@ -103,6 +104,12 @@ class StartOk extends StartResult {
   /// room's final one once every fix (and the game start itself) has
   /// landed.
   final List<SeededSeat> serverSeeded;
+
+  /// `game_started`'s own `seq`, read the instant this call's own state
+  /// change (the room moving to PLAYING) advanced the counter to it -- not
+  /// recomputed later from `turnSeq`, and not read back out of `room.seq`
+  /// after the counter has moved again for the `turn` frame below.
+  final int gameStartedSeq;
 
   /// `docs/PROTOCOL.md` section 13.1: the standalone `turn` frame that
   /// always follows `game_started` takes the next `seq` after it, one
@@ -482,6 +489,7 @@ class RoomRegistry {
     // other one this call fixes.
     _restartSegment(room);
     room.seq++;
+    final int gameStartedSeq = room.seq;
     // docs/PROTOCOL.md section 13.1: a standalone `turn` frame always
     // follows `game_started`, carrying its own `seq` one greater than
     // `game_started`'s, and the opening segment's `deadline_ms` -- what is
@@ -493,6 +501,7 @@ class RoomRegistry {
     return StartOk(
       room: room,
       serverSeeded: serverSeeded,
+      gameStartedSeq: gameStartedSeq,
       turnSeq: turnSeq,
       nextDeadlineMs: nextDeadlineMs,
     );
