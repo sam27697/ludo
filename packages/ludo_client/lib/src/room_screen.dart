@@ -42,7 +42,9 @@ class RoomScreen extends StatelessWidget {
                   : loc.roomScreenCodeLabel(code!),
               key: const Key('room-screen-code'),
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleMedium,
+              style: code == null
+                  ? Theme.of(context).textTheme.titleMedium
+                  : Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 16),
             Expanded(
@@ -57,6 +59,9 @@ class RoomScreen extends StatelessWidget {
               loc.roomScreenNotImplemented,
               key: const Key('room-screen-not-implemented'),
               textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
