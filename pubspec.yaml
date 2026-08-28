@@ -4,5 +4,6 @@ environment:
   sdk: ^3.5.0
 
 workspace:
+  - packages/fair_dice
   - packages/ludo_engine
   - packages/ludo_server
