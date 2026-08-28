@@ -1,0 +1,16 @@
+name: fair_dice
+description: >
+  Verifiable dice: a backward SHA-256 hash chain of per-roll secrets, reveal
+  verification against that chain, and the HMAC-SHA256 die draw with
+  rejection sampling. Pure Dart, game-agnostic, no I/O, no clock, no
+  randomness of its own.
+publish_to: none
+environment:
+  sdk: ^3.5.0
+resolution: workspace
+
+dependencies:
+  crypto: ^3.0.0
+
+dev_dependencies:
+  test: ^1.25.0
