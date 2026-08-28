@@ -23,6 +23,18 @@ jobs:
 
       - run: flutter pub get
 
+      # Cheap check before the expensive one. The emulator step below takes
+      # minutes to boot; if the driver or target file it points flutter
+      # drive at has moved or been misspelled, this catches it in seconds
+      # instead of at the end of that boot. This step runs under the job's
+      # own `defaults.run.working-directory` (packages/ludo_client), so the
+      # paths here are relative to that, not to the repository root.
+      - name: confirm the drive script and target exist
+        run: |
+          set -euo pipefail
+          test -f test_driver/integration_test.dart || { echo "missing packages/ludo_client/test_driver/integration_test.dart" >&2; exit 1; }
+          test -f integration_test/screenshots_test.dart || { echo "missing packages/ludo_client/integration_test/screenshots_test.dart" >&2; exit 1; }
+
       # Standard boilerplate from reactivecircus/android-emulator-runner's
       # own README for GitHub-hosted Linux runners: makes /dev/kvm
       # group-writable so the emulator gets hardware acceleration instead of
@@ -59,13 +71,17 @@ jobs:
           # job's own `defaults.run.working-directory` (that default applies
           # to plain `run:` steps, not to what a composite action does
           # internally), so it changes into the client package itself
-          # before calling flutter drive.
-          script: |
-            cd packages/ludo_client
-            flutter drive \
-              --driver=test_driver/integration_test.dart \
-              --target=integration_test/screenshots_test.dart \
-              -d emulator-5554
+          # before calling flutter drive. android-emulator-runner passes
+          # each line of `script:` to its own `sh -c`, not to one shell, so
+          # the `cd` and the drive invocation must be joined on a single
+          # line with `&&` -- two lines here would run in two separate
+          # shells and the second would never see the first's `cd`.
+          script: >-
+            cd packages/ludo_client &&
+            flutter drive
+            --driver=test_driver/integration_test.dart
+            --target=integration_test/screenshots_test.dart
+            -d emulator-5554
 
       # flutter drive's driver adaptor (test_driver/integration_test.dart)
       # writes each captured PNG to screenshots/<name>.png relative to
