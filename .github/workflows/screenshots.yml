@@ -76,9 +76,21 @@ jobs:
           # the `cd` and the drive invocation must be joined on a single
           # line with `&&` -- two lines here would run in two separate
           # shells and the second would never see the first's `cd`.
+          #
+          # --profile: flutter drive builds debug by default, and debug
+          # mode is what draws the red DEBUG ribbon MaterialApp shows
+          # over every screen -- not acceptable on a store screenshot.
+          # --release is not an option here because it strips the Dart
+          # VM service that flutter drive needs to talk to the running
+          # app, which breaks the driver connection. Profile mode keeps
+          # the VM service and turns the banner off, which is the pair
+          # of properties a captured screenshot needs. This is still one
+          # folded YAML scalar (`>-`), so the flag is its own line here
+          # but still lands in the single-line script the runner sees.
           script: >-
             cd packages/ludo_client &&
             flutter drive
+            --profile
             --driver=test_driver/integration_test.dart
             --target=integration_test/screenshots_test.dart
             -d emulator-5554
