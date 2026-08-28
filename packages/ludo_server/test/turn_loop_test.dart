@@ -106,17 +106,26 @@ void main() {
   /// Sends `start_game` from the host and waits for `game_started` on both
   /// sockets, tolerating any `seat_seed` pushes a correct implementation
   /// interleaves around it (every seat that never called `set_seed` gets a
-  /// server-assigned one at this point, section 11.2). Returns the host's
-  /// `game_started` payload, which carries `turn` (the seat starting the
-  /// game), `game_id` and `client_seeds`.
+  /// server-assigned one at this point, section 11.2). Also consumes the
+  /// standalone `turn` frame section 13.1 requires immediately after
+  /// `game_started`, on both sockets, via [expectOpeningTurn] -- otherwise
+  /// it sits in each socket's queue and is mistaken for whatever the next
+  /// helper actually asked for. Returns the host's `game_started` payload,
+  /// which carries `turn` (the seat starting the game), `game_id` and
+  /// `client_seeds`.
   Future<Map<String, Object?>> startGame(WireTestLobby lobby) async {
     lobby.host.client.send('start_game', <String, Object?>{});
     final Map<String, Object?> hostFrame = await receiveType(
       lobby.host.client,
       'game_started',
     );
+    final Map<String, Object?> hostFrameData =
+        hostFrame['d']! as Map<String, Object?>;
+    final Object? startingSeat = hostFrameData['turn'];
+    await expectOpeningTurn(lobby.host.client, startingSeat);
     await receiveType(lobby.guest.client, 'game_started');
-    return hostFrame['d']! as Map<String, Object?>;
+    await expectOpeningTurn(lobby.guest.client, startingSeat);
+    return hostFrameData;
   }
 
   WireTestSeat seatFor(WireTestLobby lobby, int seat) =>
@@ -509,9 +518,14 @@ void main() {
     lobby.host.client.send('start_game', <String, Object?>{});
     final Map<String, Object?> hostStarted =
         await receiveType(lobby.host.client, 'game_started');
-    await receiveType(lobby.guest.client, 'game_started');
     final Map<String, Object?> startedData =
         hostStarted['d']! as Map<String, Object?>;
+    // Section 13.1: a standalone turn immediately follows game_started, on
+    // every socket in the room; consumed and asserted here so nothing
+    // downstream mistakes it for the frame it actually asked for.
+    await expectOpeningTurn(lobby.host.client, startedData['turn']);
+    await receiveType(lobby.guest.client, 'game_started');
+    await expectOpeningTurn(lobby.guest.client, startedData['turn']);
 
     expect(
       startedData['game_id'],
