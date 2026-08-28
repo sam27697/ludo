@@ -86,7 +86,12 @@ class ResumeFailure extends ResumeResult {
 sealed class StartResult {}
 
 class StartOk extends StartResult {
-  StartOk({required this.room, required this.serverSeeded});
+  StartOk({
+    required this.room,
+    required this.serverSeeded,
+    required this.turnSeq,
+    required this.nextDeadlineMs,
+  });
   final Room room;
 
   /// Seats that had no `client_seed` when this call ran and were given a
@@ -98,6 +103,17 @@ class StartOk extends StartResult {
   /// room's final one once every fix (and the game start itself) has
   /// landed.
   final List<SeededSeat> serverSeeded;
+
+  /// `docs/PROTOCOL.md` section 13.1: the standalone `turn` frame that
+  /// always follows `game_started` takes the next `seq` after it, one
+  /// greater than `game_started`'s own.
+  final int turnSeq;
+
+  /// The opening segment's `deadline_ms` for that `turn` frame: what is
+  /// left of the segment `_restartSegment` already started earlier in this
+  /// same call, read fresh rather than assumed to still be the full
+  /// `rules.turnSeconds * 1000` it began at.
+  final int nextDeadlineMs;
 }
 
 class StartFailure extends StartResult {
@@ -466,7 +482,20 @@ class RoomRegistry {
     // other one this call fixes.
     _restartSegment(room);
     room.seq++;
-    return StartOk(room: room, serverSeeded: serverSeeded);
+    // docs/PROTOCOL.md section 13.1: a standalone `turn` frame always
+    // follows `game_started`, carrying its own `seq` one greater than
+    // `game_started`'s, and the opening segment's `deadline_ms` -- what is
+    // left of the segment `_restartSegment` just started above, not a
+    // second restart of it.
+    room.seq++;
+    final int turnSeq = room.seq;
+    final int nextDeadlineMs = _remainingSegmentMs(room);
+    return StartOk(
+      room: room,
+      serverSeeded: serverSeeded,
+      turnSeq: turnSeq,
+      nextDeadlineMs: nextDeadlineMs,
+    );
   }
 
   /// `roll`, `docs/PROTOCOL.md` section 12.1. The rejection ladder below is
