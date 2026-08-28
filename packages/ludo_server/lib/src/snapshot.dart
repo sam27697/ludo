@@ -1,14 +1,12 @@
-// docs/PROTOCOL.md section 6, and the section 5 payload shapes that are
-// built straight from a `Room` or a `Seat` rather than from an inbound
-// message. `docs/ENGINE_API.md` section 9 is the wire mapping for the
-// engine's own vocabulary; this file is the server's half of that mapping,
-// turning a `GameState` into the redacted snapshot a client is allowed to
-// see. `rngState` and `config.seed` never appear below, on purpose: sending
-// either would hand a client every future roll.
+// docs/PROTOCOL.md sections 6, 5 and 11, and the section 5 payload shapes
+// that are built straight from a `Room` or a `Seat` rather than from an
+// inbound message. `docs/ENGINE_API.md` section 9 is the wire mapping for
+// the engine's own vocabulary; this file is the server's half of that
+// mapping, turning a `GameState` into the redacted snapshot a client is
+// allowed to see. `rngState`, `config.seed` and a room's dice-chain server
+// secret never appear below, on purpose: sending any of them would hand a
+// client every future roll.
 
-import 'dart:convert';
-
-import 'package:crypto/crypto.dart' as crypto;
 import 'package:ludo_engine/ludo_engine.dart' as engine;
 
 import 'room.dart';
@@ -27,6 +25,13 @@ Map<String, Object?> buildRoomSnapshot(Room room) {
       'capture_bonus': room.rules.captureBonus,
       'turn_seconds': room.rules.turnSeconds,
     },
+    // docs/PROTOCOL.md section 11.2: present in every state, including
+    // LOBBY, from the moment the room exists. `chain_commit` is
+    // `room.chain.commit`, never `room`'s raw server secret.
+    'chain_commit': room.chain.commit,
+    'chain_index': room.chainIndex,
+    'game_id': room.gameId,
+    'client_seeds': room.clientSeeds,
     'seats': <Object?>[
       for (final Seat seat in room.seats) _seatSnapshot(room, seat),
     ],
@@ -44,6 +49,11 @@ Map<String, Object?> _seatSnapshot(Room room, Seat seat) {
     'name': seat.name,
     'connected': seat.connected,
     'tokens': tokens,
+    // docs/PROTOCOL.md section 6: null until this seat's seed is fixed,
+    // and `seed_origin` is `"player"` or `"server"` from that point on and
+    // never null again.
+    'client_seed': seat.clientSeed,
+    'seed_origin': seat.seedOrigin,
   };
 }
 
@@ -119,23 +129,39 @@ Map<String, Object?> buildPresence(int seat, bool connected, int seq) {
   return <String, Object?>{'seat': seat, 'connected': connected, 'seq': seq};
 }
 
-/// `game_started`, section 5: `{ "turn": int, "seed_commit": string }`, plus
-/// `seq`, now on the "carrying `seq`" list.
+/// `game_started`, section 5 and section 11.2: `{ "turn": int, "game_id":
+/// string, "client_seeds": string }`, plus `seq`.
 ///
-/// `seed_commit` is pinned by section 6: SHA-256, lowercase hex, over the
-/// UTF-8 bytes of the seed's decimal representation, so that
-/// `seed_commit == sha256(seed.toString())`. It is deliberately not
-/// `engine.stateHash`, which is FNV-1a and a checksum rather than a
-/// commitment -- collisions are cheap to construct, so a server committing
-/// with a checksum could still pick a different seed afterwards that
-/// happened to match.
-Map<String, Object?> buildGameStarted(engine.GameState freshGame, int seq) {
-  final String seedCommit = crypto.sha256
-      .convert(utf8.encode(freshGame.config.seed.toString()))
-      .toString();
+/// No `seed_commit` -- the commitment is `chain_commit`, already published
+/// in `room` at room creation, and it is not repeated here because it has
+/// not changed. `game_id` and `client_seeds` are read off [room], which
+/// `RoomRegistry.startGame` has already set by the time this is called;
+/// both are frozen from this instant on and never appear anywhere else in
+/// this file.
+Map<String, Object?> buildGameStarted(Room room, int seq) {
+  final engine.GameState game = room.game!;
   return <String, Object?>{
-    'turn': freshGame.currentSeat,
-    'seed_commit': seedCommit,
+    'turn': game.currentSeat,
+    'game_id': room.gameId,
+    'client_seeds': room.clientSeeds,
+    'seq': seq,
+  };
+}
+
+/// `seat_seed`, section 5 and section 11.2: broadcast to the whole room
+/// whenever a seat's seed is fixed -- once on an accepted `set_seed`
+/// (`origin: "player"`), and again at `start_game` for every seat that sent
+/// none (`origin: "server"`).
+Map<String, Object?> buildSeatSeed({
+  required int seat,
+  required String clientSeed,
+  required String origin,
+  required int seq,
+}) {
+  return <String, Object?>{
+    'seat': seat,
+    'client_seed': clientSeed,
+    'origin': origin,
     'seq': seq,
   };
 }
