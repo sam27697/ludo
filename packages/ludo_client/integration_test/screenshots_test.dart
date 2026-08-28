@@ -32,14 +32,33 @@ void main() {
 
     await tester.pumpWidget(const LudoApp());
     await tester.pumpAndSettle();
+    await _settleForScreenshot(tester);
     await binding.takeScreenshot('01-home-en');
 
     await tester.tap(find.byKey(const Key('locale-toggle-button')));
     await tester.pumpAndSettle();
+    await _settleForScreenshot(tester);
     await binding.takeScreenshot('02-home-ar');
 
     await tester.tap(find.byKey(const Key('create-room-button')));
     await tester.pumpAndSettle();
+    await _settleForScreenshot(tester);
     await binding.takeScreenshot('03-room-ar');
   });
+}
+
+// `pumpAndSettle()` only proves the framework's widget tree has stopped
+// scheduling frames; it says nothing about whether the platform surface
+// that `convertFlutterSurfaceToImage()` swapped in has actually been handed
+// that composited frame yet. In a profile (AOT) build the two were observed
+// to fall out of step, so the screenshot after each action showed the
+// screen the *previous* action had produced. Pumping a handful of explicit,
+// real-duration frames forces further compositing to occur on the test
+// clock, and the trailing `pumpAndSettle()` drains anything those frames
+// scheduled, before the surface is read back.
+Future<void> _settleForScreenshot(WidgetTester tester) async {
+  for (var i = 0; i < 5; i++) {
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  await tester.pumpAndSettle();
 }
