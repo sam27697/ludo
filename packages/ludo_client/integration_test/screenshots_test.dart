@@ -15,6 +15,7 @@
 //   01-home-en.png  home screen, English, left-to-right
 //   02-home-ar.png  home screen, Arabic, right-to-left
 //   03-room-ar.png  room screen, reached from the Arabic home screen
+//   04-room-en.png  room screen, reached back through the English home screen
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -44,6 +45,22 @@ void main() {
     await tester.pumpAndSettle();
     await _settleForScreenshot(tester);
     await binding.takeScreenshot('03-room-ar');
+
+    // Back to the (still Arabic) home screen, toggle the locale to English,
+    // then enter a room again to land on an English room screen. The AppBar
+    // back button here is the one MaterialPageRoute supplies automatically
+    // (see room_screen.dart); it carries no key, so it is found by widget
+    // type, which works under either locale, unlike a tooltip lookup.
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('locale-toggle-button')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('create-room-button')));
+    await tester.pumpAndSettle();
+    await _settleForScreenshot(tester);
+    await binding.takeScreenshot('04-room-en');
   });
 }
 
