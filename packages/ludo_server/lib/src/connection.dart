@@ -491,7 +491,8 @@ class Connection {
       );
     }
 
-    final Map<String, Object?> data = buildGameStarted(ok.room, ok.room.seq);
+    final Map<String, Object?> data =
+        buildGameStarted(ok.room, ok.gameStartedSeq);
 
     _send(type: 'game_started', data: data, re: envelope.id);
     hub.broadcast(
