@@ -114,16 +114,92 @@ void main() {
   WireTestSeat seatFor(WireTestLobby lobby, int seat) =>
       seat == lobby.host.seat ? lobby.host : lobby.guest;
 
-  /// Sends [type] from whichever socket holds [seat] and reads the very
-  /// next frame on that same socket. Every frame that results from a
-  /// message -- the private error reply if it was rejected, or its own
-  /// broadcast copy (with re) if it was accepted -- reaches the sender's
-  /// own socket, so this is always the correct place to read the answer
-  /// from, unlike a fixed "always read from the host" socket: an error
-  /// reply is never broadcast to anyone but the sender (section 5: error
-  /// carries no seq and is not one of the state-changing pushes), so a
-  /// fixed host-reader would simply hang forever whenever the host itself
-  /// was not the one sending.
+  /// Every helper in this file that sends `roll` or `move` and then reads
+  /// the reply is built on this pair of functions rather than on a raw
+  /// `client.next()`. The design chosen here, and the reason: section 12.3
+  /// puts every message into exactly one of two disjoint cases. Either it
+  /// is rejected and answered with a private `error` that reaches only the
+  /// sender's own socket (section 5: error carries no `seq` and is not one
+  /// of the state-changing pushes), or it is accepted and produces one or
+  /// more state-changing pushes, each of which "is broadcast to every
+  /// connected socket in the room, including the one that sent the
+  /// message that caused it" -- the sender's own copy carries `re`, no
+  /// other socket's copy does.
+  ///
+  /// A fixed reader (always read the log from the host's socket, say) was
+  /// tried first and abandoned, because it hangs forever on the `error`
+  /// case whenever the guest is the one sending: an error never reaches
+  /// the host's socket at all. Reading only from the sender's own socket
+  /// and never touching the other one was also tried, and is what caused
+  /// twelve failures in a row: every accepted message's broadcast copy on
+  /// the *other* socket is left sitting in that socket's queue undrained,
+  /// and the moment a helper later reads from that socket -- because the
+  /// turn passed to it, or a caller samples it directly with `resume` --
+  /// the first thing it sees is that stale backlog, not whatever the
+  /// caller actually asked for.
+  ///
+  /// So the design here is neither of those: read the sender's own socket
+  /// first, and only if what came back was not an `error`, also drain the
+  /// identical broadcast copy off the other socket in the room, right
+  /// here, before returning. That keeps both sockets fully drained after
+  /// every helper call, so nothing downstream -- an off-turn seat's error,
+  /// a `resume` sampled mid-turn, the next seat's own roll -- can ever
+  /// collide with a frame an earlier call left behind.
+  Future<void> _drainOtherCopy(
+    WireTestLobby lobby,
+    int actingSeat,
+    Map<String, Object?> mine,
+  ) async {
+    final WireTestSeat other =
+        actingSeat == lobby.host.seat ? lobby.guest : lobby.host;
+    final Map<String, Object?> theirs = await other.client.next();
+    expect(
+      theirs['t'],
+      mine['t'],
+      reason: 'room ${lobby.code}: a broadcast push must reach every '
+          'socket with the same frame type (section 12.3); seat '
+          '$actingSeat\'s socket saw "${mine['t']}", the other socket saw '
+          '"${theirs['t']}" instead',
+    );
+    expect(
+      theirs['d'],
+      mine['d'],
+      reason: 'room ${lobby.code}: a broadcast push must reach every '
+          'socket with the identical payload (section 12.3); seat '
+          '$actingSeat\'s socket saw ${mine['d']}, the other socket saw '
+          '${theirs['d']}',
+    );
+    expect(
+      theirs['re'],
+      isNull,
+      reason: 'room ${lobby.code}: a socket that did not send the message '
+          'must never see re on the resulting broadcast (section 12.3); '
+          'the other socket saw re=${theirs['re']} on a '
+          '"${theirs['t']}" frame',
+    );
+  }
+
+  /// The next frame that resulted from a message [actingSeat] sent, read
+  /// off [actingSeat]'s own socket and, unless it was a private `error`,
+  /// also drained (and checked) off the other socket in the room via
+  /// [_drainOtherCopy] -- see that function's doc comment for the design
+  /// this implements and the reason two other designs were tried first and
+  /// abandoned.
+  Future<Map<String, Object?>> _next(
+    WireTestLobby lobby,
+    int actingSeat,
+  ) async {
+    final Map<String, Object?> mine =
+        await seatFor(lobby, actingSeat).client.next();
+    if (mine['t'] != 'error') {
+      await _drainOtherCopy(lobby, actingSeat, mine);
+    }
+    return mine;
+  }
+
+  /// Sends [type] from whichever socket holds [seat] and returns the reply
+  /// via [_next], which is what actually keeps both sockets in the room
+  /// drained in lockstep -- see its doc comment for why that matters.
   Future<Map<String, Object?>> _sendAndRead(
     WireTestLobby lobby,
     int seat,
@@ -131,14 +207,19 @@ void main() {
     Map<String, Object?> data,
   ) {
     seatFor(lobby, seat).client.send(type, data);
-    return seatFor(lobby, seat).client.next();
+    return _next(lobby, seat);
   }
 
   /// Sends `resume` on [seat]'s own socket and returns the `room` snapshot
   /// it gets back. Read-only from the protocol's point of view (section 8);
   /// used here purely to sample state -- `turn.k`, `turn.deadline_ms` -- at
   /// a moment of the test's choosing, without disturbing the room's own
-  /// broadcast stream the way sending `roll` or `move` would.
+  /// broadcast stream the way sending `roll` or `move` would. A caller
+  /// that read a `rolled` frame and stopped there, without also draining
+  /// whatever `turn_passed`/`turn` a no-legal-move roll queues behind it
+  /// (see `consumeNoLegalMove` below), would have this call collide with
+  /// that leftover backlog instead of getting a snapshot; every caller
+  /// below drains first.
   Future<Map<String, Object?>> resumeSnapshot(
     WireTestLobby lobby,
     WireTestSeat seat,
@@ -158,11 +239,9 @@ void main() {
   }
 
   /// Sends `roll` from whichever socket currently holds [seat] and returns
-  /// the very next frame the host's socket sees. The host sees every frame
-  /// in the room, including its own when it is the sender (section 12.3:
-  /// "every frame is broadcast to every connected socket ... including the
-  /// one that sent it"), so reading only from the host gives a single,
-  /// correctly ordered log of the whole session regardless of who acts.
+  /// the reply on that same socket, via [_sendAndRead]/[_next], which also
+  /// drains the identical broadcast copy off the other socket in the room
+  /// so it cannot corrupt a later read on it.
   Future<Map<String, Object?>> sendRoll(WireTestLobby lobby, int seat) async {
     return _sendAndRead(lobby, seat, 'roll', <String, Object?>{});
   }
@@ -177,10 +256,11 @@ void main() {
 
   /// Reads the two frames a `rolled` with an empty `legal` list produces
   /// (section 12.1): `turn_passed` with `reason: "no_legal_move"`, then
-  /// `turn` for whichever seat now holds it. Returns that seat.
+  /// `turn` for whichever seat now holds it. Returns that seat. Reads via
+  /// [_next], which also drains and checks the other socket's copy of
+  /// each of the two frames, so no backlog is left behind on it.
   Future<int> consumeNoLegalMove(WireTestLobby lobby, int actingSeat) async {
-    final WireTestClient reader = seatFor(lobby, actingSeat).client;
-    final Map<String, Object?> passed = await reader.next();
+    final Map<String, Object?> passed = await _next(lobby, actingSeat);
     expect(
       passed['t'],
       'turn_passed',
@@ -195,7 +275,7 @@ void main() {
       reason: 'turn_passed following an empty-legal rolled must carry '
           'reason "no_legal_move"; got ${passedData['reason']}',
     );
-    final Map<String, Object?> turn = await reader.next();
+    final Map<String, Object?> turn = await _next(lobby, actingSeat);
     expect(
       turn['t'],
       'turn',
@@ -207,11 +287,11 @@ void main() {
 
   /// Reads the one frame section 12.2 sends after `moved`: either
   /// `game_over` (game won, no `turn` follows it) or `turn` for whichever
-  /// seat -- the same one or the next -- now holds it.
+  /// seat -- the same one or the next -- now holds it. Reads via [_next],
+  /// which also drains and checks the other socket's copy.
   Future<_AfterMove> consumeAfterMove(
       WireTestLobby lobby, int actingSeat) async {
-    final Map<String, Object?> next =
-        await seatFor(lobby, actingSeat).client.next();
+    final Map<String, Object?> next = await _next(lobby, actingSeat);
     if (next['t'] == 'game_over') {
       return _AfterMove(gameOver: true);
     }
@@ -241,6 +321,15 @@ void main() {
   }) async {
     int current = seat;
     for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+      // Advances the injected FakeClock past docs/PROTOCOL.md section 7's
+      // 1-second sliding window for the per-connection message limit (30
+      // then RATE_LIMITED, 60 then close, lib/src/rate_limit.dart) before
+      // every retry. The clock in this harness never ticks on its own, so
+      // without this a retry loop long enough to find an empty legal list
+      // several times in a row eventually trips a real, correctly
+      // implemented rate limit that has nothing to do with the property
+      // this loop is trying to reach.
+      harness.clock.advance(const Duration(seconds: 2));
       final Map<String, Object?> frame = await sendRoll(lobby, current);
       expect(
         frame['t'],
@@ -261,6 +350,75 @@ void main() {
       '$maxAttempts attempts; this suite cannot steer the dice (see the '
       'file header), so this is a real possible outcome of an unlucky run, '
       'not necessarily a defect',
+    );
+  }
+
+  /// Like [reachLegalRoll], but also retries past any roll whose legal
+  /// list already covers every token 0..3 -- a real possible outcome
+  /// early in a two-player game, where a six with all four of a seat's
+  /// tokens still in the yard makes all four legal at once -- because a
+  /// roll like that leaves no well-formed token 0..3 left over to prove
+  /// ILLEGAL_MOVE against. A roll like that cannot simply be discarded:
+  /// once it has happened the room is in await_move, and a second roll
+  /// before a move would itself be rejected by the ladder (WRONG_PHASE),
+  /// so it is completed with an arbitrary legal move, exactly as a real
+  /// client would, before this tries again for a roll this test can
+  /// actually use.
+  Future<(int, Map<String, Object?>)> reachPartialLegalRoll(
+    WireTestLobby lobby,
+    int seat, {
+    int maxAttempts = 60,
+  }) async {
+    int current = seat;
+    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+      // See reachLegalRoll's identical comment above: advances the fake
+      // clock past the per-connection message rate limit's 1-second
+      // window before every retry.
+      harness.clock.advance(const Duration(seconds: 2));
+      final Map<String, Object?> frame = await sendRoll(lobby, current);
+      expect(
+        frame['t'],
+        'rolled',
+        reason: 'attempt $attempt/$maxAttempts: expected a rolled frame '
+            'from seat $current in room ${lobby.code}, got "${frame['t']}": '
+            '${frame['d']}',
+      );
+      final Map<String, Object?> data = frame['d']! as Map<String, Object?>;
+      final List<int> legal = (data['legal']! as List<Object?>).cast<int>();
+      if (legal.isEmpty) {
+        current = await consumeNoLegalMove(lobby, current);
+        continue;
+      }
+      if (legal.length < 4) {
+        return (current, data);
+      }
+      final Map<String, Object?> moved = await sendMove(
+        lobby,
+        current,
+        legal.first,
+      );
+      expect(
+        moved['t'],
+        'moved',
+        reason: 'expected moved after a legal move, got '
+            '"${moved['t']}": ${moved['d']}',
+      );
+      final _AfterMove after = await consumeAfterMove(lobby, current);
+      if (after.gameOver) {
+        throw TestFailure(
+          'reached game_over while only looking for a roll with a '
+          'partial legal list to prove ILLEGAL_MOVE against; unexpected '
+          'this early without steering the dice',
+        );
+      }
+      current = after.nextSeat!;
+    }
+    throw TestFailure(
+      'no roll left a legal list that was both non-empty and short of '
+      'all four tokens for any seat in room ${lobby.code} within '
+      '$maxAttempts attempts; this suite cannot steer the dice (see the '
+      'file header), so this is a real possible outcome of an unlucky '
+      'run, not necessarily a defect',
     );
   }
 
@@ -679,7 +837,8 @@ void main() {
       final Uri uri = await start();
       final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
       final Map<String, Object?> started = await startGame(lobby);
-      final (int onTurn, Map<String, Object?> rolled) = await reachLegalRoll(
+      final (int onTurn, Map<String, Object?> rolled) =
+          await reachPartialLegalRoll(
         lobby,
         started['turn']! as int,
       );
@@ -909,7 +1068,20 @@ void main() {
         reason: 'expected rolled from seat $onTurn in room ${lobby.code}, '
             'got "${rolled['t']}": ${rolled['d']}',
       );
-      final int k = (rolled['d']! as Map<String, Object?>)['k']! as int;
+      final Map<String, Object?> rolledData =
+          rolled['d']! as Map<String, Object?>;
+      final int k = rolledData['k']! as int;
+      final List<int> legal =
+          (rolledData['legal']! as List<Object?>).cast<int>();
+      if (legal.isEmpty) {
+        // A rolled with an empty legal list queues turn_passed then turn
+        // behind it on both sockets (section 12.1). resumeSnapshot below
+        // expects the very next frame on each socket to be the room
+        // snapshot resume itself produces, so that backlog has to be
+        // drained to a known state first, or resume collides with the
+        // stale turn_passed instead of answering with a snapshot.
+        await consumeNoLegalMove(lobby, onTurn);
+      }
 
       final Map<String, Object?> afterRoll = await resumeSnapshot(
         lobby,
@@ -1098,11 +1270,13 @@ void main() {
         );
         final List<int> legal = (data['legal']! as List<Object?>).cast<int>();
         if (legal.isEmpty) {
-          final Map<String, Object?> passed =
-              await seatFor(lobby, current).client.next();
+          // Read via _next, not a raw client.next(): both frames are
+          // broadcast to every socket in the room (section 12.3), so the
+          // other socket's copy of each has to be drained here too, or it
+          // sits in that socket's queue and corrupts a later read on it.
+          final Map<String, Object?> passed = await _next(lobby, current);
           _assertNoEarlyReveal(passed, rolledSeen);
-          final Map<String, Object?> turn =
-              await seatFor(lobby, current).client.next();
+          final Map<String, Object?> turn = await _next(lobby, current);
           _assertNoEarlyReveal(turn, rolledSeen);
           current = (turn['d']! as Map<String, Object?>)['seat']! as int;
         } else {
@@ -1119,8 +1293,7 @@ void main() {
                 '"${moved['t']}": ${moved['d']}',
           );
           _assertNoEarlyReveal(moved, rolledSeen);
-          final Map<String, Object?> after =
-              await seatFor(lobby, current).client.next();
+          final Map<String, Object?> after = await _next(lobby, current);
           _assertNoEarlyReveal(after, rolledSeen);
           if (after['t'] == 'game_over') {
             break;
@@ -1152,6 +1325,10 @@ void main() {
       for (int attempt = 1;
           attempt <= maxAttempts && records.length < wanted;
           attempt++) {
+        // Advances the fake clock past the per-connection message rate
+        // limit's 1-second window before every attempt -- see
+        // reachLegalRoll's identical comment for why.
+        harness.clock.advance(const Duration(seconds: 2));
         final Map<String, Object?> frame = await sendRoll(lobby, current);
         expect(
           frame['t'],
@@ -1276,8 +1453,20 @@ void main() {
       WireTestSeat? other;
       while (attempts < maxAttempts) {
         attempts++;
+        // Advances the fake clock past the per-connection message rate
+        // limit's 1-second window before every attempt -- see
+        // reachLegalRoll's identical comment for why.
+        harness.clock.advance(const Duration(seconds: 2));
         final String rollId =
             seatFor(lobby, current).client.send('roll', <String, Object?>{});
+        // Read raw here, deliberately not via _next: until legal is known
+        // below, this attempt might turn out to be the no-legal-move
+        // triple this test inspects both sockets of directly (the other
+        // socket's copies are read explicitly, further down, precisely so
+        // this test can assert re is absent from them itself). Only once
+        // an attempt is known to be discarded (the legal-move branch
+        // below) does the other socket's copy of it get drained here
+        // instead, so a discarded attempt cannot leave a backlog behind.
         final Map<String, Object?> rolled =
             await seatFor(lobby, current).client.next();
         expect(
@@ -1297,25 +1486,33 @@ void main() {
           triple = <Map<String, Object?>>[rolled, passed, turn];
 
           final int rollingSeat = current;
+          // rolled was read off rollingSeat's own socket, which is always
+          // the sender's own copy regardless of whether rollingSeat is
+          // the host or the guest seat, so re must always equal rollId
+          // here (section 12.3: the sender's own copy carries re).
           expect(
             rolled['re'],
-            rollingSeat == lobby.host.seat ? rollId : isNull,
-            reason: 'the sender\'s own copy of rolled must carry re; the '
-                'other socket\'s must not',
+            rollId,
+            reason: 'the sender\'s own copy of rolled must carry re '
+                '($rollId); got ${rolled['re']}',
           );
           other = rollingSeat == lobby.host.seat ? lobby.guest : lobby.host;
 
           current = (turn['d']! as Map<String, Object?>)['seat']! as int;
           break;
         }
-        // This attempt left a legal move pending instead; take it (any
-        // legal token) and keep trying for the no-legal-move triple.
+        // This attempt left a legal move pending instead; it is
+        // discarded. rolled was read raw above without draining the other
+        // socket's copy (because until legal was known this attempt
+        // might have been the target), so that copy has to be drained
+        // here now that the attempt is known not to be it.
+        await _drainOtherCopy(lobby, current, rolled);
+
         final String moveId = seatFor(
           lobby,
           current,
         ).client.send('move', <String, Object?>{'token': legal.first});
-        final Map<String, Object?> moved =
-            await seatFor(lobby, current).client.next();
+        final Map<String, Object?> moved = await _next(lobby, current);
         expect(
           moved['t'],
           'moved',
@@ -1400,6 +1597,10 @@ void main() {
       const int maxAttempts = 40;
       bool found = false;
       for (int attempt = 1; attempt <= maxAttempts && !found; attempt++) {
+        // Advances the fake clock past the per-connection message rate
+        // limit's 1-second window before every attempt -- see
+        // reachLegalRoll's identical comment for why.
+        harness.clock.advance(const Duration(seconds: 2));
         final Map<String, Object?> rolled = await sendRoll(lobby, current);
         expect(
           rolled['t'],
@@ -1424,8 +1625,11 @@ void main() {
             (rolledData['legal']! as List<Object?>).cast<int>();
         if (legal.isEmpty) {
           found = true;
-          final Map<String, Object?> passed =
-              await seatFor(lobby, current).client.next();
+          // Read via _next: both frames are broadcast to every socket in
+          // the room (section 12.3), so the other socket's copy of each
+          // is drained (and checked) here too, consistent with every
+          // other read in this file.
+          final Map<String, Object?> passed = await _next(lobby, current);
           expect(
             passed['t'],
             'turn_passed',
@@ -1437,8 +1641,7 @@ void main() {
             (passed['d']! as Map<String, Object?>)['reason'],
             'no_legal_move',
           );
-          final Map<String, Object?> turn =
-              await seatFor(lobby, current).client.next();
+          final Map<String, Object?> turn = await _next(lobby, current);
           expect(
             turn['t'],
             'turn',
