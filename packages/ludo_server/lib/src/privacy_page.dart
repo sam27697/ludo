@@ -5,13 +5,18 @@
 // function of one optional string, called once by `WireServer.start` and
 // cached, per order 049.
 //
-// The wording below is the draft's wording, unchanged. The only edits made
-// converting it to HTML are: the bold lead-ins became `<h2>` headings, the
-// publication date replaced the `[DATE OF PUBLICATION]` placeholder, and the
-// one em-dash in the draft's title ("Privacy Policy - Ludo RNG") was
-// rewritten as a hyphen, because hard rule 5 of the mission forbids an
-// em-dash reaching a public page. Nothing was added, and nothing was
-// dropped.
+// The wording below is the draft's wording, unchanged, with one exception
+// forced by the contact address being configuration and not always present:
+// the "Data you can ask about" paragraph's second sentence ("If you believe
+// we hold something about you ... write to the address below") is a promise
+// that only holds when there is an address below, so it is omitted along
+// with the contact section rather than left pointing at nothing. The other
+// edits made converting the draft to HTML are: the bold lead-ins became
+// `<h2>` headings, the publication date replaced the `[DATE OF
+// PUBLICATION]` placeholder, and the one em-dash in the draft's title
+// ("Privacy Policy - Ludo RNG") was rewritten as a hyphen, because hard rule
+// 5 of the mission forbids an em-dash reaching a public page. Nothing else
+// was added, and nothing else was dropped.
 
 import 'dart:convert';
 
@@ -93,10 +98,13 @@ String buildPrivacyPageHtml({String? contactEmail}) {
     )
     ..writeln('<h2>Data you can ask about.</h2>')
     ..writeln(
-      '<p>Because we hold no account and no personal profile, there is '
-      'normally nothing to give you a copy of or to delete. If you '
-      'believe we hold something about you and you want it removed, '
-      'write to the address below and we will act on it.</p>',
+      trimmedEmail != null
+          ? '<p>Because we hold no account and no personal profile, there is '
+              'normally nothing to give you a copy of or to delete. If you '
+              'believe we hold something about you and you want it removed, '
+              'write to the address below and we will act on it.</p>'
+          : '<p>Because we hold no account and no personal profile, there is '
+              'normally nothing to give you a copy of or to delete.</p>',
     )
     ..writeln('<h2>Changes to this policy.</h2>')
     ..writeln(
