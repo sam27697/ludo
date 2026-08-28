@@ -23,6 +23,42 @@ import 'package:test/test.dart';
 
 import 'support/dice_oracle.dart';
 
+/// Resolves `test/support/dice_oracle.dart` from the `ludo_server` entry in
+/// [packageConfig] rather than from [Directory.current]. `dart test` runs
+/// this file under an isolate whose [Isolate.packageConfig] is the same
+/// `package_config.json` no matter which directory the suite was invoked
+/// from -- `bin/ludo-verify.sh` invokes it from the repository root, a
+/// developer running it by hand from `packages/ludo_server` does not -- so
+/// reading the `ludo_server` package's own `rootUri` out of that file finds
+/// this file's home directory without depending on the caller's shell.
+Future<Uri> _oracleUri(Uri packageConfig) async {
+  final Object? decoded = jsonDecode(
+    await File.fromUri(packageConfig).readAsString(),
+  );
+  final List<Object?> packages =
+      (decoded! as Map<String, Object?>)['packages']! as List<Object?>;
+  final Map<String, Object?> ludoServer =
+      packages.cast<Map<String, Object?>>().firstWhere(
+            (Map<String, Object?> package) => package['name'] == 'ludo_server',
+            orElse: () => fail(
+              'package_config.json at $packageConfig has no "ludo_server" '
+              'package entry; cannot locate test/support/dice_oracle.dart '
+              'without it',
+            ),
+          );
+  // `rootUri` in package_config.json is not guaranteed to have a trailing
+  // slash, and Uri.resolve treats a URI without one as pointing at a file,
+  // not a directory: resolving 'test/support/dice_oracle.dart' against
+  // '.../packages/ludo_server' (no slash) replaces 'ludo_server' with
+  // 'test' instead of descending into it. Force the directory form first.
+  String rootUriString = ludoServer['rootUri']! as String;
+  if (!rootUriString.endsWith('/')) {
+    rootUriString = '$rootUriString/';
+  }
+  final Uri packageRoot = packageConfig.resolve(rootUriString);
+  return packageRoot.resolve('test/support/dice_oracle.dart');
+}
+
 /// A handful of client seeds distinct enough that two different searches in
 /// this file are never accidentally asking the same question.
 const String _gameIdA = 'dice-oracle-test-game-a';
@@ -44,8 +80,7 @@ void main() {
             'revealsFor + chainCommit computed from candidateSecretAt(index) '
             'directly', () {
           final List<int> secret = candidateSecretAt(index);
-          final List<String> expectedReveals =
-              revealsFor(secret, count: count);
+          final List<String> expectedReveals = revealsFor(secret, count: count);
           final String expectedCommit = chainCommit(secret);
 
           final ({List<String> reveals, String chainCommit}) fast =
@@ -114,8 +149,7 @@ void main() {
     test(
         'a secret found by the default (fast) search reproduces the wanted '
         'faces through facesFor, and its reveals/chain_commit agree with '
-        'the full-chain walk computed from the returned secret directly',
-        () {
+        'the full-chain walk computed from the returned secret directly', () {
       const List<int> wanted = <int>[3, 1, 4];
       final SteeredSecret found = findSecretForFaces(
         wanted: wanted,
@@ -314,15 +348,13 @@ void main() {
           'test spawns',
         );
       }
-      final Uri oracleUri = Directory.current.uri.resolve(
-        'test/support/dice_oracle.dart',
-      );
+      final Uri oracleUri = await _oracleUri(packageConfig);
       if (!File.fromUri(oracleUri).existsSync()) {
         fail(
-          'expected test/support/dice_oracle.dart to exist relative to the '
-          'current working directory (${Directory.current.path}); this '
-          'test must be run from packages/ludo_server, the same as every '
-          'other command in this suite',
+          'expected test/support/dice_oracle.dart to exist at $oracleUri, '
+          'resolved from the "ludo_server" package root recorded in '
+          '${packageConfig.toFilePath()} -- that entry may be stale or '
+          'the file may have moved',
         );
       }
 
@@ -367,8 +399,8 @@ void main() {
 
       final Map<String, Object?> decoded =
           jsonDecode(result.stdout as String) as Map<String, Object?>;
-      final List<int> freshSecret = (decoded['secret']! as List<Object?>)
-          .cast<int>();
+      final List<int> freshSecret =
+          (decoded['secret']! as List<Object?>).cast<int>();
 
       final SteeredSecret inProcess = findSecretForFaces(
         wanted: wanted,
