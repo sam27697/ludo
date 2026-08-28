@@ -85,6 +85,17 @@ esac
 HEALTH_PORT="${LUDO_HEALTH_PORT:-$DEFAULT_HEALTH_PORT}"
 HEALTH_URL="http://127.0.0.1:${HEALTH_PORT}/health"
 
+# The compose file's ports: entry and container_name both read these two
+# from the environment `docker compose` is invoked with (see bring_up()
+# below and the logs call in roll_back_and_fail()). LUDO_PORT is set from
+# HEALTH_PORT itself, not recomputed, so the port the container publishes
+# and the port curl polls above are read from the same variable and cannot
+# drift apart. LUDO_ENVIRONMENT is set from ENVIRONMENT_NAME, which the
+# case statement above has already forced to a known value (staging or
+# production) before either variable is used.
+LUDO_ENVIRONMENT="$ENVIRONMENT_NAME"
+LUDO_PORT="$HEALTH_PORT"
+
 require_file "$ENV_FILE" ".env"
 
 [[ -d "$REPO_DIR/.git" ]] || fail "no checkout at $REPO_DIR -- clone it first, see README.md"
@@ -129,7 +140,9 @@ docker build \
 
 bring_up() {
   local tag="$1" version="$2"
-  LUDO_IMAGE_TAG="$tag" LUDO_VERSION="$version" docker compose \
+  LUDO_IMAGE_TAG="$tag" LUDO_VERSION="$version" \
+  LUDO_ENVIRONMENT="$LUDO_ENVIRONMENT" LUDO_PORT="$LUDO_PORT" \
+  docker compose \
     --project-name "$PROJECT_NAME" \
     --project-directory "$ROOT" \
     -f "$COMPOSE_FILE" \
@@ -144,7 +157,9 @@ bring_up() {
 roll_back_and_fail() {
   log "$*"
   log "last 50 lines of container log:"
-  LUDO_IMAGE_TAG="$NEW_TAG" docker compose \
+  LUDO_IMAGE_TAG="$NEW_TAG" \
+  LUDO_ENVIRONMENT="$LUDO_ENVIRONMENT" LUDO_PORT="$LUDO_PORT" \
+  docker compose \
     --project-name "$PROJECT_NAME" \
     --project-directory "$ROOT" \
     -f "$COMPOSE_FILE" \

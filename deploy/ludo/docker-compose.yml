@@ -1,26 +1,41 @@
-# Staging service definition for ludo_server. Lives at /srv/apps/ludo/ on
-# the server, next to .env (never committed) and the repo/ checkout.
-# deploy.sh is the only thing that invokes this file; it always sets
-# LUDO_IMAGE_TAG on the command line before calling `docker compose up`, so
+# Service definition for ludo_server. Used for both staging and production
+# from the same file, distinguished only by the environment variables
+# deploy.sh sets on the `docker compose` command line: LUDO_ENVIRONMENT and
+# LUDO_PORT. Lives at /srv/apps/ludo/ on the server, next to .env (never
+# committed) and the repo/ checkout. deploy.sh is the only thing that
+# invokes this file; it always sets LUDO_IMAGE_TAG, LUDO_ENVIRONMENT and
+# LUDO_PORT on the command line before calling `docker compose up`, so
 # there is no `build:` section here and plain `docker compose up` on its own
 # never rebuilds or repulls anything -- the deploy script controls that.
+# Calling compose directly without those three set is refused (see the
+# `:?` forms below) rather than silently publishing the wrong port under
+# the wrong name.
 
 services:
   ludo-server:
     image: ${LUDO_IMAGE_TAG:?LUDO_IMAGE_TAG is not set -- run deploy.sh, do not call compose directly}
-    container_name: ludo-server
+
+    # A fixed container_name overrides compose's own project-scoped naming,
+    # so it has to carry the environment itself or staging and production
+    # collide on the same name the moment both run on the same box.
+    # LUDO_ENVIRONMENT is the same value deploy.sh already validates against
+    # a known list (staging, production) before it ever gets here.
+    container_name: ludo-server-${LUDO_ENVIRONMENT:?LUDO_ENVIRONMENT is not set -- run deploy.sh, do not call compose directly}
     restart: unless-stopped
 
     # Host loopback only. Docker's port publishing writes DNAT rules the
     # host firewall never sees, so binding 0.0.0.0 here would make the
     # container reachable from the public internet directly, bypassing the
-    # reverse proxy that terminates TLS. 8199 is the host side, matches what
-    # the reverse proxy already forwards stg.ludo.provefair.app to; 8080 is
-    # container-internal only and is private to this container's own
-    # network namespace, which is why the process inside binds 0.0.0.0:8080
-    # without contradicting the rule above.
+    # reverse proxy that terminates TLS. LUDO_PORT is the host side --
+    # 8199 for staging, 8099 for production -- and deploy.sh sets it from
+    # the exact same shell variable it polls with curl once the container
+    # is up, so the port published here and the port deploy.sh checks can
+    # never be two different numbers. 8080 is container-internal only and
+    # is private to this container's own network namespace, which is why
+    # the process inside binds 0.0.0.0:8080 without contradicting the rule
+    # above.
     ports:
-      - "127.0.0.1:8199:8080"
+      - "127.0.0.1:${LUDO_PORT:?LUDO_PORT is not set -- run deploy.sh, do not call compose directly}:8080"
 
     # Real values (PORT, TRUSTED_PROXIES) live in .env on the server and are
     # never in this file or in the repository.
@@ -49,7 +64,9 @@ services:
     # Mirrors the Dockerfile HEALTHCHECK; kept here too so `docker compose
     # ps` reflects health without needing the image's own default to be
     # inspected separately. GET /health reports 200 with a JSON body once
-    # the process is bound and answering as itself.
+    # the process is bound and answering as itself. This is the container's
+    # own port, always 8080, and is not environment-dependent -- only the
+    # host side of the mapping above changes.
     healthcheck:
       test:
         - CMD-SHELL
