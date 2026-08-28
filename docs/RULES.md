@@ -152,7 +152,7 @@ also safe, trivially, because no opponent can reach it.
     is a block and the move was already illegal under rule 22.
 28a. That reasoning holds only while `blocks` is on. With `blocks` off, rule 22
     never fires, the move is legal, and rule 28 still requires exactly one
-    opponent token — so a destination holding two or more tokens of one seat is
+    opponent token -- so a destination holding two or more tokens of one seat is
     landed on and **nothing is captured**. Turning blocks off therefore does not
     make stacking worthless: it converts a hard block into a shelter that cannot
     be captured, and the arriving token stands on the square alongside them.
