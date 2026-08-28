@@ -35,11 +35,14 @@
 // authorised.
 //
 // `set_seed` is the one message here whose own ladder, `docs/PROTOCOL.md`
-// section 11.2, is not room-exists / seat-authorised / phase-correct: phase
-// runs before seat authorisation. `_handleSetSeed` below still resolves a
-// socket with no stored identity at all as `BAD_SEAT_TOKEN` first, because
-// there is no room to read a phase off in that case; once identity exists,
-// phase overtakes seat authorisation exactly as section 11.2 orders it.
+// section 11.2, is not room-exists / seat-authorised / phase-correct in the
+// usual order: room existence still runs first, but phase then overtakes
+// seat authorisation. `_handleSetSeed` below still resolves a socket with no
+// stored identity at all as `BAD_SEAT_TOKEN` first, because there is no room
+// to look up in that case; once identity exists, a room that does not exist
+// or has been reaped answers `NO_SUCH_ROOM`, and only once a live room is
+// found does phase overtake seat authorisation exactly as section 11.2
+// orders it.
 
 import 'dart:async';
 import 'dart:convert';
@@ -558,22 +561,28 @@ class Connection {
   }
 
   /// `set_seed`, `docs/PROTOCOL.md` section 11.2. Unlike the five
-  /// socket-identified messages above, this one's own ladder checks phase
-  /// before seat authorisation, so a request wrong in both ways answers
-  /// `WRONG_PHASE`. A socket with no stored identity at all has no room to
-  /// read a phase off, so that case is still resolved first, as
-  /// `BAD_SEAT_TOKEN` -- the table's "socket holds no seat" row, read
-  /// literally, is exactly this socket. `RoomRegistry.setSeed` re-runs the
-  /// same ladder itself (room-phase, then seat, then field, then
-  /// already-set) as defence in depth, the same way every other registry
-  /// call re-validates what this file already checked.
+  /// socket-identified messages above, this one's own ladder checks room
+  /// existence, then phase, before seat authorisation, so a request wrong
+  /// in both phase and seat answers `WRONG_PHASE`, and a request against a
+  /// room that never existed or has been reaped answers `NO_SUCH_ROOM`
+  /// regardless of what else is wrong with it. A socket with no stored
+  /// identity at all has no room to look up, so that case is still resolved
+  /// first, as `BAD_SEAT_TOKEN` -- the table's "socket holds no seat" row,
+  /// read literally, is exactly this socket. `RoomRegistry.setSeed` re-runs
+  /// the same ladder itself (room-exists, then phase, then seat, then
+  /// field, then already-set) as defence in depth, the same way every other
+  /// registry call re-validates what this file already checked.
   void _handleSetSeed(ParsedEnvelope envelope) {
     if (!_hasIdentity) {
       _reject(envelope, ProtocolError.badSeatToken);
       return;
     }
     final Room? liveRoom = registry.lookup(roomCode!);
-    if (liveRoom == null || liveRoom.state != RoomState.lobby) {
+    if (liveRoom == null) {
+      _reject(envelope, ProtocolError.noSuchRoom);
+      return;
+    }
+    if (liveRoom.state != RoomState.lobby) {
       _reject(envelope, ProtocolError.wrongPhase);
       return;
     }
