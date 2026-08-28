@@ -73,7 +73,7 @@ void main() {
           },
         );
         expect(isTerminal(finished), isTrue);
-        final result = apply(finished, const RollIntention(0));
+        final result = apply(finished, const RollIntention(0, 4));
         expect(result, isA<Rejected>());
         expect((result as Rejected).error, EngineError.gameFinished);
       });

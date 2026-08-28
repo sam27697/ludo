@@ -6,8 +6,14 @@
 // 2. intention.seat not in config.seats              -> seatNotInPlay
 // 3. intention.seat != state.currentSeat             -> notYourTurn
 // 4. intention type does not match state.phase       -> wrongPhase
-// 5. MoveIntention.token outside 0..3                -> noSuchToken
-// 6. MoveIntention.token not in legalTokens(state)    -> illegalMove
+// 5. RollIntention.face not an integer in 1..6       -> badFace
+// 6. MoveIntention.token outside 0..3                -> noSuchToken
+// 7. MoveIntention.token not in legalTokens(state)    -> illegalMove
+//
+// The badFace step is exercised in depth, including its exact position in
+// this order relative to every other check, by test/rules/dice_test.dart;
+// the entry here exists so this file's own "one test per EngineError"
+// promise stays true of all seven values, not six.
 
 import 'package:ludo_engine/ludo_engine.dart';
 import 'package:test/test.dart';
@@ -33,7 +39,7 @@ void main() {
 
     test('seatNotInPlay: a seat index not in config.seats', () {
       final state = buildAwaitRoll(seats: twoPlayerSeats, rngState: 1);
-      final result = apply(state, const RollIntention(1));
+      final result = apply(state, const RollIntention(1, 4));
       expect(result, isA<Rejected>());
       expect((result as Rejected).error, EngineError.seatNotInPlay);
     });
@@ -41,7 +47,7 @@ void main() {
     test('notYourTurn: a seat in play that is not the current seat', () {
       final state =
           buildAwaitRoll(seats: twoPlayerSeats, currentSeat: 0, rngState: 1);
-      final result = apply(state, const RollIntention(2));
+      final result = apply(state, const RollIntention(2, 4));
       expect(result, isA<Rejected>());
       expect((result as Rejected).error, EngineError.notYourTurn);
     });
@@ -55,7 +61,7 @@ void main() {
           0: <int>[0, -1, -1, -1],
         },
       );
-      final result = apply(state, const RollIntention(0));
+      final result = apply(state, const RollIntention(0, 4));
       expect(result, isA<Rejected>());
       expect((result as Rejected).error, EngineError.wrongPhase);
     });
@@ -67,6 +73,21 @@ void main() {
       expect(result, isA<Rejected>());
       expect((result as Rejected).error, EngineError.wrongPhase);
     });
+
+    test(
+      'badFace: RollIntention.face outside 1..6 from the right seat in '
+      'the right phase',
+      () {
+        final state = buildAwaitRoll(
+          seats: twoPlayerSeats,
+          currentSeat: 0,
+          rngState: 1,
+        );
+        final result = apply(state, const RollIntention(0, 0));
+        expect(result, isA<Rejected>());
+        expect((result as Rejected).error, EngineError.badFace);
+      },
+    );
 
     test('noSuchToken: MoveIntention.token outside 0..3', () {
       final state = buildAwaitMove(
@@ -118,7 +139,7 @@ void main() {
           },
         );
         // seat 2 is in play but is not currentSeat, and the game is over.
-        final result = apply(finished, const RollIntention(2));
+        final result = apply(finished, const RollIntention(2, 4));
         expect(result, isA<Rejected>());
         expect((result as Rejected).error, EngineError.gameFinished);
       },
@@ -131,7 +152,7 @@ void main() {
         final state =
             buildAwaitRoll(seats: twoPlayerSeats, currentSeat: 0, rngState: 1);
         // seat 1 is neither in twoPlayerSeats nor currentSeat.
-        final result = apply(state, const RollIntention(1));
+        final result = apply(state, const RollIntention(1, 4));
         expect(result, isA<Rejected>());
         expect((result as Rejected).error, EngineError.seatNotInPlay);
       },
@@ -153,7 +174,7 @@ void main() {
 
     test(
       'a MoveIntention with an out-of-range token sent during awaitRoll '
-      'returns wrongPhase, not noSuchToken (checks 4 before 5)',
+      'returns wrongPhase, not noSuchToken (checks 4 before 6)',
       () {
         final state =
             buildAwaitRoll(seats: twoPlayerSeats, currentSeat: 0, rngState: 1);
