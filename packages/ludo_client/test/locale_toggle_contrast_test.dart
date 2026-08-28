@@ -10,12 +10,17 @@
 // `style: const TextStyle(color: Colors.white)` back on the toggle's `Text`
 // in home_screen.dart) and rerun it; the failure message reports the ratio
 // it measured, which lands at the same ~1.05:1 the screenshot scan found.
+//
+// The last test in this file covers the smaller defect found in the same
+// screenshot frame: the Arabic homeRoomCodeInvalid string was being clipped
+// with an ellipsis instead of wrapping.
 
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart';
 
 /// WCAG 2.1 relative luminance of an sRGB colour. Each channel is
@@ -114,6 +119,46 @@ void main() {
             'locale toggle foreground $foreground on app bar background '
             '$background measures $ratio:1, below the WCAG AA minimum of '
             '4.5:1 for normal text',
+      );
+    },
+  );
+
+  testWidgets(
+    'the invalid room code error wraps instead of being clipped with an '
+    'ellipsis',
+    (tester) async {
+      await tester.pumpWidget(const LudoApp(initialLocale: Locale('ar')));
+      await tester.pumpAndSettle();
+
+      final context = tester.element(find.byType(Scaffold));
+      final loc = AppLocalizations.of(context);
+
+      await tester.enterText(
+        find.byKey(const Key('room-code-field')),
+        'invalid',
+      );
+      await tester.tap(find.byKey(const Key('join-room-button')));
+      await tester.pumpAndSettle();
+
+      final errorText = loc.homeRoomCodeInvalid;
+      final finder = find.text(errorText);
+      expect(
+        finder,
+        findsOneWidget,
+        reason:
+            'the full, untruncated error string should still be the '
+            'text of the widget on screen even when it wraps to more than '
+            'one line',
+      );
+
+      final paragraph = tester.renderObject<RenderParagraph>(finder);
+      expect(
+        paragraph.didExceedMaxLines,
+        isFalse,
+        reason:
+            'homeRoomCodeInvalid ("$errorText") did not fit within its '
+            'line limit and was clipped; see errorMaxLines on the room code '
+            'field in home_screen.dart',
       );
     },
   );
