@@ -8,6 +8,7 @@
 // describes.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -32,6 +33,11 @@ const Duration housekeepingInterval = Duration(minutes: 1);
 /// configured proxy list.
 const String forwardedForHeader = 'x-forwarded-for';
 
+/// The exact, case-sensitive path of the operational health endpoint. Not a
+/// game protocol message: it is answered before the WebSocket upgrade is
+/// ever attempted, and it is the only path this server treats specially.
+const String _healthPath = '/health';
+
 /// Owns the listening socket and everything that turns an accepted
 /// connection into a [Connection]. Built once per running server; `start`
 /// opens the port, `close` shuts it down along with the housekeeping timer.
@@ -42,6 +48,7 @@ class WireServer {
     required this.clock,
     Random? random,
     Set<String> trustedProxies = const <String>{},
+    this.version = 'dev',
   })  : _random = random ?? Random.secure(),
         _trustedProxies = trustedProxies,
         _hub = _ConnectionHub();
@@ -50,6 +57,10 @@ class WireServer {
   final RateLimiter rateLimiter;
   final Clock clock;
   final Random _random;
+
+  /// The build identifier reported by `GET /health`. Not otherwise used;
+  /// this server does not act differently for one version than another.
+  final String version;
 
   /// Addresses (as `InternetAddress.address` strings) allowed to set
   /// [forwardedForHeader] and be believed. Empty by default: with no
@@ -63,11 +74,18 @@ class WireServer {
   HttpServer? _httpServer;
   Timer? _housekeeping;
 
+  /// The instant [start] completed, per the injected [clock]. Null before
+  /// [start] has returned, in which case reported uptime is zero.
+  DateTime? _startedAt;
+
   /// Starts listening. [address] is anything `HttpServer.bind` accepts
   /// (`InternetAddress` or a host string); [port] `0` binds an ephemeral
   /// port, readable back afterwards from [port].
   Future<void> start({required Object address, required int port}) async {
     final shelf.Handler handler = (shelf.Request request) {
+      if (request.requestedUri.path == _healthPath) {
+        return _handleHealth(request);
+      }
       final String ip = _clientIp(request);
       final shelf.Handler upgrade = webSocketHandler((
         WebSocketChannel channel,
@@ -82,6 +100,7 @@ class WireServer {
     _housekeeping = Timer.periodic(housekeepingInterval, (_) {
       _runHousekeeping();
     });
+    _startedAt = clock.now;
   }
 
   /// The bound port. Only meaningful after [start] has completed.
@@ -138,6 +157,44 @@ class WireServer {
     } finally {
       conn.handleDisconnect();
     }
+  }
+
+  /// `GET /health` never reaches the WebSocket upgrade path: the path check
+  /// in [start]'s handler runs first, always, regardless of what upgrade
+  /// headers the request carries. The body is aggregate counts only -- never
+  /// a room code, a seat token, a client IP, or a configuration value --
+  /// because this hostname is public.
+  shelf.Response _handleHealth(shelf.Request request) {
+    if (request.method != 'GET') {
+      return shelf.Response(405, headers: const <String, String>{
+        'allow': 'GET',
+      });
+    }
+    final Map<String, Object?> body = <String, Object?>{
+      'status': 'ok',
+      'version': version,
+      'uptime_s': _uptimeSeconds,
+      'rooms': registry.roomCount,
+    };
+    return shelf.Response.ok(
+      jsonEncode(body),
+      headers: const <String, String>{
+        'content-type': 'application/json',
+        'cache-control': 'no-store',
+      },
+    );
+  }
+
+  /// Whole seconds since [start] completed, from the injected [clock]. Zero
+  /// before [start] has completed and never negative afterwards, even if the
+  /// clock is a test double that has not strictly advanced.
+  int get _uptimeSeconds {
+    final DateTime? startedAt = _startedAt;
+    if (startedAt == null) {
+      return 0;
+    }
+    final int seconds = clock.now.difference(startedAt).inSeconds;
+    return seconds < 0 ? 0 : seconds;
   }
 
   /// The client's IP, section 7's rate limits being scoped by it. The

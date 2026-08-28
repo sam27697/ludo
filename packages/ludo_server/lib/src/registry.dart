@@ -439,6 +439,11 @@ class RoomRegistry {
 
   Room? lookup(String code) => _rooms[code];
 
+  /// How many rooms this registry currently holds, including one that has
+  /// expired but has not yet been reaped. A getter, not a computation:
+  /// no reaping happens as a side effect of reading it.
+  int get roomCount => _rooms.length;
+
   void _refreshIdleTracking(Room room) {
     final bool idle = room.seats.every((Seat s) => !s.connected);
     if (idle) {
