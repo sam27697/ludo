@@ -28,25 +28,12 @@ set -euo pipefail
 ROOT="/srv/apps/ludo"
 REPO_DIR="$ROOT/repo"
 COMPOSE_FILE="$REPO_DIR/deploy/ludo/docker-compose.yml"
-ENV_FILE="$ROOT/.env"
-STATE_FILE="$ROOT/.current_image_tag"
 DOCKERFILE="packages/ludo_server/Dockerfile"
 SERVICE_NAME="ludo-server"
 IMAGE_NAME="ludo-server"
 ENVIRONMENT_NAME="${LUDO_ENVIRONMENT:-staging}"
 HEALTH_ATTEMPTS=30
 HEALTH_INTERVAL_SECONDS=2
-
-# docker compose derives the project name, and the base directory it
-# resolves a compose file's own relative paths against (env_file:, volumes,
-# build.context), from the "project directory" -- the directory holding the
-# compose file, unless --project-directory says otherwise. COMPOSE_FILE now
-# lives inside the checkout, not in $ROOT, so both of those would drift from
-# what the already-running container was brought up under if left to that
-# default. Pin both to $ROOT explicitly: that is where the previously
-# hand-placed compose file lived, it is where .env actually is, and
-# basename($ROOT) is the project name docker compose was already using.
-PROJECT_NAME="$(basename "$ROOT")"
 
 REF="${1:-main}"
 
@@ -85,6 +72,30 @@ esac
 HEALTH_PORT="${LUDO_HEALTH_PORT:-$DEFAULT_HEALTH_PORT}"
 HEALTH_URL="http://127.0.0.1:${HEALTH_PORT}/health"
 
+# staging and production are two independent deployments on this box, not
+# one project split by an environment variable at deploy time: each gets
+# its own directory under $ROOT to hold its own .env and its own record of
+# what is currently running, so that a production deploy can never read,
+# write, or roll back onto staging's state or the reverse. The case
+# statement above has already rejected any ENVIRONMENT_NAME other than
+# staging or production, so it is safe to build a path out of it here.
+ENV_ROOT="$ROOT/$ENVIRONMENT_NAME"
+ENV_FILE="$ENV_ROOT/.env"
+STATE_FILE="$ENV_ROOT/.current_image_tag"
+
+# docker compose derives the project name, and the base directory it
+# resolves a compose file's own relative paths against (env_file:, volumes,
+# build.context), from the "project directory" -- the directory holding the
+# compose file, unless --project-directory says otherwise. COMPOSE_FILE
+# lives inside the checkout, which staging and production share, so
+# --project-directory has to point somewhere environment-specific or both
+# environments would resolve the compose file's env_file: .env entry to
+# the same file and would be the same compose project. Pin it to
+# $ENV_ROOT, where this environment's own .env actually lives, and derive
+# PROJECT_NAME from ENVIRONMENT_NAME rather than from $ROOT so the two
+# environments can never end up owning the same set of containers.
+PROJECT_NAME="ludo-$ENVIRONMENT_NAME"
+
 # The compose file's ports: entry and container_name both read these two
 # from the environment `docker compose` is invoked with (see bring_up()
 # below and the logs call in roll_back_and_fail()). LUDO_PORT is set from
@@ -96,7 +107,12 @@ HEALTH_URL="http://127.0.0.1:${HEALTH_PORT}/health"
 LUDO_ENVIRONMENT="$ENVIRONMENT_NAME"
 LUDO_PORT="$HEALTH_PORT"
 
-require_file "$ENV_FILE" ".env"
+if [[ ! -f "$ENV_FILE" ]]; then
+  if [[ -f "$ROOT/.env" ]]; then
+    fail "missing $ENV_FILE -- found $ROOT/.env instead, which is the old shared location from before staging and production got their own directories. Fix by hand, once: mkdir -p \"$ENV_ROOT\" && mv \"$ROOT/.env\" \"$ENV_FILE\" (see deploy/ludo/README.md)"
+  fi
+  fail "missing .env: $ENV_FILE (see deploy/ludo/README.md)"
+fi
 
 [[ -d "$REPO_DIR/.git" ]] || fail "no checkout at $REPO_DIR -- clone it first, see README.md"
 
@@ -144,7 +160,7 @@ bring_up() {
   LUDO_ENVIRONMENT="$LUDO_ENVIRONMENT" LUDO_PORT="$LUDO_PORT" \
   docker compose \
     --project-name "$PROJECT_NAME" \
-    --project-directory "$ROOT" \
+    --project-directory "$ENV_ROOT" \
     -f "$COMPOSE_FILE" \
     --env-file "$ENV_FILE" \
     up -d --remove-orphans
@@ -161,7 +177,7 @@ roll_back_and_fail() {
   LUDO_ENVIRONMENT="$LUDO_ENVIRONMENT" LUDO_PORT="$LUDO_PORT" \
   docker compose \
     --project-name "$PROJECT_NAME" \
-    --project-directory "$ROOT" \
+    --project-directory "$ENV_ROOT" \
     -f "$COMPOSE_FILE" \
     --env-file "$ENV_FILE" \
     logs --no-color --tail 50 "$SERVICE_NAME" || true
