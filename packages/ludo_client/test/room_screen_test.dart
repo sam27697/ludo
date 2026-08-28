@@ -15,6 +15,8 @@
 // tester.getSemantics(...).identifier, and dispose the handle at the end
 // of the test.
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -207,66 +209,97 @@ void main() {
   });
 
   group('property 5: the board has a real size', () {
-    testWidgets(
-      'the board renders as a nonzero square and is the tallest widget '
-      'in the body',
-      (tester) async {
-        await tester.pumpWidget(_harness());
-        await tester.pumpAndSettle();
+    testWidgets('the board fills its box and the painted square inside it is a '
+        'nonzero square that is the tallest widget in the body', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_harness());
+      await tester.pumpAndSettle();
 
-        final boardSize = tester.getSize(
-          find.byKey(const Key('room-screen-board')),
-        );
-        final codeSize = tester.getSize(
-          find.byKey(const Key('room-screen-code')),
-        );
-        final notImplementedSize = tester.getSize(
-          find.byKey(const Key('room-screen-not-implemented')),
-        );
+      // The widget keyed room-screen-board is LudoBoard's outer
+      // LayoutBuilder, which fills whatever box the Expanded gives it; it
+      // is not itself square (BOARD_API.md section 4.1). The square is
+      // painted lower in the tree, by the single CustomPaint that draws
+      // the grid, so that widget is what property 5 must measure to prove
+      // the board actually took all the room it was given.
+      final boardFinder = find.byKey(const Key('room-screen-board'));
+      final outerSize = tester.getSize(boardFinder);
+      final paintedSquareFinder = find.descendant(
+        of: boardFinder,
+        matching: find.byType(CustomPaint),
+      );
+      expect(
+        paintedSquareFinder,
+        findsOneWidget,
+        reason:
+            'expected exactly one CustomPaint under room-screen-board, '
+            'the widget that paints the board grid; found none or more '
+            'than one, so the painted square cannot be measured',
+      );
+      final paintedSize = tester.getSize(paintedSquareFinder);
+      final codeSize = tester.getSize(
+        find.byKey(const Key('room-screen-code')),
+      );
+      final notImplementedSize = tester.getSize(
+        find.byKey(const Key('room-screen-not-implemented')),
+      );
 
-        expect(
-          boardSize.width,
-          greaterThan(0),
-          reason:
-              'the board rendered at width ${boardSize.width}; LudoBoard '
-              'sizes itself from its constraints and renders nothing at '
-              'all when both axes are unbounded, so a width of 0 means '
-              'the room screen put it somewhere unconstrained',
-        );
-        expect(
-          boardSize.height,
-          greaterThan(0),
-          reason:
-              'the board rendered at height ${boardSize.height}; same '
-              'failure mode as the width check above, on the other axis',
-        );
-        expect(
-          boardSize.width,
-          boardSize.height,
-          reason:
-              'the board rendered as ${boardSize.width} wide by '
-              '${boardSize.height} tall; LudoBoard always sizes itself to '
-              'a square',
-        );
-        expect(
-          boardSize.height,
-          greaterThan(codeSize.height),
-          reason:
-              'the board (height ${boardSize.height}) should be taller '
-              'than the room code text (height ${codeSize.height}); it is '
-              'meant to be the tallest thing in the body',
-        );
-        expect(
-          boardSize.height,
-          greaterThan(notImplementedSize.height),
-          reason:
-              'the board (height ${boardSize.height}) should be taller '
-              'than the not-implemented text (height '
-              '${notImplementedSize.height}); it is meant to be the '
-              'tallest thing in the body',
-        );
-      },
-    );
+      expect(
+        outerSize.width,
+        greaterThan(0),
+        reason:
+            'the box handed to the board measured width ${outerSize.width}; '
+            'LudoBoard sizes itself from its constraints and renders '
+            'nothing at all when both axes are unbounded, so a width of '
+            '0 means the room screen put it somewhere unconstrained',
+      );
+      expect(
+        outerSize.height,
+        greaterThan(0),
+        reason:
+            'the box handed to the board measured height '
+            '${outerSize.height}; same failure mode as the width check '
+            'above, on the other axis',
+      );
+      expect(
+        paintedSize.width,
+        paintedSize.height,
+        reason:
+            'the painted board measured ${paintedSize.width} wide by '
+            '${paintedSize.height} tall; LudoBoard centres the largest '
+            'square that fits its box, so the painted square must have '
+            'equal sides',
+      );
+      final expectedSide = math.min(outerSize.width, outerSize.height);
+      expect(
+        paintedSize.width,
+        moreOrLessEquals(expectedSide, epsilon: 0.5),
+        reason:
+            'the painted board measured side ${paintedSize.width}, but '
+            'the box handed to the board was ${outerSize.width} x '
+            '${outerSize.height}, so the painted side should be '
+            'min(outerWidth, outerHeight) == $expectedSide; a smaller '
+            'painted square means the board did not take all the space '
+            'it was given',
+      );
+      expect(
+        paintedSize.height,
+        greaterThan(codeSize.height),
+        reason:
+            'the painted board (height ${paintedSize.height}) should be '
+            'taller than the room code text (height ${codeSize.height}); '
+            'it is meant to be the tallest thing in the body',
+      );
+      expect(
+        paintedSize.height,
+        greaterThan(notImplementedSize.height),
+        reason:
+            'the painted board (height ${paintedSize.height}) should be '
+            'taller than the not-implemented text (height '
+            '${notImplementedSize.height}); it is meant to be the '
+            'tallest thing in the body',
+      );
+    });
   });
 
   group('property 6: RTL does not mirror the board', () {
