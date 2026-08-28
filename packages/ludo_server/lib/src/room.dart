@@ -1,4 +1,4 @@
-// docs/PROTOCOL.md sections 2, 3 and 6; docs/RULES.md section 2.
+// docs/PROTOCOL.md sections 2, 3, 6 and 11; docs/RULES.md section 2.
 //
 // `docs/ENGINE_API.md` defines a `RulesConfig` with two fields, `blocks` and
 // `captureBonus`; that is what the engine consumes. `docs/PROTOCOL.md`
@@ -13,6 +13,7 @@
 // `GameConfig` for `newGame`. This split is flagged in the work order report
 // as the order's own ambiguity, not invented silently.
 
+import 'package:fair_dice/fair_dice.dart' show DiceChain;
 import 'package:ludo_engine/ludo_engine.dart' show GameState;
 
 /// The rule toggles a room is created with. Mirrors the wire shape of
@@ -50,6 +51,8 @@ class Seat {
     required this.name,
     required this.seatToken,
     required this.connected,
+    this.clientSeed,
+    this.seedOrigin,
   });
 
   /// 0..3, the engine seat index.
@@ -61,6 +64,18 @@ class Seat {
   final String seatToken;
 
   bool connected;
+
+  /// `docs/PROTOCOL.md` section 11.2. Null until this seat's seed is fixed,
+  /// which happens exactly once: either an accepted `set_seed` in LOBBY, or
+  /// a server-drawn seed handed out at `start_game` to any seat that sent
+  /// none. Never null again after that, and never overwritten once set --
+  /// the registry is the only thing that assigns it and it never assigns it
+  /// twice for the same seat.
+  String? clientSeed;
+
+  /// `"player"` or `"server"`, fixed at the same moment as [clientSeed] and
+  /// null exactly when [clientSeed] is null.
+  String? seedOrigin;
 
   @override
   String toString() => 'Seat(seat: $seat, name: $name, connected: $connected)';
@@ -80,6 +95,10 @@ class Room {
     required this.hostSeat,
     required this.seats,
     required this.game,
+    required this.chain,
+    this.chainIndex = 0,
+    this.gameId,
+    this.clientSeeds,
     this.seq = 0,
   });
 
@@ -112,6 +131,34 @@ class Room {
 
   /// Null until `start_game`.
   GameState? game;
+
+  /// The room's dice chain, built once at creation from a server secret
+  /// drawn from a CSPRNG (`docs/PROTOCOL.md` section 11.3: "never reuse a
+  /// chain across games"; this order never restarts a room's game, so one
+  /// chain for the life of the room is the whole of that rule for now).
+  /// `chain.commit` is `chain_commit` on the wire. Order 008's turn loop
+  /// calls `chain.reveal(k)` for the roll path; this file never reveals a
+  /// link itself. The server secret this chain was built from is reachable
+  /// only by rebuilding a `List<int>` from bytes nobody kept a reference to
+  /// -- it is not stored anywhere on `Room` in its raw form, is never
+  /// logged, and never enters a snapshot.
+  DiceChain chain;
+
+  /// `docs/PROTOCOL.md` section 11.2's `chain_index`, `0` for the first
+  /// chain of the room. Order 008 is the only thing that ever advances this
+  /// (a game exceeding `N = 4096` rolls starts a second chain); this order
+  /// never changes it after creation.
+  int chainIndex;
+
+  /// 16 lowercase hex characters, server generated, set once at
+  /// `start_game`. Null in LOBBY.
+  String? gameId;
+
+  /// The frozen `client_seeds` string of section 11.2: seats in ascending
+  /// index, `seat:seed`, joined by `|`. Set once at `start_game`, from every
+  /// seat's now-fixed [Seat.clientSeed], and never changes after. Null in
+  /// LOBBY.
+  String? clientSeeds;
 
   @override
   String toString() => 'Room(code: $code, state: $state, '
