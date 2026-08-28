@@ -13,16 +13,25 @@
 // whatever the code currently does, including its bugs, which is the one
 // failure mode the gate exists to prevent.
 //
+// Rule 38 (docs/RULES.md): the engine draws no randomness at all, so this
+// tool draws the faces itself. Each game holds its own SplitMix64 state,
+// seeded from that game's `seed` exactly as `newGame` used to seed
+// `GameState.rngState`, and draws a face with the rejection sampling pinned
+// in docs/ENGINE_API.md section 7 before building each RollIntention. The
+// face drawn is recorded on the intention, per the corpus format in that
+// same section.
+//
 // The choice of which legal token to move each turn is deterministic and
-// seed-derived (a SplitMix64 stream kept separate from the game's own dice
-// stream), not Dart's Random() and not always the first legal token, so the
-// corpus actually exercises captures, blocks and multi-token turns instead
-// of playing the same degenerate line every time.
+// seed-derived (a second, independent SplitMix64 stream kept apart from the
+// dice stream above), not Dart's Random() and not always the first legal
+// token, so the corpus actually exercises captures, blocks and multi-token
+// turns instead of playing the same degenerate line every time.
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:ludo_engine/ludo_engine.dart';
+import 'package:ludo_engine/src/rng.dart';
 
 /// A second, independent SplitMix64 stream used only to pick which legal
 /// token to move. It is seeded from the game seed but is not the engine's
@@ -105,6 +114,9 @@ GameRecord simulateGame({
   var blockRejections = 0;
   var threeSixForfeits = 0;
   var choiceState = _choiceSeedFor(seed);
+  // Seeded exactly as newGame used to seed GameState.rngState, before the
+  // engine stopped drawing its own dice.
+  var diceState = seed;
 
   while (!isTerminal(state)) {
     if (intentions.length >= maxIntentions) {
@@ -117,8 +129,14 @@ GameRecord simulateGame({
     late final ApplyResult result;
     if (state.phase == GamePhase.awaitRoll) {
       final seat = state.currentSeat;
-      intentions.add(<String, Object?>{'t': 'roll', 'seat': seat});
-      result = apply(state, RollIntention(seat));
+      final (nextDiceState, face) = rollDie(diceState);
+      diceState = nextDiceState;
+      intentions.add(<String, Object?>{
+        't': 'roll',
+        'seat': seat,
+        'face': face,
+      });
+      result = apply(state, RollIntention(seat, face));
       if (result is! Applied) {
         throw StateError(
           'game "$name" (seed=$seed): unexpected rejection on roll: '

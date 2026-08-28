@@ -103,8 +103,13 @@ GameState buildAwaitMove({
 
 /// A ready-to-roll fixture: `phase = awaitRoll`, `roll = null`. Tests that
 /// exercise [RollIntention] itself (rule 7's turn pass, rule 10's third six,
-/// rule 13's extra-roll-with-no-legal-move) build from this and pick
-/// `rngState` with `findRngStateForNextRoll` so the draw is known in advance.
+/// rule 13's extra-roll-with-no-legal-move) build from this and pass the
+/// face they want straight into `RollIntention(seat, face)`, per rule 38:
+/// the engine draws nothing, so the face is chosen by the caller, not
+/// searched for via `rngState`. `rngState` still has to be given some value
+/// here because it remains a field on `GameState` (docs/ENGINE_API.md
+/// section 7 calls it vestigial, pending removal by a later order); pick
+/// any fixed int unless the test is specifically about `rngState` itself.
 GameState buildAwaitRoll({
   required List<int> seats,
   Map<int, List<int>> tokens = const <int, List<int>>{},

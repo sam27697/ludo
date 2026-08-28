@@ -40,7 +40,15 @@ class GameState {
   /// Increments by 1 on every accepted intention.
   final int seq;
 
-  /// The future of the dice. Secret; never leaves the server.
+  /// The future of the dice, in the sense that it still is one -- but the
+  /// engine no longer reads it. Since rule 38 (docs/RULES.md), the die face
+  /// travels inside `RollIntention` and `apply` never touches this field; it
+  /// is carried forward unchanged from `newGame` on every transition. It
+  /// stays in the state and in `stateHash` because removing it would break
+  /// `packages/ludo_server`'s `seed_commit` computation, which is a change
+  /// that belongs to the protocol order (`docs/FAIRNESS.md` section 7 item 3,
+  /// work order 021's successor), not to this one. Secret; never leaves the
+  /// server.
   final int rngState;
 
   static List<List<int>> _freezeTokens(List<List<int>> tokens) {

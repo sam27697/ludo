@@ -56,7 +56,7 @@ void main() {
         buildAwaitRoll(seats: twoPlayerSeats, currentSeat: 0, rngState: 1);
     _expectRejectionChangesNothing(
       state,
-      const RollIntention(1),
+      const RollIntention(1, 4),
       EngineError.seatNotInPlay,
     );
   });
@@ -66,8 +66,18 @@ void main() {
         buildAwaitRoll(seats: twoPlayerSeats, currentSeat: 0, rngState: 1);
     _expectRejectionChangesNothing(
       state,
-      const RollIntention(2),
+      const RollIntention(2, 4),
       EngineError.notYourTurn,
+    );
+  });
+
+  test('rejection changes nothing: badFace', () {
+    final state =
+        buildAwaitRoll(seats: twoPlayerSeats, currentSeat: 0, rngState: 1);
+    _expectRejectionChangesNothing(
+      state,
+      const RollIntention(0, 0),
+      EngineError.badFace,
     );
   });
 
