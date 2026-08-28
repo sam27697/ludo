@@ -203,16 +203,35 @@ void main() {
     );
   }
 
-  Future<List<Map<String, Object?>>> collectFrames(
+  /// Reads frames off [client] one at a time until a [type] frame arrives,
+  /// returning every frame seen along the way, [type] included, in arrival
+  /// order. This tolerates any number of interleaved pushes -- a `seat_seed`
+  /// broadcast for the sender's own seat, a `seat_seed` for another seat's
+  /// server-assigned seed, in whatever order a correct implementation
+  /// happens to emit them -- while still failing, inside a bounded, short
+  /// wall-clock budget, when [type] never shows up at all. A caller that
+  /// needs both the interleaved pushes and the frame that follows them (a
+  /// `seat_seed` push together with the `game_started` that ends the burst,
+  /// for instance) reads them off the returned list instead of guessing how
+  /// many frames the burst contains.
+  Future<List<Map<String, Object?>>> drainUntil(
     WireTestClient client,
-    int count, {
-    Duration timeout = const Duration(seconds: 2),
+    String type, {
+    int maxFrames = 6,
+    Duration perFrame = const Duration(milliseconds: 500),
   }) async {
     final List<Map<String, Object?>> frames = <Map<String, Object?>>[];
-    for (int i = 0; i < count; i++) {
-      frames.add(await client.next(timeout: timeout));
+    for (int i = 0; i < maxFrames; i++) {
+      final Map<String, Object?> frame = await client.next(timeout: perFrame);
+      frames.add(frame);
+      if (frame['t'] == type) {
+        return frames;
+      }
     }
-    return frames;
+    throw TestFailure(
+      'expected a "$type" frame within $maxFrames frames on this socket and '
+      'none arrived; frames seen along the way: $frames',
+    );
   }
 
   /// Sends `start_game` from the host and waits for `game_started` on both
@@ -819,7 +838,7 @@ void main() {
 
       lobby.host.client.send('start_game', <String, Object?>{});
       final List<Map<String, Object?>> guestFrames =
-          await collectFrames(lobby.guest.client, 2);
+          await drainUntil(lobby.guest.client, 'game_started');
 
       Map<String, Object?>? serverSeedFrame;
       for (final Map<String, Object?> frame in guestFrames) {
@@ -974,7 +993,7 @@ void main() {
 
       lobby.host.client.send('start_game', <String, Object?>{});
       final List<Map<String, Object?>> guestFrames =
-          await collectFrames(lobby.guest.client, 2);
+          await drainUntil(lobby.guest.client, 'game_started');
 
       String? guestServerSeed;
       Map<String, Object?>? gameStartedData;
