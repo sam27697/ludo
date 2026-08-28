@@ -250,6 +250,47 @@ gate_golden() {
   return 1
 }
 
+# 3a. The fair_dice test suite: the hash-chain build, reveal verification and
+# HMAC draw against packages/fair_dice/test/vectors.json, the frozen oracle
+# for the scheme. Run from inside the package because the suite opens
+# test/vectors.json relative to its own working directory, the same way the
+# `dart test` invocation for gate_rules and gate_golden does.
+gate_dice() {
+  local dart
+  dart="$(resolve_dart)" || {
+    echo "no Dart SDK found on PATH, in \$DART_SDK, or at /workspace/toolchains/dart-sdk"
+    return 77
+  }
+
+  local pkg="$ROOT/packages/fair_dice"
+  local test_dir="$pkg/test"
+  if [ ! -d "$test_dir" ] || [ -z "$(find "$test_dir" -name '*_test.dart' -print -quit 2>/dev/null)" ]; then
+    echo "no dice tests yet (packages/fair_dice/test/ missing or empty)"
+    return 77
+  fi
+
+  local out rc
+  out="$(cd "$pkg" && "$dart" test test/ 2>&1)"; rc=$?
+
+  # Pull the pass/fail count straight from the runner's own final summary
+  # line ("+N: All tests passed." or "+N -M: Some tests failed.") instead of
+  # hardcoding an expected total, so a suite that grows never needs this file
+  # touched.
+  local summary passed failed total
+  summary="$(printf '%s\n' "$out" | grep -oE '\+[0-9]+( -[0-9]+)?: (All tests passed|Some tests failed)' | tail -n1)"
+  passed="$(printf '%s' "$summary" | grep -oE '^\+[0-9]+' | tr -d '+')"
+  failed="$(printf '%s' "$summary" | grep -oE ' -[0-9]+' | tr -d ' -')"
+  [ -z "$passed" ] && passed=0
+  [ -z "$failed" ] && failed=0
+  total=$((passed + failed))
+
+  echo "$out"
+  echo "dice($passed/$total)"
+
+  [ $rc -eq 0 ] && return 0
+  return 1
+}
+
 # 3b. The server test suite: room and registry conformance tests under
 # packages/ludo_server/test/. Not protocol conformance -- that is gate_protocol,
 # still a stub -- this is the registry and room logic exercised directly.
@@ -351,6 +392,7 @@ run_gate static     gate_static
 run_gate purity     gate_purity
 run_gate rules      gate_rules
 run_gate golden     gate_golden
+run_gate dice       gate_dice
 run_gate server     gate_server
 run_gate protocol   gate_protocol
 run_gate simulator  gate_simulator
