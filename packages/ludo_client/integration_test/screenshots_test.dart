@@ -34,6 +34,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:ludo_client/src/app.dart';
+import 'package:ludo_client/src/room_screen.dart';
 
 /// The code typed into the join field for both room captures. Six
 /// characters from the room-code alphabet; see the file header for why this
@@ -64,11 +65,42 @@ void main() {
     await binding.takeScreenshot('03-room-ar');
 
     // Back to the (still Arabic) home screen, toggle the locale to English,
-    // then join a room again to land on an English room screen. The AppBar
-    // back button here is the one MaterialPageRoute supplies automatically
-    // (see room_screen.dart); it carries no key, so it is found by widget
-    // type, which works under either locale, unlike a tooltip lookup.
-    await tester.tap(find.byType(BackButton));
+    // then join a room again to land on an English room screen.
+    //
+    // This used to be `tester.tap(find.byType(BackButton))`, on the theory
+    // that the AppBar's automatically-implied back button is a BackButton
+    // (room_screen.dart sets neither `leading` nor
+    // `automaticallyImplyLeading: false`, and home_screen.dart pushes the
+    // route with a plain MaterialPageRoute, so AppBar's own logic --
+    // packages/flutter/lib/src/material/app_bar.dart, `_AppBarState.build`,
+    // pinned Flutter 3.47.1 -- does build `leading = const BackButton()`
+    // whenever there is no custom leading and the route has an active route
+    // below it). That reasoning holds under `flutter test`: a headless
+    // reproduction of this exact sequence (locale toggle, then Join Room,
+    // landing on the Arabic room screen) finds exactly one BackButton at
+    // this point. It nonetheless found zero widgets on the real device this
+    // workflow runs against (workflow run 33183494414), which uses
+    // IntegrationTestWidgetsFlutterBinding on a real emulator rather than
+    // the fake-clock binding `flutter test` uses; nothing in this repo
+    // explains that divergence, and it cannot be reproduced in this
+    // container, which has no Android SDK or emulator.
+    //
+    // Rather than chase a binding-specific timing difference that can only
+    // be diagnosed on a device, this drives the pop directly through the
+    // Navigator instead of tapping whatever widget Material happens to
+    // render as the back affordance. It is the same call any back
+    // affordance (button, gesture, hardware key) ends up making, so it
+    // reaches the same home screen without depending on a widget lookup
+    // that has already been proven fragile once. (The other option the
+    // order allowed -- pumping LudoApp() a second time instead of navigating
+    // back at all -- was tried and rejected: WidgetsBinding.attachRootWidget
+    // reuses the existing root Element rather than discarding it
+    // (packages/flutter/lib/src/widgets/binding.dart, `attachToBuildOwner`),
+    // so LudoApp's State, and the NavigatorState nested inside it, survive
+    // the second pumpWidget call. A headless reproduction confirmed this
+    // directly: pumping LudoApp() again from the room screen left the room
+    // screen on screen, not the home screen.)
+    Navigator.of(tester.element(find.byType(RoomScreen))).pop();
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('locale-toggle-button')));
