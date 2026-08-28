@@ -38,15 +38,14 @@ services:
 
     # Mirrors the Dockerfile HEALTHCHECK; kept here too so `docker compose
     # ps` reflects health without needing the image's own default to be
-    # inspected separately. See the Dockerfile comment: there is no
-    # dedicated health endpoint yet, so a fixed 404 from the WebSocket
-    # upgrade handler stands in as the liveness signal.
+    # inspected separately. GET /health reports 200 with a JSON body once
+    # the process is bound and answering as itself.
     healthcheck:
       test:
         - CMD-SHELL
         - >-
           code=$$(curl -s -o /dev/null -w '%{http_code}'
-          http://127.0.0.1:8080/) && [ "$$code" = "404" ]
+          http://127.0.0.1:8080/health) && [ "$$code" = "200" ]
       interval: 30s
       timeout: 3s
       start_period: 10s
