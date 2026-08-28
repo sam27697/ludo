@@ -11,7 +11,6 @@ import 'package:ludo_engine/ludo_engine.dart';
 import 'package:test/test.dart';
 
 import '../support/fixtures.dart';
-import '../support/splitmix64.dart';
 
 void main() {
   group('rule 1: setup', () {
@@ -169,28 +168,25 @@ void main() {
       'seat rather than to seat 0',
       () {
         const seats = <int>[1, 2, 3];
-        // Every token in the yard and a non-six roll gives an empty legal
+        // Every token in the yard and a non-six face gives an empty legal
         // set, so rule 7 passes the turn with no move played, and we only
-        // need one controlled draw to observe where the turn goes next.
-        final rngState = findRngStateForNextRoll(3);
+        // need one roll to observe where the turn goes next. Rule 38: the
+        // face is chosen by the caller, not drawn by the engine, so a 3 is
+        // simply passed straight in.
         final state = buildAwaitRoll(
           seats: seats,
           currentSeat: 3,
-          rngState: rngState,
+          rngState: 1,
         );
-        final result = apply(state, const RollIntention(3));
-        expect(
-          result,
-          isA<Applied>(),
-          reason: 'seed=$rngState should draw a 3, expect $result',
-        );
+        final result = apply(state, const RollIntention(3, 3));
+        expect(result, isA<Applied>(), reason: 'expect $result');
         final applied = result as Applied;
         expect(
           applied.state.currentSeat,
           1,
           reason: 'seat 3 is the highest occupied seat in $seats; the next '
               'turn must wrap to the lowest occupied seat, 1, not to seat 0 '
-              '(unoccupied) or seat 4 (out of range). seed=$rngState',
+              '(unoccupied) or seat 4 (out of range).',
         );
       },
     );

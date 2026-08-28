@@ -9,7 +9,6 @@ import 'package:ludo_engine/ludo_engine.dart';
 import 'package:test/test.dart';
 
 import '../support/fixtures.dart';
-import '../support/splitmix64.dart';
 
 void main() {
   test(
@@ -116,21 +115,20 @@ void main() {
       );
       expect(legalTokens(sanity), contains(0));
 
-      // Now the third 6 itself, drawn by an actual roll: the roll step
-      // must recognise sixes == 2 and a value of 6 before it ever computes
-      // a legal set, and must forfeit the turn without offering a move.
-      final rngState = findRngStateForNextRoll(6);
+      // Now the third 6 itself: the roll step must recognise sixes == 2
+      // and a face of 6 before it ever computes a legal set, and must
+      // forfeit the turn without offering a move.
       final state = buildAwaitRoll(
         seats: twoPlayerSeats,
         currentSeat: 0,
         sixes: 2,
-        rngState: rngState,
+        rngState: 1,
         tokens: const {
           0: <int>[30, -1, -1, -1],
         },
       );
-      final result = apply(state, const RollIntention(0));
-      expect(result, isA<Applied>(), reason: 'rngState=$rngState');
+      final result = apply(state, const RollIntention(0, 6));
+      expect(result, isA<Applied>());
       final applied = result as Applied;
 
       expect(applied.events.whereType<Moved>(), isEmpty);
@@ -178,19 +176,18 @@ void main() {
     'case 6: a roll producing no legal move for any token passes the turn '
     'immediately, with no timer and no error (rule 7)',
     () {
-      // Three tokens home and one in the yard: any roll that is not a 6
+      // Three tokens home and one in the yard: any face that is not a 6
       // leaves nothing legal.
-      final rngState = findRngStateForNextRoll(5);
       final state = buildAwaitRoll(
         seats: twoPlayerSeats,
         currentSeat: 0,
-        rngState: rngState,
+        rngState: 1,
         tokens: const {
           0: <int>[-1, 57, 57, 57],
         },
       );
-      final result = apply(state, const RollIntention(0));
-      expect(result, isA<Applied>(), reason: 'rngState=$rngState');
+      final result = apply(state, const RollIntention(0, 5));
+      expect(result, isA<Applied>());
       final applied = result as Applied;
       expect(
         applied.events,
