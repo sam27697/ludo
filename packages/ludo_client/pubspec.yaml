@@ -34,6 +34,11 @@ dependencies:
     sdk: flutter
   intl: ^0.20.2
 
+  # Annotations only, no runtime. lib/src/board_geometry.dart uses
+  # @immutable and has no other reason to import anything from Flutter, so
+  # the geometry stays testable without a render tree.
+  meta: ^1.15.0
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
