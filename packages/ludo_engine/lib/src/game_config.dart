@@ -21,6 +21,13 @@ class GameConfig {
   final RulesConfig rules;
 
   /// 64-bit, from the server CSPRNG. Never sent to a client.
+  ///
+  /// No longer read by the engine as of rule 38 (docs/RULES.md): the die
+  /// face now rides in `RollIntention` and the engine draws nothing from
+  /// this seed. It is kept on `GameConfig` only because dropping it would
+  /// break `packages/ludo_server`'s `seed_commit` computation; that removal
+  /// belongs to the protocol order that follows this one
+  /// (`docs/FAIRNESS.md` section 7 item 3).
   final int seed;
 
   @override
