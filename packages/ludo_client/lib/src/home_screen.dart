@@ -60,10 +60,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: widget.onToggleLocale,
             child: Tooltip(
               message: loc.homeLocaleToggleTooltip,
-              child: Text(
-                loc.homeLocaleToggleLabel,
-                style: const TextStyle(color: Colors.white),
-              ),
+              child: Text(loc.homeLocaleToggleLabel),
             ),
           ),
         ],
