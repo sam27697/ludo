@@ -20,6 +20,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:test/test.dart';
 
@@ -64,6 +65,40 @@ Future<List<int>> _bytesOf(HttpClientResponse response) =>
       (List<int> soFar, List<int> chunk) => soFar..addAll(chunk),
     );
 
+/// The absolute path to this package's own root directory (the directory
+/// containing `bin/`, `lib/` and `pubspec.yaml`), resolved from the package
+/// configuration rather than from the current working directory or from
+/// `Platform.script` -- under `dart test` the latter resolves to a
+/// precompiled kernel file in a temporary directory, not to this source
+/// file, so it cannot anchor anything here. Resolving
+/// `package:ludo_server/ludo_server.dart` instead gives the same absolute
+/// path whether the test runner's working directory is this package
+/// directory or the repository root, which is exactly the difference
+/// between running `dart test` locally and running it through
+/// `bin/ludo-verify.sh`. Cached after the first resolution since it cannot
+/// change during a single test run.
+Future<String>? _packageRootFuture;
+
+Future<String> _packageRoot() {
+  return _packageRootFuture ??= () async {
+    final Uri? libUri = await Isolate.resolvePackageUri(
+      Uri.parse('package:ludo_server/ludo_server.dart'),
+    );
+    if (libUri == null) {
+      fail(
+        'could not resolve package:ludo_server/ludo_server.dart to a file '
+        'URI; cannot locate bin/server.dart for the subprocess tests '
+        'below',
+      );
+    }
+    // libUri points at <package root>/lib/ludo_server.dart; its
+    // grandparent directory is the package root that bin/server.dart
+    // hangs off of.
+    final Directory packageRoot = File.fromUri(libUri).parent.parent;
+    return packageRoot.path;
+  }();
+}
+
 /// A running `bin/server.dart` process with a caller-controlled environment,
 /// so `PRIVACY_CONTACT_EMAIL` can be asserted both set and (deliberately)
 /// absent regardless of whatever happens to be in this test runner's own
@@ -92,11 +127,14 @@ class _ServerProcess {
       env['PRIVACY_CONTACT_EMAIL'] = contactEmail;
     }
 
+    final String packageRoot = await _packageRoot();
+
     final Process process = await Process.start(
       Platform.resolvedExecutable,
       <String>['run', 'bin/server.dart'],
       environment: env,
       includeParentEnvironment: false,
+      workingDirectory: packageRoot,
     );
 
     final Completer<int> portCompleter = Completer<int>();
