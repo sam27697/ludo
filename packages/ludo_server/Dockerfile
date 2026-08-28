@@ -21,7 +21,17 @@ WORKDIR /workspace
 
 # Manifests first, and the whole workspace's manifests before any source, so
 # `pub get` resolves once and the layer caches on manifest changes only.
+#
+# This list is exactly the `workspace:` list in the root pubspec.yaml, no
+# more and no less -- packages/ludo_client sits alongside these under
+# packages/ but is not a workspace member (it is the Flutter app, resolved
+# on its own) and must not be copied here. There is no way to derive this
+# list from the manifest at COPY time without parsing YAML in a shell step,
+# which trades a list a human can check by eye for a script that fails the
+# same way this Dockerfile just did, only quietly. When a package joins or
+# leaves the workspace in pubspec.yaml, add or remove its line here too.
 COPY pubspec.yaml pubspec.lock ./
+COPY packages/fair_dice/pubspec.yaml packages/fair_dice/pubspec.yaml
 COPY packages/ludo_engine/pubspec.yaml packages/ludo_engine/pubspec.yaml
 COPY packages/ludo_server/pubspec.yaml packages/ludo_server/pubspec.yaml
 
@@ -30,6 +40,7 @@ COPY packages/ludo_server/pubspec.yaml packages/ludo_server/pubspec.yaml
 # something else if it and the manifests have drifted apart.
 RUN dart pub get --enforce-lockfile
 
+COPY packages/fair_dice packages/fair_dice
 COPY packages/ludo_engine packages/ludo_engine
 COPY packages/ludo_server packages/ludo_server
 
