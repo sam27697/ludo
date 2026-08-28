@@ -862,4 +862,180 @@ void main() {
       );
     },
   );
+
+  // Order 048, verdict of run 17, defect 1: the contact paragraph is
+  // configuration-driven (spec item 13), but the "Data you can ask about"
+  // section names "the address below" regardless of whether an address is
+  // configured. With PRIVACY_CONTACT_EMAIL unset there is no address and
+  // nothing below to point at; that sentence, and the "Contact." section it
+  // refers to, must both disappear together, not just one of them.
+  //
+  // The verdict also asks for a general internal-consistency assertion: that
+  // every occurrence of "below", "above" or "following" in the rendered text
+  // points at something that actually exists. That is not expressible here
+  // without guessing. Resolving "the thing it points at" for an arbitrary
+  // occurrence of one of those words is a natural-language reading task, not
+  // a structural check a test can perform without first deciding, by hand,
+  // what each occurrence is supposed to refer to -- which means hardcoding
+  // today's draft wording into the assertion and calling it general. The one
+  // occurrence of "below" this policy contains today is exactly the case the
+  // verdict already names concretely, so the two cases below are asserted
+  // directly instead of through an invented general mechanism.
+  group(
+    'PRIVACY_CONTACT_EMAIL: the "address below" cross-reference resolves '
+    'in both configurations',
+    () {
+      test(
+          'unset: no "address below" reference and no dangling '
+          '"if you believe we hold something about you" sentence', () async {
+        final _ServerProcess proc = await _ServerProcess.start(
+          setContactEmail: false,
+        );
+        activeProcess = proc;
+
+        final HttpClientResponse response = await _send(
+          client,
+          proc.uri('/privacy'),
+        );
+        final String body = await _bodyOf(response);
+
+        expect(
+          response.statusCode,
+          200,
+          reason: 'GET /privacy with PRIVACY_CONTACT_EMAIL unset must still '
+              'answer 200, got ${response.statusCode} with body "$body"',
+        );
+        expect(
+          body.contains('address below'),
+          isFalse,
+          reason: 'with PRIVACY_CONTACT_EMAIL unset there is no address and '
+              'nothing below to point at, but the document still contains '
+              'the phrase "address below"; full body: $body',
+        );
+        expect(
+          body.contains(
+            'If you believe we hold something about you',
+          ),
+          isFalse,
+          reason: 'with PRIVACY_CONTACT_EMAIL unset the sentence directing '
+              'the reader to write to an address that does not exist must '
+              'not appear, but the document contains it; full body: $body',
+        );
+      });
+
+      test(
+          'unset: the Data you can ask about section is still present and '
+          'still ends at "...nothing to give you a copy of or to '
+          'delete."', () async {
+        final _ServerProcess proc = await _ServerProcess.start(
+          setContactEmail: false,
+        );
+        activeProcess = proc;
+
+        final HttpClientResponse response = await _send(
+          client,
+          proc.uri('/privacy'),
+        );
+        final String body = await _bodyOf(response);
+
+        expect(
+          body.contains('Data you can ask about'),
+          isTrue,
+          reason: 'the "Data you can ask about" section must still be '
+              'present with PRIVACY_CONTACT_EMAIL unset, just without the '
+              'dangling reference to an address; full body: $body',
+        );
+        expect(
+          body.contains(
+            'nothing to give you a copy of or to delete.',
+          ),
+          isTrue,
+          reason: 'expected the section to still end at "...nothing to '
+              'give you a copy of or to delete." with PRIVACY_CONTACT_EMAIL '
+              'unset; full body: $body',
+        );
+      });
+
+      test(
+          'set: the address-below sentence and the Contact section are '
+          'both present', () async {
+        const String email = 'crossref-test@example.invalid';
+        final _ServerProcess proc = await _ServerProcess.start(
+          setContactEmail: true,
+          contactEmail: email,
+        );
+        activeProcess = proc;
+
+        final HttpClientResponse response = await _send(
+          client,
+          proc.uri('/privacy'),
+        );
+        final String body = await _bodyOf(response);
+
+        expect(
+          response.statusCode,
+          200,
+          reason: 'GET /privacy with PRIVACY_CONTACT_EMAIL="$email" set '
+              'must still answer 200, got ${response.statusCode} with body '
+              '"$body"',
+        );
+        expect(
+          body.contains(
+            'write to the address below and we will act on it',
+          ),
+          isTrue,
+          reason: 'with PRIVACY_CONTACT_EMAIL set, the sentence directing '
+              'the reader to the address below must be present; full body: '
+              '$body',
+        );
+        expect(
+          body.contains('Contact'),
+          isTrue,
+          reason: 'with PRIVACY_CONTACT_EMAIL set, a Contact section must '
+              'be present for "address below" to point at; full body: '
+              '$body',
+        );
+      });
+
+      test(
+          'set: the configured address appears within the Contact section, '
+          'after its heading', () async {
+        const String email = 'crossref-test@example.invalid';
+        final _ServerProcess proc = await _ServerProcess.start(
+          setContactEmail: true,
+          contactEmail: email,
+        );
+        activeProcess = proc;
+
+        final HttpClientResponse response = await _send(
+          client,
+          proc.uri('/privacy'),
+        );
+        final String body = await _bodyOf(response);
+
+        final int contactHeadingIndex = body.indexOf('Contact');
+        expect(
+          contactHeadingIndex,
+          greaterThanOrEqualTo(0),
+          reason: 'expected a "Contact" heading somewhere in the document '
+              'with PRIVACY_CONTACT_EMAIL set; full body: $body',
+        );
+        final int emailIndex = body.indexOf(email);
+        expect(
+          emailIndex,
+          greaterThanOrEqualTo(0),
+          reason: 'expected the exact configured address "$email" in the '
+              'document; full body: $body',
+        );
+        expect(
+          emailIndex,
+          greaterThan(contactHeadingIndex),
+          reason: 'expected the configured address to appear after the '
+              '"Contact" heading, inside the contact section, not before '
+              'it; Contact heading at index $contactHeadingIndex, address '
+              'at index $emailIndex; full body: $body',
+        );
+      });
+    },
+  );
 }
