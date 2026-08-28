@@ -15,6 +15,8 @@
 //     finished tokens). Progress 57 is excluded from the rotation multiset
 //     tested here; see the comment on that test.
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +27,9 @@ const _entry = [0, 13, 26, 39];
 
 int _manhattan(BoardCell a, BoardCell b) =>
     (a.col - b.col).abs() + (a.row - b.row).abs();
+
+int _chebyshev(BoardCell a, BoardCell b) =>
+    math.max((a.col - b.col).abs(), (a.row - b.row).abs());
 
 /// The name of the 6x6 corner quadrant [cell] falls in, or null if it is
 /// outside all four. The board is 15x15; the cross arm through the middle
@@ -133,30 +138,60 @@ void main() {
   });
 
   group('The track is connected (property 3)', () {
-    test('seat 0: progress p and p + 1 are orthogonally adjacent for every p '
-        'in 0..50, and progress 51 wraps to adjacent to progress 0', () {
-      for (var p = 0; p <= 50; p++) {
-        final a = cellFor(seat: 0, progress: p);
-        final b = cellFor(seat: 0, progress: p + 1);
-        final distance = _manhattan(a, b);
+    // Amended 2026-08-28, run 15: Chebyshev distance exactly 1 for every
+    // one of the 52 steps (orthogonal or diagonal), plus exactly four of
+    // those 52 steps must be diagonal (Manhattan distance 2). Checking
+    // Chebyshev alone would also pass a track that wandered diagonally
+    // the whole way round, which is the wrong-direction bug this property
+    // exists to catch, so both halves are asserted together.
+    test('seat 0: progress p and p + 1 are adjacent (Chebyshev distance '
+        'exactly 1) for every p in 0..50, wrapping progress 51 to progress '
+        '0, and exactly four of those 52 steps are diagonal (Manhattan '
+        'distance 2)', () {
+      final steps = <int, (BoardCell, BoardCell)>{
+        for (var p = 0; p <= 50; p++)
+          p: (cellFor(seat: 0, progress: p), cellFor(seat: 0, progress: p + 1)),
+        51: (cellFor(seat: 0, progress: 51), cellFor(seat: 0, progress: 0)),
+      };
+
+      final diagonalAt = <int>[];
+      for (final entry in steps.entries) {
+        final p = entry.key;
+        final (a, b) = entry.value;
+        final chebyshev = _chebyshev(a, b);
         expect(
-          distance,
+          chebyshev,
           1,
           reason:
-              'seat 0: progress $p ($a) and progress ${p + 1} ($b) are '
-              'Manhattan distance $distance apart, expected 1 (seed: p=$p)',
+              'seat 0: progress $p ($a) and its successor ($b) are '
+              'Chebyshev distance $chebyshev apart, expected exactly 1 '
+              '(seed: p=$p)',
         );
+
+        final manhattan = _manhattan(a, b);
+        expect(
+          manhattan == 1 || manhattan == 2,
+          isTrue,
+          reason:
+              'seat 0: progress $p ($a) and its successor ($b) are '
+              'Chebyshev distance 1 but Manhattan distance $manhattan, '
+              'which is neither an orthogonal step (Manhattan 1) nor a '
+              'diagonal one (Manhattan 2) (seed: p=$p)',
+        );
+        if (manhattan == 2) {
+          diagonalAt.add(p);
+        }
       }
-      final last = cellFor(seat: 0, progress: 51);
-      final wrapped = cellFor(seat: 0, progress: 0);
-      final distance = _manhattan(last, wrapped);
+
       expect(
-        distance,
-        1,
+        diagonalAt.length,
+        4,
         reason:
-            'seat 0: progress 51 ($last) and progress 0 ($wrapped), '
-            'the wrap case, are Manhattan distance $distance apart, '
-            'expected 1',
+            'expected exactly 4 diagonal (Manhattan distance 2) steps '
+            'around the 52-step track, one at each corner where an arm '
+            'of the cross meets the next; found ${diagonalAt.length} at '
+            'progress ${diagonalAt.join(', ')} (seed: diagonalAt='
+            '$diagonalAt)',
       );
     });
   });
