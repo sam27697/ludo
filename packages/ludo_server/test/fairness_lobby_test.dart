@@ -29,22 +29,18 @@ import 'package:test/test.dart';
 
 import 'support/wire_harness.dart';
 
-// `SetSeedResult`, `SetSeedOk` and `SetSeedFailure` are not on
-// `package:ludo_server/ludo_server.dart`'s export list (see
-// `lib/ludo_server.dart`), unlike every other registry result type
-// (`JoinResult`, `ResumeResult`, `StartResult`, and so on, all of which are
-// exported). This import reaches past that gap for exactly one purpose,
-// documented at its one call site below: `set_seed`'s own wire message,
-// `docs/PROTOCOL.md` section 4, carries no room `code` field at all, so
-// there is no way for a real client socket to ever send a set_seed against
-// a room code that never existed -- a socket's room is always the one it
-// created, joined or resumed into, which necessarily existed at that
+// `SetSeedResult` and `SetSeedFailure` now come from the package's own
+// export list; they used to be reached for through `src/registry.dart`
+// because they were missing from it. The reason this suite needs them at
+// all is documented at their one call site below: `set_seed`'s own wire
+// message, `docs/PROTOCOL.md` section 4, carries no room `code` field at
+// all, so there is no way for a real client socket to ever send a set_seed
+// against a room code that never existed -- a socket's room is always the
+// one it created, joined or resumed into, which necessarily existed at that
 // moment. `RoomRegistry.setSeed` is the only entry point that can even be
 // asked the "never existed" question for this message, and it is a real
 // method on the real registry the wire server itself calls, not a mock of
 // one.
-import 'package:ludo_server/src/registry.dart'
-    show SetSeedResult, SetSeedFailure;
 
 /// A room's first chain commitment: `s[0]`, 64 lowercase hex characters.
 final RegExp _hex64 = RegExp(r'^[0-9a-f]{64}$');
