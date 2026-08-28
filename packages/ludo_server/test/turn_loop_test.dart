@@ -255,10 +255,19 @@ void main() {
   }
 
   /// Reads the two frames a `rolled` with an empty `legal` list produces
-  /// (section 12.1): `turn_passed` with `reason: "no_legal_move"`, then
-  /// `turn` for whichever seat now holds it. Returns that seat. Reads via
-  /// [_next], which also drains and checks the other socket's copy of
-  /// each of the two frames, so no backlog is left behind on it.
+  /// (section 12.1): `turn_passed`, then `turn` for whichever seat now
+  /// holds it. Returns that seat. Section 12.1 gives `turn_passed` two
+  /// disjoint reasons, both of which leave `legal` empty on the `rolled`
+  /// that preceded them -- "no_legal_move" (the engine had nothing to
+  /// move) and "three_sixes" (the turn ended on a third consecutive six,
+  /// which forfeits the turn regardless of what would otherwise have been
+  /// legal) -- so a generic "bounce past whatever ended this turn without
+  /// a move" helper used across many tests must accept either; a test
+  /// that specifically needs the no_legal_move reason (see the
+  /// `turn_passed` group below) checks it itself rather than relying on
+  /// this one to. Reads via [_next], which also drains and checks the
+  /// other socket's copy of each of the two frames, so no backlog is left
+  /// behind on it.
   Future<int> consumeNoLegalMove(WireTestLobby lobby, int actingSeat) async {
     final Map<String, Object?> passed = await _next(lobby, actingSeat);
     expect(
@@ -271,9 +280,10 @@ void main() {
         passed['d']! as Map<String, Object?>;
     expect(
       passedData['reason'],
-      'no_legal_move',
+      anyOf('no_legal_move', 'three_sixes'),
       reason: 'turn_passed following an empty-legal rolled must carry '
-          'reason "no_legal_move"; got ${passedData['reason']}',
+          'reason "no_legal_move" or "three_sixes" (section 12.1); got '
+          '${passedData['reason']}',
     );
     final Map<String, Object?> turn = await _next(lobby, actingSeat);
     expect(
@@ -1624,7 +1634,6 @@ void main() {
         final List<int> legal =
             (rolledData['legal']! as List<Object?>).cast<int>();
         if (legal.isEmpty) {
-          found = true;
           // Read via _next: both frames are broadcast to every socket in
           // the room (section 12.3), so the other socket's copy of each
           // is drained (and checked) here too, consistent with every
@@ -1637,10 +1646,8 @@ void main() {
                 'turn_passed immediately after the empty-legal rolled, got '
                 '"${passed['t']}": ${passed['d']}',
           );
-          expect(
-            (passed['d']! as Map<String, Object?>)['reason'],
-            'no_legal_move',
-          );
+          final Object? reason =
+              (passed['d']! as Map<String, Object?>)['reason'];
           final Map<String, Object?> turn = await _next(lobby, current);
           expect(
             turn['t'],
@@ -1649,12 +1656,23 @@ void main() {
                 'seat immediately after turn_passed, got "${turn['t']}": '
                 '${turn['d']}',
           );
+          final int nextSeat =
+              (turn['d']! as Map<String, Object?>)['seat']! as int;
           expect(
-            (turn['d']! as Map<String, Object?>)['seat'],
+            nextSeat,
             isNot(current),
             reason: 'turn must move to a different seat after '
-                'no_legal_move',
+                'turn_passed (reason $reason)',
           );
+          if (reason == 'no_legal_move') {
+            // This is the specific property this test proves; every
+            // other empty-legal reason (three_sixes, section 12.1) is a
+            // real, valid pass too, just not the one being proven here,
+            // so it is bounced past exactly like a legal move would be.
+            found = true;
+          } else {
+            current = nextSeat;
+          }
         } else {
           final Map<String, Object?> moved = await sendMove(
             lobby,
