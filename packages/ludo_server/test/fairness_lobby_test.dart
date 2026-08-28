@@ -250,13 +250,22 @@ void main() {
 
   /// Sends `start_game` from the host and waits for `game_started` on both
   /// sockets, tolerating any `seat_seed` pushes a correct implementation
-  /// interleaves around it. Returns the host's `game_started` payload.
+  /// interleaves around it. Also consumes the standalone `turn` frame
+  /// section 13.1 requires immediately after `game_started`, on both
+  /// sockets, via [expectOpeningTurn] -- otherwise it sits in each
+  /// socket's queue and is mistaken for whatever the next helper actually
+  /// asked for. Returns the host's `game_started` payload.
   Future<Map<String, Object?>> startGame(_Lobby lobby) async {
     lobby.host.client.send('start_game', <String, Object?>{});
     final Map<String, Object?> hostFrame =
         await receiveType(lobby.host.client, 'game_started');
+    final Map<String, Object?> hostFrameData =
+        hostFrame['d']! as Map<String, Object?>;
+    final Object? startingSeat = hostFrameData['turn'];
+    await expectOpeningTurn(lobby.host.client, startingSeat);
     await receiveType(lobby.guest.client, 'game_started');
-    return hostFrame['d']! as Map<String, Object?>;
+    await expectOpeningTurn(lobby.guest.client, startingSeat);
+    return hostFrameData;
   }
 
   Future<Map<String, Object?>> setSeed(

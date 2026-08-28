@@ -261,9 +261,14 @@ void main() {
     lobby.host.client.send('start_game', <String, Object?>{});
     final Map<String, Object?> hostStarted =
         await receiveType(lobby.host.client, 'game_started');
-    await receiveType(lobby.guest.client, 'game_started');
     final Map<String, Object?> startedData =
         hostStarted['d']! as Map<String, Object?>;
+    // Section 13.1: a standalone turn immediately follows game_started, on
+    // every socket in the room; consumed and asserted here so _driveRolls
+    // below does not mistake it for the first rolled frame it sends for.
+    await expectOpeningTurn(lobby.host.client, startedData['turn']);
+    await receiveType(lobby.guest.client, 'game_started');
+    await expectOpeningTurn(lobby.guest.client, startedData['turn']);
 
     expect(
       startedData['game_id'],
@@ -316,9 +321,14 @@ void main() {
     lobby.host.client.send('start_game', <String, Object?>{});
     final Map<String, Object?> hostStarted =
         await receiveType(lobby.host.client, 'game_started');
-    await receiveType(lobby.guest.client, 'game_started');
     final Map<String, Object?> startedData =
         hostStarted['d']! as Map<String, Object?>;
+    // Section 13.1: a standalone turn immediately follows game_started, on
+    // every socket in the room; consumed and asserted here so _driveRolls
+    // below does not mistake it for the first rolled frame it sends for.
+    await expectOpeningTurn(lobby.host.client, startedData['turn']);
+    await receiveType(lobby.guest.client, 'game_started');
+    await expectOpeningTurn(lobby.guest.client, startedData['turn']);
 
     final int startingSeat = startedData['turn']! as int;
     final List<_RollRecord> rolls =
