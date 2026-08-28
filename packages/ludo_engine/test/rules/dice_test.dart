@@ -250,7 +250,8 @@ void main() {
           0: <int>[20, -1, -1, -1],
         },
       );
-      final threeSixesResult = apply(threeSixesState, const RollIntention(0, 6));
+      final threeSixesResult =
+          apply(threeSixesState, const RollIntention(0, 6));
       expect(threeSixesResult, isA<Applied>());
       expect(
         (threeSixesResult as Applied).state.rngState,
