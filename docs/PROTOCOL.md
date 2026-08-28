@@ -173,7 +173,7 @@ every delta and renders only snapshots; the deltas are an optimisation.
     { "seat": 0, "name": "Sam", "connected": true, "tokens": [-1, 0, 14, 57],
       "client_seed": "alice-seed", "seed_origin": "player" }
   ],
-  "turn": { "seat": 1, "phase": "await_roll|await_move", "value": 6,
+  "turn": { "seat": 1, "phase": "await_roll|await_move|finished", "value": 6,
             "legal": [0, 2], "deadline_ms": 41200, "sixes": 1, "k": 12 },
   "winner": null,
   "seq": 118
@@ -746,3 +746,47 @@ The ruling, in full, because the middle case is the one that bites:
 
 **The server already does exactly this**, in `connection.dart`'s rules parser.
 This section makes the table agree with it.
+
+## 14. Two rulings on the snapshot's `turn`, 2026-08-29
+
+Both were found by reading `lib/src/snapshot.dart` against section 6 rather
+than by reading section 6 alone, and both matter to the client decoder that is
+about to be written: a decoder built strictly on section 6 as it stood would
+reject the snapshot of a finished game, which is the exact snapshot a player who
+was away when the game ended receives on `resume` under section 8 rule 5.
+
+### 14.1 `turn.phase` has a third value, `finished`
+
+Section 6's example carried `"await_roll|await_move"` and that list is
+incomplete. `engine.GamePhase` has three members and `snapshot.dart:118-127`
+maps all three onto the wire, so a room in state `FINISHED` serves a `turn`
+object whose `phase` is the string `finished`.
+
+That is the right behaviour and it is not being changed. The snapshot describes
+the game as it stands, and a game that has ended is in a real phase, not in an
+absent one. What was wrong is section 6's enumeration, which is now corrected in
+place.
+
+A `turn` carrying `phase: "finished"` follows the same field rules as
+`await_roll`: `value`, `legal` and `sixes` are absent, because
+`_turnSnapshot` adds them only under `await_move`. `deadline_ms` and `k` are
+present, as they are in every phase.
+
+**A client must accept all three values.** Rejecting `finished` costs a player
+the one frame that tells them how the game they missed came out.
+
+### 14.2 `turn` is null before `start_game`, and only there
+
+`_turnSnapshot` returns null exactly when `room.game` is null, and `room.game`
+is set at `start_game` and never cleared. So:
+
+- **LOBBY** -- `turn` is `null`. There is no turn, and there is no honest
+  integer to put in `seat`.
+- **PLAYING** -- `turn` is an object, `phase` is `await_roll` or `await_move`.
+- **FINISHED** -- `turn` is an object, `phase` is `finished`. It is **not**
+  null. The losing readings here are equally plausible from section 6's text
+  alone, which is why this is written down rather than left to two hands to
+  guess at separately.
+
+`winner` moves the other way and is the companion field: `null` in LOBBY and
+PLAYING, an integer seat in FINISHED.
