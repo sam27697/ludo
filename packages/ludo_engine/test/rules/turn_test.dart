@@ -5,20 +5,24 @@ import 'package:ludo_engine/ludo_engine.dart';
 import 'package:test/test.dart';
 
 import '../support/fixtures.dart';
-import '../support/splitmix64.dart';
 
 void main() {
-  test('rule 5: a roll is a uniform integer 1 to 6 inclusive', () {
-    for (final want in const [1, 2, 3, 4, 5, 6]) {
-      final rngState = findRngStateForNextRoll(want);
-      final state = buildAwaitRoll(seats: twoPlayerSeats, rngState: rngState);
-      final result = apply(state, const RollIntention(0));
-      expect(result, isA<Applied>());
-      final rolled = (result as Applied).events.whereType<Rolled>().single;
-      expect(rolled.value, want, reason: 'rngState=$rngState');
-      expect(rolled.value, inInclusiveRange(1, 6));
-    }
-  });
+  test(
+    'rule 5: a turn begins with exactly one die roll, an integer 1 to 6 '
+    'inclusive, and the engine reports back exactly the face it was given',
+    () {
+      for (final want in const [1, 2, 3, 4, 5, 6]) {
+        // Rule 38: the engine draws nothing of its own; the face is
+        // supplied by the caller and only validated, not generated.
+        final state = buildAwaitRoll(seats: twoPlayerSeats, rngState: 1);
+        final result = apply(state, RollIntention(0, want));
+        expect(result, isA<Applied>(), reason: 'face=$want');
+        final rolled = (result as Applied).events.whereType<Rolled>().single;
+        expect(rolled.value, want, reason: 'face=$want');
+        expect(rolled.value, inInclusiveRange(1, 6));
+      }
+    },
+  );
 
   test(
     'rule 6: after the roll, the engine computes the legal set for that '
@@ -28,16 +32,15 @@ void main() {
       // token 1 in the yard needs a 6, not a 2: illegal.
       // token 2 at 55 needs exactly 2 to reach home at 57: legal.
       // token 3 already home at 57 is never movable again: illegal.
-      final rngState = findRngStateForNextRoll(2);
       final state = buildAwaitRoll(
         seats: twoPlayerSeats,
-        rngState: rngState,
+        rngState: 1,
         tokens: const {
           0: <int>[10, -1, 55, 57],
         },
       );
-      final result = apply(state, const RollIntention(0));
-      expect(result, isA<Applied>(), reason: 'rngState=$rngState');
+      final result = apply(state, const RollIntention(0, 2));
+      expect(result, isA<Applied>());
       final applied = result as Applied;
       expect(applied.state.roll, 2);
       expect(applied.state.phase, GamePhase.awaitMove);
@@ -52,14 +55,13 @@ void main() {
     'rule 7: an empty legal set passes the turn immediately, with no error '
     'and no move',
     () {
-      final rngState = findRngStateForNextRoll(4);
       final state = buildAwaitRoll(
         seats: twoPlayerSeats,
         currentSeat: 0,
-        rngState: rngState,
+        rngState: 1,
       );
-      final result = apply(state, const RollIntention(0));
-      expect(result, isA<Applied>(), reason: 'rngState=$rngState');
+      final result = apply(state, const RollIntention(0, 4));
+      expect(result, isA<Applied>());
       final applied = result as Applied;
 
       expect(
@@ -114,18 +116,17 @@ void main() {
       // sixes = 1 models a turn already one six in, mid extra-roll. Token 0
       // sits at 56, so only a roll of exactly 1 is legal for it; tokens 1-3
       // are in the yard and need a 6. A roll of 3 leaves nothing legal.
-      final rngState = findRngStateForNextRoll(3);
       final state = buildAwaitRoll(
         seats: twoPlayerSeats,
         currentSeat: 0,
         sixes: 1,
-        rngState: rngState,
+        rngState: 1,
         tokens: const {
           0: <int>[56, -1, -1, -1],
         },
       );
-      final result = apply(state, const RollIntention(0));
-      expect(result, isA<Applied>(), reason: 'rngState=$rngState');
+      final result = apply(state, const RollIntention(0, 3));
+      expect(result, isA<Applied>());
       final applied = result as Applied;
 
       expect(
