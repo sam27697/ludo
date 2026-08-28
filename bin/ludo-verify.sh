@@ -346,11 +346,43 @@ gate_simulator() {
   return 77
 }
 
-# 6. A real build artifact. "It compiles" is not the gate: the release bundle
-# builds and the debug build installs and reaches the main screen.
+# 6. A real build artifact. "It compiles" is not the gate: something has to
+# actually be built, not merely type-checked.
+#
+# The client half of this is already covered elsewhere: the `client` job in
+# .github/workflows/verify.yml builds the release app bundle (and, when the
+# upload-signing secrets are configured, signs and verifies it) on every
+# push. That needs a Flutter toolchain this script does not assume is present,
+# so it is not repeated here.
+#
+# What this gate checks is the other artifact: the server image. It only
+# passes if it can actually run `docker build` against
+# packages/ludo_server/Dockerfile from $ROOT, the same command
+# deploy/ludo/deploy.sh runs and the server-image job in
+# .github/workflows/verify.yml runs on every push. `command -v docker` alone
+# proves nothing -- a docker client binary with no reachable daemon behind it
+# is common on a bare build host -- so the check is `docker info`, which
+# actually talks to the daemon.
 gate_artifact() {
-  echo "no client yet"
-  return 77
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "no docker on PATH here, so this gate cannot build the server image; it runs on every push instead, as the server-image job in .github/workflows/verify.yml"
+    return 77
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    echo "docker is on PATH but no docker daemon answered 'docker info', so this gate cannot build the server image; it runs on every push instead, as the server-image job in .github/workflows/verify.yml"
+    return 77
+  fi
+
+  local log rc
+  log="$(docker build -f "$ROOT/packages/ludo_server/Dockerfile" -t ludo-server:verify "$ROOT" 2>&1)"
+  rc=$?
+  if [ $rc -ne 0 ]; then
+    echo "docker build -f packages/ludo_server/Dockerfile -t ludo-server:verify $ROOT failed (exit $rc); last 30 lines:"
+    printf '%s\n' "$log" | tail -n 30
+    return 1
+  fi
+  echo "docker build -f packages/ludo_server/Dockerfile -t ludo-server:verify $ROOT succeeded"
+  return 0
 }
 
 # The specs themselves are checked from gate one, because they are the only

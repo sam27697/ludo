@@ -13,6 +13,24 @@ jobs:
       - run: dart pub get
       - run: bash bin/ludo-verify.sh
 
+  # Builds the server image on every push, exactly the way deploy/ludo/deploy.sh
+  # builds it and exactly the way gate_artifact in bin/ludo-verify.sh builds it
+  # when a docker daemon is available to that script. Kept as its own job, not
+  # folded into `verify` or `client`, for the same reason `client` is separate:
+  # when this goes red it must be unambiguous that the server image build is
+  # what broke, not the Dart harness and not the Android client.
+  #
+  # This is the check that would have caught packages/fair_dice joining the pub
+  # workspace without also joining the Dockerfile's COPY list -- main sat
+  # unbuildable with nothing to say so until someone tried to deploy it. The
+  # image is never pushed anywhere and nothing here logs in to a registry;
+  # building it to prove it builds is the entire point.
+  server-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: docker build -f packages/ludo_server/Dockerfile -t ludo-server:ci .
+
   # packages/ludo_client is a standalone Flutter package, not a member of the
   # root pub workspace (see packages/ludo_client/pubspec.yaml and the root
   # pubspec.yaml for why: a Flutter package as a workspace member drags a
