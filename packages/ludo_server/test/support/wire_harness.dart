@@ -31,10 +31,19 @@ class ServerHarness {
   final RoomRegistry registry;
   final WireServer server;
 
-  static ServerHarness build() {
+  /// [secure] is additive, order 052: `RoomRegistry` has always taken
+  /// `required Random secure` (`lib/src/registry.dart:284`), and every
+  /// existing call site of this method calls it with no arguments and gets
+  /// exactly what it always got, `Random.secure()`. A caller that supplies
+  /// [secure] -- `test/support/scripted_bytes.dart`'s
+  /// `ScriptedBytesRandom`, so far the only one -- gets a room whose whole
+  /// draw sequence, and therefore whose whole die-face sequence, is fixed
+  /// rather than drawn from real entropy. Nothing under `lib/` or `bin/`
+  /// is aware this parameter exists.
+  static ServerHarness build({Random? secure}) {
     final FakeClock clock = FakeClock(DateTime.utc(2026, 8, 28));
     final RoomRegistry registry =
-        RoomRegistry(clock: clock, secure: Random.secure());
+        RoomRegistry(clock: clock, secure: secure ?? Random.secure());
     final RateLimiter rateLimiter = RateLimiter(clock: clock);
     final WireServer server = WireServer(
       registry: registry,
