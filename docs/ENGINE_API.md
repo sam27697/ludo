@@ -113,7 +113,8 @@ sealed class Intention {
 }
 
 class RollIntention extends Intention {          // wire: "roll"
-  const RollIntention(int seat);
+  final int face;                                // 1..6, drawn by the caller
+  const RollIntention(int seat, this.face);
 }
 
 class MoveIntention extends Intention {          // wire: "move"
@@ -186,14 +187,25 @@ detail:
 3. `intention.seat != state.currentSeat` -> `notYourTurn`.
 4. Intention type does not match `state.phase` -> `wrongPhase`.
    (`RollIntention` needs `awaitRoll`, `MoveIntention` needs `awaitMove`.)
-5. `MoveIntention.token` outside 0..3 -> `noSuchToken`.
-6. `MoveIntention.token` not in `legalTokens(state)` -> `illegalMove`.
+5. `RollIntention.face` not an integer in 1..6 -> `badFace`.
+6. `MoveIntention.token` outside 0..3 -> `noSuchToken`.
+7. `MoveIntention.token` not in `legalTokens(state)` -> `illegalMove`.
+
+`badFace` sits at step 5 and not earlier on purpose. A face is only meaningful
+once the seat and the phase are known to be right, so a spectator sending
+`{"face": 99}` out of turn gets `notYourTurn`, which is what it did wrong first.
+`badFace` is a new value at the end of the `EngineError` enum; appending keeps
+every existing `.name` string and every existing `.index` stable, which the
+golden corpus's optional `error` field depends on.
 
 ## 5. What each intention does
 
 ### RollIntention
 
-1. Draw a die value, 1..6, per section 7. This advances `rngState`.
+1. Read the die value from `intention.face`. The engine draws nothing and
+   `rngState` does not move; see section 7 and rule 38. A `face` that is not an
+   integer in 1..6 is rejected with `badFace` before anything else in this list
+   happens, and a rejection leaves the state untouched as always.
 2. If the value is 6 and `state.sixes == 2`, this is the third consecutive 6.
    Rule 10: the roll is **not played**, no move is offered, the turn passes.
    Emit `Rolled` then `TurnEnded(threeSixes)` then `TurnBegan` for the next
@@ -257,11 +269,33 @@ Event order for a capturing move that grants an extra roll:
 
 ## 7. Dice, exactly
 
-The die must be unpredictable to a player and byte-identical on replay. Those
-are compatible because the unpredictability lives entirely in the seed, which
-is cryptographic and server-side, while the stream from that seed is fixed.
+**The engine does not roll dice.** Rule 38. The face arrives inside
+`RollIntention`, the engine validates it is 1..6, and that is the whole of the
+engine's involvement with randomness.
 
-The generator is **SplitMix64**, with 64-bit wrapping arithmetic:
+Where a face comes from depends on who is calling:
+
+| Caller | Source of the face |
+|---|---|
+| the game server | `packages/fair_dice`, per `docs/FAIRNESS.md` section 2.3: one HMAC draw per roll under a per-roll chain secret, revealed in the same frame as the result |
+| `tool/generate_corpus.dart`, and offline simulation | the SplitMix64 below, seeded per game, so a corpus is reproducible from its seed alone |
+
+That split is the point of the change. A per-roll verifiable secret cannot come
+out of one generator held for a whole game, so the engine had to stop holding
+one. It also makes rule 36 stronger: replay no longer depends on this
+generator, because the faces are in the intention stream.
+
+`rngState` and `config.seed` still exist on the state and in the hash, and the
+engine no longer moves either. **They are vestigial and their removal belongs to
+the protocol order** (`docs/FAIRNESS.md` section 7 item 3), which is when the
+server stops computing `seed_commit` from `config.seed` and can drop them
+together. They were left in place rather than removed here so that this change
+does not have to break `packages/ludo_server` in the same commit.
+
+### SplitMix64, for the corpus generator only
+
+Retained in `lib/src/rng.dart` and off the gameplay path. The generator is
+**SplitMix64**, with 64-bit wrapping arithmetic:
 
 ```
 next(state):
@@ -290,7 +324,30 @@ roll(state):
 The rejection branch is reachable roughly once in a billion draws and it is
 still specified, because "roughly never" is exactly when a determinism bug hides.
 
-Nothing else in the engine consumes randomness. `rngState` changes only here.
+Nothing in `apply` consumes randomness. Only the corpus generator calls this.
+
+### The golden corpus record
+
+One JSON object per line in `test/golden/corpus.jsonl`, keys in this order:
+
+```
+name        string
+seed        int          the generator's seed, NOT the engine's
+seats       [int]
+rules       { blocks: bool, captureBonus: bool }
+intentions  [ {"t":"roll","seat":int,"face":int}
+            | {"t":"move","seat":int,"token":int} ]
+finalHash   string       16 lowercase hex, stateHash of the final state
+finalSeq    int
+```
+
+**`face` is mandatory on every `roll` record.** A replayer that treats a missing
+`face` as anything other than a hard failure would silently accept a corpus from
+before this change and prove nothing; it must name the record and fail.
+
+`seed` stays in the record because the generator still needs it to reproduce the
+same faces, and because a face sequence that cannot be re-derived from anything
+is a face sequence nobody can audit. It is no longer read by the engine.
 
 ## 8. Serialisation and the hash
 
