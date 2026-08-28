@@ -23,6 +23,11 @@ Future<void> main() async {
           .where((String s) => s.isNotEmpty)
           .toSet();
 
+  // Reported by GET /health. Set by the deploy process; falls back to 'dev'
+  // when unset or empty so a local run still answers with something.
+  final String rawVersion = Platform.environment['LUDO_VERSION'] ?? '';
+  final String version = rawVersion.isEmpty ? 'dev' : rawVersion;
+
   final RoomRegistry registry = RoomRegistry(
     clock: const SystemClock(),
     secure: Random.secure(),
@@ -33,6 +38,7 @@ Future<void> main() async {
     rateLimiter: rateLimiter,
     clock: const SystemClock(),
     trustedProxies: trustedProxies,
+    version: version,
   );
 
   await server.start(address: InternetAddress.anyIPv4, port: port);
