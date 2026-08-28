@@ -4,7 +4,6 @@ import 'package:ludo_engine/ludo_engine.dart';
 import 'package:test/test.dart';
 
 import '../support/fixtures.dart';
-import '../support/splitmix64.dart';
 
 void main() {
   test(
@@ -46,18 +45,17 @@ void main() {
       // turn. Token 0 sits well inside the track so a third 6 would
       // otherwise be a perfectly legal advance; rule 10 says it must not be
       // offered at all.
-      final rngState = findRngStateForNextRoll(6);
       final state = buildAwaitRoll(
         seats: twoPlayerSeats,
         currentSeat: 0,
         sixes: 2,
-        rngState: rngState,
+        rngState: 1,
         tokens: const {
           0: <int>[20, -1, -1, -1],
         },
       );
-      final result = apply(state, const RollIntention(0));
-      expect(result, isA<Applied>(), reason: 'rngState=$rngState');
+      final result = apply(state, const RollIntention(0, 6));
+      expect(result, isA<Applied>());
       final applied = result as Applied;
 
       expect(
