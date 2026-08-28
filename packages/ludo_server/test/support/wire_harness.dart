@@ -172,3 +172,188 @@ class WireTestClient {
     }
   }
 }
+
+// -----------------------------------------------------------------------
+// Additive helpers below this line, added for order 046 (the turn loop
+// conformance suite, `docs/PROTOCOL.md` section 12) so that more than one
+// `turn_loop_*.dart` file can share the same two-seat-lobby plumbing rather
+// than each re-deriving its own private copy of it, the way
+// `fairness_lobby_test.dart` did for section 11. Nothing above this line
+// was changed to add them; every existing symbol in this file keeps its
+// exact prior signature and behaviour, which is what the six other test
+// files that already import this one depend on.
+// -----------------------------------------------------------------------
+
+/// One seat in a room reachable over the wire: the socket that took or
+/// resumed it, the seat index the registry assigned, and the seat token
+/// that reclaims it (`docs/PROTOCOL.md` section 2). General-purpose, not
+/// specific to any one section of the protocol.
+class WireTestSeat {
+  WireTestSeat({required this.client, required this.seat, required this.token});
+
+  final WireTestClient client;
+  final int seat;
+  final String token;
+}
+
+/// A room in LOBBY with exactly two seats filled, every handshake frame
+/// already drained from both sockets' queues -- host and guest are ready
+/// for a caller to send the one message it actually wants to observe.
+class WireTestLobby {
+  WireTestLobby({
+    required this.code,
+    required this.host,
+    required this.guest,
+    required this.hostRoom,
+    required this.guestRoom,
+  });
+
+  final String code;
+  final WireTestSeat host;
+  final WireTestSeat guest;
+
+  /// The `d` of the `room` frame the host received on `create_room`.
+  final Map<String, Object?> hostRoom;
+
+  /// The `d` of the `room` frame the guest received on `join_room`.
+  final Map<String, Object?> guestRoom;
+}
+
+/// Creates a fresh room over [uri] and joins a second client into it,
+/// draining every handshake frame (`seat_assigned`, both `room` frames, and
+/// the host's `player_joined` push for the guest) so a caller is left with
+/// two sockets ready for whatever it actually wants to test. Every socket
+/// opened here is appended to [clients], exactly as a caller opening a
+/// [WireTestClient] by hand would do, so a `tearDown` that already closes
+/// everything in that list closes these too.
+Future<WireTestLobby> buildWireTestLobby(
+  Uri uri,
+  List<WireTestClient> clients, {
+  String hostName = 'Host',
+  String guestName = 'Guest',
+  int players = 2,
+  Map<String, Object?> rules = const <String, Object?>{},
+}) async {
+  final WireTestClient hostClient = await WireTestClient.connect(uri);
+  clients.add(hostClient);
+  hostClient.send('create_room', <String, Object?>{
+    'name': hostName,
+    'players': players,
+    if (rules.isNotEmpty) 'rules': rules,
+  });
+  final Map<String, Object?> hostSeatAssigned = await hostClient.next();
+  final Map<String, Object?> hostRoomFrame = await hostClient.next();
+  final Map<String, Object?> hostSeatData =
+      hostSeatAssigned['d']! as Map<String, Object?>;
+  final Map<String, Object?> hostRoomData =
+      hostRoomFrame['d']! as Map<String, Object?>;
+  final String code = hostRoomData['code']! as String;
+
+  final WireTestClient guestClient = await WireTestClient.connect(uri);
+  clients.add(guestClient);
+  guestClient.send('join_room', <String, Object?>{
+    'code': code,
+    'name': guestName,
+  });
+  final Map<String, Object?> guestSeatAssigned = await guestClient.next();
+  final Map<String, Object?> guestRoomFrame = await guestClient.next();
+  final Map<String, Object?> guestSeatData =
+      guestSeatAssigned['d']! as Map<String, Object?>;
+
+  // The host's socket also receives player_joined for the guest; drained
+  // here so later reads on the host's queue see only what a later message
+  // actually produces.
+  await hostClient.next();
+
+  return WireTestLobby(
+    code: code,
+    host: WireTestSeat(
+      client: hostClient,
+      seat: hostSeatData['seat']! as int,
+      token: hostSeatData['seat_token']! as String,
+    ),
+    guest: WireTestSeat(
+      client: guestClient,
+      seat: guestSeatData['seat']! as int,
+      token: guestSeatData['seat_token']! as String,
+    ),
+    hostRoom: hostRoomData,
+    guestRoom: guestRoomFrame['d']! as Map<String, Object?>,
+  );
+}
+
+/// Reads frames off [client] one at a time, discarding anything that is not
+/// a [type] frame, up to [maxFrames]. Tolerates a correct implementation
+/// interleaving other pushes in an order the spec does not pin, while still
+/// failing -- inside a bounded, short wall-clock budget -- when the frame a
+/// caller actually needs never shows up at all. Identical in behaviour to
+/// the private helper of the same name in `fairness_lobby_test.dart`;
+/// promoted here so more than one file can share it without a second
+/// hand-copy drifting from the first.
+Future<Map<String, Object?>> receiveType(
+  WireTestClient client,
+  String type, {
+  int maxFrames = 6,
+  Duration perFrame = const Duration(milliseconds: 500),
+}) async {
+  for (int i = 0; i < maxFrames; i++) {
+    final Map<String, Object?> frame = await client.next(timeout: perFrame);
+    if (frame['t'] == type) {
+      return frame;
+    }
+  }
+  throw TestFailure(
+    'expected a "$type" frame within $maxFrames frames and none arrived',
+  );
+}
+
+/// Reads frames off [client] one at a time until a [type] frame arrives,
+/// returning every frame seen along the way, [type] included, in arrival
+/// order. Tolerates any number of interleaved pushes while still failing,
+/// inside a bounded, short wall-clock budget, when [type] never shows up at
+/// all. Identical in behaviour to the private helper of the same name in
+/// `fairness_lobby_test.dart`; promoted here for the same reason as
+/// [receiveType] above.
+Future<List<Map<String, Object?>>> drainUntil(
+  WireTestClient client,
+  String type, {
+  int maxFrames = 6,
+  Duration perFrame = const Duration(milliseconds: 500),
+}) async {
+  final List<Map<String, Object?>> frames = <Map<String, Object?>>[];
+  for (int i = 0; i < maxFrames; i++) {
+    final Map<String, Object?> frame = await client.next(timeout: perFrame);
+    frames.add(frame);
+    if (frame['t'] == type) {
+      return frames;
+    }
+  }
+  throw TestFailure(
+    'expected a "$type" frame within $maxFrames frames on this socket and '
+    'none arrived; frames seen along the way: $frames',
+  );
+}
+
+/// Asserts [frame] is an `error` frame carrying exactly [expectedCode].
+/// [because] is folded into every assertion's failure message so a
+/// mismatch names the scenario it was proving, not just the two codes that
+/// disagreed.
+void expectErrorFrame(
+  Map<String, Object?> frame,
+  String expectedCode, {
+  required String because,
+}) {
+  if (frame['t'] != 'error') {
+    throw TestFailure(
+      'expected an error frame ($because) but got a "${frame['t']}" frame '
+      'instead: ${frame['d']}',
+    );
+  }
+  final Map<String, Object?> data = frame['d']! as Map<String, Object?>;
+  if (data['code'] != expectedCode) {
+    throw TestFailure(
+      'expected error code $expectedCode ($because) but got '
+      '${data['code']} (message: "${data['message']}")',
+    );
+  }
+}
