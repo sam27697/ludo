@@ -72,15 +72,12 @@ USER 10001:10001
 ENV PORT=8080
 EXPOSE 8080
 
-# packages/ludo_server has no dedicated health endpoint as of this order --
-# see deploy/ludo/README.md for the finding. Every HTTP request that is not
-# a WebSocket upgrade gets a fixed 404 Not Found from shelf_web_socket; that
-# response is only reachable at all if the process is bound to the port and
-# running its request pipeline, so it is used here as the liveness signal
-# until a real endpoint exists. This checks the exact status code, not
+# GET /health reports 200 with a JSON body only once the process is bound,
+# serving its request pipeline, and answering as itself -- not merely that
+# something is listening on the port. This checks the exact status code, not
 # merely that curl connected, so a proxy or stub answering on the port with
 # something else still fails the check.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD ["/bin/sh", "-c", "code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/) && [ \"$code\" = \"404\" ]"]
+  CMD ["/bin/sh", "-c", "code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health) && [ \"$code\" = \"200\" ]"]
 
 ENTRYPOINT ["/server"]

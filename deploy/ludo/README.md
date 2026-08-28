@@ -44,27 +44,32 @@ bash repo/deploy/ludo/deploy.sh 1c9e072
 ```
 
 The script fetches, hard-resets `repo/` to the resolved ref, builds an image
-tagged `ludo-server:staging-<short-sha>`, brings it up, and polls it over
-`127.0.0.1:8199` (the published loopback port, the same port the reverse
-proxy already forwards `stg.ludo.provefair.app` to) until it answers or the
-attempt budget runs out. If it never answers healthy, the script prints the
-last 50 lines of the container's log, brings the previously-deployed image
-back up, and exits non-zero. Nothing succeeds silently and nothing fails
-silently.
+tagged `ludo-server:staging-<short-sha>`, brings it up with `LUDO_VERSION`
+set to that same short sha, and polls `GET /health` over `127.0.0.1:8199`
+(the published loopback port, the same port the reverse proxy already
+forwards `stg.ludo.provefair.app` to) until it answers `200` or the attempt
+budget runs out. Once it answers `200`, the script fetches `/health` once
+more and compares the `version` field it reports against the sha it just
+deployed. If it never answers `200`, or if it answers but reports a
+different sha, the script prints the last 50 lines of the container's log,
+brings the previously-deployed image back up, and exits non-zero. Nothing
+succeeds silently and nothing fails silently.
 
 The last line the script prints is always `sha=<short-sha>
-health=ok` or `sha=<short-sha> health=fail`, whether or not it rolled back.
+health=ok version=<short-sha>` or `sha=<short-sha> health=fail`, whether or
+not it rolled back.
 
 ## Rolling back by hand
 
-The script rolls back automatically on a failed health check. To roll back
-manually to a specific previously-built image (they are never deleted by
-this script, only superseded):
+The script rolls back automatically on a failed health check or a version
+mismatch. To roll back manually to a specific previously-built image (they
+are never deleted by this script, only superseded):
 
 ```
 cd /srv/apps/ludo
 docker images ludo-server
-LUDO_IMAGE_TAG=ludo-server:staging-<short-sha> docker compose \
+LUDO_IMAGE_TAG=ludo-server:staging-<short-sha> \
+LUDO_VERSION=<short-sha> docker compose \
   -f docker-compose.yml --env-file .env up -d --remove-orphans
 ```
 
@@ -76,26 +81,26 @@ Then update `/srv/apps/ludo/.current_image_tag` to match, so the next
 Run, from anywhere with network access to the staging hostname:
 
 ```
-curl -sS -o /dev/null -w '%{http_code}\n' https://stg.ludo.provefair.app/
+curl -sS https://stg.ludo.provefair.app/health
 ```
 
 Then, from the `deploy` account on the box itself:
 
 ```
-curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8199/
+curl -sS http://127.0.0.1:8199/health
 ```
 
-There is no dedicated health endpoint in `packages/ludo_server` as of this
-order (see "What we found" below); a plain `404` with the body `Only
-WebSocket connections are supported.` is what a healthy process returns to a
-GET, because every request that is not a WebSocket upgrade gets that fixed
-response. That is the signal to read, not "some 2xx".
+A healthy process answers both with `200` and a small JSON body:
+`{"status":"ok","version":"<short-sha>","uptime_s":<n>,"rooms":<n>}`. The
+`version` field is what `deploy.sh` set `LUDO_VERSION` to on the last deploy
+that succeeded; read it and confirm it is the sha you expect running, not
+just that the status code came back `200`.
 
-- Both commands return `404`: the container is up, the reverse proxy is
-  forwarding correctly, and TLS terminates correctly. The staging server is
-  healthy. If a player still reports a problem, it is at the protocol layer
-  above this, not here.
-- The loopback command (`127.0.0.1:8199`) returns `404` but the public one
+- Both commands return `200` and agree on `version`: the container is up,
+  the reverse proxy is forwarding correctly, TLS terminates correctly, and
+  it is running the build you think it is. If a player still reports a
+  problem, it is at the protocol layer above this, not here.
+- The loopback command (`127.0.0.1:8199`) returns `200` but the public one
   fails, times out, or returns something from a different server: the
   container is fine. The break is DNS, TLS, or the reverse proxy, none of
   which this deploy account can see or fix -- escalate to whoever holds the
@@ -106,7 +111,7 @@ response. That is the signal to read, not "some 2xx".
   `docker compose -f docker-compose.yml --env-file .env logs --tail 100
   ludo-server` from `/srv/apps/ludo/` and read what the process actually
   said on its way down.
-- The loopback command connects but returns something other than `404`
+- The loopback command connects but returns something other than `200`
   (a `502`, a connection reset mid-response, anything else): something is
   listening on `127.0.0.1:8199` but it is not this container answering
   normally -- check `docker compose ps` for a crash-looping container before
@@ -114,15 +119,6 @@ response. That is the signal to read, not "some 2xx".
 
 ## What we found, for the next order
 
-- `packages/ludo_server` has no HTTP health endpoint. Every GET that is not
-  a WebSocket upgrade returns a fixed `404` from `shelf_web_socket`. This is
-  used throughout this deploy (Dockerfile `HEALTHCHECK`, compose
-  `healthcheck`, and `deploy.sh`'s own poll) as a stand-in liveness signal:
-  it proves the process is bound to the port and running its request
-  pipeline, but it proves nothing about room state, memory pressure, or
-  whether the housekeeping timer is still running. A real `/health` (or
-  similar) endpoint is server source, outside this order's file list, and
-  is the next order's business.
 - `TRUSTED_PROXIES` is read by `bin/server.dart` and is meant to hold the
   addresses of proxies allowed to set `X-Forwarded-For`. What address the
   Dart process actually sees as the immediate TCP peer, once a connection
