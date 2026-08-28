@@ -649,6 +649,9 @@ void main() {
     test('usable as a Set element, deduplicating equal cells', () {
       final set = <BoardCell>{
         const BoardCell(1, 2),
+        // Duplicate on purpose: this test exists to prove the Set collapses
+        // two equal BoardCells to one element, so the repeat below is the point.
+        // ignore: equal_elements_in_set
         const BoardCell(1, 2),
         const BoardCell(3, 4),
       };
@@ -756,7 +759,6 @@ void main() {
           3: [39, 0, 57, 30],
         };
         final handle = tester.ensureSemantics();
-        addTearDown(handle.dispose);
 
         await tester.pumpWidget(_harness(tokens: tokens));
         await tester.pumpAndSettle();
@@ -786,6 +788,8 @@ void main() {
             );
           }
         }
+
+        handle.dispose();
       },
     );
 
@@ -797,7 +801,6 @@ void main() {
           for (final seat in _seats) seat: [10, 10, 30, 45],
         };
         final handle = tester.ensureSemantics();
-        addTearDown(handle.dispose);
 
         await tester.pumpWidget(_harness(tokens: tokens));
         await tester.pumpAndSettle();
@@ -830,6 +833,8 @@ void main() {
                 '(seed: seat=$seat)',
           );
         }
+
+        handle.dispose();
       },
     );
 
@@ -843,7 +848,6 @@ void main() {
           3: [39, 0, 57, 30],
         };
         final handle = tester.ensureSemantics();
-        addTearDown(handle.dispose);
 
         await tester.pumpWidget(
           _harness(tokens: tokens, textDirection: TextDirection.rtl),
@@ -875,6 +879,8 @@ void main() {
             );
           }
         }
+
+        handle.dispose();
       },
     );
 
