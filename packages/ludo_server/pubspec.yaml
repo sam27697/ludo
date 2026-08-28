@@ -8,6 +8,8 @@ resolution: workspace
 dependencies:
   ludo_engine:
     path: ../ludo_engine
+  fair_dice:
+    path: ../fair_dice
   shelf: ^1.4.0
   shelf_web_socket: ^3.0.0
   web_socket_channel: ^3.0.0
