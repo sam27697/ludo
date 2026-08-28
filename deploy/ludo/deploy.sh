@@ -27,16 +27,26 @@ set -euo pipefail
 
 ROOT="/srv/apps/ludo"
 REPO_DIR="$ROOT/repo"
-COMPOSE_FILE="$ROOT/docker-compose.yml"
+COMPOSE_FILE="$REPO_DIR/deploy/ludo/docker-compose.yml"
 ENV_FILE="$ROOT/.env"
 STATE_FILE="$ROOT/.current_image_tag"
 DOCKERFILE="packages/ludo_server/Dockerfile"
 SERVICE_NAME="ludo-server"
 IMAGE_NAME="ludo-server"
 ENVIRONMENT_NAME="${LUDO_ENVIRONMENT:-staging}"
-HEALTH_URL="http://127.0.0.1:8199/health"
 HEALTH_ATTEMPTS=30
 HEALTH_INTERVAL_SECONDS=2
+
+# docker compose derives the project name, and the base directory it
+# resolves a compose file's own relative paths against (env_file:, volumes,
+# build.context), from the "project directory" -- the directory holding the
+# compose file, unless --project-directory says otherwise. COMPOSE_FILE now
+# lives inside the checkout, not in $ROOT, so both of those would drift from
+# what the already-running container was brought up under if left to that
+# default. Pin both to $ROOT explicitly: that is where the previously
+# hand-placed compose file lived, it is where .env actually is, and
+# basename($ROOT) is the project name docker compose was already using.
+PROJECT_NAME="$(basename "$ROOT")"
 
 REF="${1:-main}"
 
@@ -63,7 +73,18 @@ require_command git
 require_command docker
 require_command curl
 
-require_file "$COMPOSE_FILE" "docker-compose.yml"
+# The port polled has to be the port the environment being deployed actually
+# publishes, not a literal that happens to be right for staging. Unknown
+# environments fail loudly here rather than falling back to staging's port
+# and going on to print a health=ok that describes the wrong container.
+case "$ENVIRONMENT_NAME" in
+  staging)    DEFAULT_HEALTH_PORT=8199 ;;
+  production) DEFAULT_HEALTH_PORT=8099 ;;
+  *) fail "no known health port for LUDO_ENVIRONMENT='$ENVIRONMENT_NAME' -- set LUDO_HEALTH_PORT explicitly, or deploy with LUDO_ENVIRONMENT unset (staging) or LUDO_ENVIRONMENT=production" ;;
+esac
+HEALTH_PORT="${LUDO_HEALTH_PORT:-$DEFAULT_HEALTH_PORT}"
+HEALTH_URL="http://127.0.0.1:${HEALTH_PORT}/health"
+
 require_file "$ENV_FILE" ".env"
 
 [[ -d "$REPO_DIR/.git" ]] || fail "no checkout at $REPO_DIR -- clone it first, see README.md"
@@ -77,6 +98,11 @@ else
   RESET_TARGET="$REF"
 fi
 git -C "$REPO_DIR" reset --hard --quiet "$RESET_TARGET"
+
+# COMPOSE_FILE lives inside $REPO_DIR, so it only exists to be checked once
+# the reset above has put the right ref's copy on disk; checking it earlier
+# would be checking whatever the previous deploy left behind.
+require_file "$COMPOSE_FILE" "docker-compose.yml (inside the checkout -- see deploy/ludo/README.md)"
 
 SHA="$(git -C "$REPO_DIR" rev-parse --short HEAD)"
 log "resolved ref '$REF' to sha $SHA"
@@ -104,6 +130,8 @@ docker build \
 bring_up() {
   local tag="$1" version="$2"
   LUDO_IMAGE_TAG="$tag" LUDO_VERSION="$version" docker compose \
+    --project-name "$PROJECT_NAME" \
+    --project-directory "$ROOT" \
     -f "$COMPOSE_FILE" \
     --env-file "$ENV_FILE" \
     up -d --remove-orphans
@@ -117,6 +145,8 @@ roll_back_and_fail() {
   log "$*"
   log "last 50 lines of container log:"
   LUDO_IMAGE_TAG="$NEW_TAG" docker compose \
+    --project-name "$PROJECT_NAME" \
+    --project-directory "$ROOT" \
     -f "$COMPOSE_FILE" \
     --env-file "$ENV_FILE" \
     logs --no-color --tail 50 "$SERVICE_NAME" || true

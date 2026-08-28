@@ -13,7 +13,6 @@ Run as the `deploy` account. Replace `<repo-url>` with the real remote.
 mkdir -p /srv/apps/ludo
 cd /srv/apps/ludo
 git clone <repo-url> repo
-cp repo/deploy/ludo/docker-compose.yml docker-compose.yml
 cp repo/deploy/ludo/env.example .env
 # edit .env now: set PORT (leave at 8080 unless you also change the
 # container-side half of the port mapping in docker-compose.yml) and
@@ -23,11 +22,24 @@ chmod 600 .env
 bash repo/deploy/ludo/deploy.sh main
 ```
 
-`docker-compose.yml` and `.env` are copied out of the checkout once, by
-hand, at install time -- not symlinked into `repo/`, so a later `git reset
---hard` inside `repo/` during a deploy never touches either of them.
-`deploy.sh` reads them from `/srv/apps/ludo/` directly, not from inside
-`repo/`.
+`.env` is copied out of the checkout once, by hand, at install time -- not
+symlinked into `repo/`, so a later `git reset --hard` inside `repo/` during a
+deploy never touches it. `deploy.sh` reads it from `/srv/apps/ludo/.env`
+directly, not from inside `repo/`.
+
+`docker-compose.yml` is **not** copied anywhere. `deploy.sh` reads it
+straight out of the checkout, at `repo/deploy/ludo/docker-compose.yml`, after
+resetting that checkout to the ref being deployed -- so whatever compose
+change is merged is what runs, the same way a code change is. It passes
+`--project-directory /srv/apps/ludo` on every `docker compose` call so the
+compose file's own relative paths (its `env_file: .env` entry) still resolve
+against `/srv/apps/ludo/`, where `.env` actually lives, and so the project
+name stays `ludo` regardless of where inside the checkout the file sits.
+
+If this box was set up before this changed, there is a stale hand-placed
+copy sitting at `/srv/apps/ludo/docker-compose.yml`. `deploy.sh` no longer
+reads it. It is not load-bearing and can be deleted; nothing refers to it
+anymore.
 
 ## Deploying
 
@@ -45,15 +57,21 @@ bash repo/deploy/ludo/deploy.sh 1c9e072
 
 The script fetches, hard-resets `repo/` to the resolved ref, builds an image
 tagged `ludo-server:staging-<short-sha>`, brings it up with `LUDO_VERSION`
-set to that same short sha, and polls `GET /health` over `127.0.0.1:8199`
-(the published loopback port, the same port the reverse proxy already
-forwards `stg.ludo.provefair.app` to) until it answers `200` or the attempt
-budget runs out. Once it answers `200`, the script fetches `/health` once
-more and compares the `version` field it reports against the sha it just
-deployed. If it never answers `200`, or if it answers but reports a
-different sha, the script prints the last 50 lines of the container's log,
-brings the previously-deployed image back up, and exits non-zero. Nothing
-succeeds silently and nothing fails silently.
+set to that same short sha, and polls `GET /health` over the loopback port
+for the environment being deployed -- `127.0.0.1:8199` for staging,
+`127.0.0.1:8099` for production, `LUDO_ENVIRONMENT` selects which and
+`LUDO_HEALTH_PORT` overrides the port directly if a deploy ever needs a
+non-default one -- until it answers `200` or the attempt budget runs out.
+Once it answers `200`, the script fetches `/health` once more and compares
+the `version` field it reports against the sha it just deployed. If it never
+answers `200`, or if it answers but reports a different sha, the script
+prints the last 50 lines of the container's log, brings the
+previously-deployed image back up, and exits non-zero. Nothing succeeds
+silently and nothing fails silently.
+
+An `ENVIRONMENT_NAME` deploy.sh does not recognise fails immediately, before
+anything is built or brought up, rather than quietly polling staging's port
+on a deploy meant for somewhere else.
 
 The last line the script prints is always `sha=<short-sha>
 health=ok version=<short-sha>` or `sha=<short-sha> health=fail`, whether or
@@ -70,8 +88,16 @@ cd /srv/apps/ludo
 docker images ludo-server
 LUDO_IMAGE_TAG=ludo-server:staging-<short-sha> \
 LUDO_VERSION=<short-sha> docker compose \
-  -f docker-compose.yml --env-file .env up -d --remove-orphans
+  --project-name ludo --project-directory /srv/apps/ludo \
+  -f repo/deploy/ludo/docker-compose.yml --env-file .env up -d --remove-orphans
 ```
+
+`--project-name ludo --project-directory /srv/apps/ludo` matter here, not
+just for `deploy.sh`: without them `docker compose` derives both from the
+directory the `-f` file sits in (`repo/deploy/ludo/`), which resolves the
+compose file's `env_file: .env` entry to a `.env` that does not exist there
+and, if the derived name ever stopped matching, would bring up a second
+container beside the one already running instead of replacing it.
 
 Then update `/srv/apps/ludo/.current_image_tag` to match, so the next
 `deploy.sh` run rolls back to the right place if it needs to.
@@ -107,10 +133,15 @@ just that the status code came back `200`.
   proxy and the DNS zone.
 - The loopback command fails to connect at all (connection refused, or
   curl reports it cannot connect): the container is down or never came up.
-  Run `docker compose -f docker-compose.yml --env-file .env ps` and
-  `docker compose -f docker-compose.yml --env-file .env logs --tail 100
-  ludo-server` from `/srv/apps/ludo/` and read what the process actually
-  said on its way down.
+  Run, from `/srv/apps/ludo/`:
+  ```
+  docker compose --project-name ludo --project-directory /srv/apps/ludo \
+    -f repo/deploy/ludo/docker-compose.yml --env-file .env ps
+  docker compose --project-name ludo --project-directory /srv/apps/ludo \
+    -f repo/deploy/ludo/docker-compose.yml --env-file .env logs --tail 100 \
+    ludo-server
+  ```
+  and read what the process actually said on its way down.
 - The loopback command connects but returns something other than `200`
   (a `502`, a connection reset mid-response, anything else): something is
   listening on `127.0.0.1:8199` but it is not this container answering
@@ -134,10 +165,23 @@ just that the status code came back `200`.
   up correctly together. Confirm this on the real box before staging is
   used for anything load-related.
 
+- `deploy.sh` now derives the port it polls from `LUDO_ENVIRONMENT`
+  (`8199` staging, `8099` production), but `docker-compose.yml`'s `ports:`
+  entry is still the literal `127.0.0.1:8199:8080` -- it does not read
+  `LUDO_ENVIRONMENT` at all. A deploy run with `LUDO_ENVIRONMENT=production`
+  today would build and tag a production image correctly, bring it up, and
+  still publish it on `8199`, the same host port staging uses, while
+  `deploy.sh` polls `8099` and finds nothing there -- the deploy fails loudly
+  and rolls back rather than reporting a false `health=ok`, but it will
+  never succeed until the compose file's port mapping is made to follow
+  `LUDO_ENVIRONMENT` the same way the image tag already does. That is a
+  change to `docker-compose.yml` and is not part of this order.
+
 ## Out of scope here
 
 Production (`ludo.provefair.app`, port 8099), TLS, the reverse proxy
 configuration, and the Android release build are not this deploy's concern.
-When staging is proven, these same files get an environment change
-(`LUDO_ENVIRONMENT=production`, a different host port already reserved by
-the proxy), not a rewrite.
+Before staging's setup is reused for production, `docker-compose.yml`'s
+`ports:` mapping needs to stop being the literal `8199` and start following
+`LUDO_ENVIRONMENT` the way `deploy.sh` itself now does (see the finding
+above) -- `LUDO_ENVIRONMENT=production` alone is not enough yet.
