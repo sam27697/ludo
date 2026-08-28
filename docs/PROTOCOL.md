@@ -651,6 +651,26 @@ business carrying: `deadline_ms` is milliseconds remaining, computed at send
 time, and `game_started` is built once and broadcast to every socket from one
 shared map.
 
+**The `turn` frame carries its own `seq`, one greater than `game_started`'s.**
+Section 12.3 says every frame carries `seq` and that the counter advances by
+exactly one per frame. The opening `turn` is not exempt and does not share
+`game_started`'s value. The reason is the one 13.2 gives below for the opposite
+case: a frame that repeats a `seq` the room has already used reads to a client
+as a repeat rather than an advance, and makes a correct client resynchronise for
+no reason. So `start_game` advances the room counter twice -- once for the game
+starting, once for the opening turn segment -- and the frames go out in that
+order, each carrying the value it advanced to.
+
+The full order on an accepted `start_game`, with `seq` advancing by one at every
+step:
+
+    seat_seed (one per server-seeded seat, each at its own seq)
+    game_started                      seq = n
+    turn                              seq = n + 1, seat == game_started.turn
+
+`deadline_ms` on that frame is measured from the segment the registry already
+starts at `start_game`, not from send time of a later frame.
+
 **The server does not do this yet.** `connection.dart`'s `_handleStartGame`
 sends `game_started` and stops; the only two `turn` emissions are in the roll
 and move handlers. This is a defect against this section as of now, and it needs
