@@ -173,6 +173,24 @@ class Room {
   /// LOBBY.
   String? clientSeeds;
 
+  /// `docs/PROTOCOL.md` section 6's `turn.k`: the number of rolls this game
+  /// has made so far. `0` from `start_game` until the first roll, thereafter
+  /// exactly the `k` of the most recent `rolled` frame. `registry.dart`'s
+  /// `roll()` is the only thing that ever advances this, and only on the one
+  /// code path that has already committed to sending a `rolled` frame
+  /// carrying the same `k` -- a rejected roll leaves this untouched.
+  int rollCount = 0;
+
+  /// The moment the currently active turn segment began, per section 6: a
+  /// segment starts, and the full `rules.turnSeconds` is restored, on a
+  /// seat's turn beginning, on a `rolled` that leaves a legal move pending,
+  /// and on an extra roll being granted, and on nothing else. Null until
+  /// `start_game`. Every `deadline_ms`, whether in a pushed frame or in a
+  /// `room` snapshot built later, is `max(0, rules.turnSeconds * 1000 -
+  /// now.difference(this).inMilliseconds)` on the registry's injected
+  /// `Clock` -- never `DateTime.now()` directly.
+  DateTime? turnSegmentStartedAt;
+
   @override
   String toString() => 'Room(code: $code, state: $state, '
       'players: $players, seats: ${seats.length})';
