@@ -22,6 +22,18 @@ chmod 600 .env
 bash repo/deploy/ludo/deploy.sh main
 ```
 
+`LUDO_ENVIRONMENT` is not set in `.env` and is never read from it. It is an
+environment variable the operator sets on the `deploy.sh` invocation itself
+(`LUDO_ENVIRONMENT=production bash repo/deploy/ludo/deploy.sh main`, or left
+unset for staging). `deploy.sh` validates it, derives the health port from
+it, and passes it straight through to `docker compose` as `LUDO_ENVIRONMENT`
+and `LUDO_PORT`, which the compose file uses to name the container
+(`ludo-server-staging` / `ludo-server-production`) and to publish it on the
+right loopback port (`8199` / `8099`). Neither has a default inside the
+compose file: calling `docker compose` on this file directly, without
+either variable set, is refused rather than silently publishing on the
+wrong port under the wrong name.
+
 `.env` is copied out of the checkout once, by hand, at install time -- not
 symlinked into `repo/`, so a later `git reset --hard` inside `repo/` during a
 deploy never touches it. `deploy.sh` reads it from `/srv/apps/ludo/.env`
@@ -40,6 +52,40 @@ If this box was set up before this changed, there is a stale hand-placed
 copy sitting at `/srv/apps/ludo/docker-compose.yml`. `deploy.sh` no longer
 reads it. It is not load-bearing and can be deleted; nothing refers to it
 anymore.
+
+## The first deploy after container_name became environment-scoped
+
+Before this change, `docker-compose.yml` gave the container the fixed name
+`ludo-server`. After it, the name is `ludo-server-${LUDO_ENVIRONMENT}`, so a
+box already running a container literally named `ludo-server` will meet a
+compose file that no longer says that name on the very next deploy.
+
+Docker compose does not use `container_name` to decide whether a container
+already belongs to a service; it uses its own labels
+(`com.docker.compose.project`, `.service`, `.container-number`), which were
+already on the running container and do not change here. The service key
+is still `ludo-server`, the project name is still `ludo`
+(`--project-name`/`--project-directory` are unchanged, pinned by order
+031). So `docker compose up` should recognise the existing container as
+the current instance of the `ludo-server` service, see that its
+`container_name` no longer matches the desired config, and recreate it
+under the new name in place -- not leave a duplicate running under the old
+name, and not treat it as an orphan `--remove-orphans` has to clear (an
+orphan is a container for a service no longer defined in the file at all;
+`ludo-server` is still defined, just renamed).
+
+This is reasoned from how compose is documented to match containers to
+services, not measured -- there is no `docker` binary available while
+writing this, so it has not been run against a real running container.
+Before relying on it: after the first deploy following this change, run
+`docker compose --project-name ludo --project-directory /srv/apps/ludo -f
+repo/deploy/ludo/docker-compose.yml --env-file .env ps` and confirm there
+is exactly one container for the `ludo-server` service and its name is
+`ludo-server-staging` (or `-production`), not a second container sitting
+alongside a leftover `ludo-server`. If a stray `ludo-server` container is
+still present, stop and remove it by hand
+(`docker stop ludo-server && docker rm ludo-server`) before deploying
+again -- do not assume the next run will clear it on its own.
 
 ## Deploying
 
@@ -87,10 +133,17 @@ are never deleted by this script, only superseded):
 cd /srv/apps/ludo
 docker images ludo-server
 LUDO_IMAGE_TAG=ludo-server:staging-<short-sha> \
-LUDO_VERSION=<short-sha> docker compose \
+LUDO_VERSION=<short-sha> \
+LUDO_ENVIRONMENT=staging LUDO_PORT=8199 docker compose \
   --project-name ludo --project-directory /srv/apps/ludo \
   -f repo/deploy/ludo/docker-compose.yml --env-file .env up -d --remove-orphans
 ```
+
+Use `LUDO_ENVIRONMENT=production LUDO_PORT=8099` instead of the staging
+values above if this is a production box. `LUDO_ENVIRONMENT` and
+`LUDO_PORT` are required on every `docker compose` invocation against this
+file now, hand-run ones included; without them compose refuses to start
+rather than publishing on whatever port the file happened to default to.
 
 `--project-name ludo --project-directory /srv/apps/ludo` matter here, not
 just for `deploy.sh`: without them `docker compose` derives both from the
@@ -135,13 +188,19 @@ just that the status code came back `200`.
   curl reports it cannot connect): the container is down or never came up.
   Run, from `/srv/apps/ludo/`:
   ```
+  LUDO_ENVIRONMENT=staging LUDO_PORT=8199 \
   docker compose --project-name ludo --project-directory /srv/apps/ludo \
     -f repo/deploy/ludo/docker-compose.yml --env-file .env ps
+  LUDO_ENVIRONMENT=staging LUDO_PORT=8199 \
   docker compose --project-name ludo --project-directory /srv/apps/ludo \
     -f repo/deploy/ludo/docker-compose.yml --env-file .env logs --tail 100 \
     ludo-server
   ```
-  and read what the process actually said on its way down.
+  and read what the process actually said on its way down. (Use
+  `LUDO_ENVIRONMENT=production LUDO_PORT=8099` on a production box. Both
+  are required for any hand-run `docker compose` command against this file
+  now, `ps` and `logs` included -- compose parses the whole file, so even a
+  read-only command needs `container_name` and `ports:` to resolve.)
 - The loopback command connects but returns something other than `200`
   (a `502`, a connection reset mid-response, anything else): something is
   listening on `127.0.0.1:8199` but it is not this container answering
@@ -165,23 +224,49 @@ just that the status code came back `200`.
   up correctly together. Confirm this on the real box before staging is
   used for anything load-related.
 
-- `deploy.sh` now derives the port it polls from `LUDO_ENVIRONMENT`
-  (`8199` staging, `8099` production), but `docker-compose.yml`'s `ports:`
-  entry is still the literal `127.0.0.1:8199:8080` -- it does not read
-  `LUDO_ENVIRONMENT` at all. A deploy run with `LUDO_ENVIRONMENT=production`
-  today would build and tag a production image correctly, bring it up, and
-  still publish it on `8199`, the same host port staging uses, while
-  `deploy.sh` polls `8099` and finds nothing there -- the deploy fails loudly
-  and rolls back rather than reporting a false `health=ok`, but it will
-  never succeed until the compose file's port mapping is made to follow
-  `LUDO_ENVIRONMENT` the same way the image tag already does. That is a
-  change to `docker-compose.yml` and is not part of this order.
+- Resolved: `docker-compose.yml`'s `ports:` and `container_name` used to be
+  the literals `127.0.0.1:8199:8080` and `ludo-server`, so a
+  `LUDO_ENVIRONMENT=production` deploy built a production image, published
+  it on staging's port, and would have collided with a running staging
+  container on the container name besides. Both now read `LUDO_PORT` and
+  `LUDO_ENVIRONMENT` from the same `docker compose` invocation `deploy.sh`
+  drives -- `LUDO_PORT` is set from the exact `HEALTH_PORT` variable
+  `deploy.sh` polls with, not recomputed separately, so the published port
+  and the polled port cannot read different values by construction.
+
+- Not resolved, and outside what this order's file list allowed touching:
+  `ROOT` in `deploy.sh` is the hard-coded literal `/srv/apps/ludo`,
+  independent of where the script is invoked from. For staging and
+  production to truly coexist on one box, each needs its own `.env`
+  (different `PORT`/`TRUSTED_PROXIES` are not the concern here, but a
+  shared `.env` means a shared `TRUSTED_PROXIES` even if the concern
+  someday becomes environment-specific) and, more urgently, its own
+  `.current_image_tag`. With one shared `ROOT`, a production deploy and a
+  staging deploy write and read the same `$ROOT/.current_image_tag`, and
+  `roll_back_and_fail`'s prefix-strip
+  (`${PREVIOUS_TAG#"$IMAGE_NAME:$ENVIRONMENT_NAME-"}`) only produces a bare
+  sha when the recorded tag was written by a deploy of the *same*
+  environment; if the last deploy to touch that file was the other
+  environment, the strip silently no-ops (bash leaves the string alone
+  when the prefix does not match) and a subsequent rollback would try to
+  bring up the other environment's image tag under the wrong
+  `LUDO_VERSION`. This order made the container-level identity
+  (name, port) environment-safe; the deploy-state level (one `ROOT`, one
+  `.env`, one state file) is not, and running staging and production from
+  the same `$ROOT` is not safe until that is addressed -- most likely by
+  giving each environment its own `$ROOT` directory and its own checkout,
+  which means `ROOT` in `deploy.sh` stopping being a single hard-coded
+  path. That is a `deploy.sh` restructure, not a variable pass-through,
+  and was out of this order's file list.
 
 ## Out of scope here
 
-Production (`ludo.provefair.app`, port 8099), TLS, the reverse proxy
-configuration, and the Android release build are not this deploy's concern.
-Before staging's setup is reused for production, `docker-compose.yml`'s
-`ports:` mapping needs to stop being the literal `8199` and start following
-`LUDO_ENVIRONMENT` the way `deploy.sh` itself now does (see the finding
-above) -- `LUDO_ENVIRONMENT=production` alone is not enough yet.
+TLS, the reverse proxy configuration, and the Android release build are
+not this deploy's concern. Hostnames (`stg.ludo.provefair.app`,
+`ludo.provefair.app`) are root policy on the box and are not changed here;
+nothing in this order needed a hostname change.
+
+Actually bringing up production -- deciding where its checkout and `.env`
+live, and resolving the shared-`ROOT` finding above -- is the master's,
+from the box, after staging is deployed and verified with this change
+first.
