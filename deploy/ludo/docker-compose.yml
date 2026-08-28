@@ -27,6 +27,16 @@ services:
     env_file:
       - .env
 
+    # LUDO_VERSION does not go in .env: it changes on every deploy and .env
+    # is hand-maintained on the server. deploy.sh exports it into the shell
+    # that invokes `docker compose up`, but compose only uses a shell
+    # variable for ${...} interpolation inside this file -- it does not
+    # otherwise flow into the container. This line is what actually carries
+    # it in, and it defaults to "dev" so `docker compose up` on its own,
+    # without LUDO_VERSION set, still starts.
+    environment:
+      LUDO_VERSION: "${LUDO_VERSION:-dev}"
+
     # A structured-log-per-event server can fill a 4 GB disk if nothing
     # caps it. 10 MB per file, 5 files kept: 50 MB ceiling for this
     # container's logs, rotated by the daemon, never by hand.
