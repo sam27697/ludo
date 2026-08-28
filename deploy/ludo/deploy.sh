@@ -11,11 +11,13 @@
 #
 # What it does, in order: fetches the repo checkout and hard-resets it to
 # the resolved ref, builds an image tagged with the resulting short sha and
-# the environment name, brings that image up, polls its health over the
-# published loopback port with a bounded number of attempts, and rolls back
-# to whatever image was running before if the new one never comes healthy.
-# It prints the sha deployed and the health result as its last line either
-# way, and exits non-zero on a failed deploy after having rolled back.
+# the environment name, brings that image up with LUDO_VERSION set to that
+# sha, polls /health over the published loopback port with a bounded number
+# of attempts, and rolls back to whatever image was running before if the
+# new one never comes healthy or if the version /health reports once it is
+# healthy disagrees with the sha just deployed. It prints the sha deployed
+# and the health result as its last line either way, and exits non-zero on
+# a failed deploy after having rolled back.
 #
 # It never prints .env's contents and never echoes an environment variable
 # value; the only things it prints are shas, tags, http status codes, and
@@ -32,7 +34,7 @@ DOCKERFILE="packages/ludo_server/Dockerfile"
 SERVICE_NAME="ludo-server"
 IMAGE_NAME="ludo-server"
 ENVIRONMENT_NAME="${LUDO_ENVIRONMENT:-staging}"
-HEALTH_URL="http://127.0.0.1:8199/"
+HEALTH_URL="http://127.0.0.1:8199/health"
 HEALTH_ATTEMPTS=30
 HEALTH_INTERVAL_SECONDS=2
 
@@ -82,8 +84,15 @@ log "resolved ref '$REF' to sha $SHA"
 NEW_TAG="${IMAGE_NAME}:${ENVIRONMENT_NAME}-${SHA}"
 
 PREVIOUS_TAG=""
+PREVIOUS_SHA=""
 if [[ -f "$STATE_FILE" ]]; then
   PREVIOUS_TAG="$(cat "$STATE_FILE")"
+  # The tag this script writes to STATE_FILE is always
+  # "$IMAGE_NAME:$ENVIRONMENT_NAME-<sha>"; strip that prefix back off to
+  # recover the sha the previous image was actually built from, so a
+  # rollback reports the version it is actually rolling back to rather than
+  # the sha of the deploy that just failed.
+  PREVIOUS_SHA="${PREVIOUS_TAG#"$IMAGE_NAME:$ENVIRONMENT_NAME-"}"
 fi
 
 log "building $NEW_TAG"
@@ -93,34 +102,19 @@ docker build \
   "$REPO_DIR"
 
 bring_up() {
-  local tag="$1"
-  LUDO_IMAGE_TAG="$tag" docker compose \
+  local tag="$1" version="$2"
+  LUDO_IMAGE_TAG="$tag" LUDO_VERSION="$version" docker compose \
     -f "$COMPOSE_FILE" \
     --env-file "$ENV_FILE" \
     up -d --remove-orphans
 }
 
-log "bringing up $NEW_TAG"
-bring_up "$NEW_TAG"
-
-healthy="no"
-attempt=1
-while [[ "$attempt" -le "$HEALTH_ATTEMPTS" ]]; do
-  code="$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null || true)"
-  # No dedicated health endpoint exists yet (see README.md); every
-  # non-WebSocket request gets a fixed 404 from shelf_web_socket, and that
-  # 404 is only reachable if the process is bound and serving, so it is
-  # used as the liveness signal here.
-  if [[ "$code" == "404" ]]; then
-    healthy="yes"
-    break
-  fi
-  attempt=$((attempt + 1))
-  sleep "$HEALTH_INTERVAL_SECONDS"
-done
-
-if [[ "$healthy" != "yes" ]]; then
-  log "health check failed for $NEW_TAG after $HEALTH_ATTEMPTS attempts (last status: ${code:-none})"
+# Rolls back to whatever was running before (if anything was), prints the
+# expected-vs-reported sha, and exits non-zero. Shared by both ways a deploy
+# can fail: the readiness poll never turning up 200, and the readiness poll
+# turning up 200 from a process that is not the sha just deployed.
+roll_back_and_fail() {
+  log "$*"
   log "last 50 lines of container log:"
   LUDO_IMAGE_TAG="$NEW_TAG" docker compose \
     -f "$COMPOSE_FILE" \
@@ -129,14 +123,45 @@ if [[ "$healthy" != "yes" ]]; then
 
   if [[ -n "$PREVIOUS_TAG" ]]; then
     log "rolling back to $PREVIOUS_TAG"
-    bring_up "$PREVIOUS_TAG"
+    bring_up "$PREVIOUS_TAG" "$PREVIOUS_SHA"
   else
     log "no previous image recorded -- nothing to roll back to, container left as-is for inspection"
   fi
 
   log "sha=$SHA health=fail"
   exit 1
+}
+
+log "bringing up $NEW_TAG"
+bring_up "$NEW_TAG" "$SHA"
+
+healthy="no"
+attempt=1
+while [[ "$attempt" -le "$HEALTH_ATTEMPTS" ]]; do
+  code="$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null || true)"
+  if [[ "$code" == "200" ]]; then
+    healthy="yes"
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep "$HEALTH_INTERVAL_SECONDS"
+done
+
+if [[ "$healthy" != "yes" ]]; then
+  roll_back_and_fail "health check failed for $NEW_TAG after $HEALTH_ATTEMPTS attempts (last status: ${code:-none})"
+fi
+
+# The status code alone only proves a process is listening and answering;
+# the body proves it is the sha just built. /health's body is the flat
+# four-key object health_test.dart pins down, so a plain pattern match on
+# the version field is enough -- no JSON tool is assumed to be on the box.
+health_body="$(curl -s "$HEALTH_URL" 2>/dev/null || true)"
+reported_version="$(printf '%s' "$health_body" \
+  | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+
+if [[ "$reported_version" != "$SHA" ]]; then
+  roll_back_and_fail "version mismatch after deploy: expected sha $SHA, /health reported '${reported_version:-<empty>}'"
 fi
 
 echo "$NEW_TAG" > "$STATE_FILE"
-log "sha=$SHA health=ok"
+log "sha=$SHA health=ok version=$reported_version"
