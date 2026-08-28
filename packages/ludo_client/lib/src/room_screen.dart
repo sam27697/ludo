@@ -1,6 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'board.dart';
+
+/// Placeholder tokens for the board this screen draws. There is no
+/// networking in this build, so there is no real game state to show; these
+/// sixteen numbers exist only so the screenshot pipeline has a full board to
+/// photograph instead of an empty one. A server-connected build replaces
+/// this constant with the room's real tokens. Nothing here is game logic.
+const Map<int, List<int>> kRoomScreenPreviewTokens = <int, List<int>>{
+  0: <int>[-1, 7, 24, 57],
+  1: <int>[-1, 3, 18, 44],
+  2: <int>[11, 29, 40, 52],
+  3: <int>[-1, -1, 15, 33],
+};
 
 /// Placeholder room screen. There is no networking in this build; this
 /// screen exists to show, honestly, that Create Room and Join Room lead
@@ -20,9 +33,8 @@ class RoomScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: Text(loc.roomScreenTitle)),
       body: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(16),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
               code == null
@@ -31,6 +43,14 @@ class RoomScreen extends StatelessWidget {
               key: const Key('room-screen-code'),
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: LudoBoard(
+                key: const Key('room-screen-board'),
+                tokens: kRoomScreenPreviewTokens,
+                seatsInPlay: const <int>[0, 1, 2, 3],
+              ),
             ),
             const SizedBox(height: 16),
             Text(
