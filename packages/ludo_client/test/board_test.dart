@@ -774,6 +774,7 @@ void main() {
               find.descendant(
                 of: find.byKey(Key('token-$seat-$index')),
                 matching: find.bySemanticsIdentifier(expectedId),
+                matchRoot: true,
               ),
               findsOneWidget,
               reason:
@@ -808,6 +809,7 @@ void main() {
             find.descendant(
               of: find.byKey(Key('token-$seat-0')),
               matching: find.bySemanticsIdentifier(expectedId),
+              matchRoot: true,
             ),
             findsOneWidget,
             reason:
@@ -818,6 +820,7 @@ void main() {
             find.descendant(
               of: find.byKey(Key('token-$seat-1')),
               matching: find.bySemanticsIdentifier(expectedId),
+              matchRoot: true,
             ),
             findsOneWidget,
             reason:
@@ -860,6 +863,7 @@ void main() {
               find.descendant(
                 of: find.byKey(Key('token-$seat-$index')),
                 matching: find.bySemanticsIdentifier(expectedId),
+                matchRoot: true,
               ),
               findsOneWidget,
               reason:
