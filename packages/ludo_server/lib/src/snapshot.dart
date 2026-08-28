@@ -14,7 +14,15 @@ import 'room.dart';
 /// The full `room` push, section 6. `seq` is read, never computed: it is
 /// `room.seq`, the registry's own counter, moved by exactly one on every
 /// successful state-changing call before this is ever built.
-Map<String, Object?> buildRoomSnapshot(Room room) {
+///
+/// [now] is the instant `turn.deadline_ms` is computed against, per section
+/// 6: "the value is `max(0, turn_seconds * 1000 - elapsed)` measured on the
+/// server's injected clock, so it is computable in a snapshot whether or not
+/// anything is scheduled to fire at zero." This file has no clock of its
+/// own -- `clock.dart` says nothing under `lib/src/` calls `DateTime.now()`
+/// directly -- so the caller (`connection.dart`, holding the same injected
+/// `Clock` the registry was built with) passes the reading in.
+Map<String, Object?> buildRoomSnapshot(Room room, {required DateTime now}) {
   return <String, Object?>{
     'code': room.code,
     'state': _wireState(room.state),
@@ -35,7 +43,7 @@ Map<String, Object?> buildRoomSnapshot(Room room) {
     'seats': <Object?>[
       for (final Seat seat in room.seats) _seatSnapshot(room, seat),
     ],
-    'turn': _turnSnapshot(room.game),
+    'turn': _turnSnapshot(room, now),
     'winner': room.game?.winner,
     'seq': room.seq,
   };
@@ -58,10 +66,10 @@ Map<String, Object?> _seatSnapshot(Room room, Seat seat) {
 }
 
 /// `docs/PROTOCOL.md` section 6: `value`, `legal` and `sixes` are absent
-/// when `phase` is `await_roll`. `deadline_ms` is not built here at all --
-/// the 45 second timer is order 008's, per this order's "Out of scope".
-/// Before `start_game`, `room.game` is null and there is no turn yet.
-Map<String, Object?>? _turnSnapshot(engine.GameState? game) {
+/// when `phase` is `await_roll`; `deadline_ms` and `k` are present in every
+/// phase. Before `start_game`, `room.game` is null and there is no turn yet.
+Map<String, Object?>? _turnSnapshot(Room room, DateTime now) {
+  final engine.GameState? game = room.game;
   if (game == null) {
     return null;
   }
@@ -74,7 +82,27 @@ Map<String, Object?>? _turnSnapshot(engine.GameState? game) {
     turn['legal'] = engine.legalTokens(game);
     turn['sixes'] = game.sixes;
   }
+  turn['deadline_ms'] = _deadlineMs(room, now);
+  turn['k'] = room.rollCount;
   return turn;
+}
+
+/// `docs/PROTOCOL.md` section 6's `deadline_ms` formula, read against [now]
+/// rather than against the moment some earlier frame was built -- a `room`
+/// snapshot can be requested at any time after the segment it describes
+/// started, so this is computed fresh every time this function runs, unlike
+/// the `deadline_ms` on a `rolled` or `turn` push, which the registry fixed
+/// once, at the instant that specific frame was decided, and which this
+/// file never recomputes.
+int _deadlineMs(Room room, DateTime now) {
+  final DateTime? startedAt = room.turnSegmentStartedAt;
+  if (startedAt == null) {
+    return 0;
+  }
+  final int budgetMs = room.rules.turnSeconds * 1000;
+  final int elapsedMs = now.difference(startedAt).inMilliseconds;
+  final int remaining = budgetMs - elapsedMs;
+  return remaining > 0 ? remaining : 0;
 }
 
 String _wireState(RoomState state) {
@@ -162,6 +190,91 @@ Map<String, Object?> buildSeatSeed({
     'seat': seat,
     'client_seed': clientSeed,
     'origin': origin,
+    'seq': seq,
+  };
+}
+
+/// `rolled`, section 5 and section 11.2/11.3: `value`, `legal`,
+/// `deadline_ms`, `k` and `reveal` are exactly what the registry's `roll()`
+/// call decided -- this never recomputes a face, a chain link or a `seq`,
+/// it only lays out the fields that were already fixed by the one code path
+/// allowed to read `chain.reveal(k)` and publish it.
+Map<String, Object?> buildRolled({
+  required int seat,
+  required int value,
+  required List<int> legal,
+  required int deadlineMs,
+  required int k,
+  required String reveal,
+  required int seq,
+}) {
+  return <String, Object?>{
+    'seat': seat,
+    'value': value,
+    'legal': legal,
+    'deadline_ms': deadlineMs,
+    'k': k,
+    'reveal': reveal,
+    'seq': seq,
+  };
+}
+
+/// `turn_passed`, section 5: `reason` is `"no_legal_move"` or
+/// `"three_sixes"`, the wire strings for `engine.TurnEndReason`.
+Map<String, Object?> buildTurnPassed({
+  required int seat,
+  required String reason,
+  required int seq,
+}) {
+  return <String, Object?>{'seat': seat, 'reason': reason, 'seq': seq};
+}
+
+/// `turn`, section 5: sent for the seat that now holds the turn, whether
+/// because the turn passed or because that seat was granted an extra roll.
+Map<String, Object?> buildTurn({
+  required int seat,
+  required int deadlineMs,
+  required int seq,
+}) {
+  return <String, Object?>{'seat': seat, 'deadline_ms': deadlineMs, 'seq': seq};
+}
+
+/// `moved`, section 5 and section 12.2: built from the engine's own `Moved`
+/// and `Captured` events and from nothing else. `captured` is the list of
+/// `{seat, token}` the engine reported captured by this move, in the order
+/// it reported them, empty when there were none.
+Map<String, Object?> buildMoved({
+  required int seat,
+  required int token,
+  required int from,
+  required int to,
+  required List<Map<String, Object?>> captured,
+  required bool extraRoll,
+  required int seq,
+}) {
+  return <String, Object?>{
+    'seat': seat,
+    'token': token,
+    'from': from,
+    'to': to,
+    'captured': captured,
+    'extra_roll': extraRoll,
+    'seq': seq,
+  };
+}
+
+/// `game_over`, section 5 and section 11.2: no `seed` -- every roll's secret
+/// was already published in its own `rolled` frame -- and `verify_url` is
+/// the permalink, `https://provefair.app/v/<game_id>`, built by the
+/// registry from `room.gameId` and handed in here unchanged.
+Map<String, Object?> buildGameOver({
+  required int winner,
+  required String verifyUrl,
+  required int seq,
+}) {
+  return <String, Object?>{
+    'winner': winner,
+    'verify_url': verifyUrl,
     'seq': seq,
   };
 }

@@ -1,9 +1,10 @@
 /// The authoritative Ludo game server: the in-memory room registry
-/// (`docs/PROTOCOL.md` sections 2 and 3), and the wire layer on top of it --
-/// envelope parsing, the section 7 validation ladder, rate limits, the
+/// (`docs/PROTOCOL.md` sections 2, 3 and 12), and the wire layer on top of it
+/// -- envelope parsing, the section 7 validation ladder, rate limits, the
 /// `shelf` + `shelf_web_socket` socket handling and the reap/prune
-/// housekeeping timer. The turn loop, `roll`, `move` and the 45 second timer
-/// are not here yet; that is order 008's.
+/// housekeeping timer. The turn timer's expiry (rule 15 of `docs/RULES.md`,
+/// the server playing a seat's only legal move) is not here yet; that is a
+/// later order's.
 library;
 
 export 'src/clock.dart' show Clock, SystemClock, FakeClock;
@@ -30,12 +31,21 @@ export 'src/registry.dart'
         StartResult,
         StartOk,
         StartFailure,
+        SetSeedResult,
+        SetSeedOk,
+        SetSeedFailure,
         SetPlayersResult,
         SetPlayersOk,
         SetPlayersFailure,
         LeaveResult,
         LeaveOk,
         LeaveFailure,
+        RollResult,
+        RollOk,
+        RollFailure,
+        MoveResult,
+        MoveOk,
+        MoveFailure,
         RoomRegistry;
 export 'src/rate_limit.dart' show RateLimiter, MessageRateOutcome;
 export 'src/envelope.dart'

@@ -48,6 +48,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:ludo_engine/ludo_engine.dart' as engine;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'clock.dart';
@@ -230,14 +231,9 @@ class Connection {
       case 'leave_room':
         _handleLeaveRoom(envelope);
       case 'roll':
+        _handleRoll(envelope);
       case 'move':
-        // Out of scope for this order: there is no turn loop yet. Every
-        // syntactically valid roll/move from an authorised seat in a live
-        // room answers WRONG_PHASE, deliberately, until order 008 lands the
-        // turn loop. Because "phase correct" precedes "payload fields" in
-        // the ladder, the payload (e.g. move's "token") is never even
-        // inspected here.
-        _handleRollOrMove(envelope);
+        _handleMove(envelope);
       default:
         // Unreachable: parseEnvelope already rejected anything outside
         // knownMessageTypes as BAD_TYPE.
@@ -307,7 +303,7 @@ class Connection {
     );
     _send(
       type: 'room',
-      data: buildRoomSnapshot(ok.room),
+      data: buildRoomSnapshot(ok.room, now: clock.now),
       re: envelope.id,
     );
     _log(
@@ -351,7 +347,11 @@ class Connection {
     hub.attach(code: ok.room.code, conn: this);
 
     _send(type: 'seat_assigned', data: buildSeatAssigned(ok.seat), re: null);
-    _send(type: 'room', data: buildRoomSnapshot(ok.room), re: envelope.id);
+    _send(
+      type: 'room',
+      data: buildRoomSnapshot(ok.room, now: clock.now),
+      re: envelope.id,
+    );
     hub.broadcast(
       code: ok.room.code,
       type: 'player_joined',
@@ -399,7 +399,11 @@ class Connection {
     seatToken = ok.seat.seatToken;
     final Connection? displaced = hub.attach(code: ok.room.code, conn: this);
 
-    _send(type: 'room', data: buildRoomSnapshot(ok.room), re: envelope.id);
+    _send(
+      type: 'room',
+      data: buildRoomSnapshot(ok.room, now: clock.now),
+      re: envelope.id,
+    );
     // A takeover -- this socket resuming a seat that was already connected,
     // handled below via `displaced` -- flips nothing on the seat itself, and
     // the registry only moves `seq` on a real flip (registry.dart's own
@@ -542,7 +546,8 @@ class Connection {
       return;
     }
     final SetPlayersOk ok = result as SetPlayersOk;
-    final Map<String, Object?> data = buildRoomSnapshot(ok.room);
+    final Map<String, Object?> data =
+        buildRoomSnapshot(ok.room, now: clock.now);
 
     _send(type: 'room', data: data, re: envelope.id);
     hub.broadcast(
@@ -678,23 +683,291 @@ class Connection {
     );
   }
 
-  void _handleRollOrMove(ParsedEnvelope envelope) {
+  /// `roll`, `docs/PROTOCOL.md` section 12.1. `_hasIdentity` is the
+  /// section 7 identity-before-payload check every one of the five
+  /// socket-identified messages gets; `_turnLadderError` is section 12.1's
+  /// own table from "the room does not exist" down through "the turn is
+  /// awaiting a move, not a roll" -- run here, ahead of the payload check,
+  /// exactly as section 7's "phase correct" precedes "payload fields", even
+  /// though `roll`'s only payload rule is that `d` is empty.
+  void _handleRoll(ParsedEnvelope envelope) {
     if (!_hasIdentity) {
       _reject(envelope, ProtocolError.badSeatToken);
       return;
     }
-    final Room? room = registry.lookup(roomCode!);
+    final Room? liveRoom = registry.lookup(roomCode!);
+    final ProtocolError? ladderError =
+        _turnLadderError(liveRoom, seatToken!, engine.GamePhase.awaitRoll);
+    if (ladderError != null) {
+      _reject(envelope, ladderError, room: roomCode);
+      return;
+    }
+    if (envelope.data.isNotEmpty) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+
+    final RollResult result =
+        registry.roll(code: roomCode!, seatToken: seatToken!);
+    if (result is RollFailure) {
+      _reject(envelope, result.error, room: roomCode);
+      return;
+    }
+    _publishRoll(envelope, result as RollOk);
+  }
+
+  /// `move`, `docs/PROTOCOL.md` section 12.2. Same shape as [_handleRoll],
+  /// with `awaitMove` as the phase this message needs to find the turn in,
+  /// and with `token`'s own `BAD_FIELD` check -- absent, not an integer, or
+  /// outside `0..3` -- run after the ladder and before `registry.move`,
+  /// which is what lets that call's own signature take a plain `int`
+  /// rather than the `Object?` every payload field starts life as.
+  void _handleMove(ParsedEnvelope envelope) {
+    if (!_hasIdentity) {
+      _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    final Room? liveRoom = registry.lookup(roomCode!);
+    final ProtocolError? ladderError =
+        _turnLadderError(liveRoom, seatToken!, engine.GamePhase.awaitMove);
+    if (ladderError != null) {
+      _reject(envelope, ladderError, room: roomCode);
+      return;
+    }
+
+    const Set<String> allowedKeys = <String>{'token'};
+    if (!envelope.data.keys.every(allowedKeys.contains)) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+    final Object? rawToken = envelope.data['token'];
+    if (rawToken is! int || rawToken < 0 || rawToken > 3) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+
+    final MoveResult result = registry.move(
+      code: roomCode!,
+      seatToken: seatToken!,
+      token: rawToken,
+    );
+    if (result is MoveFailure) {
+      _reject(envelope, result.error, room: roomCode);
+      return;
+    }
+    _publishMove(envelope, result as MoveOk);
+  }
+
+  /// `docs/PROTOCOL.md` section 12.1/12.2: the ladder `roll` and `move`
+  /// share, from "the room does not exist" through "the turn is awaiting a
+  /// move [or a roll], not a roll [or a move]" -- everything above the
+  /// payload check, so it can run before that check the same way
+  /// `_handleStartGame` and `_handleSetPlayers` peek the room for their own
+  /// phase check ahead of theirs. `awaitingPhase` is `awaitRoll` for `roll`
+  /// and `awaitMove` for `move`. Returns null when nothing in the ladder
+  /// rejects; `registry.roll`/`registry.move` re-run every one of these
+  /// checks themselves once called, the same defence in depth every other
+  /// registry method gets from this file.
+  ProtocolError? _turnLadderError(
+    Room? room,
+    String callerSeatToken,
+    engine.GamePhase awaitingPhase,
+  ) {
     if (room == null) {
-      _reject(envelope, ProtocolError.noSuchRoom, room: roomCode);
+      return ProtocolError.noSuchRoom;
+    }
+    Seat? seat;
+    for (final Seat candidate in room.seats) {
+      if (candidate.seatToken == callerSeatToken) {
+        seat = candidate;
+        break;
+      }
+    }
+    if (seat == null) {
+      return ProtocolError.badSeatToken;
+    }
+    if (room.state == RoomState.finished) {
+      return ProtocolError.gameOver;
+    }
+    if (room.state == RoomState.lobby) {
+      return ProtocolError.wrongPhase;
+    }
+    final engine.GameState game = room.game!;
+    if (seat.seat != game.currentSeat) {
+      return ProtocolError.notYourTurn;
+    }
+    if (game.phase != awaitingPhase) {
+      return ProtocolError.wrongPhase;
+    }
+    return null;
+  }
+
+  /// Builds and sends every frame `RoomRegistry.roll` decided on, in the
+  /// order section 12.1 fixes: `rolled` always, then `turn_passed` and
+  /// `turn` together, exactly when the roll ended the turn. `re` is set on
+  /// every one of them for this socket's own copy, and on none of them for
+  /// anyone else's, per section 12.3.
+  void _publishRoll(ParsedEnvelope envelope, RollOk ok) {
+    final engine.Rolled rolledEvent =
+        ok.events.whereType<engine.Rolled>().single;
+    final Map<String, Object?> rolledData = buildRolled(
+      seat: rolledEvent.seat,
+      value: rolledEvent.value,
+      legal: rolledEvent.legal,
+      deadlineMs: ok.rolledDeadlineMs,
+      k: ok.k,
+      reveal: ok.reveal,
+      seq: ok.rolledSeq,
+    );
+    _sendAndBroadcast(
+      room: ok.room.code,
+      type: 'rolled',
+      data: rolledData,
+      re: envelope.id,
+    );
+
+    final List<engine.TurnEnded> turnEndedEvents =
+        ok.events.whereType<engine.TurnEnded>().toList();
+    if (turnEndedEvents.isEmpty) {
+      _log(
+        type: envelope.type,
+        id: envelope.id,
+        outcome: 'ok',
+        room: ok.room.code,
+        seat: rolledEvent.seat,
+        seq: ok.rolledSeq,
+      );
       return;
     }
-    final bool seated = room.seats.any((Seat s) => s.seatToken == seatToken);
-    if (!seated) {
-      _reject(envelope, ProtocolError.badSeatToken, room: roomCode);
+
+    final engine.TurnEnded turnEnded = turnEndedEvents.single;
+    final Map<String, Object?> passedData = buildTurnPassed(
+      seat: turnEnded.seat,
+      reason: _wireTurnEndReason(turnEnded.reason),
+      seq: ok.turnPassedSeq!,
+    );
+    _sendAndBroadcast(
+      room: ok.room.code,
+      type: 'turn_passed',
+      data: passedData,
+      re: envelope.id,
+    );
+
+    final Map<String, Object?> turnData = buildTurn(
+      seat: ok.room.game!.currentSeat,
+      deadlineMs: ok.nextDeadlineMs!,
+      seq: ok.turnSeq!,
+    );
+    _sendAndBroadcast(
+      room: ok.room.code,
+      type: 'turn',
+      data: turnData,
+      re: envelope.id,
+    );
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: 'ok',
+      room: ok.room.code,
+      seat: rolledEvent.seat,
+      seq: ok.turnSeq,
+    );
+  }
+
+  /// Builds and sends every frame `RoomRegistry.move` decided on: `moved`
+  /// always, then exactly one of `game_over` or `turn`, per section 12.2.
+  void _publishMove(ParsedEnvelope envelope, MoveOk ok) {
+    final engine.Moved movedEvent = ok.events.whereType<engine.Moved>().single;
+    final List<Map<String, Object?>> captured = <Map<String, Object?>>[
+      for (final engine.Captured c in ok.events.whereType<engine.Captured>())
+        <String, Object?>{'seat': c.seat, 'token': c.token},
+    ];
+    final bool extraRoll = ok.events.whereType<engine.ExtraRoll>().isNotEmpty;
+    final Map<String, Object?> movedData = buildMoved(
+      seat: movedEvent.seat,
+      token: movedEvent.token,
+      from: movedEvent.from,
+      to: movedEvent.to,
+      captured: captured,
+      extraRoll: extraRoll,
+      seq: ok.movedSeq,
+    );
+    _sendAndBroadcast(
+      room: ok.room.code,
+      type: 'moved',
+      data: movedData,
+      re: envelope.id,
+    );
+
+    final List<engine.GameWon> wonEvents =
+        ok.events.whereType<engine.GameWon>().toList();
+    if (wonEvents.isNotEmpty) {
+      final engine.GameWon won = wonEvents.single;
+      final Map<String, Object?> overData = buildGameOver(
+        winner: won.seat,
+        verifyUrl: ok.verifyUrl!,
+        seq: ok.gameOverSeq!,
+      );
+      _sendAndBroadcast(
+        room: ok.room.code,
+        type: 'game_over',
+        data: overData,
+        re: envelope.id,
+      );
+      _log(
+        type: envelope.type,
+        id: envelope.id,
+        outcome: 'ok',
+        room: ok.room.code,
+        seat: movedEvent.seat,
+        seq: ok.gameOverSeq,
+      );
       return;
     }
-    // No turn loop yet: order 008. This is deliberate, not forgotten.
-    _reject(envelope, ProtocolError.wrongPhase, room: roomCode);
+
+    final Map<String, Object?> turnData = buildTurn(
+      seat: ok.room.game!.currentSeat,
+      deadlineMs: ok.nextDeadlineMs!,
+      seq: ok.turnSeq!,
+    );
+    _sendAndBroadcast(
+      room: ok.room.code,
+      type: 'turn',
+      data: turnData,
+      re: envelope.id,
+    );
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: 'ok',
+      room: ok.room.code,
+      seat: movedEvent.seat,
+      seq: ok.turnSeq,
+    );
+  }
+
+  /// `docs/PROTOCOL.md` section 12.3: every frame in section 12 is
+  /// broadcast to every connected socket in the room including the sender,
+  /// and the sender's own copy is the only one that carries `re`.
+  void _sendAndBroadcast({
+    required String room,
+    required String type,
+    required Map<String, Object?> data,
+    required String re,
+  }) {
+    _send(type: type, data: data, re: re);
+    hub.broadcast(code: room, type: type, data: data, exceptConn: this);
+  }
+
+  /// The wire string for `engine.TurnEndReason`, `docs/PROTOCOL.md` section
+  /// 5's `turn_passed.reason`.
+  String _wireTurnEndReason(engine.TurnEndReason reason) {
+    switch (reason) {
+      case engine.TurnEndReason.noLegalMove:
+        return 'no_legal_move';
+      case engine.TurnEndReason.threeSixes:
+        return 'three_sixes';
+    }
   }
 
   /// `rules`, the wire-level object of `docs/PROTOCOL.md` section 4. Called
