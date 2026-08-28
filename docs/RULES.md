@@ -180,16 +180,27 @@ also safe, trivially, because no opponent can reach it.
 
 ## 6. Determinism
 
-36. Given the same seed and the same ordered list of intentions, the engine
-    produces byte-identical state, on any machine, in any process, at any time.
-    Every deviation from this is a defect, including one caused by iteration
-    order over an unordered collection.
+36. Given the same ordered list of intentions, the engine produces
+    byte-identical state, on any machine, in any process, at any time. Every
+    deviation from this is a defect, including one caused by iteration order
+    over an unordered collection.
+
+    This is stronger than the rule it replaces, which said "the same seed and
+    the same intentions". The die face now travels inside the roll intention,
+    so replay no longer depends on the engine's generator producing the same
+    stream as the version that recorded the game.
 37. The engine has no clock, no network, no file access and no global mutable
     state. The turn timer of rule 14 lives in the server, not the engine; the
     engine only ever sees the resulting move.
-38. All randomness comes from the seeded generator the engine is given. The
-    server supplies a cryptographically generated seed per game; the engine
-    itself is a pure function of seed and intentions.
+38. The engine draws no randomness at all. A roll intention carries the face it
+    was drawn with; the engine checks it is an integer 1..6, rejects it
+    otherwise, and applies the rules to it. Where the face came from is not the
+    engine's business and cannot be, because `docs/FAIRNESS.md` requires a
+    separate secret per roll and the engine is handed one game at a time.
+
+    An engine that could draw a face could also produce one nobody can verify,
+    which is why rule 37's ban on reaching a clock or a generator is what makes
+    this rule enforceable rather than merely stated.
 
 ## 7. The cases that must be tested explicitly
 
