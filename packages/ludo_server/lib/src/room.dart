@@ -138,10 +138,23 @@ class Room {
   /// chain for the life of the room is the whole of that rule for now).
   /// `chain.commit` is `chain_commit` on the wire. Order 008's turn loop
   /// calls `chain.reveal(k)` for the roll path; this file never reveals a
-  /// link itself. The server secret this chain was built from is reachable
-  /// only by rebuilding a `List<int>` from bytes nobody kept a reference to
-  /// -- it is not stored anywhere on `Room` in its raw form, is never
-  /// logged, and never enters a snapshot.
+  /// link itself.
+  ///
+  /// The server secret this chain was built from is `s[chainLength]`,
+  /// the chain's root, and `DiceChain.build` keeps it verbatim as the last
+  /// entry of the chain it materialises. `chain.reveal(chain.chainLength)`
+  /// therefore returns that secret in hex through this same public API used
+  /// for every other link -- there is no separate guard against it, and
+  /// there must not be one, because the root is exactly what section 11.2's
+  /// `rolled` frame is supposed to reveal on the chain's last valid roll
+  /// (`k == chainLength`), so a future caller can verify the whole chain
+  /// back to a value it can check was drawn honestly. What must never
+  /// happen is a call to `reveal` with a `k` the caller did not get from an
+  /// actual roll count for this chain: `reveal` has no way to know whether
+  /// the `k` it is given is this game's current roll number or some other
+  /// integer, so an off-by-one or a hardcoded `chainLength` handed to it
+  /// early would reveal the root, and every roll after it, before their
+  /// turns are due.
   DiceChain chain;
 
   /// `docs/PROTOCOL.md` section 11.2's `chain_index`, `0` for the first
