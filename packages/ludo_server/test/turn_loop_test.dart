@@ -21,10 +21,12 @@
 // seam an earlier draft of this file blamed for all three -- is untouched
 // and unused by anything below; it was never the seam this file needed.
 import 'package:fair_dice/fair_dice.dart' show drawDie, hexEncode, verifyReveal;
+import 'package:ludo_engine/ludo_engine.dart' show GameState, TurnEndReason;
 import 'package:ludo_server/ludo_server.dart' show Room, RoomState;
 import 'package:test/test.dart';
 
 import 'support/dice_oracle.dart';
+import 'support/engine_search.dart';
 import 'support/scripted_bytes.dart';
 import 'support/wire_harness.dart';
 
@@ -334,121 +336,6 @@ void main() {
     );
   }
 
-  /// Rolls for [seat], repeating for whichever seat next holds the turn on
-  /// every no-legal-move pass, until a roll leaves at least one legal move
-  /// -- or [maxAttempts] rolls happen without one. Returns the `rolled`
-  /// payload of the successful roll and the seat that rolled it, leaving
-  /// the room in PLAYING/await_move for that seat. Used by every test below
-  /// that needs a real `move` to be legal, none of which need a *specific*
-  /// legal move, only *a* legal one.
-  Future<(int, Map<String, Object?>)> reachLegalRoll(
-    WireTestLobby lobby,
-    int seat, {
-    int maxAttempts = 60,
-  }) async {
-    int current = seat;
-    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-      // Advances the injected FakeClock past docs/PROTOCOL.md section 7's
-      // 1-second sliding window for the per-connection message limit (30
-      // then RATE_LIMITED, 60 then close, lib/src/rate_limit.dart) before
-      // every retry. The clock in this harness never ticks on its own, so
-      // without this a retry loop long enough to find an empty legal list
-      // several times in a row eventually trips a real, correctly
-      // implemented rate limit that has nothing to do with the property
-      // this loop is trying to reach.
-      harness.clock.advance(const Duration(seconds: 2));
-      final Map<String, Object?> frame = await sendRoll(lobby, current);
-      expect(
-        frame['t'],
-        'rolled',
-        reason: 'attempt $attempt/$maxAttempts: expected a rolled frame '
-            'from seat $current in room ${lobby.code}, got "${frame['t']}": '
-            '${frame['d']}',
-      );
-      final Map<String, Object?> data = frame['d']! as Map<String, Object?>;
-      final List<int> legal = (data['legal']! as List<Object?>).cast<int>();
-      if (legal.isNotEmpty) {
-        return (current, data);
-      }
-      current = await consumeNoLegalMove(lobby, current);
-    }
-    throw TestFailure(
-      'no roll left a legal move for any seat in room ${lobby.code} within '
-      '$maxAttempts attempts; this suite cannot steer the dice (see the '
-      'file header), so this is a real possible outcome of an unlucky run, '
-      'not necessarily a defect',
-    );
-  }
-
-  /// Like [reachLegalRoll], but also retries past any roll whose legal
-  /// list already covers every token 0..3 -- a real possible outcome
-  /// early in a two-player game, where a six with all four of a seat's
-  /// tokens still in the yard makes all four legal at once -- because a
-  /// roll like that leaves no well-formed token 0..3 left over to prove
-  /// ILLEGAL_MOVE against. A roll like that cannot simply be discarded:
-  /// once it has happened the room is in await_move, and a second roll
-  /// before a move would itself be rejected by the ladder (WRONG_PHASE),
-  /// so it is completed with an arbitrary legal move, exactly as a real
-  /// client would, before this tries again for a roll this test can
-  /// actually use.
-  Future<(int, Map<String, Object?>)> reachPartialLegalRoll(
-    WireTestLobby lobby,
-    int seat, {
-    int maxAttempts = 60,
-  }) async {
-    int current = seat;
-    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-      // See reachLegalRoll's identical comment above: advances the fake
-      // clock past the per-connection message rate limit's 1-second
-      // window before every retry.
-      harness.clock.advance(const Duration(seconds: 2));
-      final Map<String, Object?> frame = await sendRoll(lobby, current);
-      expect(
-        frame['t'],
-        'rolled',
-        reason: 'attempt $attempt/$maxAttempts: expected a rolled frame '
-            'from seat $current in room ${lobby.code}, got "${frame['t']}": '
-            '${frame['d']}',
-      );
-      final Map<String, Object?> data = frame['d']! as Map<String, Object?>;
-      final List<int> legal = (data['legal']! as List<Object?>).cast<int>();
-      if (legal.isEmpty) {
-        current = await consumeNoLegalMove(lobby, current);
-        continue;
-      }
-      if (legal.length < 4) {
-        return (current, data);
-      }
-      final Map<String, Object?> moved = await sendMove(
-        lobby,
-        current,
-        legal.first,
-      );
-      expect(
-        moved['t'],
-        'moved',
-        reason: 'expected moved after a legal move, got '
-            '"${moved['t']}": ${moved['d']}',
-      );
-      final _AfterMove after = await consumeAfterMove(lobby, current);
-      if (after.gameOver) {
-        throw TestFailure(
-          'reached game_over while only looking for a roll with a '
-          'partial legal list to prove ILLEGAL_MOVE against; unexpected '
-          'this early without steering the dice',
-        );
-      }
-      current = after.nextSeat!;
-    }
-    throw TestFailure(
-      'no roll left a legal list that was both non-empty and short of '
-      'all four tokens for any seat in room ${lobby.code} within '
-      '$maxAttempts attempts; this suite cannot steer the dice (see the '
-      'file header), so this is a real possible outcome of an unlucky '
-      'run, not necessarily a defect',
-    );
-  }
-
   // -----------------------------------------------------------------------
   // Order 055's steering seam: order 052's dice-steering seam, applied to
   // this file's own tests rather than proved in the abstract the way
@@ -543,6 +430,216 @@ void main() {
     );
 
     return (lobby, startedData);
+  }
+
+  /// The fixed 2-player seat mapping every steered helper below assumes
+  /// (host=0, guest=2, lib/src/registry.dart:967-978), spelled out once so
+  /// `test/support/engine_search.dart`'s offline search runs over exactly
+  /// the seats the wire-level room it steers will actually use.
+  const List<int> steeredSeats = <int>[0, 2];
+
+  /// Sends [faces] one roll at a time on the socket currently holding the
+  /// turn, steering each through [buildSteeredLobby] first so every value
+  /// is fixed before a single frame is sent. Every roll except the last is
+  /// driven all the way through: if it leaves a legal move, the move sent
+  /// is `legal.first` -- rule 15's own definition of "the first legal
+  /// move", and the exact policy `test/support/engine_search.dart`'s
+  /// search assumed when it found [faces] in the first place, so replaying
+  /// it here is required, not a convenience -- and whatever follows
+  /// (`turn_passed`+`turn`, or `moved`+`turn`) is drained via the readers
+  /// already in this file. The last face's own `roll` is sent and its
+  /// `rolled` frame returned untouched, without a move: that is the one
+  /// roll a caller actually wanted to observe, and every earlier face in
+  /// [faces] only existed to reach the state it is rolled from.
+  ///
+  /// [beforeFinalRoll], if given, runs immediately before that last `roll`
+  /// is sent -- the seam a caller uses to advance the injected clock partway
+  /// through a steered sequence without disturbing which face any roll
+  /// produces.
+  Future<(WireTestLobby, int, Map<String, Object?>)> driveToSteeredRoll(
+    List<int> faces, {
+    Map<String, Object?> rules = const <String, Object?>{},
+    Future<void> Function()? beforeFinalRoll,
+  }) async {
+    final (WireTestLobby lobby, Map<String, Object?> started) =
+        await buildSteeredLobby(faces, rules: rules);
+    int current = started['turn']! as int;
+    Map<String, Object?>? lastData;
+    for (int i = 0; i < faces.length; i++) {
+      final bool isLast = i == faces.length - 1;
+      if (isLast && beforeFinalRoll != null) {
+        await beforeFinalRoll();
+      }
+      final Map<String, Object?> frame = await sendRoll(lobby, current);
+      expect(
+        frame['t'],
+        'rolled',
+        reason: 'steered roll ${i + 1}/${faces.length} (face ${faces[i]}): '
+            'expected a rolled frame from seat $current in room '
+            '${lobby.code}, got "${frame['t']}": ${frame['d']}',
+      );
+      final Map<String, Object?> data = frame['d']! as Map<String, Object?>;
+      expect(
+        data['value'],
+        faces[i],
+        reason: 'steering must produce the wanted face on the wire; wanted '
+            '${faces[i]} at roll ${i + 1}/${faces.length}, got '
+            '${data['value']}',
+      );
+      if (isLast) {
+        lastData = data;
+        break;
+      }
+      final List<int> legal = (data['legal']! as List<Object?>).cast<int>();
+      if (legal.isEmpty) {
+        current = await consumeNoLegalMove(lobby, current);
+      } else {
+        final Map<String, Object?> moved = await sendMove(
+          lobby,
+          current,
+          legal.first,
+        );
+        expect(
+          moved['t'],
+          'moved',
+          reason: 'steered roll ${i + 1}/${faces.length}: expected moved '
+              'after driving the first legal move, got "${moved['t']}": '
+              '${moved['d']}',
+        );
+        final _AfterMove after = await consumeAfterMove(lobby, current);
+        expect(
+          after.gameOver,
+          isFalse,
+          reason: 'the steered face sequence $faces reached game_over '
+              'before its last roll; test/support/engine_search.dart\'s '
+              'offline search must have missed a win reachable this early, '
+              'which is itself worth reporting',
+        );
+        current = after.nextSeat!;
+      }
+    }
+    return (lobby, current, lastData!);
+  }
+
+  /// Like [driveToSteeredRoll], but drives every face in [faces] all the
+  /// way through -- including the last -- and returns each roll's own
+  /// `rolled` payload, in order, rather than stopping at the last one, plus
+  /// the lobby and the room's own `game_started` payload (a caller that
+  /// needs `game_id`/`client_seeds` off it, the way the hash-chain test
+  /// below does, would otherwise have no way to reach it). Used by tests
+  /// that need several real, distinct rolls (and reveals) rather than a
+  /// single game state to land on.
+  Future<(WireTestLobby, Map<String, Object?>, List<Map<String, Object?>>)>
+      driveSteeredRollSeries(
+    List<int> faces, {
+    Map<String, Object?> rules = const <String, Object?>{},
+  }) async {
+    final (WireTestLobby lobby, Map<String, Object?> started) =
+        await buildSteeredLobby(faces, rules: rules);
+    int current = started['turn']! as int;
+    final List<Map<String, Object?>> collected = <Map<String, Object?>>[];
+    for (int i = 0; i < faces.length; i++) {
+      final Map<String, Object?> frame = await sendRoll(lobby, current);
+      expect(
+        frame['t'],
+        'rolled',
+        reason: 'steered roll ${i + 1}/${faces.length} (face ${faces[i]}): '
+            'expected a rolled frame from seat $current in room '
+            '${lobby.code}, got "${frame['t']}": ${frame['d']}',
+      );
+      final Map<String, Object?> data = frame['d']! as Map<String, Object?>;
+      expect(
+        data['value'],
+        faces[i],
+        reason: 'steering must produce the wanted face on the wire; wanted '
+            '${faces[i]} at roll ${i + 1}/${faces.length}, got '
+            '${data['value']}',
+      );
+      collected.add(data);
+      final List<int> legal = (data['legal']! as List<Object?>).cast<int>();
+      if (legal.isEmpty) {
+        current = await consumeNoLegalMove(lobby, current);
+      } else {
+        final Map<String, Object?> moved = await sendMove(
+          lobby,
+          current,
+          legal.first,
+        );
+        expect(
+          moved['t'],
+          'moved',
+          reason: 'steered roll ${i + 1}/${faces.length}: expected moved '
+              'after driving the first legal move, got "${moved['t']}": '
+              '${moved['d']}',
+        );
+        final _AfterMove after = await consumeAfterMove(lobby, current);
+        expect(
+          after.gameOver,
+          isFalse,
+          reason: 'the steered face sequence $faces reached game_over '
+              'before collecting ${faces.length} rolls; '
+              'test/support/engine_search.dart\'s offline roll-budget '
+              'search must have missed a win reachable this early, which '
+              'is itself worth reporting',
+        );
+        current = after.nextSeat!;
+      }
+    }
+    return (lobby, started, collected);
+  }
+
+  /// The one game state every old `reachLegalRoll` call site in this file
+  /// was actually fishing for: the very first roll of a fresh two-seat
+  /// game, where every token starts in the yard (docs/RULES.md rule 17) so
+  /// a legal move exists if and only if the face is 6. Found by
+  /// `test/support/engine_search.dart`'s offline search rather than
+  /// hand-asserted, so a future rule change that made this untrue would
+  /// fail this search (and name the state it could not reach) instead of
+  /// silently steering the wrong face. Returns the lobby, the seat that
+  /// rolled, and that roll's own `rolled` payload.
+  Future<(WireTestLobby, int, Map<String, Object?>)> freshLegalRoll({
+    Map<String, Object?> rules = const <String, Object?>{},
+  }) async {
+    final List<int>? faces = findFaceSequence(
+      seats: steeredSeats,
+      accepts: (EngineRollStep step, GameState state) => step.legal.isNotEmpty,
+    );
+    expect(
+      faces,
+      isNotNull,
+      reason: 'test/support/engine_search.dart found no face, within its '
+          'own bound, that leaves a legal move on the first roll of a '
+          'fresh two-seat game; docs/RULES.md rule 17 says a 6 always does, '
+          'so this is the offline search disagreeing with the rules, not '
+          'an unlucky run',
+    );
+    return driveToSteeredRoll(faces!, rules: rules);
+  }
+
+  /// The state the old `reachPartialLegalRoll` call site was fishing for: a
+  /// roll that leaves a legal list which is neither empty nor all four
+  /// tokens -- needed to prove ILLEGAL_MOVE against a well-formed token
+  /// that is simply not on it. Found by `test/support/engine_search.dart`'s
+  /// offline search: a single face cannot produce this on the first roll of
+  /// a fresh game (a 6 makes every token legal at once, nothing else makes
+  /// any token legal at all), so the search looks past the first roll
+  /// rather than this file asserting by hand how many faces it takes.
+  Future<(WireTestLobby, int, Map<String, Object?>)>
+      freshPartialLegalRoll() async {
+    final List<int>? faces = findFaceSequence(
+      seats: steeredSeats,
+      accepts: (EngineRollStep step, GameState state) =>
+          step.legal.isNotEmpty && step.legal.length < 4,
+    );
+    expect(
+      faces,
+      isNotNull,
+      reason: 'test/support/engine_search.dart found no face sequence, '
+          'within its own bound, that leaves a legal list which is '
+          'neither empty nor all four tokens -- needed to prove '
+          'ILLEGAL_MOVE against a token that is well-formed but not legal',
+    );
+    return driveToSteeredRoll(faces!);
   }
 
   group('roll: the rejection ladder, section 12.1, in order', () {
@@ -673,13 +770,7 @@ void main() {
     test(
         'NOT_YOUR_TURN precedes WRONG_PHASE: an off-turn roll while the '
         'on-turn seat is itself in the wrong phase to roll again', () async {
-      final Uri uri = await start();
-      final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
-      final Map<String, Object?> started = await startGame(lobby);
-      final (int onTurn, _) = await reachLegalRoll(
-        lobby,
-        started['turn']! as int,
-      );
+      final (WireTestLobby lobby, int onTurn, _) = await freshLegalRoll();
       final int offTurn =
           onTurn == lobby.host.seat ? lobby.guest.seat : lobby.host.seat;
 
@@ -700,13 +791,7 @@ void main() {
     test(
         'WRONG_PHASE: the on-turn seat rolls again while a move is '
         'pending', () async {
-      final Uri uri = await start();
-      final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
-      final Map<String, Object?> started = await startGame(lobby);
-      final (int onTurn, _) = await reachLegalRoll(
-        lobby,
-        started['turn']! as int,
-      );
+      final (WireTestLobby lobby, int onTurn, _) = await freshLegalRoll();
 
       final Map<String, Object?> reply = await sendRoll(lobby, onTurn);
       expectErrorFrame(
@@ -856,13 +941,7 @@ void main() {
     });
 
     test('BAD_FIELD: token is absent', () async {
-      final Uri uri = await start();
-      final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
-      final Map<String, Object?> started = await startGame(lobby);
-      final (int onTurn, _) = await reachLegalRoll(
-        lobby,
-        started['turn']! as int,
-      );
+      final (WireTestLobby lobby, int onTurn, _) = await freshLegalRoll();
 
       seatFor(lobby, onTurn).client.send('move', <String, Object?>{});
       final Map<String, Object?> reply =
@@ -875,13 +954,7 @@ void main() {
     });
 
     test('BAD_FIELD: token is not an integer', () async {
-      final Uri uri = await start();
-      final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
-      final Map<String, Object?> started = await startGame(lobby);
-      final (int onTurn, _) = await reachLegalRoll(
-        lobby,
-        started['turn']! as int,
-      );
+      final (WireTestLobby lobby, int onTurn, _) = await freshLegalRoll();
 
       final Map<String, Object?> reply = await sendMove(lobby, onTurn, 'zero');
       expectErrorFrame(
@@ -892,13 +965,7 @@ void main() {
     });
 
     test('BAD_FIELD: token is outside 0..3 (below range)', () async {
-      final Uri uri = await start();
-      final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
-      final Map<String, Object?> started = await startGame(lobby);
-      final (int onTurn, _) = await reachLegalRoll(
-        lobby,
-        started['turn']! as int,
-      );
+      final (WireTestLobby lobby, int onTurn, _) = await freshLegalRoll();
 
       final Map<String, Object?> reply = await sendMove(lobby, onTurn, -1);
       expectErrorFrame(
@@ -909,13 +976,7 @@ void main() {
     });
 
     test('BAD_FIELD: token is outside 0..3 (above range)', () async {
-      final Uri uri = await start();
-      final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
-      final Map<String, Object?> started = await startGame(lobby);
-      final (int onTurn, _) = await reachLegalRoll(
-        lobby,
-        started['turn']! as int,
-      );
+      final (WireTestLobby lobby, int onTurn, _) = await freshLegalRoll();
 
       final Map<String, Object?> reply = await sendMove(lobby, onTurn, 4);
       expectErrorFrame(
@@ -928,13 +989,8 @@ void main() {
     test(
         'BAD_FIELD precedes ILLEGAL_MOVE: a malformed token is BAD_FIELD '
         'even while a legal move exists to compare it against', () async {
-      final Uri uri = await start();
-      final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
-      final Map<String, Object?> started = await startGame(lobby);
-      final (int onTurn, Map<String, Object?> rolled) = await reachLegalRoll(
-        lobby,
-        started['turn']! as int,
-      );
+      final (WireTestLobby lobby, int onTurn, Map<String, Object?> rolled) =
+          await freshLegalRoll();
       final List<int> legal = (rolled['legal']! as List<Object?>).cast<int>();
       expect(
         legal,
@@ -957,14 +1013,8 @@ void main() {
     test(
         'ILLEGAL_MOVE: a well-formed token that is not in the current '
         'legal list', () async {
-      final Uri uri = await start();
-      final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
-      final Map<String, Object?> started = await startGame(lobby);
-      final (int onTurn, Map<String, Object?> rolled) =
-          await reachPartialLegalRoll(
-        lobby,
-        started['turn']! as int,
-      );
+      final (WireTestLobby lobby, int onTurn, Map<String, Object?> rolled) =
+          await freshPartialLegalRoll();
       final List<int> legal = (rolled['legal']! as List<Object?>).cast<int>();
       final int illegalToken = <int>[
         0,
@@ -1044,13 +1094,8 @@ void main() {
     test(
         'carries seat, token, from, to, captured (never absent, never '
         'null), extra_roll and seq', () async {
-      final Uri uri = await start();
-      final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
-      final Map<String, Object?> started = await startGame(lobby);
-      final (int onTurn, Map<String, Object?> rolled) = await reachLegalRoll(
-        lobby,
-        started['turn']! as int,
-      );
+      final (WireTestLobby lobby, int onTurn, Map<String, Object?> rolled) =
+          await freshLegalRoll();
       final List<int> legal = (rolled['legal']! as List<Object?>).cast<int>();
       final int token = legal.first;
 
@@ -1305,48 +1350,45 @@ void main() {
     test(
         'restarts to the full window when a rolled frame leaves a legal '
         'move pending, even after the segment had already decayed', () async {
-      final Uri uri = await start();
-      final WireTestLobby lobby = await buildWireTestLobby(
-        uri,
-        clients,
-        rules: <String, Object?>{'turn_seconds': 30},
-      );
-      final Map<String, Object?> started = await startGame(lobby);
       const int fullMs = 30 * 1000;
-
-      int current = started['turn']! as int;
-      Map<String, Object?>? rolled;
-      const int maxAttempts = 60;
-      for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-        // Decay the segment before every attempt, so whichever attempt
-        // finally leaves a legal move pending has genuinely decayed
-        // first -- this is not merely "the clock never moved so it was
-        // trivially still full".
-        harness.clock.advance(const Duration(seconds: 5));
-        final Map<String, Object?> frame = await sendRoll(lobby, current);
-        expect(
-          frame['t'],
-          'rolled',
-          reason: 'attempt $attempt/$maxAttempts: expected rolled from '
-              'seat $current in room ${lobby.code}, got "${frame['t']}": '
-              '${frame['d']}',
-        );
-        final Map<String, Object?> data = frame['d']! as Map<String, Object?>;
-        final List<int> legal = (data['legal']! as List<Object?>).cast<int>();
-        if (legal.isNotEmpty) {
-          rolled = data;
-          break;
-        }
-        current = await consumeNoLegalMove(lobby, current);
-      }
-      expect(
-        rolled,
-        isNotNull,
-        reason: 'no roll left a legal move within $maxAttempts attempts; '
-            'this suite cannot steer the dice (see the file header)',
+      // The same state freshLegalRoll steers for -- the first roll of a
+      // fresh two-seat game leaves a legal move if and only if it is a 6
+      // (docs/RULES.md rule 17) -- found by test/support/engine_search.dart
+      // rather than hand-asserted here.
+      final List<int>? faces = findFaceSequence(
+        seats: steeredSeats,
+        accepts: (EngineRollStep step, GameState state) =>
+            step.legal.isNotEmpty,
       );
       expect(
-        rolled!['deadline_ms'],
+        faces,
+        isNotNull,
+        reason: 'test/support/engine_search.dart found no face, within its '
+            'own bound, that leaves a legal move on the first roll of a '
+            'fresh two-seat game',
+      );
+
+      final (WireTestLobby lobby, int current, Map<String, Object?> rolled) =
+          await driveToSteeredRoll(
+        faces!,
+        rules: <String, Object?>{'turn_seconds': 30},
+        beforeFinalRoll: () async {
+          // Decay the segment before the roll this test actually observes,
+          // so the restart it asserts below is a genuine restart -- this is
+          // not merely "the clock never moved so it was trivially still
+          // full".
+          harness.clock.advance(const Duration(seconds: 5));
+        },
+      );
+      expect(
+        rolled['legal'],
+        isNotEmpty,
+        reason: 'setup requires the steered roll to actually leave a legal '
+            'move for seat $current in room ${lobby.code} for this '
+            'property to mean anything; got legal=${rolled['legal']}',
+      );
+      expect(
+        rolled['deadline_ms'],
         fullMs,
         reason: 'a rolled frame that leaves a legal move pending must '
             'restart the segment to the full window ($fullMs ms), even '
@@ -1514,64 +1556,42 @@ void main() {
         'SHA-256(reveal_1) == chain_commit; SHA-256(reveal_k) == '
         'reveal_{k-1}; every value == drawDie(reveal, game_id, '
         'client_seeds, k, 0), recomputed independently', () async {
-      final Uri uri = await start();
-      final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
-      final Map<String, Object?> started = await startGame(lobby);
+      // 5 real, distinct rolls are all this property needs -- nothing
+      // about a *specific* game state, just enough rolled frames to prove
+      // the reveal chain end to end. test/support/engine_search.dart
+      // verifies, against the real engine, that 5 rolls can be driven from
+      // a fresh two-seat game without ever reaching game_over (rule 33's
+      // 228-progress win condition is nowhere near reachable in 5 rolls
+      // under any face sequence; see _winUnreachable above for the fuller
+      // accounting), rather than this file assuming it.
+      const int wanted = 5;
+      final List<int>? faces =
+          findRollBudgetFaces(seats: steeredSeats, rolls: wanted);
+      expect(
+        faces,
+        isNotNull,
+        reason: 'test/support/engine_search.dart found no $wanted-roll face '
+            'sequence, from a fresh two-seat game, that avoids game_over '
+            'along the way',
+      );
+
+      final (
+        WireTestLobby lobby,
+        Map<String, Object?> started,
+        List<Map<String, Object?>> rolls
+      ) = await driveSteeredRollSeries(faces!);
       final String chainCommit = lobby.hostRoom['chain_commit']! as String;
       final String gameId = started['game_id']! as String;
       final String clientSeeds = started['client_seeds']! as String;
 
-      final List<_RollRecord> records = <_RollRecord>[];
-      int current = started['turn']! as int;
-      const int wanted = 5;
-      const int maxAttempts = 30;
-      for (int attempt = 1;
-          attempt <= maxAttempts && records.length < wanted;
-          attempt++) {
-        // Advances the fake clock past the per-connection message rate
-        // limit's 1-second window before every attempt -- see
-        // reachLegalRoll's identical comment for why.
-        harness.clock.advance(const Duration(seconds: 2));
-        final Map<String, Object?> frame = await sendRoll(lobby, current);
-        expect(
-          frame['t'],
-          'rolled',
-          reason: 'attempt $attempt: expected rolled from seat $current in '
-              'room ${lobby.code}, got "${frame['t']}": ${frame['d']} '
-              '(this is the expected failure mode while roll is '
-              'unimplemented: WRONG_PHASE unconditionally, '
-              'connection.dart:695)',
-        );
-        final Map<String, Object?> data = frame['d']! as Map<String, Object?>;
-        records.add(
+      final List<_RollRecord> records = <_RollRecord>[
+        for (final Map<String, Object?> data in rolls)
           _RollRecord(
             k: data['k']! as int,
             reveal: data['reveal']! as String,
             value: data['value']! as int,
           ),
-        );
-        final List<int> legal = (data['legal']! as List<Object?>).cast<int>();
-        if (legal.isEmpty) {
-          current = await consumeNoLegalMove(lobby, current);
-        } else {
-          final Map<String, Object?> moved = await sendMove(
-            lobby,
-            current,
-            legal.first,
-          );
-          expect(
-            moved['t'],
-            'moved',
-            reason: 'expected moved, got '
-                '"${moved['t']}": ${moved['d']}',
-          );
-          final _AfterMove after = await consumeAfterMove(lobby, current);
-          if (after.gameOver) {
-            break;
-          }
-          current = after.nextSeat!;
-        }
-      }
+      ];
 
       expect(
         records.length,
@@ -1775,104 +1795,95 @@ void main() {
         'a roll with no legal move produces rolled first (still carrying '
         'its reveal), then turn_passed with reason no_legal_move, then '
         'turn for the next seat', () async {
-      final Uri uri = await start();
-      final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
-      final Map<String, Object?> started = await startGame(lobby);
-
-      int current = started['turn']! as int;
-      const int maxAttempts = 40;
-      bool found = false;
-      for (int attempt = 1; attempt <= maxAttempts && !found; attempt++) {
-        // Advances the fake clock past the per-connection message rate
-        // limit's 1-second window before every attempt -- see
-        // reachLegalRoll's identical comment for why.
-        harness.clock.advance(const Duration(seconds: 2));
-        final Map<String, Object?> rolled = await sendRoll(lobby, current);
-        expect(
-          rolled['t'],
-          'rolled',
-          reason: 'attempt $attempt/$maxAttempts: expected rolled from '
-              'seat $current in room ${lobby.code}, got "${rolled['t']}": '
-              '${rolled['d']}',
-        );
-        final Map<String, Object?> rolledData =
-            rolled['d']! as Map<String, Object?>;
-        final Object? reveal = rolledData['reveal'];
-        expect(
-          reveal,
-          isA<String>(),
-          reason: 'the rolled frame preceding a turn_passed must still '
-              'carry its reveal (section 12.1: "the roll happened, and a '
-              'roll that is not published is a hole in the chain")',
-        );
-        expect(_hex64.hasMatch(reveal! as String), isTrue);
-
-        final List<int> legal =
-            (rolledData['legal']! as List<Object?>).cast<int>();
-        if (legal.isEmpty) {
-          // Read via _next: both frames are broadcast to every socket in
-          // the room (section 12.3), so the other socket's copy of each
-          // is drained (and checked) here too, consistent with every
-          // other read in this file.
-          final Map<String, Object?> passed = await _next(lobby, current);
-          expect(
-            passed['t'],
-            'turn_passed',
-            reason: 'expected '
-                'turn_passed immediately after the empty-legal rolled, got '
-                '"${passed['t']}": ${passed['d']}',
-          );
-          final Object? reason =
-              (passed['d']! as Map<String, Object?>)['reason'];
-          final Map<String, Object?> turn = await _next(lobby, current);
-          expect(
-            turn['t'],
-            'turn',
-            reason: 'expected turn for the next '
-                'seat immediately after turn_passed, got "${turn['t']}": '
-                '${turn['d']}',
-          );
-          final int nextSeat =
-              (turn['d']! as Map<String, Object?>)['seat']! as int;
-          expect(
-            nextSeat,
-            isNot(current),
-            reason: 'turn must move to a different seat after '
-                'turn_passed (reason $reason)',
-          );
-          if (reason == 'no_legal_move') {
-            // This is the specific property this test proves; every
-            // other empty-legal reason (three_sixes, section 12.1) is a
-            // real, valid pass too, just not the one being proven here,
-            // so it is bounced past exactly like a legal move would be.
-            found = true;
-          } else {
-            current = nextSeat;
-          }
-        } else {
-          final Map<String, Object?> moved = await sendMove(
-            lobby,
-            current,
-            legal.first,
-          );
-          expect(moved['t'], 'moved');
-          final _AfterMove after = await consumeAfterMove(lobby, current);
-          if (after.gameOver) {
-            throw TestFailure(
-              'reached game_over while only looking for '
-              'a no-legal-move roll; unexpected this early without '
-              'steering the dice',
-            );
-          }
-          current = after.nextSeat!;
-        }
-      }
+      // The first roll of a fresh two-seat game leaves no legal move for
+      // any face but 6 (docs/RULES.md rule 17: every token is in the yard,
+      // and only a 6 lets one leave it), and rule 7 makes that a
+      // no_legal_move pass rather than any other reason -- a one-face
+      // search, confirmed by test/support/engine_search.dart against the
+      // real engine rather than asserted here.
+      final List<int>? faces = findFaceSequence(
+        seats: steeredSeats,
+        accepts: (EngineRollStep step, GameState state) =>
+            step.legal.isEmpty &&
+            step.turnEndReason == TurnEndReason.noLegalMove,
+      );
       expect(
-        found,
-        isTrue,
-        reason: 'no roll left an empty legal list within $maxAttempts '
-            'attempts across both seats in room ${lobby.code}; this suite '
-            'cannot steer the dice (see the file header)',
+        faces,
+        isNotNull,
+        reason: 'test/support/engine_search.dart found no face, within its '
+            'own bound, that leaves turn_passed with reason no_legal_move '
+            'on the first roll of a fresh two-seat game',
+      );
+      final int wantedFace = faces!.single;
+
+      final (WireTestLobby lobby, Map<String, Object?> started) =
+          await buildSteeredLobby(faces);
+      final int current = started['turn']! as int;
+
+      final Map<String, Object?> rolled = await sendRoll(lobby, current);
+      expect(
+        rolled['t'],
+        'rolled',
+        reason: 'expected rolled from the steered face $wantedFace for '
+            'seat $current in room ${lobby.code}, got "${rolled['t']}": '
+            '${rolled['d']}',
+      );
+      final Map<String, Object?> rolledData =
+          rolled['d']! as Map<String, Object?>;
+      expect(
+        rolledData['value'],
+        wantedFace,
+        reason: 'steering must produce the wanted face on the wire; got '
+            '${rolledData['value']}',
+      );
+      final Object? reveal = rolledData['reveal'];
+      expect(
+        reveal,
+        isA<String>(),
+        reason: 'the rolled frame preceding a turn_passed must still '
+            'carry its reveal (section 12.1: "the roll happened, and a '
+            'roll that is not published is a hole in the chain")',
+      );
+      expect(_hex64.hasMatch(reveal! as String), isTrue);
+      expect(
+        rolledData['legal'],
+        isEmpty,
+        reason: 'steering targeted a face that leaves no legal move; got '
+            'legal=${rolledData['legal']}',
+      );
+
+      // Read via _next: both frames are broadcast to every socket in the
+      // room (section 12.3), so the other socket's copy of each is drained
+      // (and checked) here too, consistent with every other read in this
+      // file.
+      final Map<String, Object?> passed = await _next(lobby, current);
+      expect(
+        passed['t'],
+        'turn_passed',
+        reason: 'expected turn_passed immediately after the empty-legal '
+            'rolled, got "${passed['t']}": ${passed['d']}',
+      );
+      final Object? reason = (passed['d']! as Map<String, Object?>)['reason'];
+      expect(
+        reason,
+        'no_legal_move',
+        reason: 'steering targeted the first roll of a fresh game (rule 7), '
+            'which must produce reason no_legal_move, not three_sixes; got '
+            '$reason',
+      );
+      final Map<String, Object?> turn = await _next(lobby, current);
+      expect(
+        turn['t'],
+        'turn',
+        reason: 'expected turn for the next seat immediately after '
+            'turn_passed, got "${turn['t']}": ${turn['d']}',
+      );
+      final int nextSeat = (turn['d']! as Map<String, Object?>)['seat']! as int;
+      expect(
+        nextSeat,
+        isNot(current),
+        reason: 'turn must move to a different seat after turn_passed '
+            '(reason $reason)',
       );
     });
 
