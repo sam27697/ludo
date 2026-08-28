@@ -37,7 +37,7 @@ There are exactly two secrets in this protocol and they are different things.
 
 - **Room code.** Short, human-readable, dictatable over a phone call. It is the
   capability to *join* a room. 6 characters from the alphabet
-  `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` — 32 symbols. `0`, `O`, `1` and `I` are
+  `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` -- 32 symbols. `0`, `O`, `1` and `I` are
   all excluded. `L` is kept deliberately: with `1` gone there is nothing left
   for it to be confused with, and dropping it would leave 31 symbols.
   Generated from a CSPRNG, never sequential, never derived from a counter or a
@@ -112,7 +112,7 @@ different games.
 | `player_left` | `{ "seat": int }` |
 | `presence` | `{ "seat": int, "connected": bool }` |
 | `seat_seed` | `{ "seat": int, "client_seed": string, "origin": "player"\|"server" }`. Broadcast when a seat's seed is fixed. The seed is not a secret. Section 11. |
-| `game_started` | `{ "turn": int, "game_id": string, "client_seeds": string }`. **No `seed_commit`** — the commitment is `chain_commit` and it was published at room creation. Section 11. |
+| `game_started` | `{ "turn": int, "game_id": string, "client_seeds": string }`. **No `seed_commit`** -- the commitment is `chain_commit` and it was published at room creation. Section 11. |
 | `rolled` | `{ "seat": int, "value": 1..6, "legal": [int], "deadline_ms": int, "k": int, "reveal": string }`. `legal` is the list of token indices this seat may move with this value. Empty means the turn is about to pass. `k` is the 1-based roll number within this game and `reveal` is `s[k]` as 64 lowercase hex characters; both ship in this same frame, never before it. Section 11. |
 | `moved` | `{ "seat": int, "token": int, "from": int, "to": int, "captured": [{"seat":int,"token":int}], "extra_roll": bool }` |
 | `turn_passed` | `{ "seat": int, "reason": "no_legal_move"\|"three_sixes" }` |
@@ -137,8 +137,8 @@ Carrying `seq`: `room`, `player_joined`, `player_left`, `presence`, `seat_seed`,
 `game_started`, `rolled`, `moved`, `turn_passed`, `turn`, `game_over`.
 
 `seat_seed` is on that list and it matters. A seat's seed is part of the room
-state a client renders — the UI has to show which seats contributed entropy and
-which are trusting the server — so a client that missed one and does not know it
+state a client renders -- the UI has to show which seats contributed entropy and
+which are trusting the server -- so a client that missed one and does not know it
 missed one would display a seat's provenance wrongly. That is the same class of
 error as a missed `moved`.
 
@@ -187,10 +187,34 @@ every delta and renders only snapshots; the deltas are an optimisation.
   the entire desync detection mechanism and it is why `seq` is mandatory on
   every state-changing push.
 - `value`, `legal` and `sixes` are absent when `phase` is `await_roll`.
-- `turn.k` is the roll number the **next** roll of this game will carry. It is
-  `0` in LOBBY and equals the `k` of the last `rolled` frame once play has
-  begun, so a client that reconnects mid-game knows where it is in the chain
-  without replaying anything.
+- `turn.k` is **the number of rolls this game has made so far**: `0` from
+  `game_started` until the first roll, and thereafter exactly the `k` of the
+  most recent `rolled` frame. The next roll of the game carries `k + 1`. A
+  client that reconnects mid-game therefore knows the last chain link that was
+  revealed to the room, without replaying anything.
+
+  > **Amended 2026-08-28, run 16, master's ruling.** The bullet shipped saying
+  > `turn.k` is "the roll number the **next** roll will carry" *and* that it
+  > "equals the `k` of the last `rolled` frame". Those are two different
+  > integers one apart and both hands would have implemented a different one.
+  > The last-roll reading wins on three counts: the section 6 example carries
+  > `"k": 12` on a turn that has already rolled (`value` and `sixes` are
+  > present), so 12 is that roll's own number; the same bullet's "`0` in LOBBY"
+  > is only consistent with a count of rolls made, since a next-roll counter
+  > would read `1` before the first roll; and what a reconnecting client needs
+  > in order to check the chain is the last link that was published, not a
+  > prediction of the next one. The "next roll" wording is struck.
+
+- `turn.deadline_ms` is milliseconds remaining in the **current turn segment**,
+  never an absolute time. A segment starts, and the full `rules.turn_seconds`
+  is restored, on every one of these and nothing else: a seat's turn begins, a
+  `rolled` frame leaves a legal move pending, and an extra roll is granted. It
+  does **not** restart on a `moved` that ends the turn, because the next
+  segment belongs to the next seat and starts with that seat's `turn` frame.
+  The value is `max(0, turn_seconds * 1000 - elapsed)` measured on the server's
+  injected clock, so it is computable in a snapshot whether or not anything is
+  scheduled to fire at zero. A server that has not yet implemented expiry still
+  reports an honest countdown; it simply lets it reach zero without acting.
 - `chain_commit` and `chain_index` are present in every state, including LOBBY,
   because the commitment is published at room creation and is what a player
   checks their seed arrived *after*. `game_id` and `client_seeds` are `null` in
@@ -250,7 +274,7 @@ socket that is in no room gets `BAD_SEAT_TOKEN` for any of them, whatever its
 payload looks like.
 
 One field is exempt in every direction. A `code` or `seat_token` whose JSON type
-is wrong — not a string at all — is `BAD_FIELD` immediately, because no lookup
+is wrong -- not a string at all -- is `BAD_FIELD` immediately, because no lookup
 can be attempted with it. A `code` that is a string but malformed is **not**
 pre-validated: it goes to the registry as received, so a malformed code and a
 well-formed code for a room that does not exist both come back `NO_SUCH_ROOM`.
@@ -356,7 +380,7 @@ answers, and it may animate optimistically. It must correct itself to the
 server's message without argument when the two differ, and it must never
 suppress or delay a server message because it disagrees with it.
 
-## 11. Verifiable dice — the 2026-08-28 amendment
+## 11. Verifiable dice -- the 2026-08-28 amendment
 
 `docs/FAIRNESS.md` is the scheme and its test vectors. This section is the wire
 form of it, and where the two disagree about a field name or a frame, **this
@@ -494,6 +518,95 @@ frames.
 ### 11.4 What this obsoletes
 
 `seed_commit`, `game_over.seed`, and the engine's per-game seed as a source of
-dice. The engine already stopped drawing faces on run 11 — `RollIntention`
-carries the face and the engine validates `1..6` — so the server is now the only
+dice. The engine already stopped drawing faces on run 11 -- `RollIntention`
+carries the face and the engine validates `1..6` -- so the server is now the only
 thing that decides a face, which is exactly where a verifiable scheme needs it.
+
+## 12. The turn loop, frame by frame
+
+Master-written 2026-08-28, run 16, for order 008 and its blind test half. Every
+statement here is normative. Where this section and section 5's table describe
+the same frame, section 5 gives the fields and this section gives the ordering.
+
+### 12.1 `roll`
+
+The rejection ladder, in order, first failure wins, nothing is touched before a
+rejection:
+
+| Situation | Code |
+|---|---|
+| the room does not exist, or no longer does | `NO_SUCH_ROOM` |
+| the socket holds no seat in that room | `BAD_SEAT_TOKEN` |
+| the room is FINISHED | `GAME_OVER` |
+| the room is in LOBBY | `WRONG_PHASE` |
+| the sender is not the seat on turn | `NOT_YOUR_TURN` |
+| the turn is awaiting a move, not a roll | `WRONG_PHASE` |
+
+`NOT_YOUR_TURN` precedes the phase check, and that ordering is deliberate: a
+player who is not on turn learns only that, and is not told which phase the
+seat on turn happens to be in. It is not a secret worth defending, but two
+implementations that order these differently produce two different error codes
+for the same wire input, and a conformance test cannot pin both.
+
+On acceptance the server, in this order:
+
+1. increments the game's roll counter to `k = turn.k + 1`;
+2. takes `reveal = chain.reveal(k)`, 64 lowercase hex;
+3. takes `value = drawDie(reveal, game_id, client_seeds, k, 0)`, which is
+   `packages/fair_dice`'s function and is not reimplemented here;
+4. applies `RollIntention(seat, value)` to the engine;
+5. broadcasts one `rolled` carrying `seat`, `value`, the engine's `legal`,
+   `deadline_ms`, `k`, `reveal` and `seq`.
+
+**The chain link is read once and published in that same frame.** There is no
+path on which `reveal` is computed and the frame is not sent, and no path on
+which `k` advances without a `rolled`. A `roll` rejected by the ladder above
+advances nothing: the counter, the chain and the engine are all untouched, so a
+client may retry a rejected `roll` and receive the same `k` it would have had.
+
+If the engine reports the turn ended with no legal move, a `turn_passed` with
+`reason: "no_legal_move"` follows the `rolled`, then a `turn` for the next
+seat. If it ended on the third six, the same, with `reason: "three_sixes"`. In
+both cases the `rolled` is still sent first and still carries its `reveal`: the
+roll happened, and a roll that is not published is a hole in the chain.
+
+### 12.2 `move`
+
+The same ladder, with `WRONG_PHASE` when the turn is awaiting a roll rather
+than a move, and `ILLEGAL_MOVE` when `token` is not in the current `legal`
+list. `token` absent, not an integer, or outside `0..3` is `BAD_FIELD`, and it
+is checked before legality, because a malformed field is not an illegal move.
+
+On acceptance the server broadcasts one `moved` carrying `seat`, `token`,
+`from`, `to`, `captured`, `extra_roll` and `seq`, built from the engine's own
+events and from nothing else. `captured` is the list of `{seat, token}` the
+engine reported captured by this move, in the order it reported them, and is an
+empty list when there were none. `extra_roll` is true exactly when the engine
+granted one, whether for a six or for a capture.
+
+Then, in order, whichever apply:
+
+- if the game is now won: `game_over` with `winner` and `verify_url`, and the
+  room moves to FINISHED. No `turn` frame follows a `game_over`.
+- else if the turn ended: `turn` for the seat that now holds it.
+- else (an extra roll, or a move that left the same seat on turn): `turn` for
+  the same seat, so every client's countdown restarts from one frame it can see
+  rather than from a rule it has to infer.
+
+### 12.3 What must be true of every one of these frames
+
+- Every frame in this section carries `seq`, taken from the room's counter at
+  the moment the frame is built, and the counter advances by exactly one per
+  frame. Three frames from one `move` carry three consecutive `seq` values.
+- Every frame is broadcast to **every connected socket in the room**, including
+  the one that sent the message that caused it. The sender's copy carries `re`;
+  the others do not. A sender that had to special-case its own action would be
+  a second code path for the same state change, and the second path is the one
+  that drifts.
+- A `roll` or `move` from a disconnected-but-seated player is impossible by
+  construction, since it arrives on a socket, but the seat being marked
+  disconnected is not itself grounds for rejection: a socket that has resumed
+  the seat is the seat.
+- The engine is the only thing that decides legality, capture, extra rolls and
+  the winner. The server decides the face, the ordering and the wire shape. No
+  rule from `docs/RULES.md` is reimplemented in the server.

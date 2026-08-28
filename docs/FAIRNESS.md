@@ -59,8 +59,8 @@ asked for, in four specific ways:
    **Players contribute zero entropy.** This is the important gap.
 3. **64 bits is too small for a commitment** whose preimage space is exactly
    the 64-bit integers written in decimal.
-4. **There is no link.** Nothing is stored — rooms are reaped after 60 minutes
-   — so a player cannot check anything tomorrow.
+4. **There is no link.** Nothing is stored -- rooms are reaped after 60 minutes
+   -- so a player cannot check anything tomorrow.
 
 ## 2. The scheme
 
@@ -86,8 +86,8 @@ at the start. **Preimage resistance is what makes this safe to reveal live:**
 
 If a game somehow exceeds N rolls the server starts a second chain and
 publishes a new `chain_commit` with a `chain_index`. Rolls carry their
-`chain_index`. This never happens in practice — the 40-game golden corpus tops
-out at 945 intentions — but a silent wrap would be a forged roll, so it is
+`chain_index`. This never happens in practice -- the 40-game golden corpus tops
+out at 945 intentions -- but a silent wrap would be a forged roll, so it is
 explicit.
 
 ### 2.2 Player entropy
@@ -129,7 +129,7 @@ re-HMAC with `msg + "|r1"`, then `|r2`, and so on.
 `game_started`. It is the key of the verification permalink and it is not the
 room code, because room codes are reissued after 24 hours.
 
-### 2.4 Test vectors — the implementation is checked against these
+### 2.4 Test vectors -- the implementation is checked against these
 
 `packages/fair_dice/test/vectors.json`, generated 2026-08-26 and **verified by
 two independent implementations, one in Dart and one in Python, written from
@@ -209,7 +209,7 @@ who does not trust the app either.
 
 ## 5. The verification link
 
-`https://provefair.app/v/<game_id>` — a plain web page, in the browser, for
+`https://provefair.app/v/<game_id>` -- a plain web page, in the browser, for
 somebody who trusts nothing here.
 
 - Shows: `chain_commit`, every seat's client seed and its origin, and every
@@ -233,7 +233,7 @@ publicly and honoured.
 
 ## 6. Shared package
 
-`packages/fair_dice` — chain construction, reveal verification, the HMAC draw,
+`packages/fair_dice` -- chain construction, reveal verification, the HMAC draw,
 and the vectors. Pure Dart, no I/O, no clock, under the same purity gate as the
 engine. Ludo depends on it. Backgammon depends on it unchanged. The browser
 verifier is a direct port of the same twenty lines.
