@@ -178,8 +178,9 @@ void main() {
   /// Reads the two frames a `rolled` with an empty `legal` list produces
   /// (section 12.1): `turn_passed` with `reason: "no_legal_move"`, then
   /// `turn` for whichever seat now holds it. Returns that seat.
-  Future<int> consumeNoLegalMove(WireTestLobby lobby) async {
-    final Map<String, Object?> passed = await lobby.host.client.next();
+  Future<int> consumeNoLegalMove(WireTestLobby lobby, int actingSeat) async {
+    final WireTestClient reader = seatFor(lobby, actingSeat).client;
+    final Map<String, Object?> passed = await reader.next();
     expect(
       passed['t'],
       'turn_passed',
@@ -194,7 +195,7 @@ void main() {
       reason: 'turn_passed following an empty-legal rolled must carry '
           'reason "no_legal_move"; got ${passedData['reason']}',
     );
-    final Map<String, Object?> turn = await lobby.host.client.next();
+    final Map<String, Object?> turn = await reader.next();
     expect(
       turn['t'],
       'turn',
@@ -207,8 +208,10 @@ void main() {
   /// Reads the one frame section 12.2 sends after `moved`: either
   /// `game_over` (game won, no `turn` follows it) or `turn` for whichever
   /// seat -- the same one or the next -- now holds it.
-  Future<_AfterMove> consumeAfterMove(WireTestLobby lobby) async {
-    final Map<String, Object?> next = await lobby.host.client.next();
+  Future<_AfterMove> consumeAfterMove(
+      WireTestLobby lobby, int actingSeat) async {
+    final Map<String, Object?> next =
+        await seatFor(lobby, actingSeat).client.next();
     if (next['t'] == 'game_over') {
       return _AfterMove(gameOver: true);
     }
@@ -251,7 +254,7 @@ void main() {
       if (legal.isNotEmpty) {
         return (current, data);
       }
-      current = await consumeNoLegalMove(lobby);
+      current = await consumeNoLegalMove(lobby, current);
     }
     throw TestFailure(
       'no roll left a legal move for any seat in room ${lobby.code} within '
@@ -581,7 +584,8 @@ void main() {
       );
 
       seatFor(lobby, onTurn).client.send('move', <String, Object?>{});
-      final Map<String, Object?> reply = await lobby.host.client.next();
+      final Map<String, Object?> reply =
+          await seatFor(lobby, onTurn).client.next();
       expectErrorFrame(
         reply,
         'BAD_FIELD',
@@ -1038,7 +1042,7 @@ void main() {
           rolled = data;
           break;
         }
-        current = await consumeNoLegalMove(lobby);
+        current = await consumeNoLegalMove(lobby, current);
       }
       expect(
         rolled,
@@ -1094,9 +1098,11 @@ void main() {
         );
         final List<int> legal = (data['legal']! as List<Object?>).cast<int>();
         if (legal.isEmpty) {
-          final Map<String, Object?> passed = await lobby.host.client.next();
+          final Map<String, Object?> passed =
+              await seatFor(lobby, current).client.next();
           _assertNoEarlyReveal(passed, rolledSeen);
-          final Map<String, Object?> turn = await lobby.host.client.next();
+          final Map<String, Object?> turn =
+              await seatFor(lobby, current).client.next();
           _assertNoEarlyReveal(turn, rolledSeen);
           current = (turn['d']! as Map<String, Object?>)['seat']! as int;
         } else {
@@ -1113,7 +1119,8 @@ void main() {
                 '"${moved['t']}": ${moved['d']}',
           );
           _assertNoEarlyReveal(moved, rolledSeen);
-          final Map<String, Object?> after = await lobby.host.client.next();
+          final Map<String, Object?> after =
+              await seatFor(lobby, current).client.next();
           _assertNoEarlyReveal(after, rolledSeen);
           if (after['t'] == 'game_over') {
             break;
@@ -1165,7 +1172,7 @@ void main() {
         );
         final List<int> legal = (data['legal']! as List<Object?>).cast<int>();
         if (legal.isEmpty) {
-          current = await consumeNoLegalMove(lobby);
+          current = await consumeNoLegalMove(lobby, current);
         } else {
           final Map<String, Object?> moved = await sendMove(
             lobby,
@@ -1178,7 +1185,7 @@ void main() {
             reason: 'expected moved, got '
                 '"${moved['t']}": ${moved['d']}',
           );
-          final _AfterMove after = await consumeAfterMove(lobby);
+          final _AfterMove after = await consumeAfterMove(lobby, current);
           if (after.gameOver) {
             break;
           }
@@ -1254,9 +1261,6 @@ void main() {
       final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
       final Map<String, Object?> started = await startGame(lobby);
       final int onTurn = started['turn']! as int;
-      final WireTestSeat sender = seatFor(lobby, onTurn);
-      final WireTestSeat other =
-          onTurn == lobby.host.seat ? lobby.guest : lobby.host;
 
       // A `roll` whose value leaves no legal move is the only single wire
       // message this section documents producing exactly three broadcast
@@ -1269,10 +1273,13 @@ void main() {
       const int maxAttempts = 60;
       int current = onTurn;
       List<Map<String, Object?>>? triple;
+      WireTestSeat? other;
       while (attempts < maxAttempts) {
         attempts++;
-        final String rollId = sender.client.send('roll', <String, Object?>{});
-        final Map<String, Object?> rolled = await lobby.host.client.next();
+        final String rollId =
+            seatFor(lobby, current).client.send('roll', <String, Object?>{});
+        final Map<String, Object?> rolled =
+            await seatFor(lobby, current).client.next();
         expect(
           rolled['t'],
           'rolled',
@@ -1283,16 +1290,20 @@ void main() {
             ((rolled['d']! as Map<String, Object?>)['legal']! as List<Object?>)
                 .cast<int>();
         if (legal.isEmpty) {
-          final Map<String, Object?> passed = await lobby.host.client.next();
-          final Map<String, Object?> turn = await lobby.host.client.next();
+          final Map<String, Object?> passed =
+              await seatFor(lobby, current).client.next();
+          final Map<String, Object?> turn =
+              await seatFor(lobby, current).client.next();
           triple = <Map<String, Object?>>[rolled, passed, turn];
 
+          final int rollingSeat = current;
           expect(
             rolled['re'],
-            sender == lobby.host ? rollId : isNull,
+            rollingSeat == lobby.host.seat ? rollId : isNull,
             reason: 'the sender\'s own copy of rolled must carry re; the '
                 'other socket\'s must not',
           );
+          other = rollingSeat == lobby.host.seat ? lobby.guest : lobby.host;
 
           current = (turn['d']! as Map<String, Object?>)['seat']! as int;
           break;
@@ -1303,14 +1314,15 @@ void main() {
           lobby,
           current,
         ).client.send('move', <String, Object?>{'token': legal.first});
-        final Map<String, Object?> moved = await lobby.host.client.next();
+        final Map<String, Object?> moved =
+            await seatFor(lobby, current).client.next();
         expect(
           moved['t'],
           'moved',
           reason: 'expected moved, got '
               '"${moved['t']}": ${moved['d']}',
         );
-        final _AfterMove after = await consumeAfterMove(lobby);
+        final _AfterMove after = await consumeAfterMove(lobby, current);
         if (after.gameOver) {
           throw TestFailure(
             'reached game_over while only looking for a '
@@ -1346,7 +1358,7 @@ void main() {
 
       // Broadcast reach: the other socket must have received the same
       // rolled/turn_passed/turn sequence, without re.
-      final Map<String, Object?> otherRolled = await other.client.next();
+      final Map<String, Object?> otherRolled = await other!.client.next();
       final Map<String, Object?> otherPassed = await other.client.next();
       final Map<String, Object?> otherTurn = await other.client.next();
       for (final Map<String, Object?> f in <Map<String, Object?>>[
@@ -1412,7 +1424,8 @@ void main() {
             (rolledData['legal']! as List<Object?>).cast<int>();
         if (legal.isEmpty) {
           found = true;
-          final Map<String, Object?> passed = await lobby.host.client.next();
+          final Map<String, Object?> passed =
+              await seatFor(lobby, current).client.next();
           expect(
             passed['t'],
             'turn_passed',
@@ -1424,7 +1437,8 @@ void main() {
             (passed['d']! as Map<String, Object?>)['reason'],
             'no_legal_move',
           );
-          final Map<String, Object?> turn = await lobby.host.client.next();
+          final Map<String, Object?> turn =
+              await seatFor(lobby, current).client.next();
           expect(
             turn['t'],
             'turn',
@@ -1445,7 +1459,7 @@ void main() {
             legal.first,
           );
           expect(moved['t'], 'moved');
-          final _AfterMove after = await consumeAfterMove(lobby);
+          final _AfterMove after = await consumeAfterMove(lobby, current);
           if (after.gameOver) {
             throw TestFailure(
               'reached game_over while only looking for '
