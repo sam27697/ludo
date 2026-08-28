@@ -28,6 +28,14 @@ Future<void> main() async {
   final String rawVersion = Platform.environment['LUDO_VERSION'] ?? '';
   final String version = rawVersion.isEmpty ? 'dev' : rawVersion;
 
+  // The contact address rendered into the /privacy page's contact section.
+  // Unset or empty omits that section entirely rather than shipping an
+  // invented or a placeholder address; see docs on buildPrivacyPageHtml.
+  final String rawPrivacyContactEmail =
+      Platform.environment['PRIVACY_CONTACT_EMAIL'] ?? '';
+  final String? privacyContactEmail =
+      rawPrivacyContactEmail.isEmpty ? null : rawPrivacyContactEmail;
+
   final RoomRegistry registry = RoomRegistry(
     clock: const SystemClock(),
     secure: Random.secure(),
@@ -39,6 +47,7 @@ Future<void> main() async {
     clock: const SystemClock(),
     trustedProxies: trustedProxies,
     version: version,
+    privacyContactEmail: privacyContactEmail,
   );
 
   await server.start(address: InternetAddress.anyIPv4, port: port);
