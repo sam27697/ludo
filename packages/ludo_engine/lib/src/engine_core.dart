@@ -11,7 +11,6 @@ import 'game_config.dart';
 import 'game_state.dart';
 import 'intentions.dart';
 import 'apply_result.dart';
-import 'rng.dart';
 
 /// A fresh game: `awaitRoll`, the lowest occupied seat to move first, every
 /// token in the yard, `seq = 0`, `rngState = config.seed`.
@@ -92,16 +91,21 @@ ApplyResult _applyRoll(GameState state, RollIntention intention) {
   if (state.phase != GamePhase.awaitRoll) {
     return const Rejected(EngineError.wrongPhase);
   }
+  final value = intention.face;
+  if (value < 1 || value > 6) {
+    // Step 5 of the check ladder, docs/ENGINE_API.md section 4: a face
+    // outside 1..6 is rejected before anything else in the roll step runs,
+    // and rngState does not move -- the engine draws nothing, rule 38.
+    return const Rejected(EngineError.badFace);
+  }
 
   final seat = state.currentSeat;
-  final (newRngState, value) = rollDie(state.rngState);
 
   if (value == 6 && state.sixes == 2) {
     // Rule 10: the third consecutive 6 is not played at all.
     return _passTurn(
       state: state,
       seat: seat,
-      newRngState: newRngState,
       rolledEvent: Rolled(seat: seat, value: value, legal: const <int>[]),
       turnEndReason: TurnEndReason.threeSixes,
     );
@@ -113,7 +117,6 @@ ApplyResult _applyRoll(GameState state, RollIntention intention) {
     return _passTurn(
       state: state,
       seat: seat,
-      newRngState: newRngState,
       rolledEvent: Rolled(seat: seat, value: value, legal: const <int>[]),
       turnEndReason: TurnEndReason.noLegalMove,
     );
@@ -129,7 +132,7 @@ ApplyResult _applyRoll(GameState state, RollIntention intention) {
     sixes: newSixes,
     winner: state.winner,
     seq: state.seq + 1,
-    rngState: newRngState,
+    rngState: state.rngState,
   );
   return Applied(newState, <GameEvent>[
     Rolled(seat: seat, value: value, legal: legal),
@@ -139,7 +142,6 @@ ApplyResult _applyRoll(GameState state, RollIntention intention) {
 ApplyResult _passTurn({
   required GameState state,
   required int seat,
-  required int newRngState,
   required Rolled rolledEvent,
   required TurnEndReason turnEndReason,
 }) {
@@ -153,7 +155,7 @@ ApplyResult _passTurn({
     sixes: 0,
     winner: state.winner,
     seq: state.seq + 1,
-    rngState: newRngState,
+    rngState: state.rngState,
   );
   return Applied(newState, <GameEvent>[
     rolledEvent,
