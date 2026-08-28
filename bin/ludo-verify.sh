@@ -273,19 +273,28 @@ gate_dice() {
   out="$(cd "$pkg" && "$dart" test test/ 2>&1)"; rc=$?
 
   # Pull the pass/fail count straight from the runner's own final summary
-  # line ("+N: All tests passed." or "+N -M: Some tests failed.") instead of
-  # hardcoding an expected total, so a suite that grows never needs this file
-  # touched.
-  local summary passed failed total
-  summary="$(printf '%s\n' "$out" | grep -oE '\+[0-9]+( -[0-9]+)?: (All tests passed|Some tests failed)' | tail -n1)"
+  # line ("+N: All tests passed.", "+N -M: Some tests failed.", or, once a
+  # suite has a skip: in it, "+N ~S: All tests passed." / "+N ~S -M: Some
+  # tests failed.") instead of hardcoding an expected total, so a suite that
+  # grows never needs this file touched. The middle "~S" group used to be
+  # absent from this pattern entirely, which meant a suite with any skipped
+  # test matched nothing at all and silently reported 0/0 here.
+  local summary passed skipped failed total
+  summary="$(printf '%s\n' "$out" | grep -oE '\+[0-9]+( ~[0-9]+)?( -[0-9]+)?: (All tests passed|Some tests failed)' | tail -n1)"
   passed="$(printf '%s' "$summary" | grep -oE '^\+[0-9]+' | tr -d '+')"
+  skipped="$(printf '%s' "$summary" | grep -oE ' ~[0-9]+' | tr -d ' ~')"
   failed="$(printf '%s' "$summary" | grep -oE ' -[0-9]+' | tr -d ' -')"
   [ -z "$passed" ] && passed=0
+  [ -z "$skipped" ] && skipped=0
   [ -z "$failed" ] && failed=0
   total=$((passed + failed))
 
   echo "$out"
-  echo "dice($passed/$total)"
+  if [ "$skipped" -gt 0 ]; then
+    echo "dice($passed/$total, $skipped skipped)"
+  else
+    echo "dice($passed/$total)"
+  fi
 
   [ $rc -eq 0 ] && return 0
   return 1
@@ -311,19 +320,30 @@ gate_server() {
   out="$("$dart" test packages/ludo_server/test/ 2>&1)"; rc=$?
 
   # Pull the pass/fail count straight from the runner's own final summary
-  # line ("+N: All tests passed." or "+N -M: Some tests failed.") instead of
-  # hardcoding an expected total, so a suite that grows never needs this file
-  # touched.
-  local summary passed failed total
-  summary="$(printf '%s\n' "$out" | grep -oE '\+[0-9]+( -[0-9]+)?: (All tests passed|Some tests failed)' | tail -n1)"
+  # line ("+N: All tests passed.", "+N -M: Some tests failed.", or, once a
+  # suite has a skip: in it, "+N ~S: All tests passed." / "+N ~S -M: Some
+  # tests failed.") instead of hardcoding an expected total, so a suite that
+  # grows never needs this file touched. The middle "~S" group used to be
+  # absent from this pattern entirely, which meant a suite with any skipped
+  # test matched nothing at all and silently reported 0/0 here -- true of
+  # this very gate as of run 18, which had a real "~5" in its runner line
+  # and printed server(0/0) regardless.
+  local summary passed skipped failed total
+  summary="$(printf '%s\n' "$out" | grep -oE '\+[0-9]+( ~[0-9]+)?( -[0-9]+)?: (All tests passed|Some tests failed)' | tail -n1)"
   passed="$(printf '%s' "$summary" | grep -oE '^\+[0-9]+' | tr -d '+')"
+  skipped="$(printf '%s' "$summary" | grep -oE ' ~[0-9]+' | tr -d ' ~')"
   failed="$(printf '%s' "$summary" | grep -oE ' -[0-9]+' | tr -d ' -')"
   [ -z "$passed" ] && passed=0
+  [ -z "$skipped" ] && skipped=0
   [ -z "$failed" ] && failed=0
   total=$((passed + failed))
 
   echo "$out"
-  echo "server($passed/$total)"
+  if [ "$skipped" -gt 0 ]; then
+    echo "server($passed/$total, $skipped skipped)"
+  else
+    echo "server($passed/$total)"
+  fi
 
   [ $rc -eq 0 ] && return 0
   return 1
