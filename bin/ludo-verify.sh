@@ -362,8 +362,120 @@ gate_protocol() {
 # client killed mid-game and reconnecting, and once with two dropping at the
 # same time. This is the integration gate.
 gate_simulator() {
-  echo "no server yet"
-  return 77
+  local dart
+  dart="$(resolve_dart)" || {
+    echo "no Dart SDK found on PATH, in \$DART_SDK, or at /workspace/toolchains/dart-sdk"
+    return 77
+  }
+
+  local server_pkg="$ROOT/packages/ludo_server"
+  local sim_tool="$server_pkg/tool/simulator.dart"
+  if [ ! -f "$sim_tool" ]; then
+    echo "no packages/ludo_server/tool/simulator.dart yet"
+    return 77
+  fi
+
+  # Pick a free port instead of hardcoding one: scan a small range with
+  # bash's own /dev/tcp and take the first one nothing answers a connect
+  # attempt on. A gate that goes red because something else on the box holds
+  # a fixed port is a gate nobody will trust.
+  local port="" candidate
+  for candidate in $(seq 8123 8223); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$candidate") 2>/dev/null; then
+      continue
+    fi
+    port="$candidate"
+    break
+  done
+  if [ -z "$port" ]; then
+    echo "no free TCP port found in 8123-8223 to run the simulator's server on"
+    return 1
+  fi
+
+  # Deliberately not `local`: the EXIT trap below still needs to read these
+  # after gate_simulator's own stack frame is gone, since the trap fires at
+  # the exit of the surrounding subshell, not at the return of this
+  # function. Nothing outside this one subshell ever sees them -- run_gate
+  # captures gate_simulator's output through a command substitution, and a
+  # command substitution runs in its own subshell, so these die with it.
+  server_log="$(mktemp "${TMPDIR:-/tmp}/ludo-verify-sim-server.XXXXXX")"
+  server_pid=""
+
+  # Fires on a normal return, on the simulator failing, on the wall-clock
+  # bound below, and on the script being interrupted -- exactly the set of
+  # exits that must not leave a server holding the port.
+  cleanup() {
+    if [ -n "$server_pid" ] && kill -0 "$server_pid" 2>/dev/null; then
+      kill "$server_pid" 2>/dev/null
+      local waited=0
+      while kill -0 "$server_pid" 2>/dev/null && [ "$waited" -lt 50 ]; do
+        sleep 0.1
+        waited=$((waited + 1))
+      done
+      kill -0 "$server_pid" 2>/dev/null && kill -9 "$server_pid" 2>/dev/null
+      wait "$server_pid" 2>/dev/null
+    fi
+    rm -f "$server_log"
+  }
+  trap cleanup EXIT INT TERM
+
+  # exec replaces this backgrounded subshell with the server process itself,
+  # so $! below is the server's own pid rather than a wrapper shell's, and
+  # one kill is enough to stop it.
+  (cd "$server_pkg" && exec env PORT="$port" "$dart" run bin/server.dart) \
+    >"$server_log" 2>&1 &
+  server_pid=$!
+
+  # Poll /health until it actually answers, rather than sleeping a fixed
+  # amount and hoping the server is up by then.
+  local health_ok=0 waited_ms=0
+  while [ "$waited_ms" -lt 30000 ]; do
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      echo "server process exited before it ever answered /health; its output:"
+      sed 's/^/     /' "$server_log"
+      return 1
+    fi
+    if curl -fsS -o /dev/null --max-time 1 "http://127.0.0.1:$port/health" 2>/dev/null; then
+      health_ok=1
+      break
+    fi
+    sleep 0.2
+    waited_ms=$((waited_ms + 200))
+  done
+
+  if [ "$health_ok" -ne 1 ]; then
+    echo "server on 127.0.0.1:$port never answered /health within 30s; its output:"
+    sed 's/^/     /' "$server_log"
+    return 1
+  fi
+
+  # The simulator bounds its own run at --timeout-seconds (180 by default);
+  # this outer `timeout` is a second, independent bound so a hang that the
+  # simulator's own internal timeout somehow fails to catch still cannot
+  # hang the harness forever. -k gives it 10s past the TERM before a KILL.
+  local sim_out sim_rc
+  sim_out="$(cd "$server_pkg" && timeout -k 10 210 "$dart" run tool/simulator.dart \
+    --target "ws://127.0.0.1:$port" --scenario all 2>&1)"
+  sim_rc=$?
+
+  echo "$sim_out"
+
+  local sim_summary sim_passed sim_failed sim_total
+  sim_summary="$(printf '%s\n' "$sim_out" | grep -oE 'simulator: [0-9]+ passed, [0-9]+ failed' | tail -n1)"
+  sim_passed="$(printf '%s' "$sim_summary" | grep -oE '[0-9]+ passed' | grep -oE '^[0-9]+')"
+  sim_failed="$(printf '%s' "$sim_summary" | grep -oE '[0-9]+ failed' | grep -oE '^[0-9]+')"
+  [ -z "$sim_passed" ] && sim_passed=0
+  [ -z "$sim_failed" ] && sim_failed=0
+  sim_total=$((sim_passed + sim_failed))
+  echo "simulator($sim_passed/$sim_total)"
+
+  if [ "$sim_rc" -eq 124 ]; then
+    echo "simulator did not finish within this gate's own 210s wall-clock bound"
+    return 1
+  fi
+
+  [ "$sim_rc" -eq 0 ] && return 0
+  return 1
 }
 
 # 6. A real build artifact. "It compiles" is not the gate: something has to
