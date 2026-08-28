@@ -1,8 +1,9 @@
 # Protocol
 
-Frozen 2026-08-18. This is master-written and it is not a work order's to
-change. An implementation that cannot satisfy this file reports that; it does
-not adjust the file.
+Frozen 2026-08-18. **Amended 2026-08-28 for verifiable dice**; the amendment is
+section 11, and every table below already carries it. This is master-written and
+it is not a work order's to change. An implementation that cannot satisfy this
+file reports that; it does not adjust the file.
 
 Transport is a single WebSocket per client over TLS. Messages are JSON objects,
 UTF-8, one message per frame. The stack that carries this is decided in
@@ -79,6 +80,7 @@ seat is not reassignable by anything a third party can observe.
 | `create_room` | `{ "name": string, "players": 2\|3\|4, "rules": RulesConfig }` | Answered by `room`. Caller becomes host and takes the first seat. |
 | `join_room` | `{ "code": string, "name": string }` | Answered by `room` or an `error`. |
 | `resume` | `{ "code": string, "seat_token": string }` | Answered by `room` with the full current state. Works in LOBBY, PLAYING and FINISHED. |
+| `set_seed` | `{ "client_seed": string }` | Any seated player, **LOBBY only, once per seat**, after that seat has received a `room` frame carrying `chain_commit`. 1 to 64 characters of `[A-Za-z0-9_-]`. Answered by `seat_seed`, broadcast to the room. Section 11. |
 | `start_game` | `{ }` | Host only. LOBBY only. Every configured seat filled. |
 | `set_players` | `{ "players": 2\|3\|4 }` | Host only. LOBBY only. Not below current occupancy. Re-seats everyone onto the canonical set for the new count and answers with `room`. |
 | `roll` | `{ }` | Only the seat whose turn it is, only when the turn is awaiting a roll. |
@@ -109,12 +111,13 @@ different games.
 | `player_joined` | `{ "seat": int, "name": string }` |
 | `player_left` | `{ "seat": int }` |
 | `presence` | `{ "seat": int, "connected": bool }` |
-| `game_started` | `{ "turn": int, "seed_commit": string }` |
-| `rolled` | `{ "seat": int, "value": 1..6, "legal": [int], "deadline_ms": int }`. `legal` is the list of token indices this seat may move with this value. Empty means the turn is about to pass. |
+| `seat_seed` | `{ "seat": int, "client_seed": string, "origin": "player"\|"server" }`. Broadcast when a seat's seed is fixed. The seed is not a secret. Section 11. |
+| `game_started` | `{ "turn": int, "game_id": string, "client_seeds": string }`. **No `seed_commit`** — the commitment is `chain_commit` and it was published at room creation. Section 11. |
+| `rolled` | `{ "seat": int, "value": 1..6, "legal": [int], "deadline_ms": int, "k": int, "reveal": string }`. `legal` is the list of token indices this seat may move with this value. Empty means the turn is about to pass. `k` is the 1-based roll number within this game and `reveal` is `s[k]` as 64 lowercase hex characters; both ship in this same frame, never before it. Section 11. |
 | `moved` | `{ "seat": int, "token": int, "from": int, "to": int, "captured": [{"seat":int,"token":int}], "extra_roll": bool }` |
 | `turn_passed` | `{ "seat": int, "reason": "no_legal_move"\|"three_sixes" }` |
 | `turn` | `{ "seat": int, "deadline_ms": int }` |
-| `game_over` | `{ "winner": int, "seed": int }`. The seed is published here and only here, after play, so the `seed_commit` from `game_started` can be checked against it. |
+| `game_over` | `{ "winner": int, "verify_url": string }`. **No `seed`.** Nothing is withheld until the end any more: every roll's secret was already published in its own `rolled` frame, so a client can finish verifying before this frame arrives. `verify_url` is the permalink for later and for strangers. Section 11. |
 | `error` | `{ "code": string, "message": string }`, with `re` set when it answers a specific message. |
 | `pong` | `{ }` |
 
@@ -130,8 +133,14 @@ gap by comparing the `seq` of what arrives against its own, so a delta that
 carries no `seq` is a delta the client cannot place, and one such message
 desynchronises the client permanently.
 
-Carrying `seq`: `room`, `player_joined`, `player_left`, `presence`,
+Carrying `seq`: `room`, `player_joined`, `player_left`, `presence`, `seat_seed`,
 `game_started`, `rolled`, `moved`, `turn_passed`, `turn`, `game_over`.
+
+`seat_seed` is on that list and it matters. A seat's seed is part of the room
+state a client renders — the UI has to show which seats contributed entropy and
+which are trusting the server — so a client that missed one and does not know it
+missed one would display a seat's provenance wrongly. That is the same class of
+error as a missed `moved`.
 
 Not carrying `seq`: `error` and `pong`, neither of which changes state, and
 `seat_assigned`, which is not itself a state change and is always immediately
@@ -156,11 +165,16 @@ every delta and renders only snapshots; the deltas are an optimisation.
   "host_seat": 0,
   "players": 4,
   "rules": { "blocks": true, "capture_bonus": true, "turn_seconds": 45 },
+  "chain_commit": "4b871c47...",
+  "chain_index": 0,
+  "game_id": null,
+  "client_seeds": null,
   "seats": [
-    { "seat": 0, "name": "Sam", "connected": true, "tokens": [-1, 0, 14, 57] }
+    { "seat": 0, "name": "Sam", "connected": true, "tokens": [-1, 0, 14, 57],
+      "client_seed": "alice-seed", "seed_origin": "player" }
   ],
   "turn": { "seat": 1, "phase": "await_roll|await_move", "value": 6,
-            "legal": [0, 2], "deadline_ms": 41200, "sixes": 1 },
+            "legal": [0, 2], "deadline_ms": 41200, "sixes": 1, "k": 12 },
   "winner": null,
   "seq": 118
 }
@@ -173,26 +187,22 @@ every delta and renders only snapshots; the deltas are an optimisation.
   the entire desync detection mechanism and it is why `seq` is mandatory on
   every state-changing push.
 - `value`, `legal` and `sixes` are absent when `phase` is `await_roll`.
-- `seed_commit` in `game_started` is a hash of the game seed, published before
-  play. The seed itself is published in `game_over`. This costs nothing and it
-  means a player who suspects the dice can check afterwards that they were
-  fixed before the game started rather than chosen during it.
-
-  **The hash is SHA-256, lowercase hex, over the UTF-8 bytes of the seed's
-  decimal representation with no sign, no padding and no separator**, so that
-  `seed_commit == sha256(seed.toString())`. It is deliberately not the engine's
-  `stateHash`, which is FNV-1a and is a checksum, not a commitment: FNV-1a
-  collisions are cheap to construct, so a server that had committed with it
-  could still choose a different seed afterwards and produce one that matched.
-  A commitment that does not bind the committer proves nothing, and this field
-  exists only to prove something. The seed is 64-bit and comes from the server
-  CSPRNG, so the commitment does not reveal it in advance either.
-
-  The hash covers the seed alone and nothing else. Hashing the initial game
-  state instead would bind the room configuration into the commitment as well,
-  which sounds stronger and is worse: the configuration is already public to
-  everyone in the room, and a client checking the commitment afterwards would
-  have to reconstruct that whole state exactly rather than hash one integer.
+- `turn.k` is the roll number the **next** roll of this game will carry. It is
+  `0` in LOBBY and equals the `k` of the last `rolled` frame once play has
+  begun, so a client that reconnects mid-game knows where it is in the chain
+  without replaying anything.
+- `chain_commit` and `chain_index` are present in every state, including LOBBY,
+  because the commitment is published at room creation and is what a player
+  checks their seed arrived *after*. `game_id` and `client_seeds` are `null` in
+  LOBBY and non-null from `game_started` onward.
+- `client_seed` and `seed_origin` are per seat and present in every state. A
+  seat that has not set one in LOBBY has `client_seed: null` and
+  `seed_origin: null`; both are fixed at `game_started`, at which point
+  `seed_origin` is `"player"` or `"server"` and never null again.
+- **`seed_commit` is gone, and so is `game_over.seed`.** They were the one-seed
+  scheme, which committed the server to a seed it had already chosen freely and
+  let it grind for a sequence it liked, and which could not reveal anything
+  until the game was over. Section 11 replaces both.
 
 ## 7. Errors
 
@@ -214,6 +224,7 @@ Every error is one of these codes. A code is never invented at a call site.
 | `WRONG_PHASE` | `roll` when a move is pending, or `move` when a roll is pending. |
 | `ILLEGAL_MOVE` | the token is not in the `legal` list for the current roll. |
 | `BAD_SEAT_TOKEN` | `resume` with a token that matches no seat in that room. |
+| `SEED_ALREADY_SET` | a second `set_seed` from a seat that already has one. Section 11. |
 | `GAME_OVER` | any action against a FINISHED room. |
 | `INTERNAL` | a bug. Logged with the room code and the sequence number. |
 
@@ -344,3 +355,122 @@ It may compute the `legal` set locally to grey out tokens before the server
 answers, and it may animate optimistically. It must correct itself to the
 server's message without argument when the two differ, and it must never
 suppress or delay a server message because it disagrees with it.
+
+## 11. Verifiable dice — the 2026-08-28 amendment
+
+`docs/FAIRNESS.md` is the scheme and its test vectors. This section is the wire
+form of it, and where the two disagree about a field name or a frame, **this
+file wins for the wire and FAIRNESS.md wins for the cryptography**.
+
+### 11.1 What the ordering has to prove
+
+The whole security argument is an ordering, and it must be provable from a
+transcript a client kept, not promised in a document:
+
+    chain_commit published   ->   player seeds arrive   ->   play
+    (room creation)               (LOBBY, set_seed)          (rolled frames)
+
+The server commits to all 4096 future secrets before it has seen a single
+player seed, so it cannot grind a chain to suit the seeds; the players' seeds
+land afterwards, so the server cannot choose them; and each `s[k]` is published
+in the same frame as the roll it produced, so no player can predict a roll and
+no player can influence one.
+
+A client verifying offline needs nothing but the frames it already received.
+That is the point of putting `reveal` in `rolled` rather than behind a link.
+
+### 11.2 Frame-by-frame
+
+**`room`** carries `chain_commit` (64 lowercase hex characters, `s[0]`) and
+`chain_index` (integer, `0` for the first chain of the room) from the moment the
+room exists. Both are in the LOBBY snapshot. A client that joins later gets the
+same values, and it MUST NOT accept a `chain_commit` that changes for a given
+`chain_index` within one room; that is a forged roll and the client shows it as
+one.
+
+**`set_seed`** (client to server), **LOBBY only, once per seat.** The rejection
+ladder, in order, so an implementation does not invent one:
+
+| Situation | Code |
+|---|---|
+| room is not in LOBBY | `WRONG_PHASE` |
+| socket holds no seat | `BAD_SEAT_TOKEN` |
+| `client_seed` absent, not a string, empty, over 64 characters, or containing anything outside `[A-Za-z0-9_-]` | `BAD_FIELD` |
+| this seat already has a seed | `SEED_ALREADY_SET` |
+
+`WRONG_PHASE` precedes the seat check here, unlike the five messages in section
+7 whose identity check runs first, because a `set_seed` arriving after
+`start_game` is a client racing the host rather than a client in no room, and
+telling it "wrong phase" is the accurate answer. Say it, do not repair it.
+
+**`seat_seed`** (server to client) is broadcast to the whole room when a seat's
+seed is fixed: `{ "seat": int, "client_seed": string, "origin":
+"player"|"server" }`, plus `seq`. Fixed happens twice: on an accepted
+`set_seed`, and at `start_game` for every seat that sent none, which the server
+gives a 16-byte hex seed with `origin: "server"`.
+
+**The UI must show a `"server"` seat as not having contributed entropy.** It is
+still fully auditable; it is a seat that chose to trust the server, and a player
+is entitled to see which of their friends did that.
+
+> **This frame is named `seat_seed`, not `seed_set` as `docs/FAIRNESS.md`
+> section 4 calls it. Deliberate, master's decision, 2026-08-28.** `set_seed`
+> and `seed_set` differ only by a transposition, they travel in opposite
+> directions, and both would appear as adjacent cases in the same `switch` on
+> `t`. A typo between them would not fail to compile and would not fail a
+> casual test. Nothing about the cryptography changes. `seat_seed` also reads
+> correctly, because the frame is about a seat.
+
+**`game_started`** gains `game_id` (16 lowercase hex characters, server
+generated, the key of the verification permalink and **not** the room code,
+which is reissued after 24 hours) and `client_seeds` (the frozen combined
+string: seats in ascending index, `seat:seed`, joined by `|`, for example
+`0:alice-seed|2:bob-seed`). It **drops `seed_commit`**. `chain_commit` is not
+repeated here; it was in `room` and it has not changed.
+
+`client_seeds` is frozen at this instant and is a literal string on the wire
+rather than something the client reassembles from the `seat_seed` frames it
+happened to receive. It is an input to every HMAC, so a client that rebuilt it
+with a different separator, a different ordering, or a seat it missed would
+compute every face wrong and conclude the server cheated. Ship the exact bytes.
+
+**`rolled`** gains `k` and `reveal`. `k` is 1-based within the game and
+increments by exactly one per roll. `reveal` is `s[k]`, 64 lowercase hex
+characters. The client verifies `SHA-256(reveal) == ` the previous reveal, and
+the first one against `chain_commit`.
+
+**There is no `die` field**, though FAIRNESS.md section 4 lists one. `rolled`
+already carries `value`, which is the face. Two fields that must always agree is
+a desync waiting to be written, and the one that already exists is the one every
+other part of this protocol reads. **`value` is the die.**
+
+For the HMAC of FAIRNESS.md section 2.3, **Ludo always uses die index `d = 0`**,
+so the message is `"<game_id>|<client_seeds>|<k>|0"`. Backgammon will ask for
+`d = 0` and `d = 1` off the same reveal; that is backgammon's protocol, not
+this one, and the shared `packages/fair_dice` already takes `d` as a parameter.
+
+**`game_over`** drops `seed` and gains `verify_url`, the absolute
+`https://provefair.app/v/<game_id>`. It is a convenience for a stranger and for
+later. **A client must never need it to verify**; everything required was in the
+frames.
+
+### 11.3 What the server must not do
+
+- Never send `reveal` for a roll before that roll's result. One early reveal
+  destroys the scheme for every roll after it, because the chain runs backwards.
+- Never reuse a chain across games. A new `game_id` gets a new chain and a new
+  `chain_commit`, published in `room` before the game starts.
+- If a game exceeds `N = 4096` rolls, start a second chain, increment
+  `chain_index`, and publish the new `chain_commit`. The 40-game golden corpus
+  tops out at 945 intentions so this never happens in practice, but a silent
+  wrap is indistinguishable from a forgery and must be impossible rather than
+  unlikely.
+- Never accept a `set_seed` after `start_game`, and never let a seat's seed
+  change once fixed. The seed is an input to every face of the game.
+
+### 11.4 What this obsoletes
+
+`seed_commit`, `game_over.seed`, and the engine's per-game seed as a source of
+dice. The engine already stopped drawing faces on run 11 — `RollIntention`
+carries the face and the engine validates `1..6` — so the server is now the only
+thing that decides a face, which is exactly where a verifiable scheme needs it.
