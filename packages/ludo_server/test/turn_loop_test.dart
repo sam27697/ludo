@@ -3,43 +3,51 @@
 // only, against a real, running `WireServer`, the same way
 // `fairness_lobby_test.dart` covers section 11's lobby half.
 //
-// Every test in this file is expected to fail on this branch. `roll` and
-// `move` currently answer `WRONG_PHASE` unconditionally --
-// `connection.dart:695`, "No turn loop yet: order 008." This file never
-// reaches into `lib/` to make one pass; it only sends real JSON over a real
-// socket and reads the JSON that comes back.
-//
-// Three properties this order asked for could not be tested and are marked
-// `skip:` below rather than faked, each with the specific reason. All three
-// come back to the same root cause, explained in full next to the first one
-// (`_captureUnreachable`): `test/support/scripted_random.dart`'s
-// `ScriptedRandom` only intercepts `Random.nextInt(32)` (the room-code
-// alphabet size). `RoomRegistry._drawBytes`, the one thing standing between
-// a test and a chosen die-face sequence, draws every byte -- the chain's
-// server secret, a server-assigned seat seed, and `game_id` alike -- with
-// `Random.nextInt(256)`, which `ScriptedRandom` does not touch at all: those
-// calls always fall through to a real `Random.secure()`. There is no
-// documented seam that lets a wire-level test choose or predict a die face,
-// and building one would mean encoding the exact order and byte-width of
-// every CSPRNG draw `RoomRegistry` happens to make today (room code, two
-// seat tokens, the secret, per-seat server seeds, `game_id`) -- undocumented
-// implementation detail a blind conformance suite must not depend on.
-import 'package:fair_dice/fair_dice.dart' show drawDie, verifyReveal;
+// Order 055 folds in order 052's seam: `test/support/scripted_bytes.dart`'s
+// `ScriptedBytesRandom` and `test/support/dice_oracle.dart`'s
+// `findSecretForFaces` let a wire-level test choose the exact die-face
+// sequence a room produces, at the one-time cost of an offline search whose
+// size is roughly `6^(faces wanted)` -- `test/dice_steering_test.dart` is
+// the proof this works and this file only calls it, never edits it. That
+// closes two of the three skips this file used to carry outright: a non-six
+// on the first roll of a fresh game and three consecutive sixes are one-
+// and three-face searches. It also turns the retry loop this file used to
+// run -- up to 60 real, unsteered rolls hoping one would leave an empty
+// `legal` list -- from a coin flip into the same one-face search; that loop
+// is gone. The third kind of skip, a real capture and a real win, is not
+// closed: each is a real, measured number of faces, named next to its own
+// `skip:` below, past which `6^n` is not a search this suite can run in its
+// own lifetime. `test/support/scripted_random.dart` -- the room-code-only
+// seam an earlier draft of this file blamed for all three -- is untouched
+// and unused by anything below; it was never the seam this file needed.
+import 'package:fair_dice/fair_dice.dart' show drawDie, hexEncode, verifyReveal;
 import 'package:ludo_server/ludo_server.dart' show Room, RoomState;
 import 'package:test/test.dart';
 
+import 'support/dice_oracle.dart';
+import 'support/scripted_bytes.dart';
 import 'support/wire_harness.dart';
 
 const String _captureUnreachable =
-    'needs a real capture, which needs control over which die faces land, '
-    'which this suite could not obtain through test/support/scripted_random '
-    'as it ships -- see the file header';
-const String _threeSixesUnreachable =
-    'needs three consecutive sixes forced into one seat\'s rolls, which '
-    'needs control over the die faces -- see the file header';
+    'needs a real capture; the shortest sequence found for a 2-seat room is '
+    '8 rolls -- the capturing seat spends its own first turn reaching '
+    'progress 11 (faces 6, 6, 5), the victim seat then leaves the yard and '
+    'stops one square past its own entry, the smallest square that is not '
+    'itself safe (faces 6, 1), and the capturing seat closes the remaining '
+    '16 and lands on it (faces 6, 6, 4). 6^8 is nearly 1.7 million '
+    'candidates, and test/support/dice_oracle.dart walks its full '
+    '4096-link chain for every one of them regardless of how few faces are '
+    'wanted -- on the order of 6.9 billion hashes, not a search this suite '
+    'can run';
 const String _winUnreachable =
-    'needs a natural win, which needs control over the die faces for the '
-    'whole game, not just one roll -- see the file header';
+    'needs a natural win: one seat\'s 4 tokens need 4*57=228 total progress '
+    'plus their 4 individual yard exits, and docs/RULES.md rule 10 still '
+    'caps every run of sixes at 2 before a forced break and a hand-off to '
+    'the other seat, the same pattern the three-sixes test in this file '
+    'exercises -- so even a best-case run is on the order of 60 or more '
+    'rolls, putting the search at 6^60 or beyond, a number with no useful '
+    'relationship to the 6^8 the capture case above already found too '
+    'large to run';
 
 /// A room's first chain commitment, and every subsequent `reveal`: `s[k]`,
 /// 64 lowercase hex characters.
@@ -430,6 +438,97 @@ void main() {
       'file header), so this is a real possible outcome of an unlucky '
       'run, not necessarily a defect',
     );
+  }
+
+  // -----------------------------------------------------------------------
+  // Order 055's steering seam: order 052's dice-steering seam, applied to
+  // this file's own tests rather than proved in the abstract the way
+  // test/dice_steering_test.dart proves it. Every steered test below uses
+  // the same two client seeds, so client_seeds -- and therefore which
+  // secret findSecretForFaces has to search for -- is known before a
+  // single frame is sent.
+  // -----------------------------------------------------------------------
+  const String hostSteerSeed = 'turn-loop-host-seed';
+  const String guestSteerSeed = 'turn-loop-guest-seed';
+  const String steerClientSeeds = '0:$hostSteerSeed|2:$guestSteerSeed';
+
+  /// The `game_id` any steered room below will report, computed offline
+  /// exactly as test/dice_steering_test.dart does: buildScript's
+  /// filler-byte formula at the game_id offset does not depend on the
+  /// secret spliced in ahead of it, so this is fixed before
+  /// findSecretForFaces has even chosen one.
+  String predictedGameId() {
+    final List<int> probe =
+        buildScript(secret: List<int>.filled(serverSecretDraws, 0));
+    return hexEncode(probe.sublist(gameIdOffset, gameIdOffset + gameIdDraws));
+  }
+
+  /// Builds a fresh 2-seat room whose die faces are steered to [wanted] for
+  /// `k = 1..wanted.length` (test/support/dice_oracle.dart's
+  /// `findSecretForFaces`, searched before a single frame is sent), joins a
+  /// guest, fixes both seats' seeds so `client_seeds` matches
+  /// [steerClientSeeds], and starts the game. Reassigns the outer
+  /// `harness` so setUp's default, never-started harness is replaced
+  /// before anything talks to the network; `tearDown` closes whichever
+  /// harness that variable holds at the end of a test, so nothing this
+  /// leaves behind leaks. Returns the lobby and the `game_started` payload.
+  Future<(WireTestLobby, Map<String, Object?>)> buildSteeredLobby(
+    List<int> wanted, {
+    Map<String, Object?> rules = const <String, Object?>{},
+  }) async {
+    final String gameId = predictedGameId();
+    final SteeredSecret steered = findSecretForFaces(
+      wanted: wanted,
+      gameId: gameId,
+      clientSeeds: steerClientSeeds,
+    );
+    harness = ServerHarness.build(
+      secure: ScriptedBytesRandom(buildScript(secret: steered.secret)),
+    );
+    final Uri uri = await start();
+    final WireTestLobby lobby =
+        await buildWireTestLobby(uri, clients, players: 2, rules: rules);
+    expect(
+      <int>[lobby.host.seat, lobby.guest.seat],
+      <int>[0, 2],
+      reason: 'this steering helper assumes the fixed 2-player seat '
+          'mapping (host=0, guest=2, lib/src/registry.dart:967-978) so it '
+          'can predict client_seeds before the room exists; got host='
+          '${lobby.host.seat} guest=${lobby.guest.seat}. If this ever '
+          'fails, the mapping changed and steerClientSeeds needs to change '
+          'with it -- it is not a flake.',
+    );
+
+    lobby.host.client
+        .send('set_seed', <String, Object?>{'client_seed': hostSteerSeed});
+    await receiveType(lobby.host.client, 'seat_seed');
+    lobby.guest.client
+        .send('set_seed', <String, Object?>{'client_seed': guestSteerSeed});
+    await receiveType(lobby.guest.client, 'seat_seed');
+
+    lobby.host.client.send('start_game', <String, Object?>{});
+    final Map<String, Object?> hostStarted =
+        await receiveType(lobby.host.client, 'game_started');
+    await receiveType(lobby.guest.client, 'game_started');
+    final Map<String, Object?> startedData =
+        hostStarted['d']! as Map<String, Object?>;
+
+    expect(
+      startedData['game_id'],
+      gameId,
+      reason: 'predicted game_id (computed offline from buildScript\'s '
+          'filler bytes) did not match game_started.game_id off the wire; '
+          'the draw-order picture in scripted_bytes.dart no longer '
+          'matches registry.dart',
+    );
+    expect(
+      startedData['client_seeds'],
+      steerClientSeeds,
+      reason: 'predicted client_seeds did not match game_started.'
+          'client_seeds off the wire',
+    );
+
+    return (lobby, startedData);
   }
 
   group('roll: the rejection ladder, section 12.1, in order', () {
@@ -1243,12 +1342,94 @@ void main() {
     });
 
     test(
-      'restarts to the full window when an extra roll is granted',
-      () {},
-      skip: 'needs a roll that grants an extra roll (a six or a '
-          'capture), which needs control over the die faces -- see the '
-          'file header',
-    );
+        'restarts to the full window when an extra roll is granted',
+        () async {
+      // A 6 on the first roll of a fresh game is a one-face search: every
+      // token is in the yard, so a 6 is the only face with a legal move at
+      // all, and rolling one always grants another roll (docs/RULES.md
+      // rule 9) once the resulting move is applied.
+      final (WireTestLobby lobby, Map<String, Object?> started) =
+          await buildSteeredLobby(
+        <int>[6],
+        rules: <String, Object?>{'turn_seconds': 30},
+      );
+      final int onTurn = started['turn']! as int;
+      const int fullMs = 30 * 1000;
+
+      final Map<String, Object?> rolled = await sendRoll(lobby, onTurn);
+      expect(
+        rolled['t'],
+        'rolled',
+        reason: 'expected rolled from the steered 6, got "${rolled['t']}": '
+            '${rolled['d']}',
+      );
+      final Map<String, Object?> rolledData =
+          rolled['d']! as Map<String, Object?>;
+      expect(rolledData['value'], 6);
+      final List<int> legal =
+          (rolledData['legal']! as List<Object?>).cast<int>();
+      expect(
+        legal,
+        isNotEmpty,
+        reason: 'a 6 on the first roll of a fresh game must leave every '
+            'token in the yard eligible to leave it (docs/RULES.md rule '
+            '17); got an empty legal list',
+      );
+      expect(
+        rolledData['deadline_ms'],
+        fullMs,
+        reason: 'a rolled frame that leaves a legal move pending must '
+            'itself restart the segment (section 6); got '
+            '${rolledData['deadline_ms']}',
+      );
+
+      // Let time pass between the roll and the move, so a turn frame that
+      // merely inherited the rolled frame's own restart above -- rather
+      // than restarting again specifically because an extra roll was
+      // granted -- would show a decayed value here, not the full window.
+      harness.clock.advance(const Duration(seconds: 11));
+
+      final Map<String, Object?> moved =
+          await sendMove(lobby, onTurn, legal.first);
+      expect(
+        moved['t'],
+        'moved',
+        reason: 'expected moved after the legal move, got "${moved['t']}": '
+            '${moved['d']}',
+      );
+      final Map<String, Object?> movedData =
+          moved['d']! as Map<String, Object?>;
+      expect(
+        movedData['extra_roll'],
+        isTrue,
+        reason: 'a 6 must grant an extra roll (docs/RULES.md rule 9); got '
+            'extra_roll=${movedData['extra_roll']}',
+      );
+
+      final Map<String, Object?> turnFrame = await _next(lobby, onTurn);
+      expect(
+        turnFrame['t'],
+        'turn',
+        reason: 'an extra roll keeps the same seat on turn (section 12.2); '
+            'got "${turnFrame['t']}": ${turnFrame['d']}',
+      );
+      final Map<String, Object?> turnData =
+          turnFrame['d']! as Map<String, Object?>;
+      expect(
+        turnData['seat'],
+        onTurn,
+        reason: 'the extra roll must stay with the same seat, not hand off',
+      );
+      expect(
+        turnData['deadline_ms'],
+        fullMs,
+        reason: 'an extra roll must restart the segment to the full '
+            'window ($fullMs ms, section 6); 11000ms passed between the '
+            'roll and the move, so this value would be $fullMs minus that '
+            'if the restart had not happened -- got '
+            '${turnData['deadline_ms']}',
+      );
+    });
   });
 
   group('no reveal arrives early, section 11.3', () {
