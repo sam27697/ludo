@@ -65,6 +65,8 @@ String wireErrorCode(ProtocolError error) {
       return 'ILLEGAL_MOVE';
     case ProtocolError.badSeatToken:
       return 'BAD_SEAT_TOKEN';
+    case ProtocolError.seedAlreadySet:
+      return 'SEED_ALREADY_SET';
     case ProtocolError.gameOver:
       return 'GAME_OVER';
     case ProtocolError.internal:
@@ -124,6 +126,7 @@ const Set<String> knownMessageTypes = <String>{
   'resume',
   'start_game',
   'set_players',
+  'set_seed',
   'leave_room',
   'ping',
   'roll',
@@ -250,6 +253,8 @@ String defaultErrorMessage(ProtocolError error) {
       return 'that move is not legal';
     case ProtocolError.badSeatToken:
       return 'seat token does not match a live seat';
+    case ProtocolError.seedAlreadySet:
+      return 'this seat has already set a seed';
     case ProtocolError.gameOver:
       return 'the game is over';
     case ProtocolError.internal:

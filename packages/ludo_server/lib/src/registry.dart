@@ -7,6 +7,7 @@
 
 import 'dart:math';
 
+import 'package:fair_dice/fair_dice.dart' show DiceChain, hexEncode;
 import 'package:ludo_engine/ludo_engine.dart' as engine;
 
 import 'clock.dart';
@@ -32,6 +33,7 @@ enum ProtocolError {
   wrongPhase,
   illegalMove,
   badSeatToken,
+  seedAlreadySet,
   gameOver,
   internal,
 }
@@ -84,12 +86,43 @@ class ResumeFailure extends ResumeResult {
 sealed class StartResult {}
 
 class StartOk extends StartResult {
-  StartOk({required this.room});
+  StartOk({required this.room, required this.serverSeeded});
   final Room room;
+
+  /// Seats that had no `client_seed` when this call ran and were given a
+  /// server-drawn one, in ascending seat order, each paired with `room.seq`
+  /// at the instant that particular fix happened. `docs/PROTOCOL.md`
+  /// section 5 puts `seat_seed` on the list of pushes that carry `seq` and
+  /// section 6's `Room.seq` doc calls every such push its own
+  /// state-changing call -- so each entry here needs its own `seq`, not the
+  /// room's final one once every fix (and the game start itself) has
+  /// landed.
+  final List<SeededSeat> serverSeeded;
 }
 
 class StartFailure extends StartResult {
   StartFailure(this.error);
+  final ProtocolError error;
+}
+
+/// One seat fixed with a server-drawn seed during a single `start_game`
+/// call, paired with the room's `seq` at the moment of that specific fix.
+class SeededSeat {
+  SeededSeat({required this.seat, required this.seq});
+  final Seat seat;
+  final int seq;
+}
+
+sealed class SetSeedResult {}
+
+class SetSeedOk extends SetSeedResult {
+  SetSeedOk({required this.room, required this.seat});
+  final Room room;
+  final Seat seat;
+}
+
+class SetSeedFailure extends SetSeedResult {
+  SetSeedFailure(this.error);
   final ProtocolError error;
 }
 
@@ -131,6 +164,18 @@ const int _minName = 1;
 const int _maxName = 24;
 const int _minTurnSeconds = 15;
 const int _maxTurnSeconds = 120;
+
+/// `docs/PROTOCOL.md` section 11.2/11.3: the server secret a chain is
+/// rooted at is 32 bytes, a server-drawn seed handed to a seed-less seat at
+/// `start_game` is 16 bytes (32 lowercase hex characters), and `game_id` is
+/// 8 bytes (16 lowercase hex characters).
+const int _serverSecretBytes = 32;
+const int _serverSeedBytes = 16;
+const int _gameIdBytes = 8;
+
+const int _minClientSeed = 1;
+const int _maxClientSeed = 64;
+final RegExp _clientSeedPattern = RegExp(r'^[A-Za-z0-9_-]+$');
 
 /// In-memory rooms: creation, codes, seats, seat tokens, lifecycle and
 /// reaping. No WebSocket, no HTTP, no timer driven by the wall clock --
@@ -191,6 +236,12 @@ class RoomRegistry {
       seatToken: generateSeatToken(_secure),
       connected: true,
     );
+    // docs/PROTOCOL.md section 11.1: the chain is built, and its commitment
+    // fixed, before this room exists anywhere a `set_seed` could reach it --
+    // `_rooms[code] = room` below is the first point at which the code this
+    // chain belongs to resolves to anything at all, so no player seed can
+    // possibly have been accepted before this line runs.
+    final DiceChain chain = DiceChain.build(_drawBytes(_serverSecretBytes));
     final Room room = Room(
       code: code,
       createdAt: _clock.now,
@@ -200,6 +251,7 @@ class RoomRegistry {
       hostSeat: hostSeatIndex,
       seats: <Seat>[hostSeat],
       game: null,
+      chain: chain,
     );
     _rooms[code] = room;
     _refreshIdleTracking(room);
@@ -274,6 +326,29 @@ class RoomRegistry {
     if (room.seats.length != room.players) {
       return StartFailure(ProtocolError.notEnoughPlayers);
     }
+
+    // docs/PROTOCOL.md section 11.2: every seat that sent no `set_seed`
+    // gets a server-drawn seed here, before `client_seeds` is frozen. Each
+    // of these is its own fixed-seed state change (section 5 puts
+    // `seat_seed` on the "carrying seq" list), separate from the state
+    // change that is the game starting, so each gets its own `seq`.
+    // `room.seats` is already ordered by ascending seat index (the
+    // invariant `joinRoom` and `setPlayers` both maintain), so iterating it
+    // in place produces the seats in the order `client_seeds` needs.
+    final List<SeededSeat> serverSeeded = <SeededSeat>[];
+    for (final Seat s in room.seats) {
+      if (s.clientSeed == null) {
+        s.clientSeed = hexEncode(_drawBytes(_serverSeedBytes));
+        s.seedOrigin = 'server';
+        room.seq++;
+        serverSeeded.add(SeededSeat(seat: s, seq: room.seq));
+      }
+    }
+
+    room.gameId = hexEncode(_drawBytes(_gameIdBytes));
+    room.clientSeeds =
+        room.seats.map((Seat s) => '${s.seat}:${s.clientSeed}').join('|');
+
     final List<int> seatIndices = room.seats.map((Seat s) => s.seat).toList()
       ..sort();
     final engine.GameConfig config = engine.GameConfig(
@@ -287,17 +362,55 @@ class RoomRegistry {
     room.game = engine.newGame(config);
     room.state = RoomState.playing;
     room.seq++;
-    return StartOk(room: room);
+    return StartOk(room: room, serverSeeded: serverSeeded);
+  }
+
+  /// `set_seed`, `docs/PROTOCOL.md` section 11.2. The rejection ladder here
+  /// is deliberately not the room-exists / seat-authorised / phase-correct
+  /// order every other method in this file uses: phase runs before seat
+  /// authorisation, per section 11.2's own table, so a request that is
+  /// wrong in both ways answers `WRONG_PHASE`. A room that no longer exists
+  /// at all is folded into `WRONG_PHASE` rather than `NO_SUCH_ROOM` --
+  /// section 11.2's table has no `NO_SUCH_ROOM` row for this message, and a
+  /// vanished room is certainly not a room in LOBBY.
+  SetSeedResult setSeed({
+    required String code,
+    required String seatToken,
+    required Object? clientSeed,
+  }) {
+    final Room? room = _rooms[code];
+    if (room == null || room.state != RoomState.lobby) {
+      return SetSeedFailure(ProtocolError.wrongPhase);
+    }
+    final Seat? seat = _findSeat(room, seatToken);
+    if (seat == null) {
+      return SetSeedFailure(ProtocolError.badSeatToken);
+    }
+    final String? validSeed = _validClientSeed(clientSeed);
+    if (validSeed == null) {
+      return SetSeedFailure(ProtocolError.badField);
+    }
+    if (seat.clientSeed != null) {
+      return SetSeedFailure(ProtocolError.seedAlreadySet);
+    }
+    seat.clientSeed = validSeed;
+    seat.seedOrigin = 'player';
+    room.seq++;
+    return SetSeedOk(room: room, seat: seat);
   }
 
   /// Changes the configured player count of a LOBBY room and re-seats
   /// everyone already present onto the canonical seat set for the new
   /// count, per `docs/RULES.md` rule 2a and `docs/PROTOCOL.md` section 3.
   ///
-  /// Every seat keeps its `name`, its `seatToken` and its `connected` flag
-  /// across the re-seat; only the seat index moves. The seat currently at
-  /// the lowest index takes the lowest index of the new set, and so on,
-  /// preserving join order.
+  /// Every seat keeps its `name`, its `seatToken`, its `connected` flag and
+  /// its `clientSeed`/`seedOrigin` across the re-seat; only the seat index
+  /// moves. The seat currently at the lowest index takes the lowest index
+  /// of the new set, and so on, preserving join order. Carrying the seed
+  /// across matters: `docs/PROTOCOL.md` section 11.3 says a seat's seed
+  /// never changes once fixed, and rebuilding a fresh `Seat` here without
+  /// its seed would silently erase a fixed one, letting the same occupant
+  /// `set_seed` again under a new index and defeating "once per seat".
   SetPlayersResult setPlayers({
     required String code,
     required String seatToken,
@@ -334,6 +447,8 @@ class RoomRegistry {
           name: ordered[i].name,
           seatToken: ordered[i].seatToken,
           connected: ordered[i].connected,
+          clientSeed: ordered[i].clientSeed,
+          seedOrigin: ordered[i].seedOrigin,
         ),
     ];
 
@@ -481,6 +596,31 @@ class RoomRegistry {
     final int lo = _secure.nextInt(1 << 32);
     return (hi << 32) | lo;
   }
+
+  /// [n] bytes straight off this registry's CSPRNG. The only source of
+  /// randomness for a chain's server secret, a server-drawn seat seed and a
+  /// `game_id` -- all three are byte strings with no further structure, so
+  /// there is nothing beyond this to draw them with.
+  List<int> _drawBytes(int n) =>
+      List<int>.generate(n, (int _) => _secure.nextInt(256));
+}
+
+/// `docs/PROTOCOL.md` section 11.2: `client_seed` absent, not a string,
+/// empty, over 64 characters, or containing anything outside
+/// `[A-Za-z0-9_-]` is `BAD_FIELD`. Returns the seed unchanged when valid,
+/// null otherwise -- this never trims, lowercases or truncates, because a
+/// seed that fails the check is rejected, not repaired.
+String? _validClientSeed(Object? raw) {
+  if (raw is! String) {
+    return null;
+  }
+  if (raw.length < _minClientSeed || raw.length > _maxClientSeed) {
+    return null;
+  }
+  if (!_clientSeedPattern.hasMatch(raw)) {
+    return null;
+  }
+  return raw;
 }
 
 List<int> _seatIndicesFor(int players) {
