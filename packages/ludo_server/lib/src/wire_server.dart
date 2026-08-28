@@ -19,6 +19,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'clock.dart';
 import 'connection.dart';
+import 'privacy_page.dart';
 import 'rate_limit.dart';
 import 'registry.dart';
 
@@ -38,6 +39,16 @@ const String forwardedForHeader = 'x-forwarded-for';
 /// ever attempted, and it is the only path this server treats specially.
 const String _healthPath = '/health';
 
+/// The exact, case-sensitive path of the privacy policy page. Matched
+/// alongside its trailing-slash form by the same pre-upgrade check
+/// [_healthPath] uses; see order 049.
+const String _privacyPath = '/privacy';
+
+/// The trailing-slash form of [_privacyPath]. A separate constant rather
+/// than a computed one so both paths read as literal strings at every call
+/// site.
+const String _privacyPathWithSlash = '/privacy/';
+
 /// Owns the listening socket and everything that turns an accepted
 /// connection into a [Connection]. Built once per running server; `start`
 /// opens the port, `close` shuts it down along with the housekeeping timer.
@@ -49,9 +60,11 @@ class WireServer {
     Random? random,
     Set<String> trustedProxies = const <String>{},
     this.version = 'dev',
+    String? privacyContactEmail,
   })  : _random = random ?? Random.secure(),
         _trustedProxies = trustedProxies,
-        _hub = _ConnectionHub();
+        _hub = _ConnectionHub(),
+        _privacyHtml = buildPrivacyPageHtml(contactEmail: privacyContactEmail);
 
   final RoomRegistry registry;
   final RateLimiter rateLimiter;
@@ -69,6 +82,11 @@ class WireServer {
   /// ignored outright, never inspected at all.
   final Set<String> _trustedProxies;
 
+  /// The complete `/privacy` document, built once from the constructor's
+  /// `privacyContactEmail` argument at construction time so serving it never
+  /// touches the filesystem or re-renders anything at request time.
+  final String _privacyHtml;
+
   final _ConnectionHub _hub;
 
   HttpServer? _httpServer;
@@ -83,8 +101,12 @@ class WireServer {
   /// port, readable back afterwards from [port].
   Future<void> start({required Object address, required int port}) async {
     final shelf.Handler handler = (shelf.Request request) {
-      if (request.requestedUri.path == _healthPath) {
+      final String path = request.requestedUri.path;
+      if (path == _healthPath) {
         return _handleHealth(request);
+      }
+      if (path == _privacyPath || path == _privacyPathWithSlash) {
+        return _handlePrivacy(request);
       }
       final String ip = _clientIp(request);
       final shelf.Handler upgrade = webSocketHandler((
@@ -183,6 +205,28 @@ class WireServer {
         'cache-control': 'no-store',
       },
     );
+  }
+
+  /// `GET /privacy` and `HEAD /privacy` (and their trailing-slash forms,
+  /// which are matched identically, not redirected) never reach the
+  /// WebSocket upgrade path either, for the same reason [_handleHealth]
+  /// doesn't. Any other method is a `405` naming `GET` and `HEAD` in
+  /// `allow`.
+  shelf.Response _handlePrivacy(shelf.Request request) {
+    const Map<String, String> headers = <String, String>{
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'public, max-age=3600',
+    };
+    switch (request.method) {
+      case 'GET':
+        return shelf.Response.ok(_privacyHtml, headers: headers);
+      case 'HEAD':
+        return shelf.Response.ok('', headers: headers);
+      default:
+        return shelf.Response(405, headers: const <String, String>{
+          'allow': 'GET, HEAD',
+        });
+    }
   }
 
   /// Whole seconds since [start] completed, from the injected [clock]. Zero
