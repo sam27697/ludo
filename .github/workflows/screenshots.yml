@@ -1,0 +1,91 @@
+name: screenshots
+
+# Manually triggered only. This boots a real Android emulator, which is slow
+# and burns minutes verify.yml has no business spending on every push, so it
+# never runs on push or pull_request -- only when a human asks for it, after
+# a change that might have moved one of the three captured screens.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/ludo_client
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.47.1"
+          channel: "stable"
+
+      - run: flutter pub get
+
+      # Standard boilerplate from reactivecircus/android-emulator-runner's
+      # own README for GitHub-hosted Linux runners: makes /dev/kvm
+      # group-writable so the emulator gets hardware acceleration instead of
+      # falling back to (very slow, likely to time out) software rendering.
+      - name: enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # API 34 (Android 14): inside the app's [minSdk 24, targetSdk 36]
+      # range, and picked over something closer to 36 because it is a level
+      # this action and the emulator's KVM acceleration are long
+      # established against on ubuntu-latest -- targetSdk 36 is what the app
+      # ships against, not a requirement that screenshots be captured on
+      # that exact platform version.
+      #
+      # profile: "Nexus 5" is an AVD hardware profile whose documented
+      # screen spec is 1080x1920 -- Play's accepted phone screenshot
+      # resolution, and the same physical spec as the real device it is
+      # named after. Neither this API level nor this profile has been
+      # booted by the worker that wrote this workflow: there is no Android
+      # SDK in that worker's container, so this is the best-supported choice
+      # available, not one confirmed against a live run.
+      - name: boot the emulator and capture screenshots
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: "Nexus 5"
+          disable-animations: true
+          # The script runs from the repository root regardless of this
+          # job's own `defaults.run.working-directory` (that default applies
+          # to plain `run:` steps, not to what a composite action does
+          # internally), so it changes into the client package itself
+          # before calling flutter drive.
+          script: |
+            cd packages/ludo_client
+            flutter drive \
+              --driver=test_driver/integration_test.dart \
+              --target=integration_test/screenshots_test.dart \
+              -d emulator-5554
+
+      # flutter drive's driver adaptor (test_driver/integration_test.dart)
+      # writes each captured PNG to screenshots/<name>.png relative to
+      # wherever flutter drive itself ran, which the script step above
+      # pins to packages/ludo_client. Fails loudly instead of uploading an
+      # empty artifact if the emulator step produced nothing.
+      - name: confirm the screenshots exist
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(screenshots/*.png)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "no PNGs found under packages/ludo_client/screenshots; the drive step did not produce screenshots" >&2
+            exit 1
+          fi
+          echo "found ${#files[@]} screenshot(s):"
+          ls -la "${files[@]}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: store-screenshots
+          path: packages/ludo_client/screenshots/*.png
+          if-no-files-found: error
