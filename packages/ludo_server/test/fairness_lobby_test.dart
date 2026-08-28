@@ -24,9 +24,27 @@
 // a message type from `lib/`, so a symbol that does not exist yet on this
 // branch is never referenced by this file at all.
 
+import 'package:ludo_server/ludo_server.dart';
 import 'package:test/test.dart';
 
 import 'support/wire_harness.dart';
+
+// `SetSeedResult`, `SetSeedOk` and `SetSeedFailure` are not on
+// `package:ludo_server/ludo_server.dart`'s export list (see
+// `lib/ludo_server.dart`), unlike every other registry result type
+// (`JoinResult`, `ResumeResult`, `StartResult`, and so on, all of which are
+// exported). This import reaches past that gap for exactly one purpose,
+// documented at its one call site below: `set_seed`'s own wire message,
+// `docs/PROTOCOL.md` section 4, carries no room `code` field at all, so
+// there is no way for a real client socket to ever send a set_seed against
+// a room code that never existed -- a socket's room is always the one it
+// created, joined or resumed into, which necessarily existed at that
+// moment. `RoomRegistry.setSeed` is the only entry point that can even be
+// asked the "never existed" question for this message, and it is a real
+// method on the real registry the wire server itself calls, not a mock of
+// one.
+import 'package:ludo_server/src/registry.dart'
+    show SetSeedResult, SetSeedFailure;
 
 /// A room's first chain commitment: `s[0]`, 64 lowercase hex characters.
 final RegExp _hex64 = RegExp(r'^[0-9a-f]{64}$');
@@ -738,6 +756,206 @@ void main() {
         because: 'client_seed on the second attempt is empty, which the '
             'ladder checks before the already-set check, even though seat '
             '${lobby.host.seat} already fixed a seed',
+      );
+    });
+  });
+
+  group('set_seed: the NO_SUCH_ROOM row, section 11.2, amended 2026-08-28', () {
+    // The four rungs below NO_SUCH_ROOM (WRONG_PHASE, BAD_SEAT_TOKEN,
+    // BAD_FIELD, SEED_ALREADY_SET, in that order) are already pinned by the
+    // group above, including two precedence cases
+    // (WRONG_PHASE-over-BAD_FIELD and BAD_SEAT_TOKEN-over-BAD_FIELD) and one
+    // that specifically exercises a room already in PLAYING. Nothing here
+    // repeats those; this group only adds what the amendment made new: the
+    // row itself, that it does not leak "existed" versus "never existed",
+    // and that it outranks BAD_FIELD too.
+
+    test(
+        'setSeed on the registry against a room code that never existed is refused with NO_SUCH_ROOM',
+        () async {
+      // No `start()`, no socket: as the import note above explains, there is
+      // no wire form of this scenario for set_seed, so this one test goes
+      // straight at RoomRegistry.setSeed, the same real method
+      // connection.dart's wire handler calls, and does not touch anything
+      // this branch's server does not already expose.
+      final ServerHarness bareHarness = ServerHarness.build();
+      addTearDown(bareHarness.close);
+      const String neverExisted = 'ZZZZZZ';
+
+      final SetSeedResult result = bareHarness.registry.setSeed(
+        code: neverExisted,
+        seatToken: 'irrelevant-seat-token-never-existed',
+        clientSeed: 'irrelevant-seed',
+      );
+
+      expect(
+        result,
+        isA<SetSeedFailure>(),
+        reason: 'setSeed against room code "$neverExisted", which this test '
+            'never created, must fail; got $result',
+      );
+      expect(
+        (result as SetSeedFailure).error,
+        ProtocolError.noSuchRoom,
+        reason: 'a room code that never existed must answer NO_SUCH_ROOM '
+            '(section 11.2, amended 2026-08-28); got ${result.error}',
+      );
+    });
+
+    test(
+        'set_seed against a room that has been reaped is refused with NO_SUCH_ROOM, not WRONG_PHASE and not BAD_SEAT_TOKEN',
+        () async {
+      final Uri uri = await start();
+      final _Lobby lobby = await buildTwoSeatLobby(uri);
+
+      // Both sockets stay open for the rest of this test -- set_seed is
+      // about to be sent on one of them -- but the registry's own idea of
+      // "connected" is flipped false for both seats so the room becomes
+      // idle-eligible, the same disconnect-then-advance-then-reap sequence
+      // `registry_lifecycle_test.dart` uses against joinRoom, resume,
+      // startGame and leaveRoom, aimed here at set_seed instead.
+      harness.registry.setConnected(
+        code: lobby.code,
+        seatToken: lobby.host.token,
+        connected: false,
+      );
+      harness.registry.setConnected(
+        code: lobby.code,
+        seatToken: lobby.guest.token,
+        connected: false,
+      );
+      harness.clock.advance(const Duration(minutes: 10));
+      expect(
+        harness.registry.reap(),
+        1,
+        reason: 'setup requires room ${lobby.code} to actually be reaped '
+            'for this test to reach the state it is checking',
+      );
+      expect(
+        harness.registry.lookup(lobby.code),
+        isNull,
+        reason:
+            'room ${lobby.code} must be gone from the registry after reap()',
+      );
+
+      final Map<String, Object?> reply = await setSeed(
+        lobby.host.client,
+        <String, Object?>{'client_seed': 'alice-seed'},
+      );
+      expectErrorCode(
+        reply,
+        'NO_SUCH_ROOM',
+        because: 'room ${lobby.code} was reaped and the socket sending '
+            'set_seed still holds a seat token that was genuinely seat '
+            '${lobby.host.seat} in it (section 11.2, amended 2026-08-28)',
+      );
+    });
+
+    test(
+        'a room code that never existed and a room that was reaped produce the identical NO_SUCH_ROOM value for set_seed',
+        () async {
+      final Uri uri = await start();
+      final _Lobby lobby = await buildTwoSeatLobby(uri);
+
+      const String neverExisted = 'QRSTUV';
+      final SetSeedResult neverResult = harness.registry.setSeed(
+        code: neverExisted,
+        seatToken: 'irrelevant-seat-token-never-existed',
+        clientSeed: 'irrelevant-seed',
+      );
+      expect(
+        neverResult,
+        isA<SetSeedFailure>(),
+        reason: 'setup requires the never-existed code to fail; got '
+            '$neverResult',
+      );
+
+      harness.registry.setConnected(
+        code: lobby.code,
+        seatToken: lobby.host.token,
+        connected: false,
+      );
+      harness.registry.setConnected(
+        code: lobby.code,
+        seatToken: lobby.guest.token,
+        connected: false,
+      );
+      harness.clock.advance(const Duration(minutes: 10));
+      expect(
+        harness.registry.reap(),
+        1,
+        reason: 'setup requires room ${lobby.code} to actually be reaped '
+            'for this test to reach the state it is checking',
+      );
+
+      final Map<String, Object?> reapedReply = await setSeed(
+        lobby.host.client,
+        <String, Object?>{'client_seed': 'alice-seed'},
+      );
+      expect(
+        reapedReply['t'],
+        'error',
+        reason: 'expected an error frame for the reaped room '
+            '${lobby.code} but got a "${reapedReply['t']}" frame instead: '
+            '${reapedReply['d']}',
+      );
+      final Map<String, Object?> reapedData =
+          reapedReply['d']! as Map<String, Object?>;
+
+      final String neverExistedWireCode =
+          wireErrorCode((neverResult as SetSeedFailure).error);
+      expect(
+        reapedData['code'],
+        neverExistedWireCode,
+        reason: 'code "$neverExisted", which never existed, answered '
+            '$neverExistedWireCode; room ${lobby.code}, which existed and '
+            'was reaped, answered ${reapedData['code']}; existence must not '
+            'leak through a difference between the two (section 11.2, '
+            'amended 2026-08-28)',
+      );
+      expect(
+        reapedData['code'],
+        'NO_SUCH_ROOM',
+        reason: 'both must actually be NO_SUCH_ROOM, not merely equal to '
+            'each other by both being some other, wrong code',
+      );
+    });
+
+    test(
+        'set_seed against a reaped room with a malformed client_seed is refused with NO_SUCH_ROOM, not BAD_FIELD',
+        () async {
+      final Uri uri = await start();
+      final _Lobby lobby = await buildTwoSeatLobby(uri);
+
+      harness.registry.setConnected(
+        code: lobby.code,
+        seatToken: lobby.host.token,
+        connected: false,
+      );
+      harness.registry.setConnected(
+        code: lobby.code,
+        seatToken: lobby.guest.token,
+        connected: false,
+      );
+      harness.clock.advance(const Duration(minutes: 10));
+      expect(
+        harness.registry.reap(),
+        1,
+        reason: 'setup requires room ${lobby.code} to actually be reaped '
+            'for this test to reach the state it is checking',
+      );
+
+      final Map<String, Object?> reply = await setSeed(
+        lobby.host.client,
+        <String, Object?>{'client_seed': ''},
+      );
+      expectErrorCode(
+        reply,
+        'NO_SUCH_ROOM',
+        because: 'room ${lobby.code} no longer exists, which the ladder '
+            'checks before client_seed shape, even though the client_seed '
+            'sent ("") is also malformed -- NO_SUCH_ROOM sits above '
+            'BAD_FIELD (section 11.2, amended 2026-08-28)',
       );
     });
   });
