@@ -31,6 +31,23 @@ rotated three times about the board centre), reimplemented in Python because
 this script has no Dart runtime to import from. If board_geometry.dart's
 layout ever changes, this has to change by hand to match, same as the
 palette below.
+
+Round 3 (order 064): round 2 fixed the structure but left the quadrant
+colour assignment exactly where round 1 (and the un-reviewed run 18 build)
+put it -- red top-left, green top-right, blue bottom-left, yellow
+bottom-right, the Microsoft logo's own arrangement, position for position.
+Real Ludo boards have no canonical colour-to-corner mapping, so this round
+rotates the assignment (SEAT_COLORS below) by one seat. It also stopped
+drawing the home column as a one-cell-wide pinstripe down the centre of each
+arm: at 512px that line is already thin, and at 48px -- the size Play's own
+list view actually shows most often -- it and the star rings vanish and
+what is left is four flat squares, the exact failure this round exists to
+fix. The home lane now fills the arm's full three-cell width, so each arm
+reads as a solid coloured spoke running from its yard to the centre
+pinwheel even after a 48px downscale, and the safe squares are drawn as
+four solid dots (one per entry square) rather than eight thin outlined
+rings, for the same reason: a filled dot survives Lanczos downsampling to
+48px, a one-pixel ring does not.
 """
 
 from pathlib import Path
@@ -41,11 +58,26 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = REPO_ROOT / "assets" / "store"
 
 # packages/ludo_client/lib/src/board.dart:181-184, alpha byte dropped (opaque).
-SEAT_RED = (0xD3, 0x2F, 0x2F)  # seat 0, left arm and top-left yard
-SEAT_GREEN = (0x38, 0x8E, 0x3C)  # seat 1, top arm and top-right yard
-SEAT_YELLOW = (0xFB, 0xC0, 0x2D)  # seat 2, right arm and bottom-right yard
-SEAT_BLUE = (0x19, 0x76, 0xD2)  # seat 3, bottom arm and bottom-left yard
-SEAT_COLORS = [SEAT_RED, SEAT_GREEN, SEAT_YELLOW, SEAT_BLUE]
+# These four RGB values are the board's real seat colours and are not
+# touched by order 064 -- only which corner each one lands in changes,
+# below.
+SEAT_RED = (0xD3, 0x2F, 0x2F)
+SEAT_GREEN = (0x38, 0x8E, 0x3C)
+SEAT_YELLOW = (0xFB, 0xC0, 0x2D)
+SEAT_BLUE = (0x19, 0x76, 0xD2)
+
+# Which colour sits in which seat slot (seat slot 0 is the top-left yard and
+# the arm reaching left, slot 1 is top-right and the arm reaching up, slot 2
+# is bottom-right and the arm reaching right, slot 3 is bottom-left and the
+# arm reaching down -- see YARD_CORNERS and _TRACK_QUARTER below). A real
+# Ludo board has no fixed colour-to-corner mapping, so this ordering is
+# free. Round 1 and round 2 both left it red/green/yellow/blue clockwise
+# from the top-left, which is the Microsoft logo's own layout and colour
+# assignment, corner for corner. Order 064: rotate the list by one seat so
+# every corner's colour changes. Still the same four colours, still a
+# clockwise cycle red -> green -> yellow -> blue -> red, just entered one
+# seat later.
+SEAT_COLORS = [SEAT_GREEN, SEAT_YELLOW, SEAT_BLUE, SEAT_RED]
 
 # packages/ludo_client/lib/src/board.dart:200
 BOARD_GROUND = (0xF7, 0xF3, 0xE9)
@@ -113,8 +145,19 @@ TRACK = [
 ]
 
 # docs/RULES.md section 1.3: the four entry squares plus the square eight
-# ahead of each are the starred safe squares.
+# ahead of each are the starred safe squares -- eight in total, the true
+# rule.
 SAFE_TRACK_INDICES = [0, 8, 13, 21, 26, 34, 39, 47]
+
+# Order 064: the icon draws only the four entry squares (one per seat) as
+# large filled dots, not all eight as thin rings. Eight thin rings do not
+# survive a Lanczos downscale to 48px -- they were already gone in the
+# icon-48-check.png that prompted this order -- and a dot that has shrunk
+# to nothing is worse than not drawing it, because it is one more shape
+# competing for space at full size for no payoff at the size that matters.
+# This does not change what a real board's safe squares are; it changes
+# what this one small bitmap has room to show.
+ICON_STAR_INDICES = [0, 13, 26, 39]
 
 # Seat 0's home column, progress 52..56, running inward from the left arm
 # toward the centre. board_geometry.dart's _homeColumn, unchanged.
@@ -129,10 +172,10 @@ def _grid(x0: float, y0: float, size: float) -> list[float]:
 
 
 def draw_board(draw: ImageDraw.ImageDraw, x0: float, y0: float, size: float) -> None:
-    """Draws the board motif: the four yards, the coloured home column of
-    each arm reaching into the centre, the eight starred safe squares, and
-    the centre split four ways to match the arm that feeds it. Caller is
-    responsible for the ground fill under this box.
+    """Draws the board motif: the four yards, each arm's home lane reaching
+    into the centre, four of the eight starred safe squares, and the centre
+    split four ways to match the arm that feeds it. Caller is responsible
+    for the ground fill under this box.
     """
     xs = _grid(x0, y0, size)
     ys = _grid(y0, y0, size)  # same units, board is square
@@ -144,7 +187,10 @@ def draw_board(draw: ImageDraw.ImageDraw, x0: float, y0: float, size: float) -> 
             xs[col + width] - 1, ys[row + height] - 1,
         ]
 
-    line_width = max(1, round(unit * 0.09))
+    # Order 064: thicker than round 2's 0.09 so the border between a
+    # coloured region and its neighbour stays visible after a 48px
+    # downscale instead of anti-aliasing away to nothing.
+    line_width = max(1, round(unit * 0.16))
 
     # Four yards, full bleed at the corners.
     for seat, (col, row) in enumerate(YARD_CORNERS):
@@ -169,15 +215,36 @@ def draw_board(draw: ImageDraw.ImageDraw, x0: float, y0: float, size: float) -> 
     )
 
     # Each seat's home column: the coloured lane running from its yard's
-    # edge to the centre, the middle third of that seat's arm of the track,
-    # each outlined so the lane reads as its own bordered strip rather than
-    # a shape that bleeds straight into the centre triangle beside it.
+    # edge to the centre, each outlined so the lane reads as its own
+    # bordered strip rather than a shape that bleeds straight into the
+    # centre triangle beside it.
+    #
+    # HOME_COLUMNS gives the true board's home column, which is one cell
+    # wide -- the middle third of the three-cell arm. Drawn at one cell
+    # wide it is a pinstripe: visible at 512px, gone at 48px, which was
+    # exactly round 2's failure (order 064's opening measurement: "a pale
+    # cross" with "the home columns gone"). The icon draws the lane at the
+    # arm's full three-cell width instead, so each arm becomes one solid
+    # coloured spoke reaching from its yard into the centre pinwheel. This
+    # departs from the literal board -- a real lane is one cell wide, not
+    # three -- which is the simplification order 064 permits explicitly:
+    # simplify toward the board's silhouette, not back toward flat squares.
     for seat in range(4):
         cols = [c for c, _ in HOME_COLUMNS[seat]]
         rows = [r for _, r in HOME_COLUMNS[seat]]
+        if min(rows) == max(rows):
+            # Horizontal arm (east/west): keep the lane's length (its
+            # column span) and widen it to the arm's full row band.
+            col_lo, col_hi = min(cols), max(cols)
+            row_lo, row_hi = 6, 8
+        else:
+            # Vertical arm (north/south): keep the lane's length (its row
+            # span) and widen it to the arm's full column band.
+            row_lo, row_hi = min(rows), max(rows)
+            col_lo, col_hi = 6, 8
         lane_box = cell_box(
-            min(cols), min(rows),
-            max(cols) - min(cols) + 1, max(rows) - min(rows) + 1,
+            col_lo, row_lo,
+            col_hi - col_lo + 1, row_hi - row_lo + 1,
         )
         draw.rectangle(lane_box, fill=SEAT_COLORS[seat])
         draw.rectangle(lane_box, outline=BOARD_OUTLINE, width=line_width)
@@ -191,25 +258,33 @@ def draw_board(draw: ImageDraw.ImageDraw, x0: float, y0: float, size: float) -> 
     cx0, cy0 = xs[6], ys[6]
     cx1, cy1 = xs[9], ys[9]
     mid = ((cx0 + cx1) / 2, (cy0 + cy1) / 2)
-    draw.polygon([(cx0, cy0), (cx1, cy0), mid], fill=SEAT_GREEN)   # top: seat 1
-    draw.polygon([(cx1, cy0), (cx1, cy1), mid], fill=SEAT_YELLOW)  # right: seat 2
-    draw.polygon([(cx1, cy1), (cx0, cy1), mid], fill=SEAT_BLUE)    # bottom: seat 3
-    draw.polygon([(cx0, cy1), (cx0, cy0), mid], fill=SEAT_RED)     # left: seat 0
+    # Each triangle takes the colour of the seat whose arm arrives at that
+    # side, by geometry, not by seat number: seat 1's arm always arrives at
+    # the top, seat 2's at the right, seat 3's at the bottom, seat 0's at
+    # the left, regardless of which colour SEAT_COLORS assigns that seat.
+    # Reading off SEAT_COLORS[seat] here, instead of naming a colour
+    # directly, is what makes the round-064 colour rotation apply to the
+    # centre automatically instead of leaving it one rotation behind the
+    # yards and lanes.
+    draw.polygon([(cx0, cy0), (cx1, cy0), mid], fill=SEAT_COLORS[1])  # top: seat 1
+    draw.polygon([(cx1, cy0), (cx1, cy1), mid], fill=SEAT_COLORS[2])  # right: seat 2
+    draw.polygon([(cx1, cy1), (cx0, cy1), mid], fill=SEAT_COLORS[3])  # bottom: seat 3
+    draw.polygon([(cx0, cy1), (cx0, cy0), mid], fill=SEAT_COLORS[0])  # left: seat 0
     draw.line([(cx0, cy0), (cx1, cy1)], fill=BOARD_OUTLINE, width=line_width)
     draw.line([(cx1, cy0), (cx0, cy1)], fill=BOARD_OUTLINE, width=line_width)
     draw.rectangle([cx0, cy0, cx1 - 1, cy1 - 1], outline=BOARD_OUTLINE, width=line_width)
 
-    # The eight starred safe squares of the shared track, docs/RULES.md 1.3.
-    star_radius = unit * 0.24
-    star_width = max(1, round(unit * 0.09))
-    for idx in SAFE_TRACK_INDICES:
+    # The four entry safe squares (ICON_STAR_INDICES, see above), drawn as
+    # solid dots rather than the true board's thin outlined rings, so they
+    # still read as marks at 48px instead of anti-aliasing into the ground.
+    star_radius = unit * 0.32
+    for idx in ICON_STAR_INDICES:
         col, row = TRACK[idx]
         ccx = xs[col] + (xs[col + 1] - xs[col]) / 2
         ccy = ys[row] + (ys[row + 1] - ys[row]) / 2
         draw.ellipse(
             [ccx - star_radius, ccy - star_radius, ccx + star_radius, ccy + star_radius],
-            outline=BOARD_OUTLINE,
-            width=star_width,
+            fill=BOARD_OUTLINE,
         )
 
     outline_width = max(2, round(size * 0.008))
