@@ -393,7 +393,8 @@ ladder, in order, so an implementation does not invent one:
 
 | Situation | Code |
 |---|---|
-| room is not in LOBBY | `WRONG_PHASE` |
+| the room does not exist, or no longer does | `NO_SUCH_ROOM` |
+| room exists but is not in LOBBY | `WRONG_PHASE` |
 | socket holds no seat | `BAD_SEAT_TOKEN` |
 | `client_seed` absent, not a string, empty, over 64 characters, or containing anything outside `[A-Za-z0-9_-]` | `BAD_FIELD` |
 | this seat already has a seed | `SEED_ALREADY_SET` |
@@ -402,6 +403,28 @@ ladder, in order, so an implementation does not invent one:
 7 whose identity check runs first, because a `set_seed` arriving after
 `start_game` is a client racing the host rather than a client in no room, and
 telling it "wrong phase" is the accurate answer. Say it, do not repair it.
+
+> **The `NO_SUCH_ROOM` row was added 2026-08-28, run 15, master's ruling.** The
+> table shipped without it and the implementer, correctly, refused to invent an
+> answer: it reported the gap and folded a vanished room into `WRONG_PHASE`
+> because a room that does not exist is certainly not a room in LOBBY. That
+> reasoning is sound and the ruling still goes the other way, for two reasons.
+>
+> The first is consistency. A reaped room already answers `NO_SUCH_ROOM` on all
+> four of the other entry points, and the registry has a test pinning exactly
+> that. One message answering differently about the same fact is the kind of
+> inconsistency that gets "fixed" later by someone who does not know which of
+> the two was deliberate.
+>
+> The second is what the client does next, which is the part that matters at
+> 2am. `WRONG_PHASE` tells a client the game moved on without it, and the
+> reasonable response is to wait for the `game_started` it must have missed.
+> That push is never coming, because there is no room. `NO_SUCH_ROOM` tells it
+> the truth: go back to the join screen. Two error codes that differ only in
+> which wrong thing the client then does are not interchangeable.
+>
+> There is no existence leak either way. A socket that reaches this rung is
+> holding a seat token for that room, so it already knows the room existed.
 
 **`seat_seed`** (server to client) is broadcast to the whole room when a seat's
 seed is fixed: `{ "seat": int, "client_seed": string, "origin":
