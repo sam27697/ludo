@@ -48,6 +48,7 @@ export 'src/envelope.dart'
         encodeEnvelope,
         generateMessageId;
 export 'src/connection.dart' show Connection, RoomHub;
+export 'src/privacy_page.dart' show buildPrivacyPageHtml, privacyLastUpdated;
 export 'src/wire_server.dart' show WireServer, housekeepingInterval;
 
 // GameState is ludo_engine's, not this package's, but Room.game exposes it
