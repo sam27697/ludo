@@ -120,8 +120,10 @@ List<_Step> _recordScript(
 
 void main() {
   const seats = <int>[0, 1, 2, 3];
-  final configA = GameConfig(seats: seats, rules: const RulesConfig(), seed: 111);
-  final configB = GameConfig(seats: seats, rules: const RulesConfig(), seed: 999);
+  final configA =
+      GameConfig(seats: seats, rules: const RulesConfig(), seed: 111);
+  final configB =
+      GameConfig(seats: seats, rules: const RulesConfig(), seed: 999);
 
   test(
     'rule 36: two games built from different seeds, replayed with the same '
