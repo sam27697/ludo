@@ -268,7 +268,7 @@ Future<String> _mountAndCaptureRequest(
   Locale locale = const Locale('en'),
 }) async {
   await tester.pumpWidget(_harness(screen, locale: locale));
-  await pumpEventQueue();
+  await tester.pump();
   expect(
     transport.sentRaw,
     isNotEmpty,
@@ -313,7 +313,7 @@ Future<void> _resolveConnected(
       ),
     ),
   );
-  await pumpEventQueue();
+  await tester.pump();
   await tester.pump();
 }
 
@@ -331,7 +331,7 @@ Future<void> _resolveFailed(
       data: <String, Object?>{'code': code, 'message': message},
     ),
   );
-  await pumpEventQueue();
+  await tester.pump();
   await tester.pump();
 }
 
@@ -399,7 +399,14 @@ void main() {
         final transport = FakeTransport();
         connector.enqueue(transport);
         final controller = _newController(connector);
-        addTearDown(controller.dispose);
+        // Disposed explicitly at the end of this body rather than via
+        // addTearDown: the request initState issued (rule 1) is
+        // deliberately left unresolved here so the connecting phase can be
+        // observed, and flutter_test's own invariant check for pending
+        // timers runs before addTearDown callbacks fire (see round 2
+        // defect 2), so an addTearDown-only disposal would fail this test
+        // on a live request timer that has nothing to do with the
+        // assertions below.
 
         await _mountAndCaptureRequest(
           tester,
@@ -451,6 +458,8 @@ void main() {
               'rule 3: lobby-connecting must contain Text(loc.'
               'lobbyConnecting), which reads "${loc.lobbyConnecting}"',
         );
+
+        controller.dispose();
       },
     );
 
@@ -558,7 +567,7 @@ void main() {
         await _resolveConnected(tester, transport, id, seatForThisClient: 0);
 
         transport.endFromFarSide();
-        await pumpEventQueue();
+        await tester.pump();
         await tester.pump();
 
         expect(controller.phase, RoomPhase.closed);
@@ -585,7 +594,7 @@ void main() {
         final resumeTransport = FakeTransport();
         connector.enqueue(resumeTransport);
         await tester.tap(find.byKey(const Key('lobby-reconnect-button')));
-        await pumpEventQueue();
+        await tester.pump();
 
         expect(
           connector.calls,
@@ -595,6 +604,20 @@ void main() {
               'controller.reconnect(), which opens a second transport; '
               'expected exactly 2 connect() calls total (initial + '
               'reconnect), got ${connector.calls.length}',
+        );
+
+        // Resolve the resume request the tap armed, so addTearDown's
+        // dispose does not race flutter_test's pending-timer invariant
+        // check against a request that was never answered (round 2
+        // defect 2). The reply itself is not the point of this test; the
+        // assertion above already covers the tap's behaviour.
+        final resumeId = _idOf(resumeTransport.sentRaw.last);
+        expect(_typeOf(resumeTransport.sentRaw.last), 'resume');
+        await _resolveConnected(
+          tester,
+          resumeTransport,
+          resumeId,
+          seatForThisClient: 0,
         );
       },
     );
@@ -641,7 +664,7 @@ void main() {
             data: <String, Object?>{'seat': 0, 'connected': false, 'seq': 9},
           ),
         );
-        await pumpEventQueue();
+        await tester.pump();
         await tester.pump();
 
         expect(controller.hasDesynced, isTrue);
@@ -668,7 +691,7 @@ void main() {
         // Drop the transport: phase becomes closed, hasDesynced is
         // untouched by that path (only a successful reconnect clears it).
         transport.endFromFarSide();
-        await pumpEventQueue();
+        await tester.pump();
         await tester.pump();
         expect(controller.phase, RoomPhase.closed);
         expect(controller.hasDesynced, isTrue);
@@ -711,7 +734,7 @@ void main() {
 
         // Fail the resume: an error reply lands the controller in failed,
         // with hasDesynced still untouched (only success clears it).
-        await pumpEventQueue();
+        await tester.pump();
         final resumeId = _idOf(resumeTransport.sentRaw.last);
         expect(_typeOf(resumeTransport.sentRaw.last), 'resume');
         resumeTransport.pushText(
@@ -721,7 +744,7 @@ void main() {
             data: <String, Object?>{'code': 'NO_SUCH_ROOM', 'message': ''},
           ),
         );
-        await pumpEventQueue();
+        await tester.pump();
         await tester.pump();
 
         expect(controller.phase, RoomPhase.failed);
@@ -1100,17 +1123,20 @@ void main() {
         final context = tester.element(find.byType(LobbyScreen));
         final loc = AppLocalizations.of(context);
         final expectedText = loc.lobbyWaitingForPlayers(2, 4);
+        final waitingText = tester.widget<Text>(
+          find.byKey(const Key('lobby-waiting')),
+        );
         expect(
-          find.descendant(
-            of: find.byKey(const Key('lobby-waiting')),
-            matching: find.text(expectedText),
-          ),
-          findsOneWidget,
+          waitingText.data,
+          expectedText,
           reason:
-              'rule 4: lobby-waiting must read loc.lobbyWaitingForPlayers'
+              'rule 4: lobby-waiting must be a Text of '
+              'loc.lobbyWaitingForPlayers'
               '(controller.room!.seats.length, controller.room!.players) '
               '== loc.lobbyWaitingForPlayers(2, 4) == "$expectedText" for '
-              'a 2-of-4 room',
+              'a 2-of-4 room; got "${waitingText.data}". The key is on the '
+              'Text itself per the frozen declaration, so find.descendant '
+              '(which excludes its own root) can never match here.',
         );
       },
     );
@@ -1277,7 +1303,7 @@ void main() {
 
         final beforeCount = transport.sentRaw.length;
         await tester.tap(finder);
-        await pumpEventQueue();
+        await tester.pump();
 
         expect(
           transport.sentRaw.length,
@@ -1299,6 +1325,26 @@ void main() {
               "controller.startGame, which sends a 'start_game' request; "
               'the new messages sent were $sentTypes',
         );
+
+        // Resolve the start_game request the tap armed (a plain frame, per
+        // RoomController's own contract, not a room snapshot), so
+        // addTearDown's dispose does not race flutter_test's pending-timer
+        // invariant against a request the assertions above already
+        // exercised (round 2 defect 2).
+        final startId = _idOf(transport.sentRaw.last);
+        transport.pushText(
+          _frame(
+            type: 'game_started',
+            re: startId,
+            data: <String, Object?>{
+              'turn': 0,
+              'game_id': 'a' * 16,
+              'client_seeds': '0:seed',
+              'seq': 2,
+            },
+          ),
+        );
+        await tester.pump();
       },
     );
   });
@@ -1343,7 +1389,7 @@ void main() {
         // initState a second time.
         await tester.pumpWidget(_harness(screen));
         await tester.pump();
-        await pumpEventQueue();
+        await tester.pump();
 
         final createMessagesAfterRebuild = transport.sentRaw
             .where((s) => _typeOf(s) == 'create_room')
@@ -1356,6 +1402,17 @@ void main() {
               'not once per build; after an explicit rebuild there are '
               'still ${createMessagesAfterRebuild.length} create_room '
               'messages total, expected 1',
+        );
+
+        // Resolve the create_room request initState issued, so addTearDown's
+        // dispose does not race flutter_test's pending-timer invariant
+        // (round 2 defect 2). The reply's content is not the point of this
+        // test; the assertions above already cover initState's behaviour.
+        await _resolveConnected(
+          tester,
+          transport,
+          _idOf(createMessagesAfterRebuild.single),
+          seatForThisClient: 0,
         );
       },
     );
@@ -1393,6 +1450,16 @@ void main() {
         final sentData = _dataOf(joinMessages.single);
         expect(sentData['code'], 'ZZZZZZ');
         expect(sentData['name'], 'Riri');
+
+        // Resolve the join_room request initState issued, so addTearDown's
+        // dispose does not race flutter_test's pending-timer invariant
+        // (round 2 defect 2).
+        await _resolveConnected(
+          tester,
+          transport,
+          _idOf(joinMessages.single),
+          seatForThisClient: 0,
+        );
       },
     );
   });
@@ -1475,7 +1542,7 @@ void main() {
         final retryTransport = FakeTransport();
         connector.enqueue(retryTransport);
         await tester.tap(find.byKey(const Key('lobby-retry-button')));
-        await pumpEventQueue();
+        await tester.pump();
 
         expect(
           connector.calls,
@@ -1501,6 +1568,15 @@ void main() {
           reason:
               'rule 7: retry must re-issue the same request with the same '
               'arguments initState issued; got $sentData',
+        );
+
+        // Resolve the retry's request, so addTearDown's dispose does not
+        // race flutter_test's pending-timer invariant (round 2 defect 2).
+        await _resolveConnected(
+          tester,
+          retryTransport,
+          _idOf(createMessages.single),
+          seatForThisClient: 0,
         );
       },
     );
@@ -1531,7 +1607,7 @@ void main() {
         final retryTransport = FakeTransport();
         connector.enqueue(retryTransport);
         await tester.tap(find.byKey(const Key('lobby-retry-button')));
-        await pumpEventQueue();
+        await tester.pump();
 
         final joinMessages = retryTransport.sentRaw
             .where((s) => _typeOf(s) == 'join_room')
@@ -1544,6 +1620,15 @@ void main() {
           reason:
               'rule 7: retry after a failed join must resend the same '
               'code and name; got $sentData',
+        );
+
+        // Resolve the retry's request, so addTearDown's dispose does not
+        // race flutter_test's pending-timer invariant (round 2 defect 2).
+        await _resolveConnected(
+          tester,
+          retryTransport,
+          _idOf(joinMessages.single),
+          seatForThisClient: 0,
         );
       },
     );
@@ -1561,7 +1646,7 @@ void main() {
         final controller = _newController(connector);
         addTearDown(controller.dispose);
 
-        await _mountAndCaptureRequest(
+        final id = await _mountAndCaptureRequest(
           tester,
           LobbyScreen(
             controller: controller,
@@ -1607,6 +1692,17 @@ void main() {
               'the English lobbyConnecting string must not be on screen '
               'when the app locale is Arabic',
         );
+
+        // Resolve the request initState issued, so addTearDown's dispose
+        // does not race flutter_test's pending-timer invariant (round 2
+        // defect 2). The reply's content is not the point of this test;
+        // the assertions above already cover the connecting-phase body.
+        await _resolveConnected(
+          tester,
+          transport,
+          id,
+          seatForThisClient: 0,
+        );
       },
     );
 
@@ -1644,15 +1740,18 @@ void main() {
         );
 
         final locAr = lookupAppLocalizations(const Locale('ar'));
+        final waitingTextAr = tester.widget<Text>(
+          find.byKey(const Key('lobby-waiting')),
+        );
         expect(
-          find.descendant(
-            of: find.byKey(const Key('lobby-waiting')),
-            matching: find.text(locAr.lobbyWaitingForPlayers(1, 4)),
-          ),
-          findsOneWidget,
+          waitingTextAr.data,
+          locAr.lobbyWaitingForPlayers(1, 4),
           reason:
-              'rule 8/4: lobby-waiting must show the Arabic '
-              'lobbyWaitingForPlayers string when the locale is ar',
+              'rule 8/4: lobby-waiting must be a Text of the Arabic '
+              'lobbyWaitingForPlayers string when the locale is ar; got '
+              '"${waitingTextAr.data}". The key is on the Text itself per '
+              'the frozen declaration, so find.descendant (which excludes '
+              'its own root) can never match here.',
         );
 
         // Force a desync and check the banner text too.
@@ -1662,7 +1761,7 @@ void main() {
             data: <String, Object?>{'seat': 0, 'connected': false, 'seq': 9},
           ),
         );
-        await pumpEventQueue();
+        await tester.pump();
         await tester.pump();
 
         expect(
