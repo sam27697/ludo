@@ -1062,6 +1062,16 @@ void main() {
       await reconnectFuture;
       expect(controller.phase, RoomPhase.connected);
 
+      // reconnect() completing and the resume reply reaching this listener
+      // on `frames` are two different chains of microtasks (one runs
+      // through the completer the request awaits, the other runs through
+      // controller._handleFrame re-adding the frame to controller.frames),
+      // and nothing pins their relative order. Draining the queue here
+      // settles that race without touching what the assertions below check:
+      // it only decides when the reply frame is observed, not whether it,
+      // or a duplicate of it, is observed.
+      await pumpEventQueue();
+
       log.clear();
       transport2.pushText(
         _frame(
@@ -1079,6 +1089,49 @@ void main() {
             'see frames from the new connection after reconnect()',
       );
       expect(log.single.type, 'presence');
+    });
+
+    test('the room frame that answers resume() is itself delivered on '
+        'frames, to a listener attached before reconnect()', () async {
+      final (
+        RoomController controller,
+        FakeTransport transport1,
+        _Connector connector,
+      ) = await _connectedController();
+      addTearDown(controller.dispose);
+      final List<Frame> log = <Frame>[];
+      controller.frames.listen(log.add);
+
+      transport1.endFromFarSide();
+      await pumpEventQueue();
+      expect(controller.phase, RoomPhase.closed);
+
+      final FakeTransport transport2 = FakeTransport();
+      connector.enqueue(transport2);
+      final Future<void> reconnectFuture = controller.reconnect();
+      await pumpEventQueue();
+      final String id = _idOf(transport2.sentRaw.last);
+      log.clear();
+      transport2.pushText(
+        _frame(type: 'room', re: id, data: _roomJson(seq: 2)),
+      );
+      await reconnectFuture;
+      // Give the reply frame's own delivery chain (connection.frames ->
+      // controller._handleFrame -> controller.frames) a chance to run; see
+      // the reason above for why reconnectFuture completing does not by
+      // itself prove the frame already reached this listener.
+      await pumpEventQueue();
+
+      expect(
+        log,
+        hasLength(1),
+        reason:
+            'the reply frame that answers resume() must reach a listener '
+            'attached on RoomController.frames before reconnect() was '
+            'called, exactly once, not zero times and not twice',
+      );
+      expect(log.single.type, 'room');
+      expect(log.single.re, id);
     });
   });
 
