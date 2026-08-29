@@ -53,5 +53,109 @@
   "roomScreenNotImplemented": "The connection to the server is not implemented yet. This screen does not do anything else right now.",
   "@roomScreenNotImplemented": {
     "description": "Honest placeholder text explaining that the room screen has no working connection yet."
+  },
+  "homeNameFieldLabel": "Your name",
+  "@homeNameFieldLabel": {
+    "description": "Label of the text field on the home screen where the player types the name shown to other players."
+  },
+  "homeDefaultPlayerName": "Player",
+  "@homeDefaultPlayerName": {
+    "description": "Name sent to the server when the player leaves the name field empty."
+  },
+  "homePlayersSelectorLabel": "Number of players",
+  "@homePlayersSelectorLabel": {
+    "description": "Caption above the 2/3/4 seat-count selector on the home screen."
+  },
+  "homePlayersTwo": "2 players",
+  "@homePlayersTwo": {
+    "description": "Label of the segment that selects a two-seat room."
+  },
+  "homePlayersThree": "3 players",
+  "@homePlayersThree": {
+    "description": "Label of the segment that selects a three-seat room."
+  },
+  "homePlayersFour": "4 players",
+  "@homePlayersFour": {
+    "description": "Label of the segment that selects a four-seat room."
+  },
+  "lobbyConnecting": "Connecting to the room...",
+  "@lobbyConnecting": {
+    "description": "Shown on the lobby screen while the socket to the server is opening and the create or join request is in flight."
+  },
+  "lobbyConnectionLost": "Connection lost.",
+  "@lobbyConnectionLost": {
+    "description": "Shown on the lobby screen when the socket has closed and the player can choose to reconnect."
+  },
+  "lobbyRoomCodeLabel": "Room code",
+  "@lobbyRoomCodeLabel": {
+    "description": "Caption shown above the room code on the lobby screen."
+  },
+  "lobbyCopyLinkButton": "Copy link",
+  "@lobbyCopyLinkButton": {
+    "description": "Button on the lobby screen that copies the shareable room link to the clipboard."
+  },
+  "lobbyCopyCodeButton": "Copy code",
+  "@lobbyCopyCodeButton": {
+    "description": "Button on the lobby screen that copies the bare room code to the clipboard."
+  },
+  "lobbyLinkCopied": "Copied to the clipboard.",
+  "@lobbyLinkCopied": {
+    "description": "Snackbar shown after either the copy-link or the copy-code button on the lobby screen is pressed."
+  },
+  "lobbyWaitingForPlayers": "Waiting for players ({seated} of {total})",
+  "@lobbyWaitingForPlayers": {
+    "description": "Shown on the lobby screen with the number of seats currently filled and the number of seats the room needs.",
+    "placeholders": {
+      "seated": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "lobbyDesynced": "The lobby view may be out of date. Resync to be sure.",
+  "@lobbyDesynced": {
+    "description": "Banner shown on the lobby screen when the controller has detected a gap in the sequence of updates it has received."
+  },
+  "lobbyResyncButton": "Resync",
+  "@lobbyResyncButton": {
+    "description": "Button on the desync banner that reopens the connection and resumes the room."
+  },
+  "lobbyReconnectButton": "Reconnect",
+  "@lobbyReconnectButton": {
+    "description": "Button shown on the lobby screen after the connection has closed, to open it again."
+  },
+  "lobbyRetryButton": "Try again",
+  "@lobbyRetryButton": {
+    "description": "Button shown on the lobby screen after a failed create or join, to send the same request again."
+  },
+  "lobbyStartButton": "Start game",
+  "@lobbyStartButton": {
+    "description": "Button shown to the host on the lobby screen that starts the game once every seat is filled."
+  },
+  "lobbyErrorNoSuchRoom": "That room does not exist. Check the code and try again.",
+  "@lobbyErrorNoSuchRoom": {
+    "description": "Error shown on the lobby screen when the server reports NO_SUCH_ROOM."
+  },
+  "lobbyErrorRoomFull": "That room is already full.",
+  "@lobbyErrorRoomFull": {
+    "description": "Error shown on the lobby screen when the server reports ROOM_FULL."
+  },
+  "lobbyErrorRoomStarted": "That room has already started its game.",
+  "@lobbyErrorRoomStarted": {
+    "description": "Error shown on the lobby screen when the server reports ROOM_STARTED."
+  },
+  "lobbyErrorRateLimited": "Too many attempts. Wait a moment and try again.",
+  "@lobbyErrorRateLimited": {
+    "description": "Error shown on the lobby screen when the server reports RATE_LIMITED."
+  },
+  "lobbyErrorTransport": "Could not reach the server. Check your connection and try again.",
+  "@lobbyErrorTransport": {
+    "description": "Error shown on the lobby screen when the connector itself failed, before any request reached the server."
+  },
+  "lobbyErrorGeneric": "Something went wrong. Try again.",
+  "@lobbyErrorGeneric": {
+    "description": "Error shown on the lobby screen for any code not covered by a more specific message, including no code at all."
   }
 }
