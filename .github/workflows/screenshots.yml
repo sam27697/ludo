@@ -112,8 +112,29 @@ jobs:
           echo "found ${#files[@]} screenshot(s):"
           ls -la "${files[@]}"
 
+      # `if: always()` so this still runs when "boot the emulator and
+      # capture screenshots" fails partway through: flutter drive writes
+      # each PNG to disk as soon as `takeScreenshot` returns, before the
+      # next line of the test runs, so a test that fails on its fourth
+      # capture (or its first, or its tap between two captures) has
+      # already left the earlier ones on disk. Without `always()` here the
+      # default step condition only runs on a fully green job, so every
+      # failing run before this fix uploaded nothing at all -- the exact
+      # blindness this fix exists to remove.
+      #
+      # if-no-files-found is `warn`, not `error`. A capture step that fails
+      # outright already turns the job red on its own; having the upload
+      # step raise a second, differently-worded failure for the same
+      # underlying cause (zero PNGs on disk) adds noise, not information.
+      # The case this setting exists to catch -- the capture step exiting
+      # 0 while silently writing nothing -- is still caught, by the
+      # "confirm the screenshots exist" step above, which runs only on the
+      # normal success path (it has no `always()`) and still hard-fails
+      # the job with `set -euo pipefail; ... exit 1` if it finds zero
+      # PNGs there.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
         with:
           name: store-screenshots
           path: packages/ludo_client/screenshots/*.png
-          if-no-files-found: error
+          if-no-files-found: warn

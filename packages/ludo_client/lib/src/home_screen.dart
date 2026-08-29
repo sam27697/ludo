@@ -60,10 +60,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: widget.onToggleLocale,
             child: Tooltip(
               message: loc.homeLocaleToggleTooltip,
-              child: Text(
-                loc.homeLocaleToggleLabel,
-                style: const TextStyle(color: Colors.white),
-              ),
+              child: Text(loc.homeLocaleToggleLabel),
             ),
           ),
         ],
@@ -92,6 +89,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     labelText: loc.homeRoomCodeFieldLabel,
                     hintText: loc.homeRoomCodeFieldHint,
                     errorText: _errorText,
+                    // Unset, InputDecoration truncates errorText to one line
+                    // with an ellipsis (see InputDecoration.errorMaxLines in
+                    // the framework). homeRoomCodeInvalid needs four lines to
+                    // clear at this field's width in either locale (measured
+                    // with TextPainter against the field's actual layout
+                    // width), and an error a player cannot read to the end is
+                    // worse than no error, so let it wrap instead of clipping
+                    // it.
+                    errorMaxLines: 4,
                     border: const OutlineInputBorder(),
                   ),
                 ),

@@ -77,7 +77,7 @@ seat is not reassignable by anything a third party can observe.
 
 | `t` | `d` | Notes |
 |---|---|---|
-| `create_room` | `{ "name": string, "players": 2\|3\|4, "rules": RulesConfig }` | Answered by `room`. Caller becomes host and takes the first seat. |
+| `create_room` | `{ "name": string, "players": 2\|3\|4, "rules": RulesConfig? }` | Answered by `room`. Caller becomes host and takes the first seat. **`rules` is optional**; absent means the defaults below, and an explicit `null` is rejected. Section 13.4. |
 | `join_room` | `{ "code": string, "name": string }` | Answered by `room` or an `error`. |
 | `resume` | `{ "code": string, "seat_token": string }` | Answered by `room` with the full current state. Works in LOBBY, PLAYING and FINISHED. |
 | `set_seed` | `{ "client_seed": string }` | Any seated player, **LOBBY only, once per seat**, after that seat has received a `room` frame carrying `chain_commit`. 1 to 64 characters of `[A-Za-z0-9_-]`. Answered by `seat_seed`, broadcast to the room. Section 11. |
@@ -112,7 +112,7 @@ different games.
 | `player_left` | `{ "seat": int }` |
 | `presence` | `{ "seat": int, "connected": bool }` |
 | `seat_seed` | `{ "seat": int, "client_seed": string, "origin": "player"\|"server" }`. Broadcast when a seat's seed is fixed. The seed is not a secret. Section 11. |
-| `game_started` | `{ "turn": int, "game_id": string, "client_seeds": string }`. **No `seed_commit`** -- the commitment is `chain_commit` and it was published at room creation. Section 11. |
+| `game_started` | `{ "turn": int, "game_id": string, "client_seeds": string }`. **No `seed_commit`** -- the commitment is `chain_commit` and it was published at room creation. Section 11. **A standalone `turn` always follows it**, carrying the first segment's `deadline_ms`, which this frame does not carry. Section 13.1. |
 | `rolled` | `{ "seat": int, "value": 1..6, "legal": [int], "deadline_ms": int, "k": int, "reveal": string }`. `legal` is the list of token indices this seat may move with this value. Empty means the turn is about to pass. `k` is the 1-based roll number within this game and `reveal` is `s[k]` as 64 lowercase hex characters; both ship in this same frame, never before it. Section 11. |
 | `moved` | `{ "seat": int, "token": int, "from": int, "to": int, "captured": [{"seat":int,"token":int}], "extra_roll": bool }` |
 | `turn_passed` | `{ "seat": int, "reason": "no_legal_move"\|"three_sixes" }` |
@@ -173,7 +173,7 @@ every delta and renders only snapshots; the deltas are an optimisation.
     { "seat": 0, "name": "Sam", "connected": true, "tokens": [-1, 0, 14, 57],
       "client_seed": "alice-seed", "seed_origin": "player" }
   ],
-  "turn": { "seat": 1, "phase": "await_roll|await_move", "value": 6,
+  "turn": { "seat": 1, "phase": "await_roll|await_move|finished", "value": 6,
             "legal": [0, 2], "deadline_ms": 41200, "sixes": 1, "k": 12 },
   "winner": null,
   "seq": 118
@@ -343,7 +343,10 @@ tested in the simulator gate with one client killed and with two killed at once.
    would be rejected with `ROOM_STARTED`.
 4. The server answers with the full `room` snapshot. The client discards its
    local state entirely and renders the snapshot. It does not attempt to
-   reconcile, replay or animate the gap.
+   reconcile, replay or animate the gap. The **other** sockets are told the seat
+   is back with a `presence` carrying `connected: true`, but only when the
+   resume actually flipped the seat; a takeover of a seat that was already
+   connected (rule 6 below) broadcasts nothing. Section 13.2.
 5. If the game ended while the client was away, the snapshot has `state`
    `FINISHED` and a `winner`, and that is how the player learns the result.
 6. A second socket presenting a valid `seat_token` for a seat that is already
@@ -610,3 +613,180 @@ Then, in order, whichever apply:
 - The engine is the only thing that decides legality, capture, extra rolls and
   the winner. The server decides the face, the ordering and the wire shape. No
   rule from `docs/RULES.md` is reimplemented in the server.
+
+## 13. Four rulings, 2026-08-28
+
+The four-client simulator (order 014) read this document, found four places
+where it did not say enough to write a client against, reported them, and
+invented around none of them. That was the correct behaviour and these are the
+answers. Each ruling says whether the server already does this or whether the
+code has to change.
+
+### 13.1 A standalone `turn` follows `game_started`. Always.
+
+**The spec contradicted itself and this resolves it.** Section 6 says a turn
+segment starts, and `rules.turn_seconds` is restored, when "a seat's turn
+begins", and that the next segment "starts with that seat's `turn` frame". The
+first seat's turn begins at `game_started`, and `game_started` carries
+`{ turn, game_id, client_seeds }` with **no `deadline_ms`**. So under the old
+text the first turn of every game was the one segment in the game with no frame
+announcing it, and the sentence deriving `deadline_ms` from the `turn` frame was
+false for exactly that segment.
+
+The order is therefore, on `start_game`:
+
+    seat_seed (one per server-seeded seat, in seq order)
+    game_started
+    turn                              <- new, seat == game_started.turn
+
+`turn` is the single uniform signal that a turn segment has begun, with no
+exception at the start of the game. A client keeps one handler for "a turn
+began" rather than two, and the one that fires once per game is not the one that
+gets tested least and drifts.
+
+`game_started.turn` is kept and is not redundant: it tells a client the game
+began and who moves first, which it needs to render the board before it renders
+a timer. The `turn` frame adds the deadline, which `game_started` has no
+business carrying: `deadline_ms` is milliseconds remaining, computed at send
+time, and `game_started` is built once and broadcast to every socket from one
+shared map.
+
+**The `turn` frame carries its own `seq`, one greater than `game_started`'s.**
+Section 12.3 says every frame carries `seq` and that the counter advances by
+exactly one per frame. The opening `turn` is not exempt and does not share
+`game_started`'s value. The reason is the one 13.2 gives below for the opposite
+case: a frame that repeats a `seq` the room has already used reads to a client
+as a repeat rather than an advance, and makes a correct client resynchronise for
+no reason. So `start_game` advances the room counter twice -- once for the game
+starting, once for the opening turn segment -- and the frames go out in that
+order, each carrying the value it advanced to.
+
+The full order on an accepted `start_game`, with `seq` advancing by one at every
+step:
+
+    seat_seed (one per server-seeded seat, each at its own seq)
+    game_started                      seq = n
+    turn                              seq = n + 1, seat == game_started.turn
+
+`deadline_ms` on that frame is measured from the segment the registry already
+starts at `start_game`, not from send time of a later frame.
+
+**The server does not do this yet.** `connection.dart`'s `_handleStartGame`
+sends `game_started` and stops; the only two `turn` emissions are in the roll
+and move handlers. This is a defect against this section as of now, and it needs
+its own order and its own blind test half.
+
+### 13.2 `presence` broadcasts on `resume` only when the seat actually flipped
+
+Section 8 said a disconnect pushes `presence` to the others and never said what
+a reconnect pushes, which left the room able to learn that a seat went away and
+never learn it came back.
+
+The ruling: **`presence` with `connected: true` is broadcast to the other
+sockets when, and only when, the resume actually changed the seat from not
+connected to connected.** A resume that takes over a seat which was already
+connected -- section 8 rule 6, the same person's phone reconnecting before the
+server noticed the old socket died -- broadcasts nothing.
+
+The reason is `seq`, and it is not a micro-optimisation. A takeover flips
+nothing on the seat, so the room counter does not advance. Broadcasting anyway
+would put a `seq` on the wire that the room has already used, which reads to a
+client as a repeat rather than an advance and triggers a needless `resume`
+against a socket that was merely flapping. A frame that makes correct clients
+resynchronise for no reason is worse than no frame.
+
+The resuming socket itself gets the full `room` snapshot with `re`, per section
+8 step 4, and does not also get the `presence`. It is not news to itself.
+
+**The server already does exactly this**, at `connection.dart`'s resume handler,
+guarded on the registry's own reconnected flag. This section documents behaviour
+that already exists and was never written down.
+
+### 13.3 There is no such thing as two things happening at the same moment
+
+The simulator's `double-drop` scenario asks what "two clients drop at the same
+moment" means. At the protocol level it means nothing, and that is the ruling.
+
+**Every state change in a room is serialised through that room's single `seq`
+counter.** Two sockets closing microseconds apart are two closes, processed one
+after the other, producing two `presence` frames at two consecutive `seq`
+values. There is no combined frame, no ordering guarantee between the two beyond
+that they are ordered, and no way for a client to tell a simultaneous drop from
+two drops in quick succession. It does not need to.
+
+"At the same moment" is therefore a **test-harness** definition, not a protocol
+one, and it belongs in `docs/SIMULATOR.md` where it already is: both sockets are
+closed before either reconnect begins, and the two reconnects are then raced
+concurrently rather than run in sequence. That is what makes the scenario prove
+more than running `reconnect` twice -- it exercises two seats mid-resume against
+one room counter -- and it is a statement about the test, not about the wire.
+
+A client may make no assumption about the relative order of two `presence`
+frames for two different seats beyond their `seq`.
+
+### 13.4 `rules` is optional on `create_room`; absent means the documented defaults
+
+Section 4's table lists `create_room` as `{ name, players, rules }`, which reads
+as three required fields, while the paragraph under `RulesConfig` says "Defaults
+are those values", which only means something if the object can be left out.
+
+The ruling, in full, because the middle case is the one that bites:
+
+- **`rules` absent** -- accepted, and the room gets `blocks: true`,
+  `capture_bonus: true`, `turn_seconds: 45`.
+- **`rules` present with a subset of keys** -- accepted; the keys given are
+  taken and the rest default individually.
+- **`rules` present and explicitly `null`** -- **rejected** with `BAD_FIELD`. An
+  explicit null is a client that thinks it is sending something, and it gets no
+  exemption from the rule below.
+- **`rules` carrying any key other than `blocks`, `capture_bonus`,
+  `turn_seconds`** -- rejected with `BAD_FIELD`, never ignored. Section 4
+  already says why: silently dropping an unknown rule toggle produces two
+  clients that believe they are playing different games.
+
+**The server already does exactly this**, in `connection.dart`'s rules parser.
+This section makes the table agree with it.
+
+## 14. Two rulings on the snapshot's `turn`, 2026-08-29
+
+Both were found by reading `lib/src/snapshot.dart` against section 6 rather
+than by reading section 6 alone, and both matter to the client decoder that is
+about to be written: a decoder built strictly on section 6 as it stood would
+reject the snapshot of a finished game, which is the exact snapshot a player who
+was away when the game ended receives on `resume` under section 8 rule 5.
+
+### 14.1 `turn.phase` has a third value, `finished`
+
+Section 6's example carried `"await_roll|await_move"` and that list is
+incomplete. `engine.GamePhase` has three members and `snapshot.dart:118-127`
+maps all three onto the wire, so a room in state `FINISHED` serves a `turn`
+object whose `phase` is the string `finished`.
+
+That is the right behaviour and it is not being changed. The snapshot describes
+the game as it stands, and a game that has ended is in a real phase, not in an
+absent one. What was wrong is section 6's enumeration, which is now corrected in
+place.
+
+A `turn` carrying `phase: "finished"` follows the same field rules as
+`await_roll`: `value`, `legal` and `sixes` are absent, because
+`_turnSnapshot` adds them only under `await_move`. `deadline_ms` and `k` are
+present, as they are in every phase.
+
+**A client must accept all three values.** Rejecting `finished` costs a player
+the one frame that tells them how the game they missed came out.
+
+### 14.2 `turn` is null before `start_game`, and only there
+
+`_turnSnapshot` returns null exactly when `room.game` is null, and `room.game`
+is set at `start_game` and never cleared. So:
+
+- **LOBBY** -- `turn` is `null`. There is no turn, and there is no honest
+  integer to put in `seat`.
+- **PLAYING** -- `turn` is an object, `phase` is `await_roll` or `await_move`.
+- **FINISHED** -- `turn` is an object, `phase` is `finished`. It is **not**
+  null. The losing readings here are equally plausible from section 6's text
+  alone, which is why this is written down rather than left to two hands to
+  guess at separately.
+
+`winner` moves the other way and is the companion field: `null` in LOBBY and
+PLAYING, an integer seat in FINISHED.
