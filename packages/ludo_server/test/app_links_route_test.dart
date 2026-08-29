@@ -100,16 +100,85 @@ final String _secondValidFakeFingerprint =
 /// missing colons, and a value with trailing whitespace or a quote in it."
 /// A fifth, "too many pairs", is added beyond the minimum the order names,
 /// covered by its "cover at least" wording.
+///
+/// Order 087 correction, 2026-08-29: this map originally also carried
+/// 'lowercase hex' and 'trailing whitespace' entries, asserted 404 by the
+/// loop below exactly like every other entry here. The coordinator
+/// confirmed that was a specification error in order 077 once order 087's
+/// frozen declaration existed: declarations 2-4 make case and surrounding
+/// whitespace insignificant *before* the shape check runs, so neither
+/// fixture is a "wrong shape" value under the contract this pair
+/// implements, and grouping them here would now assert something the spec
+/// explicitly forbids. Both entries were removed from this map and their
+/// tests migrated below, in the block headed "order 087 correction,
+/// 2026-08-29", to assert 200 and byte-for-byte body identity with the
+/// canonical value instead of 404. The coordinator's own words, directing
+/// that migration: "migrate them in place, keeping their structure and
+/// their names accurate to what they now assert." The remaining four
+/// entries below are unchanged from order 077 and still assert 404, since
+/// none of them becomes valid under any reading of the frozen declaration.
 final Map<String, String> _malformedFingerprints = <String, String>{
-  'lowercase hex': _validFakeFingerprint.toLowerCase(),
   'too few pairs (31 instead of 32)':
       _fakeBytes.sublist(0, 31).map(_hexPair).join(':'),
   'too many pairs (33 instead of 32)':
       (List<int>.from(_fakeBytes)..add(0xC0)).map(_hexPair).join(':'),
   'missing colons': _fakeBytes.map(_hexPair).join(),
-  'trailing whitespace': '$_validFakeFingerprint ',
   'a quote embedded in the value': '$_validFakeFingerprint"',
 };
+
+/// [_validFakeFingerprint] with every hex letter lower-cased. This is the
+/// exact fixture that used to back the 'lowercase hex' entry removed from
+/// [_malformedFingerprints] above; kept as its own named constant, rather
+/// than inlined, so the migrated test using it below is visibly using the
+/// same value order 077 used, not a fresh one that would leave the
+/// migration less checkable.
+final String _lowercaseOfCanonical = _validFakeFingerprint.toLowerCase();
+
+/// [_validFakeFingerprint] with a single trailing space appended. The exact
+/// fixture that used to back the 'trailing whitespace' entry removed from
+/// [_malformedFingerprints] above, kept for the same reason
+/// [_lowercaseOfCanonical] is.
+final String _canonicalWithTrailingWhitespace = '$_validFakeFingerprint ';
+
+/// [_validFakeFingerprint] with every other character's case flipped,
+/// deterministically by index rather than by hand, so this file cannot
+/// silently drift into being a second copy of [_lowercaseOfCanonical] or
+/// [_validFakeFingerprint] itself if either is edited later. Colons and
+/// digits are unaffected by case; only the hex letters A-F actually vary
+/// between the even and odd positions they land on.
+String _mixedCaseOf(String canonical) {
+  final StringBuffer buffer = StringBuffer();
+  for (int i = 0; i < canonical.length; i++) {
+    final String ch = canonical[i];
+    buffer.write(i.isEven ? ch.toLowerCase() : ch.toUpperCase());
+  }
+  return buffer.toString();
+}
+
+final String _mixedCaseOfCanonical = _mixedCaseOf(_validFakeFingerprint);
+
+/// [_validFakeFingerprint] padded with a tab and a space on each side, so
+/// the "leading and trailing whitespace" wording in order 087's item list
+/// is covered by whitespace on both ends and by more than one kind of
+/// whitespace character, not only the single trailing space
+/// [_canonicalWithTrailingWhitespace] already covers on its own.
+final String _paddedOnBothSides = '\t $_validFakeFingerprint \t';
+
+/// [_validFakeFingerprint] with its first character replaced by the Latin
+/// letter G, which is not a hex digit. Unlike every fixture above, no
+/// amount of trimming or upper-casing repairs this: it is wrong for a
+/// reason declaration 2's normalisation does not touch, so it must stay
+/// 404 both before and after that normalisation exists.
+final String _nonHexCharacterFingerprint =
+    'G${_validFakeFingerprint.substring(1)}';
+
+/// A value that is only whitespace. Trimming it, per declaration 2,
+/// produces the empty string, so declaration 6 (null-or-empty is 404 with
+/// an empty body, never `[]`) governs it once normalisation exists; before
+/// normalisation exists it simply fails the shape check outright, which is
+/// also 404 with an empty body, so this fixture is a regression guard
+/// either way, not new-behaviour proof.
+const String _whitespaceOnlyFingerprint = '   ';
 
 const String _assetLinksPath = '/.well-known/assetlinks.json';
 
@@ -250,6 +319,53 @@ class _ServerProcess {
   }
 
   Process get process => _process;
+}
+
+/// The status code, body and content-type header from one GET of
+/// [_assetLinksPath] against a freshly started, freshly stopped server
+/// process. Used only by the order 087 tests below, which need to compare
+/// two independent processes' responses to each other rather than compare
+/// one response against a value hardcoded in this file, since this file
+/// must not depend on `link_pages.dart`'s internal document shape (that
+/// module is not exported from `package:ludo_server/ludo_server.dart` at
+/// all -- see `lib/ludo_server.dart`'s export list -- and this file is
+/// bound by its own order to test observable behaviour through the route,
+/// not the internal structure behind it).
+class _FetchResult {
+  const _FetchResult(this.statusCode, this.body, this.contentType);
+  final int statusCode;
+  final String body;
+  final String? contentType;
+}
+
+/// Starts a `bin/server.dart` subprocess with `LUDO_APP_SIGNING_SHA256` set
+/// to [fingerprint] (or unset, if null), issues one GET of
+/// [_assetLinksPath], and stops the process again before returning -- all
+/// in a `try`/`finally` so a process is never leaked even if the `expect`
+/// calls the caller makes on the result throw. Deliberately independent of
+/// the `activeProcess`/`tearDown` bookkeeping the rest of this file uses,
+/// because several of the tests below need two independent processes alive
+/// only long enough to compare their answers, not one process held for the
+/// duration of the test.
+Future<_FetchResult> _fetchAssetLinks(
+  HttpClient client,
+  String? fingerprint,
+) async {
+  final _ServerProcess proc = await _ServerProcess.start(
+    appSigningSha256: fingerprint,
+  );
+  try {
+    final HttpClientResponse response =
+        await _send(client, proc.uri(_assetLinksPath));
+    final String body = await _bodyOf(response);
+    return _FetchResult(
+      response.statusCode,
+      body,
+      response.headers.value('content-type'),
+    );
+  } finally {
+    await proc.stop();
+  }
 }
 
 void main() {
@@ -513,6 +629,336 @@ void main() {
         );
       });
     }
+  });
+
+  // -------------------------------------------------------------------
+  // Order 087 correction, 2026-08-29. The two tests immediately below
+  // replace two that used to sit inside the group above, under order 077,
+  // asserting 404 for these exact fixtures ('lowercase hex' and 'trailing
+  // whitespace'). Order 087's frozen declaration (lines 2-4 of that order)
+  // makes case and surrounding whitespace insignificant before the shape
+  // check ever runs, so neither fixture is actually a "wrong shape" value
+  // under the contract this pair implements; leaving them inside a group
+  // titled "a value whose shape is wrong is treated as unset" would now
+  // assert something the frozen declaration explicitly forbids. The
+  // coordinator confirmed this in a mid-task correction: "my instruction
+  // and my frozen declaration contradict each other, and the declaration
+  // is the one that is right," and directed migrating these two in place
+  // rather than deleting or weakening them. They are placed here, directly
+  // after the group they were removed from, rather than folded back inside
+  // it under a title that would misdescribe them.
+  //
+  // Each test independently confirms the canonical value itself answers
+  // 200 before comparing bodies. Without that check, a coincidental pass
+  // is possible: if the variant under test still answered 404 with an
+  // empty body (i.e. normalisation were not implemented, or were
+  // implemented wrongly), and the canonical fetch in the same test also
+  // somehow answered with an empty body, an empty string would compare
+  // equal to an empty string and the identical-body assertion would pass
+  // for a reason that has nothing to do with normalisation. Asserting
+  // canonical == 200 first closes that off: on this branch, that
+  // assertion itself is expected to pass (item 2's group above already
+  // establishes the canonical value works today), so the failure this
+  // pair should see is squarely on the variant's status code or body, not
+  // smuggled in via a doubly-empty comparison.
+
+  test(
+      'migrated from order 077\'s "lowercase hex" case: once the '
+      'configured value is upper-cased before validation, a fully '
+      'lower-case fingerprint answers 200 with a body byte-identical to '
+      'the canonical upper-case value\'s (declaration 2, 3 and 4)', () async {
+    final _FetchResult canonical =
+        await _fetchAssetLinks(client, _validFakeFingerprint);
+    expect(
+      canonical.statusCode,
+      200,
+      reason: 'test setup error: the canonical upper-case fingerprint '
+          '"$_validFakeFingerprint" itself did not answer 200 (got '
+          '${canonical.statusCode} with body "${canonical.body}"); the '
+          'comparison below is meaningless until this holds',
+    );
+
+    final _FetchResult lower =
+        await _fetchAssetLinks(client, _lowercaseOfCanonical);
+    expect(
+      lower.statusCode,
+      200,
+      reason: 'GET $_assetLinksPath with LUDO_APP_SIGNING_SHA256 set to '
+          'the fully lower-case value "$_lowercaseOfCanonical" must '
+          'answer 200 once the value is upper-cased before the shape '
+          'check runs; got ${lower.statusCode} with body '
+          '"${lower.body}"',
+    );
+    expect(
+      lower.body,
+      canonical.body,
+      reason: 'the lower-case fingerprint\'s served body must be '
+          'byte-identical to the canonical upper-case value\'s; '
+          'lower-case body: "${lower.body}", canonical body: '
+          '"${canonical.body}"',
+    );
+  });
+
+  test(
+      'migrated from order 077\'s "trailing whitespace" case: once the '
+      'configured value is trimmed before validation, an otherwise-'
+      'canonical value with one trailing space answers 200 with a body '
+      'byte-identical to the canonical value\'s (declaration 2, 3 and 4)',
+      () async {
+    final _FetchResult canonical =
+        await _fetchAssetLinks(client, _validFakeFingerprint);
+    expect(
+      canonical.statusCode,
+      200,
+      reason: 'test setup error: the canonical upper-case fingerprint '
+          '"$_validFakeFingerprint" itself did not answer 200 (got '
+          '${canonical.statusCode} with body "${canonical.body}"); the '
+          'comparison below is meaningless until this holds',
+    );
+
+    final _FetchResult padded =
+        await _fetchAssetLinks(client, _canonicalWithTrailingWhitespace);
+    expect(
+      padded.statusCode,
+      200,
+      reason: 'GET $_assetLinksPath with LUDO_APP_SIGNING_SHA256 set to '
+          '"$_canonicalWithTrailingWhitespace" (the canonical value plus '
+          'one trailing space) must answer 200 once the value is '
+          'trimmed before the shape check runs; got ${padded.statusCode} '
+          'with body "${padded.body}"',
+    );
+    expect(
+      padded.body,
+      canonical.body,
+      reason: 'the trailing-whitespace fingerprint\'s served body must '
+          'be byte-identical to the canonical value\'s; padded body: '
+          '"${padded.body}", canonical body: "${canonical.body}"',
+    );
+  });
+
+  // -------------------------------------------------------------------
+  // The tests below are new for order 087 and were not present, in any
+  // form, in the file order 077 left behind. None of them replaces or
+  // weakens an existing assertion; every one is additional coverage of
+  // the frozen declaration at the top of this order.
+  //
+  // Every 404 assertion in this group is on the route's own 404, not the
+  // WebSocket fallback's. `wire_server.dart`'s handler matches
+  // `_assetLinksPath` by exact string equality against `request
+  // .requestedUri.path` before the WebSocket upgrade branch is ever
+  // reached (`lib/src/wire_server.dart`, the `if (path == _assetLinksPath)`
+  // check inside `start`'s handler), so every request in this file to
+  // `/.well-known/assetlinks.json` reaches `_handleAssetLinks` regardless
+  // of the configured fingerprint's shape; the path itself, not the
+  // fingerprint, decides whether this route's handler runs at all. That
+  // handler's own 404 is `shelf.Response(404, body: '')`, a genuinely
+  // empty body. The WebSocket fallback's 404, by contrast
+  // (`shelf_web_socket`'s `webSocketHandler`, `web_socket_handler.dart:118`
+  // in the installed `shelf_web_socket-3.0.0` package), always carries the
+  // fixed non-empty body "Only WebSocket connections are supported." The
+  // two are therefore never the same response, and asserting `body,
+  // isEmpty` on a 404 here is asserting the route's own fail-safe path
+  // specifically, not merely "some 404 occurred" -- unlike the risk this
+  // order names for a different route in an unrelated pair of orders,
+  // where the path itself is a regex the fallback can also fail to match.
+  group(
+      'GET /.well-known/assetlinks.json, order 087: further case- and '
+      'whitespace-normalisation coverage', () {
+    test(
+        'a mixed-case fingerprint answers 200 with a body byte-identical '
+        'to the canonical upper-case value\'s (declaration 2, 3 and 4)',
+        () async {
+      expect(
+        _mixedCaseOfCanonical.toUpperCase(),
+        _validFakeFingerprint,
+        reason: 'test setup error: upper-casing the constructed mixed-case '
+            'fixture "$_mixedCaseOfCanonical" did not reproduce '
+            '"$_validFakeFingerprint"; this case is not exercising the '
+            'same fingerprint in a different case at all',
+      );
+      expect(
+        _mixedCaseOfCanonical,
+        isNot(_validFakeFingerprint),
+        reason: 'test setup error: the constructed mixed-case fixture '
+            '"$_mixedCaseOfCanonical" is identical to the canonical value, '
+            'so this case is not exercising case-normalisation at all',
+      );
+
+      final _FetchResult canonical =
+          await _fetchAssetLinks(client, _validFakeFingerprint);
+      expect(
+        canonical.statusCode,
+        200,
+        reason: 'test setup error: the canonical upper-case fingerprint '
+            '"$_validFakeFingerprint" itself did not answer 200 (got '
+            '${canonical.statusCode} with body "${canonical.body}"); the '
+            'comparison below is meaningless until this holds',
+      );
+
+      final _FetchResult mixed =
+          await _fetchAssetLinks(client, _mixedCaseOfCanonical);
+      expect(
+        mixed.statusCode,
+        200,
+        reason: 'GET $_assetLinksPath with LUDO_APP_SIGNING_SHA256 set to '
+            'the mixed-case value "$_mixedCaseOfCanonical" must answer 200 '
+            'once the value is upper-cased before the shape check runs; '
+            'got ${mixed.statusCode} with body "${mixed.body}"',
+      );
+      expect(
+        mixed.body,
+        canonical.body,
+        reason: 'the mixed-case fingerprint\'s served body must be '
+            'byte-identical to the canonical value\'s; mixed-case body: '
+            '"${mixed.body}", canonical body: "${canonical.body}"',
+      );
+    });
+
+    test(
+        'leading and trailing whitespace of more than one kind around an '
+        'otherwise valid value is tolerated: 200 with a body '
+        'byte-identical to the canonical value\'s (declaration 2)', () async {
+      expect(
+        _paddedOnBothSides.trim(),
+        _validFakeFingerprint,
+        reason: 'test setup error: trimming the constructed fixture '
+            '"$_paddedOnBothSides" did not reproduce '
+            '"$_validFakeFingerprint"; this case is not exercising '
+            'whitespace tolerance around the same fingerprint at all',
+      );
+
+      final _FetchResult canonical =
+          await _fetchAssetLinks(client, _validFakeFingerprint);
+      expect(
+        canonical.statusCode,
+        200,
+        reason: 'test setup error: the canonical upper-case fingerprint '
+            '"$_validFakeFingerprint" itself did not answer 200 (got '
+            '${canonical.statusCode} with body "${canonical.body}"); the '
+            'comparison below is meaningless until this holds',
+      );
+
+      final _FetchResult padded =
+          await _fetchAssetLinks(client, _paddedOnBothSides);
+      expect(
+        padded.statusCode,
+        200,
+        reason: 'GET $_assetLinksPath with LUDO_APP_SIGNING_SHA256 set to '
+            '"$_paddedOnBothSides" (a tab and a space on each side of the '
+            'canonical value) must answer 200 once the value is trimmed '
+            'before the shape check runs; got ${padded.statusCode} with '
+            'body "${padded.body}"',
+      );
+      expect(
+        padded.body,
+        canonical.body,
+        reason: 'the padded fingerprint\'s served body must be '
+            'byte-identical to the canonical value\'s; padded body: '
+            '"${padded.body}", canonical body: "${canonical.body}"',
+      );
+    });
+
+    test(
+        'regression guard: a non-hex character (a plain Latin "G") still '
+        'answers 404 with an empty body -- no amount of trimming or '
+        'upper-casing repairs it, so declaration 5 continues to apply '
+        'exactly as it does today', () async {
+      expect(
+        _nonHexCharacterFingerprint.trim().toUpperCase().contains('G'),
+        isTrue,
+        reason: 'test setup error: "$_nonHexCharacterFingerprint" no '
+            'longer contains the non-hex character "G" after trimming and '
+            'upper-casing it the way the route is required to; this case '
+            'is not testing an unfixable shape violation at all',
+      );
+
+      final _FetchResult result =
+          await _fetchAssetLinks(client, _nonHexCharacterFingerprint);
+      expect(
+        result.statusCode,
+        404,
+        reason: 'GET $_assetLinksPath with LUDO_APP_SIGNING_SHA256 set to '
+            '"$_nonHexCharacterFingerprint" (a non-hex character in place '
+            'of a hex digit) must answer 404, exactly like unset; got '
+            '${result.statusCode} with body "${result.body}"',
+      );
+      expect(
+        result.body,
+        isEmpty,
+        reason: 'GET $_assetLinksPath with LUDO_APP_SIGNING_SHA256 set to '
+            '"$_nonHexCharacterFingerprint" must answer with an empty '
+            'body, got "${result.body}"',
+      );
+    });
+
+    test(
+        'regression guard: a value that is only whitespace answers 404 '
+        'with an empty body, not "[]", after trimming reduces it to the '
+        'empty string (declaration 2 and 6 together)', () async {
+      expect(
+        _whitespaceOnlyFingerprint.trim(),
+        isEmpty,
+        reason: 'test setup error: "$_whitespaceOnlyFingerprint" did not '
+            'trim down to the empty string; this case is not testing the '
+            'whitespace-only-collapses-to-empty interaction at all',
+      );
+
+      final _FetchResult result =
+          await _fetchAssetLinks(client, _whitespaceOnlyFingerprint);
+      expect(
+        result.statusCode,
+        404,
+        reason: 'GET $_assetLinksPath with LUDO_APP_SIGNING_SHA256 set to '
+            'a whitespace-only value must answer 404, exactly like unset '
+            'or empty; got ${result.statusCode} with body '
+            '"${result.body}"',
+      );
+      expect(
+        result.body,
+        isEmpty,
+        reason: 'GET $_assetLinksPath with LUDO_APP_SIGNING_SHA256 set to '
+            'a whitespace-only value must answer with an empty body '
+            '(never the two bytes "[]", per declaration 6), got '
+            '"${result.body}"',
+      );
+      expect(
+        result.body.trim(),
+        isNot('[]'),
+        reason: 'GET $_assetLinksPath with LUDO_APP_SIGNING_SHA256 set to '
+            'a whitespace-only value must not serve the empty JSON array '
+            '"[]"; got body "${result.body}"',
+      );
+    });
+
+    test(
+        'regression guard: a fingerprint that becomes valid only after '
+        'normalisation (a lower-case value) still never appears in the '
+        'server\'s stdout or stderr, in either its configured or its '
+        'canonical-upper-case form (declaration 7)', () async {
+      final _ServerProcess proc = await _ServerProcess.start(
+        appSigningSha256: _lowercaseOfCanonical,
+      );
+      activeProcess = proc;
+
+      final HttpClientResponse response =
+          await _send(client, proc.uri(_assetLinksPath));
+      await _bodyOf(response);
+
+      await proc.stop();
+      activeProcess = null;
+
+      final String allOutput =
+          <String>[...proc.stdoutLines, ...proc.stderrLines].join('\n');
+      expect(
+        allOutput.toLowerCase().contains(_lowercaseOfCanonical.toLowerCase()),
+        isFalse,
+        reason: 'the configured (lower-case, fabricated) fingerprint '
+            '"$_lowercaseOfCanonical" must never appear, in any casing, in '
+            'the server\'s stdout or stderr, whether or not this value is '
+            'accepted after normalisation; found it in the captured '
+            'process output:\n$allOutput',
+      );
+    });
   });
 
   test(
