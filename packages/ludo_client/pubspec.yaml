@@ -54,6 +54,14 @@ dev_dependencies:
     sdk: flutter
   path: ^1.9.1
 
+  # Already a transitive dependency of flutter_test, used directly by
+  # test/net/room_controller_test.dart to drive RoomController's request
+  # timeout without guessing a real wall-clock duration. Declared here,
+  # dev-only, because the analyzer's depend_on_referenced_packages lint
+  # (a CI gate) fails the build on an import that is only transitively
+  # resolvable.
+  fake_async: ^1.3.3
+
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
   # activated in the `analysis_options.yaml` file located at the root of your
