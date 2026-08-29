@@ -52,6 +52,43 @@ resolve_dart() {
   return 1
 }
 
+# Same resolution order as resolve_dart, for the Flutter SDK: PATH first,
+# then $FLUTTER_SDK, then the toolchain path this environment installs it at.
+resolve_flutter() {
+  if command -v flutter >/dev/null 2>&1; then
+    command -v flutter
+    return 0
+  elif [ -n "${FLUTTER_SDK:-}" ] && [ -x "$FLUTTER_SDK/bin/flutter" ]; then
+    echo "$FLUTTER_SDK/bin/flutter"
+    return 0
+  elif [ -x /workspace/toolchains/flutter/bin/flutter ]; then
+    echo /workspace/toolchains/flutter/bin/flutter
+    return 0
+  fi
+  return 1
+}
+
+# The directories directly under packages/ that have a pubspec.yaml, split by
+# whether that pubspec pins `sdk: flutter`. Shared by gate_static and
+# gate_client_static so the two agree on the same partition without either
+# one hardcoding a package name -- the next Flutter package added to this
+# repository lands in FLUTTER_ONLY_PKGS automatically. Resets and repopulates
+# the two globals on every call rather than appending, so calling it twice in
+# one run never doubles the list.
+discover_packages() {
+  DART_ONLY_PKGS=(); FLUTTER_ONLY_PKGS=()
+  local pkg_dir
+  for pkg_dir in "$ROOT"/packages/*/; do
+    pkg_dir="${pkg_dir%/}"
+    [ -f "$pkg_dir/pubspec.yaml" ] || continue
+    if grep -qE '^[[:space:]]*sdk:[[:space:]]*flutter[[:space:]]*$' "$pkg_dir/pubspec.yaml"; then
+      FLUTTER_ONLY_PKGS+=("${pkg_dir#"$ROOT"/}")
+    else
+      DART_ONLY_PKGS+=("${pkg_dir#"$ROOT"/}")
+    fi
+  done
+}
+
 # 1. Static analysis and formatting. First because it is free and because a
 # tree that does not analyse cleanly is not worth running tests against.
 #
@@ -80,17 +117,8 @@ gate_static() {
     return 77
   }
 
-  local pkg_dir
-  local -a dart_only=() flutter_only=()
-  for pkg_dir in "$ROOT"/packages/*/; do
-    pkg_dir="${pkg_dir%/}"
-    [ -f "$pkg_dir/pubspec.yaml" ] || continue
-    if grep -qE '^[[:space:]]*sdk:[[:space:]]*flutter[[:space:]]*$' "$pkg_dir/pubspec.yaml"; then
-      flutter_only+=("${pkg_dir#"$ROOT"/}")
-    else
-      dart_only+=("${pkg_dir#"$ROOT"/}")
-    fi
-  done
+  discover_packages
+  local -a dart_only=("${DART_ONLY_PKGS[@]}") flutter_only=("${FLUTTER_ONLY_PKGS[@]}")
 
   # A gate that checks nothing and reports green is worse than no gate. If
   # discovery above found no Dart-only package at all -- packages/ deleted or
@@ -114,6 +142,24 @@ gate_static() {
     return 1
   fi
 
+  # A tree that has never had `dart pub get` run has no
+  # .dart_tool/package_config.json, so every third-party import in these
+  # packages is unresolved and `dart analyze` reports a wall of
+  # uri_does_not_exist / undefined_function errors that say nothing about the
+  # code. dart_only is a pub workspace (root pubspec.yaml has `workspace:`
+  # listing them), so one `dart pub get` at the repo root resolves all of
+  # them at once. Run it unconditionally rather than only when the config
+  # file is missing: on an already-resolved tree it is a fast no-op, and a
+  # conditional here would just move the false-red to whatever check decided
+  # "resolved enough."
+  local pubget_out pubget_rc
+  pubget_out="$(cd "$ROOT" && "$dart" pub get 2>&1)"; pubget_rc=$?
+  if [ $pubget_rc -ne 0 ]; then
+    echo "dart pub get failed, so dependencies are unresolved and analysis would report nothing but unresolved imports:"
+    echo "$pubget_out"
+    return 1
+  fi
+
   local out rc
   out="$("$dart" analyze --fatal-infos --fatal-warnings "${dart_only[@]}" 2>&1)"; rc=$?
   if [ $rc -ne 0 ]; then
@@ -131,8 +177,87 @@ gate_static() {
   echo "$out"
   echo "$fmt_out"
   if [ ${#flutter_only[@]} -gt 0 ]; then
-    echo "excluded here, covered by the client CI job instead:${flutter_only[*]}"
+    echo "excluded here, covered by the client_static gate instead:${flutter_only[*]}"
   fi
+  return 0
+}
+
+# 1a. Static analysis and formatting for the packages gate_static excludes.
+# Uses the same discovery, so it never needs telling about a Flutter package
+# by name. Requires a real Flutter SDK -- a plain `dart` binary cannot
+# resolve a pubspec that pins `sdk: flutter` -- and reports "not implemented"
+# rather than a pass when none is reachable, the same way gate_protocol and
+# gate_artifact already do for their own missing tools.
+#
+# Runs `flutter pub get` before analysing, for the same reason gate_static
+# now runs `dart pub get` first: on a package that has never been resolved,
+# `flutter analyze` triggers its own implicit pub get but still reports the
+# generated localization sources as missing, because the analyzer's snapshot
+# of the filesystem is taken before generation finishes. Resolving first,
+# explicitly, is what makes the first analyze on a virgin tree agree with
+# every analyze after it.
+#
+# Does not run `flutter test`. That is the client CI job's, and a several-
+# minute test run inside a gate people run constantly is how a harness stops
+# being run.
+gate_client_static() {
+  local flutter
+  flutter="$(resolve_flutter)" || {
+    echo "no Flutter SDK found on PATH, in \$FLUTTER_SDK, or at /workspace/toolchains/flutter/bin/flutter"
+    return 77
+  }
+  local dart="$(dirname "$flutter")/dart"
+
+  discover_packages
+  local -a flutter_only=("${FLUTTER_ONLY_PKGS[@]}")
+
+  # Same two refusals gate_static makes: an empty check that reports green is
+  # worse than no gate at all.
+  if [ ${#flutter_only[@]} -eq 0 ]; then
+    echo "no Flutter package found under packages/ -- refusing to report a pass for analysing nothing"
+    return 1
+  fi
+
+  local pkg_dir missing=""
+  for pkg_dir in "${flutter_only[@]}"; do
+    if [ -z "$(find "$ROOT/$pkg_dir" -name '*.dart' -print -quit 2>/dev/null)" ]; then
+      missing="$missing $pkg_dir"
+    fi
+  done
+  if [ -n "$missing" ]; then
+    echo "Flutter package(s) with no .dart source under them:$missing"
+    return 1
+  fi
+
+  local report="" pkg_out rc
+  for pkg_dir in "${flutter_only[@]}"; do
+    pkg_out="$(cd "$ROOT/$pkg_dir" && "$flutter" pub get 2>&1)"; rc=$?
+    if [ $rc -ne 0 ]; then
+      echo "flutter pub get failed in $pkg_dir, so dependencies are unresolved and analysis would be meaningless:"
+      echo "$pkg_out"
+      return 1
+    fi
+
+    pkg_out="$(cd "$ROOT/$pkg_dir" && "$flutter" analyze 2>&1)"; rc=$?
+    if [ $rc -ne 0 ]; then
+      echo "flutter analyze failed in $pkg_dir:"
+      echo "$pkg_out"
+      return 1
+    fi
+    report="$report
+$pkg_dir: $pkg_out"
+
+    pkg_out="$(cd "$ROOT/$pkg_dir" && "$dart" format --output=none --set-exit-if-changed . 2>&1)"; rc=$?
+    if [ $rc -ne 0 ]; then
+      echo "dart format --output=none --set-exit-if-changed . failed in $pkg_dir:"
+      echo "$pkg_out"
+      return 1
+    fi
+    report="$report
+$pkg_dir: $pkg_out"
+  done
+
+  printf '%s\n' "$report" | sed '/^$/d'
   return 0
 }
 
@@ -550,17 +675,18 @@ gate_secrets() {
 echo "ludo-verify  $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo 'no git')"
 echo
 
-run_gate specs      gate_specs
-run_gate secrets    gate_secrets
-run_gate static     gate_static
-run_gate purity     gate_purity
-run_gate rules      gate_rules
-run_gate golden     gate_golden
-run_gate dice       gate_dice
-run_gate server     gate_server
-run_gate protocol   gate_protocol
-run_gate simulator  gate_simulator
-run_gate artifact   gate_artifact
+run_gate specs         gate_specs
+run_gate secrets       gate_secrets
+run_gate static        gate_static
+run_gate client_static gate_client_static
+run_gate purity        gate_purity
+run_gate rules         gate_rules
+run_gate golden        gate_golden
+run_gate dice          gate_dice
+run_gate server        gate_server
+run_gate protocol      gate_protocol
+run_gate simulator     gate_simulator
+run_gate artifact      gate_artifact
 
 echo
 echo "gates: $PASS passed, $FAIL failed, $TODO not implemented"
