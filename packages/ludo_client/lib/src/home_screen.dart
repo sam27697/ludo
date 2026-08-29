@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'deep_link.dart';
 import 'lobby_screen.dart';
 import 'net/room_controller.dart';
 import 'room_code.dart';
@@ -14,6 +17,8 @@ class HomeScreen extends StatefulWidget {
     super.key,
     required this.onToggleLocale,
     this.controllerFactory = defaultRoomControllerFactory,
+    this.initialLinkReader = noInitialLink,
+    this.linkStream = noLinkStream,
   });
 
   /// Flips the app between its two supported locales.
@@ -24,6 +29,16 @@ class HomeScreen extends StatefulWidget {
   /// substitutes one built over a fake transport.
   final RoomControllerFactory controllerFactory;
 
+  /// Reads the link that launched the app, if any (the cold-start path).
+  /// Defaults to a reader that never finds one, so a widget pumped with no
+  /// arguments never touches a real platform channel.
+  final InitialLinkReader initialLinkReader;
+
+  /// A stream of links arriving while the app is already running (the
+  /// warm-start path). Defaults to a stream that never emits, for the same
+  /// reason as [initialLinkReader].
+  final LinkStreamOpener linkStream;
+
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -33,9 +48,45 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _nameController = TextEditingController();
   String? _errorText;
   int _players = 4;
+  StreamSubscription<Uri>? _linkSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.initialLinkReader().then((uri) {
+      if (uri != null) {
+        _handleLink(uri);
+      }
+    });
+    _linkSubscription = widget.linkStream().listen(_handleLink);
+  }
+
+  /// Applies a room code found in an incoming link to the code field.
+  ///
+  /// This never navigates: a link only pre-fills and validates the code, the
+  /// same way a player pastes one in by hand, and the player still taps Join
+  /// themselves. That holds whether the home screen is the front-most route
+  /// or another route (a lobby, a game) is currently pushed above it; either
+  /// way nothing here pops or pushes anything.
+  void _handleLink(Uri uri) {
+    if (!mounted) {
+      return;
+    }
+    final AppLocalizations loc = AppLocalizations.of(context);
+    final String? code = roomCodeFromUri(uri);
+    setState(() {
+      if (code != null) {
+        _codeController.text = code;
+        _errorText = null;
+      } else {
+        _errorText = loc.homeRoomCodeInvalid;
+      }
+    });
+  }
 
   @override
   void dispose() {
+    _linkSubscription?.cancel();
     _codeController.dispose();
     _nameController.dispose();
     super.dispose();
