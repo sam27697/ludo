@@ -72,14 +72,22 @@ final RegExp _roomLinkPathPattern = RegExp(r'^/r/([^/]+)$');
 /// as silently as an absent one does, and there is no way to tell from the
 /// string alone whether it is the app signing key or, wrongly, the upload
 /// key; see `docs/RELEASE.md:139-159`. The value itself is never logged.
+///
+/// [rawFingerprint] is trimmed of surrounding whitespace and upper-cased
+/// before the shape check, so a value that is otherwise valid is accepted
+/// regardless of how it was typed or pasted; the normalised value is what
+/// gets checked against [appSigningFingerprintShape] and what is passed to
+/// [buildAssetLinksJson], so the served document always carries the
+/// canonical upper-case form.
 String? _buildAssetLinksJsonOrNull(String? rawFingerprint) {
   if (rawFingerprint == null || rawFingerprint.isEmpty) {
     return null;
   }
-  if (!isValidAppSigningFingerprintShape(rawFingerprint)) {
+  final String normalisedFingerprint = rawFingerprint.trim().toUpperCase();
+  if (!isValidAppSigningFingerprintShape(normalisedFingerprint)) {
     return null;
   }
-  return buildAssetLinksJson(rawFingerprint);
+  return buildAssetLinksJson(normalisedFingerprint);
 }
 
 /// Owns the listening socket and everything that turns an accepted
