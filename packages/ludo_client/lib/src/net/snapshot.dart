@@ -126,6 +126,28 @@ class SeatState {
       seedOrigin: seedOrigin,
     );
   }
+
+  /// A copy with the given fields replaced. Every omitted parameter keeps
+  /// this instance's value; there is no way to null out [clientSeed] or
+  /// [seedOrigin] through this method, because nothing that constructs a
+  /// [SeatState] copy today needs to.
+  SeatState copyWith({
+    int? seat,
+    String? name,
+    bool? connected,
+    List<int>? tokens,
+    String? clientSeed,
+    SeedOrigin? seedOrigin,
+  }) {
+    return SeatState(
+      seat: seat ?? this.seat,
+      name: name ?? this.name,
+      connected: connected ?? this.connected,
+      tokens: tokens ?? this.tokens,
+      clientSeed: clientSeed ?? this.clientSeed,
+      seedOrigin: seedOrigin ?? this.seedOrigin,
+    );
+  }
 }
 
 class TurnState {
@@ -277,6 +299,42 @@ class RoomSnapshot {
       turn: turn,
       winner: winner,
       seq: seq,
+    );
+  }
+
+  /// A copy with the given fields replaced. Every omitted parameter keeps
+  /// this instance's value; there is no way to null out [gameId],
+  /// [clientSeeds], [turn] or [winner] through this method, because nothing
+  /// that constructs a [RoomSnapshot] copy today needs to.
+  RoomSnapshot copyWith({
+    String? code,
+    RoomState? state,
+    int? hostSeat,
+    int? players,
+    RulesConfig? rules,
+    String? chainCommit,
+    int? chainIndex,
+    String? gameId,
+    String? clientSeeds,
+    List<SeatState>? seats,
+    TurnState? turn,
+    int? winner,
+    int? seq,
+  }) {
+    return RoomSnapshot(
+      code: code ?? this.code,
+      state: state ?? this.state,
+      hostSeat: hostSeat ?? this.hostSeat,
+      players: players ?? this.players,
+      rules: rules ?? this.rules,
+      chainCommit: chainCommit ?? this.chainCommit,
+      chainIndex: chainIndex ?? this.chainIndex,
+      gameId: gameId ?? this.gameId,
+      clientSeeds: clientSeeds ?? this.clientSeeds,
+      seats: seats ?? this.seats,
+      turn: turn ?? this.turn,
+      winner: winner ?? this.winner,
+      seq: seq ?? this.seq,
     );
   }
 }
