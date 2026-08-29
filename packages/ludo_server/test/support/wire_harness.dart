@@ -31,10 +31,19 @@ class ServerHarness {
   final RoomRegistry registry;
   final WireServer server;
 
-  static ServerHarness build() {
+  /// [secure] is additive, order 052: `RoomRegistry` has always taken
+  /// `required Random secure` (`lib/src/registry.dart:284`), and every
+  /// existing call site of this method calls it with no arguments and gets
+  /// exactly what it always got, `Random.secure()`. A caller that supplies
+  /// [secure] -- `test/support/scripted_bytes.dart`'s
+  /// `ScriptedBytesRandom`, so far the only one -- gets a room whose whole
+  /// draw sequence, and therefore whose whole die-face sequence, is fixed
+  /// rather than drawn from real entropy. Nothing under `lib/` or `bin/`
+  /// is aware this parameter exists.
+  static ServerHarness build({Random? secure}) {
     final FakeClock clock = FakeClock(DateTime.utc(2026, 8, 28));
     final RoomRegistry registry =
-        RoomRegistry(clock: clock, secure: Random.secure());
+        RoomRegistry(clock: clock, secure: secure ?? Random.secure());
     final RateLimiter rateLimiter = RateLimiter(clock: clock);
     final WireServer server = WireServer(
       registry: registry,
@@ -332,6 +341,62 @@ Future<List<Map<String, Object?>>> drainUntil(
     'expected a "$type" frame within $maxFrames frames on this socket and '
     'none arrived; frames seen along the way: $frames',
   );
+}
+
+// -----------------------------------------------------------------------
+// Additive helper below this line, added for order 065 (`docs/PROTOCOL.md`
+// section 13.1: a standalone `turn` follows `game_started`, always). Every
+// call site that used to stop reading at `game_started` now has to consume
+// this frame too, on every socket in the room, or it sits in that socket's
+// queue and is mistaken for whatever the next helper actually asked for.
+// -----------------------------------------------------------------------
+
+/// Reads exactly one frame off [client] and asserts it is the standalone
+/// `turn` frame section 13.1 requires immediately after `game_started`:
+/// frame type `turn`, `d['seat'] == gameStartedTurn` (the `turn` field off
+/// the `game_started` payload already read on this same socket) and
+/// `d['deadline_ms']` a positive `int`. Reads with [WireTestClient.next]
+/// rather than [receiveType] on purpose -- skipping past an out-of-order
+/// frame here would hide the very defect this assertion exists to catch,
+/// and section 13.1 promises this frame arrives with nothing between it
+/// and `game_started` on a given socket. Does not check `seq`;
+/// `test/turn_after_start_test.dart` (order 062) already owns the
+/// `seq == game_started.seq + 1` rule and is the one place that changes if
+/// that rule ever does.
+Future<Map<String, Object?>> expectOpeningTurn(
+  WireTestClient client,
+  Object? gameStartedTurn,
+) async {
+  final Map<String, Object?> frame = await client.next();
+  expect(
+    frame['t'],
+    'turn',
+    reason: 'section 13.1: game_started must be immediately followed by a '
+        'standalone turn frame on the same socket, with nothing between '
+        'them; got a "${frame['t']}" frame instead: ${frame['d']}',
+  );
+  final Map<String, Object?> data = frame['d']! as Map<String, Object?>;
+  expect(
+    data['seat'],
+    gameStartedTurn,
+    reason: 'section 13.1: turn.seat must equal game_started.turn; got '
+        'turn.seat=${data['seat']} game_started.turn=$gameStartedTurn',
+  );
+  final Object? rawDeadline = data['deadline_ms'];
+  expect(
+    rawDeadline,
+    isA<int>(),
+    reason: 'section 13.1: the opening turn frame must carry deadline_ms '
+        'as an int -- the whole reason it exists, since game_started '
+        'cannot carry it; got ${rawDeadline.runtimeType}: $rawDeadline',
+  );
+  expect(
+    rawDeadline! as int,
+    greaterThan(0),
+    reason: 'deadline_ms on the opening turn frame must be a positive '
+        'number of milliseconds remaining; got $rawDeadline',
+  );
+  return frame;
 }
 
 /// Asserts [frame] is an `error` frame carrying exactly [expectedCode].
