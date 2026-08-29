@@ -265,7 +265,16 @@ void main() {
     testWidgets('reaches FlutterError.onError and the screen keeps working', (
       tester,
     ) async {
-      final List<FlutterErrorDetails> captured = _captureFlutterErrors();
+      // No FlutterError.onError override here: flutter_test's own binding
+      // uses the currently installed onError to record a genuinely
+      // zone-escaped error (exactly what base commit produces, since
+      // nothing on the chain catches it), and replacing that handler in a
+      // test that might hit that exact escape path collides with the
+      // binding's own bookkeeping instead of producing a plain expect()
+      // failure. Left at its default, an escape is caught cleanly by the
+      // binding and fails this test on its own; a correct fix instead
+      // reports through the default onError as a normal, drainable
+      // exception, which takeException() below both surfaces and drains.
       final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
       final _RecordingNavigatorObserver observer =
           _RecordingNavigatorObserver();
@@ -283,7 +292,14 @@ void main() {
       await tester.pump();
 
       _expectScreenUndisturbed(tester, observer: observer);
-      _expectReportedOnce(captured, expectedException: thrown);
+      expect(
+        tester.takeException(),
+        same(thrown),
+        reason:
+            'declaration E1 requirement 3: the error must not be swallowed; '
+            'it must reach the framework as the original error object, '
+            'drainable through tester.takeException()',
+      );
     });
   });
 
@@ -297,7 +313,8 @@ void main() {
       'reaches FlutterError.onError, the screen keeps working, and a later '
       'valid Uri on the same stream still pre-fills the code field',
       (tester) async {
-        final List<FlutterErrorDetails> captured = _captureFlutterErrors();
+        // See the matching comment on the initialLinkReader test above:
+        // no onError override here, for the same reason.
         final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
         final _RecordingNavigatorObserver observer =
             _RecordingNavigatorObserver();
@@ -314,7 +331,14 @@ void main() {
         await tester.pump();
 
         _expectScreenUndisturbed(tester, observer: observer);
-        _expectReportedOnce(captured, expectedException: thrown);
+        expect(
+          tester.takeException(),
+          same(thrown),
+          reason:
+              'declaration E1 requirement 3: the error must not be '
+              'swallowed; it must reach the framework as the original '
+              'error object, drainable through tester.takeException()',
+        );
 
         // E1 requirement 4, tested directly rather than by implication: the
         // subscription must still be useful after the error. An
@@ -389,40 +413,28 @@ void main() {
   });
 
   group('E3: the two context values distinguish the two paths', () {
-    // Uses the two async-error scenarios, which are the ones the frozen
-    // declaration names when it talks about "the two paths" and their
-    // context strings; both are expected, on the fixed implementation, to
-    // report through FlutterError.onError without ever touching the
-    // flutter_test binding's own uncaught-zone-error path (see the header
-    // comment on the groups above), so this test does not carry the same
-    // base-commit crash risk as those two -- it is expected to fail here
-    // for the ordinary reason that captured stays empty, or crashes the
-    // same way the moment the first of the two errors is delivered,
-    // depending on which the implementation leaves unhandled.
+    // Driven through the two synchronous-throw scenarios rather than the
+    // two async ones above: both a synchronous throw and a later
+    // Future/stream error are required to go through the same reporting
+    // rule (E1 requirement 5), so the context each path names should not
+    // depend on which of the two ways that path happens to fail, and only
+    // the synchronous shape is safe to combine with a FlutterError.onError
+    // override in this suite (see the comments on the async-error groups
+    // above for why the async shape is not).
     testWidgets(
       'the initialLinkReader failure and the linkStream failure report '
       'distinct, path-naming FlutterErrorDetails.context values',
       (tester) async {
         final List<FlutterErrorDetails> captured = _captureFlutterErrors();
-        final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
-        final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
         final _RecordingNavigatorObserver observer =
             _RecordingNavigatorObserver();
         await tester.pumpWidget(
           _homeScreenApp(
-            initialLinkReader: reader.call,
-            linkStream: opener.call,
+            initialLinkReader: _throwingInitialLinkReader,
+            linkStream: _throwingLinkStream,
             observer: observer,
           ),
         );
-        await tester.pump();
-
-        reader.completeError(StateError('E3 probe: initial link path'));
-        await tester.pump();
-        await tester.pump();
-
-        opener.addError(StateError('E3 probe: link stream path'));
-        await tester.pump();
         await tester.pump();
 
         expect(
