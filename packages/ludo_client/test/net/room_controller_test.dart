@@ -1225,17 +1225,18 @@ void main() {
       expect(controller.hasDesynced, isFalse);
     });
 
-    test('a game delta carrying a seq far ahead of room.seq does not set '
-        'hasDesynced, does not change room, and still reaches frames '
-        '(master ruling, mid-task: gap detection is scoped to the three '
-        'lobby deltas only, because this controller does not advance '
-        "room.seq during play and a game delta would otherwise latch "
-        'hasDesynced the instant a game started; this scoping expires '
-        'when the game-state reducer lands)', () async {
+    test('a game delta carrying a seq far ahead of room.seq is a gap and '
+        'must set hasDesynced, must not adopt the pushed seq or apply the '
+        'delta, and must attempt exactly one resume on the current '
+        'connection, carrying room.code and the cached seat token '
+        '(D8: this ruling expired the moment the game-state reducer '
+        'landed; the delta this order used to test with is now the wrong '
+        'expectation, and this test replaces it with the one the frozen '
+        'declaration in work/ludo/orders/091 requires)', () async {
       final (RoomController controller, FakeTransport transport, _) =
           await _connectedController(seq: 1);
       addTearDown(controller.dispose);
-      final Object? roomBefore = controller.room;
+      final int seqBefore = controller.room!.seq;
       final List<Frame> log = <Frame>[];
       controller.frames.listen(log.add);
 
@@ -1257,13 +1258,41 @@ void main() {
 
       expect(
         controller.hasDesynced,
-        isFalse,
+        isTrue,
         reason:
-            'a game delta must never set hasDesynced under this '
-            'scoping ruling, however far ahead its seq is',
+            'a rolled whose seq is far ahead of room.seq is a gap and must '
+            'set hasDesynced',
       );
-      expect(identical(controller.room, roomBefore), isTrue);
+      expect(
+        controller.room!.seq,
+        seqBefore,
+        reason:
+            'the gap must not be papered over by adopting the pushed seq; '
+            'room.seq only ever moves through a successful resync',
+      );
       expect(log.map((f) => f.type), contains('rolled'));
+
+      final List<String> resumeRaw = transport.sentRaw
+          .where((String raw) => _decode(raw)['t'] == 'resume')
+          .toList();
+      expect(
+        resumeRaw,
+        hasLength(1),
+        reason:
+            'exactly one resume must have been sent on the current, '
+            'already-open connection; got ${transport.sentRaw}',
+      );
+      final Map<String, Object?> sent = _decode(resumeRaw.single);
+      expect(
+        sent['d'],
+        equals(<String, Object?>{
+          'code': controller.room!.code,
+          'seat_token': controller.seatToken,
+        }),
+        reason:
+            'the resume must carry room.code and the cached seat token, '
+            'got d=${sent['d']}',
+      );
     });
   });
 
