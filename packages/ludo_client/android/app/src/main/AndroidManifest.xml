@@ -24,6 +24,21 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Android App Links: production host only. stg.ludo.provefair.app
+                 is deliberately absent: a staging host in a shipped manifest
+                 is a claim the app makes to every installed phone, and it buys
+                 nothing. Verification depends on
+                 https://ludo.provefair.app/.well-known/assetlinks.json
+                 matching the Play App Signing key; see docs/RELEASE.md. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="https"
+                    android:host="ludo.provefair.app"
+                    android:pathPrefix="/r/"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

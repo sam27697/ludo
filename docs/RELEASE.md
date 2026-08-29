@@ -157,3 +157,21 @@ Links verification just does not match, so links that were supposed to
 open directly in the app open in a browser instead, and nothing in any log
 says why. If deep links stop opening the app, this mismatch is the first
 thing to check.
+
+Once the app signing key fingerprint exists (it does not yet: the app is
+still a Draft and Google has not generated one), it goes into
+`/srv/apps/ludo/.env` on the box, one line:
+`LUDO_APP_SIGNING_SHA256=AA:BB:CC:...` (an actual value has 32 colon-separated
+hex pairs; the one above is shortened to show the shape, not a value to
+copy). There is one `.env` per environment, so it has to be added on both
+staging and production separately, and each box needs a redeploy afterwards
+for the new value to reach the running process. The value is accepted in
+either case and with surrounding whitespace trimmed, so a hand-typed or
+lower-cased paste still works. Until the value is present and shaped
+correctly, `/.well-known/assetlinks.json` answers 404 with an empty body,
+which means "not configured" and is deliberate; it must never be made to
+answer `[]` instead, because an empty JSON array is itself a valid asset
+links document and asserts, positively, that no application is associated
+with this domain -- a different and stronger claim than "not configured
+yet." This value is secret-adjacent and must never be committed to the
+repository.
