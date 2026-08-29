@@ -74,6 +74,16 @@ class RulesConfig {
       turnSeconds: turnSeconds,
     );
   }
+
+  /// Emits exactly the three keys of docs/PROTOCOL.md section 4, always all
+  /// three, in the order `blocks`, `capture_bonus`, `turn_seconds`.
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'blocks': blocks,
+      'capture_bonus': captureBonus,
+      'turn_seconds': turnSeconds,
+    };
+  }
 }
 
 class SeatState {
