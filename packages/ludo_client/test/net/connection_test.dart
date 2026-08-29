@@ -38,7 +38,6 @@
 //      short real Duration and await the actual Future the API returns;
 //      nothing here sleeps blind.
 
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
