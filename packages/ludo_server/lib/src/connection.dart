@@ -491,7 +491,8 @@ class Connection {
       );
     }
 
-    final Map<String, Object?> data = buildGameStarted(ok.room, ok.room.seq);
+    final Map<String, Object?> data =
+        buildGameStarted(ok.room, ok.gameStartedSeq);
 
     _send(type: 'game_started', data: data, re: envelope.id);
     hub.broadcast(
@@ -500,12 +501,28 @@ class Connection {
       data: data,
       exceptConn: this,
     );
+
+    // docs/PROTOCOL.md section 13.1: a standalone `turn` frame always
+    // follows `game_started`, announcing the opening segment the same way
+    // every later one is announced, at its own seq one greater than
+    // `game_started`'s.
+    final Map<String, Object?> turnData = buildTurn(
+      seat: ok.room.game!.currentSeat,
+      deadlineMs: ok.nextDeadlineMs,
+      seq: ok.turnSeq,
+    );
+    _sendAndBroadcast(
+      room: ok.room.code,
+      type: 'turn',
+      data: turnData,
+      re: envelope.id,
+    );
     _log(
       type: envelope.type,
       id: envelope.id,
       outcome: 'ok',
       room: ok.room.code,
-      seq: ok.room.seq,
+      seq: ok.turnSeq,
     );
   }
 
