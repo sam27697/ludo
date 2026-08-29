@@ -39,6 +39,10 @@ dependencies:
   # the geometry stays testable without a render tree.
   meta: ^1.15.0
 
+  # lib/src/net/ws_transport.dart. The server package already depends on
+  # web_socket_channel ^3.0.0 and speaks docs/PROTOCOL.md over it.
+  web_socket_channel: ^3.0.0
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
