@@ -8,18 +8,25 @@
 // throwsA(isA<SnapshotFormatException>()), never throwsException.
 //
 // Two ambiguities in the frozen interface / rules text were found while
-// writing this file and are deliberately NOT resolved by a guess here; see
-// the final report for detail. In short:
-//   1. Whether the seat-index range 0..3 applies to TurnState.seat, in
-//      addition to the explicitly named SeatState.seat and
-//      RoomSnapshot.hostSeat, is not tested either way.
-//   2. Whether a JSON key that is entirely absent (as opposed to present
-//      with an explicit JSON null) throws for a field that is `required`
-//      in its constructor but nullable in its type (SeatState.clientSeed,
-//      SeatState.seedOrigin, RoomSnapshot.gameId, RoomSnapshot.clientSeeds,
-//      RoomSnapshot.turn, RoomSnapshot.winner) is not tested either way.
-//      Only "explicit null is accepted" and "wrong type throws" are tested
-//      for those six fields.
+// writing the original version of this file and were deliberately NOT
+// resolved by a guess; they were reported instead of tested either way.
+// The master ruled on both afterward (work order 071, work/ludo/STATE.md,
+// run 21); the two rulings below are the tests that lock those rulings in.
+//   1. The seat-index range 0..3 applies to TurnState.seat, not just to
+//      SeatState.seat and RoomSnapshot.hostSeat: see the group
+//      'TurnState.seat range 0..3' and the enclosing-path group under
+//      RoomSnapshot.fromJson.
+//   2. A JSON key that is entirely absent and a key present with an
+//      explicit JSON null decode to the same `null` result, for the six
+//      fields that are `required` in their Dart constructor but nullable
+//      in type: SeatState.clientSeed, SeatState.seedOrigin,
+//      RoomSnapshot.gameId, RoomSnapshot.clientSeeds, RoomSnapshot.turn,
+//      RoomSnapshot.winner. See the group 'absent key equals explicit null,
+//      for exactly six fields'. That group also proves the contrast: a
+//      field that is required in both senses (non-nullable in type) still
+//      throws when its key is merely absent, which the pre-existing
+//      `nonNullableFields` loop above already covers and is not repeated
+//      here.
 
 import 'dart:convert';
 
@@ -391,8 +398,6 @@ void main() {
       });
     });
 
-    // Ambiguity: whether a missing key (as opposed to an explicit null)
-    // throws for these two fields is not tested; see the file header.
     test('client_seed explicit null is accepted', () {
       final seat = SeatState.fromJson(
         _replacing(_validSeat(), 'client_seed', null),
@@ -405,6 +410,49 @@ void main() {
       );
       expect(seat.seedOrigin, isNull);
     });
+
+    // Ruling (work order 071): an absent key and an explicit null decode
+    // to the same thing for client_seed and seed_origin.
+    test(
+      'client_seed entirely absent from the map is accepted, and yields null',
+      () {
+        final seat = SeatState.fromJson(_without(_validSeat(), 'client_seed'));
+        expect(seat.clientSeed, isNull);
+      },
+    );
+    test(
+      'seed_origin entirely absent from the map is accepted, and yields null',
+      () {
+        final seat = SeatState.fromJson(_without(_validSeat(), 'seed_origin'));
+        expect(seat.seedOrigin, isNull);
+      },
+    );
+    test(
+      'client_seed: absent key and explicit null decode to the same result',
+      () {
+        final absent = SeatState.fromJson(
+          _without(_validSeat(), 'client_seed'),
+        );
+        final explicitNull = SeatState.fromJson(
+          _replacing(_validSeat(), 'client_seed', null),
+        );
+        expect(absent.clientSeed, equals(explicitNull.clientSeed));
+        expect(absent.clientSeed, isNull);
+      },
+    );
+    test(
+      'seed_origin: absent key and explicit null decode to the same result',
+      () {
+        final absent = SeatState.fromJson(
+          _without(_validSeat(), 'seed_origin'),
+        );
+        final explicitNull = SeatState.fromJson(
+          _replacing(_validSeat(), 'seed_origin', null),
+        );
+        expect(absent.seedOrigin, equals(explicitNull.seedOrigin));
+        expect(absent.seedOrigin, isNull);
+      },
+    );
 
     test('client_seed of the wrong runtime type (an int) throws', () {
       expect(
@@ -633,6 +681,32 @@ void main() {
         () => TurnState.fromJson(_replacing(base, 'sixes', 1.0)),
         throwsA(isA<SnapshotFormatException>()),
       );
+    });
+
+    // Ruling (work order 071, work/ludo/STATE.md, run 21): the 0..3
+    // seat-index range applies to TurnState.seat, the same as it does to
+    // SeatState.seat and RoomSnapshot.hostSeat, because the server sets it
+    // from `game.currentSeat` in `_turnSnapshot`, a seat index like any
+    // other. Implemented at lib/src/net/snapshot.dart:141-144.
+    group('seat range 0..3', () {
+      test('-1, just under the minimum, throws', () {
+        expect(
+          () => TurnState.fromJson(_validTurn(seat: -1)),
+          throwsA(isA<SnapshotFormatException>()),
+        );
+      });
+      test('0, the minimum, is accepted', () {
+        expect(TurnState.fromJson(_validTurn(seat: 0)).seat, 0);
+      });
+      test('3, the maximum, is accepted', () {
+        expect(TurnState.fromJson(_validTurn(seat: 3)).seat, 3);
+      });
+      test('4, just over the maximum, throws', () {
+        expect(
+          () => TurnState.fromJson(_validTurn(seat: 4)),
+          throwsA(isA<SnapshotFormatException>()),
+        );
+      });
     });
   });
 
@@ -868,9 +942,45 @@ void main() {
       });
     });
 
-    // Ambiguity: whether a missing key (as opposed to an explicit null)
-    // throws for game_id, client_seeds, turn and winner is not tested; see
-    // the file header.
+    // Ruling (work order 071): the 0..3 range on TurnState.seat is proven
+    // above directly through TurnState.fromJson, and here through the
+    // enclosing RoomSnapshot.fromJson path as well, because that is the
+    // path the server actually exercises on the wire and a range check
+    // that exists on the inner class but is bypassed by the outer one
+    // (for instance because the outer decoder builds a TurnState by hand
+    // instead of delegating to TurnState.fromJson) is exactly the defect
+    // this guards against.
+    group('turn.seat range 0..3, through RoomSnapshot.fromJson', () {
+      test('-1, just under the minimum, throws', () {
+        expect(
+          () => RoomSnapshot.fromJson(
+            _validRoom(state: 'PLAYING', turn: _validTurn(seat: -1)),
+          ),
+          throwsA(isA<SnapshotFormatException>()),
+        );
+      });
+      test('0, the minimum, is accepted', () {
+        final room = RoomSnapshot.fromJson(
+          _validRoom(state: 'PLAYING', turn: _validTurn(seat: 0)),
+        );
+        expect(room.turn!.seat, 0);
+      });
+      test('3, the maximum, is accepted', () {
+        final room = RoomSnapshot.fromJson(
+          _validRoom(state: 'PLAYING', turn: _validTurn(seat: 3)),
+        );
+        expect(room.turn!.seat, 3);
+      });
+      test('4, just over the maximum, throws', () {
+        expect(
+          () => RoomSnapshot.fromJson(
+            _validRoom(state: 'PLAYING', turn: _validTurn(seat: 4)),
+          ),
+          throwsA(isA<SnapshotFormatException>()),
+        );
+      });
+    });
+
     test('game_id explicit null is accepted', () {
       expect(RoomSnapshot.fromJson(_validRoom(gameId: null)).gameId, isNull);
     });
@@ -945,6 +1055,124 @@ void main() {
       final json = _replacing(_validRoom(), 'unexpected_future_field', 'junk');
       final room = RoomSnapshot.fromJson(json);
       expect(room.code, 'K7M2QP');
+    });
+
+    // Ruling (work order 071, work/ludo/STATE.md, run 21): for exactly six
+    // fields that are `required` in the Dart constructor but nullable in
+    // type, an absent key and an explicit JSON null decode to the same
+    // `null`. Four of the six live on RoomSnapshot; the other two,
+    // SeatState.clientSeed and SeatState.seedOrigin, are proven in the
+    // group above under SeatState.fromJson.
+    group('absent key equals explicit null, for exactly six fields', () {
+      test(
+        'game_id entirely absent from the map is accepted, and yields null',
+        () {
+          final room = RoomSnapshot.fromJson(_without(_validRoom(), 'game_id'));
+          expect(room.gameId, isNull);
+        },
+      );
+      test(
+        'game_id: absent key and explicit null decode to the same result',
+        () {
+          final absent = RoomSnapshot.fromJson(
+            _without(_validRoom(), 'game_id'),
+          );
+          final explicitNull = RoomSnapshot.fromJson(_validRoom(gameId: null));
+          expect(absent.gameId, equals(explicitNull.gameId));
+          expect(absent.gameId, isNull);
+        },
+      );
+
+      test('client_seeds entirely absent from the map is accepted, and yields null', () {
+        final room = RoomSnapshot.fromJson(
+          _without(_validRoom(), 'client_seeds'),
+        );
+        expect(room.clientSeeds, isNull);
+      });
+      test(
+        'client_seeds: absent key and explicit null decode to the same result',
+        () {
+          final absent = RoomSnapshot.fromJson(
+            _without(_validRoom(), 'client_seeds'),
+          );
+          final explicitNull = RoomSnapshot.fromJson(
+            _validRoom(clientSeeds: null),
+          );
+          expect(absent.clientSeeds, equals(explicitNull.clientSeeds));
+          expect(absent.clientSeeds, isNull);
+        },
+      );
+
+      test(
+        'turn entirely absent from the map is accepted, and yields null',
+        () {
+          final room = RoomSnapshot.fromJson(_without(_validRoom(), 'turn'));
+          expect(room.turn, isNull);
+        },
+      );
+      test(
+        'turn: absent key and explicit null decode to the same (null) result',
+        () {
+          final absent = RoomSnapshot.fromJson(_without(_validRoom(), 'turn'));
+          final explicitNull = RoomSnapshot.fromJson(_validRoom(turn: null));
+          expect(absent.turn, equals(explicitNull.turn));
+          expect(absent.turn, isNull);
+        },
+      );
+
+      test(
+        'winner entirely absent from the map is accepted, and yields null',
+        () {
+          final room = RoomSnapshot.fromJson(_without(_validRoom(), 'winner'));
+          expect(room.winner, isNull);
+        },
+      );
+      test(
+        'winner: absent key and explicit null decode to the same result',
+        () {
+          final absent = RoomSnapshot.fromJson(
+            _without(_validRoom(), 'winner'),
+          );
+          final explicitNull = RoomSnapshot.fromJson(_validRoom(winner: null));
+          expect(absent.winner, equals(explicitNull.winner));
+          expect(absent.winner, isNull);
+        },
+      );
+
+      // The contrast that makes the ruling narrow rather than a licence to
+      // accept `{}`: every field that is non-nullable in Dart type (`code`,
+      // `state`, `host_seat`, `players`, `rules`, `chain_commit`,
+      // `chain_index`, `seats`, `seq`) already throws when its key is
+      // merely absent, not only when it is explicit null. That is the
+      // `nonNullableFields` loop above, in the main `RoomSnapshot.fromJson`
+      // group ('$field missing throws' / '$field explicit null throws');
+      // it is not repeated here because 067 already wrote it and this
+      // order is not to re-test what 067 covered. The same holds for
+      // SeatState's required fields (seat, name, connected, tokens) and
+      // for TurnState's (seat, phase, deadline_ms, k), each covered by an
+      // equivalent loop in their own groups.
+
+      // section 14.2: `turn` is documented null in LOBBY only, and
+      // non-null in PLAYING and FINISHED. The absent-means-null ruling
+      // above must not be read as license for a PLAYING snapshot to omit
+      // `turn` altogether; this decoder performs no cross-field
+      // validation (see the 'cross-field consistency is deliberately not
+      // enforced' group below and RoomSnapshot.fromJson's own doc
+      // comment), so it accepts that combination today. This test names
+      // the gap rather than leaving it silent: a real enforcement of
+      // section 14.2 would have to live above this decoder, in whatever
+      // reads a fully-formed RoomSnapshot and knows the previous state
+      // (this file has no access to the previous snapshot, only the one
+      // JSON object being decoded), or be added here as an explicit
+      // state-versus-turn cross-check that the current implementation
+      // does not perform.
+      test('PLAYING with turn absent is accepted today; section 14.2 is not enforced at this layer', () {
+        final room = RoomSnapshot.fromJson(
+          _without(_validRoom(state: 'PLAYING'), 'turn'),
+        );
+        expect(room.state, RoomState.playing);
+        expect(room.turn, isNull);
+      });
     });
   });
 
