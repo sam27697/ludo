@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'deep_link.dart';
 import 'home_screen.dart';
 
 /// The two locales this app ships with. Order matters only for
@@ -41,12 +42,23 @@ ThemeData buildAppTheme() {
 /// Root widget. Owns the current locale so a locale toggle reachable from the
 /// home screen can flip it without touching the phone's system language.
 class LudoApp extends StatefulWidget {
-  const LudoApp({super.key, this.initialLocale = const Locale('en')});
+  const LudoApp({
+    super.key,
+    this.initialLocale = const Locale('en'),
+    this.initialLinkReader = noInitialLink,
+    this.linkStream = noLinkStream,
+  });
 
   /// The locale the app starts in. Defaults to English; exposed so tests can
   /// pump the widget tree directly into Arabic without going through the
   /// toggle button.
   final Locale initialLocale;
+
+  /// Passed straight down to [HomeScreen]. See its own doc comment.
+  final InitialLinkReader initialLinkReader;
+
+  /// Passed straight down to [HomeScreen]. See its own doc comment.
+  final LinkStreamOpener linkStream;
 
   @override
   State<LudoApp> createState() => _LudoAppState();
@@ -76,7 +88,11 @@ class _LudoAppState extends State<LudoApp> {
         GlobalCupertinoLocalizations.delegate,
       ],
       onGenerateTitle: (context) => AppLocalizations.of(context).appTitle,
-      home: HomeScreen(onToggleLocale: _toggleLocale),
+      home: HomeScreen(
+        onToggleLocale: _toggleLocale,
+        initialLinkReader: widget.initialLinkReader,
+        linkStream: widget.linkStream,
+      ),
     );
   }
 }
