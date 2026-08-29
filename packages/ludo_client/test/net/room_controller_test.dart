@@ -43,15 +43,22 @@
 //      originally issued.
 //
 //   3. Rule 8 (seq gap => hasDesynced) and rule 15 ("game deltas ... change
-//      no controller state") are in tension for the seven inert game-delta
-//      types, which also carry seq: does an out-of-order rolled/moved/etc.
-//      set hasDesynced (rule 8, generic to "a state-changing push"), or is
-//      a game delta exempt because rule 15 says it changes nothing? The
-//      order does not say. This file resolves the tension only by scoping
-//      each rule's test to avoid the overlap: rule 8's gap test uses a
-//      lobby delta (presence), and rule 15's inertness tests always use a
-//      gapless seq (room.seq + 1), so neither test asserts an answer to the
-//      genuinely open question. Left untested, deliberately.
+//      no controller state") were in tension for the seven inert game-delta
+//      types, which also carry seq. Ruled by the master, mid-task: gap
+//      detection is scoped to the three lobby deltas only, and a game
+//      delta never sets hasDesynced in this order. The reason is that this
+//      controller does not reduce game state at all, so room.seq does not
+//      advance during play; if a game delta could trip hasDesynced, it
+//      would latch true the instant a game started, since every game
+//      delta's seq would then look like a permanent gap against a room.seq
+//      that is frozen at the LOBBY value. Rule 8's gap test uses a lobby
+//      delta (presence); a dedicated test below covers the game-delta case
+//      and asserts hasDesynced stays false, room is unchanged, and the
+//      frame still reaches frames. **This scoping expires the moment the
+//      game-state reducer lands**: once room.seq advances during play,
+//      gap detection must extend to game deltas too, and this ruling (and
+//      the test for it) will need revisiting against whatever that order
+//      says.
 //
 //   4. Whether leave() waits for the server's reply (player_left or
 //      presence, per docs/PROTOCOL.md section 4's leave_room row) before
@@ -1163,6 +1170,47 @@ void main() {
       );
       await okReconnect;
       expect(controller.hasDesynced, isFalse);
+    });
+
+    test('a game delta carrying a seq far ahead of room.seq does not set '
+        'hasDesynced, does not change room, and still reaches frames '
+        '(master ruling, mid-task: gap detection is scoped to the three '
+        'lobby deltas only, because this controller does not advance '
+        "room.seq during play and a game delta would otherwise latch "
+        'hasDesynced the instant a game started; this scoping expires '
+        'when the game-state reducer lands)', () async {
+      final (RoomController controller, FakeTransport transport, _) =
+          await _connectedController(seq: 1);
+      addTearDown(controller.dispose);
+      final Object? roomBefore = controller.room;
+      final List<Frame> log = <Frame>[];
+      controller.frames.listen(log.add);
+
+      transport.pushText(
+        _frame(
+          type: 'rolled',
+          data: <String, Object?>{
+            'seat': 0,
+            'value': 4,
+            'legal': <int>[0],
+            'deadline_ms': 1000,
+            'k': 1,
+            'reveal': 'b' * 64,
+            'seq': 9999,
+          },
+        ),
+      );
+      await pumpEventQueue();
+
+      expect(
+        controller.hasDesynced,
+        isFalse,
+        reason:
+            'a game delta must never set hasDesynced under this '
+            'scoping ruling, however far ahead its seq is',
+      );
+      expect(identical(controller.room, roomBefore), isTrue);
+      expect(log.map((f) => f.type), contains('rolled'));
     });
   });
 
