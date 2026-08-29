@@ -348,9 +348,9 @@ class RoomController extends ChangeNotifier {
   /// client (connection.dart:355-360), so a join naming a seat this client
   /// has never seen is the ordinary case, not a contrived one: that seat is
   /// added, not ignored. It gets the defaults the server's snapshot builder
-  /// gives a freshly joined lobby seat (snapshot.dart:52-56) — `connected:
-  /// true`, four `-1` tokens, no client seed, no seed origin — because the
-  /// frame itself carries nothing else. The list is kept sorted by seat
+  /// gives a freshly joined lobby seat (snapshot.dart:52-56): `connected:
+  /// true`, four `-1` tokens, no client seed, no seed origin. The frame
+  /// itself carries nothing else. The list is kept sorted by seat
   /// index afterwards, matching the server's own sort on every join
   /// (registry.dart:408-409). When the seat is already present, this is the
   /// original rule 6 behaviour: its name becomes the pushed name and its
