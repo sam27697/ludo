@@ -53,12 +53,45 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    widget.initialLinkReader().then((uri) {
-      if (uri != null) {
-        _handleLink(uri);
-      }
-    });
-    _linkSubscription = widget.linkStream().listen(_handleLink);
+    try {
+      widget.initialLinkReader().then(
+        (uri) {
+          if (uri != null) {
+            _handleLink(uri);
+          }
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          _reportLinkError(error, stackTrace, 'reading the initial link');
+        },
+      );
+    } catch (error, stackTrace) {
+      _reportLinkError(error, stackTrace, 'reading the initial link');
+    }
+    try {
+      _linkSubscription = widget.linkStream().listen(
+        _handleLink,
+        onError: (Object error, StackTrace stackTrace) {
+          _reportLinkError(error, stackTrace, 'listening to the link stream');
+        },
+      );
+    } catch (error, stackTrace) {
+      _reportLinkError(error, stackTrace, 'listening to the link stream');
+    }
+  }
+
+  /// Reports a failure on either deep-link path through the framework's
+  /// non-fatal channel. Neither path is allowed to show anything to the
+  /// player: a link that could not be read just leaves the code field for
+  /// the player to fill in by hand, which is the documented fallback.
+  void _reportLinkError(Object error, StackTrace stackTrace, String context) {
+    FlutterError.reportError(
+      FlutterErrorDetails(
+        exception: error,
+        stack: stackTrace,
+        library: 'ludo client',
+        context: ErrorDescription(context),
+      ),
+    );
   }
 
   /// Applies a room code found in an incoming link to the code field.
