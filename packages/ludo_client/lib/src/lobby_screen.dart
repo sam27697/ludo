@@ -101,9 +101,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(loc.lobbyLinkCopied)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(loc.lobbyLinkCopied)));
   }
 
   @override

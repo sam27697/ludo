@@ -351,41 +351,35 @@ void main() {
 
     for (final locale in <Locale>[const Locale('en'), const Locale('ar')]) {
       for (final entry in table.entries) {
-        test(
-          'locale ${locale.languageCode}: code ${entry.key ?? 'null'} maps '
-          'to the rule 6 row',
-          () {
-            final loc = lookupAppLocalizations(locale);
-            final result = lobbyErrorMessage(loc, entry.key);
-            final expected = entry.value(loc);
-            expect(
-              result,
-              expected,
-              reason:
-                  'lobbyErrorMessage(loc, ${entry.key ?? 'null'}) in locale '
-                  '${locale.languageCode} should equal "$expected" per rule '
-                  '6\'s table; got "$result"',
-            );
-          },
-        );
+        test('locale ${locale.languageCode}: code ${entry.key ?? 'null'} maps '
+            'to the rule 6 row', () {
+          final loc = lookupAppLocalizations(locale);
+          final result = lobbyErrorMessage(loc, entry.key);
+          final expected = entry.value(loc);
+          expect(
+            result,
+            expected,
+            reason:
+                'lobbyErrorMessage(loc, ${entry.key ?? 'null'}) in locale '
+                '${locale.languageCode} should equal "$expected" per rule '
+                '6\'s table; got "$result"',
+          );
+        });
       }
     }
 
-    test(
-      "rule 6: case is not normalised -- 'Transport' (mixed case) falls "
-      'through to the generic message, not the transport-specific one',
-      () {
-        final loc = lookupAppLocalizations(const Locale('en'));
-        expect(
-          lobbyErrorMessage(loc, 'Transport'),
-          loc.lobbyErrorGeneric,
-          reason:
-              "rule 6 pins case-sensitivity explicitly: 'Transport' must "
-              "not match the lower-case 'transport' row and must fall "
-              'through to lobbyErrorGeneric',
-        );
-      },
-    );
+    test("rule 6: case is not normalised -- 'Transport' (mixed case) falls "
+        'through to the generic message, not the transport-specific one', () {
+      final loc = lookupAppLocalizations(const Locale('en'));
+      expect(
+        lobbyErrorMessage(loc, 'Transport'),
+        loc.lobbyErrorGeneric,
+        reason:
+            "rule 6 pins case-sensitivity explicitly: 'Transport' must "
+            "not match the lower-case 'transport' row and must fall "
+            'through to lobbyErrorGeneric',
+      );
+    });
   });
 
   // --- Rule 3: phase rendering is exclusive. ------------------------------
@@ -463,86 +457,82 @@ void main() {
       },
     );
 
-    testWidgets(
-      'connected: shows the connected body and nothing else',
-      (tester) async {
-        final connector = _Connector();
-        final transport = FakeTransport();
-        connector.enqueue(transport);
-        final controller = _newController(connector);
-        addTearDown(controller.dispose);
+    testWidgets('connected: shows the connected body and nothing else', (
+      tester,
+    ) async {
+      final connector = _Connector();
+      final transport = FakeTransport();
+      connector.enqueue(transport);
+      final controller = _newController(connector);
+      addTearDown(controller.dispose);
 
-        final id = await _mountAndCaptureRequest(
-          tester,
-          LobbyScreen(
-            controller: controller,
-            action: LobbyAction.create,
-            playerName: 'Sam',
-            players: 4,
-          ),
-          transport,
-        );
-        await _resolveConnected(tester, transport, id, seatForThisClient: 0);
+      final id = await _mountAndCaptureRequest(
+        tester,
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.create,
+          playerName: 'Sam',
+          players: 4,
+        ),
+        transport,
+      );
+      await _resolveConnected(tester, transport, id, seatForThisClient: 0);
 
-        expect(controller.phase, RoomPhase.connected);
-        _expectExclusivePhase(tester, expected: null);
-        _expectDesyncBanner(tester, present: false);
-      },
-    );
+      expect(controller.phase, RoomPhase.connected);
+      _expectExclusivePhase(tester, expected: null);
+      _expectDesyncBanner(tester, present: false);
+    });
 
-    testWidgets(
-      'failed: shows lobby-error with the mapped message and a retry '
-      'button, and nothing else',
-      (tester) async {
-        final connector = _Connector();
-        final transport = FakeTransport();
-        connector.enqueue(transport);
-        final controller = _newController(connector);
-        addTearDown(controller.dispose);
+    testWidgets('failed: shows lobby-error with the mapped message and a retry '
+        'button, and nothing else', (tester) async {
+      final connector = _Connector();
+      final transport = FakeTransport();
+      connector.enqueue(transport);
+      final controller = _newController(connector);
+      addTearDown(controller.dispose);
 
-        final id = await _mountAndCaptureRequest(
-          tester,
-          LobbyScreen(
-            controller: controller,
-            action: LobbyAction.create,
-            playerName: 'Sam',
-            players: 4,
-          ),
-          transport,
-        );
-        await _resolveFailed(tester, transport, id, code: 'ROOM_FULL');
+      final id = await _mountAndCaptureRequest(
+        tester,
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.create,
+          playerName: 'Sam',
+          players: 4,
+        ),
+        transport,
+      );
+      await _resolveFailed(tester, transport, id, code: 'ROOM_FULL');
 
-        expect(controller.phase, RoomPhase.failed);
-        expect(controller.errorCode, 'ROOM_FULL');
-        _expectExclusivePhase(tester, expected: 'lobby-error');
-        _expectDesyncBanner(tester, present: false);
+      expect(controller.phase, RoomPhase.failed);
+      expect(controller.errorCode, 'ROOM_FULL');
+      _expectExclusivePhase(tester, expected: 'lobby-error');
+      _expectDesyncBanner(tester, present: false);
 
-        final context = tester.element(find.byType(LobbyScreen));
-        final loc = AppLocalizations.of(context);
-        final expectedText = lobbyErrorMessage(loc, controller.errorCode);
-        expect(
-          find.descendant(
-            of: find.byKey(const Key('lobby-error')),
-            matching: find.text(expectedText),
-          ),
-          findsOneWidget,
-          reason:
-              'rule 3: lobby-error must contain a Text whose data is '
-              'exactly lobbyErrorMessage(loc, controller.errorCode) == '
-              '"$expectedText" for errorCode ROOM_FULL',
-        );
-        expect(
-          find.descendant(
-            of: find.byKey(const Key('lobby-error')),
-            matching: find.byKey(const Key('lobby-retry-button')),
-          ),
-          findsOneWidget,
-          reason:
-              'rule 3: lobby-error must contain a button keyed '
-              'lobby-retry-button',
-        );
-      },
-    );
+      final context = tester.element(find.byType(LobbyScreen));
+      final loc = AppLocalizations.of(context);
+      final expectedText = lobbyErrorMessage(loc, controller.errorCode);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-error')),
+          matching: find.text(expectedText),
+        ),
+        findsOneWidget,
+        reason:
+            'rule 3: lobby-error must contain a Text whose data is '
+            'exactly lobbyErrorMessage(loc, controller.errorCode) == '
+            '"$expectedText" for errorCode ROOM_FULL',
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-error')),
+          matching: find.byKey(const Key('lobby-retry-button')),
+        ),
+        findsOneWidget,
+        reason:
+            'rule 3: lobby-error must contain a button keyed '
+            'lobby-retry-button',
+      );
+    });
 
     testWidgets(
       'closed: shows lobby-closed with loc.lobbyConnectionLost and a '
@@ -727,10 +717,7 @@ void main() {
         );
         expect(controller.hasDesynced, isTrue);
         _expectExclusivePhase(tester, expected: 'lobby-connecting');
-        _expectDesyncBanner(
-          tester,
-          present: true,
-        );
+        _expectDesyncBanner(tester, present: true);
 
         // Fail the resume: an error reply lands the controller in failed,
         // with hasDesynced still untouched (only success clears it).
@@ -821,8 +808,10 @@ void main() {
           },
         );
         addTearDown(
-          () => tester.binding.defaultBinaryMessenger
-              .setMockMethodCallHandler(SystemChannels.platform, null),
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            SystemChannels.platform,
+            null,
+          ),
         );
 
         final id = await _mountAndCaptureRequest(
@@ -891,8 +880,10 @@ void main() {
           },
         );
         addTearDown(
-          () => tester.binding.defaultBinaryMessenger
-              .setMockMethodCallHandler(SystemChannels.platform, null),
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            SystemChannels.platform,
+            null,
+          ),
         );
 
         final id = await _mountAndCaptureRequest(
@@ -1042,50 +1033,49 @@ void main() {
       },
     );
 
-    testWidgets(
-      'a seat name in Arabic script renders exactly, unescaped',
-      (tester) async {
-        final connector = _Connector();
-        final transport = FakeTransport();
-        connector.enqueue(transport);
-        final controller = _newController(connector);
-        addTearDown(controller.dispose);
+    testWidgets('a seat name in Arabic script renders exactly, unescaped', (
+      tester,
+    ) async {
+      final connector = _Connector();
+      final transport = FakeTransport();
+      connector.enqueue(transport);
+      final controller = _newController(connector);
+      addTearDown(controller.dispose);
 
-        const arabicName = 'أحمد';
-        final seats = <Map<String, Object?>>[
-          _seatJson(0, name: arabicName, connected: true),
-        ];
+      const arabicName = 'أحمد';
+      final seats = <Map<String, Object?>>[
+        _seatJson(0, name: arabicName, connected: true),
+      ];
 
-        final id = await _mountAndCaptureRequest(
-          tester,
-          LobbyScreen(
-            controller: controller,
-            action: LobbyAction.create,
-            playerName: arabicName,
-            players: 4,
-          ),
-          transport,
-        );
-        await _resolveConnected(
-          tester,
-          transport,
-          id,
-          seatForThisClient: 0,
-          seats: seats,
-        );
+      final id = await _mountAndCaptureRequest(
+        tester,
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.create,
+          playerName: arabicName,
+          players: 4,
+        ),
+        transport,
+      );
+      await _resolveConnected(
+        tester,
+        transport,
+        id,
+        seatForThisClient: 0,
+        seats: seats,
+      );
 
-        expect(
-          find.descendant(
-            of: find.byKey(const Key('lobby-seat-0')),
-            matching: find.text(arabicName),
-          ),
-          findsOneWidget,
-          reason:
-              'rule 4: the seat-0 row must show the Arabic name "$arabicName" '
-              'exactly, unescaped and unmangled',
-        );
-      },
-    );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-seat-0')),
+          matching: find.text(arabicName),
+        ),
+        findsOneWidget,
+        reason:
+            'rule 4: the seat-0 row must show the Arabic name "$arabicName" '
+            'exactly, unescaped and unmangled',
+      );
+    });
 
     testWidgets(
       'lobby-waiting shows loc.lobbyWaitingForPlayers(occupied, total)',
@@ -1417,51 +1407,50 @@ void main() {
       },
     );
 
-    testWidgets(
-      'LobbyAction.join calls joinRoom(code:, name:) exactly once',
-      (tester) async {
-        final connector = _Connector();
-        final transport = FakeTransport();
-        connector.enqueue(transport);
-        final controller = _newController(connector);
-        addTearDown(controller.dispose);
+    testWidgets('LobbyAction.join calls joinRoom(code:, name:) exactly once', (
+      tester,
+    ) async {
+      final connector = _Connector();
+      final transport = FakeTransport();
+      connector.enqueue(transport);
+      final controller = _newController(connector);
+      addTearDown(controller.dispose);
 
-        await _mountAndCaptureRequest(
-          tester,
-          LobbyScreen(
-            controller: controller,
-            action: LobbyAction.join,
-            code: 'ZZZZZZ',
-            playerName: 'Riri',
-          ),
-          transport,
-        );
+      await _mountAndCaptureRequest(
+        tester,
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.join,
+          code: 'ZZZZZZ',
+          playerName: 'Riri',
+        ),
+        transport,
+      );
 
-        final joinMessages = transport.sentRaw
-            .where((s) => _typeOf(s) == 'join_room')
-            .toList();
-        expect(
-          joinMessages,
-          hasLength(1),
-          reason:
-              'rule 1: exactly one join_room request expected after mount, '
-              'got ${joinMessages.length}',
-        );
-        final sentData = _dataOf(joinMessages.single);
-        expect(sentData['code'], 'ZZZZZZ');
-        expect(sentData['name'], 'Riri');
+      final joinMessages = transport.sentRaw
+          .where((s) => _typeOf(s) == 'join_room')
+          .toList();
+      expect(
+        joinMessages,
+        hasLength(1),
+        reason:
+            'rule 1: exactly one join_room request expected after mount, '
+            'got ${joinMessages.length}',
+      );
+      final sentData = _dataOf(joinMessages.single);
+      expect(sentData['code'], 'ZZZZZZ');
+      expect(sentData['name'], 'Riri');
 
-        // Resolve the join_room request initState issued, so addTearDown's
-        // dispose does not race flutter_test's pending-timer invariant
-        // (round 2 defect 2).
-        await _resolveConnected(
-          tester,
-          transport,
-          _idOf(joinMessages.single),
-          seatForThisClient: 0,
-        );
-      },
-    );
+      // Resolve the join_room request initState issued, so addTearDown's
+      // dispose does not race flutter_test's pending-timer invariant
+      // (round 2 defect 2).
+      await _resolveConnected(
+        tester,
+        transport,
+        _idOf(joinMessages.single),
+        seatForThisClient: 0,
+      );
+    });
   });
 
   // --- Rule 2: the screen never disposes the controller. ------------------
@@ -1488,9 +1477,7 @@ void main() {
         await _resolveConnected(tester, transport, id, seatForThisClient: 0);
 
         // Remove the screen from the tree entirely, forcing State.dispose.
-        await tester.pumpWidget(
-          _harness(const SizedBox.shrink()),
-        );
+        await tester.pumpWidget(_harness(const SizedBox.shrink()));
         await tester.pump();
 
         expect(
@@ -1636,75 +1623,69 @@ void main() {
 
   // --- Rule 8/9: every string is localised; Arabic and RTL. --------------
   group('Arabic and RTL', () {
-    testWidgets(
-      'pumped in Locale(ar), Directionality resolves to rtl and the '
-      'connecting body shows the Arabic string, not the English one',
-      (tester) async {
-        final connector = _Connector();
-        final transport = FakeTransport();
-        connector.enqueue(transport);
-        final controller = _newController(connector);
-        addTearDown(controller.dispose);
+    testWidgets('pumped in Locale(ar), Directionality resolves to rtl and the '
+        'connecting body shows the Arabic string, not the English one', (
+      tester,
+    ) async {
+      final connector = _Connector();
+      final transport = FakeTransport();
+      connector.enqueue(transport);
+      final controller = _newController(connector);
+      addTearDown(controller.dispose);
 
-        final id = await _mountAndCaptureRequest(
-          tester,
-          LobbyScreen(
-            controller: controller,
-            action: LobbyAction.create,
-            playerName: 'سام',
-            players: 4,
-          ),
-          transport,
-          locale: const Locale('ar'),
-        );
+      final id = await _mountAndCaptureRequest(
+        tester,
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.create,
+          playerName: 'سام',
+          players: 4,
+        ),
+        transport,
+        locale: const Locale('ar'),
+      );
 
-        final context = tester.element(find.byType(LobbyScreen));
-        expect(
-          Directionality.of(context),
-          TextDirection.rtl,
-          reason:
-              'pumping LobbyScreen in Locale(ar) must resolve '
-              'Directionality to rtl',
-        );
+      final context = tester.element(find.byType(LobbyScreen));
+      expect(
+        Directionality.of(context),
+        TextDirection.rtl,
+        reason:
+            'pumping LobbyScreen in Locale(ar) must resolve '
+            'Directionality to rtl',
+      );
 
-        final locAr = lookupAppLocalizations(const Locale('ar'));
-        final locEn = lookupAppLocalizations(const Locale('en'));
-        expect(
-          locAr.lobbyConnecting,
-          isNot(locEn.lobbyConnecting),
-          reason:
-              'test sanity: app_en.arb and app_ar.arb must give different '
-              'strings for lobbyConnecting, or this test cannot tell the '
-              'two locales apart',
-        );
-        expect(
-          find.text(locAr.lobbyConnecting),
-          findsOneWidget,
-          reason:
-              'rule 8: the Arabic string for lobbyConnecting must be on '
-              'screen when the locale is ar; got neither the Arabic nor '
-              'possibly the English string instead',
-        );
-        expect(
-          find.text(locEn.lobbyConnecting),
-          findsNothing,
-          reason:
-              'the English lobbyConnecting string must not be on screen '
-              'when the app locale is Arabic',
-        );
+      final locAr = lookupAppLocalizations(const Locale('ar'));
+      final locEn = lookupAppLocalizations(const Locale('en'));
+      expect(
+        locAr.lobbyConnecting,
+        isNot(locEn.lobbyConnecting),
+        reason:
+            'test sanity: app_en.arb and app_ar.arb must give different '
+            'strings for lobbyConnecting, or this test cannot tell the '
+            'two locales apart',
+      );
+      expect(
+        find.text(locAr.lobbyConnecting),
+        findsOneWidget,
+        reason:
+            'rule 8: the Arabic string for lobbyConnecting must be on '
+            'screen when the locale is ar; got neither the Arabic nor '
+            'possibly the English string instead',
+      );
+      expect(
+        find.text(locEn.lobbyConnecting),
+        findsNothing,
+        reason:
+            'the English lobbyConnecting string must not be on screen '
+            'when the app locale is Arabic',
+      );
 
-        // Resolve the request initState issued, so addTearDown's dispose
-        // does not race flutter_test's pending-timer invariant (round 2
-        // defect 2). The reply's content is not the point of this test;
-        // the assertions above already cover the connecting-phase body.
-        await _resolveConnected(
-          tester,
-          transport,
-          id,
-          seatForThisClient: 0,
-        );
-      },
-    );
+      // Resolve the request initState issued, so addTearDown's dispose
+      // does not race flutter_test's pending-timer invariant (round 2
+      // defect 2). The reply's content is not the point of this test;
+      // the assertions above already cover the connecting-phase body.
+      await _resolveConnected(tester, transport, id, seatForThisClient: 0);
+    });
 
     testWidgets(
       'pumped in Locale(ar), the connected body shows Arabic strings for '
