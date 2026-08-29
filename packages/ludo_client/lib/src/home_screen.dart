@@ -66,6 +66,15 @@ class _HomeScreenState extends State<HomeScreen> {
     // Rule 2 of order 080: LobbyScreen never disposes a controller it did
     // not create. This screen created it, so this screen retires it once
     // the player has walked away from the pushed route.
+    //
+    // leave() must run and complete before dispose(): dispose() tears the
+    // connection down without telling the server, and the server treats a
+    // dropped socket as a reconnect candidate rather than a released seat.
+    // On a socket that already died, this can sit for up to the 10 second
+    // request timeout before leave()'s own catch swallows it; that wait is
+    // bounded and deliberate and is not visible to the player, since the
+    // route has already popped by the time we get here.
+    await controller.leave();
     controller.dispose();
   }
 
@@ -93,6 +102,11 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+    // See the matching comment in _createRoom: leave() must be awaited
+    // before dispose() so a leave_room request actually reaches the wire,
+    // and the up-to-10-second worst case on a dead socket is bounded and
+    // deliberate, not a bug.
+    await controller.leave();
     controller.dispose();
   }
 
