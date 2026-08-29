@@ -401,19 +401,18 @@ void main() {
   });
 
   group('the name field, order 080 rule 11', () {
-    testWidgets(
-      'is present, keyed home-name-field, with the localised label',
-      (tester) async {
-        await tester.pumpWidget(_homeScreenApp());
-        await tester.pumpAndSettle();
+    testWidgets('is present, keyed home-name-field, with the localised label', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_homeScreenApp());
+      await tester.pumpAndSettle();
 
-        final context = tester.element(find.byType(Scaffold));
-        final loc = AppLocalizations.of(context);
+      final context = tester.element(find.byType(Scaffold));
+      final loc = AppLocalizations.of(context);
 
-        expect(find.byKey(const Key('home-name-field')), findsOneWidget);
-        expect(find.text(loc.homeNameFieldLabel), findsOneWidget);
-      },
-    );
+      expect(find.byKey(const Key('home-name-field')), findsOneWidget);
+      expect(find.text(loc.homeNameFieldLabel), findsOneWidget);
+    });
 
     testWidgets('a typed name reaches LobbyScreen.playerName verbatim', (
       tester,
@@ -421,10 +420,7 @@ void main() {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
 
-      await tester.enterText(
-        find.byKey(const Key('home-name-field')),
-        'Priya',
-      );
+      await tester.enterText(find.byKey(const Key('home-name-field')), 'Priya');
       await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
 
       final LobbyScreen pushed = _pushedLobbyScreen(tester);
@@ -439,9 +435,8 @@ void main() {
         await tester.pumpAndSettle();
 
         final context = tester.element(find.byType(Scaffold));
-        final String defaultName = AppLocalizations.of(
-          context,
-        ).homeDefaultPlayerName;
+        final String defaultName = AppLocalizations.of(context)
+            .homeDefaultPlayerName;
         expect(
           defaultName,
           isNotEmpty,
@@ -466,14 +461,10 @@ void main() {
         await tester.pumpAndSettle();
 
         final context = tester.element(find.byType(Scaffold));
-        final String defaultName = AppLocalizations.of(
-          context,
-        ).homeDefaultPlayerName;
+        final String defaultName = AppLocalizations.of(context)
+            .homeDefaultPlayerName;
 
-        await tester.enterText(
-          find.byKey(const Key('home-name-field')),
-          '   ',
-        );
+        await tester.enterText(find.byKey(const Key('home-name-field')), '   ');
         await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
 
         final LobbyScreen pushed = _pushedLobbyScreen(tester);
@@ -490,31 +481,26 @@ void main() {
   });
 
   group('the players selector, order 080 rule 12', () {
-    testWidgets(
-      'is present, keyed home-players-selector, defaulting to 4',
-      (tester) async {
-        await tester.pumpWidget(_homeScreenApp());
-        await tester.pumpAndSettle();
+    testWidgets('is present, keyed home-players-selector, defaulting to 4', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_homeScreenApp());
+      await tester.pumpAndSettle();
 
-        final Finder selectorKey = find.byKey(
-          const Key('home-players-selector'),
-        );
-        expect(selectorKey, findsOneWidget);
+      final Finder selectorKey = find.byKey(const Key('home-players-selector'));
+      expect(selectorKey, findsOneWidget);
 
-        final SegmentedButton<int> segmented = tester
-            .widget<SegmentedButton<int>>(
-              find.descendant(
-                of: selectorKey,
-                matching: find.byType(SegmentedButton<int>),
-              ),
-            );
-        expect(
-          segmented.selected,
-          <int>{4},
-          reason: 'the players selector must default to 4',
-        );
-      },
-    );
+      final SegmentedButton<int> segmented = tester
+          .widget<SegmentedButton<int>>(
+            find.descendant(
+              of: selectorKey,
+              matching: find.byType(SegmentedButton<int>),
+            ),
+          );
+      expect(segmented.selected, <int>{
+        4,
+      }, reason: 'the players selector must default to 4');
+    });
 
     testWidgets(
       'selecting 2 and then Create Room pushes LobbyScreen.players == 2',
@@ -543,7 +529,8 @@ void main() {
         expect(
           segmented.selected,
           <int>{2},
-          reason: 'fixture is broken: selecting 2 must select it before '
+          reason:
+              'fixture is broken: selecting 2 must select it before '
               'Create Room is even tapped',
         );
 
@@ -553,291 +540,341 @@ void main() {
         expect(
           pushed.players,
           2,
-          reason: 'the chosen player count must be the one Create Room '
+          reason:
+              'the chosen player count must be the one Create Room '
               'passes to LobbyScreen, not the default',
         );
       },
     );
   });
 
-  group('declaration rules 3-5: backing out of the lobby releases the seat', () {
-    testWidgets(
-      'rule 3, create path: popping the pushed lobby sends leave_room on '
-      'the wire, and the controller Create Room built is disposed '
-      'afterwards',
-      (tester) async {
-        final _LiveControllerFactory factory = _LiveControllerFactory();
-        await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
-        await tester.pumpAndSettle();
+  group(
+    'declaration rules 3-5: backing out of the lobby releases the seat',
+    () {
+      testWidgets(
+        'rule 3, create path: popping the pushed lobby sends leave_room on '
+        'the wire, and the controller Create Room built is disposed '
+        'afterwards',
+        (tester) async {
+          final _LiveControllerFactory factory = _LiveControllerFactory();
+          await tester.pumpWidget(
+            _homeScreenApp(controllerFactory: factory.call),
+          );
+          await tester.pumpAndSettle();
 
-        await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-        await tester.pump();
+          await _tapAndAwaitPushedRoute(
+            tester,
+            const Key('create-room-button'),
+          );
+          await tester.pump();
 
-        expect(
-          factory.controllers,
-          hasLength(1),
-          reason: 'fixture is broken: Create Room must build exactly one '
-              'controller through the injected factory',
-        );
-        expect(factory.transports, hasLength(1));
-        final RoomController controller = factory.controllers.single;
-        final FakeTransport transport = factory.transports.single;
+          expect(
+            factory.controllers,
+            hasLength(1),
+            reason:
+                'fixture is broken: Create Room must build exactly one '
+                'controller through the injected factory',
+          );
+          expect(factory.transports, hasLength(1));
+          final RoomController controller = factory.controllers.single;
+          final FakeTransport transport = factory.transports.single;
 
-        final List<Map<String, Object?>> sentBeforeReply = _decodeSent(
-          transport,
-        );
-        expect(
-          sentBeforeReply,
-          hasLength(1),
-          reason: 'fixture is broken: LobbyScreen.initState must have sent '
-              'exactly one create_room request by now; sent '
-              '${sentBeforeReply.map((f) => f['t']).toList()}',
-        );
-        expect(sentBeforeReply.single['t'], 'create_room');
-        final String createRequestId = sentBeforeReply.single['id']! as String;
+          final List<Map<String, Object?>> sentBeforeReply = _decodeSent(
+            transport,
+          );
+          expect(
+            sentBeforeReply,
+            hasLength(1),
+            reason:
+                'fixture is broken: LobbyScreen.initState must have sent '
+                'exactly one create_room request by now; sent '
+                '${sentBeforeReply.map((f) => f['t']).toList()}',
+          );
+          expect(sentBeforeReply.single['t'], 'create_room');
+          final String createRequestId =
+              sentBeforeReply.single['id']! as String;
 
-        transport.pushText(
-          _serverFrame(type: 'room', re: createRequestId, data: _roomJson()),
-        );
-        await tester.pump();
-        expect(
-          controller.phase,
-          RoomPhase.connected,
-          reason: 'fixture is broken: replying to create_room with a room '
-              'frame must bring the controller to phase connected before '
-              'this test backs out of the lobby, or this is not testing a '
-              'player who actually created a room; controller is in phase '
-              '${controller.phase}',
-        );
+          transport.pushText(
+            _serverFrame(type: 'room', re: createRequestId, data: _roomJson()),
+          );
+          await tester.pump();
+          expect(
+            controller.phase,
+            RoomPhase.connected,
+            reason:
+                'fixture is broken: replying to create_room with a room '
+                'frame must bring the controller to phase connected before '
+                'this test backs out of the lobby, or this is not testing a '
+                'player who actually created a room; controller is in phase '
+                '${controller.phase}',
+          );
 
-        await _popPushedRoute(tester);
-        await _flushAnyOutstandingRequestTimeout(tester);
+          await _popPushedRoute(tester);
+          await _flushAnyOutstandingRequestTimeout(tester);
 
-        expect(
-          tester.takeException(),
-          isNull,
-          reason: 'declaration rule 5: popping the pushed lobby route must '
-              'not throw or surface an unhandled error',
-        );
+          expect(
+            tester.takeException(),
+            isNull,
+            reason:
+                'declaration rule 5: popping the pushed lobby route must '
+                'not throw or surface an unhandled error',
+          );
 
-        final List<Map<String, Object?>> sentAfterPop = _decodeSent(transport);
-        expect(
-          sentAfterPop.any((Map<String, Object?> frame) => frame['t'] == 'leave_room'),
-          isTrue,
-          reason: 'declaration rule 3: backing out of a room this screen '
-              'created must cause a leave_room request to reach the wire; '
-              'only saw types ${sentAfterPop.map((f) => f['t']).toList()}. '
-              'RoomController.leave() (lib/src/net/room_controller.dart:227) '
-              'returns early without sending anything once the controller '
-              'has been disposed, so this failing is consistent with '
-              'HomeScreen disposing the controller without ever calling '
-              'leave() first, which is the defect this order exists to '
-              'close',
-        );
+          final List<Map<String, Object?>> sentAfterPop = _decodeSent(
+            transport,
+          );
+          expect(
+            sentAfterPop.any(
+              (Map<String, Object?> frame) => frame['t'] == 'leave_room',
+            ),
+            isTrue,
+            reason:
+                'declaration rule 3: backing out of a room this screen '
+                'created must cause a leave_room request to reach the wire; '
+                'only saw types ${sentAfterPop.map((f) => f['t']).toList()}. '
+                'RoomController.leave() (lib/src/net/room_controller.dart:227) '
+                'returns early without sending anything once the controller '
+                'has been disposed, so this failing is consistent with '
+                'HomeScreen disposing the controller without ever calling '
+                'leave() first, which is the defect this order exists to '
+                'close',
+          );
 
-        expect(
-          () => controller.addListener(() {}),
-          throwsFlutterError,
-          reason: 'declaration rule 3: the controller Create Room built '
-              'must be disposed once the pushed route is popped, and a '
-              'disposed ChangeNotifier must throw on addListener; it did '
-              'not, so it is still usable',
-        );
-      },
-    );
+          expect(
+            () => controller.addListener(() {}),
+            throwsFlutterError,
+            reason:
+                'declaration rule 3: the controller Create Room built '
+                'must be disposed once the pushed route is popped, and a '
+                'disposed ChangeNotifier must throw on addListener; it did '
+                'not, so it is still usable',
+          );
+        },
+      );
 
-    testWidgets(
-      'rule 3, join path: popping the pushed lobby sends leave_room on the '
-      'wire, and the controller Join Room built is disposed afterwards',
-      (tester) async {
-        final _LiveControllerFactory factory = _LiveControllerFactory();
-        await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
-        await tester.pumpAndSettle();
+      testWidgets(
+        'rule 3, join path: popping the pushed lobby sends leave_room on the '
+        'wire, and the controller Join Room built is disposed afterwards',
+        (tester) async {
+          final _LiveControllerFactory factory = _LiveControllerFactory();
+          await tester.pumpWidget(
+            _homeScreenApp(controllerFactory: factory.call),
+          );
+          await tester.pumpAndSettle();
 
-        await tester.enterText(
-          find.byKey(const Key('room-code-field')),
-          'AB23CD',
-        );
-        await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
-        await tester.pump();
+          await tester.enterText(
+            find.byKey(const Key('room-code-field')),
+            'AB23CD',
+          );
+          await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
+          await tester.pump();
 
-        expect(factory.controllers, hasLength(1));
-        expect(factory.transports, hasLength(1));
-        final RoomController controller = factory.controllers.single;
-        final FakeTransport transport = factory.transports.single;
+          expect(factory.controllers, hasLength(1));
+          expect(factory.transports, hasLength(1));
+          final RoomController controller = factory.controllers.single;
+          final FakeTransport transport = factory.transports.single;
 
-        final List<Map<String, Object?>> sentBeforeReply = _decodeSent(
-          transport,
-        );
-        expect(
-          sentBeforeReply,
-          hasLength(1),
-          reason: 'fixture is broken: LobbyScreen.initState must have sent '
-              'exactly one join_room request by now; sent '
-              '${sentBeforeReply.map((f) => f['t']).toList()}',
-        );
-        expect(sentBeforeReply.single['t'], 'join_room');
-        final String joinRequestId = sentBeforeReply.single['id']! as String;
+          final List<Map<String, Object?>> sentBeforeReply = _decodeSent(
+            transport,
+          );
+          expect(
+            sentBeforeReply,
+            hasLength(1),
+            reason:
+                'fixture is broken: LobbyScreen.initState must have sent '
+                'exactly one join_room request by now; sent '
+                '${sentBeforeReply.map((f) => f['t']).toList()}',
+          );
+          expect(sentBeforeReply.single['t'], 'join_room');
+          final String joinRequestId = sentBeforeReply.single['id']! as String;
 
-        transport.pushText(
-          _serverFrame(
-            type: 'room',
-            re: joinRequestId,
-            data: _roomJson(code: 'AB23CD', hostSeat: 0),
-          ),
-        );
-        await tester.pump();
-        expect(
-          controller.phase,
-          RoomPhase.connected,
-          reason: 'fixture is broken: replying to join_room with a room '
-              'frame must bring the controller to phase connected before '
-              'this test backs out of the lobby; controller is in phase '
-              '${controller.phase}',
-        );
+          transport.pushText(
+            _serverFrame(
+              type: 'room',
+              re: joinRequestId,
+              data: _roomJson(code: 'AB23CD', hostSeat: 0),
+            ),
+          );
+          await tester.pump();
+          expect(
+            controller.phase,
+            RoomPhase.connected,
+            reason:
+                'fixture is broken: replying to join_room with a room '
+                'frame must bring the controller to phase connected before '
+                'this test backs out of the lobby; controller is in phase '
+                '${controller.phase}',
+          );
 
-        await _popPushedRoute(tester);
-        await _flushAnyOutstandingRequestTimeout(tester);
+          await _popPushedRoute(tester);
+          await _flushAnyOutstandingRequestTimeout(tester);
 
-        expect(
-          tester.takeException(),
-          isNull,
-          reason: 'declaration rule 5: popping the pushed lobby route must '
-              'not throw or surface an unhandled error',
-        );
+          expect(
+            tester.takeException(),
+            isNull,
+            reason:
+                'declaration rule 5: popping the pushed lobby route must '
+                'not throw or surface an unhandled error',
+          );
 
-        final List<Map<String, Object?>> sentAfterPop = _decodeSent(transport);
-        expect(
-          sentAfterPop.any((Map<String, Object?> frame) => frame['t'] == 'leave_room'),
-          isTrue,
-          reason: 'declaration rule 3: backing out of a room this screen '
-              'joined must cause a leave_room request to reach the wire; '
-              'only saw types ${sentAfterPop.map((f) => f['t']).toList()}',
-        );
+          final List<Map<String, Object?>> sentAfterPop = _decodeSent(
+            transport,
+          );
+          expect(
+            sentAfterPop.any(
+              (Map<String, Object?> frame) => frame['t'] == 'leave_room',
+            ),
+            isTrue,
+            reason:
+                'declaration rule 3: backing out of a room this screen '
+                'joined must cause a leave_room request to reach the wire; '
+                'only saw types ${sentAfterPop.map((f) => f['t']).toList()}',
+          );
 
-        expect(
-          () => controller.addListener(() {}),
-          throwsFlutterError,
-          reason: 'declaration rule 3: the controller Join Room built must '
-              'be disposed once the pushed route is popped; it is still '
-              'usable',
-        );
-      },
-    );
+          expect(
+            () => controller.addListener(() {}),
+            throwsFlutterError,
+            reason:
+                'declaration rule 3: the controller Join Room built must '
+                'be disposed once the pushed route is popped; it is still '
+                'usable',
+          );
+        },
+      );
 
-    testWidgets(
-      'rule 4: when the connector rejects and no connection was ever '
-      'established, popping the pushed lobby sends nothing, throws '
-      'nothing, and the controller is still disposed',
-      (tester) async {
-        final _CapturingNeverConnectsFactory factory =
-            _CapturingNeverConnectsFactory();
-        await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
-        await tester.pumpAndSettle();
+      testWidgets(
+        'rule 4: when the connector rejects and no connection was ever '
+        'established, popping the pushed lobby sends nothing, throws '
+        'nothing, and the controller is still disposed',
+        (tester) async {
+          final _CapturingNeverConnectsFactory factory =
+              _CapturingNeverConnectsFactory();
+          await tester.pumpWidget(
+            _homeScreenApp(controllerFactory: factory.call),
+          );
+          await tester.pumpAndSettle();
 
-        await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-        await tester.pump();
+          await _tapAndAwaitPushedRoute(
+            tester,
+            const Key('create-room-button'),
+          );
+          await tester.pump();
 
-        final RoomController? controller = factory.controller;
-        expect(
-          controller,
-          isNotNull,
-          reason: 'fixture is broken: Create Room must have built a '
-              'controller through the injected factory',
-        );
-        expect(
-          controller!.phase,
-          RoomPhase.failed,
-          reason: 'fixture is broken: this scenario requires the connector '
-              'to have already rejected, landing the controller in phase '
-              'failed, before the player backs out; controller is in phase '
-              '${controller.phase}',
-        );
+          final RoomController? controller = factory.controller;
+          expect(
+            controller,
+            isNotNull,
+            reason:
+                'fixture is broken: Create Room must have built a '
+                'controller through the injected factory',
+          );
+          expect(
+            controller!.phase,
+            RoomPhase.failed,
+            reason:
+                'fixture is broken: this scenario requires the connector '
+                'to have already rejected, landing the controller in phase '
+                'failed, before the player backs out; controller is in phase '
+                '${controller.phase}',
+          );
 
-        await _popPushedRoute(tester);
-        await _flushAnyOutstandingRequestTimeout(tester);
+          await _popPushedRoute(tester);
+          await _flushAnyOutstandingRequestTimeout(tester);
 
-        expect(
-          tester.takeException(),
-          isNull,
-          reason: 'declaration rule 4: when no connection was ever '
-              'established, popping the pushed lobby route must not throw '
-              'or surface an unhandled error',
-        );
+          expect(
+            tester.takeException(),
+            isNull,
+            reason:
+                'declaration rule 4: when no connection was ever '
+                'established, popping the pushed lobby route must not throw '
+                'or surface an unhandled error',
+          );
 
-        expect(
-          () => controller.addListener(() {}),
-          throwsFlutterError,
-          reason: 'declaration rule 4: even when no connection was ever '
-              'established, the controller Create Room built must still be '
-              'disposed once the pushed route is popped; it is still '
-              'usable',
-        );
-      },
-    );
+          expect(
+            () => controller.addListener(() {}),
+            throwsFlutterError,
+            reason:
+                'declaration rule 4: even when no connection was ever '
+                'established, the controller Create Room built must still be '
+                'disposed once the pushed route is popped; it is still '
+                'usable',
+          );
+        },
+      );
 
-    testWidgets(
-      'rule 5: when the far side has already gone away before the player '
-      'backs out, popping the pushed lobby throws nothing, and the '
-      'controller is still disposed',
-      (tester) async {
-        final _LiveControllerFactory factory = _LiveControllerFactory();
-        await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
-        await tester.pumpAndSettle();
+      testWidgets(
+        'rule 5: when the far side has already gone away before the player '
+        'backs out, popping the pushed lobby throws nothing, and the '
+        'controller is still disposed',
+        (tester) async {
+          final _LiveControllerFactory factory = _LiveControllerFactory();
+          await tester.pumpWidget(
+            _homeScreenApp(controllerFactory: factory.call),
+          );
+          await tester.pumpAndSettle();
 
-        await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-        await tester.pump();
+          await _tapAndAwaitPushedRoute(
+            tester,
+            const Key('create-room-button'),
+          );
+          await tester.pump();
 
-        final RoomController controller = factory.controllers.single;
-        final FakeTransport transport = factory.transports.single;
+          final RoomController controller = factory.controllers.single;
+          final FakeTransport transport = factory.transports.single;
 
-        final List<Map<String, Object?>> sentBeforeReply = _decodeSent(
-          transport,
-        );
-        expect(sentBeforeReply, hasLength(1));
-        final String createRequestId = sentBeforeReply.single['id']! as String;
-        transport.pushText(
-          _serverFrame(type: 'room', re: createRequestId, data: _roomJson()),
-        );
-        await tester.pump();
-        expect(
-          controller.phase,
-          RoomPhase.connected,
-          reason: 'fixture is broken: this scenario requires a room the '
-              'player is actually connected to before the socket dies; '
-              'controller is in phase ${controller.phase}',
-        );
+          final List<Map<String, Object?>> sentBeforeReply = _decodeSent(
+            transport,
+          );
+          expect(sentBeforeReply, hasLength(1));
+          final String createRequestId =
+              sentBeforeReply.single['id']! as String;
+          transport.pushText(
+            _serverFrame(type: 'room', re: createRequestId, data: _roomJson()),
+          );
+          await tester.pump();
+          expect(
+            controller.phase,
+            RoomPhase.connected,
+            reason:
+                'fixture is broken: this scenario requires a room the '
+                'player is actually connected to before the socket dies; '
+                'controller is in phase ${controller.phase}',
+          );
 
-        transport.endFromFarSide();
-        await tester.pump();
-        await tester.pump();
+          transport.endFromFarSide();
+          await tester.pump();
+          await tester.pump();
 
-        expect(
-          tester.takeException(),
-          isNull,
-          reason: 'fixture is broken: the far side vanishing on its own, '
-              'before the player ever backs out, must not itself throw',
-        );
+          expect(
+            tester.takeException(),
+            isNull,
+            reason:
+                'fixture is broken: the far side vanishing on its own, '
+                'before the player ever backs out, must not itself throw',
+          );
 
-        await _popPushedRoute(tester);
-        await _flushAnyOutstandingRequestTimeout(tester);
+          await _popPushedRoute(tester);
+          await _flushAnyOutstandingRequestTimeout(tester);
 
-        expect(
-          tester.takeException(),
-          isNull,
-          reason: 'declaration rule 5: when the socket had already died '
-              'before the player backed out, popping the pushed lobby '
-              'route must not throw or surface an unhandled error',
-        );
+          expect(
+            tester.takeException(),
+            isNull,
+            reason:
+                'declaration rule 5: when the socket had already died '
+                'before the player backed out, popping the pushed lobby '
+                'route must not throw or surface an unhandled error',
+          );
 
-        expect(
-          () => controller.addListener(() {}),
-          throwsFlutterError,
-          reason: 'declaration rule 5: even after the socket died first, '
-              'the controller this screen created must still be disposed '
-              'once the pushed route is popped; it is still usable',
-        );
-      },
-    );
-  });
+          expect(
+            () => controller.addListener(() {}),
+            throwsFlutterError,
+            reason:
+                'declaration rule 5: even after the socket died first, '
+                'the controller this screen created must still be disposed '
+                'once the pushed route is popped; it is still usable',
+          );
+        },
+      );
+    },
+  );
 }
