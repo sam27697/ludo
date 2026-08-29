@@ -343,7 +343,17 @@ class RoomController extends ChangeNotifier {
     }
   }
 
-  /// `{seat, name}`, rule 6: that seat's name becomes the pushed name and its
+  /// `{seat, name}`. The server's own seats list holds only occupied seats
+  /// (registry.dart:395-409) and broadcasts `player_joined` to every other
+  /// client (connection.dart:355-360), so a join naming a seat this client
+  /// has never seen is the ordinary case, not a contrived one: that seat is
+  /// added, not ignored. It gets the defaults the server's snapshot builder
+  /// gives a freshly joined lobby seat (snapshot.dart:52-56): `connected:
+  /// true`, four `-1` tokens, no client seed, no seed origin. The frame
+  /// itself carries nothing else. The list is kept sorted by seat
+  /// index afterwards, matching the server's own sort on every join
+  /// (registry.dart:408-409). When the seat is already present, this is the
+  /// original rule 6 behaviour: its name becomes the pushed name and its
   /// connected becomes true.
   void _applyPlayerJoined(Frame frame) {
     final RoomSnapshot? room = _room;
@@ -356,17 +366,28 @@ class RoomController extends ChangeNotifier {
     if (seatValue is! int || nameValue is! String || seqValue == null) {
       return;
     }
-    final int index = room.seats.indexWhere(
-      (SeatState s) => s.seat == seatValue,
-    );
-    if (index == -1) {
-      return;
-    }
     if (seqValue != room.seq + 1) {
       _hasDesynced = true;
     }
+    final int index = room.seats.indexWhere(
+      (SeatState s) => s.seat == seatValue,
+    );
     final List<SeatState> seats = List<SeatState>.from(room.seats);
-    seats[index] = seats[index].copyWith(name: nameValue, connected: true);
+    if (index == -1) {
+      seats.add(
+        SeatState(
+          seat: seatValue,
+          name: nameValue,
+          connected: true,
+          tokens: const <int>[-1, -1, -1, -1],
+          clientSeed: null,
+          seedOrigin: null,
+        ),
+      );
+      seats.sort((SeatState a, SeatState b) => a.seat.compareTo(b.seat));
+    } else {
+      seats[index] = seats[index].copyWith(name: nameValue, connected: true);
+    }
     _room = room.copyWith(seats: seats, seq: seqValue);
     notifyListeners();
   }
