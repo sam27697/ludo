@@ -6,13 +6,14 @@
 // methods, because these methods are wired straight to button handlers and
 // an exception out of a button handler is a crash on a player's phone.
 //
-// This is a lobby controller. It opens and re-opens a RoomConnection, caches
-// the seat and seat token a reconnect needs, applies the three lobby deltas
-// to the snapshot it holds, and detects when it has missed a delta it cannot
-// place. It does not reduce a single game delta: `rolled`, `moved`, `turn`,
-// `turn_passed`, `game_started`, `game_over` and `seat_seed` reach `frames`
-// exactly as they arrived and change nothing here. That reducer is a
-// different order's job, against a screen that actually renders a board.
+// This is the room controller. It opens and re-opens a RoomConnection,
+// caches the seat and seat token a reconnect needs, and reduces every
+// state-changing push docs/PROTOCOL.md section 5 lists -- the three lobby
+// deltas and every game delta -- so a screen holding this controller can
+// render a live board from `room` alone. A `seq` gap, on any of them, is no
+// longer a flag left for the UI to notice: it resynchronises itself in
+// place on the open socket (`_beginResync`, docs/PROTOCOL.md section 6) and
+// comes back with the server's own snapshot.
 
 import 'dart:async';
 
@@ -28,6 +29,22 @@ import 'transport.dart';
 /// history worth keeping (the room, the seat, the seat token), and every
 /// later state carries that history forward instead of discarding it.
 enum RoomPhase { idle, connecting, connected, closed, failed }
+
+/// docs/PROTOCOL.md section 5's "Carrying seq" list: every frame type this
+/// controller reduces. `error`, `pong` and `seat_assigned` are not on it.
+const Set<String> _stateChangingTypes = <String>{
+  'room',
+  'player_joined',
+  'player_left',
+  'presence',
+  'seat_seed',
+  'game_started',
+  'rolled',
+  'moved',
+  'turn_passed',
+  'turn',
+  'game_over',
+};
 
 /// Holds the one [RoomConnection] a lobby screen is driving at any moment,
 /// re-creates it across a drop, and exposes the whole thing as a
@@ -55,6 +72,12 @@ class RoomController extends ChangeNotifier {
   bool _hasDesynced = false;
   String? _errorCode;
   String? _errorMessage;
+
+  /// True between a seq gap starting a resync (`_beginResync`) and that
+  /// resync's `resume` reply landing or failing. While true, every
+  /// state-changing push changes nothing: the snapshot the resync gets back
+  /// is what re-bases the client, not whatever arrived in the meantime.
+  bool _resyncInFlight = false;
 
   RoomConnection? _connection;
   StreamSubscription<Frame>? _frameSub;
@@ -205,8 +228,9 @@ class RoomController extends ChangeNotifier {
   /// [RoomPhase.connected] and is a silent no-op otherwise. The reply is a
   /// plain frame, not a snapshot; it is not parsed as one and changes
   /// nothing here. The `game_started` and `turn` frames that follow reach
-  /// [frames] like every other game delta and are this controller's business
-  /// not to touch.
+  /// [frames] like every other frame and, when they are contiguous, are
+  /// reduced exactly as they would be if this controller had never asked for
+  /// them.
   Future<void> startGame() async {
     final RoomConnection? connection = _connection;
     if (_disposed || _phase != RoomPhase.connected || connection == null) {
@@ -322,25 +346,82 @@ class RoomController extends ChangeNotifier {
 
   /// Every frame the current connection produces, including every one this
   /// controller's reducer ignores. Forwarded to [frames] unconditionally and
-  /// first, then handed to the lobby-delta reducer.
+  /// first, then handed to the reducer when it is one of the types
+  /// docs/PROTOCOL.md section 5 marks as carrying `seq`.
   void _handleFrame(Frame frame) {
     if (!_framesController.isClosed) {
       _framesController.add(frame);
     }
     _syncSeatCache();
-    switch (frame.type) {
-      case 'player_joined':
-        _applyPlayerJoined(frame);
-      case 'player_left':
-        _applyPlayerLeft(frame);
-      case 'presence':
-        _applyPresence(frame);
-      default:
-        // Every game delta, and anything this controller does not
-        // recognise, is out of scope: it reaches `frames` above and changes
-        // nothing else.
-        break;
+    if (_stateChangingTypes.contains(frame.type)) {
+      _reduce(frame);
     }
+  }
+
+  /// The order of checks a state-changing push goes through, normative and
+  /// unconditional: a resync already running or no room held yet both leave
+  /// the frame changing nothing here, before any per-type rule ever runs.
+  void _reduce(Frame frame) {
+    if (_resyncInFlight) {
+      return;
+    }
+    final RoomSnapshot? room = _room;
+    if (room == null) {
+      return;
+    }
+    switch (frame.type) {
+      case 'room':
+        _reduceRoom(frame, room);
+      case 'player_joined':
+        _reducePlayerJoined(frame, room);
+      case 'player_left':
+        _reducePlayerLeft(frame, room);
+      case 'presence':
+        _reducePresence(frame, room);
+      case 'seat_seed':
+        _reduceSeatSeed(frame, room);
+      case 'game_started':
+        _reduceGameStarted(frame, room);
+      case 'rolled':
+        _reduceRolled(frame, room);
+      case 'moved':
+        _reduceMoved(frame, room);
+      case 'turn_passed':
+        _reduceTurnPassed(frame, room);
+      case 'turn':
+        _reduceTurn(frame, room);
+      case 'game_over':
+        _reduceGameOver(frame, room);
+    }
+  }
+
+  /// A server-initiated `room` push, `re` null: the request path already
+  /// owns every `room` that answers `createRoom`, `joinRoom`, `resume` or
+  /// `setPlayers`, including this controller's own resync, so a `room` here
+  /// with `re` set is not this reducer's business. A decode failure is
+  /// treated the same as any other malformed frame: caught, no state
+  /// change, no rethrow.
+  void _reduceRoom(Frame frame, RoomSnapshot room) {
+    final int? seqValue = frame.seq;
+    if (seqValue == null) {
+      return;
+    }
+    if (frame.re != null) {
+      return;
+    }
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+    final RoomSnapshot decoded;
+    try {
+      decoded = RoomSnapshot.fromJson(frame.data);
+    } on SnapshotFormatException {
+      return;
+    }
+    _room = decoded;
+    _hasDesynced = false;
+    notifyListeners();
   }
 
   /// `{seat, name}`. The server's own seats list holds only occupied seats
@@ -353,22 +434,21 @@ class RoomController extends ChangeNotifier {
   /// itself carries nothing else. The list is kept sorted by seat
   /// index afterwards, matching the server's own sort on every join
   /// (registry.dart:408-409). When the seat is already present, this is the
-  /// original rule 6 behaviour: its name becomes the pushed name and its
+  /// original rule's behaviour: its name becomes the pushed name and its
   /// connected becomes true.
-  void _applyPlayerJoined(Frame frame) {
-    final RoomSnapshot? room = _room;
-    if (room == null) {
-      return;
-    }
-    final Object? seatValue = frame.data['seat'];
-    final Object? nameValue = frame.data['name'];
+  void _reducePlayerJoined(Frame frame, RoomSnapshot room) {
+    final int? seatValue = _asInt(frame.data, 'seat');
+    final String? nameValue = _asString(frame.data, 'name');
     final int? seqValue = frame.seq;
-    if (seatValue is! int || nameValue is! String || seqValue == null) {
+    if (seatValue == null || nameValue == null || seqValue == null) {
       return;
     }
+
     if (seqValue != room.seq + 1) {
-      _hasDesynced = true;
+      _beginResync(room);
+      return;
     }
+
     final int index = room.seats.indexWhere(
       (SeatState s) => s.seat == seatValue,
     );
@@ -392,15 +472,13 @@ class RoomController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// `{seat}`, rule 6: that seat is removed from `room.seats`.
-  void _applyPlayerLeft(Frame frame) {
-    final RoomSnapshot? room = _room;
-    if (room == null) {
-      return;
-    }
-    final Object? seatValue = frame.data['seat'];
+  /// `{seat}`: that seat is removed from `room.seats`. A seat absent from
+  /// `room.seats` is ignored entirely, ahead of the gap check, matching the
+  /// behaviour `presence` has always had.
+  void _reducePlayerLeft(Frame frame, RoomSnapshot room) {
+    final int? seatValue = _asInt(frame.data, 'seat');
     final int? seqValue = frame.seq;
-    if (seatValue is! int || seqValue == null) {
+    if (seatValue == null || seqValue == null) {
       return;
     }
     final int index = room.seats.indexWhere(
@@ -409,25 +487,26 @@ class RoomController extends ChangeNotifier {
     if (index == -1) {
       return;
     }
+
     if (seqValue != room.seq + 1) {
-      _hasDesynced = true;
+      _beginResync(room);
+      return;
     }
+
     final List<SeatState> seats = List<SeatState>.from(room.seats)
       ..removeAt(index);
     _room = room.copyWith(seats: seats, seq: seqValue);
     notifyListeners();
   }
 
-  /// `{seat, connected}`, rule 6: that seat's connected is set.
-  void _applyPresence(Frame frame) {
-    final RoomSnapshot? room = _room;
-    if (room == null) {
-      return;
-    }
-    final Object? seatValue = frame.data['seat'];
-    final Object? connectedValue = frame.data['connected'];
+  /// `{seat, connected}`: that seat's connected is set. Absent seat: ignored
+  /// entirely, ahead of the gap check.
+  void _reducePresence(Frame frame, RoomSnapshot room) {
+    final int? seatValue = _asInt(frame.data, 'seat');
+    final Object? connectedRaw = frame.data['connected'];
+    final bool? connectedValue = connectedRaw is bool ? connectedRaw : null;
     final int? seqValue = frame.seq;
-    if (seatValue is! int || connectedValue is! bool || seqValue == null) {
+    if (seatValue == null || connectedValue == null || seqValue == null) {
       return;
     }
     final int index = room.seats.indexWhere(
@@ -436,13 +515,453 @@ class RoomController extends ChangeNotifier {
     if (index == -1) {
       return;
     }
+
     if (seqValue != room.seq + 1) {
-      _hasDesynced = true;
+      _beginResync(room);
+      return;
     }
+
     final List<SeatState> seats = List<SeatState>.from(room.seats);
     seats[index] = seats[index].copyWith(connected: connectedValue);
     _room = room.copyWith(seats: seats, seq: seqValue);
     notifyListeners();
+  }
+
+  /// `{seat, client_seed, origin}`. `origin` is `"player"` or `"server"`;
+  /// any other value is malformed. That seat's `clientSeed` and
+  /// `seedOrigin` are set; nothing else changes. Absent seat: ignored
+  /// entirely, ahead of the gap check.
+  void _reduceSeatSeed(Frame frame, RoomSnapshot room) {
+    final int? seatValue = _asInt(frame.data, 'seat');
+    final String? clientSeedValue = _asString(frame.data, 'client_seed');
+    final String? originRaw = _asString(frame.data, 'origin');
+    final int? seqValue = frame.seq;
+    if (seatValue == null ||
+        clientSeedValue == null ||
+        originRaw == null ||
+        seqValue == null) {
+      return;
+    }
+    final SeedOrigin origin;
+    switch (originRaw) {
+      case 'player':
+        origin = SeedOrigin.player;
+      case 'server':
+        origin = SeedOrigin.server;
+      default:
+        return;
+    }
+
+    final int index = room.seats.indexWhere(
+      (SeatState s) => s.seat == seatValue,
+    );
+    if (index == -1) {
+      return;
+    }
+
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+
+    final List<SeatState> seats = List<SeatState>.from(room.seats);
+    seats[index] = seats[index].copyWith(
+      clientSeed: clientSeedValue,
+      seedOrigin: origin,
+    );
+    _room = room.copyWith(seats: seats, seq: seqValue);
+    notifyListeners();
+  }
+
+  /// `{turn, game_id, client_seeds}`. Sets `state` to playing, `gameId`,
+  /// `clientSeeds`, and the first `turn`. `deadlineMs` is the whole
+  /// `turnSeconds` segment, not zero: docs/PROTOCOL.md section 14.2 requires
+  /// `turn` to be non-null the moment a room is in PLAYING, and that alone
+  /// is why this reducer cannot leave it unset or zeroed. The standalone
+  /// `turn` frame the protocol also sends immediately after `game_started`
+  /// (docs/PROTOCOL.md section 13.1) arrives microseconds later and
+  /// overwrites this value with the server's own; that is the expected
+  /// case, not a fallback this reducer is covering for. `k` is 0, section
+  /// 6's "0 from game_started until the first roll". `turn` here is a
+  /// room-level field, not an index into a seat, so the absent-seat rule
+  /// does not apply to it: that rule only guards a frame field literally
+  /// named `seat`.
+  void _reduceGameStarted(Frame frame, RoomSnapshot room) {
+    final int? turnSeat = _asInt(frame.data, 'turn');
+    final String? gameId = _asString(frame.data, 'game_id');
+    final String? clientSeeds = _asString(frame.data, 'client_seeds');
+    final int? seqValue = frame.seq;
+    if (turnSeat == null ||
+        gameId == null ||
+        clientSeeds == null ||
+        seqValue == null) {
+      return;
+    }
+
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+
+    final TurnState turn = TurnState(
+      seat: turnSeat,
+      phase: TurnPhase.awaitRoll,
+      deadlineMs: room.rules.turnSeconds * 1000,
+      k: 0,
+      value: null,
+      legal: null,
+      sixes: null,
+    );
+    _room = room.copyWith(
+      state: RoomState.playing,
+      gameId: gameId,
+      clientSeeds: clientSeeds,
+      turn: turn,
+      seq: seqValue,
+    );
+    notifyListeners();
+  }
+
+  /// `{seat, deadline_ms}`. Sets `turn` to a fresh await-roll segment for
+  /// `seat`, carrying `k` forward from the turn it replaces: section 6
+  /// defines `turn.k` as the rolls made so far and a turn beginning makes no
+  /// roll. Absent seat: ignored entirely, ahead of the gap check.
+  void _reduceTurn(Frame frame, RoomSnapshot room) {
+    final int? seatValue = _asInt(frame.data, 'seat');
+    final int? deadlineMs = _asInt(frame.data, 'deadline_ms');
+    final int? seqValue = frame.seq;
+    if (seatValue == null || deadlineMs == null || seqValue == null) {
+      return;
+    }
+
+    if (!room.seats.any((SeatState s) => s.seat == seatValue)) {
+      return;
+    }
+
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+
+    final TurnState turn = TurnState(
+      seat: seatValue,
+      phase: TurnPhase.awaitRoll,
+      deadlineMs: deadlineMs,
+      k: room.turn?.k ?? 0,
+      value: null,
+      legal: null,
+      sixes: null,
+    );
+    _room = room.copyWith(turn: turn, seq: seqValue);
+    notifyListeners();
+  }
+
+  /// `{seat, value, legal, deadline_ms, k}`. `reveal` ships on the wire and
+  /// is not required and not stored: nothing in this client verifies the
+  /// chain yet. An empty `legal` is legal input, stored as an empty list.
+  /// Absent seat: ignored entirely, ahead of the gap check.
+  void _reduceRolled(Frame frame, RoomSnapshot room) {
+    final int? seatValue = _asInt(frame.data, 'seat');
+    final int? value = _asInt(frame.data, 'value');
+    final List<int>? legal = _asIntList(frame.data, 'legal');
+    final int? deadlineMs = _asInt(frame.data, 'deadline_ms');
+    final int? k = _asInt(frame.data, 'k');
+    final int? seqValue = frame.seq;
+    if (seatValue == null ||
+        value == null ||
+        legal == null ||
+        deadlineMs == null ||
+        k == null ||
+        seqValue == null) {
+      return;
+    }
+
+    if (!room.seats.any((SeatState s) => s.seat == seatValue)) {
+      return;
+    }
+
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+
+    final TurnState turn = TurnState(
+      seat: seatValue,
+      phase: TurnPhase.awaitMove,
+      deadlineMs: deadlineMs,
+      k: k,
+      value: value,
+      legal: legal,
+      sixes: null,
+    );
+    _room = room.copyWith(turn: turn, seq: seqValue);
+    notifyListeners();
+  }
+
+  /// `{seat, token, from, to, captured, extra_roll}`. The moving seat's
+  /// token becomes `to`; `from` is not checked against the current value,
+  /// because a disagreement there is a desync `seq` already catches. Each
+  /// `captured` entry names a seat whose token becomes `-1`; an entry naming
+  /// a seat absent from `room.seats` is skipped and the rest of the frame
+  /// still applies, the one place this per-entry skip replaces the
+  /// whole-frame ignore. The moving seat itself absent from `room.seats`
+  /// still ignores the whole frame, ahead of the gap check. `turn`, when
+  /// present, returns to await-roll with `value`, `legal` and `sixes`
+  /// cleared and `seat`, `deadlineMs` and `k` kept; `extra_roll` is required
+  /// so a malformed frame is caught and is otherwise not acted on.
+  void _reduceMoved(Frame frame, RoomSnapshot room) {
+    final int? seatValue = _asInt(frame.data, 'seat');
+    final int? token = _asInt(frame.data, 'token');
+    final int? from = _asInt(frame.data, 'from');
+    final int? to = _asInt(frame.data, 'to');
+    final int? seqValue = frame.seq;
+    final Object? extraRollRaw = frame.data['extra_roll'];
+    final bool? extraRoll = extraRollRaw is bool ? extraRollRaw : null;
+    if (seatValue == null ||
+        token == null ||
+        from == null ||
+        to == null ||
+        seqValue == null ||
+        extraRoll == null) {
+      return;
+    }
+
+    final Object? capturedRaw = frame.data['captured'];
+    if (capturedRaw is! List) {
+      return;
+    }
+    final List<(int, int)> captured = <(int, int)>[];
+    for (final Object? entry in capturedRaw) {
+      if (entry is! Map<String, Object?>) {
+        return;
+      }
+      final int? capturedSeat = _asInt(entry, 'seat');
+      final int? capturedToken = _asInt(entry, 'token');
+      if (capturedSeat == null || capturedToken == null) {
+        return;
+      }
+      captured.add((capturedSeat, capturedToken));
+    }
+
+    if (!room.seats.any((SeatState s) => s.seat == seatValue)) {
+      return;
+    }
+
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+
+    final List<SeatState> seats = List<SeatState>.from(room.seats);
+    final int moverIndex = seats.indexWhere(
+      (SeatState s) => s.seat == seatValue,
+    );
+    final List<int> moverTokens = List<int>.from(seats[moverIndex].tokens);
+    moverTokens[token] = to;
+    seats[moverIndex] = seats[moverIndex].copyWith(tokens: moverTokens);
+
+    for (final (int capturedSeat, int capturedToken) in captured) {
+      final int capturedIndex = seats.indexWhere(
+        (SeatState s) => s.seat == capturedSeat,
+      );
+      if (capturedIndex == -1) {
+        continue;
+      }
+      final List<int> tokens = List<int>.from(seats[capturedIndex].tokens);
+      tokens[capturedToken] = -1;
+      seats[capturedIndex] = seats[capturedIndex].copyWith(tokens: tokens);
+    }
+
+    final TurnState? currentTurn = room.turn;
+    final TurnState? turn = currentTurn == null
+        ? null
+        : TurnState(
+            seat: currentTurn.seat,
+            phase: TurnPhase.awaitRoll,
+            deadlineMs: currentTurn.deadlineMs,
+            k: currentTurn.k,
+            value: null,
+            legal: null,
+            sixes: null,
+          );
+
+    _room = turn == null
+        ? room.copyWith(seats: seats, seq: seqValue)
+        : room.copyWith(seats: seats, turn: turn, seq: seqValue);
+    notifyListeners();
+  }
+
+  /// `{seat, reason}`. `reason` is `"no_legal_move"` or `"three_sixes"`; any
+  /// other value is malformed. Clears `turn` the same way `moved` does,
+  /// without changing whose turn it is: the `turn` frame that follows does
+  /// that. Absent seat: ignored entirely, ahead of the gap check.
+  void _reduceTurnPassed(Frame frame, RoomSnapshot room) {
+    final int? seatValue = _asInt(frame.data, 'seat');
+    final String? reasonValue = _asString(frame.data, 'reason');
+    final int? seqValue = frame.seq;
+    if (seatValue == null || reasonValue == null || seqValue == null) {
+      return;
+    }
+    if (reasonValue != 'no_legal_move' && reasonValue != 'three_sixes') {
+      return;
+    }
+
+    if (!room.seats.any((SeatState s) => s.seat == seatValue)) {
+      return;
+    }
+
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+
+    final TurnState? currentTurn = room.turn;
+    final TurnState? turn = currentTurn == null
+        ? null
+        : TurnState(
+            seat: currentTurn.seat,
+            phase: TurnPhase.awaitRoll,
+            deadlineMs: currentTurn.deadlineMs,
+            k: currentTurn.k,
+            value: null,
+            legal: null,
+            sixes: null,
+          );
+
+    _room = turn == null
+        ? room.copyWith(seq: seqValue)
+        : room.copyWith(turn: turn, seq: seqValue);
+    notifyListeners();
+  }
+
+  /// `{winner, verify_url}`. Sets `state` to finished and `winner`.
+  /// `verify_url` is required so a malformed frame is caught and is
+  /// otherwise not stored; nothing renders it yet. If `turn` is present its
+  /// `phase` becomes finished with `value`, `legal` and `sixes` cleared and
+  /// `seat`, `deadlineMs` and `k` kept, per docs/PROTOCOL.md sections 14.1
+  /// and 14.2: a finished game's `turn` is not null. `winner` here is a
+  /// room-level field, not an index into a seat, so the absent-seat rule
+  /// does not apply to it: that rule only guards a frame field literally
+  /// named `seat`.
+  void _reduceGameOver(Frame frame, RoomSnapshot room) {
+    final int? winnerValue = _asInt(frame.data, 'winner');
+    final String? verifyUrl = _asString(frame.data, 'verify_url');
+    final int? seqValue = frame.seq;
+    if (winnerValue == null || verifyUrl == null || seqValue == null) {
+      return;
+    }
+
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+
+    final TurnState? currentTurn = room.turn;
+    final TurnState? turn = currentTurn == null
+        ? null
+        : TurnState(
+            seat: currentTurn.seat,
+            phase: TurnPhase.finished,
+            deadlineMs: currentTurn.deadlineMs,
+            k: currentTurn.k,
+            value: null,
+            legal: null,
+            sixes: null,
+          );
+
+    _room = turn == null
+        ? room.copyWith(
+            state: RoomState.finished,
+            winner: winnerValue,
+            seq: seqValue,
+          )
+        : room.copyWith(
+            state: RoomState.finished,
+            winner: winnerValue,
+            turn: turn,
+            seq: seqValue,
+          );
+    notifyListeners();
+  }
+
+  /// A gap on any state-changing push resynchronises this controller on its
+  /// own open socket rather than leaving it to the caller. `hasDesynced` is
+  /// set and a listener notified first, unconditionally, so a screen can
+  /// show the round trip. `resume` is sent only when there is something to
+  /// ask with: a live connection, [RoomPhase.connected], and a cached seat
+  /// token. This is `resume` on the connection already open, never
+  /// `reconnect()` -- `reconnect()` opens a second transport, and the
+  /// server's own `attach` only displaces a *different* socket resuming the
+  /// same seat (wire_server.dart:415), so a second transport is both slower
+  /// and the one path that can get the still-working socket displaced.
+  /// Single-flight matters for the same reason: `recordJoinOrResume` allows
+  /// 20 join-or-resume messages per IP per minute (rate_limit.dart:15-16,
+  /// 75-79), and a burst of missed frames each firing its own `resume` would
+  /// spend that budget in seconds.
+  ///
+  /// This `resume` is one the player never asked for and cannot see, so its
+  /// failure must not be treated the way a request the player made is
+  /// treated. Only a `ProtocolErrorException` -- the server answering with
+  /// an `error` frame, naming a code -- is routed through
+  /// `_failFromRequest`: that is the server deliberately refusing this seat
+  /// on this socket, and there is nothing to gain by sitting in `connected`
+  /// and asking again on the next gapped frame. Every other error --
+  /// `ConnectionClosedException`, `RequestTimeoutException`,
+  /// `FrameFormatException`, anything else -- leaves the phase, the error
+  /// fields and the connection untouched. A `resume` that merely times out
+  /// on a socket that is still perfectly alive must not be the thing that
+  /// closes that socket; the ordinary lifecycle (`connection.done` in
+  /// `_openAndAttach`) already sets `RoomPhase.closed` if and when the
+  /// transport actually ends, and beating it there with a `failed` this
+  /// resync invented would both lie about what happened and duplicate work
+  /// the lifecycle already does. `_resyncInFlight` is still cleared on every
+  /// path, unconditionally: `_reduce` returns early while it is set, so a
+  /// failure that left it set would stop this controller reducing any frame
+  /// at all, forever. `hasDesynced` is left `true` on the non-fatal paths on
+  /// purpose -- the desync that started this resync has not been resolved,
+  /// only the attempt to resolve it has failed, and the next gapped frame
+  /// will try again.
+  void _beginResync(RoomSnapshot room) {
+    _hasDesynced = true;
+    notifyListeners();
+
+    final RoomConnection? connection = _connection;
+    final String? token = _cachedSeatToken;
+    if (connection == null || _phase != RoomPhase.connected || token == null) {
+      return;
+    }
+
+    _resyncInFlight = true;
+    connection
+        .resume(code: room.code, seatToken: token)
+        .then(
+          (RoomSnapshot snapshot) {
+            if (_disposed) {
+              return;
+            }
+            _resyncInFlight = false;
+            _room = snapshot;
+            _hasDesynced = false;
+            notifyListeners();
+          },
+          onError: (Object error) {
+            if (_disposed) {
+              return;
+            }
+            _resyncInFlight = false;
+            if (error is ProtocolErrorException) {
+              _failFromRequest(error);
+              return;
+            }
+            // Every other error -- a timeout on a socket that is still
+            // alive, the transport ending on its own, a malformed reply --
+            // is not a verdict from the server and is not this method's to
+            // act on. Leave the phase, the error fields and the connection
+            // exactly as they are; notify only because _resyncInFlight
+            // changing is itself an observable state a screen may render on.
+            notifyListeners();
+          },
+        );
   }
 
   /// Maps an error caught from a request made on an already-open connection
@@ -492,4 +1011,36 @@ class RoomController extends ChangeNotifier {
     _errorMessage = message;
     notifyListeners();
   }
+}
+
+// --- delta field parsing -----------------------------------------------
+//
+// Every one of these reads a single field and returns null both when it is
+// missing and when its runtime type does not match, so a caller cannot tell
+// "absent" from "wrong type" apart -- docs/PROTOCOL.md's frozen declaration
+// treats both as the same malformed frame. None of these throws.
+
+int? _asInt(Map<String, Object?> data, String key) {
+  final Object? value = data[key];
+  return value is int ? value : null;
+}
+
+String? _asString(Map<String, Object?> data, String key) {
+  final Object? value = data[key];
+  return value is String ? value : null;
+}
+
+List<int>? _asIntList(Map<String, Object?> data, String key) {
+  final Object? value = data[key];
+  if (value is! List) {
+    return null;
+  }
+  final List<int> result = <int>[];
+  for (final Object? element in value) {
+    if (element is! int) {
+      return null;
+    }
+    result.add(element);
+  }
+  return result;
 }
