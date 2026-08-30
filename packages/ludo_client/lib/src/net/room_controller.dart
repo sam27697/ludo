@@ -575,15 +575,17 @@ class RoomController extends ChangeNotifier {
 
   /// `{turn, game_id, client_seeds}`. Sets `state` to playing, `gameId`,
   /// `clientSeeds`, and the first `turn`. `deadlineMs` is the whole
-  /// `turnSeconds` segment, not zero: docs/PROTOCOL.md section 13.1 says the
-  /// first seat's turn begins here and section 6 says a segment starts at
-  /// the full duration, and section 13.1 also says the standalone `turn`
-  /// frame the protocol otherwise sends next is not yet implemented on the
-  /// server, so this is the one frame that must already leave a board
-  /// renderable. `k` is 0, section 6's "0 from game_started until the first
-  /// roll". `turn` here is a room-level field, not an index into a seat, so
-  /// the absent-seat rule does not apply to it: that rule only guards a
-  /// frame field literally named `seat`.
+  /// `turnSeconds` segment, not zero: docs/PROTOCOL.md section 14.2 requires
+  /// `turn` to be non-null the moment a room is in PLAYING, and that alone
+  /// is why this reducer cannot leave it unset or zeroed. The standalone
+  /// `turn` frame the protocol also sends immediately after `game_started`
+  /// (docs/PROTOCOL.md section 13.1) arrives microseconds later and
+  /// overwrites this value with the server's own; that is the expected
+  /// case, not a fallback this reducer is covering for. `k` is 0, section
+  /// 6's "0 from game_started until the first roll". `turn` here is a
+  /// room-level field, not an index into a seat, so the absent-seat rule
+  /// does not apply to it: that rule only guards a frame field literally
+  /// named `seat`.
   void _reduceGameStarted(Frame frame, RoomSnapshot room) {
     final int? turnSeat = _asInt(frame.data, 'turn');
     final String? gameId = _asString(frame.data, 'game_id');
@@ -896,6 +898,29 @@ class RoomController extends ChangeNotifier {
   /// 20 join-or-resume messages per IP per minute (rate_limit.dart:15-16,
   /// 75-79), and a burst of missed frames each firing its own `resume` would
   /// spend that budget in seconds.
+  ///
+  /// This `resume` is one the player never asked for and cannot see, so its
+  /// failure must not be treated the way a request the player made is
+  /// treated. Only a `ProtocolErrorException` -- the server answering with
+  /// an `error` frame, naming a code -- is routed through
+  /// `_failFromRequest`: that is the server deliberately refusing this seat
+  /// on this socket, and there is nothing to gain by sitting in `connected`
+  /// and asking again on the next gapped frame. Every other error --
+  /// `ConnectionClosedException`, `RequestTimeoutException`,
+  /// `FrameFormatException`, anything else -- leaves the phase, the error
+  /// fields and the connection untouched. A `resume` that merely times out
+  /// on a socket that is still perfectly alive must not be the thing that
+  /// closes that socket; the ordinary lifecycle (`connection.done` in
+  /// `_openAndAttach`) already sets `RoomPhase.closed` if and when the
+  /// transport actually ends, and beating it there with a `failed` this
+  /// resync invented would both lie about what happened and duplicate work
+  /// the lifecycle already does. `_resyncInFlight` is still cleared on every
+  /// path, unconditionally: `_reduce` returns early while it is set, so a
+  /// failure that left it set would stop this controller reducing any frame
+  /// at all, forever. `hasDesynced` is left `true` on the non-fatal paths on
+  /// purpose -- the desync that started this resync has not been resolved,
+  /// only the attempt to resolve it has failed, and the next gapped frame
+  /// will try again.
   void _beginResync(RoomSnapshot room) {
     _hasDesynced = true;
     notifyListeners();
@@ -924,7 +949,17 @@ class RoomController extends ChangeNotifier {
               return;
             }
             _resyncInFlight = false;
-            _failFromRequest(error);
+            if (error is ProtocolErrorException) {
+              _failFromRequest(error);
+              return;
+            }
+            // Every other error -- a timeout on a socket that is still
+            // alive, the transport ending on its own, a malformed reply --
+            // is not a verdict from the server and is not this method's to
+            // act on. Leave the phase, the error fields and the connection
+            // exactly as they are; notify only because _resyncInFlight
+            // changing is itself an observable state a screen may render on.
+            notifyListeners();
           },
         );
   }
