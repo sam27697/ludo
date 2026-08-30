@@ -631,6 +631,125 @@ void main() {
       );
       expect(notifyCount, greaterThan(0));
     });
+
+    // game_started and game_over are outside the whole-frame absent-seat
+    // rule above: neither indexes into room.seats to modify one seat. Both
+    // set room-level fields only -- state, gameId, clientSeeds, winner and
+    // the room's own turn -- so a stale seats list that happens to lack the
+    // named seat must not turn either frame into a no-op. Order 095's
+    // narrowing of the rule, proved here rather than assumed.
+    test('game_started whose turn names a seat absent from room.seats is '
+        'applied in full: state, gameId, clientSeeds and a fresh turn are all '
+        'set, and seq advances', () async {
+      final (
+        RoomController controller,
+        FakeTransport transport,
+        _,
+      ) = await _connectedController(
+        seq: 1,
+        turnSeconds: 90,
+        seats: <Map<String, Object?>>[_seatJson(0, name: 'Sam')],
+      );
+      addTearDown(controller.dispose);
+      int notifyCount = 0;
+      controller.addListener(() => notifyCount++);
+
+      await _push(transport, 'game_started', <String, Object?>{
+        'turn': 3, // seat 3 is absent from room.seats above
+        'game_id': 'c' * 16,
+        'client_seeds': '0:seed',
+        'seq': 2,
+      });
+
+      expect(controller.room!.state.toString(), contains('playing'));
+      expect(controller.room!.gameId, 'c' * 16);
+      expect(controller.room!.clientSeeds, '0:seed');
+      final turn = controller.room!.turn;
+      expect(
+        turn,
+        isNotNull,
+        reason:
+            'game_started must set a fresh turn even for a seat '
+            'absent from room.seats',
+      );
+      expect(turn!.seat, 3);
+      expect(turn.phase.toString(), contains('awaitRoll'));
+      expect(
+        turn.deadlineMs,
+        90000,
+        reason:
+            'deadlineMs must be rules.turnSeconds (90) * 1000, not '
+            'the 45000 default and not 0',
+      );
+      expect(turn.k, 0);
+      expect(turn.value, isNull);
+      expect(turn.legal, isNull);
+      expect(turn.sixes, isNull);
+      expect(
+        controller.room!.seq,
+        2,
+        reason:
+            'a seat absent from room.seats must not turn '
+            'game_started into a no-op: seq must still advance',
+      );
+      expect(notifyCount, greaterThan(0));
+    });
+
+    test('game_over whose winner names a seat absent from room.seats is '
+        'applied in full: state and winner are set, a non-null turn moves to '
+        'phase finished, and seq advances', () async {
+      final (
+        RoomController controller,
+        FakeTransport transport,
+        _,
+      ) = await _connectedController(
+        seq: 1,
+        state: 'PLAYING',
+        seats: <Map<String, Object?>>[_seatJson(0, name: 'Sam')],
+        turn: _turnJson(
+          seat: 1,
+          phase: 'await_move',
+          deadlineMs: 800,
+          k: 12,
+          value: 5,
+          legal: <int>[3],
+        ),
+      );
+      addTearDown(controller.dispose);
+      int notifyCount = 0;
+      controller.addListener(() => notifyCount++);
+
+      await _push(transport, 'game_over', <String, Object?>{
+        'winner': 3, // seat 3 is absent from room.seats above
+        'verify_url': 'https://provefair.app/v/abc',
+        'seq': 2,
+      });
+
+      expect(controller.room!.state.toString(), contains('finished'));
+      expect(
+        controller.room!.winner,
+        3,
+        reason:
+            'winner must be set even for a seat absent from '
+            'room.seats',
+      );
+      final turn = controller.room!.turn!;
+      expect(turn.phase.toString(), contains('finished'));
+      expect(turn.value, isNull);
+      expect(turn.legal, isNull);
+      expect(turn.sixes, isNull);
+      expect(turn.seat, 1, reason: 'seat is kept, not cleared');
+      expect(turn.deadlineMs, 800, reason: 'deadlineMs is kept');
+      expect(turn.k, 12, reason: 'k is kept');
+      expect(
+        controller.room!.seq,
+        2,
+        reason:
+            'a seat absent from room.seats must not turn game_over '
+            'into a no-op: seq must still advance',
+      );
+      expect(notifyCount, greaterThan(0));
+    });
   });
 
   // ======================================================================

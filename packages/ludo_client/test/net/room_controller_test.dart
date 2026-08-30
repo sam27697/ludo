@@ -215,12 +215,17 @@ RoomController _newController(_Connector connector) =>
 /// returns it already in phase connected with room, seat and seatToken all
 /// populated. The seat this client holds is always [hostSeat], matching
 /// docs/PROTOCOL.md section 4: the caller of create_room becomes host and
-/// takes the first seat.
+/// takes the first seat. [state] and [turn] default to 'LOBBY' and null,
+/// matching every call site that predates them; a caller that needs a
+/// PLAYING snapshot with a live turn (docs/PROTOCOL.md section 14.2) passes
+/// both explicitly.
 Future<(RoomController, FakeTransport, _Connector)> _connectedController({
   int players = 4,
   int hostSeat = 0,
   String code = 'K7M2QP',
   List<Map<String, Object?>>? seats,
+  String state = 'LOBBY',
+  Map<String, Object?>? turn,
   int seq = 1,
 }) async {
   final _Connector connector = _Connector();
@@ -249,6 +254,8 @@ Future<(RoomController, FakeTransport, _Connector)> _connectedController({
         players: players,
         hostSeat: hostSeat,
         seats: seats,
+        state: state,
+        turn: turn,
         seq: seq,
       ),
     ),
@@ -256,6 +263,27 @@ Future<(RoomController, FakeTransport, _Connector)> _connectedController({
   await future;
   return (controller, transport, connector);
 }
+
+/// A minimal, valid docs/PROTOCOL.md section 6 `turn` object: 'await_roll',
+/// with value/legal/sixes all absent, as the section says they must be in
+/// that phase.
+Map<String, Object?> _turnJson({
+  required int seat,
+  required String phase,
+  required int deadlineMs,
+  required int k,
+  int? value,
+  List<int>? legal,
+  int? sixes,
+}) => <String, Object?>{
+  'seat': seat,
+  'phase': phase,
+  'deadline_ms': deadlineMs,
+  'k': k,
+  'value': ?value,
+  'legal': ?legal,
+  'sixes': ?sixes,
+};
 
 void main() {
   // --- Rule 1: no method ever throws. ---------------------------------
@@ -1723,9 +1751,37 @@ void main() {
     });
   });
 
-  // --- Rule 15: game deltas are inert here. -----------------------------
-  group('rule 15: game deltas are inert here; they reach frames and change '
-      'no controller state', () {
+  // --- Rule 15, narrowed by order 095: game deltas are no longer inert. -
+  // Order 090 folded every one of these seven types into a reducer over
+  // `room`, so "changes no controller state" is a retired belief, not a
+  // contract of this controller any more. What survives from the original
+  // rule 15 is the wire contract: every one of these seven types still
+  // reaches `frames`, forwarded exactly like every other push, whether or
+  // not the reducer does anything with it. That half is real and nothing
+  // else in this file covers it for the game deltas.
+  //
+  // The room-level assertion kept here is deliberately shallow: each
+  // fixture starts at seq 1 and every tuple's data carries seq 2, so a
+  // `room.seq` of 2 afterward is the minimal, honest signal that the
+  // controller actually reduced the delta rather than dropping it. Per-field
+  // reducer correctness for all seven types -- what moved, what a turn's
+  // phase becomes, the absent-seat rule and its one per-entry exception for
+  // `moved.captured` -- is proved in depth, frame by frame, by
+  // test/net/room_controller_game_test.dart's D3 and D4 groups. This group
+  // does not repeat that work.
+  //
+  // The fixture below seats both 0 and 1 and starts PLAYING with a live
+  // turn already on seat 0 (docs/PROTOCOL.md section 14.2: a PLAYING
+  // snapshot's turn is never null), so every one of the seven data tuples
+  // below names a seat that is actually present. That matters most for
+  // `turn`, whose tuple names seat 1: the group's fixture used to be
+  // _connectedController(seq: 1), whose default room holds only seat 0, so
+  // the old 'turn' case passed even before order 090 landed -- not because
+  // turn deltas were inert, but because the absent-seat rule silently
+  // dropped it. Giving the fixture the seat the frame names closes that
+  // gap rather than inheriting it.
+  group('rule 15: a game delta always reaches frames, whether or not the '
+      'reducer changes room state', () {
     final List<(String, Map<String, Object?>)> gameDeltas =
         <(String, Map<String, Object?>)>[
           (
@@ -1789,24 +1845,46 @@ void main() {
         ];
 
     for (final (String type, Map<String, Object?> data) in gameDeltas) {
-      test('$type reaches frames and leaves room unchanged', () async {
-        final (RoomController controller, FakeTransport transport, _) =
-            await _connectedController(seq: 1);
+      test('$type reaches frames and room.seq advances to the '
+          "delta's own seq", () async {
+        final (
+          RoomController controller,
+          FakeTransport transport,
+          _,
+        ) = await _connectedController(
+          seq: 1,
+          state: 'PLAYING',
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Sam', connected: true),
+            _seatJson(1, name: 'Bob', connected: true),
+          ],
+          turn: _turnJson(
+            seat: 0,
+            phase: 'await_roll',
+            deadlineMs: 45000,
+            k: 0,
+          ),
+        );
         addTearDown(controller.dispose);
-        final Object? roomBefore = controller.room;
         final List<Frame> log = <Frame>[];
         controller.frames.listen(log.add);
 
         transport.pushText(_frame(type: type, data: data));
         await pumpEventQueue();
 
-        expect(log.map((f) => f.type), contains(type));
         expect(
-          identical(controller.room, roomBefore),
-          isTrue,
+          log.map((f) => f.type),
+          contains(type),
+          reason: '$type must still reach frames',
+        );
+        expect(
+          controller.room!.seq,
+          2,
           reason:
-              '$type must change no controller state; room must '
-              'be untouched',
+              '$type is a state-changing push (docs/PROTOCOL.md section '
+              "5) and order 090's reducer folds it into room; a seq "
+              'stuck at 1 would mean the delta was dropped rather than '
+              'applied',
         );
       });
     }
