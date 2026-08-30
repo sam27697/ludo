@@ -1755,6 +1755,39 @@ void main() {
               'rule 8/5: the desync banner must show the Arabic '
               'lobbyDesynced string when the locale is ar',
         );
+
+        // The gapped presence above did more than set hasDesynced: per
+        // order 098's frozen declaration (F0), a gap now also makes the
+        // controller send a background "resume" on this same, already-open
+        // transport. flutter_test checks for a pending Timer immediately
+        // after this body ends, before addTearDown runs, so that resume's
+        // outstanding request timer has to be resolved here, not in
+        // tear-down. Answer it with a room snapshot -- resolving is the
+        // stronger proof for a test whose remaining assertions are about
+        // what the Arabic strings say next, and it is what a real server
+        // would eventually do.
+        final resumeId = _idOf(transport.sentRaw.last);
+        expect(
+          _typeOf(transport.sentRaw.last),
+          'resume',
+          reason:
+              'fixture is broken: the gapped presence above must have '
+              'sent a resume as its last request on this transport',
+        );
+        transport.pushText(
+          _frame(
+            type: 'room',
+            re: resumeId,
+            data: _roomJson(
+              seats: <Map<String, Object?>>[
+                _seatJson(0, name: 'سام', connected: false),
+              ],
+              seq: 9,
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
       },
     );
   });

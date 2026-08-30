@@ -19,6 +19,7 @@
 
 import 'dart:convert';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/src/net/frame.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
@@ -219,6 +220,41 @@ Future<void> _push(
 ) async {
   transport.pushText(_frame(type: type, data: data));
   await pumpEventQueue();
+}
+
+/// The synchronous twin of [_connectedController], for use inside a
+/// `fakeAsync` body where `await` cannot be used: drives the same
+/// createRoom() handshake, but advances the zone with [async.flushMicrotasks]
+/// instead of awaiting futures. Needed for the F1 test that has to let a real
+/// ten-second request timeout elapse without an actual wall-clock wait.
+(RoomController, FakeTransport, _Connector) _connectedControllerInFakeAsync(
+  FakeAsync async, {
+  int seq = 1,
+  List<Map<String, Object?>>? seats,
+}) {
+  final _Connector connector = _Connector();
+  final FakeTransport transport = FakeTransport();
+  connector.enqueue(transport);
+  final RoomController controller = _newController(connector);
+
+  unawaitedFuture(controller.createRoom(name: 'Sam', players: 4));
+  async.flushMicrotasks();
+  final String id = _idOf(transport.sentRaw.last);
+  transport.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: <String, Object?>{'seat': 0, 'seat_token': 'tok-0'},
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'room',
+      re: id,
+      data: _roomJson(seq: seq, seats: seats),
+    ),
+  );
+  async.flushMicrotasks();
+  return (controller, transport, connector);
 }
 
 /// Asserts that pushing [type]/[data] on the current, already-connected
@@ -1883,6 +1919,292 @@ void main() {
     });
   });
 
+  // ======================================================================
+  // F1 (order 098). A background resync's failure does not drive the
+  // phase, with one exception: an error the server sent on purpose. Proved
+  // from the outside, against the frozen declaration shared with order 096,
+  // never against room_controller.dart itself.
+  // ======================================================================
+  group('F1: a background resync failure is fatal only when the server '
+      'refuses the resume', () {
+    test('the resume answered with an error frame is fatal: phase becomes '
+        'failed, the error code is the server\'s own code verbatim, and the '
+        'connection is closed', () async {
+      final (RoomController controller, FakeTransport transport, _) =
+          await _connectedController(seq: 1);
+      addTearDown(controller.dispose);
+
+      await _push(transport, 'presence', <String, Object?>{
+        'seat': 0,
+        'connected': false,
+        'seq': 999,
+      });
+      expect(
+        _resumeCount(transport),
+        1,
+        reason: 'fixture is broken: the gap must have started a resync',
+      );
+      final String id = _idOf(transport.sentRaw.last);
+
+      transport.pushText(
+        _frame(
+          type: 'error',
+          re: id,
+          data: <String, Object?>{
+            'code': 'NO_SUCH_ROOM',
+            'message': 'this room no longer exists',
+          },
+        ),
+      );
+      await pumpEventQueue();
+
+      expect(controller.phase, RoomPhase.failed);
+      expect(
+        controller.errorCode,
+        'NO_SUCH_ROOM',
+        reason:
+            "the server's own error code must reach errorCode verbatim, "
+            'exactly as it does for a player-initiated request',
+      );
+      expect(
+        transport.isClosed,
+        isTrue,
+        reason:
+            'a fatal background-resync failure must close the '
+            'connection, unchanged from a player-initiated request '
+            'failure',
+      );
+    });
+
+    test('the transport ending while the background resume is outstanding '
+        'closes the phase rather than failing it: hasDesynced stays true and '
+        'no error code is set', () async {
+      final (RoomController controller, FakeTransport transport, _) =
+          await _connectedController(seq: 1);
+      addTearDown(controller.dispose);
+
+      await _push(transport, 'presence', <String, Object?>{
+        'seat': 0,
+        'connected': false,
+        'seq': 999,
+      });
+      expect(
+        _resumeCount(transport),
+        1,
+        reason: 'fixture is broken: the gap must have started a resync',
+      );
+      final String? errorCodeBefore = controller.errorCode;
+
+      transport.endFromFarSide();
+      await pumpEventQueue();
+
+      expect(
+        controller.phase,
+        RoomPhase.closed,
+        reason:
+            'the ordinary connection.done lifecycle, not the resync\'s '
+            'own failure path, must decide the phase when the socket '
+            'itself dies while a background resume is outstanding',
+      );
+      expect(
+        controller.hasDesynced,
+        isTrue,
+        reason: 'a non-fatal resync failure must never clear hasDesynced',
+      );
+      expect(
+        controller.errorCode,
+        errorCodeBefore,
+        reason:
+            'the outstanding resume completing with '
+            'ConnectionClosedException must not itself set an error '
+            'code',
+      );
+      expect(
+        controller.errorCode,
+        isNot('closed'),
+        reason:
+            "errorCode == 'closed' is what a *request*-driven "
+            'ConnectionClosedException maps to through _failFromRequest '
+            '(see room_controller_test.dart); a background resync '
+            'failing the same way must never reach that mapping',
+      );
+    });
+
+    test('the resume timing out on a transport that stays open leaves the '
+        'controller connected: the connection is untouched, hasDesynced '
+        'stays true, and no error code is set', () {
+      fakeAsync((FakeAsync async) {
+        final (RoomController controller, FakeTransport transport, _) =
+            _connectedControllerInFakeAsync(async, seq: 1);
+
+        transport.pushText(
+          _frame(
+            type: 'presence',
+            data: <String, Object?>{'seat': 0, 'connected': false, 'seq': 999},
+          ),
+        );
+        async.flushMicrotasks();
+        expect(
+          controller.hasDesynced,
+          isTrue,
+          reason: 'fixture is broken: the gap must have started a resync',
+        );
+        expect(
+          _resumeCount(transport),
+          1,
+          reason: 'fixture is broken: the gap must have started a resync',
+        );
+
+        // The frozen declaration exposes no way to configure or discover
+        // the real request timeout; two hours of fake time is generous
+        // enough to exceed any plausible value, and the resume is never
+        // answered.
+        async.elapse(const Duration(hours: 2));
+        async.flushMicrotasks();
+
+        expect(
+          controller.phase,
+          RoomPhase.connected,
+          reason:
+              'a timed-out background resume must not touch the phase '
+              'of a socket that is still alive',
+        );
+        expect(
+          transport.isClosed,
+          isFalse,
+          reason:
+              'a timed-out background resume must not close a socket '
+              'that is still alive',
+        );
+        expect(controller.hasDesynced, isTrue);
+        expect(
+          controller.errorCode,
+          isNull,
+          reason: 'a timed-out background resume must not set an error code',
+        );
+
+        controller.dispose();
+      });
+    });
+
+    test('after a non-fatal resync failure, the controller still reduces '
+        'frames: a well-formed contiguous delta pushed afterwards still '
+        'changes room, proving _resyncInFlight was cleared rather than left '
+        'set and silently freezing every future frame', () {
+      fakeAsync((FakeAsync async) {
+        final (
+          RoomController controller,
+          FakeTransport transport,
+          _,
+        ) = _connectedControllerInFakeAsync(
+          async,
+          seq: 1,
+          seats: <Map<String, Object?>>[_seatJson(0, name: 'Sam')],
+        );
+
+        transport.pushText(
+          _frame(
+            type: 'presence',
+            data: <String, Object?>{'seat': 0, 'connected': false, 'seq': 999},
+          ),
+        );
+        async.flushMicrotasks();
+        expect(
+          _resumeCount(transport),
+          1,
+          reason: 'fixture is broken: the gap must have started a resync',
+        );
+
+        // Non-fatal failure: the resume times out, never answered.
+        async.elapse(const Duration(hours: 2));
+        async.flushMicrotasks();
+        expect(
+          controller.phase,
+          RoomPhase.connected,
+          reason: 'fixture is broken: a timeout must not fail the phase',
+        );
+        expect(
+          controller.room!.seats.length,
+          1,
+          reason:
+              'fixture is broken: the original gapped delta must still '
+              'not have been applied',
+        );
+
+        // room.seq is still 1 (the gapped delta at seq 999 was never
+        // applied), so seq 2 is contiguous.
+        transport.pushText(
+          _frame(
+            type: 'player_joined',
+            data: <String, Object?>{'seat': 1, 'name': 'Bob', 'seq': 2},
+          ),
+        );
+        async.flushMicrotasks();
+
+        expect(
+          controller.room!.seats.length,
+          2,
+          reason:
+              'a contiguous delta pushed after a non-fatal resync '
+              'failure must still be reduced; a controller that left '
+              '_resyncInFlight set would silently ignore this frame '
+              'forever',
+        );
+        expect(controller.room!.seq, 2);
+
+        controller.dispose();
+      });
+    });
+
+    test('single-flight survives a non-fatal failure: after a timed-out '
+        'resume, a later gapped delta produces a new resume on the wire', () {
+      fakeAsync((FakeAsync async) {
+        final (RoomController controller, FakeTransport transport, _) =
+            _connectedControllerInFakeAsync(async, seq: 1);
+
+        transport.pushText(
+          _frame(
+            type: 'presence',
+            data: <String, Object?>{'seat': 0, 'connected': false, 'seq': 999},
+          ),
+        );
+        async.flushMicrotasks();
+        expect(
+          _resumeCount(transport),
+          1,
+          reason: 'fixture is broken: the gap must have started a resync',
+        );
+
+        async.elapse(const Duration(hours: 2));
+        async.flushMicrotasks();
+        expect(
+          controller.phase,
+          RoomPhase.connected,
+          reason: 'fixture is broken: a timeout must not fail the phase',
+        );
+
+        transport.pushText(
+          _frame(
+            type: 'presence',
+            data: <String, Object?>{'seat': 0, 'connected': true, 'seq': 1000},
+          ),
+        );
+        async.flushMicrotasks();
+
+        expect(
+          _resumeCount(transport),
+          2,
+          reason:
+              'a later gap must produce a fresh resume once the earlier '
+              'one has failed; the controller must not have locked '
+              'itself out of ever resyncing again',
+        );
+
+        controller.dispose();
+      });
+    });
+  });
+
   group('D5 step 6: disposed while the resume is outstanding', () {
     test('the controller does nothing at all: no exception, and phase is not '
         'flipped to failed by the outstanding request completing after '
@@ -1939,3 +2261,9 @@ void main() {
     );
   });
 }
+
+/// A fire-and-forget helper for the fakeAsync F1 tests, which cannot use
+/// `await`: kept as a named function (rather than package:pedantic's
+/// unawaited, not a dependency here) purely so `dart format`/the
+/// unawaited_futures lint has something unambiguous to see was deliberate.
+void unawaitedFuture(Future<void> future) {}
