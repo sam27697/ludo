@@ -671,10 +671,23 @@ step:
 `deadline_ms` on that frame is measured from the segment the registry already
 starts at `start_game`, not from send time of a later frame.
 
-**The server does not do this yet.** `connection.dart`'s `_handleStartGame`
-sends `game_started` and stops; the only two `turn` emissions are in the roll
-and move handlers. This is a defect against this section as of now, and it needs
-its own order and its own blind test half.
+**The server does this. Implemented and proved.** `_handleStartGame` builds the
+opening `turn` with `buildTurn(seat: room.game.currentSeat, deadlineMs:
+ok.nextDeadlineMs, seq: ok.turnSeq)` and sends it to the whole room
+(`packages/ludo_server/lib/src/connection.dart:505-518`), with `turnSeq` and
+`nextDeadlineMs` computed by the registry rather than recomputed at send time
+(`registry.dart:93-123`). Its blind conformance half is
+`packages/ludo_server/test/turn_after_start_test.dart`, and
+`dice_steering_test.dart` and `fairness_lobby_test.dart` both consume the frame
+in their own sequences.
+
+> **Corrected 2026-08-29, run 27.** This paragraph said "The server does not do
+> this yet ... it needs its own order and its own blind test half" and kept
+> saying it after orders 061 and 062 had delivered exactly that. A section that
+> declares a defect the code no longer has is worse than one that says nothing:
+> run 27 wrote it into a work order's frozen declaration as a live constraint,
+> on this document's authority, before measuring the handler. Measure the code,
+> then trust the prose.
 
 ### 13.2 `presence` broadcasts on `resume` only when the seat actually flipped
 
