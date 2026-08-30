@@ -581,8 +581,9 @@ class RoomController extends ChangeNotifier {
   /// frame the protocol otherwise sends next is not yet implemented on the
   /// server, so this is the one frame that must already leave a board
   /// renderable. `k` is 0, section 6's "0 from game_started until the first
-  /// roll". The named seat absent from `room.seats` ignores the frame
-  /// entirely, ahead of the gap check.
+  /// roll". `turn` here is a room-level field, not an index into a seat, so
+  /// the absent-seat rule does not apply to it: that rule only guards a
+  /// frame field literally named `seat`.
   void _reduceGameStarted(Frame frame, RoomSnapshot room) {
     final int? turnSeat = _asInt(frame.data, 'turn');
     final String? gameId = _asString(frame.data, 'game_id');
@@ -592,10 +593,6 @@ class RoomController extends ChangeNotifier {
         gameId == null ||
         clientSeeds == null ||
         seqValue == null) {
-      return;
-    }
-
-    if (!room.seats.any((SeatState s) => s.seat == turnSeat)) {
       return;
     }
 
@@ -840,18 +837,15 @@ class RoomController extends ChangeNotifier {
   /// otherwise not stored; nothing renders it yet. If `turn` is present its
   /// `phase` becomes finished with `value`, `legal` and `sixes` cleared and
   /// `seat`, `deadlineMs` and `k` kept, per docs/PROTOCOL.md sections 14.1
-  /// and 14.2: a finished game's `turn` is not null. The named winner
-  /// absent from `room.seats` ignores the frame entirely, ahead of the gap
-  /// check.
+  /// and 14.2: a finished game's `turn` is not null. `winner` here is a
+  /// room-level field, not an index into a seat, so the absent-seat rule
+  /// does not apply to it: that rule only guards a frame field literally
+  /// named `seat`.
   void _reduceGameOver(Frame frame, RoomSnapshot room) {
     final int? winnerValue = _asInt(frame.data, 'winner');
     final String? verifyUrl = _asString(frame.data, 'verify_url');
     final int? seqValue = frame.seq;
     if (winnerValue == null || verifyUrl == null || seqValue == null) {
-      return;
-    }
-
-    if (!room.seats.any((SeatState s) => s.seat == winnerValue)) {
       return;
     }
 
