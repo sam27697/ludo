@@ -275,6 +275,35 @@ void main() {
       // binding and fails this test on its own; a correct fix instead
       // reports through the default onError as a normal, drainable
       // exception, which takeException() below both surfaces and drains.
+      //
+      // Order 097 re-tried this against order 092's fix in place (where the
+      // future's error is always caught by the onError argument to then(),
+      // so nothing here should ever reach the zone as a genuine escape) by
+      // swapping this block for _captureFlutterErrors() plus
+      // _expectReportedOnce(), the same pattern the two synchronous-throw
+      // tests below use successfully. It did not work: run in complete
+      // isolation with --plain-name matching only this test, the run
+      // failed within the first second on
+      // "'package:flutter_test/src/binding.dart': Failed assertion: ...
+      // '_pendingExceptionDetails != null'" -- the same crash this comment
+      // already describes for base -- and the process then would not exit
+      // on its own; it needed an external kill after the bound wait. Order
+      // 097 also found that this exact crash-then-hang is not unique to
+      // this test or to error reporting: it reproduced, each time in
+      // complete single-test isolation, on the synchronous-throw test for
+      // initialLinkReader() below, on the synchronous-throw test for
+      // linkStream() below, and on the entirely error-free "an invalid
+      // initial link still sets the existing error text" test further down
+      // in this file, none of which touch this future-error path at all.
+      // That rules out load and test ordering as the cause and points at
+      // something in how this flutter_test binding on this box handles a
+      // FlutterError.onError override at all, not at anything specific to
+      // this scenario. The practical cost stands as originally flagged:
+      // this test verifies the error reaches the framework by identity
+      // (same(thrown)) but not that FlutterErrorDetails.library equals
+      // 'ludo client' or that its stack is non-null; those two assertions
+      // for this path are exercised only by the synchronous-throw
+      // counterpart below.
       final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
       final _RecordingNavigatorObserver observer =
           _RecordingNavigatorObserver();
@@ -314,7 +343,9 @@ void main() {
       'valid Uri on the same stream still pre-fills the code field',
       (tester) async {
         // See the matching comment on the initialLinkReader test above:
-        // no onError override here, for the same reason.
+        // no onError override here, for the same reason, and order 097
+        // confirmed the same crash-then-hang for this test too when it
+        // tried the _captureFlutterErrors() swap here as well.
         final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
         final _RecordingNavigatorObserver observer =
             _RecordingNavigatorObserver();
@@ -421,6 +452,19 @@ void main() {
     // the synchronous shape is safe to combine with a FlutterError.onError
     // override in this suite (see the comments on the async-error groups
     // above for why the async shape is not).
+    //
+    // Order 097 record: this test itself hits the same
+    // "'_pendingExceptionDetails != null'" crash-then-hang documented on
+    // the async-error groups above, reproduced in complete --plain-name
+    // isolation both against order 092's real fix and against mutation M4
+    // (making both context strings 'reading the initial link'). Because
+    // the crash happens before this test's own expect() calls run either
+    // way, M4 could not be shown to be caught or missed by this suite: the
+    // run result is identical whether M4 is applied or not. The E3 keying
+    // weakness this comment block used to flag (that the check keys on the
+    // words initial/cold and stream/warm) is therefore unproven either way
+    // in this environment, and was left as originally written rather than
+    // rewritten against a mutation result nobody could actually observe.
     testWidgets(
       'the initialLinkReader failure and the linkStream failure report '
       'distinct, path-naming FlutterErrorDetails.context values',
