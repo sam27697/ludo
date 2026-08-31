@@ -35,5 +35,17 @@
   "lobbyErrorRoomStarted": "بدأت هذه الغرفة لعبتها بالفعل.",
   "lobbyErrorRateLimited": "محاولات كثيرة جدًا. انتظر قليلاً ثم حاول مرة أخرى.",
   "lobbyErrorTransport": "تعذر الوصول إلى الخادم. تحقق من اتصالك وحاول مرة أخرى.",
-  "lobbyErrorGeneric": "حدث خطأ ما. حاول مرة أخرى."
+  "lobbyErrorGeneric": "حدث خطأ ما. حاول مرة أخرى.",
+  "gameScreenTitle": "اللعبة",
+  "gameWaitingForStart": "بانتظار بدء اللعبة",
+  "gameWaitingForTurn": "بانتظار الدور التالي",
+  "gameWaitingForPlayer": "بانتظار {name}",
+  "gameYourTurnRoll": "دورك. ارمِ النرد.",
+  "gameYourTurnMove": "دورك. اختر قطعة لتحريكها.",
+  "gameRollButton": "رمي النرد",
+  "gameTokenButton": "قطعة {number}",
+  "gameDieValue": "الرمية: {value}",
+  "gameOverYouWin": "لقد فزت",
+  "gameOverPlayerWins": "{name} يفوز",
+  "gameOverEnded": "انتهت اللعبة"
 }
