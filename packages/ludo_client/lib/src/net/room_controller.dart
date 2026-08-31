@@ -243,6 +243,48 @@ class RoomController extends ChangeNotifier {
     }
   }
 
+  /// Forwards to the connection when [phase] is [RoomPhase.connected] and is
+  /// a silent no-op otherwise. The reply is a plain frame, not a snapshot; it
+  /// is not parsed as one and changes nothing here. The `rolled` frame that
+  /// follows reaches [frames] like every other frame and is what actually
+  /// moves the turn forward.
+  Future<void> roll() async {
+    final RoomConnection? connection = _connection;
+    if (_disposed || _phase != RoomPhase.connected || connection == null) {
+      return;
+    }
+    try {
+      await connection.roll();
+    } catch (error) {
+      _failFromRequest(error);
+    }
+  }
+
+  /// Forwards to the connection when [phase] is [RoomPhase.connected] and is
+  /// a silent no-op otherwise. The reply is a plain frame, not a snapshot; it
+  /// is not parsed as one and changes nothing here. The `moved` frame that
+  /// follows reaches [frames] like every other frame and is what actually
+  /// moves the token.
+  ///
+  /// `token` is passed through to [RoomConnection.move] exactly as given and
+  /// is not validated here: not its range, not `turn.legal`, not whose turn
+  /// it is. The server is authoritative and answers `ILLEGAL_MOVE`,
+  /// `NOT_YOUR_TURN` or `WRONG_PHASE` when it is wrong; checking any of that
+  /// here would be a second implementation of the rules the server already
+  /// owns. A screen may grey a button out, but that is the screen's business,
+  /// not this method's.
+  Future<void> move(int token) async {
+    final RoomConnection? connection = _connection;
+    if (_disposed || _phase != RoomPhase.connected || connection == null) {
+      return;
+    }
+    try {
+      await connection.move(token);
+    } catch (error) {
+      _failFromRequest(error);
+    }
+  }
+
   /// Sends `leave_room` best-effort (its outcome, success or failure, is
   /// never surfaced as an error: this controller is on its way out either
   /// way), closes the connection, and sets [phase] to [RoomPhase.closed].
@@ -626,6 +668,15 @@ class RoomController extends ChangeNotifier {
   /// `seat`, carrying `k` forward from the turn it replaces: section 6
   /// defines `turn.k` as the rolls made so far and a turn beginning makes no
   /// roll. Absent seat: ignored entirely, ahead of the gap check.
+  ///
+  /// A null `room.turn` is not a special case: `k` falls back to `0`, and
+  /// that is applied the same as any other segment, not treated as an error
+  /// and not ignored. A `turn` frame arriving with no prior turn on the room
+  /// still begins a turn and still makes no roll, so section 6's "rolls made
+  /// so far" is still zero. This holds whether the null came from a fresh
+  /// snapshot that never carried a turn or from anywhere else `room.turn` can
+  /// be null; this reducer does not distinguish those cases and neither does
+  /// the rule.
   void _reduceTurn(Frame frame, RoomSnapshot room) {
     final int? seatValue = _asInt(frame.data, 'seat');
     final int? deadlineMs = _asInt(frame.data, 'deadline_ms');
