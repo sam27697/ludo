@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'deep_link.dart';
-import 'lobby_screen.dart';
+import 'lobby_screen.dart' show LobbyAction;
 import 'net/room_controller.dart';
 import 'room_code.dart';
+import 'room_route.dart';
 import 'server_config.dart';
 
 /// Home screen: app title, a name field, a player-count selector, Create
@@ -139,7 +140,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final RoomController controller = widget.controllerFactory();
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => LobbyScreen(
+        builder: (context) => RoomRoute(
           controller: controller,
           action: LobbyAction.create,
           playerName: name,
@@ -178,7 +179,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final RoomController controller = widget.controllerFactory();
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => LobbyScreen(
+        builder: (context) => RoomRoute(
           controller: controller,
           action: LobbyAction.join,
           code: normalized,
