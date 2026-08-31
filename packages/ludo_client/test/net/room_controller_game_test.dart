@@ -134,15 +134,25 @@ Map<String, Object?> _roomJson({
 
 /// Hands out queued [FakeTransport]s, one per call, in order. Records every
 /// url it was called with so a test can assert how many times (and prove no
-/// more than that) a connection was ever attempted.
+/// more than that) a connection was ever attempted. [rejectNextWith] makes
+/// exactly the next call reject instead, to build a phase=failed fixture for
+/// the G1/G2 no-op tests without ever handing out a transport at all.
 class _Connector {
   final List<FakeTransport> _queue = <FakeTransport>[];
   final List<Uri> calls = <Uri>[];
+  Object? _rejectNextWith;
 
   void enqueue(FakeTransport transport) => _queue.add(transport);
 
+  void rejectNextWith(Object error) => _rejectNextWith = error;
+
   Future<WireTransport> call(Uri url) async {
     calls.add(url);
+    if (_rejectNextWith != null) {
+      final Object error = _rejectNextWith!;
+      _rejectNextWith = null;
+      throw error;
+    }
     if (_queue.isEmpty) {
       throw StateError(
         '_Connector: connect() call #${calls.length} has no transport '
@@ -302,6 +312,129 @@ Future<void> _expectNoOp(
 
   controller.removeListener(listener);
   await sub.cancel();
+}
+
+// ===========================================================================
+// Declaration G. roll() and RoomController.move(int) do not exist on the
+// branch this file is written against: a second worker is adding them, blind,
+// from the identical frozen block. Calling controller.roll() or
+// controller.move(n) directly here would fail `flutter analyze` with
+// undefined_method and stop the whole file from compiling, hiding the D1
+// through D6 coverage above it.
+//
+// Order 100 wrote these tests blind, before RoomController had roll() or
+// move(). To keep the file analysing on that base it carried a small
+// extension forwarding both names through `dynamic`, so the cases failed at
+// runtime with NoSuchMethodError instead of failing to compile. Order 099
+// landed the real methods, Dart resolves a declared instance member ahead of
+// an extension member of the same name, and the extension became dead code
+// the analyzer flagged as unused_element. Removed here by the master on
+// merging the pair. Every case below now calls the real methods, and every
+// one of them passes against an implementation this file's author never read.
+
+// --- phase fixtures shared by G1 clause 1's and G2 clause 3's four phases --
+
+/// Phase idle: no connection has ever been attempted. There is no transport
+/// at all, so the "wire" a no-op is checked against is [_Connector.calls]
+/// staying empty rather than any [FakeTransport].
+Future<(RoomController, FakeTransport?, _Connector)> _idlePhaseFixture() async {
+  final _Connector connector = _Connector();
+  final RoomController controller = _newController(connector);
+  expect(controller.phase, RoomPhase.idle, reason: 'fixture is broken');
+  return (controller, null, connector);
+}
+
+/// Phase connecting: createRoom() is in flight and has not been answered.
+Future<(RoomController, FakeTransport?, _Connector)>
+_connectingPhaseFixture() async {
+  final _Connector connector = _Connector();
+  final FakeTransport transport = FakeTransport();
+  connector.enqueue(transport);
+  final RoomController controller = _newController(connector);
+  unawaitedFuture(controller.createRoom(name: 'Sam', players: 4));
+  expect(controller.phase, RoomPhase.connecting, reason: 'fixture is broken');
+  return (controller, transport, connector);
+}
+
+/// Finishes the createRoom() a connecting-phase fixture started, so it does
+/// not leak a pending request/timer into a later test (standing lesson 9).
+Future<void> _finishConnectingFixture(FakeTransport transport) async {
+  final String id = _idOf(transport.sentRaw.first);
+  transport.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: <String, Object?>{'seat': 0, 'seat_token': 'tok'},
+    ),
+  );
+  transport.pushText(_frame(type: 'room', re: id, data: _roomJson(seq: 1)));
+  await pumpEventQueue();
+}
+
+/// Phase closed: the transport died on its own, with nothing outstanding.
+Future<(RoomController, FakeTransport?, _Connector)>
+_closedPhaseFixture() async {
+  final (
+    RoomController controller,
+    FakeTransport transport,
+    _Connector connector,
+  ) = await _connectedController(
+    seq: 1,
+  );
+  transport.endFromFarSide();
+  await pumpEventQueue();
+  expect(controller.phase, RoomPhase.closed, reason: 'fixture is broken');
+  return (controller, transport, connector);
+}
+
+/// Phase failed: the connector itself rejected, so no transport was ever
+/// handed out at all.
+Future<(RoomController, FakeTransport?, _Connector)>
+_failedPhaseFixture() async {
+  final _Connector connector = _Connector();
+  connector.rejectNextWith(Exception('boom'));
+  final RoomController controller = _newController(connector);
+  await controller.createRoom(name: 'Sam', players: 4);
+  expect(controller.phase, RoomPhase.failed, reason: 'fixture is broken');
+  return (controller, null, connector);
+}
+
+/// Asserts that calling [action] on [controller] was a silent no-op: no new
+/// bytes on [transport]'s wire when a transport exists at all, no new
+/// connection attempt through [connector] either way, no listener fired, and
+/// the call itself does not throw. The one assertion this cannot make in
+/// phases idle and failed is "the wire is empty", because neither phase ever
+/// had a wire to begin with; [connector.calls] not growing is the equivalent
+/// guarantee for those two, since it proves no transport was opened to send
+/// on regardless.
+Future<void> _expectGameIntentionNoOp(
+  RoomController controller,
+  _Connector connector, {
+  FakeTransport? transport,
+  required Future<void> Function() action,
+  required String reason,
+}) async {
+  final RoomPhase phaseBefore = controller.phase;
+  final int sentBefore = transport?.sentRaw.length ?? 0;
+  final int callsBefore = connector.calls.length;
+  int notifyCount = 0;
+  void listener() => notifyCount++;
+  controller.addListener(listener);
+
+  await expectLater(action(), completes, reason: '$reason (must not throw)');
+
+  expect(controller.phase, phaseBefore, reason: reason);
+  expect(
+    transport?.sentRaw.length ?? 0,
+    sentBefore,
+    reason: '$reason (the wire must stay exactly as it was)',
+  );
+  expect(
+    connector.calls.length,
+    callsBefore,
+    reason: '$reason (must not open a new connection)',
+  );
+  expect(notifyCount, 0, reason: '$reason (must not notify)');
+  controller.removeListener(listener);
 }
 
 void main() {
@@ -2259,6 +2392,636 @@ void main() {
         expect(controller.room!.turn!.sixes, 2);
       },
     );
+  });
+
+  // ======================================================================
+  // G1. RoomController.roll(). See the extension _PendingGameIntentions
+  // above main() for why controller.roll() compiles on a branch that does
+  // not yet declare it.
+  // ======================================================================
+  group('G1: RoomController.roll()', () {
+    test('clause 2: puts exactly one roll request on the wire, with t="roll" '
+        'and the empty d docs/PROTOCOL.md section 4 specifies, while '
+        'connected', () async {
+      final (RoomController controller, FakeTransport transport, _) =
+          await _connectedController(seq: 1);
+      addTearDown(controller.dispose);
+      final int sentBefore = transport.sentRaw.length;
+
+      final Future<void> future = controller.roll();
+      await pumpEventQueue();
+
+      final List<Map<String, Object?>> rollFrames = transport.sentRaw
+          .skip(sentBefore)
+          .map(_decode)
+          .where((Map<String, Object?> m) => m['t'] == 'roll')
+          .toList();
+      expect(
+        rollFrames,
+        hasLength(1),
+        reason:
+            'roll() must put exactly one roll request on the wire, got '
+            '${transport.sentRaw.skip(sentBefore).toList()}',
+      );
+      expect(
+        rollFrames.single['d'],
+        equals(<String, Object?>{}),
+        reason: 'docs/PROTOCOL.md section 4: roll carries an empty d',
+      );
+
+      // Resolve it so nothing is left outstanding at the end of the body
+      // (standing lesson 9).
+      final String id = rollFrames.single['id']! as String;
+      transport.pushText(_frame(type: 'pong', re: id));
+      await expectLater(future, completes);
+    });
+
+    test('clause 1: is a silent no-op in phase idle, sending nothing at all '
+        'and notifying no listener', () async {
+      final (
+        RoomController controller,
+        FakeTransport? transport,
+        _Connector connector,
+      ) = await _idlePhaseFixture();
+      addTearDown(controller.dispose);
+
+      await _expectGameIntentionNoOp(
+        controller,
+        connector,
+        transport: transport,
+        action: controller.roll,
+        reason: 'G1 clause 1: roll() must be a silent no-op in phase idle',
+      );
+    });
+
+    test('clause 1: is a silent no-op in phase connecting, sending nothing at '
+        'all and notifying no listener', () async {
+      final (
+        RoomController controller,
+        FakeTransport? transport,
+        _Connector connector,
+      ) = await _connectingPhaseFixture();
+      addTearDown(controller.dispose);
+
+      await _expectGameIntentionNoOp(
+        controller,
+        connector,
+        transport: transport,
+        action: controller.roll,
+        reason:
+            'G1 clause 1: roll() must be a silent no-op in phase '
+            'connecting',
+      );
+
+      await _finishConnectingFixture(transport!);
+    });
+
+    test('clause 1: is a silent no-op in phase closed, sending nothing at all '
+        'and notifying no listener', () async {
+      final (
+        RoomController controller,
+        FakeTransport? transport,
+        _Connector connector,
+      ) = await _closedPhaseFixture();
+      addTearDown(controller.dispose);
+
+      await _expectGameIntentionNoOp(
+        controller,
+        connector,
+        transport: transport,
+        action: controller.roll,
+        reason: 'G1 clause 1: roll() must be a silent no-op in phase closed',
+      );
+    });
+
+    test('clause 1: is a silent no-op in phase failed, sending nothing at all '
+        'and notifying no listener', () async {
+      final (
+        RoomController controller,
+        FakeTransport? transport,
+        _Connector connector,
+      ) = await _failedPhaseFixture();
+      addTearDown(controller.dispose);
+
+      await _expectGameIntentionNoOp(
+        controller,
+        connector,
+        transport: transport,
+        action: controller.roll,
+        reason: 'G1 clause 1: roll() must be a silent no-op in phase failed',
+      );
+    });
+
+    test('clause 1: after dispose(), roll() sends nothing at all and does not '
+        'throw', () async {
+      final (RoomController controller, FakeTransport transport, _) =
+          await _connectedController(seq: 1);
+      final int sentBefore = transport.sentRaw.length;
+
+      controller.dispose();
+
+      late Future<void> future;
+      expect(
+        () => future = controller.roll(),
+        returnsNormally,
+        reason: 'roll() after dispose() must not throw synchronously',
+      );
+      await expectLater(future, completes);
+      expect(
+        transport.sentRaw.length,
+        sentBefore,
+        reason: 'roll() after dispose() must send nothing at all',
+      );
+    });
+
+    test("clause 3: the reply frame is discarded -- room stays the identical "
+        'snapshot it was before, seq does not move, and no listener fires for '
+        'the reply itself', () async {
+      final (RoomController controller, FakeTransport transport, _) =
+          await _connectedController(seq: 1);
+      addTearDown(controller.dispose);
+      final Object? roomBefore = controller.room;
+      final int seqBefore = controller.room!.seq;
+      int notifyCount = 0;
+      controller.addListener(() => notifyCount++);
+
+      final Future<void> future = controller.roll();
+      await pumpEventQueue();
+      final String id = _idOf(transport.sentRaw.last);
+      // 'pong' is a real docs/PROTOCOL.md section 5 type, carries no seq,
+      // and is not one of D4's reducer types, so it is inert on the
+      // ordinary frame path too: any change observed here can only be
+      // attributed to roll() itself trying to parse its own reply as a
+      // snapshot.
+      transport.pushText(_frame(type: 'pong', re: id));
+      await expectLater(future, completes);
+
+      expect(
+        identical(controller.room, roomBefore),
+        isTrue,
+        reason: 'G1 clause 3: the reply must not be parsed as a snapshot',
+      );
+      expect(
+        controller.room!.seq,
+        seqBefore,
+        reason: 'G1 clause 3: the reply must not advance seq',
+      );
+      expect(
+        notifyCount,
+        0,
+        reason: 'G1 clause 3: the reply itself must not notify',
+      );
+    });
+
+    test('clause 4: a request that fails drives the phase to failed and sets '
+        'errorCode/errorMessage verbatim, pinned the way the D5: resync '
+        'failure group above pins its own', () async {
+      final (RoomController controller, FakeTransport transport, _) =
+          await _connectedController(seq: 1);
+      addTearDown(controller.dispose);
+
+      final Future<void> future = controller.roll();
+      await pumpEventQueue();
+      final String id = _idOf(transport.sentRaw.last);
+      transport.pushText(
+        _frame(
+          type: 'error',
+          re: id,
+          data: <String, Object?>{
+            'code': 'WRONG_PHASE',
+            'message': 'a move is pending',
+          },
+        ),
+      );
+
+      await expectLater(
+        future,
+        completes,
+        reason: 'roll() must never throw, even on a server error',
+      );
+      expect(controller.phase, RoomPhase.failed);
+      expect(controller.errorCode, 'WRONG_PHASE');
+      expect(controller.errorMessage, 'a move is pending');
+    });
+  });
+
+  // ======================================================================
+  // G2. RoomController.move(int token).
+  // ======================================================================
+  group('G2: RoomController.move(int token)', () {
+    test('clause 2: puts exactly one move request on the wire, carrying '
+        '{"token": n} for an n that is not 0, while connected', () async {
+      final (RoomController controller, FakeTransport transport, _) =
+          await _connectedController(seq: 1);
+      addTearDown(controller.dispose);
+      const int chosenToken = 3;
+      final int sentBefore = transport.sentRaw.length;
+
+      final Future<void> future = controller.move(chosenToken);
+      await pumpEventQueue();
+
+      final List<Map<String, Object?>> moveFrames = transport.sentRaw
+          .skip(sentBefore)
+          .map(_decode)
+          .where((Map<String, Object?> m) => m['t'] == 'move')
+          .toList();
+      expect(
+        moveFrames,
+        hasLength(1),
+        reason:
+            'move() must put exactly one move request on the wire, got '
+            '${transport.sentRaw.skip(sentBefore).toList()}',
+      );
+      expect(
+        moveFrames.single['d'],
+        equals(<String, Object?>{'token': chosenToken}),
+        reason:
+            'docs/PROTOCOL.md section 4: move carries {"token": n}, and '
+            'chosenToken is $chosenToken specifically so a hardcoded 0 '
+            'cannot satisfy this assertion',
+      );
+
+      final String id = moveFrames.single['id']! as String;
+      transport.pushText(_frame(type: 'pong', re: id));
+      await expectLater(future, completes);
+    });
+
+    test('clause 3: is a silent no-op in phase connecting, sending nothing at '
+        'all and notifying no listener', () async {
+      final (
+        RoomController controller,
+        FakeTransport? transport,
+        _Connector connector,
+      ) = await _connectingPhaseFixture();
+      addTearDown(controller.dispose);
+
+      await _expectGameIntentionNoOp(
+        controller,
+        connector,
+        transport: transport,
+        action: () => controller.move(1),
+        reason:
+            'G2 clause 3: move() must be a silent no-op in phase '
+            'connecting',
+      );
+
+      await _finishConnectingFixture(transport!);
+    });
+
+    test('clause 3: is a silent no-op in phase failed, sending nothing at all '
+        'and notifying no listener', () async {
+      final (
+        RoomController controller,
+        FakeTransport? transport,
+        _Connector connector,
+      ) = await _failedPhaseFixture();
+      addTearDown(controller.dispose);
+
+      await _expectGameIntentionNoOp(
+        controller,
+        connector,
+        transport: transport,
+        action: () => controller.move(1),
+        reason: 'G2 clause 3: move() must be a silent no-op in phase failed',
+      );
+    });
+
+    test(
+      'clause 1: a token that is not in the current turn\'s legal list is '
+      'still sent unchanged -- the controller performs no legality check',
+      () async {
+        final (
+          RoomController controller,
+          FakeTransport transport,
+          _,
+        ) = await _connectedController(
+          seq: 1,
+          state: 'PLAYING',
+          turn: _turnJson(
+            seat: 0,
+            phase: 'await_move',
+            deadlineMs: 9000,
+            k: 4,
+            value: 3,
+            legal: <int>[2],
+          ),
+        );
+        addTearDown(controller.dispose);
+        const int illegalToken = 1;
+        final int sentBefore = transport.sentRaw.length;
+
+        final Future<void> future = controller.move(illegalToken);
+        await pumpEventQueue();
+
+        final List<Map<String, Object?>> moveFrames = transport.sentRaw
+            .skip(sentBefore)
+            .map(_decode)
+            .where((Map<String, Object?> m) => m['t'] == 'move')
+            .toList();
+        expect(
+          moveFrames,
+          hasLength(1),
+          reason:
+              'G2 clause 1: a token outside legal ([2]) must still reach '
+              'the wire unchanged',
+        );
+        expect(moveFrames.single['d'], equals(<String, Object?>{'token': 1}));
+
+        final String id = moveFrames.single['id']! as String;
+        transport.pushText(_frame(type: 'pong', re: id));
+        await expectLater(future, completes);
+      },
+    );
+
+    test('clause 1: a token outside 0..3 is still sent unchanged -- the '
+        'controller performs no range check', () async {
+      final (
+        RoomController controller,
+        FakeTransport transport,
+        _,
+      ) = await _connectedController(
+        seq: 1,
+        state: 'PLAYING',
+        turn: _turnJson(
+          seat: 0,
+          phase: 'await_move',
+          deadlineMs: 9000,
+          k: 4,
+          value: 3,
+          legal: <int>[0, 1, 2, 3],
+        ),
+      );
+      addTearDown(controller.dispose);
+      const int outOfRangeToken = 99;
+      final int sentBefore = transport.sentRaw.length;
+
+      final Future<void> future = controller.move(outOfRangeToken);
+      await pumpEventQueue();
+
+      final List<Map<String, Object?>> moveFrames = transport.sentRaw
+          .skip(sentBefore)
+          .map(_decode)
+          .where((Map<String, Object?> m) => m['t'] == 'move')
+          .toList();
+      expect(
+        moveFrames,
+        hasLength(1),
+        reason:
+            'G2 clause 1: a token outside 0..3 must still reach the wire '
+            'unchanged',
+      );
+      expect(moveFrames.single['d'], equals(<String, Object?>{'token': 99}));
+
+      final String id = moveFrames.single['id']! as String;
+      transport.pushText(_frame(type: 'pong', re: id));
+      await expectLater(future, completes);
+    });
+
+    test(
+      "clause 1: a move sent while another seat holds the turn is still "
+      'sent unchanged -- the controller does not check whose turn it is',
+      () async {
+        final (
+          RoomController controller,
+          FakeTransport transport,
+          _,
+        ) = await _connectedController(
+          seq: 1,
+          hostSeat: 0,
+          state: 'PLAYING',
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Sam'),
+            _seatJson(1, name: 'Bob'),
+          ],
+          turn: _turnJson(
+            seat: 1, // not this client's own seat (0)
+            phase: 'await_move',
+            deadlineMs: 9000,
+            k: 4,
+            value: 3,
+            legal: <int>[0],
+          ),
+        );
+        addTearDown(controller.dispose);
+        expect(controller.seat, 0, reason: 'fixture is broken');
+        final int sentBefore = transport.sentRaw.length;
+
+        final Future<void> future = controller.move(0);
+        await pumpEventQueue();
+
+        final List<Map<String, Object?>> moveFrames = transport.sentRaw
+            .skip(sentBefore)
+            .map(_decode)
+            .where((Map<String, Object?> m) => m['t'] == 'move')
+            .toList();
+        expect(
+          moveFrames,
+          hasLength(1),
+          reason:
+              'G2 clause 1: a move issued while seat 1 holds the turn must '
+              'still reach the wire from seat 0 unchanged; the server, not '
+              'this controller, answers NOT_YOUR_TURN',
+        );
+        expect(moveFrames.single['d'], equals(<String, Object?>{'token': 0}));
+
+        final String id = moveFrames.single['id']! as String;
+        transport.pushText(_frame(type: 'pong', re: id));
+        await expectLater(future, completes);
+      },
+    );
+
+    test('clause 4: a request that fails drives the phase to failed and sets '
+        'errorCode/errorMessage verbatim, pinned the way the D5: resync '
+        'failure group above pins its own', () async {
+      final (RoomController controller, FakeTransport transport, _) =
+          await _connectedController(seq: 1);
+      addTearDown(controller.dispose);
+
+      final Future<void> future = controller.move(0);
+      await pumpEventQueue();
+      final String id = _idOf(transport.sentRaw.last);
+      transport.pushText(
+        _frame(
+          type: 'error',
+          re: id,
+          data: <String, Object?>{
+            'code': 'ILLEGAL_MOVE',
+            'message': 'token not in legal',
+          },
+        ),
+      );
+
+      await expectLater(
+        future,
+        completes,
+        reason: 'move() must never throw, even on a server error',
+      );
+      expect(controller.phase, RoomPhase.failed);
+      expect(controller.errorCode, 'ILLEGAL_MOVE');
+      expect(controller.errorMessage, 'token not in legal');
+    });
+  });
+
+  // ======================================================================
+  // G3. The ordering guarantee, and its one limit: no de-duplication, no
+  // in-flight guard.
+  // ======================================================================
+  group('G3: ordering, no de-duplication, no in-flight guard', () {
+    test(
+      'two roll() calls issued back to back both reach the wire, in call '
+      'order, as two distinct requests; the second is not suppressed',
+      () async {
+        final (RoomController controller, FakeTransport transport, _) =
+            await _connectedController(seq: 1);
+        final int sentBefore = transport.sentRaw.length;
+
+        final Future<void> first = controller.roll();
+        final Future<void> second = controller.roll();
+        await pumpEventQueue();
+
+        final List<Map<String, Object?>> rollFrames = transport.sentRaw
+            .skip(sentBefore)
+            .map(_decode)
+            .where((Map<String, Object?> m) => m['t'] == 'roll')
+            .toList();
+        expect(
+          rollFrames,
+          hasLength(2),
+          reason:
+              'G3: two roll() calls in flight at once must be two requests '
+              'on the wire; a length of 1 would mean de-duplication or an '
+              'in-flight guard the declaration explicitly forbids, got '
+              '${transport.sentRaw.skip(sentBefore).toList()}',
+        );
+        expect(
+          rollFrames[0]['id'],
+          isNot(rollFrames[1]['id']),
+          reason:
+              'the two requests must be distinct messages, not one id '
+              'replayed twice',
+        );
+
+        // Neither request is ever answered here; dispose from inside the
+        // body (standing lesson 9) rather than only via addTearDown, so no
+        // pending request/timer survives past this test.
+        controller.dispose();
+        await pumpEventQueue();
+        unawaitedFuture(first);
+        unawaitedFuture(second);
+      },
+    );
+  });
+
+  // ======================================================================
+  // G4. The null starting turn, frozen by the master as the rule rather
+  // than merely observed. No implementation change is permitted for G4;
+  // this pins behaviour the reducer already has.
+  // ======================================================================
+  group('G4: the null starting turn', () {
+    test('a standalone turn frame whose gap check passes, naming a seat '
+        'present in room.seats, arriving while room.turn is null, is applied '
+        'as a fresh await-roll segment with k == 0 -- not ignored and not a '
+        'desync', () async {
+      final (
+        RoomController controller,
+        FakeTransport transport,
+        _,
+      ) = await _connectedController(
+        seq: 1,
+        seats: <Map<String, Object?>>[
+          _seatJson(0, name: 'Sam'),
+          _seatJson(1, name: 'Bob'),
+        ],
+      );
+      addTearDown(controller.dispose);
+      expect(controller.room!.turn, isNull, reason: 'fixture is broken');
+      int notifyCount = 0;
+      controller.addListener(() => notifyCount++);
+
+      await _push(transport, 'turn', <String, Object?>{
+        'seat': 1,
+        'deadline_ms': 24680,
+        'seq': 2, // room.seq (1) + 1: the gap check passes
+      });
+
+      final turn = controller.room!.turn;
+      expect(
+        turn,
+        isNotNull,
+        reason:
+            'G4: a turn frame arriving while room.turn is null must be '
+            'applied, not ignored',
+      );
+      expect(turn!.seat, 1);
+      expect(turn.phase.toString(), contains('awaitRoll'));
+      expect(
+        turn.deadlineMs,
+        24680,
+        reason: "deadlineMs must be exactly the frame's own deadline_ms",
+      );
+      expect(
+        turn.k,
+        0,
+        reason:
+            'G4: k of a fresh segment computed from a null starting turn '
+            'is 0 -- it is not omitted, not an error, and does not '
+            'trigger a resync',
+      );
+      expect(turn.value, isNull);
+      expect(turn.legal, isNull);
+      expect(turn.sixes, isNull);
+      expect(controller.room!.seq, 2);
+      expect(
+        controller.hasDesynced,
+        isFalse,
+        reason: 'G4: a null starting turn must not raise hasDesynced',
+      );
+      expect(notifyCount, greaterThan(0));
+    });
+
+    test('the same frame while room.turn is non-null carries that turn\'s own '
+        'k forward instead of resetting it to 0', () async {
+      final (
+        RoomController controller,
+        FakeTransport transport,
+        _,
+      ) = await _connectedController(
+        seq: 1,
+        state: 'PLAYING',
+        seats: <Map<String, Object?>>[
+          _seatJson(0, name: 'Sam'),
+          _seatJson(1, name: 'Bob'),
+        ],
+        turn: _turnJson(
+          seat: 0,
+          phase: 'await_move',
+          deadlineMs: 500,
+          k: 7,
+          value: 6,
+          legal: <int>[0, 1],
+        ),
+      );
+      addTearDown(controller.dispose);
+
+      await _push(transport, 'turn', <String, Object?>{
+        'seat': 1,
+        'deadline_ms': 13579,
+        'seq': 2,
+      });
+
+      final turn = controller.room!.turn!;
+      expect(turn.seat, 1);
+      expect(turn.deadlineMs, 13579);
+      expect(
+        turn.k,
+        7,
+        reason:
+            'G4: k must be carried forward from the turn this frame '
+            'replaces, chosen as 7 (not 0) so a hardcoded 0 could not '
+            'satisfy both this case and the null-starting-turn case '
+            'above',
+      );
+    });
   });
 }
 
