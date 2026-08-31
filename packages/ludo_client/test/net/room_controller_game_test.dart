@@ -322,23 +322,15 @@ Future<void> _expectNoOp(
 // undefined_method and stop the whole file from compiling, hiding the D1
 // through D6 coverage above it.
 //
-// This extension is the guard, not a stand-in implementation. It decides
-// nothing about what roll()/move() do: every body below reaches the real
-// method through `dynamic`, so on this branch it throws NoSuchMethodError at
-// test time -- which is the correct, expected result the work order asks
-// for -- and the moment RoomController gains real roll()/move() methods,
-// Dart's own rule that a declared instance member always wins over an
-// extension member of the same name makes this extension dead code without
-// touching a line of this file or of room_controller.dart.
-extension _PendingGameIntentions on RoomController {
-  Future<void> roll() async {
-    return (this as dynamic).roll();
-  }
-
-  Future<void> move(int token) async {
-    return (this as dynamic).move(token);
-  }
-}
+// Order 100 wrote these tests blind, before RoomController had roll() or
+// move(). To keep the file analysing on that base it carried a small
+// extension forwarding both names through `dynamic`, so the cases failed at
+// runtime with NoSuchMethodError instead of failing to compile. Order 099
+// landed the real methods, Dart resolves a declared instance member ahead of
+// an extension member of the same name, and the extension became dead code
+// the analyzer flagged as unused_element. Removed here by the master on
+// merging the pair. Every case below now calls the real methods, and every
+// one of them passes against an implementation this file's author never read.
 
 // --- phase fixtures shared by G1 clause 1's and G2 clause 3's four phases --
 
