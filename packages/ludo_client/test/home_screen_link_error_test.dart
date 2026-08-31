@@ -11,16 +11,12 @@
 //
 // A note on how the failures show up. A Future that completes with an
 // error, or a Stream that emits one, with nothing on the chain to catch it,
-// does not merely fail a plain expect() on this base: flutter_test's own
-// binding intercepts the escaped zone error before this file's assertions
-// ever run, and because this suite has replaced FlutterError.onError to
-// capture what reaches it, the binding's internal bookkeeping trips its own
-// assertion ('_pendingExceptionDetails != null') instead of producing a
-// tidy expect() failure. That is still a failure of the test in question,
-// attributed to it and not to any other test, and it is itself evidence for
-// E0: the error reached nobody's onError at all, mine included, until the
-// binding caught it as a bare crash. See the Acceptance report for the
-// verbatim text.
+// does not merely fail a plain expect() on this base: it is a genuine
+// zone-level escape, and on base that is itself the proof of E0, that
+// nothing on the chain caught the error before flutter_test's own binding
+// did. See the doc comment on _captureFlutterErrors below for what that
+// binding does with an escape once a test has its own FlutterError.onError
+// installed, and why every capture in this file is scoped the way it is.
 
 import 'dart:async';
 
@@ -157,17 +153,34 @@ String _codeFieldText(WidgetTester tester) =>
 String? _codeFieldError(WidgetTester tester) =>
     _codeField(tester).decoration?.errorText;
 
-/// Overrides [FlutterError.onError] for the current test only, capturing
-/// every [FlutterErrorDetails] reported through it, and restores whatever
-/// was installed before once the test ends -- so one test's override can
-/// never leak into the next one, per this order's own instruction.
-List<FlutterErrorDetails> _captureFlutterErrors() {
+/// Runs [drive] with [FlutterError.onError] swapped for a collector, then
+/// puts the previous handler straight back before this function returns --
+/// never in an addTearDown. flutter_test's own binding
+/// (flutter_test/lib/src/binding.dart, handleUncaughtError, around the
+/// `_pendingExceptionDetails != null` assert) routes any error that escapes
+/// the test's zone through whatever FlutterError.onError is installed at
+/// that instant; if a test's own override is still installed there, the
+/// report goes to the override instead of the binding's own handler, the
+/// binding's bookkeeping assert trips, and the line that would complete the
+/// test never runs, so flutter_test waits forever. addTearDown restores too
+/// late for that, because addTearDown callbacks run after the binding's
+/// post-body work has already needed the handler back. Restoring inside a
+/// finally, before the caller ever calls expect(), is what keeps a failure
+/// in [drive] -- or in anything else that reaches the zone while [drive]
+/// runs -- a plain reported one instead of a hang. Every assertion about
+/// what was captured belongs after this function returns, never inside
+/// [drive].
+Future<List<FlutterErrorDetails>> _captureFlutterErrors(
+  Future<void> Function() drive,
+) async {
   final List<FlutterErrorDetails> captured = <FlutterErrorDetails>[];
   final FlutterExceptionHandler? previousOnError = FlutterError.onError;
   FlutterError.onError = captured.add;
-  addTearDown(() {
+  try {
+    await drive();
+  } finally {
     FlutterError.onError = previousOnError;
-  });
+  }
   return captured;
 }
 
@@ -206,8 +219,17 @@ void _expectScreenUndisturbed(
   expect(find.byType(Dialog), findsNothing);
   expect(
     observer.pushCount,
-    0,
-    reason: 'declaration E1 requirement 2: nothing may navigate',
+    1,
+    reason:
+        'declaration E1 requirement 2: nothing may navigate. The baseline is '
+        'one push and not zero, because a Navigator reports its own initial '
+        'route through didPush: MaterialApp\'s home: route arrives through '
+        '_RouteEntry.handleAdd, which enqueues a _NavigatorPushObservation, '
+        'and that calls observer.didPush (widgets/navigator.dart). Measured '
+        'on a control that pumps this same tree with no link error at all: '
+        'pushCount is 1 before the screen does anything. So 2 here means the '
+        'error path really navigated, and 0 means the initial route stopped '
+        'being observed and this assertion has gone blind',
   );
   expect(observer.popCount, 0);
 }
@@ -250,126 +272,62 @@ void _expectReportedOnce(
 
 void main() {
   group('E1 requirements 1-3: a Future.error from initialLinkReader', () {
-    // On base commit a3ab7f3, initialLinkReader().then((uri) {...}) has no
-    // onError, so completing the fake reader's future with an error becomes
-    // a genuinely unhandled asynchronous error at the zone level -- there is
-    // no code path that ever calls FlutterError.reportError. With
-    // FlutterError.onError overridden to capture reports (as this test
-    // must, to prove E1 requirement 3), flutter_test's own binding detects
-    // that escaped zone error and trips its internal
-    // '_pendingExceptionDetails != null' assertion before this test's own
-    // expect() calls ever run. That is the expected failure on base: a
-    // crash inside flutter_test's binding, not a clean expect() mismatch,
-    // and it is itself the proof that nothing on the chain caught the
-    // error. See the Acceptance report for the verbatim text.
     testWidgets('reaches FlutterError.onError and the screen keeps working', (
       tester,
     ) async {
-      // No FlutterError.onError override here: flutter_test's own binding
-      // uses the currently installed onError to record a genuinely
-      // zone-escaped error (exactly what base commit produces, since
-      // nothing on the chain catches it), and replacing that handler in a
-      // test that might hit that exact escape path collides with the
-      // binding's own bookkeeping instead of producing a plain expect()
-      // failure. Left at its default, an escape is caught cleanly by the
-      // binding and fails this test on its own; a correct fix instead
-      // reports through the default onError as a normal, drainable
-      // exception, which takeException() below both surfaces and drains.
-      //
-      // Order 097 re-tried this against order 092's fix in place (where the
-      // future's error is always caught by the onError argument to then(),
-      // so nothing here should ever reach the zone as a genuine escape) by
-      // swapping this block for _captureFlutterErrors() plus
-      // _expectReportedOnce(), the same pattern the two synchronous-throw
-      // tests below use successfully. It did not work: run in complete
-      // isolation with --plain-name matching only this test, the run
-      // failed within the first second on
-      // "'package:flutter_test/src/binding.dart': Failed assertion: ...
-      // '_pendingExceptionDetails != null'" -- the same crash this comment
-      // already describes for base -- and the process then would not exit
-      // on its own; it needed an external kill after the bound wait. Order
-      // 097 also found that this exact crash-then-hang is not unique to
-      // this test or to error reporting: it reproduced, each time in
-      // complete single-test isolation, on the synchronous-throw test for
-      // initialLinkReader() below, on the synchronous-throw test for
-      // linkStream() below, and on the entirely error-free "an invalid
-      // initial link still sets the existing error text" test further down
-      // in this file, none of which touch this future-error path at all.
-      // That rules out load and test ordering as the cause and points at
-      // something in how this flutter_test binding on this box handles a
-      // FlutterError.onError override at all, not at anything specific to
-      // this scenario. The practical cost stands as originally flagged:
-      // this test verifies the error reaches the framework by identity
-      // (same(thrown)) but not that FlutterErrorDetails.library equals
-      // 'ludo client' or that its stack is non-null; those two assertions
-      // for this path are exercised only by the synchronous-throw
-      // counterpart below.
       final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
       final _RecordingNavigatorObserver observer =
           _RecordingNavigatorObserver();
-      await tester.pumpWidget(
-        _homeScreenApp(initialLinkReader: reader.call, observer: observer),
-      );
-      await tester.pump();
-
       final Object thrown = StateError(
         'initialLinkReader future failed (scenario: platform channel '
         'error)',
       );
-      reader.completeError(thrown);
-      await tester.pump();
-      await tester.pump();
+
+      final List<FlutterErrorDetails> captured = await _captureFlutterErrors(
+        () async {
+          await tester.pumpWidget(
+            _homeScreenApp(initialLinkReader: reader.call, observer: observer),
+          );
+          await tester.pump();
+
+          reader.completeError(thrown);
+          await tester.pump();
+          await tester.pump();
+        },
+      );
 
       _expectScreenUndisturbed(tester, observer: observer);
-      expect(
-        tester.takeException(),
-        same(thrown),
-        reason:
-            'declaration E1 requirement 3: the error must not be swallowed; '
-            'it must reach the framework as the original error object, '
-            'drainable through tester.takeException()',
-      );
+      _expectReportedOnce(captured, expectedException: thrown);
     });
   });
 
   group('E1 requirements 1-4: a stream error from linkStream', () {
-    // Same shape of expected base-commit failure as the group above:
-    // widget.linkStream().listen(_handleLink) passes no onError, so an
-    // error event on the fake stream is unhandled at the zone level on base
-    // commit, and the same flutter_test binding assertion is the expected
-    // crash there.
     testWidgets(
       'reaches FlutterError.onError, the screen keeps working, and a later '
       'valid Uri on the same stream still pre-fills the code field',
       (tester) async {
-        // See the matching comment on the initialLinkReader test above:
-        // no onError override here, for the same reason, and order 097
-        // confirmed the same crash-then-hang for this test too when it
-        // tried the _captureFlutterErrors() swap here as well.
         final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
         final _RecordingNavigatorObserver observer =
             _RecordingNavigatorObserver();
-        await tester.pumpWidget(
-          _homeScreenApp(linkStream: opener.call, observer: observer),
-        );
-        await tester.pump();
-
         final Object thrown = StateError(
           'linkStream emitted an error (scenario: platform channel error)',
         );
-        opener.addError(thrown);
-        await tester.pump();
-        await tester.pump();
+
+        final List<FlutterErrorDetails> captured = await _captureFlutterErrors(
+          () async {
+            await tester.pumpWidget(
+              _homeScreenApp(linkStream: opener.call, observer: observer),
+            );
+            await tester.pump();
+
+            opener.addError(thrown);
+            await tester.pump();
+            await tester.pump();
+          },
+        );
 
         _expectScreenUndisturbed(tester, observer: observer);
-        expect(
-          tester.takeException(),
-          same(thrown),
-          reason:
-              'declaration E1 requirement 3: the error must not be '
-              'swallowed; it must reach the framework as the original '
-              'error object, drainable through tester.takeException()',
-        );
+        _expectReportedOnce(captured, expectedException: thrown);
 
         // E1 requirement 4, tested directly rather than by implication: the
         // subscription must still be useful after the error. An
@@ -396,16 +354,19 @@ void main() {
   group('E1 requirement 5: a synchronous throw', () {
     testWidgets('from initialLinkReader() still lets the screen build and is '
         'reported', (tester) async {
-      final List<FlutterErrorDetails> captured = _captureFlutterErrors();
       final _RecordingNavigatorObserver observer =
           _RecordingNavigatorObserver();
-      await tester.pumpWidget(
-        _homeScreenApp(
-          initialLinkReader: _throwingInitialLinkReader,
-          observer: observer,
-        ),
+      final List<FlutterErrorDetails> captured = await _captureFlutterErrors(
+        () async {
+          await tester.pumpWidget(
+            _homeScreenApp(
+              initialLinkReader: _throwingInitialLinkReader,
+              observer: observer,
+            ),
+          );
+          await tester.pump();
+        },
       );
-      await tester.pump();
 
       _expectScreenUndisturbed(tester, observer: observer);
       _expectReportedOnce(captured, expectedException: _syncInitialLinkError);
@@ -415,13 +376,19 @@ void main() {
       'from linkStream() still lets the screen build, is reported, and '
       'leaves dispose safe',
       (tester) async {
-        final List<FlutterErrorDetails> captured = _captureFlutterErrors();
         final _RecordingNavigatorObserver observer =
             _RecordingNavigatorObserver();
-        await tester.pumpWidget(
-          _homeScreenApp(linkStream: _throwingLinkStream, observer: observer),
+        final List<FlutterErrorDetails> captured = await _captureFlutterErrors(
+          () async {
+            await tester.pumpWidget(
+              _homeScreenApp(
+                linkStream: _throwingLinkStream,
+                observer: observer,
+              ),
+            );
+            await tester.pump();
+          },
         );
-        await tester.pump();
 
         _expectScreenUndisturbed(tester, observer: observer);
         _expectReportedOnce(captured, expectedException: _syncLinkStreamError);
@@ -448,38 +415,27 @@ void main() {
     // two async ones above: both a synchronous throw and a later
     // Future/stream error are required to go through the same reporting
     // rule (E1 requirement 5), so the context each path names should not
-    // depend on which of the two ways that path happens to fail, and only
-    // the synchronous shape is safe to combine with a FlutterError.onError
-    // override in this suite (see the comments on the async-error groups
-    // above for why the async shape is not).
-    //
-    // Order 097 record: this test itself hits the same
-    // "'_pendingExceptionDetails != null'" crash-then-hang documented on
-    // the async-error groups above, reproduced in complete --plain-name
-    // isolation both against order 092's real fix and against mutation M4
-    // (making both context strings 'reading the initial link'). Because
-    // the crash happens before this test's own expect() calls run either
-    // way, M4 could not be shown to be caught or missed by this suite: the
-    // run result is identical whether M4 is applied or not. The E3 keying
-    // weakness this comment block used to flag (that the check keys on the
-    // words initial/cold and stream/warm) is therefore unproven either way
-    // in this environment, and was left as originally written rather than
-    // rewritten against a mutation result nobody could actually observe.
+    // depend on which of the two ways that path happens to fail. Either
+    // shape would do here; the synchronous one just needs one pump instead
+    // of two.
     testWidgets(
       'the initialLinkReader failure and the linkStream failure report '
       'distinct, path-naming FlutterErrorDetails.context values',
       (tester) async {
-        final List<FlutterErrorDetails> captured = _captureFlutterErrors();
         final _RecordingNavigatorObserver observer =
             _RecordingNavigatorObserver();
-        await tester.pumpWidget(
-          _homeScreenApp(
-            initialLinkReader: _throwingInitialLinkReader,
-            linkStream: _throwingLinkStream,
-            observer: observer,
-          ),
+        final List<FlutterErrorDetails> captured = await _captureFlutterErrors(
+          () async {
+            await tester.pumpWidget(
+              _homeScreenApp(
+                initialLinkReader: _throwingInitialLinkReader,
+                linkStream: _throwingLinkStream,
+                observer: observer,
+              ),
+            );
+            await tester.pump();
+          },
         );
-        await tester.pump();
 
         expect(
           captured,
@@ -544,17 +500,20 @@ void main() {
     // with this file's own fixtures so this suite does not depend on that
     // file. They stand guard against a fix that breaks the happy path.
     testWidgets('a null initial link does nothing', (tester) async {
-      final List<FlutterErrorDetails> captured = _captureFlutterErrors();
       final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
       final _RecordingNavigatorObserver observer =
           _RecordingNavigatorObserver();
-      await tester.pumpWidget(
-        _homeScreenApp(initialLinkReader: reader.call, observer: observer),
-      );
-      await tester.pump();
+      final List<FlutterErrorDetails> captured = await _captureFlutterErrors(
+        () async {
+          await tester.pumpWidget(
+            _homeScreenApp(initialLinkReader: reader.call, observer: observer),
+          );
+          await tester.pump();
 
-      reader.complete(null);
-      await tester.pump();
+          reader.complete(null);
+          await tester.pump();
+        },
+      );
 
       expect(_codeFieldText(tester), isEmpty);
       expect(_codeFieldError(tester), isNull);
@@ -564,17 +523,20 @@ void main() {
     testWidgets('a valid initial link still pre-fills the code field', (
       tester,
     ) async {
-      final List<FlutterErrorDetails> captured = _captureFlutterErrors();
       final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
       final _RecordingNavigatorObserver observer =
           _RecordingNavigatorObserver();
-      await tester.pumpWidget(
-        _homeScreenApp(initialLinkReader: reader.call, observer: observer),
-      );
-      await tester.pump();
+      final List<FlutterErrorDetails> captured = await _captureFlutterErrors(
+        () async {
+          await tester.pumpWidget(
+            _homeScreenApp(initialLinkReader: reader.call, observer: observer),
+          );
+          await tester.pump();
 
-      reader.complete(_validLink('AB23CD'));
-      await tester.pump();
+          reader.complete(_validLink('AB23CD'));
+          await tester.pump();
+        },
+      );
 
       expect(_codeFieldText(tester), 'AB23CD');
       expect(_codeFieldError(tester), isNull);
@@ -584,17 +546,26 @@ void main() {
     testWidgets('an invalid initial link still sets the existing error text', (
       tester,
     ) async {
-      final List<FlutterErrorDetails> captured = _captureFlutterErrors();
       final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
       final _RecordingNavigatorObserver observer =
           _RecordingNavigatorObserver();
-      await tester.pumpWidget(
-        _homeScreenApp(initialLinkReader: reader.call, observer: observer),
-      );
-      await tester.pump();
+      final List<FlutterErrorDetails> captured = await _captureFlutterErrors(
+        () async {
+          await tester.pumpWidget(
+            _homeScreenApp(initialLinkReader: reader.call, observer: observer),
+          );
+          await tester.pump();
 
-      reader.complete(_invalidLink());
-      await tester.pump();
+          reader.complete(_invalidLink());
+          // Setting the code field's text updates the TextEditingController
+          // directly and is visible after a single pump, but errorText is a
+          // decoration built from _errorText, which only shows up once the
+          // frame that setState scheduled has actually rebuilt the tree; the
+          // async-error tests above pump twice for the same reason.
+          await tester.pump();
+          await tester.pump();
+        },
+      );
 
       expect(_codeFieldText(tester), isEmpty);
       final BuildContext context = tester.element(find.byType(HomeScreen));
