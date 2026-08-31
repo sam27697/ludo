@@ -181,7 +181,8 @@ class _Connector {
 /// and its transport. The snapshot is decoded for real by
 /// `RoomSnapshot.fromJson` through `RoomConnection`'s own reply path; nothing
 /// here builds a `RoomSnapshot` directly.
-Future<(RoomController, FakeTransport)> _connectPlaying({
+Future<(RoomController, FakeTransport)> _connectPlaying(
+  WidgetTester tester, {
   int mySeat = 0,
   bool sendSeatAssigned = true,
   String state = 'PLAYING',
@@ -203,7 +204,15 @@ Future<(RoomController, FakeTransport)> _connectPlaying({
     name: 'Sam',
     players: players,
   );
-  await pumpEventQueue();
+  // Standing lesson 8: pumpEventQueue() alone relies on real Timers via
+  // Future.delayed, which never fire under the fake-async clock a
+  // testWidgets body runs in, and hangs forever with no diagnostic.
+  // tester.runAsync() steps outside the fake zone for the duration of the
+  // call so the real event loop actually advances, then tester.pump()
+  // brings the widget tree's own state back in sync with what that
+  // unblocked.
+  await tester.runAsync(() => pumpEventQueue());
+  await tester.pump();
   final String id = _idOf(transport.sentRaw.last);
   if (sendSeatAssigned) {
     transport.pushText(
@@ -288,7 +297,11 @@ void main() {
           _seatJson(3, name: 'Dee', tokens: const <int>[-1, -1, -1, -1]),
           _seatJson(1, name: 'Bob', tokens: const <int>[10, 20, 30, 40]),
         ];
-        final (controller, _) = await _connectPlaying(mySeat: 0, seats: seats);
+        final (controller, _) = await _connectPlaying(
+          tester,
+          mySeat: 0,
+          seats: seats,
+        );
         addTearDown(controller.dispose);
         expect(
           controller.room!.state,
@@ -336,6 +349,7 @@ void main() {
           _seatJson(1, name: 'Bob'),
         ];
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -371,6 +385,7 @@ void main() {
       tester,
     ) async {
       final (controller, _) = await _connectPlaying(
+        tester,
         mySeat: 0,
         players: 2,
         seats: seats,
@@ -396,6 +411,7 @@ void main() {
       'H2 branch 2: my turn awaiting a roll shows loc.gameYourTurnRoll',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -422,6 +438,7 @@ void main() {
       'H2 branch 3: my turn awaiting a move shows loc.gameYourTurnMove',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -454,6 +471,7 @@ void main() {
     testWidgets('H2 branch 4: another named seat\'s turn shows '
         'loc.gameWaitingForPlayer(name)', (tester) async {
       final (controller, _) = await _connectPlaying(
+        tester,
         mySeat: 0,
         players: 2,
         seats: seats,
@@ -481,6 +499,7 @@ void main() {
       'crashing or inventing a name (declaration D3 / order 094)',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -529,6 +548,7 @@ void main() {
       'hold: playing, turn present, my seat on turn, phase awaitRoll',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -554,6 +574,7 @@ void main() {
       'H3.6a: disabled (present, onPressed null) when it is not my turn',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -578,6 +599,7 @@ void main() {
       'a move, not a roll',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -604,6 +626,7 @@ void main() {
       'H3.6c: disabled (present, onPressed null) when room.turn is null',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -625,6 +648,7 @@ void main() {
       'frame comes back',
       (tester) async {
         final (controller, transport) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -689,6 +713,7 @@ void main() {
       'H3.8: pressing the disabled roll button sends nothing at all',
       (tester) async {
         final (controller, transport) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -734,6 +759,7 @@ void main() {
       tester,
     ) async {
       final (controller, _) = await _connectPlaying(
+        tester,
         mySeat: 0,
         players: 2,
         seats: seats,
@@ -762,6 +788,7 @@ void main() {
         Future<void> checkButton(int index, {required bool shouldBeLegal}) {
           return () async {
             final (controller, transport) = await _connectPlaying(
+              tester,
               mySeat: 0,
               players: 2,
               seats: seats,
@@ -842,6 +869,7 @@ void main() {
       'cannot pass',
       (tester) async {
         final (controller, transport) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -894,6 +922,7 @@ void main() {
       tester,
     ) async {
       final (controller, transport) = await _connectPlaying(
+        tester,
         mySeat: 0,
         players: 2,
         seats: seats,
@@ -935,6 +964,7 @@ void main() {
           _seatJson(1, name: 'Bob'),
         ];
         final (controller, transport) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: contradictorySeats,
@@ -1010,6 +1040,7 @@ void main() {
       'H5.14: absent from the tree entirely when turn.value is null',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -1039,6 +1070,7 @@ void main() {
       'null, using a value that is neither 1 nor 6',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
@@ -1105,6 +1137,7 @@ void main() {
       tester,
     ) async {
       final (controller, _) = await _connectPlaying(
+        tester,
         mySeat: 0,
         state: 'LOBBY',
         players: 4,
@@ -1132,6 +1165,7 @@ void main() {
       'and no board, since LudoBoard asserts 2 to 4 seats',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           state: 'PLAYING',
           players: 4,
@@ -1184,6 +1218,7 @@ void main() {
       'disabled',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           state: 'FINISHED',
           players: 2,
@@ -1216,6 +1251,7 @@ void main() {
       tester,
     ) async {
       final (controller, _) = await _connectPlaying(
+        tester,
         mySeat: 0,
         state: 'FINISHED',
         players: 2,
@@ -1241,6 +1277,7 @@ void main() {
       tester,
     ) async {
       final (controller, _) = await _connectPlaying(
+        tester,
         mySeat: 0,
         state: 'FINISHED',
         players: 2,
@@ -1272,6 +1309,7 @@ void main() {
       'null',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           state: 'FINISHED',
           players: 2,
@@ -1294,6 +1332,7 @@ void main() {
       'board, per H1',
       (tester) async {
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           state: 'FINISHED',
           players: 4,
@@ -1341,6 +1380,7 @@ void main() {
       // no resume is sent and no request timer is left outstanding for
       // this test to have to resolve.
       final (controller, transport) = await _connectPlaying(
+        tester,
         sendSeatAssigned: false,
         players: 2,
         seats: seats,
@@ -1361,7 +1401,8 @@ void main() {
           data: <String, Object?>{'seat': 0, 'connected': false, 'seq': 999},
         ),
       );
-      await pumpEventQueue();
+      await tester.runAsync(() => pumpEventQueue());
+      await tester.pump();
       expect(controller.hasDesynced, isTrue, reason: 'fixture is broken');
       expect(
         transport.sentRaw.where((r) => _typeOf(r) == 'resume').toList(),
@@ -1418,6 +1459,7 @@ void main() {
           _seatJson(1, name: 'بوب'),
         ];
         final (controller, _) = await _connectPlaying(
+          tester,
           mySeat: 0,
           players: 2,
           seats: seats,
