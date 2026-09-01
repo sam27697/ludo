@@ -157,5 +157,77 @@
   "lobbyErrorGeneric": "Something went wrong. Try again.",
   "@lobbyErrorGeneric": {
     "description": "Error shown on the lobby screen for any code not covered by a more specific message, including no code at all."
+  },
+  "gameScreenTitle": "Game",
+  "@gameScreenTitle": {
+    "description": "App bar title of the game screen."
+  },
+  "gameWaitingForStart": "Waiting for the game to start",
+  "@gameWaitingForStart": {
+    "description": "Shown on the game screen when the room has not started playing yet, or is playing with fewer than two seated players."
+  },
+  "gameWaitingForTurn": "Waiting for the next turn",
+  "@gameWaitingForTurn": {
+    "description": "Turn banner shown on the game screen when the room carries no current turn, or when the current turn names a seat no longer present in the room."
+  },
+  "gameWaitingForPlayer": "Waiting for {name}",
+  "@gameWaitingForPlayer": {
+    "description": "Turn banner shown on the game screen naming the seat whose turn it currently is, when it is not this player's own turn.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
+  "gameYourTurnRoll": "Your turn. Roll the die.",
+  "@gameYourTurnRoll": {
+    "description": "Turn banner shown on the game screen when it is this player's own turn and the server is waiting on a roll."
+  },
+  "gameYourTurnMove": "Your turn. Choose a token to move.",
+  "@gameYourTurnMove": {
+    "description": "Turn banner shown on the game screen when it is this player's own turn and the server is waiting on a token choice."
+  },
+  "gameRollButton": "Roll",
+  "@gameRollButton": {
+    "description": "Label of the button on the game screen that sends the roll intention to the server."
+  },
+  "gameTokenButton": "Token {number}",
+  "@gameTokenButton": {
+    "description": "Label of one of the four token buttons on the game screen. The number shown to the player runs 1 to 4 while the protocol token index underneath runs 0 to 3.",
+    "placeholders": {
+      "number": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
+  "gameDieValue": "Rolled {value}",
+  "@gameDieValue": {
+    "description": "Shown on the game screen with the value of the last roll, while the server is waiting on a token choice.",
+    "placeholders": {
+      "value": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "gameOverYouWin": "You win",
+  "@gameOverYouWin": {
+    "description": "Shown on the game screen when the game has finished and the winning seat is this player's own."
+  },
+  "gameOverPlayerWins": "{name} wins",
+  "@gameOverPlayerWins": {
+    "description": "Shown on the game screen when the game has finished and the winning seat is present in the room, naming that seat's player.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
+  "gameOverEnded": "Game over",
+  "@gameOverEnded": {
+    "description": "Shown on the game screen when the game has finished but no winning seat can be named, either because the server sent none or because it named a seat no longer present in the room."
   }
 }
