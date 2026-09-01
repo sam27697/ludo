@@ -9,7 +9,7 @@
 //
 //   dart run tool/wire_smoke.dart --target wss://stg.ludo.provefair.app
 //       [--scenario all|full-game|reconnect]
-//       [--players N] [--timeout-seconds N]
+//       [--players N] [--timeout-seconds N] [--pace-ms N]
 //
 // Modelled on packages/ludo_server/tool/simulator.dart: same PASS/FAIL/exit
 // code convention, same overall-budget stopwatch loop. That simulator is a
@@ -17,6 +17,17 @@
 // sockets -- and proves the server. This file proves the client package that
 // actually ships in the APK.
 //
+// Every message this harness itself sends on a connection is paced against
+// that same connection's own last send, --pace-ms apart (default 120ms, see
+// the Paced class below). docs/PROTOCOL.md section 7 limits any one
+// connection to 30 messages/second before RATE_LIMITED and a close at 60
+// (connection.dart:193, rate_limit.dart), and a seat that rolls a six or
+// captures keeps the turn, so an unpaced harness fires roll/move pairs back
+// to back with no gap at all and crosses that ceiling on its own -- server
+// behaviour that is correct and not a client defect, but not a fair test of
+// resume() either if it kills the very connection the test is driving.
+//
+
 // A finding, not a workaround: docs/PROTOCOL.md's reconnect scenario asks
 // for a socket that "drops without a clean close", explicitly distinct from
 // close(), "the polite path". WireTransport's only termination primitive is
@@ -81,8 +92,18 @@ Future<void> main(List<String> arguments) async {
     ScenarioResult result;
     try {
       final Future<ScenarioResult> run = scenarioName == 'full-game'
-          ? runFullGame(args.target, args.players, timeout: remaining)
-          : runReconnect(args.target, args.players, timeout: remaining);
+          ? runFullGame(
+              args.target,
+              args.players,
+              timeout: remaining,
+              paceMs: args.paceMs,
+            )
+          : runReconnect(
+              args.target,
+              args.players,
+              timeout: remaining,
+              paceMs: args.paceMs,
+            );
       result = await run.timeout(remaining);
     } on TimeoutException {
       result = ScenarioResult(
@@ -142,6 +163,7 @@ class WireSmokeArgs {
     required this.scenario,
     required this.players,
     required this.timeoutSeconds,
+    required this.paceMs,
   });
 
   /// The WebSocket URL of the server under test, ws:// or wss://, exactly as
@@ -154,8 +176,17 @@ class WireSmokeArgs {
   /// Seats to play with, 2 to 4. Defaults to 4.
   final int players;
 
-  /// Bounds each selected scenario, not the whole run. Defaults to 120.
+  /// Bounds each selected scenario, not the whole run. Defaults to 240 --
+  /// with the D1 pacing below a full game is seconds rather than
+  /// milliseconds, and staging also pays real round-trip latency on top.
   final int timeoutSeconds;
+
+  /// Minimum milliseconds between two consecutive messages this harness
+  /// sends on the same connection (D1), so no single connection can cross
+  /// the server's per-connection ceiling of 30 messages/second
+  /// (docs/PROTOCOL.md section 7, rate_limit.dart). Defaults to 120, which
+  /// caps one connection at about 8 messages a second. 0 disables pacing.
+  final int paceMs;
 
   /// The scenario names this run should execute, in a fixed order,
   /// regardless of whether `--scenario` named one of them or `all`.
@@ -167,7 +198,8 @@ WireSmokeArgs parseArgs(List<String> arguments) {
   String? target;
   String scenario = 'all';
   int players = 4;
-  int timeoutSeconds = 120;
+  int timeoutSeconds = 240;
+  int paceMs = 120;
 
   int i = 0;
   while (i < arguments.length) {
@@ -197,6 +229,15 @@ WireSmokeArgs parseArgs(List<String> arguments) {
           throw ArgsError('--timeout-seconds must be an integer, got "$raw"');
         }
         timeoutSeconds = parsed;
+        i += 2;
+        break;
+      case '--pace-ms':
+        final String raw = _valueAfter(arguments, i, arg);
+        final int? parsed = int.tryParse(raw);
+        if (parsed == null) {
+          throw ArgsError('--pace-ms must be an integer, got "$raw"');
+        }
+        paceMs = parsed;
         i += 2;
         break;
       default:
@@ -235,11 +276,16 @@ WireSmokeArgs parseArgs(List<String> arguments) {
     throw ArgsError('--timeout-seconds must be positive, got $timeoutSeconds');
   }
 
+  if (paceMs < 0) {
+    throw ArgsError('--pace-ms must not be negative, got $paceMs');
+  }
+
   return WireSmokeArgs(
     target: parsedTarget,
     scenario: scenario,
     players: players,
     timeoutSeconds: timeoutSeconds,
+    paceMs: paceMs,
   );
 }
 
@@ -252,12 +298,13 @@ String _valueAfter(List<String> arguments, int i, String flag) {
 
 /// Printed to stderr alongside any [ArgsError].
 const String usage = '''
-usage: dart run tool/wire_smoke.dart --target <url> [--scenario all|full-game|reconnect] [--players N] [--timeout-seconds N]
+usage: dart run tool/wire_smoke.dart --target <url> [--scenario all|full-game|reconnect] [--players N] [--timeout-seconds N] [--pace-ms N]
 
   --target           required. Base WebSocket URL of a running server, ws:// or wss://.
   --scenario         default: all
   --players          default: 4. Seats to play with, 2 to 4.
-  --timeout-seconds  default: 120. Bounds each selected scenario, not the whole run.
+  --timeout-seconds  default: 240. Bounds each selected scenario, not the whole run.
+  --pace-ms          default: 120. Minimum ms between two messages this harness sends on the same connection. 0 disables pacing.
 ''';
 
 // --- shared result type ------------------------------------------------
@@ -294,12 +341,59 @@ class ScenarioResult {
   final String detail;
 }
 
+// --- per-connection pacing (D1) -----------------------------------------
+
+/// Enforces the per-connection message pacing D1 requires: a minimum
+/// interval between two consecutive messages this harness sends on **the
+/// same** connection, so one seat rolling and moving back to back cannot
+/// cross the server's per-connection ceiling of 30 messages/second
+/// (docs/PROTOCOL.md section 7; connection.dart:193 calls
+/// `rateLimiter.recordMessage(this)` on every envelope, and rate_limit.dart
+/// keys that limiter by the connection object with a one-second sliding
+/// window). One [Paced] instance belongs to exactly one connection and is
+/// never shared, so four connections each sending in the same millisecond
+/// do not wait on each other.
+///
+/// The wait is measured from the moment the *previous* message was sent on
+/// this connection, not from when its reply arrived -- [send] stamps
+/// [_lastSentAt] immediately before invoking [action], so real round-trip
+/// latency to the server counts toward the interval instead of stacking on
+/// top of it.
+class Paced {
+  Paced(this.paceMs);
+
+  /// Minimum milliseconds between two sends on this connection. 0 disables
+  /// pacing.
+  final int paceMs;
+
+  DateTime? _lastSentAt;
+
+  Future<T> send<T>(Future<T> Function() action) async {
+    if (paceMs > 0) {
+      final DateTime? last = _lastSentAt;
+      if (last != null) {
+        final Duration interval = Duration(milliseconds: paceMs);
+        final Duration sinceLast = DateTime.now().difference(last);
+        if (sinceLast < interval) {
+          await Future<void>.delayed(interval - sinceLast);
+        }
+      }
+    }
+    _lastSentAt = DateTime.now();
+    return action();
+  }
+}
+
 // --- the shared turn-taking agent --------------------------------------
 
 /// Listens on [connection]'s own frame stream and, whenever the wire says
 /// it is this connection's own seat's turn, acts on it: `roll` when a
 /// `turn` frame names this seat, `move` with the first entry of `legal`
 /// when a `rolled` frame names this seat and left a legal move pending.
+/// Both sends go through [paced], which must be the same [Paced] instance
+/// every other message on [connection] (join_room, resume, start_game) is
+/// sent through, so the D1 pacing interval is enforced against this
+/// connection's whole message history and not just the agent's own sends.
 ///
 /// This reads exactly the fields docs/PROTOCOL.md section 5 puts on
 /// `rolled` -- `legal` is the list of token indices the server itself says
@@ -309,28 +403,56 @@ class ScenarioResult {
 /// and reproducible, never because it is believed to be a better move than
 /// any other legal one.
 ///
+/// [seatOverride], a finding: [RoomConnection.seat] is set only from the
+/// wire's `seat_assigned` frame (connection.dart:109-116, 208-216, set
+/// alongside [RoomConnection.seatToken], which the interface this order
+/// pins says is itself "captured from create_room/join_room replies").
+/// `resume()` (connection.dart:303-312) never triggers a `seat_assigned`
+/// -- the server's own `_handleResume`
+/// (packages/ludo_server/lib/src/connection.dart:371-438) only ever sends
+/// `room` and, on a real reconnect, a `presence` broadcast to *other*
+/// sockets (`exceptConn: this`, line 419), unlike `_handleCreateRoom` and
+/// `_handleJoinRoom` (same file, lines 299-303 and 349), which always send
+/// `seat_assigned` on their own socket. So a fresh [RoomConnection] that
+/// only ever calls [RoomConnection.resume] never learns its own seat
+/// through [RoomConnection.seat] -- it stays null for that instance's
+/// whole life. A real app gating its own turn-taking on
+/// [RoomConnection.seat], the way this agent naturally would, would resume
+/// into a snapshot that looks right and then never act again -- exactly
+/// the failure mode the reconnect scenario exists to catch. The seat a
+/// resumed connection is playing is knowable regardless, the same way a
+/// real app already knows it: cached from the `seat_assigned` this same
+/// logical player received at `join_room`, before the drop, and carried
+/// forward across the new socket. [seatOverride] is that cached value; when
+/// given, it takes the place of [RoomConnection.seat] here rather than
+/// waiting on a frame that is never coming.
+///
 /// Every failure this agent can observe -- a rejected roll or move, or an
 /// error frame this connection never asked for -- is reported through
 /// [reportError] rather than thrown, because it fires from inside a stream
 /// listener with no caller left on the stack to catch it.
 void attachAgent(
   RoomConnection connection,
-  void Function(Object error) reportError,
-) {
+  Paced paced,
+  void Function(Object error) reportError, {
+  int? seatOverride,
+}) {
   connection.frames.listen((Frame frame) {
-    final int? seat = connection.seat;
+    final int? seat = seatOverride ?? connection.seat;
     if (seat == null) {
       return;
     }
     switch (frame.type) {
       case 'turn':
         if (frame.data['seat'] == seat) {
-          connection.roll().then<void>(
-            (Frame reply) {},
-            onError: (Object error) {
-              reportError(error);
-            },
-          );
+          paced
+              .send(connection.roll)
+              .then<void>(
+                (Frame reply) {},
+                onError: (Object error) {
+                  reportError(error);
+                },
+              );
         }
         break;
       case 'rolled':
@@ -353,8 +475,8 @@ void attachAgent(
           // play, docs/PROTOCOL.md section 5.
           break;
         }
-        connection
-            .move(legal.first)
+        paced
+            .send(() => connection.move(legal.first))
             .then<void>(
               (Frame reply) {},
               onError: (Object error) {
@@ -419,6 +541,7 @@ Future<ScenarioResult> runFullGame(
   Uri target,
   int players, {
   required Duration timeout,
+  required int paceMs,
 }) async {
   const String name = 'full-game';
   final List<RoomConnection> connections = <RoomConnection>[];
@@ -455,6 +578,7 @@ Future<ScenarioResult> runFullGame(
       reportError: reportError,
       errorCompleter: errorCompleter,
       stopwatch: stopwatch,
+      paceMs: paceMs,
     ).timeout(timeout);
   } on TimeoutException {
     return ScenarioResult(
@@ -488,21 +612,25 @@ Future<ScenarioResult> _playFullGame({
   required void Function(Object error) reportError,
   required Completer<Object> errorCompleter,
   required Stopwatch stopwatch,
+  required int paceMs,
 }) async {
   const String name = 'full-game';
 
   final RoomConnection host = await open('host');
-  final RoomSnapshot created = await host.createRoom(
-    name: 'wire-smoke-host',
-    players: players,
+  final Paced hostPaced = Paced(paceMs);
+  final RoomSnapshot created = await hostPaced.send(
+    () => host.createRoom(name: 'wire-smoke-host', players: players),
   );
   final String code = created.code;
-  attachAgent(host, reportError);
+  attachAgent(host, hostPaced, reportError);
 
   for (int i = 1; i < players; i++) {
     final RoomConnection guest = await open('guest-$i');
-    await guest.joinRoom(code: code, name: 'wire-smoke-guest-$i');
-    attachAgent(guest, reportError);
+    final Paced guestPaced = Paced(paceMs);
+    await guestPaced.send(
+      () => guest.joinRoom(code: code, name: 'wire-smoke-guest-$i'),
+    );
+    attachAgent(guest, guestPaced, reportError);
   }
 
   int rolls = 0;
@@ -529,7 +657,7 @@ Future<ScenarioResult> _playFullGame({
     }
   });
 
-  await host.startGame();
+  await hostPaced.send(host.startGame);
 
   final Object outcome = await Future.any<Object>(<Future<Object>>[
     winnerCompleter.future,
@@ -543,9 +671,8 @@ Future<ScenarioResult> _playFullGame({
   // host.seatToken is guaranteed set here: create_room's own seat_assigned
   // arrived on this socket before the room reply that resolved createRoom
   // above, and RoomConnection captures it synchronously off that frame.
-  final RoomSnapshot finalSnapshot = await host.resume(
-    code: code,
-    seatToken: host.seatToken!,
+  final RoomSnapshot finalSnapshot = await hostPaced.send(
+    () => host.resume(code: code, seatToken: host.seatToken!),
   );
   checkWinnerHome(finalSnapshot, winner, name);
 
@@ -571,18 +698,31 @@ class _DropPlayerRequest {
     required this.code,
     required this.name,
     required this.replyPort,
+    required this.paceMs,
   });
 
   final String target;
   final String code;
   final String name;
   final SendPort replyPort;
+
+  /// D1's per-connection pacing, applied inside this isolate exactly as it
+  /// is applied to every other connection in this harness -- this isolate
+  /// runs on a fresh, independent [Paced] instance of its own, since Paced
+  /// state cannot cross an isolate boundary.
+  final int paceMs;
 }
 
 /// A sentinel distinct from any real value a scenario waits on, used to
 /// tell "the awaited signal fired" apart from "an error fired instead" when
 /// Future.any races the two and the signal itself carries no payload.
 const Object _firstMoveSignal = Object();
+
+/// The join name for the one seat the reconnect scenario drops and resumes.
+/// A single constant so the name used to join and the name checked against
+/// the resumed snapshot (see the resume identity check in `_playReconnect`)
+/// cannot drift apart.
+const String _dropPlayerName = 'wire-smoke-drop';
 
 /// Entry point of the isolate that owns the one connection the reconnect
 /// scenario drops rudely. Everything this seat needs to do before the drop
@@ -603,10 +743,13 @@ Future<void> _dropPlayerIsolateMain(_DropPlayerRequest request) async {
     });
   }
 
+  final Paced paced = Paced(request.paceMs);
   try {
     await connection.open();
-    attachAgent(connection, reportError);
-    await connection.joinRoom(code: request.code, name: request.name);
+    attachAgent(connection, paced, reportError);
+    await paced.send(
+      () => connection.joinRoom(code: request.code, name: request.name),
+    );
     final int? seat = connection.seat;
     final String? seatToken = connection.seatToken;
     if (seat == null || seatToken == null) {
@@ -637,6 +780,7 @@ Future<ScenarioResult> runReconnect(
   Uri target,
   int players, {
   required Duration timeout,
+  required int paceMs,
 }) async {
   const String name = 'reconnect';
   final List<RoomConnection> connections = <RoomConnection>[];
@@ -677,6 +821,7 @@ Future<ScenarioResult> runReconnect(
       reportError: reportError,
       errorCompleter: errorCompleter,
       stopwatch: stopwatch,
+      paceMs: paceMs,
       registerIsolate: (Isolate isolate, ReceivePort port) {
         dropIsolate = isolate;
         dropPort = port;
@@ -717,22 +862,26 @@ Future<ScenarioResult> _playReconnect({
   required void Function(Object error) reportError,
   required Completer<Object> errorCompleter,
   required Stopwatch stopwatch,
+  required int paceMs,
   required void Function(Isolate isolate, ReceivePort port) registerIsolate,
 }) async {
   const String name = 'reconnect';
 
   final RoomConnection host = await open('host');
-  final RoomSnapshot created = await host.createRoom(
-    name: 'wire-smoke-host',
-    players: players,
+  final Paced hostPaced = Paced(paceMs);
+  final RoomSnapshot created = await hostPaced.send(
+    () => host.createRoom(name: 'wire-smoke-host', players: players),
   );
   final String code = created.code;
-  attachAgent(host, reportError);
+  attachAgent(host, hostPaced, reportError);
 
   for (int i = 2; i < players; i++) {
     final RoomConnection guest = await open('guest-$i');
-    await guest.joinRoom(code: code, name: 'wire-smoke-guest-$i');
-    attachAgent(guest, reportError);
+    final Paced guestPaced = Paced(paceMs);
+    await guestPaced.send(
+      () => guest.joinRoom(code: code, name: 'wire-smoke-guest-$i'),
+    );
+    attachAgent(guest, guestPaced, reportError);
   }
 
   // The one non-host seat that gets dropped rudely lives in its own
@@ -775,8 +924,9 @@ Future<ScenarioResult> _playReconnect({
     _DropPlayerRequest(
       target: target.toString(),
       code: code,
-      name: 'wire-smoke-drop',
+      name: _dropPlayerName,
       replyPort: dropPort.sendPort,
+      paceMs: paceMs,
     ),
     onError: dropPort.sendPort,
     onExit: dropPort.sendPort,
@@ -793,7 +943,7 @@ Future<ScenarioResult> _playReconnect({
   final int dropSeat = joinedOutcome['seat']! as int;
   final String dropSeatToken = joinedOutcome['seatToken']! as String;
 
-  await host.startGame();
+  await hostPaced.send(host.startGame);
 
   int rolls = 0;
   int moves = 0;
@@ -846,9 +996,9 @@ Future<ScenarioResult> _playReconnect({
   dropIsolate.kill(priority: Isolate.immediate);
 
   final RoomConnection resumed = await open('resumed-seat-$dropSeat');
-  final RoomSnapshot resumedSnapshot = await resumed.resume(
-    code: code,
-    seatToken: dropSeatToken,
+  final Paced resumedPaced = Paced(paceMs);
+  final RoomSnapshot resumedSnapshot = await resumedPaced.send(
+    () => resumed.resume(code: code, seatToken: dropSeatToken),
   );
   if (resumedSnapshot.state == RoomState.lobby) {
     throw StateError(
@@ -856,13 +1006,52 @@ Future<ScenarioResult> _playReconnect({
       'game already in progress',
     );
   }
-  if (resumed.seat != dropSeat) {
+  // resumed.seat cannot confirm this identity: see the finding on
+  // attachAgent's seatOverride parameter above -- resume() never triggers a
+  // seat_assigned frame, so a fresh RoomConnection's own seat getter stays
+  // null for its whole life even after a resume that genuinely succeeded.
+  // What resume()'s reply does carry is the room's own seat list, so the
+  // check goes there instead: the entry at dropSeat must still be the seat
+  // this harness originally joined as _dropPlayerName, and it must show
+  // connected again. docs/PROTOCOL.md section 13.2 and
+  // packages/ludo_server/lib/src/connection.dart:414-421 both say presence
+  // (and, on the server's own model, the seat's connected flag) only flips
+  // when a resume actually reattaches a seat that was disconnected -- so a
+  // connected seat by that name at that index is real, observable proof
+  // this seat_token resumed seat dropSeat, not merely a snapshot that
+  // happens to look right.
+  SeatState? resumedSeatEntry;
+  for (final SeatState seat in resumedSnapshot.seats) {
+    if (seat.seat == dropSeat) {
+      resumedSeatEntry = seat;
+      break;
+    }
+  }
+  if (resumedSeatEntry == null) {
     throw StateError(
-      'resume() put this socket in seat ${resumed.seat}, expected the '
-      'dropped seat $dropSeat back',
+      'resume() snapshot has no seat entry for seat $dropSeat at all: '
+      '${resumedSnapshot.seats}',
     );
   }
-  attachAgent(resumed, reportError);
+  if (resumedSeatEntry.name != _dropPlayerName) {
+    throw StateError(
+      'resume() snapshot seat $dropSeat is named "${resumedSeatEntry.name}", '
+      'expected "$_dropPlayerName"; this socket may have resumed the wrong '
+      'seat',
+    );
+  }
+  if (!resumedSeatEntry.connected) {
+    throw StateError(
+      'resume() snapshot seat $dropSeat still shows connected=false after '
+      'the resume; docs/PROTOCOL.md section 13.2 says a resume that '
+      'actually reattached the seat must flip this',
+    );
+  }
+  // seatOverride: dropSeat, not the connection's own (null) seat getter --
+  // see attachAgent's doc comment for why. A real app resuming after a
+  // drop already knows its own seat from before the drop, the same way
+  // this harness does.
+  attachAgent(resumed, resumedPaced, reportError, seatOverride: dropSeat);
 
   final Object outcome = await Future.any<Object>(<Future<Object>>[
     winnerCompleter.future,
@@ -873,9 +1062,8 @@ Future<ScenarioResult> _playReconnect({
   }
   final int winner = outcome;
 
-  final RoomSnapshot finalSnapshot = await resumed.resume(
-    code: code,
-    seatToken: dropSeatToken,
+  final RoomSnapshot finalSnapshot = await resumedPaced.send(
+    () => resumed.resume(code: code, seatToken: dropSeatToken),
   );
   checkWinnerHome(finalSnapshot, winner, name);
 
