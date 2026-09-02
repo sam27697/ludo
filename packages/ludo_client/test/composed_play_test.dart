@@ -848,4 +848,214 @@ void main() {
       },
     );
   });
+
+  // ==========================================================================
+  // C4: the latch. A room snapshot that puts room.state back to LOBBY after
+  // game_started must neither revive LobbyScreen nor refire the network
+  // intention LobbyScreen.initState only ever meant to send once.
+  // ==========================================================================
+  group('C4: a room push moving room.state back to LOBBY after game_started '
+      'must not revive LobbyScreen or resend the join_room/create_room '
+      'request', () {
+    testWidgets(
+      'once RoomRoute has switched to GameScreen, a further room snapshot '
+      'carrying state LOBBY leaves GameScreen showing, alone, and puts no '
+      'second join_room or create_room frame on the wire',
+      (tester) async {
+        final factory = _RecordingControllerFactory();
+        await tester.pumpWidget(_homeScreenApp(factory.call));
+        await tester.pumpAndSettle();
+
+        await tester.enterText(find.byKey(const Key('home-name-field')), 'Zev');
+        await tester.enterText(
+          find.byKey(const Key('room-code-field')),
+          'LT88MN',
+        );
+
+        await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
+
+        expect(factory.controllers, hasLength(1));
+        final RoomController controller = factory.controllers.single;
+        final FakeTransport transport = factory.transports.single;
+        addTearDown(controller.dispose);
+
+        final String joinId = _idOf(
+          transport.sentRaw.singleWhere((s) => _typeOf(s) == 'join_room'),
+        );
+        transport.pushText(
+          _frame(
+            type: 'seat_assigned',
+            data: <String, Object?>{'seat': 1, 'seat_token': 'tok-c4-1'},
+          ),
+        );
+        transport.pushText(
+          _frame(
+            type: 'room',
+            re: joinId,
+            data: _roomJson(
+              code: 'LT88MN',
+              players: 2,
+              hostSeat: 0,
+              seats: <Map<String, Object?>>[
+                _seatJson(0, name: 'Sam'),
+                _seatJson(1, name: 'Zev'),
+              ],
+              seq: 1,
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          find.byType(LobbyScreen),
+          findsOneWidget,
+          reason:
+              'fixture is broken: the client must be sitting in the lobby '
+              'before game_started arrives, the same precondition C3 checks',
+        );
+
+        // The host starts the game, exactly as in C3.
+        transport.pushText(
+          _frame(
+            type: 'game_started',
+            data: <String, Object?>{
+              'turn': 0,
+              'game_id': 'd' * 16,
+              'client_seeds': '0:seed',
+              'seq': 2,
+            },
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          find.byType(GameScreen),
+          findsOneWidget,
+          reason:
+              'fixture is broken: game_started must have already switched '
+              'RoomRoute to GameScreen before this case can exercise the '
+              'latch that keeps it there',
+        );
+        expect(find.byType(LobbyScreen), findsNothing);
+
+        final int joinCountBeforeLobbyPush = transport.sentRaw
+            .where((s) => _typeOf(s) == 'join_room')
+            .length;
+        final int createCountBeforeLobbyPush = transport.sentRaw
+            .where((s) => _typeOf(s) == 'create_room')
+            .length;
+
+        // A further snapshot, unprompted (re null, exactly the shape
+        // room_controller.dart's _reduceRoom reads for a server-initiated
+        // push), puts room.state back to LOBBY. This is the situation the
+        // doc comment at room_route.dart:40-56 names directly: nothing
+        // about the server protocol forbids a later snapshot from carrying
+        // a state other than PLAYING or FINISHED, and RoomRoute must not
+        // re-derive its screen choice from it once GameScreen has shown.
+        transport.pushText(
+          _frame(
+            type: 'room',
+            data: _roomJson(
+              code: 'LT88MN',
+              state: 'LOBBY',
+              players: 2,
+              hostSeat: 0,
+              seats: <Map<String, Object?>>[
+                _seatJson(0, name: 'Sam'),
+                _seatJson(1, name: 'Zev'),
+              ],
+              seq: 3,
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          controller.room!.state,
+          RoomState.lobby,
+          reason:
+              'fixture is broken: the pushed snapshot must have actually '
+              'moved the controller\'s own room.state back to '
+              'RoomState.lobby, or this case is not exercising the '
+              'condition it claims to; got ${controller.room!.state}',
+        );
+
+        // Symptom 1: the route must still be showing GameScreen, and only
+        // GameScreen.
+        expect(
+          find.byType(GameScreen),
+          findsOneWidget,
+          reason:
+              'RoomRoute must keep showing GameScreen once it has shown it '
+              'once, even after a later room push moves room.state back to '
+              'RoomState.lobby (room_route.dart:40-56, the _showGame '
+              'latch); a build that re-derives its screen choice from '
+              'room.state live would flip back to LobbyScreen here',
+        );
+        expect(
+          find.byType(LobbyScreen),
+          findsNothing,
+          reason:
+              'RoomRoute must never remount LobbyScreen once the latch has '
+              'tripped, because a fresh LobbyScreen.initState would fire '
+              'join_room or create_room a second time',
+        );
+
+        // Symptom 2, part one: no second controller or transport exists.
+        // Named directly in the order: a remounted LobbyScreen sharing the
+        // same widget.controller would not by itself create a second
+        // transport, so this alone would not catch the defect; the wire
+        // check right below is what does.
+        expect(
+          factory.transports.length,
+          1,
+          reason:
+              'no tap and no route swap in this case ever calls the '
+              'injected controllerFactory a second time; got '
+              '${factory.transports.length} transports',
+        );
+        expect(
+          factory.controllers.length,
+          1,
+          reason:
+              'no tap and no route swap in this case ever calls the '
+              'injected controllerFactory a second time; got '
+              '${factory.controllers.length} controllers',
+        );
+
+        // Symptom 2, part two, the one that actually names the defect: a
+        // remounted LobbyScreen sharing this same transport would send a
+        // second join_room (this case joined, so create_room stays at
+        // zero throughout, and is checked anyway because a latch failure
+        // reusing the create path is just as much a defect).
+        final int joinCountAfterLobbyPush = transport.sentRaw
+            .where((s) => _typeOf(s) == 'join_room')
+            .length;
+        final int createCountAfterLobbyPush = transport.sentRaw
+            .where((s) => _typeOf(s) == 'create_room')
+            .length;
+        expect(
+          joinCountAfterLobbyPush,
+          joinCountBeforeLobbyPush,
+          reason:
+              'a room push moving state back to LOBBY must not put a '
+              'second join_room on the wire; a remounted LobbyScreen would '
+              'do exactly that from its initState. before: '
+              '$joinCountBeforeLobbyPush, after: $joinCountAfterLobbyPush',
+        );
+        expect(
+          createCountAfterLobbyPush,
+          createCountBeforeLobbyPush,
+          reason:
+              'a room push moving state back to LOBBY must not put a '
+              'create_room on the wire on a route that only ever joined. '
+              'before: $createCountBeforeLobbyPush, after: '
+              '$createCountAfterLobbyPush',
+        );
+      },
+    );
+  });
 }
