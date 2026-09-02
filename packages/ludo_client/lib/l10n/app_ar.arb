@@ -4,7 +4,7 @@
   "homeCreateRoomButton": "إنشاء غرفة",
   "homeJoinRoomButton": "الانضمام إلى غرفة",
   "homeRoomCodeFieldLabel": "رمز الغرفة",
-  "homeRoomCodeFieldHint": "6 أحرف، حروف وأرقام",
+  "homeRoomCodeFieldHint": "6 رموز، حروف وأرقام",
   "homeRoomCodeInvalid": "هذا لا يبدو رمز غرفة صحيحًا. تحقق من الحروف والأرقام وحاول مرة أخرى.",
   "homeLocaleToggleTooltip": "تغيير اللغة",
   "homeLocaleToggleLabel": "English",
@@ -46,6 +46,6 @@
   "gameTokenButton": "قطعة {number}",
   "gameDieValue": "الرمية: {value}",
   "gameOverYouWin": "لقد فزت",
-  "gameOverPlayerWins": "{name} يفوز",
+  "gameOverPlayerWins": "فاز {name}",
   "gameOverEnded": "انتهت اللعبة"
 }
