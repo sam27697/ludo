@@ -1,17 +1,34 @@
 name: device-smoke
 
-# Manually triggered only, exactly like screenshots.yml and for the same
-# reason: booting a real emulator is slow and burns minutes verify.yml (the
-# gate every other order is judged against) has no business spending on
-# every push. This workflow answers one question screenshots.yml never has:
-# does the app actually start, and reach its first screen, on the API level
-# it ships against (targetSdk 36 -- see
+# Two triggers: workflow_dispatch for an on-demand run, and a daily schedule
+# so this stops depending on somebody remembering to press the button --
+# exactly the gap run 34 exposed, this workflow having sat unrun from the day
+# it was written until it was dispatched by hand. Measured on that run
+# (33793895304, main, 8e65d39): sam27697/ludo is a public repository, so
+# GitHub-hosted Actions minutes are not metered against Sam here at all, and
+# the whole job -- emulator boot included -- finished in 7m27s. That removes
+# the cost argument for staying manual. It does not remove the reason this
+# still has no business on verify.yml's per-push path: every order in this
+# project is judged against verify.yml, and an eight-minute emulator boot in
+# that loop would slow every single review. Daily is the balance struck by
+# order 115 -- it catches a platform regression within a day without
+# touching the gate every order waits on. Pick a time off the hour and off
+# minute 0 for the cron, because GitHub queues an enormous number of jobs at
+# those times and delays them.
+#
+# This workflow answers one question screenshots.yml never has: does the
+# app actually start, and reach its first screen, on the API level it ships
+# against (targetSdk 36 -- see
 # packages/ludo_client/android/app/build.gradle.kts and the "client" job in
 # verify.yml, which confirms that level from the build's own merged
-# manifest). Order 112 exists because nothing in this repository has ever
-# watched that happen.
+# manifest). Order 112 exists because nothing in this repository had ever
+# watched that happen. Order 115 adds the schedule above, and turns the App
+# Link measurement below into an actual gate on whether a measurement
+# happened at all -- not on the state it reports, which stays informational.
 on:
   workflow_dispatch: {}
+  schedule:
+    - cron: "37 2 * * *"
 
 jobs:
   device-smoke:
@@ -82,16 +99,17 @@ jobs:
           # matters here for the same reason it does in screenshots.yml:
           # android-emulator-runner hands each line of `script:` to its own
           # `sh -c`, so anything meant to share a shell -- the `cd` below,
-          # capturing flutter drive's exit code, and using that code again
-          # after the app-links measurement -- has to live on one physical
-          # line or the later parts would never see what the earlier parts
-          # set. Every source line below must sit at this same indentation:
+          # capturing flutter drive's exit code, reinstalling the apk it
+          # just built, and deciding whether the measurement that follows
+          # actually measured anything -- has to live on one physical line
+          # or the later parts would never see what the earlier parts set.
+          # Every source line below must sit at this same indentation:
           # YAML's own folding rule for `>-` only turns a line break into a
           # space when the next line is indented no more than this one is;
           # a line indented even one column further keeps its leading
           # newline instead of folding, which would silently hand that line
           # to its own `sh -c` the same as an actual blank line would. The
-          # `if` block near the end is written unindented for exactly this
+          # `if` blocks near the end are written unindented for exactly this
           # reason, not for lack of style.
           #
           # Sequence, in order:
@@ -104,11 +122,12 @@ jobs:
           #  3. `set +e` before flutter drive, and left off for the rest of
           #     the script (nothing here turns it back on): no command after
           #     this point is allowed to end the script early just by
-          #     failing, because two of the three things left to run --
-          #     the app-links measurement and the logcat dump -- are exactly
-          #     the things that still need to happen when an earlier command
-          #     failed. The one place a failure must actually end the job
-          #     is the explicit `exit "$DRIVE_EXIT"` in step 6 below.
+          #     failing, because most of what is left to run -- the
+          #     reinstall, the app-links measurement, and the logcat dump --
+          #     are exactly the things that still need to happen when an
+          #     earlier command failed. The two places a failure is actually
+          #     allowed to end the job are the explicit `exit "$DRIVE_EXIT"`
+          #     in step 8 and `exit "$MEASURE_EXIT"` in step 9 below.
           #     (POSIX sh, not bash: `+e`/`-e` are portable, `set -o
           #     pipefail` and `[[` are not, so neither is used anywhere in
           #     this script.) `--profile`, not `--release` or the debug
@@ -118,23 +137,53 @@ jobs:
           #     app, which would break the connection before the test could
           #     run at all. Profile mode keeps the VM service and is the
           #     same choice screenshots.yml makes for the same reason.
-          #  4. capture that exit code in DRIVE_EXIT -- this is the gate,
-          #     checked explicitly in step 6, not left to errexit.
-          #  5. measure App Link state with `pm get-app-links` and, as a
+          #  4. capture that exit code in DRIVE_EXIT -- this is the gate for
+          #     the smoke test itself, checked explicitly in step 8, not
+          #     left to errexit.
+          #  5. reinstall the apk `flutter drive` just built, from
+          #     build/app/outputs/flutter-apk/app-profile.apk (already on
+          #     disk, no rebuild). This step exists because run 33793895304
+          #     measured that `flutter drive` uninstalls the app when it
+          #     finishes, so by the time step 6 asked, there was no package
+          #     left to ask about: `pm get-app-links` answered "Error:
+          #     package app.fayad.ludo unavailable" and the dumpsys fallback
+          #     answered nothing, because both were asking about a package
+          #     that was already gone. The reinstall's own exit status is
+          #     recorded in INSTALL_EXIT for the step log but is not itself
+          #     a gate -- a failed reinstall shows up as an unreadable
+          #     measurement in step 7 instead, which step 7 does treat as a
+          #     gate.
+          #  6. measure App Link state with `pm get-app-links` and, as a
           #     fallback if that prints nothing useful, the domain
-          #     verification section of `dumpsys package`. Neither command's
-          #     exit status is checked or acted on: order 112 asks for this
-          #     measurement whenever the emulator is up regardless of
-          #     whether the smoke test itself passed, and the app package
-          #     can still be installed (so `pm get-app-links` can still
-          #     answer) even when the Dart side crashed after install. This
-          #     is a report, not a gate.
-          #  6. if DRIVE_EXIT was nonzero, dump adb logcat -- both to this
+          #     verification section of `dumpsys package`. Both commands'
+          #     output is captured to a variable and echoed either way, so
+          #     the step log always shows what was measured.
+          #  7. decide whether the measurement itself succeeded. Any
+          #     domain-verification state pm or dumpsys can print --
+          #     verified, unverified, none, legacy_failure, a numeric state,
+          #     or a dumpsys "Domain verification" block naming the domain
+          #     in any state -- counts as success and is a report, not a
+          #     gate; the app is expected to read unverified until a signed
+          #     bundle reaches a Play track and assetlinks.json starts
+          #     answering, and that is not this workflow's business.
+          #     Failure is a measurement that produced nothing readable:
+          #     `pm get-app-links` answering "Error: ... unavailable" (or
+          #     anything else with no state in it) while the dumpsys
+          #     fallback also came back empty. That failure is recorded in
+          #     MEASURE_EXIT and acted on in step 9, after step 8, with a
+          #     message naming what came back empty and what INSTALL_EXIT
+          #     was, so a red run here does not require re-deriving this
+          #     order to understand.
+          #  8. if DRIVE_EXIT was nonzero, dump adb logcat -- both to this
           #     step's own log and to a file under packages/ludo_client so
           #     the upload-artifact step below has something to attach --
           #     then exit with that same code so the job goes red for the
           #     actual reason (the smoke test failing), not for a step that
           #     silently swallowed it.
+          #  9. if step 7 found no usable measurement, exit with
+          #     MEASURE_EXIT. This only runs when DRIVE_EXIT was zero --
+          #     step 8 above already exited otherwise -- so a run never
+          #     reports two different failures for one red job.
           script: >-
             cd packages/ludo_client &&
             echo "device-smoke: api-level 36 (Android 16), device emulator-5554, profile Nexus 5, target google_apis" &&
@@ -142,14 +191,33 @@ jobs:
             flutter drive --profile --driver=test_driver/integration_test.dart --target=integration_test/launch_smoke_test.dart -d emulator-5554;
             DRIVE_EXIT=$?;
             echo "device-smoke: flutter drive exit code $DRIVE_EXIT";
-            echo "device-smoke: App Link state for app.fayad.ludo -- measured only, not a gate; see order 112";
-            adb shell pm get-app-links app.fayad.ludo;
+            echo "device-smoke: reinstalling app-profile.apk so the app-links measurement below has a package to ask about (flutter drive uninstalls it on exit)";
+            adb install -r build/app/outputs/flutter-apk/app-profile.apk;
+            INSTALL_EXIT=$?;
+            echo "device-smoke: reinstall exit code $INSTALL_EXIT";
+            echo "device-smoke: App Link state for app.fayad.ludo";
+            APP_LINKS=$(adb shell pm get-app-links app.fayad.ludo 2>&1);
+            echo "$APP_LINKS";
             echo "device-smoke: domain verification section of dumpsys package (fallback if the line above printed nothing useful)";
-            adb shell dumpsys package app.fayad.ludo | sed -n '/Domain verification/,/^$/p';
+            DOMAIN_VERIFICATION=$(adb shell dumpsys package app.fayad.ludo 2>&1 | sed -n '/Domain verification/,/^$/p');
+            echo "$DOMAIN_VERIFICATION";
+            APP_LINKS_OK=1;
+            if [ -z "$APP_LINKS" ]; then APP_LINKS_OK=0; fi;
+            if printf '%s' "$APP_LINKS" | grep -qE 'Error:|unavailable'; then APP_LINKS_OK=0; fi;
+            DOMAIN_VERIFICATION_OK=1;
+            if [ -z "$DOMAIN_VERIFICATION" ]; then DOMAIN_VERIFICATION_OK=0; fi;
+            MEASURE_OK=0;
+            if [ "$APP_LINKS_OK" -eq 1 ]; then MEASURE_OK=1; fi;
+            if [ "$DOMAIN_VERIFICATION_OK" -eq 1 ]; then MEASURE_OK=1; fi;
+            MEASURE_EXIT=0;
+            if [ "$MEASURE_OK" -eq 0 ]; then echo "device-smoke: App Link measurement produced no usable state -- pm get-app-links returned [$APP_LINKS], the dumpsys domain-verification fallback returned [$DOMAIN_VERIFICATION], and the reinstall exited $INSTALL_EXIT -- see order 115" >&2; MEASURE_EXIT=1; fi;
             if [ "$DRIVE_EXIT" -ne 0 ]; then
             echo "device-smoke: flutter drive failed with exit $DRIVE_EXIT -- dumping adb logcat" >&2;
             adb logcat -d | tee device-smoke-logcat.txt 1>&2;
             exit "$DRIVE_EXIT";
+            fi;
+            if [ "$MEASURE_EXIT" -ne 0 ]; then
+            exit "$MEASURE_EXIT";
             fi
 
       # Only present when the step above actually wrote it, which only
