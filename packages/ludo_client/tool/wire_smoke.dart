@@ -10,6 +10,7 @@
 //   dart run tool/wire_smoke.dart --target wss://stg.ludo.provefair.app
 //       [--scenario all|full-game|reconnect]
 //       [--players N] [--timeout-seconds N] [--pace-ms N]
+//       [--resume-grace-seconds N]
 //
 // Modelled on packages/ludo_server/tool/simulator.dart: same PASS/FAIL/exit
 // code convention, same overall-budget stopwatch loop. That simulator is a
@@ -103,6 +104,7 @@ Future<void> main(List<String> arguments) async {
               args.players,
               timeout: remaining,
               paceMs: args.paceMs,
+              resumeGraceSeconds: args.resumeGraceSeconds,
             );
       result = await run.timeout(remaining);
     } on TimeoutException {
@@ -164,6 +166,7 @@ class WireSmokeArgs {
     required this.players,
     required this.timeoutSeconds,
     required this.paceMs,
+    required this.resumeGraceSeconds,
   });
 
   /// The WebSocket URL of the server under test, ws:// or wss://, exactly as
@@ -188,6 +191,15 @@ class WireSmokeArgs {
   /// caps one connection at about 8 messages a second. 0 disables pacing.
   final int paceMs;
 
+  /// How long, in seconds, the `reconnect` scenario's watchdog waits after
+  /// the resumed connection's agent is attached before treating a send
+  /// count still stuck at its baseline as a failure. Defaults to 90 --
+  /// deliberately generous: the other seats are paced at --pace-ms apart so
+  /// the resumed seat's own turn ordinarily comes back around within a few
+  /// seconds of the resume, and the server's own turn timer is 45s, so 90s
+  /// is two full timer periods. Unused by full-game.
+  final int resumeGraceSeconds;
+
   /// The scenario names this run should execute, in a fixed order,
   /// regardless of whether `--scenario` named one of them or `all`.
   List<String> get selectedScenarios =>
@@ -200,6 +212,7 @@ WireSmokeArgs parseArgs(List<String> arguments) {
   int players = 4;
   int timeoutSeconds = 240;
   int paceMs = 120;
+  int resumeGraceSeconds = 90;
 
   int i = 0;
   while (i < arguments.length) {
@@ -238,6 +251,17 @@ WireSmokeArgs parseArgs(List<String> arguments) {
           throw ArgsError('--pace-ms must be an integer, got "$raw"');
         }
         paceMs = parsed;
+        i += 2;
+        break;
+      case '--resume-grace-seconds':
+        final String raw = _valueAfter(arguments, i, arg);
+        final int? parsed = int.tryParse(raw);
+        if (parsed == null) {
+          throw ArgsError(
+            '--resume-grace-seconds must be an integer, got "$raw"',
+          );
+        }
+        resumeGraceSeconds = parsed;
         i += 2;
         break;
       default:
@@ -280,12 +304,19 @@ WireSmokeArgs parseArgs(List<String> arguments) {
     throw ArgsError('--pace-ms must not be negative, got $paceMs');
   }
 
+  if (resumeGraceSeconds <= 0) {
+    throw ArgsError(
+      '--resume-grace-seconds must be positive, got $resumeGraceSeconds',
+    );
+  }
+
   return WireSmokeArgs(
     target: parsedTarget,
     scenario: scenario,
     players: players,
     timeoutSeconds: timeoutSeconds,
     paceMs: paceMs,
+    resumeGraceSeconds: resumeGraceSeconds,
   );
 }
 
@@ -298,13 +329,14 @@ String _valueAfter(List<String> arguments, int i, String flag) {
 
 /// Printed to stderr alongside any [ArgsError].
 const String usage = '''
-usage: dart run tool/wire_smoke.dart --target <url> [--scenario all|full-game|reconnect] [--players N] [--timeout-seconds N] [--pace-ms N]
+usage: dart run tool/wire_smoke.dart --target <url> [--scenario all|full-game|reconnect] [--players N] [--timeout-seconds N] [--pace-ms N] [--resume-grace-seconds N]
 
-  --target           required. Base WebSocket URL of a running server, ws:// or wss://.
-  --scenario         default: all
-  --players          default: 4. Seats to play with, 2 to 4.
-  --timeout-seconds  default: 240. Bounds each selected scenario, not the whole run.
-  --pace-ms          default: 120. Minimum ms between two messages this harness sends on the same connection. 0 disables pacing.
+  --target                required. Base WebSocket URL of a running server, ws:// or wss://.
+  --scenario              default: all
+  --players               default: 4. Seats to play with, 2 to 4.
+  --timeout-seconds       default: 240. Bounds each selected scenario, not the whole run.
+  --pace-ms               default: 120. Minimum ms between two messages this harness sends on the same connection. 0 disables pacing.
+  --resume-grace-seconds  default: 90. reconnect only: how long the resumed connection's watchdog waits for that connection to send anything before failing on its own, instead of waiting on the server's turn timer.
 ''';
 
 // --- shared result type ------------------------------------------------
@@ -795,6 +827,7 @@ Future<ScenarioResult> runReconnect(
   int players, {
   required Duration timeout,
   required int paceMs,
+  int resumeGraceSeconds = 90,
 }) async {
   const String name = 'reconnect';
   final List<RoomConnection> connections = <RoomConnection>[];
@@ -836,6 +869,7 @@ Future<ScenarioResult> runReconnect(
       errorCompleter: errorCompleter,
       stopwatch: stopwatch,
       paceMs: paceMs,
+      resumeGraceSeconds: resumeGraceSeconds,
       registerIsolate: (Isolate isolate, ReceivePort port) {
         dropIsolate = isolate;
         dropPort = port;
@@ -877,6 +911,7 @@ Future<ScenarioResult> _playReconnect({
   required Completer<Object> errorCompleter,
   required Stopwatch stopwatch,
   required int paceMs,
+  required int resumeGraceSeconds,
   required void Function(Isolate isolate, ReceivePort port) registerIsolate,
 }) async {
   const String name = 'reconnect';
@@ -1071,10 +1106,46 @@ Future<ScenarioResult> _playReconnect({
   // between here and the winner outcome sends on resumedPaced.
   final int resumedSendsBaseline = resumedPaced.sendCount;
 
-  final Object outcome = await Future.any<Object>(<Future<Object>>[
-    winnerCompleter.future,
-    errorCompleter.future,
-  ]);
+  // A watchdog that runs concurrently with the race below, not after it: the
+  // server's own 45-second turn timer auto-plays a silent seat, so a
+  // resumed connection that reattaches and then never speaks again still
+  // lets the game reach a winner -- just slowly, about 45s per turn this
+  // seat holds. Waiting for the winner and then checking the count
+  // afterward (as this scenario used to) only catches that on a timeout an
+  // hour later, if at all. This fires instead, on its own, once
+  // --resume-grace-seconds has passed with the count still parked on its
+  // baseline, while the game is still being played.
+  final Completer<Object> resumeWatchdogCompleter = Completer<Object>();
+  final Timer resumeWatchdogTimer = Timer(
+    Duration(seconds: resumeGraceSeconds),
+    () {
+      if (!resumeWatchdogCompleter.isCompleted) {
+        resumeWatchdogCompleter.complete(
+          StateError(
+            'reconnect: resumed connection for seat $dropSeat sent no '
+            'message in the $resumeGraceSeconds second '
+            '--resume-grace-seconds grace period after its agent was '
+            'attached (send count is still ${resumedPaced.sendCount}, '
+            'unchanged from its baseline of $resumedSendsBaseline); '
+            "without this watchdog the server's own 45-second turn timer "
+            'would auto-play this silent seat and hide the same defect '
+            'behind an eventual winner instead of naming it here',
+          ),
+        );
+      }
+    },
+  );
+
+  final Object outcome;
+  try {
+    outcome = await Future.any<Object>(<Future<Object>>[
+      winnerCompleter.future,
+      errorCompleter.future,
+      resumeWatchdogCompleter.future,
+    ]);
+  } finally {
+    resumeWatchdogTimer.cancel();
+  }
   if (outcome is! int) {
     throw outcome;
   }
@@ -1087,6 +1158,10 @@ Future<ScenarioResult> _playReconnect({
   final int resumedSendsAfterAttach =
       resumedPaced.sendCount - resumedSendsBaseline;
   if (resumedSendsAfterAttach <= 0) {
+    // Unreachable in practice: the watchdog above already fails faster than
+    // this for a seat that never sends. Kept as a second, independent guard
+    // rather than removed, in case a future change alters what the
+    // watchdog races against.
     throw StateError(
       'reconnect: resumed connection for seat $dropSeat sent '
       '$resumedSendsAfterAttach message(s) after its agent was attached and '
