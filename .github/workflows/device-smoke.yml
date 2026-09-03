@@ -1,0 +1,167 @@
+name: device-smoke
+
+# Manually triggered only, exactly like screenshots.yml and for the same
+# reason: booting a real emulator is slow and burns minutes verify.yml (the
+# gate every other order is judged against) has no business spending on
+# every push. This workflow answers one question screenshots.yml never has:
+# does the app actually start, and reach its first screen, on the API level
+# it ships against (targetSdk 36 -- see
+# packages/ludo_client/android/app/build.gradle.kts and the "client" job in
+# verify.yml, which confirms that level from the build's own merged
+# manifest). Order 112 exists because nothing in this repository has ever
+# watched that happen.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  device-smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/ludo_client
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.47.1"
+          channel: "stable"
+
+      - run: flutter pub get
+
+      # Cheap check before the expensive one, same reasoning as the matching
+      # step in screenshots.yml: the emulator step below takes minutes to
+      # boot, and this catches a moved or misspelled driver/target path in
+      # seconds instead of at the end of that boot. Runs under this job's
+      # own working-directory (packages/ludo_client), so the paths here are
+      # relative to that, not to the repository root.
+      - name: confirm the drive script and target exist
+        run: |
+          set -euo pipefail
+          test -f test_driver/integration_test.dart || { echo "missing packages/ludo_client/test_driver/integration_test.dart" >&2; exit 1; }
+          test -f integration_test/launch_smoke_test.dart || { echo "missing packages/ludo_client/integration_test/launch_smoke_test.dart" >&2; exit 1; }
+
+      # Same boilerplate as screenshots.yml, taken from
+      # reactivecircus/android-emulator-runner's own README for
+      # GitHub-hosted Linux runners: makes /dev/kvm group-writable so the
+      # emulator gets hardware acceleration instead of falling back to
+      # software rendering, which is slow enough to risk the job timing
+      # out.
+      - name: enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # api-level: 36 is Android 16, the exact platform targetSdk 36 ships
+      # against -- the level order 112 exists to prove the app actually
+      # boots on, not merely compiles against. This has not been booted by
+      # the worker that wrote this workflow: there is no Android SDK in that
+      # worker's container, and installing one there is forbidden by order
+      # 112 itself. If the runner cannot fetch a google_apis x86_64 system
+      # image at this level (order 112 names this as a real possibility),
+      # the "boot the emulator" step below fails with whatever error
+      # sdkmanager/avdmanager produce, and that is the honest result this
+      # run reports -- nothing here silently retries at a lower level and
+      # calls it API 36.
+      #
+      # target: google_apis, arch: x86_64, profile: "Nexus 5": the same
+      # three values screenshots.yml uses at API 34, kept for consistency
+      # rather than for any requirement of this test. x86_64 in particular
+      # is what /dev/kvm above accelerates; an arm64 image on this runner's
+      # x86_64 host would fall back to software emulation.
+      - name: boot the emulator and run the launch smoke test
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: "Nexus 5"
+          disable-animations: true
+          # This whole block folds to a single line (YAML `>-`), which
+          # matters here for the same reason it does in screenshots.yml:
+          # android-emulator-runner hands each line of `script:` to its own
+          # `sh -c`, so anything meant to share a shell -- the `cd` below,
+          # capturing flutter drive's exit code, and using that code again
+          # after the app-links measurement -- has to live on one physical
+          # line or the later parts would never see what the earlier parts
+          # set. Every source line below must sit at this same indentation:
+          # YAML's own folding rule for `>-` only turns a line break into a
+          # space when the next line is indented no more than this one is;
+          # a line indented even one column further keeps its leading
+          # newline instead of folding, which would silently hand that line
+          # to its own `sh -c` the same as an actual blank line would. The
+          # `if` block near the end is written unindented for exactly this
+          # reason, not for lack of style.
+          #
+          # Sequence, in order:
+          #  1. cd into the client package (this action ignores the job's
+          #     own working-directory default; screenshots.yml documents
+          #     this at length, no need to repeat it here).
+          #  2. echo the api level and device name, so a failed run states
+          #     plainly what it was even attempting -- order 112 asks for
+          #     this explicitly.
+          #  3. `set +e` before flutter drive, and left off for the rest of
+          #     the script (nothing here turns it back on): no command after
+          #     this point is allowed to end the script early just by
+          #     failing, because two of the three things left to run --
+          #     the app-links measurement and the logcat dump -- are exactly
+          #     the things that still need to happen when an earlier command
+          #     failed. The one place a failure must actually end the job
+          #     is the explicit `exit "$DRIVE_EXIT"` in step 6 below.
+          #     (POSIX sh, not bash: `+e`/`-e` are portable, `set -o
+          #     pipefail` and `[[` are not, so neither is used anywhere in
+          #     this script.) `--profile`, not `--release` or the debug
+          #     default: `flutter drive` builds debug unless told otherwise,
+          #     and debug is not being judged here, but `--release` strips
+          #     the Dart VM service the driver needs to talk to the running
+          #     app, which would break the connection before the test could
+          #     run at all. Profile mode keeps the VM service and is the
+          #     same choice screenshots.yml makes for the same reason.
+          #  4. capture that exit code in DRIVE_EXIT -- this is the gate,
+          #     checked explicitly in step 6, not left to errexit.
+          #  5. measure App Link state with `pm get-app-links` and, as a
+          #     fallback if that prints nothing useful, the domain
+          #     verification section of `dumpsys package`. Neither command's
+          #     exit status is checked or acted on: order 112 asks for this
+          #     measurement whenever the emulator is up regardless of
+          #     whether the smoke test itself passed, and the app package
+          #     can still be installed (so `pm get-app-links` can still
+          #     answer) even when the Dart side crashed after install. This
+          #     is a report, not a gate.
+          #  6. if DRIVE_EXIT was nonzero, dump adb logcat -- both to this
+          #     step's own log and to a file under packages/ludo_client so
+          #     the upload-artifact step below has something to attach --
+          #     then exit with that same code so the job goes red for the
+          #     actual reason (the smoke test failing), not for a step that
+          #     silently swallowed it.
+          script: >-
+            cd packages/ludo_client &&
+            echo "device-smoke: api-level 36 (Android 16), device emulator-5554, profile Nexus 5, target google_apis" &&
+            set +e;
+            flutter drive --profile --driver=test_driver/integration_test.dart --target=integration_test/launch_smoke_test.dart -d emulator-5554;
+            DRIVE_EXIT=$?;
+            echo "device-smoke: flutter drive exit code $DRIVE_EXIT";
+            echo "device-smoke: App Link state for app.fayad.ludo -- measured only, not a gate; see order 112";
+            adb shell pm get-app-links app.fayad.ludo;
+            echo "device-smoke: domain verification section of dumpsys package (fallback if the line above printed nothing useful)";
+            adb shell dumpsys package app.fayad.ludo | sed -n '/Domain verification/,/^$/p';
+            if [ "$DRIVE_EXIT" -ne 0 ]; then
+            echo "device-smoke: flutter drive failed with exit $DRIVE_EXIT -- dumping adb logcat" >&2;
+            adb logcat -d | tee device-smoke-logcat.txt 1>&2;
+            exit "$DRIVE_EXIT";
+            fi
+
+      # Only present when the step above actually wrote it, which only
+      # happens when DRIVE_EXIT was nonzero -- so this has something to
+      # upload exactly when there is something worth reading, and
+      # if-no-files-found is `warn` rather than `error` for the same reason
+      # screenshots.yml's equivalent upload uses `warn`: a passing run
+      # having nothing to attach here is the expected case, not a second,
+      # differently-worded failure for the job to also report.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: device-smoke-logcat
+          path: packages/ludo_client/device-smoke-logcat.txt
+          if-no-files-found: warn
