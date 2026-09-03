@@ -82,6 +82,11 @@ jobs:
       # sets up only the Dart SDK, and this gate needs Flutter to resolve
       # packages/ludo_client's own dependencies; there the gate reports "not
       # implemented" rather than running, which is correct.
+      #
+      # No LUDO_WIRE_SCENARIO set here, so this step runs the gate's own
+      # default and covers only the full-game scenario today, not reconnect.
+      # See the comment on gate_client_wire's scenario default in
+      # bin/ludo-verify.sh for why, and for when that changes.
       - name: client wire smoke against a locally started server
         working-directory: .
         run: bash bin/ludo-verify.sh client_wire
