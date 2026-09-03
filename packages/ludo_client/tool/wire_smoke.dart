@@ -368,6 +368,19 @@ class Paced {
 
   DateTime? _lastSentAt;
 
+  /// How many times [send] has run [action] on this instance so far.
+  /// Incremented once per call, after the pacing wait and right before
+  /// [action] itself runs, so it counts messages actually sent rather than
+  /// calls merely queued. A caller can snapshot this before some point in a
+  /// connection's life and subtract later to learn how many messages that
+  /// connection sent after that point -- the reconnect scenario uses this to
+  /// assert the resumed connection actually sent something rather than
+  /// merely reaching a winner while silent.
+  int _sendCount = 0;
+
+  /// The current value of the send counter described on [_sendCount].
+  int get sendCount => _sendCount;
+
   Future<T> send<T>(Future<T> Function() action) async {
     if (paceMs > 0) {
       final DateTime? last = _lastSentAt;
@@ -380,6 +393,7 @@ class Paced {
       }
     }
     _lastSentAt = DateTime.now();
+    _sendCount++;
     return action();
   }
 }
@@ -1052,6 +1066,10 @@ Future<ScenarioResult> _playReconnect({
   // drop already knows its own seat from before the drop, the same way
   // this harness does.
   attachAgent(resumed, resumedPaced, reportError, seatOverride: dropSeat);
+  // Baseline taken right after the agent is attached, so every send it goes
+  // on to make -- and only those -- count toward the claim below. Nothing
+  // between here and the winner outcome sends on resumedPaced.
+  final int resumedSendsBaseline = resumedPaced.sendCount;
 
   final Object outcome = await Future.any<Object>(<Future<Object>>[
     winnerCompleter.future,
@@ -1061,6 +1079,22 @@ Future<ScenarioResult> _playReconnect({
     throw outcome;
   }
   final int winner = outcome;
+
+  // Read before the final resume() below, deliberately: that resume also
+  // goes through resumedPaced.send and would otherwise inflate this count
+  // by one even for a seat that reattached and then never acted again --
+  // exactly the gap this order exists to close.
+  final int resumedSendsAfterAttach =
+      resumedPaced.sendCount - resumedSendsBaseline;
+  if (resumedSendsAfterAttach <= 0) {
+    throw StateError(
+      'reconnect: resumed connection for seat $dropSeat sent '
+      '$resumedSendsAfterAttach message(s) after its agent was attached and '
+      'before the game reached a winner; expected at least one roll or '
+      'move over the new socket, not merely a silent seat auto-played by '
+      "the server's own turn timer",
+    );
+  }
 
   final RoomSnapshot finalSnapshot = await resumedPaced.send(
     () => resumed.resume(code: code, seatToken: dropSeatToken),
@@ -1077,7 +1111,8 @@ Future<ScenarioResult> _playReconnect({
         'dropped_seat=$dropSeat turns=$turns rolls=$rolls moves=$moves '
         'elapsed=${elapsedSeconds.toStringAsFixed(2)}s; seat $dropSeat was '
         'killed via its own isolate (no close() ever called on that '
-        'connection), resumed with its seat_token, and played its '
-        'remaining turns over the new socket',
+        'connection), resumed with its seat_token, and sent '
+        '$resumedSendsAfterAttach message(s) on that resumed connection '
+        'before the game reached a winner',
   );
 }
