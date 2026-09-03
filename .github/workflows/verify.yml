@@ -72,6 +72,20 @@ jobs:
       - run: dart format --output=none --set-exit-if-changed .
       - run: flutter test
 
+      # bin/ludo-verify.sh resolves $ROOT from its own location, so it must
+      # be invoked from the repository root -- working-directory: . overrides
+      # this job's own defaults.run.working-directory (packages/ludo_client,
+      # set above) for this one step. Runs only the client_wire gate, which
+      # starts its own server on 127.0.0.1 and drives
+      # packages/ludo_client/tool/wire_smoke.dart against it over a real
+      # WebSocket. Placed in this job and not in `verify` because `verify`
+      # sets up only the Dart SDK, and this gate needs Flutter to resolve
+      # packages/ludo_client's own dependencies; there the gate reports "not
+      # implemented" rather than running, which is correct.
+      - name: client wire smoke against a locally started server
+        working-directory: .
+        run: bash bin/ludo-verify.sh client_wire
+
       # Secrets cannot be referenced directly in a step's `if:` (GitHub's own
       # docs on using secrets in Actions say so explicitly); the supported
       # way to gate steps on a secret being set is to test it once, inside a
