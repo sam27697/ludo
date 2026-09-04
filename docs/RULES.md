@@ -115,6 +115,20 @@ also safe, trivially, because no opponent can reach it.
 16. A move played by the timer is a normal move in every other respect,
     including whether it grants an extra roll.
 
+16a. The same 45 seconds bound the roll, not only the token selection. A
+    seat that has not rolled when its segment expires is rolled for by the
+    server, through the same dice chain and the same link ordering as a
+    player-sent roll, and the roll's own consequences -- rule 7's pass, rule
+    10's forfeit, a fresh segment for the selection it leaves pending --
+    follow exactly as they would have. Items 14 to 16 alone left the table
+    stalled for ever whenever a seat dropped before rolling rather than
+    after, which is the state a disconnecting player is in most of the time,
+    since a seat spends its whole idle life awaiting a roll.
+
+16b. The timer is a property of the segment, not of the socket. A seat that
+    is connected and simply not acting expires on the same schedule as one
+    that has dropped.
+
 ## 4. Movement
 
 17. A token in the yard, `progress = -1`, may leave only on a roll of 6, and it

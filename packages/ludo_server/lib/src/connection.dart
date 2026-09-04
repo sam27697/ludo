@@ -978,14 +978,8 @@ class Connection {
 
   /// The wire string for `engine.TurnEndReason`, `docs/PROTOCOL.md` section
   /// 5's `turn_passed.reason`.
-  String _wireTurnEndReason(engine.TurnEndReason reason) {
-    switch (reason) {
-      case engine.TurnEndReason.noLegalMove:
-        return 'no_legal_move';
-      case engine.TurnEndReason.threeSixes:
-        return 'three_sixes';
-    }
-  }
+  String _wireTurnEndReason(engine.TurnEndReason reason) =>
+      wireTurnEndReason(reason);
 
   /// `rules`, the wire-level object of `docs/PROTOCOL.md` section 4. Called
   /// unconditionally by `_handleCreateRoom`, key present or not: a missing

@@ -9,6 +9,7 @@
 
 import 'package:ludo_engine/ludo_engine.dart' as engine;
 
+import 'registry.dart';
 import 'room.dart';
 
 /// The full `room` push, section 6. `seq` is read, never computed: it is
@@ -277,4 +278,127 @@ Map<String, Object?> buildGameOver({
     'verify_url': verifyUrl,
     'seq': seq,
   };
+}
+
+/// One frame the wire layer must publish, and the type name it goes out
+/// under. A list of these is an order, not a set: section 12 fixes the order
+/// frames are sent in and a caller sends them exactly as given.
+class OutFrame {
+  const OutFrame(this.type, this.data);
+
+  final String type;
+  final Map<String, Object?> data;
+}
+
+/// The wire string for `engine.TurnEndReason`, `docs/PROTOCOL.md` section 5's
+/// `turn_passed.reason`. Public because both the client-driven path in
+/// `connection.dart` and the timer-driven path below need it and a second
+/// copy of a two-branch mapping is a second place for it to drift.
+String wireTurnEndReason(engine.TurnEndReason reason) {
+  switch (reason) {
+    case engine.TurnEndReason.noLegalMove:
+      return 'no_legal_move';
+    case engine.TurnEndReason.threeSixes:
+      return 'three_sixes';
+  }
+}
+
+/// Every frame a timer-played turn publishes, in section 12's own order:
+/// for a roll, `rolled` and then `turn_passed` + `turn` exactly when the roll
+/// ended the turn (section 12.1); for a move, `moved` and then exactly one of
+/// `game_over` or `turn` (section 12.2). None of them carries `re`: no client
+/// request is being answered, so there is no id to answer.
+List<OutFrame> buildExpiryFrames(ExpiredTurn expired) {
+  final List<OutFrame> frames = <OutFrame>[];
+
+  final RollOk? rolled = expired.roll;
+  if (rolled != null) {
+    final engine.Rolled event = rolled.events.whereType<engine.Rolled>().single;
+    frames.add(
+      OutFrame(
+        'rolled',
+        buildRolled(
+          seat: event.seat,
+          value: event.value,
+          legal: event.legal,
+          deadlineMs: rolled.rolledDeadlineMs,
+          k: rolled.k,
+          reveal: rolled.reveal,
+          seq: rolled.rolledSeq,
+        ),
+      ),
+    );
+    final List<engine.TurnEnded> ended =
+        rolled.events.whereType<engine.TurnEnded>().toList();
+    if (ended.isNotEmpty) {
+      frames.add(
+        OutFrame(
+          'turn_passed',
+          buildTurnPassed(
+            seat: ended.single.seat,
+            reason: wireTurnEndReason(ended.single.reason),
+            seq: rolled.turnPassedSeq!,
+          ),
+        ),
+      );
+      frames.add(
+        OutFrame(
+          'turn',
+          buildTurn(
+            seat: rolled.room.game!.currentSeat,
+            deadlineMs: rolled.nextDeadlineMs!,
+            seq: rolled.turnSeq!,
+          ),
+        ),
+      );
+    }
+    return frames;
+  }
+
+  final MoveOk moved = expired.move!;
+  final engine.Moved event = moved.events.whereType<engine.Moved>().single;
+  frames.add(
+    OutFrame(
+      'moved',
+      buildMoved(
+        seat: event.seat,
+        token: event.token,
+        from: event.from,
+        to: event.to,
+        captured: <Map<String, Object?>>[
+          for (final engine.Captured c
+              in moved.events.whereType<engine.Captured>())
+            <String, Object?>{'seat': c.seat, 'token': c.token},
+        ],
+        extraRoll: moved.events.whereType<engine.ExtraRoll>().isNotEmpty,
+        seq: moved.movedSeq,
+      ),
+    ),
+  );
+  final List<engine.GameWon> won =
+      moved.events.whereType<engine.GameWon>().toList();
+  if (won.isNotEmpty) {
+    frames.add(
+      OutFrame(
+        'game_over',
+        buildGameOver(
+          winner: won.single.seat,
+          verifyUrl: moved.verifyUrl!,
+          seq: moved.gameOverSeq!,
+        ),
+      ),
+    );
+    return frames;
+  }
+  frames.add(
+    OutFrame(
+      'turn',
+      buildTurn(
+        seat: moved.room.game!.currentSeat,
+        deadlineMs: moved.nextDeadlineMs!,
+        seq: moved.turnSeq!,
+      ),
+    ),
+  );
+  return frames;
 }
