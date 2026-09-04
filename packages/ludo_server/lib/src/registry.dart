@@ -248,6 +248,27 @@ class MoveFailure extends MoveResult {
   final ProtocolError error;
 }
 
+/// One turn the server's own timer acted on, and the result the wire layer
+/// has to publish for it. [roll] and [move] are mutually exclusive and
+/// exactly one of them is set: a segment that ran out while the seat still
+/// owed a roll produces a [RollOk], one that ran out while it owed a token
+/// selection produces a [MoveOk]. Both carry precisely what the matching
+/// client-driven path carries, so the wire layer builds the same frames from
+/// them and nothing about a timer-played turn is special downstream.
+class ExpiredTurn {
+  ExpiredTurn({required this.code, required this.seat, this.roll, this.move});
+
+  /// The room this happened in. Carried explicitly because the wire layer
+  /// broadcasts by code and should not have to reach into the result.
+  final String code;
+
+  /// The seat the server acted for, 0..3.
+  final int seat;
+
+  final RollOk? roll;
+  final MoveOk? move;
+}
+
 sealed class SetPlayersResult {}
 
 class SetPlayersOk extends SetPlayersResult {
@@ -876,6 +897,84 @@ class RoomRegistry {
       (String code, DateTime expiry) => !now.isBefore(expiry),
     );
     return toRemove.length;
+  }
+
+  /// `docs/RULES.md` section 3.3: a seat that lets its segment run out does
+  /// not hold the table. Swept on a fixed cadence by the wire layer, never
+  /// by a client frame, and never by anything that reads room state -- the
+  /// only side effect of calling this is the turns it plays.
+  ///
+  /// Rule 15 for a segment that expires in `await_move`: exactly one legal
+  /// move is played; where several exist the ascending token index decides;
+  /// where none exist the turn already passed under rule 7 and no segment
+  /// was ever armed, so there is nothing here to act on.
+  ///
+  /// Rule 16a for a segment that expires in `await_roll` -- the case rule 14
+  /// never named, and the one that actually hung a table, because a seat
+  /// that drops before rolling owes an action no other seat can take. The
+  /// server rolls for it, through the same [roll] this file already exposes,
+  /// so the dice chain advances by exactly one link on exactly one code path
+  /// and a timer-drawn die is verifiable the same way every other die is.
+  ///
+  /// Deliberately not filtered on `seat.connected`: rules 14 and 15 put the
+  /// timer on the segment, not on the socket, and a connected player who
+  /// walks away hangs the table exactly as hard as a disconnected one.
+  List<ExpiredTurn> expireTurns() {
+    final List<ExpiredTurn> acted = <ExpiredTurn>[];
+    for (final Room room in _rooms.values.toList(growable: false)) {
+      if (room.state != RoomState.playing) {
+        continue;
+      }
+      final engine.GameState? game = room.game;
+      if (game == null || game.phase == engine.GamePhase.finished) {
+        continue;
+      }
+      if (_remainingSegmentMs(room) > 0) {
+        continue;
+      }
+      final Seat? seat = _seatAt(room, game.currentSeat);
+      if (seat == null) {
+        continue;
+      }
+      if (game.phase == engine.GamePhase.awaitRoll) {
+        final RollResult result =
+            roll(code: room.code, seatToken: seat.seatToken);
+        if (result is RollOk) {
+          acted.add(
+            ExpiredTurn(code: room.code, seat: seat.seat, roll: result),
+          );
+        }
+      } else if (game.phase == engine.GamePhase.awaitMove) {
+        final List<int> legal = List<int>.of(engine.legalTokens(game))..sort();
+        if (legal.isEmpty) {
+          continue;
+        }
+        final MoveResult result = move(
+          code: room.code,
+          seatToken: seat.seatToken,
+          token: legal.first,
+        );
+        if (result is MoveOk) {
+          acted.add(
+            ExpiredTurn(code: room.code, seat: seat.seat, move: result),
+          );
+        }
+      }
+    }
+    return acted;
+  }
+
+  /// The seated player at engine seat index [index], or null when that index
+  /// holds nobody. Distinct from [_findSeat], which looks a seat up by its
+  /// token; the timer has no token to start from, only the seat the engine
+  /// says currently owes an action.
+  Seat? _seatAt(Room room, int index) {
+    for (final Seat seat in room.seats) {
+      if (seat.seat == index) {
+        return seat;
+      }
+    }
+    return null;
   }
 
   Room? lookup(String code) => _rooms[code];

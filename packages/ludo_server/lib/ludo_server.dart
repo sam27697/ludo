@@ -2,9 +2,8 @@
 /// (`docs/PROTOCOL.md` sections 2, 3 and 12), and the wire layer on top of it
 /// -- envelope parsing, the section 7 validation ladder, rate limits, the
 /// `shelf` + `shelf_web_socket` socket handling and the reap/prune
-/// housekeeping timer. The turn timer's expiry (rule 15 of `docs/RULES.md`,
-/// the server playing a seat's only legal move) is not here yet; that is a
-/// later order's.
+/// housekeeping timer, and the turn timer that plays for a seat whose segment
+/// runs out (`docs/RULES.md` section 3.3).
 library;
 
 export 'src/clock.dart' show Clock, SystemClock, FakeClock;
@@ -46,6 +45,7 @@ export 'src/registry.dart'
         MoveResult,
         MoveOk,
         MoveFailure,
+        ExpiredTurn,
         RoomRegistry;
 export 'src/rate_limit.dart' show RateLimiter, MessageRateOutcome;
 export 'src/envelope.dart'
@@ -58,8 +58,13 @@ export 'src/envelope.dart'
         encodeEnvelope,
         generateMessageId;
 export 'src/connection.dart' show Connection, RoomHub;
+// The turn timer's frames: the registry decides the turn, this builds
+// what section 12 says goes on the wire for it, and the wire layer only
+// broadcasts. Exported so both halves are testable without a socket.
+export 'src/snapshot.dart' show OutFrame, buildExpiryFrames;
 export 'src/privacy_page.dart' show buildPrivacyPageHtml, privacyLastUpdated;
-export 'src/wire_server.dart' show WireServer, housekeepingInterval;
+export 'src/wire_server.dart'
+    show WireServer, housekeepingInterval, turnExpiryInterval;
 
 // GameState is ludo_engine's, not this package's, but Room.game exposes it
 // and a caller of this package should not have to depend on ludo_engine
