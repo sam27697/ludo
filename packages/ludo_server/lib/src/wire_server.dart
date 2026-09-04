@@ -24,12 +24,22 @@ import 'privacy_page.dart';
 import 'rate_limit.dart';
 import 'registry.dart';
 import 'room_code.dart';
+import 'snapshot.dart';
 
 /// How often the housekeeping timer fires: `RoomRegistry.reap()` and
 /// `RateLimiter.prune()` both run on this cadence. `docs/PROTOCOL.md` does
 /// not pin an exact number; the work order asks for "around once a minute"
 /// and this is that.
 const Duration housekeepingInterval = Duration(minutes: 1);
+
+/// How often the turn timer sweeps for expired segments. Separate from
+/// [housekeepingInterval] on purpose: reaping an idle room a minute late
+/// costs nothing, but a turn budget of `rules.turn_seconds` swept once a
+/// minute would overrun by up to a further minute, which is the same stall
+/// this timer exists to end, only shorter. One second is the coarsest sweep
+/// whose worst-case overrun a player would not notice against a 45-second
+/// budget, and the sweep itself only walks the room map.
+const Duration turnExpiryInterval = Duration(seconds: 1);
 
 /// The header a reverse proxy is expected to set with the real client
 /// address. Only trusted when the immediate peer address is in the
@@ -155,6 +165,7 @@ class WireServer {
 
   HttpServer? _httpServer;
   Timer? _housekeeping;
+  Timer? _turnExpiry;
 
   /// The instant [start] completed, per the injected [clock]. Null before
   /// [start] has returned, in which case reported uptime is zero.
@@ -193,6 +204,9 @@ class WireServer {
     _housekeeping = Timer.periodic(housekeepingInterval, (_) {
       _runHousekeeping();
     });
+    _turnExpiry = Timer.periodic(turnExpiryInterval, (_) {
+      _runTurnExpiry();
+    });
     _startedAt = clock.now;
   }
 
@@ -205,8 +219,33 @@ class WireServer {
   Future<void> close() async {
     _housekeeping?.cancel();
     _housekeeping = null;
+    _turnExpiry?.cancel();
+    _turnExpiry = null;
     await _httpServer?.close(force: true);
     _httpServer = null;
+  }
+
+  /// `docs/RULES.md` section 3.3. The registry decides and applies; this
+  /// only publishes what it decided, to every socket in the room, with no
+  /// `re` on any frame because no request is being answered. A throw from
+  /// one room must not stop the sweep for the others, and must not kill the
+  /// periodic timer, so each room's publish is guarded.
+  void _runTurnExpiry() {
+    for (final ExpiredTurn expired in registry.expireTurns()) {
+      try {
+        for (final OutFrame frame in buildExpiryFrames(expired)) {
+          _hub.broadcast(
+            code: expired.code,
+            type: frame.type,
+            data: frame.data,
+          );
+        }
+      } catch (error, stack) {
+        // ignore: avoid_print
+        print('turn-expiry publish failed room=${expired.code} '
+            'seat=${expired.seat} error=$error\n$stack');
+      }
+    }
   }
 
   void _runHousekeeping() {
