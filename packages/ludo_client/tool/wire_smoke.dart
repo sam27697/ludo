@@ -62,6 +62,24 @@ import 'package:ludo_client/src/net/frame.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
 import 'package:ludo_client/src/net/ws_transport.dart';
 
+// Order 116: a purely additive diagnostic for the reconnect stall. Off by
+// default -- prints nothing and changes no control flow -- and on only when
+// WIRE_SMOKE_DIAG=1 is set in the environment, so the ordinary PASS/FAIL
+// output bin/ludo-verify.sh greps for is untouched either way. Every line it
+// prints is prefixed `DIAG `, never `PASS ` or `FAIL `, for the same reason.
+// It exists to answer one question directly from the wire rather than by
+// inference: whether the server ever broadcasts a `turn` frame naming the
+// seat the reconnect scenario just dropped, during the window between that
+// seat's resumed connection being attached and it next sending anything.
+final bool _wireSmokeDiag = Platform.environment['WIRE_SMOKE_DIAG'] == '1';
+
+void _diag(Stopwatch stopwatch, String message) {
+  if (!_wireSmokeDiag) {
+    return;
+  }
+  print('DIAG t=${stopwatch.elapsedMilliseconds}ms $message');
+}
+
 Future<void> main(List<String> arguments) async {
   final WireSmokeArgs args;
   try {
@@ -777,6 +795,17 @@ const String _dropPlayerName = 'wire-smoke-drop';
 /// file header for why this is the mechanism: Isolate.kill(priority:
 /// Isolate.immediate) on this isolate runs no further code in it, so
 /// nothing here ever calls close() or writes a WebSocket Close frame.
+///
+/// Order 116's control, gated by WIRE_SMOKE_POLITE_DROP=1 and off by
+/// default: this isolate also opens a `commandPort` and sends it back to
+/// the parent alongside `joined`. If the parent sends `{'kind': 'close'}` on
+/// it, this isolate calls `connection.close()` -- the ordinary WebSocket
+/// closing handshake, a real Close frame on the wire -- before the parent
+/// goes on to kill it exactly as it always did. The isolate kill is still
+/// what ends this isolate either way; the one variable this changes is
+/// whether a Close frame was written first. Never used unless
+/// WIRE_SMOKE_POLITE_DROP=1 is set, so the default drop is the isolate kill
+/// alone, unchanged.
 Future<void> _dropPlayerIsolateMain(_DropPlayerRequest request) async {
   final RoomConnection connection = RoomConnection(
     url: Uri.parse(request.target),
@@ -790,6 +819,7 @@ Future<void> _dropPlayerIsolateMain(_DropPlayerRequest request) async {
   }
 
   final Paced paced = Paced(request.paceMs);
+  final ReceivePort commandPort = ReceivePort();
   try {
     await connection.open();
     attachAgent(connection, paced, reportError);
@@ -807,10 +837,17 @@ Future<void> _dropPlayerIsolateMain(_DropPlayerRequest request) async {
       );
       return;
     }
+    commandPort.listen((Object? command) async {
+      if (command is Map<Object?, Object?> && command['kind'] == 'close') {
+        await connection.close();
+        request.replyPort.send(<String, Object?>{'kind': 'closed'});
+      }
+    });
     request.replyPort.send(<String, Object?>{
       'kind': 'joined',
       'seat': seat,
       'seatToken': seatToken,
+      'commandPort': commandPort.sendPort,
     });
     // Stay alive and keep playing this seat's own turns, via the listener
     // attachAgent already registered above, until the parent isolate kills
@@ -938,6 +975,11 @@ Future<ScenarioResult> _playReconnect({
   final ReceivePort dropPort = ReceivePort();
   final Completer<Map<Object?, Object?>> joinedCompleter =
       Completer<Map<Object?, Object?>>();
+  // Order 116's control only: the drop-seat isolate's acknowledgement that
+  // it ran connection.close() on its own connection, awaited below only
+  // when WIRE_SMOKE_POLITE_DROP=1. Never completed, and never awaited, on
+  // the default isolate-kill-only path.
+  final Completer<void> closedCompleter = Completer<void>();
   bool killedDeliberately = false;
   dropPort.listen((Object? message) {
     if (message == null) {
@@ -962,6 +1004,8 @@ Future<ScenarioResult> _playReconnect({
       final Object? kind = message['kind'];
       if (kind == 'joined' && !joinedCompleter.isCompleted) {
         joinedCompleter.complete(message);
+      } else if (kind == 'closed' && !closedCompleter.isCompleted) {
+        closedCompleter.complete();
       } else if (kind == 'error') {
         reportError(StateError('drop-seat isolate: ${message['message']}'));
       }
@@ -991,6 +1035,10 @@ Future<ScenarioResult> _playReconnect({
   }
   final int dropSeat = joinedOutcome['seat']! as int;
   final String dropSeatToken = joinedOutcome['seatToken']! as String;
+  // Order 116's control only: used when WIRE_SMOKE_POLITE_DROP=1, to tell
+  // the drop-seat isolate to close() its own connection before this
+  // scenario kills it. Never sent to on the default isolate-kill-only path.
+  final SendPort dropCommandPort = joinedOutcome['commandPort']! as SendPort;
 
   await hostPaced.send(host.startGame);
 
@@ -1003,18 +1051,38 @@ Future<ScenarioResult> _playReconnect({
     switch (frame.type) {
       case 'turn':
         turns++;
+        // host is attached to the room for the scenario's whole life and
+        // receives every broadcast, including a `turn` naming the dropped
+        // seat -- this is the literal frame content the server put on the
+        // wire, read directly rather than inferred from the server's own
+        // structured log, which records the seat that just acted, not the
+        // seat the next `turn` names.
+        _diag(
+          stopwatch,
+          'turn seat=${frame.data['seat']} seq=${frame.data['seq']} '
+          'deadline_ms=${frame.data['deadline_ms']}',
+        );
         break;
       case 'rolled':
         rolls++;
+        _diag(
+          stopwatch,
+          'rolled seat=${frame.data['seat']} seq=${frame.data['seq']}',
+        );
         break;
       case 'moved':
         moves++;
+        _diag(
+          stopwatch,
+          'moved seat=${frame.data['seat']} seq=${frame.data['seq']}',
+        );
         if (!firstMoveCompleter.isCompleted) {
           firstMoveCompleter.complete();
         }
         break;
       case 'game_over':
         final Object? winner = frame.data['winner'];
+        _diag(stopwatch, 'game_over winner=$winner');
         if (winner is int && !winnerCompleter.isCompleted) {
           winnerCompleter.complete(winner);
         }
@@ -1041,13 +1109,43 @@ Future<ScenarioResult> _playReconnect({
     );
   }
 
+  // Order 116's control, gated by WIRE_SMOKE_POLITE_DROP=1 and off by
+  // default: asks the drop-seat isolate to run connection.close() -- a real
+  // Close frame on the wire, the ordinary WebSocket closing handshake --
+  // before this scenario goes on to kill that isolate exactly as it always
+  // does. The isolate kill still happens either way, on the same next line
+  // either branch reaches; the one variable this changes is whether a
+  // Close frame was written first. See the file header and
+  // _dropPlayerIsolateMain's doc comment for why this is the discriminator
+  // order 116 asks for.
+  if (Platform.environment['WIRE_SMOKE_POLITE_DROP'] == '1') {
+    _diag(stopwatch, 'closing seat=$dropSeat (polite: close() before kill)');
+    dropCommandPort.send(<String, Object?>{'kind': 'close'});
+    await closedCompleter.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        _diag(
+          stopwatch,
+          'seat=$dropSeat close() ack not received within 5s, killing anyway',
+        );
+      },
+    );
+    _diag(stopwatch, 'closed seat=$dropSeat, now killing the isolate');
+  } else {
+    _diag(stopwatch, 'killing seat=$dropSeat (isolate kill, no close frame)');
+  }
   killedDeliberately = true;
   dropIsolate.kill(priority: Isolate.immediate);
 
   final RoomConnection resumed = await open('resumed-seat-$dropSeat');
   final Paced resumedPaced = Paced(paceMs);
+  _diag(stopwatch, 'resume request seat=$dropSeat');
   final RoomSnapshot resumedSnapshot = await resumedPaced.send(
     () => resumed.resume(code: code, seatToken: dropSeatToken),
+  );
+  _diag(
+    stopwatch,
+    'resume reply seat=$dropSeat state=${resumedSnapshot.state}',
   );
   if (resumedSnapshot.state == RoomState.lobby) {
     throw StateError(
@@ -1105,6 +1203,29 @@ Future<ScenarioResult> _playReconnect({
   // on to make -- and only those -- count toward the claim below. Nothing
   // between here and the winner outcome sends on resumedPaced.
   final int resumedSendsBaseline = resumedPaced.sendCount;
+  _diag(
+    stopwatch,
+    'agent attached seat=$dropSeat baseline_sendcount=$resumedSendsBaseline',
+  );
+  // Polls resumedPaced.sendCount rather than hooking attachAgent's send path
+  // directly, so attachAgent itself -- shared with full-game and the
+  // drop-seat isolate -- needs no diagnostic-only parameter. Only prints on
+  // a change, and only under WIRE_SMOKE_DIAG=1, so an un-flagged run pays
+  // one Timer.periodic and nothing else.
+  int lastSeenSendCount = resumedSendsBaseline;
+  final Timer? resumedSendPoll = _wireSmokeDiag
+      ? Timer.periodic(const Duration(milliseconds: 500), (_) {
+          final int current = resumedPaced.sendCount;
+          if (current != lastSeenSendCount) {
+            _diag(
+              stopwatch,
+              'resumed connection sent seat=$dropSeat sendcount=$current '
+              '(baseline=$resumedSendsBaseline)',
+            );
+            lastSeenSendCount = current;
+          }
+        })
+      : null;
 
   // A watchdog that runs concurrently with the race below, not after it: the
   // server's own 45-second turn timer auto-plays a silent seat, so a
@@ -1145,7 +1266,12 @@ Future<ScenarioResult> _playReconnect({
     ]);
   } finally {
     resumeWatchdogTimer.cancel();
+    resumedSendPoll?.cancel();
   }
+  _diag(
+    stopwatch,
+    'race settled seat=$dropSeat outcome=${outcome is int ? 'winner=$outcome' : describeError(outcome)}',
+  );
   if (outcome is! int) {
     throw outcome;
   }
