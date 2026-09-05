@@ -37,12 +37,10 @@ _Table _startedGame() {
       reason: 'test setup: a 2-seat room must be creatable');
   final CreateOk host = created as CreateOk;
 
-  expect(registry.joinRoom(code: host.room.code, name: 'Guest'),
-      isA<JoinOk>(),
+  expect(registry.joinRoom(code: host.room.code, name: 'Guest'), isA<JoinOk>(),
       reason: 'test setup: the second seat must be joinable');
   expect(
-      registry.startGame(
-          code: host.room.code, seatToken: host.seat.seatToken),
+      registry.startGame(code: host.room.code, seatToken: host.seat.seatToken),
       isA<StartOk>(),
       reason: 'test setup: a full 2-seat room must start');
 
@@ -66,8 +64,7 @@ void main() {
           reason: 'one millisecond short of the budget is still inside it');
       expect(room.seq, seqAtStart,
           reason: 'a sweep that acts on nothing must change no state');
-      expect(room.rollCount, 0,
-          reason: 'and must not have drawn a die');
+      expect(room.rollCount, 0, reason: 'and must not have drawn a die');
     });
 
     test('expires exactly at the budget, not a millisecond later', () {
@@ -116,8 +113,7 @@ void main() {
       expect(t.registry.expireTurns(), isEmpty,
           reason: 'the fresh segment has its full budget; sweeping again '
               'this instant must not act a second time');
-      expect(room.rollCount, 1,
-          reason: 'and must not have drawn a second die');
+      expect(room.rollCount, 1, reason: 'and must not have drawn a second die');
     });
 
     test('acts for a seat that is still connected, rule 16b', () {
@@ -232,7 +228,8 @@ void main() {
   });
 
   group('the frames a timer-played turn publishes, PROTOCOL section 12', () {
-    test('a roll publishes rolled, then turn_passed and turn together '
+    test(
+        'a roll publishes rolled, then turn_passed and turn together '
         'exactly when the roll ended the turn', () {
       final _Table t = _startedGame();
       final Room room = t.registry.lookup(t.code)!;
