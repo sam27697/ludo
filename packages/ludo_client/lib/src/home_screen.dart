@@ -54,6 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _codeController.addListener(_clearErrorOnEdit);
     try {
       widget.initialLinkReader().then(
         (uri) {
@@ -106,6 +107,13 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) {
       return;
     }
+    if (!isAppRoomLinkUri(uri)) {
+      // Not a room link at all: wrong scheme, wrong host or wrong path
+      // shape. That is not the player's mistake, so it gets the documented
+      // fallback on _reportLinkError above -- the code field is left for
+      // the player to fill in by hand -- and nothing here touches it.
+      return;
+    }
     final AppLocalizations loc = AppLocalizations.of(context);
     final String? code = roomCodeFromUri(uri);
     setState(() {
@@ -118,9 +126,22 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  /// Clears a standing error the moment the player edits the code field,
+  /// so a message raised by a bad link or a failed Join tap does not sit
+  /// under a code the player has since corrected. Runs on every keystroke,
+  /// not just submission.
+  void _clearErrorOnEdit() {
+    if (_errorText != null) {
+      setState(() {
+        _errorText = null;
+      });
+    }
+  }
+
   @override
   void dispose() {
     _linkSubscription?.cancel();
+    _codeController.removeListener(_clearErrorOnEdit);
     _codeController.dispose();
     _nameController.dispose();
     super.dispose();
