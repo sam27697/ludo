@@ -10,28 +10,50 @@ import 'room_code.dart';
 /// and nothing enforces they stay equal except reading both.
 const String kAppLinkHost = 'ludo.provefair.app';
 
+/// Whether [uri] addresses this app's room-link space at all: the right
+/// scheme, the right host, and the right path shape (`/r/<something>`).
+///
+/// This says nothing about whether the code segment itself is a valid room
+/// code -- that is a separate question, answered by [roomCodeFromUri]. The
+/// split exists because a caller deciding whether an unreadable link is the
+/// player's fault needs to ask two different questions where
+/// `roomCodeFromUri` on its own only ever asked one: "did this URI even try
+/// to be one of ours" is answered here, and "is the code it gave me any
+/// good" is answered by normalising and checking it. A link that fails this
+/// predicate was never a room link to begin with, wrong app, wrong host, a
+/// share-sheet accident, whatever else the platform might hand the app on a
+/// plain launch; a link that passes this predicate but still comes back
+/// `null` from [roomCodeFromUri] genuinely carried a bad code.
+///
+/// The query string and the fragment are never inspected.
+bool isAppRoomLinkUri(Uri uri) {
+  return uri.scheme == 'https' &&
+      uri.host == kAppLinkHost &&
+      uri.pathSegments.length == 2 &&
+      uri.pathSegments[0] == 'r';
+}
+
 /// Extracts a room code from an incoming link, or returns `null` if the link
 /// does not carry one worth acting on.
 ///
-/// A `null` result covers three different situations on purpose, and all
-/// three are treated the same by every caller: the link is not one of ours,
-/// or it is one of ours but shaped wrong, or its code fails the local shape
-/// check `isValidRoomCode` already applies to a typed code. The code arrives
-/// from outside the app -- from a tapped link, not from the keyboard -- so it
-/// is untrusted input and gets the same scrutiny either way.
+/// A `null` result covers four different situations, and every existing
+/// caller of this function treats them the same on purpose, because every
+/// existing caller only ever needed "do I have a code to act on or not": the
+/// link is not one of ours by scheme, or by host, or by path shape (see
+/// [isAppRoomLinkUri] for those three), or it is one of ours but its code
+/// fails the local shape check `isValidRoomCode` already applies to a typed
+/// code. The code arrives from outside the app -- from a tapped link, not
+/// from the keyboard -- so it is untrusted input and gets the same scrutiny
+/// either way.
+///
+/// A caller that needs to tell "not our link" apart from "our link, bad
+/// code" -- to decide, say, whether an unreadable link is the player's fault
+/// -- calls [isAppRoomLinkUri] itself instead of trying to reverse-engineer
+/// the reason out of this function's single `null`.
 ///
 /// The query string and the fragment are never inspected.
 String? roomCodeFromUri(Uri uri) {
-  if (uri.scheme != 'https') {
-    return null;
-  }
-  if (uri.host != kAppLinkHost) {
-    return null;
-  }
-  if (uri.pathSegments.length != 2) {
-    return null;
-  }
-  if (uri.pathSegments[0] != 'r') {
+  if (!isAppRoomLinkUri(uri)) {
     return null;
   }
   final String normalized = normalizeRoomCode(uri.pathSegments[1]);
