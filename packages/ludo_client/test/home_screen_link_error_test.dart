@@ -37,10 +37,17 @@ Uri _validLink([String code = 'AB23CD']) {
   return Uri.parse('https://ludo.provefair.app/r/$code');
 }
 
+/// A well-formed https link on this app's own host, shaped exactly like a
+/// room link (isAppRoomLinkUri is true for it), whose code cannot be used
+/// (it contains the excluded character 0, so roomCodeFromUri returns null
+/// for it): the "right host, right scheme, bad code" fixture, matching the
+/// retargeted case in test/deep_link_test.dart item 11.
+Uri _invalidCodeLink() => Uri.parse('https://ludo.provefair.app/r/AB0234');
+
 /// A well-formed https link whose host is not kAppLinkHost, so
-/// roomCodeFromUri returns null: the "invalid link" fixture, matching the
-/// case used by test/deep_link_test.dart item 11.
-Uri _invalidLink() => Uri.parse('https://example.com/r/AB23CD');
+/// isAppRoomLinkUri returns false: this was never a room link at all, as
+/// opposed to [_invalidCodeLink], which is a room link with a bad code.
+Uri _notARoomLink() => Uri.parse('https://example.com/r/AB23CD');
 
 /// An [InitialLinkReader] whose future is held open by a [Completer] until
 /// the test completes or fails it.
@@ -543,35 +550,76 @@ void main() {
       expect(captured, isEmpty);
     });
 
-    testWidgets('an invalid initial link still sets the existing error text', (
-      tester,
-    ) async {
-      final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
-      final _RecordingNavigatorObserver observer =
-          _RecordingNavigatorObserver();
-      final List<FlutterErrorDetails> captured = await _captureFlutterErrors(
-        () async {
-          await tester.pumpWidget(
-            _homeScreenApp(initialLinkReader: reader.call, observer: observer),
-          );
-          await tester.pump();
+    testWidgets(
+      'an initial link whose room code is invalid still sets the existing '
+      'error text',
+      (tester) async {
+        final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
+        final _RecordingNavigatorObserver observer =
+            _RecordingNavigatorObserver();
+        final List<FlutterErrorDetails> captured = await _captureFlutterErrors(
+          () async {
+            await tester.pumpWidget(
+              _homeScreenApp(
+                initialLinkReader: reader.call,
+                observer: observer,
+              ),
+            );
+            await tester.pump();
 
-          reader.complete(_invalidLink());
-          // Setting the code field's text updates the TextEditingController
-          // directly and is visible after a single pump, but errorText is a
-          // decoration built from _errorText, which only shows up once the
-          // frame that setState scheduled has actually rebuilt the tree; the
-          // async-error tests above pump twice for the same reason.
-          await tester.pump();
-          await tester.pump();
-        },
-      );
+            reader.complete(_invalidCodeLink());
+            // Setting the code field's text updates the
+            // TextEditingController directly and is visible after a
+            // single pump, but errorText is a decoration built from
+            // _errorText, which only shows up once the frame that
+            // setState scheduled has actually rebuilt the tree; the
+            // async-error tests above pump twice for the same reason.
+            await tester.pump();
+            await tester.pump();
+          },
+        );
 
-      expect(_codeFieldText(tester), isEmpty);
-      final BuildContext context = tester.element(find.byType(HomeScreen));
-      final AppLocalizations loc = AppLocalizations.of(context);
-      expect(_codeFieldError(tester), loc.homeRoomCodeInvalid);
-      expect(captured, isEmpty);
-    });
+        expect(_codeFieldText(tester), isEmpty);
+        final BuildContext context = tester.element(find.byType(HomeScreen));
+        final AppLocalizations loc = AppLocalizations.of(context);
+        expect(_codeFieldError(tester), loc.homeRoomCodeInvalid);
+        expect(captured, isEmpty);
+      },
+    );
+
+    testWidgets(
+      'an initial uri that is not a room link at all leaves the field '
+      'clean and sets no error',
+      (tester) async {
+        final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
+        final _RecordingNavigatorObserver observer =
+            _RecordingNavigatorObserver();
+        final List<FlutterErrorDetails> captured = await _captureFlutterErrors(
+          () async {
+            await tester.pumpWidget(
+              _homeScreenApp(
+                initialLinkReader: reader.call,
+                observer: observer,
+              ),
+            );
+            await tester.pump();
+
+            reader.complete(_notARoomLink());
+            await tester.pump();
+            await tester.pump();
+          },
+        );
+
+        expect(_codeFieldText(tester), isEmpty);
+        expect(
+          _codeFieldError(tester),
+          isNull,
+          reason:
+              'a uri that is not a room link at all is not the player\'s '
+              'mistake and must not set the invalid-code error',
+        );
+        expect(captured, isEmpty);
+      },
+    );
   });
 }
