@@ -34,6 +34,14 @@ Uri _validLink([String code = 'AB23CD']) {
   return Uri.parse('https://ludo.provefair.app/r/$code');
 }
 
+/// A well-formed https link on this app's own host, shaped exactly like a
+/// room link (`isAppRoomLinkUri` is true for it), whose code cannot be used
+/// (it contains the excluded character `0`, so `roomCodeFromUri` returns
+/// null for it): the "right host, right scheme, bad code" fixture. This is
+/// what a genuinely mistyped or corrupted room code looks like, as opposed
+/// to a uri that was never a room link at all.
+Uri _invalidCodeLink() => Uri.parse('https://ludo.provefair.app/r/AB0234');
+
 /// An [InitialLinkReader] whose future is held open by a [Completer] until
 /// the test calls [complete], and which counts how many times it was
 /// invoked, per coverage item 17.
@@ -596,8 +604,9 @@ void main() {
     });
 
     testWidgets(
-      'item 11: an invalid cold link leaves the field exactly as it was and '
-      'shows the invalid-code error, and nothing navigates',
+      'item 11: a cold room link whose code is invalid leaves the field '
+      'exactly as it was and shows the invalid-code error, and nothing '
+      'navigates',
       (tester) async {
         final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
         final _RecordingNavigatorObserver observer =
@@ -615,7 +624,50 @@ void main() {
         final int pushesBefore = observer.pushCount;
         final int popsBefore = observer.popCount;
 
-        // wrong host: never matches, so this is an invalid link.
+        // right host, right scheme, bad code: isAppRoomLinkUri is true but
+        // roomCodeFromUri is null, so this is a room link with a code that
+        // cannot be used.
+        reader.complete(_invalidCodeLink());
+        await tester.pump();
+
+        expect(
+          _codeFieldText(tester),
+          'ZQ77KM',
+          reason:
+              'a room link whose code is invalid must leave whatever the '
+              'player had already typed exactly as it was, not clear it',
+        );
+        final BuildContext context = tester.element(find.byType(HomeScreen));
+        final AppLocalizations loc = AppLocalizations.of(context);
+        expect(_codeFieldError(tester), loc.homeRoomCodeInvalid);
+        expect(observer.pushCount, pushesBefore);
+        expect(observer.popCount, popsBefore);
+      },
+    );
+
+    testWidgets(
+      'item 11: a cold uri that is not a room link at all (wrong host) '
+      'leaves the field exactly as it was and sets no error, and nothing '
+      'navigates',
+      (tester) async {
+        final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
+        final _RecordingNavigatorObserver observer =
+            _RecordingNavigatorObserver();
+        await tester.pumpWidget(
+          _homeScreenApp(initialLinkReader: reader.call, observer: observer),
+        );
+        await tester.pump();
+
+        await tester.enterText(
+          find.byKey(const Key('room-code-field')),
+          'ZQ77KM',
+        );
+        await tester.pump();
+        final int pushesBefore = observer.pushCount;
+        final int popsBefore = observer.popCount;
+
+        // wrong host: this was never a room link at all, so it must not be
+        // treated as a mistyped code.
         reader.complete(Uri.parse('https://example.com/r/AB23CD'));
         await tester.pump();
 
@@ -623,12 +675,16 @@ void main() {
           _codeFieldText(tester),
           'ZQ77KM',
           reason:
-              'an invalid link must leave whatever the player had already '
-              'typed exactly as it was, not clear it',
+              'a uri that is not a room link at all must leave whatever '
+              'the player had already typed exactly as it was, not clear it',
         );
-        final BuildContext context = tester.element(find.byType(HomeScreen));
-        final AppLocalizations loc = AppLocalizations.of(context);
-        expect(_codeFieldError(tester), loc.homeRoomCodeInvalid);
+        expect(
+          _codeFieldError(tester),
+          isNull,
+          reason:
+              'a uri that is not a room link at all must not accuse the '
+              'player of mistyping a code they never typed',
+        );
         expect(observer.pushCount, pushesBefore);
         expect(observer.popCount, popsBefore);
       },
@@ -685,8 +741,8 @@ void main() {
     });
 
     testWidgets(
-      'item 15: an invalid uri on the stream sets the error and leaves the '
-      'text alone',
+      'item 15: a stream uri whose room code is invalid sets the error and '
+      'leaves the text alone',
       (tester) async {
         final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
         await tester.pumpWidget(_homeScreenApp(linkStream: opener.call));
@@ -698,13 +754,45 @@ void main() {
         );
         await tester.pump();
 
-        opener.add(Uri.parse('http://ludo.provefair.app/r/AB23CD'));
+        // right host, right scheme, bad code: isAppRoomLinkUri is true but
+        // roomCodeFromUri is null.
+        opener.add(_invalidCodeLink());
         await tester.pump();
 
         expect(_codeFieldText(tester), 'KEEPME');
         final BuildContext context = tester.element(find.byType(HomeScreen));
         final AppLocalizations loc = AppLocalizations.of(context);
         expect(_codeFieldError(tester), loc.homeRoomCodeInvalid);
+      },
+    );
+
+    testWidgets(
+      'item 15: a stream uri that is not a room link at all (wrong scheme) '
+      'sets no error and leaves the text alone',
+      (tester) async {
+        final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
+        await tester.pumpWidget(_homeScreenApp(linkStream: opener.call));
+        await tester.pump();
+
+        await tester.enterText(
+          find.byKey(const Key('room-code-field')),
+          'KEEPME',
+        );
+        await tester.pump();
+
+        // wrong scheme (http, not https): this was never a room link at
+        // all, so it must not be treated as a mistyped code.
+        opener.add(Uri.parse('http://ludo.provefair.app/r/AB23CD'));
+        await tester.pump();
+
+        expect(_codeFieldText(tester), 'KEEPME');
+        expect(
+          _codeFieldError(tester),
+          isNull,
+          reason:
+              'a uri that is not a room link at all must not accuse the '
+              'player of mistyping a code they never typed',
+        );
       },
     );
   });
