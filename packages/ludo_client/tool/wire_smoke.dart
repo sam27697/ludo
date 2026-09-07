@@ -191,9 +191,14 @@ class WireSmokeArgs {
   /// caps one connection at about 8 messages a second. 0 disables pacing.
   final int paceMs;
 
-  /// How long, in seconds, the `reconnect` scenario's watchdog waits after
-  /// the resumed connection's agent is attached before treating a send
-  /// count still stuck at its baseline as a failure. Defaults to 90 --
+  /// How long, in seconds, the `reconnect` scenario's watchdog lets the
+  /// resumed connection stay completely silent before treating it as a
+  /// failure. The watchdog samples the send count every second starting
+  /// from when the resumed connection's agent is attached and only fails
+  /// once that count has not moved past its baseline for the whole window;
+  /// a single send at any point resets nothing else about the run but does
+  /// retire the watchdog, since a resumed seat that has spoken at all is no
+  /// longer the silent seat this guard exists to catch. Defaults to 90 --
   /// deliberately generous: the other seats are paced at --pace-ms apart so
   /// the resumed seat's own turn ordinarily comes back around within a few
   /// seconds of the resume, and the server's own turn timer is 45s, so 90s
@@ -1116,25 +1121,40 @@ Future<ScenarioResult> _playReconnect({
   // --resume-grace-seconds has passed with the count still parked on its
   // baseline, while the game is still being played.
   final Completer<Object> resumeWatchdogCompleter = Completer<Object>();
-  final Timer resumeWatchdogTimer = Timer(
-    Duration(seconds: resumeGraceSeconds),
-    () {
-      if (!resumeWatchdogCompleter.isCompleted) {
-        resumeWatchdogCompleter.complete(
-          StateError(
-            'reconnect: resumed connection for seat $dropSeat sent no '
-            'message in the $resumeGraceSeconds second '
-            '--resume-grace-seconds grace period after its agent was '
-            'attached (send count is still ${resumedPaced.sendCount}, '
-            'unchanged from its baseline of $resumedSendsBaseline); '
-            "without this watchdog the server's own 45-second turn timer "
-            'would auto-play this silent seat and hide the same defect '
-            'behind an eventual winner instead of naming it here',
-          ),
-        );
-      }
-    },
-  );
+  final Stopwatch resumeWatchdogStopwatch = Stopwatch()..start();
+  final Timer resumeWatchdogTimer = Timer.periodic(const Duration(seconds: 1), (
+    Timer timer,
+  ) {
+    if (resumedPaced.sendCount != resumedSendsBaseline) {
+      // The resumed connection has spoken at least once since the
+      // baseline was taken. That is the only claim this watchdog makes;
+      // it has nothing left to check, so it stands down and lets the
+      // race resolve on the winner or on an error.
+      timer.cancel();
+      return;
+    }
+    if (resumeWatchdogStopwatch.elapsed <
+        Duration(seconds: resumeGraceSeconds)) {
+      return;
+    }
+    timer.cancel();
+    if (!resumeWatchdogCompleter.isCompleted) {
+      resumeWatchdogCompleter.complete(
+        StateError(
+          'reconnect: resumed connection for seat $dropSeat sent no '
+          'message in the $resumeGraceSeconds second '
+          '--resume-grace-seconds grace period after its agent was '
+          'attached; its send count is still '
+          '${resumedPaced.sendCount}, matching the baseline of '
+          '$resumedSendsBaseline taken at attach, and never moved in '
+          "the whole window; without this watchdog the server's own "
+          '45-second turn timer would auto-play this silent seat and '
+          'hide the same defect behind an eventual winner instead of '
+          'naming it here',
+        ),
+      );
+    }
+  });
 
   final Object outcome;
   try {
@@ -1158,10 +1178,12 @@ Future<ScenarioResult> _playReconnect({
   final int resumedSendsAfterAttach =
       resumedPaced.sendCount - resumedSendsBaseline;
   if (resumedSendsAfterAttach <= 0) {
-    // Unreachable in practice: the watchdog above already fails faster than
-    // this for a seat that never sends. Kept as a second, independent guard
-    // rather than removed, in case a future change alters what the
-    // watchdog races against.
+    // Reachable now: the watchdog above only fires once the whole
+    // --resume-grace-seconds window has passed with the count still on its
+    // baseline. A resumed seat that never sends but whose game reaches a
+    // winner before that window elapses -- the server's own turn timer can
+    // do that well inside 90s for a short game -- races past the watchdog
+    // and lands here instead. This is the guard that catches it.
     throw StateError(
       'reconnect: resumed connection for seat $dropSeat sent '
       '$resumedSendsAfterAttach message(s) after its agent was attached and '
