@@ -227,23 +227,36 @@ class WireServer {
 
   /// `docs/RULES.md` section 3.3. The registry decides and applies; this
   /// only publishes what it decided, to every socket in the room, with no
-  /// `re` on any frame because no request is being answered. A throw from
-  /// one room must not stop the sweep for the others, and must not kill the
-  /// periodic timer, so each room's publish is guarded.
+  /// `re` on any frame because no request is being answered. Two separate
+  /// guards protect two separate failures, and they must not be collapsed
+  /// into one: the outer `try` protects `registry.expireTurns()` itself, so
+  /// a throw computing which rooms expired cannot escape this periodic
+  /// timer and take every room in the process down with it; the inner `try`
+  /// protects one room's publish, so a throw broadcasting one room's expiry
+  /// cannot stop the publish for every other room this same sweep decided
+  /// on.
   void _runTurnExpiry() {
-    for (final ExpiredTurn expired in registry.expireTurns()) {
+    final List<ExpiredTurn> expired;
+    try {
+      expired = registry.expireTurns();
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('turn-expiry sweep failed error=$error\n$stack');
+      return;
+    }
+    for (final ExpiredTurn one in expired) {
       try {
-        for (final OutFrame frame in buildExpiryFrames(expired)) {
+        for (final OutFrame frame in buildExpiryFrames(one)) {
           _hub.broadcast(
-            code: expired.code,
+            code: one.code,
             type: frame.type,
             data: frame.data,
           );
         }
       } catch (error, stack) {
         // ignore: avoid_print
-        print('turn-expiry publish failed room=${expired.code} '
-            'seat=${expired.seat} error=$error\n$stack');
+        print('turn-expiry publish failed room=${one.code} '
+            'seat=${one.seat} error=$error\n$stack');
       }
     }
   }
