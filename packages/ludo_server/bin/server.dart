@@ -9,7 +9,24 @@ import 'package:ludo_server/ludo_server.dart';
 
 const int _defaultPort = 8080;
 
-Future<void> main() async {
+/// The entry point. Everything the process does lives in [_run], and this
+/// wrapper's only job is to make sure that an asynchronous error escaping
+/// from anywhere inside it -- the turn-expiry sweep is the one that is known
+/// to have escaped before, but a `runZonedGuarded` at this one seam catches
+/// every other future room's worth of them too -- prints loudly and lets the
+/// process carry on holding every other room in memory rather than dying
+/// with all of them. Loud means the error and the full stack, never a bare
+/// message, because a backstop that hides what it caught is worse than no
+/// backstop.
+void main() {
+  runZonedGuarded(() {
+    unawaited(_run());
+  }, (Object error, StackTrace stack) {
+    stderr.writeln('unhandled $error\n$stack');
+  });
+}
+
+Future<void> _run() async {
   final int port =
       int.tryParse(Platform.environment['PORT'] ?? '') ?? _defaultPort;
 
