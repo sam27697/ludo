@@ -16,92 +16,72 @@ The script fills these Play Console main-store-listing fields:
 48x48, the size that actually decides whether anyone taps it, kept next to
 the full-size icon so a reviewer can look at the thing that matters.
 
+## Why this is version 2
+
+Versions 1 (orders 054 and 059) both drew the board itself: four flat colour
+quadrants -- red, green, blue, yellow -- separated by a cross, with home lanes
+and safe squares picked out inside it. Order 059's README argued at length that
+this was not the well known four-square corporate mark, on the grounds that it
+carries internal structure a flat 2x2 grid does not.
+
+**Looking at the rendered pixels, that argument does not hold.** At full size
+the resemblance is immediate, and at 48x48 -- the size the argument itself
+named as the one that matters -- the lane outlines and safe-square rings
+disappear and what is left is exactly a 2x2 grid of flat colour in that exact
+palette. An icon that reads as another company's mark is a trademark question
+before it is a design question, and it was never worth the risk for a board
+diagram nobody can read at launcher size anyway.
+
+Version 2 draws **the die**, which is what this product is actually about: the
+dice are the feature, verifiable per roll, and the app is named for them. The
+four seat colours survive as the four pips, so the Ludo palette is still
+present without the layout that caused the resemblance. What is on screen:
+
+- a vertical gradient ground in the app's own Material 3 purple
+- a white, heavily rounded die, rotated slightly off-square so it reads as an
+  object rather than a UI card
+- four pips on the diagonals, one per seat colour, each outlined in the same
+  near-black as the die's edge
+
+At 48x48 the silhouette survives intact: a light rounded square on a dark
+ground with four coloured dots. Nothing in it depends on detail that vanishes
+when the icon is small.
+
 ## Palette
 
-Copied from `packages/ludo_client/lib/src/board.dart:181-184` (the four seat
-colours) and `:200` (the board's off-white ground). If the board's own
-colours change, this script has to be edited by hand to match; it does not
-import the Dart source.
+Seat colours copied from `packages/ludo_client/lib/src/board.dart:181-184`. If
+the board's own colours change, this script has to be edited by hand to match;
+it does not import the Dart source.
 
     seat 0  #D32F2F  red
     seat 1  #388E3C  green
     seat 2  #FBC02D  yellow
     seat 3  #1976D2  blue
-    ground  #F7F3E9  off-white
+    ground  #4A398C -> #2A1F54  (vertical gradient)
+    die     #FAF7F0 on #1B1438 edge
 
 ## Font
 
-`feature-1024x500.png` carries the only text in either image, the wordmark
-"Ludo RNG". It is set in DejaVu Sans Bold, found on this machine at
-`/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf`, a real vector font,
-not PIL's bitmap default.
+`feature-1024x500.png` carries the only text in either image: the wordmark
+"Ludo RNG" and two lines of subtitle. Set in Poppins (Bold for the wordmark,
+Medium for the subtitle), real vector fonts, not PIL's bitmap default.
 
-## The motif, and why it changed (order 059)
+**The generator asserts that every line of that text ends inside the right
+margin and fails loudly if it does not.** The first run of this version
+produced a banner whose subtitle ran off the edge of the image; a store banner
+is not the place to find that out by eye, so the check is now part of the
+build.
 
-The first version of these images (order 054) was four flat colour squares
-in a 2x2 grid separated by a thin cross -- the exact layout and exact
-positional colour assignment of a very well known corporate mark. The
-colours were honest, taken straight from the board, but a 2x2 grid of flat
-colour is generic enough that it reads as that mark before it reads as
-anything else. Neither asset from that version was ever uploaded anywhere.
+## Rendering
 
-This version draws the board itself rather than an abstraction of it, using
-the same construction `packages/ludo_client/lib/src/board_geometry.dart`
-uses: one seat's shape, rotated three times about the board centre. Nothing
-here is imported from the Dart source, so if that file's geometry ever
-changes, the coordinates in `store_graphics.py` need updating by hand to
-match, the same as the palette above. What's on screen, structurally:
+Everything is drawn at 4x the output size and downsampled with Lanczos
+resampling, so the die's rounded corners and the pip circles anti-alias
+instead of stair-stepping. The resampling is deterministic -- same input
+pixels every run -- so byte-for-byte reproducibility holds.
 
-- the four 6x6 yards, full bleed, one per seat
-- each seat's home column: a bordered lane in that seat's colour, running
-  from its yard to the centre, the same cells
-  `board_geometry.dart`'s `_homeColumn` returns for that seat
-- the centre 3x3 block, outlined, split by two drawn diagonals into four
-  triangles, each coloured to match the arm that arrives at that side of it
-- the eight starred safe squares of the shared track (`docs/RULES.md`
-  section 1.3: the four entry squares and the square eight ahead of each),
-  marked as small ringed circles
-- an outlined border around the cross itself, so the shape reads as a
-  bordered plus rather than colour bleeding straight into colour at the
-  yard edge
-
-Everything is drawn flat, at 4x the output size, then downsampled with
-Lanczos resampling so diagonal edges (the centre split, the star rings)
-anti-alias instead of stair-stepping. The resampling is deterministic --
-same input pixels every run -- so it does not break the byte-for-byte
-reproducibility the generator is for.
-
-## Judgement call for the reviewer
-
-**What the icon is not, checked deliberately:**
-
-- It is not the four-flat-squares mark order 054 accidentally produced. That
-  mark has no internal structure at all beyond the four fields and a plain
-  gap between them; this one has a bordered cross, four bordered home lanes
-  reaching inward, eight marked safe squares, and a bordered, diagonally
-  split centre block. None of that exists in a flat four-square mark.
-- It is not a generic four-colour pinwheel or flower mark (the kind of
-  rotationally-symmetric four-petal shape a few other apps use in this same
-  red/green/yellow/blue palette). Every coloured region here is a straight
-  rectangle or a straight-edged triangle bounded by a visible outline, laid
-  out on a labelled grid, not a smooth curved petal converging on a point;
-  the outlines and the grid are what keep it reading as a diagram of a board
-  rather than as an abstract mark.
-- It is not a dartboard or target mark. The concentric-rings resemblance a
-  plain diamond-in-a-square centre could invite is broken up by the visible
-  cross arms running to all four edges of the icon, which no target mark has.
-
-At 48x48 (`icon-48-check.png`) the fine detail does not survive: the star
-rings and the thin lane outlines shrink past the point of being distinct
-brush strokes. What does survive is the silhouette the order asked to be
-kept if the rest does not fit: four colour quadrants, a cross of the
-board's own ground colour connecting them, coloured lanes running along
-that cross into the centre, and a small multicoloured patch at the middle
-where the lanes meet. That silhouette is still a cross with structure in
-it, not a plain 2x2 grid, which is the property this round exists to
-guarantee.
-
-## What this order did not touch
+## What this does not touch
 
 The app's launcher icon (the icon inside the AAB itself) is a separate asset
-and this order does not produce or change it.
+and this script does not produce or change it. It is still the Flutter
+default, and it should be brought in line with this die before the app is
+promoted to production.
