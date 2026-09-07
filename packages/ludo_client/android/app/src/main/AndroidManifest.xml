@@ -1,4 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The app talks to wss://ludo.provefair.app and does nothing
+         useful without a socket. Flutter only puts this permission in
+         the debug and profile manifests, so every debug and profile
+         build connected and the release build shipped to Play could
+         not open a single socket: version code 2 answered every Create
+         Room with "failed to connect to server". Do not remove it, and
+         do not rely on the debug manifest to prove connectivity works.
+         verify.yml asserts this line survives into the merged release
+         manifest. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="Ludo RNG"
         android:name="${applicationName}"

@@ -241,7 +241,19 @@ jobs:
             echo "minSdk 24 not found in $manifest" >&2
             exit 1
           }
-          echo "confirmed from the build's own merged manifest: applicationId=app.fayad.ludo, targetSdk=36, minSdk=24"
+          # The release build has no INTERNET permission unless the MAIN
+          # manifest declares it: Flutter's scaffolding puts it only in the
+          # debug and profile manifests, so every local run connects and the
+          # shipped artifact cannot open a socket at all. Version code 2 went
+          # to closed testing that way and answered every Create Room with
+          # "failed to connect to server". This asserts it from the merged
+          # RELEASE manifest, which is the only artefact that proves what
+          # actually ships.
+          grep -q 'android.permission.INTERNET' "$manifest" || {
+            echo "android.permission.INTERNET is missing from the merged release manifest; the shipped app would not be able to open a socket" >&2
+            exit 1
+          }
+          echo "confirmed from the build's own merged manifest: applicationId=app.fayad.ludo, targetSdk=36, minSdk=24, INTERNET granted"
 
       # Guarded the same way the signing material was written: only runs
       # when the keystore secret is present. This step is the difference
