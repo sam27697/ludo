@@ -932,8 +932,22 @@ class RoomRegistry {
       if (_remainingSegmentMs(room) > 0) {
         continue;
       }
+      // From here on this room's segment has expired and this sweep owes
+      // it an action: either an ExpiredTurn is appended below, or one of
+      // the branches below calls _declineExpiredSegment, which restarts
+      // the segment and logs why, before the loop moves to the next room.
+      // Leaving neither behind is exactly the bug this method used to
+      // have -- the same declined room re-entering this sweep, and doing
+      // nothing, once a second for as long as the room lives.
+      final String phase = _turnExpiryPhaseToken(game.phase);
       final Seat? seat = _seatAt(room, game.currentSeat);
       if (seat == null) {
+        _declineExpiredSegment(
+          room: room,
+          seatIndex: game.currentSeat,
+          phase: phase,
+          reason: 'no_seat',
+        );
         continue;
       }
       if (game.phase == engine.GamePhase.awaitRoll) {
@@ -943,10 +957,24 @@ class RoomRegistry {
           acted.add(
             ExpiredTurn(code: room.code, seat: seat.seat, roll: result),
           );
+        } else if (result is RollFailure) {
+          _declineExpiredSegment(
+            room: room,
+            seatIndex: seat.seat,
+            phase: phase,
+            reason: 'roll_failed',
+            error: result.error,
+          );
         }
       } else if (game.phase == engine.GamePhase.awaitMove) {
         final List<int> legal = List<int>.of(engine.legalTokens(game))..sort();
         if (legal.isEmpty) {
+          _declineExpiredSegment(
+            room: room,
+            seatIndex: seat.seat,
+            phase: phase,
+            reason: 'no_legal_tokens',
+          );
           continue;
         }
         final MoveResult result = move(
@@ -958,10 +986,64 @@ class RoomRegistry {
           acted.add(
             ExpiredTurn(code: room.code, seat: seat.seat, move: result),
           );
+        } else if (result is MoveFailure) {
+          _declineExpiredSegment(
+            room: room,
+            seatIndex: seat.seat,
+            phase: phase,
+            reason: 'move_failed',
+            error: result.error,
+          );
         }
+      } else {
+        // Not reachable with today's engine.GamePhase (only awaitRoll,
+        // awaitMove and finished exist, and finished was filtered above),
+        // but expireTurns must stay total if that enum ever grows a phase
+        // this method has not been taught to act on.
+        _declineExpiredSegment(
+          room: room,
+          seatIndex: seat.seat,
+          phase: phase,
+          reason: 'unhandled_phase',
+        );
       }
     }
     return acted;
+  }
+
+  /// The lower-snake-case phase token the frozen turn-expiry-skipped log
+  /// line uses, per `docs/PROTOCOL.md` and order 124 -- never the Dart
+  /// enum's own `toString()`.
+  String _turnExpiryPhaseToken(engine.GamePhase phase) {
+    switch (phase) {
+      case engine.GamePhase.awaitRoll:
+        return 'await_roll';
+      case engine.GamePhase.awaitMove:
+        return 'await_move';
+      case engine.GamePhase.finished:
+        return 'other';
+    }
+  }
+
+  /// Called from every path through [expireTurns] that has passed the
+  /// `_remainingSegmentMs(room) > 0` check and is not adding an
+  /// [ExpiredTurn] for [room] to the result. Restarts the segment -- so
+  /// this seat gets a fresh full turn budget rather than the sweep
+  /// hammering the same expired room again next tick -- and prints exactly
+  /// one line in the frozen `turn-expiry skipped` format, with `error=`
+  /// appended only when [error] is given.
+  void _declineExpiredSegment({
+    required Room room,
+    required int seatIndex,
+    required String phase,
+    required String reason,
+    ProtocolError? error,
+  }) {
+    _restartSegment(room);
+    final String errorSuffix = error == null ? '' : ' error=${error.name}';
+    // ignore: avoid_print
+    print('turn-expiry skipped room=${room.code} seat=$seatIndex '
+        'phase=$phase reason=$reason$errorSuffix');
   }
 
   /// The seated player at engine seat index [index], or null when that index
