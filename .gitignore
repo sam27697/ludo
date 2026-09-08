@@ -61,6 +61,9 @@ captures/
 vendor/
 *.test
 
+# Python
+__pycache__/
+
 # IDE and editor
 .idea/
 .vscode/
