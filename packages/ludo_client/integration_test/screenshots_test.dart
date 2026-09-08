@@ -56,8 +56,10 @@
 // getting photographed and called a success.
 
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:typed_data' show Uint8List;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MethodCall, MethodChannel;
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -226,7 +228,8 @@ class _ScreenshotHarnessState extends State<_ScreenshotHarness> {
 /// Answers the `integration_test` plugin's own method channel
 /// (`plugins.flutter.io/integration_test`, the same channel
 /// `IntegrationTestWidgetsFlutterBinding.takeScreenshot` calls) with an
-/// empty byte list for every `captureScreenshot` call.
+/// empty byte list for every `captureScreenshot` call -- but only when there
+/// is genuinely no plugin behind that channel to begin with.
 ///
 /// Under `flutter drive` on a device, this channel is answered by the
 /// plugin's native Android/iOS side, which is what actually turns a
@@ -241,7 +244,47 @@ class _ScreenshotHarnessState extends State<_ScreenshotHarness> {
 /// file's own claim true: with this in place, `takeScreenshot` really is
 /// inert under `flutter test`, and the run exercises every finder, every
 /// tap and every assertion around it without ever producing a real image.
+///
+/// `setMockMethodCallHandler` does not know or care whether a device is
+/// listening on the other end: once a handler is registered for a channel,
+/// `TestDefaultBinaryMessenger.send` calls that handler and never reaches
+/// `delegate.send`, the path to the real platform plugin
+/// (flutter_test/lib/src/test_default_binary_messenger.dart:141-150, this
+/// project's installed copy). So a handler registered unconditionally here
+/// would answer `captureScreenshot` on a real emulator too, and every
+/// screenshot `flutter drive` captures would come back as the
+/// `Uint8List(0)` below instead of the Android plugin's real PNG bytes --
+/// the driver adaptor would write five zero-byte files to disk, and the
+/// workflow's own "confirm the screenshots exist" step only counts files,
+/// so the job would go green while uploading nothing. If this guard is ever
+/// deleted, that is exactly what ships to the Play Console listing.
+///
+/// The guard is `!kIsWeb && Platform.isAndroid`, the same condition
+/// `convertFlutterSurfaceToImage` itself branches on in the installed
+/// `integration_test` package
+/// (toolchains/flutter/packages/integration_test/lib/src/_callback_io.dart:66,
+/// `if (!Platform.isAndroid) { return; }` -- true under plain `flutter
+/// test` on `flutter-tester`, which is neither web nor Android, so the stub
+/// still registers there and this file's headless proof still runs;
+/// false is the one case this guard exists for, a real Android device
+/// under `flutter drive`, where the stub must never register.
 void _stubScreenshotChannel(WidgetTester tester) {
+  final bool isRealAndroidDevice = !kIsWeb && Platform.isAndroid;
+  // Proof for the record, not decoration: this line is what lets the
+  // headless run below show, in its own output, what the guard actually
+  // evaluated to on the machine that ran it.
+  // ignore: avoid_print
+  print(
+    'screenshots_test: _stubScreenshotChannel guard '
+    '(!kIsWeb && Platform.isAndroid) evaluated to $isRealAndroidDevice '
+    'on this run',
+  );
+  if (isRealAndroidDevice) {
+    // Do not touch the channel. A real device is on the other end and the
+    // real plugin must answer captureScreenshot itself.
+    return;
+  }
+
   const MethodChannel channel = MethodChannel(
     'plugins.flutter.io/integration_test',
   );
