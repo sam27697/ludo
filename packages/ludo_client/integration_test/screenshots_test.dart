@@ -348,6 +348,78 @@ Future<void> _pumpUntilFound(
   );
 }
 
+/// Forces real, wall-clock-duration frames -- not the fake test clock a
+/// plain `WidgetTester` runs on -- before a screenshot taken right after a
+/// locale toggle.
+///
+/// `pumpAndSettle()` proves only that the framework has stopped scheduling
+/// frames; it says nothing about whether the platform surface
+/// `convertFlutterSurfaceToImage()` swapped in has actually received a
+/// frame painted after the toggle. Emulator run 34191276162 on `04d59e9`
+/// produced `02-home-ar.png` byte-identical to `01-home-en.png` (md5
+/// d5faae649370b3fe726107fc482c5df6, `ImageChops.difference(...).getbbox()`
+/// -> `None`) even though `_expectHomeScreen(..., localeName: 'ar')`, which
+/// reads the widget tree the same way this file's own assertions do, was
+/// not at fault: the tree really had flipped to Arabic by the time the
+/// screenshot ran. In a profile (AOT) build the widget tree and that
+/// platform surface have been observed to fall out of step, and nothing
+/// running on Flutter's fake test clock can see or wait on that gap, since
+/// the surface lives entirely on the native side of the screenshot channel.
+///
+/// `main()` below installs `IntegrationTestWidgetsFlutterBinding`, which
+/// extends `LiveTestWidgetsFlutterBinding`
+/// (toolchains/flutter/packages/integration_test/lib/integration_test.dart:45-46).
+/// `LiveTestWidgetsFlutterBinding.pump(duration)` schedules its next frame
+/// with a real `dart:async` `Timer`
+/// (toolchains/flutter/packages/flutter_test/lib/src/binding.dart:3004-3016),
+/// not the deterministic fake clock a plain, non-live `WidgetTester` binding
+/// advances instantly -- so every one of the pumps below is real elapsed
+/// wall time for a platform compositor to actually catch up in, which is
+/// the one thing this helper can offer that a wider `pumpAndSettle()`
+/// cannot.
+///
+/// [readyFinder] is a second, independent floor: a finder for text or a
+/// widget the new locale alone produces (the caller builds it from the
+/// already-toggled `AppLocalizations`, not a hardcoded translated string,
+/// so it cannot drift from the ARB files). It does not fix the surface
+/// staleness above -- the widget tree is already correct long before the
+/// platform surface is, so in the passing case this finder is satisfied on
+/// the very first pump below and adds no extra wait -- it exists so that a
+/// future regression that made the *widget tree itself* lag behind the
+/// toggle would fail here, by name, with the reproduction in the message,
+/// instead of silently taking a screenshot of the wrong tree.
+Future<void> _settleForScreenshot(
+  WidgetTester tester,
+  Finder readyFinder,
+  String description, {
+  int minRealFrames = 30,
+  Duration frame = const Duration(milliseconds: 32),
+  int maxExtraPumps = 200,
+}) async {
+  for (var i = 0; i < minRealFrames; i++) {
+    await tester.pump(frame);
+  }
+  var extraPumps = 0;
+  while (readyFinder.evaluate().isEmpty) {
+    if (extraPumps >= maxExtraPumps) {
+      throw TestFailure(
+        'after $minRealFrames real-duration pumps of $frame each to settle '
+        'the platform surface, plus $maxExtraPumps more real-duration '
+        'pumps of the same length waiting for the widget tree itself, '
+        'still waiting for: $description',
+      );
+    }
+    await tester.pump(frame);
+    extraPumps += 1;
+  }
+  // Drains anything the loop above scheduled. Safe here and only for this
+  // capture: the toggle happens on HomeScreen, before any tap that could
+  // put LobbyScreen or GameScreen (and their runaway tickers) on screen --
+  // see the file header and _tapAndAwaitPushedRoute's own doc comment for
+  // why pumpAndSettle is not safe past that point.
+  await tester.pumpAndSettle();
+}
+
 /// Asserts the home screen is on screen, in the locale named by
 /// [localeName] ('en' or 'ar'), before a home-screen capture is taken.
 Future<void> _expectHomeScreen(
@@ -547,6 +619,20 @@ void main() {
 
     await tester.tap(find.byKey(const Key('locale-toggle-button')));
     await tester.pumpAndSettle();
+    // The toggle above is followed immediately by a screenshot, with
+    // nothing else to naturally give a native platform compositor more
+    // real time -- exactly the shape emulator run 34191276162 caught. See
+    // _settleForScreenshot's own doc comment for the measurement and why a
+    // wider pumpAndSettle() alone cannot see or fix that gap.
+    final AppLocalizations arHomeLoc = AppLocalizations.of(
+      tester.element(find.byType(HomeScreen)),
+    );
+    await _settleForScreenshot(
+      tester,
+      find.text(arHomeLoc.homeCreateRoomButton),
+      'the Arabic Create Room button label ("${arHomeLoc.homeCreateRoomButton}") '
+      'laid out on the home screen after the locale toggle',
+    );
     await _expectHomeScreen(tester, localeName: 'ar');
     await binding.takeScreenshot('02-home-ar');
 
