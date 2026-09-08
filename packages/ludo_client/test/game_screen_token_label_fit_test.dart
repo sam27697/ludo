@@ -49,6 +49,42 @@
 // test/game_screen_test.dart:69-278 rather than imported from it, per this
 // order: that file belongs to nobody this round and importing its private
 // helpers would collide with it.
+//
+// ROUND 2 (work/ludo/orders/132b-token-button-overflow-proof.md, "ROUND 1
+// VERDICT: RETURNED"): the line-count assertion above was measured to pass
+// against order 132a's fix (FittedBox(fit: BoxFit.scaleDown) around the
+// label) for every possible label string, including one three times longer
+// than the original -- because FittedBox lays its child out under
+// *unbounded* width, so the RenderParagraph behind the label always reports
+// exactly one line no matter how long the string is or how far it has been
+// shrunk to get there. A label scaled down to illegibility satisfies the
+// line-count assertion just as well as a label that genuinely fits.
+//
+// The second loop each case below adds does not re-measure line count; it
+// measures whether the label was shrunk at all. Under
+// FittedBox(fit: BoxFit.scaleDown), the FittedBox's child (the label's own
+// RenderParagraph) is laid out with no width limit, so its laid-out width is
+// the label's natural, un-shrunk, single-line width; separately, the
+// FittedBox render object itself carries the incoming BoxConstraints its own
+// parent (the button, by way of Expanded/Padding) gave it -- the box it was
+// actually allowed. If the natural width exceeds that allowed width, the
+// only way the label is still rendering on one line is that FittedBox has
+// scaled it down, and the button is too narrow for it regardless of what the
+// line count says. This file measures both numbers straight off the live
+// render tree (never a hardcoded width) and reports the implied scale factor
+// (allowed / natural) in the failure message.
+//
+// If no FittedBox sits between a token button and its label -- true on this
+// worktree's unfixed main, where the label wraps instead of shrinking, and
+// true of any future fix that solves the overflow by a mechanism other than
+// FittedBox -- there is nothing here for this measurement to read, and the
+// loop below calls markTestSkipped(...) and stops rather than silently
+// reporting a pass that measured nothing. On this worktree that code path is
+// never actually reached: the first loop's line-count assertion already
+// fails at token button 0 (unfixed main wraps every label), which aborts the
+// test body before the second loop runs. That is expected and is recorded in
+// this file's own report rather than claimed as an observation this
+// worktree does not have the fixed code to make.
 
 import 'dart:convert';
 
@@ -272,7 +308,7 @@ Key _tokenKey(int i) => Key('game-screen-token-$i');
 /// the Flutter SDK this suite runs on (see the file header), so the
 /// measurement is taken one level down, on a `TextPainter` fed the same
 /// inputs the real paragraph was laid out with.
-int _lineCountOfButtonLabel(WidgetTester tester, Key buttonKey) {
+RenderParagraph _paragraphOfButtonLabel(WidgetTester tester, Key buttonKey) {
   final Finder buttonFinder = find.byKey(buttonKey);
   expect(
     buttonFinder,
@@ -288,9 +324,11 @@ int _lineCountOfButtonLabel(WidgetTester tester, Key buttonKey) {
     findsOneWidget,
     reason: 'fixture is broken: expected exactly one RichText under $buttonKey',
   );
-  final RenderParagraph paragraph = tester.renderObject<RenderParagraph>(
-    textFinder,
-  );
+  return tester.renderObject<RenderParagraph>(textFinder);
+}
+
+int _lineCountOfButtonLabel(WidgetTester tester, Key buttonKey) {
+  final RenderParagraph paragraph = _paragraphOfButtonLabel(tester, buttonKey);
   final TextPainter probe = TextPainter(
     text: paragraph.text,
     textAlign: paragraph.textAlign,
@@ -309,6 +347,75 @@ int _lineCountOfButtonLabel(WidgetTester tester, Key buttonKey) {
   }
 }
 
+/// The width the label inside token button [buttonKey] would occupy laid out
+/// on a single line with no width limit at all -- its natural, un-shrunk
+/// width, independent of whatever constraint the real button happens to lay
+/// it out under right now. Built the same way [_lineCountOfButtonLabel] is:
+/// every input (text, style, direction, scaler, locale, strut, width basis)
+/// is read back off the live `RenderParagraph`, so this measures the label
+/// that is actually on screen, whatever it currently says, never a string
+/// typed into this file. The only deliberate difference from
+/// [_lineCountOfButtonLabel] is the layout width: always unbounded here,
+/// because "natural width" is a property of the text and its style alone,
+/// not of whatever box it happens to be squeezed into at the moment this is
+/// called.
+double _naturalSingleLineWidthOfButtonLabel(
+  WidgetTester tester,
+  Key buttonKey,
+) {
+  final RenderParagraph paragraph = _paragraphOfButtonLabel(tester, buttonKey);
+  final TextPainter probe = TextPainter(
+    text: paragraph.text,
+    textAlign: paragraph.textAlign,
+    textDirection: paragraph.textDirection,
+    textScaler: paragraph.textScaler,
+    maxLines: paragraph.maxLines,
+    locale: paragraph.locale,
+    strutStyle: paragraph.strutStyle,
+    textWidthBasis: paragraph.textWidthBasis,
+    textHeightBehavior: paragraph.textHeightBehavior,
+  )..layout();
+  try {
+    return probe.width;
+  } finally {
+    probe.dispose();
+  }
+}
+
+/// The live `RenderFittedBox` sitting between token button [buttonKey] and
+/// its label, or `null` if there is none. `null` covers two real cases this
+/// file cannot tell apart and does not need to: unfixed `main`, where the
+/// label wraps instead of shrinking, and a hypothetical future fix that
+/// solves the overflow by some means other than `FittedBox`. Either way,
+/// there is no FittedBox for the natural-width-vs-allowed-width comparison
+/// to read, and the caller must not treat that as "nothing was shrunk".
+RenderFittedBox? _fittedBoxAroundButtonLabel(
+  WidgetTester tester,
+  Key buttonKey,
+) {
+  final Finder buttonFinder = find.byKey(buttonKey);
+  final Finder textFinder = find.descendant(
+    of: buttonFinder,
+    matching: find.byType(RichText),
+  );
+  final Finder fittedBoxFinder = find.ancestor(
+    of: textFinder,
+    matching: find.byType(FittedBox),
+  );
+  final int found = fittedBoxFinder.evaluate().length;
+  if (found == 0) {
+    return null;
+  }
+  expect(
+    found,
+    1,
+    reason:
+        'fixture is broken: expected at most one FittedBox between '
+        '$buttonKey and its label, found $found',
+  );
+  return tester.renderObject<RenderFittedBox>(fittedBoxFinder);
+}
+
 /// Pins `tester.view` to the phone geometry the defect was photographed at
 /// (emulator run 34191276162: 1080x1848 physical, dpr 2.75), and returns the
 /// logical width that geometry resolves to, so a failure message can state
@@ -323,7 +430,8 @@ double _pinPhoneView(WidgetTester tester) {
 }
 
 void main() {
-  group('H4: the four token buttons fit their label on one line at phone width '
+  group('H4: the four token buttons fit their label on one line, unshrunk, '
+      'at phone width '
       '(work/ludo/orders/132b-token-button-overflow-proof.md)', () {
     final seats = <Map<String, Object?>>[
       _seatJson(0, name: 'Sam'),
@@ -332,8 +440,8 @@ void main() {
 
     testWidgets(
       'en: each of the four token buttons renders its label on exactly '
-      'one line at the 1080x1848@2.75 phone geometry the overflow was '
-      'photographed at',
+      'one line, without the label being shrunk to fit, at the '
+      '1080x1848@2.75 phone geometry the overflow was photographed at',
       (tester) async {
         final double logicalWidth = _pinPhoneView(tester);
 
@@ -368,13 +476,51 @@ void main() {
                 'a single line at a real phone width',
           );
         }
+
+        for (int i = 0; i < 4; i++) {
+          final RenderFittedBox? fittedBox = _fittedBoxAroundButtonLabel(
+            tester,
+            _tokenKey(i),
+          );
+          if (fittedBox == null) {
+            markTestSkipped(
+              'H4/132b (en): no FittedBox sits between token button $i and '
+              'its label, so this file has no way to measure whether a fix '
+              'is scaling the label down instead of letting the button be '
+              'wide enough for it; the line-count assertion above having '
+              'passed does not by itself rule that out',
+            );
+            return;
+          }
+          final double naturalWidth = _naturalSingleLineWidthOfButtonLabel(
+            tester,
+            _tokenKey(i),
+          );
+          final double allowedWidth = fittedBox.constraints.maxWidth;
+          final String impliedScale = allowedWidth.isFinite && allowedWidth > 0
+              ? (naturalWidth / allowedWidth).toStringAsFixed(3)
+              : 'undefined (FittedBox was given an unbounded width)';
+          expect(
+            naturalWidth <= allowedWidth,
+            isTrue,
+            reason:
+                'H4/132b (en): token button $i\'s label has a natural '
+                'single-line width of ${naturalWidth.toStringAsFixed(2)}dp '
+                'but FittedBox only allowed it '
+                '${allowedWidth.toStringAsFixed(2)}dp at a logical width of '
+                '${logicalWidth.toStringAsFixed(2)}dp, an implied scale '
+                'factor of $impliedScale; the label is rendering on one '
+                'line only because it has been shrunk to fit, which is not '
+                'the same as the button being wide enough for it',
+          );
+        }
       },
     );
 
     testWidgets(
       'ar: each of the four token buttons renders its label on exactly '
-      'one line at the 1080x1848@2.75 phone geometry the overflow was '
-      'photographed at',
+      'one line, without the label being shrunk to fit, at the '
+      '1080x1848@2.75 phone geometry the overflow was photographed at',
       (tester) async {
         final double logicalWidth = _pinPhoneView(tester);
 
@@ -407,6 +553,44 @@ void main() {
                 '${_devicePhysicalSize.height.toStringAsFixed(0)}, dpr '
                 '$_devicePixelRatio); a token button label must render on '
                 'a single line at a real phone width',
+          );
+        }
+
+        for (int i = 0; i < 4; i++) {
+          final RenderFittedBox? fittedBox = _fittedBoxAroundButtonLabel(
+            tester,
+            _tokenKey(i),
+          );
+          if (fittedBox == null) {
+            markTestSkipped(
+              'H4/132b (ar): no FittedBox sits between token button $i and '
+              'its label, so this file has no way to measure whether a fix '
+              'is scaling the label down instead of letting the button be '
+              'wide enough for it; the line-count assertion above having '
+              'passed does not by itself rule that out',
+            );
+            return;
+          }
+          final double naturalWidth = _naturalSingleLineWidthOfButtonLabel(
+            tester,
+            _tokenKey(i),
+          );
+          final double allowedWidth = fittedBox.constraints.maxWidth;
+          final String impliedScale = allowedWidth.isFinite && allowedWidth > 0
+              ? (naturalWidth / allowedWidth).toStringAsFixed(3)
+              : 'undefined (FittedBox was given an unbounded width)';
+          expect(
+            naturalWidth <= allowedWidth,
+            isTrue,
+            reason:
+                'H4/132b (ar): token button $i\'s label has a natural '
+                'single-line width of ${naturalWidth.toStringAsFixed(2)}dp '
+                'but FittedBox only allowed it '
+                '${allowedWidth.toStringAsFixed(2)}dp at a logical width of '
+                '${logicalWidth.toStringAsFixed(2)}dp, an implied scale '
+                'factor of $impliedScale; the label is rendering on one '
+                'line only because it has been shrunk to fit, which is not '
+                'the same as the button being wide enough for it',
           );
         }
       },
