@@ -82,6 +82,12 @@ pixels every run -- so byte-for-byte reproducibility holds.
 ## What this does not touch
 
 The app's launcher icon (the icon inside the AAB itself) is a separate asset
-and this script does not produce or change it. It is still the Flutter
-default, and it should be brought in line with this die before the app is
-promoted to production.
+and this script does not produce or change it. It is generated instead by
+`tool/launcher_icons.py`, which imports `draw_die` and `vertical_gradient`
+from this module so the launcher icon and this store icon stay the same mark.
+That script writes the adaptive icon (`mipmap-anydpi-v26/ic_launcher.xml` plus
+a background and foreground PNG per density, for API 26 and up) and the
+legacy full-bleed `ic_launcher.png` at each of the five existing mipmap
+densities (for API 24 and 25). Regenerate it with:
+
+    python3 tool/launcher_icons.py
