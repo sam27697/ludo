@@ -72,6 +72,28 @@ jobs:
       - run: dart format --output=none --set-exit-if-changed .
       - run: flutter test
 
+      # integration_test/ is a real dev_dependency from the Flutter SDK
+      # (packages/ludo_client/pubspec.yaml), not a folder `flutter test`
+      # reaches on its own, and nothing else in this workflow or in
+      # screenshots.yml runs on every push -- screenshots.yml only runs when
+      # a human dispatches it by hand, to drive a real emulator for store
+      # images. That gap is what let RoomScreen stop being reachable from
+      # screenshots_test.dart for eleven days and sixty-odd merges with
+      # nothing going red. This step is the fix: every finder, tap, pushed
+      # frame and assertion in integration_test/ still executes headlessly
+      # under the flutter-tester device, so a change that breaks the path
+      # the screenshot rig walks turns this red on the push that broke it.
+      # The capture call itself does nothing useful off-device, but it is
+      # not a no-op either -- it still calls its platform channel, and the
+      # file being run here carries its own headless guard for that. Needs
+      # `-d flutter-tester` explicitly: this package has no linux/ desktop
+      # scaffold, so the bare `flutter test` form fails with "No supported
+      # devices connected" against anything under integration_test/. Runs
+      # the whole directory, not one named file, so a file added later is
+      # covered without anyone remembering to add it here.
+      - name: integration tests headless (red here means the screenshot rig can no longer reach a screen it is supposed to photograph)
+        run: flutter test -d flutter-tester integration_test/
+
       # bin/ludo-verify.sh resolves $ROOT from its own location, so it must
       # be invoked from the repository root -- working-directory: . overrides
       # this job's own defaults.run.working-directory (packages/ludo_client,
