@@ -144,24 +144,58 @@ class _GameScreenState extends State<GameScreen> {
             child: Text(loc.gameRollButton),
           ),
           const SizedBox(height: 8),
+          // Four buttons in a single row leave too little width for either
+          // locale's label at a phone's width -- "Token 1" and "قطعة 4" both
+          // wrap mid-word once each button is down to a few dozen logical
+          // pixels. Two rows of two buttons roughly doubles what each label
+          // gets. FittedBox is the backstop under that, not the fix itself:
+          // at the widths this row actually renders at, both locales fit
+          // without any scaling, and it only engages at a narrower width or
+          // a larger system font than this app has been measured at, where
+          // the alternative is the same mid-word wrap this row exists to
+          // remove.
           Row(
             children: [
-              for (int index = 0; index < 4; index++)
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: ElevatedButton(
-                      key: Key('game-screen-token-$index'),
-                      onPressed: _tokenEnabled(room, seat, index)
-                          ? () => controller.move(index)
-                          : null,
-                      child: Text(loc.gameTokenButton(index + 1)),
-                    ),
-                  ),
-                ),
+              _tokenButton(loc, controller, room, seat, 0),
+              _tokenButton(loc, controller, room, seat, 1),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _tokenButton(loc, controller, room, seat, 2),
+              _tokenButton(loc, controller, room, seat, 3),
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// One of the four token buttons, [index] 0..3. Kept as its own widget so
+  /// the two-row layout in [_playingBody] does not repeat the button itself
+  /// four times; the key, the enabled test and the move intention are
+  /// unchanged from before the row was split in two.
+  Widget _tokenButton(
+    AppLocalizations loc,
+    RoomController controller,
+    RoomSnapshot room,
+    int? seat,
+    int index,
+  ) {
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: ElevatedButton(
+          key: Key('game-screen-token-$index'),
+          onPressed: _tokenEnabled(room, seat, index)
+              ? () => controller.move(index)
+              : null,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(loc.gameTokenButton(index + 1)),
+          ),
+        ),
       ),
     );
   }
