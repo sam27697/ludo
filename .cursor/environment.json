@@ -1,0 +1,17 @@
+{
+  "name": "Ludo",
+  "install": "bash .cursor/install.sh",
+  "ports": [
+    {
+      "name": "ludo-server",
+      "port": 8080
+    }
+  ],
+  "terminals": [
+    {
+      "name": "ludo-server",
+      "description": "Authoritative Ludo game server (shelf HTTP + WebSocket) on port 8080. GET /health returns a JSON status body; any other path is upgraded to the game protocol WebSocket.",
+      "command": "export PATH=\"$PWD/toolchains/dart-sdk/bin:$PWD/toolchains/flutter/bin:$PATH\" && cd packages/ludo_server && PORT=8080 LUDO_VERSION=dev dart run bin/server.dart"
+    }
+  ]
+}
