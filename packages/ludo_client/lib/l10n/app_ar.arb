@@ -1,6 +1,7 @@
 {
   "@@locale": "ar",
   "appTitle": "Ludo RNG",
+  "homeTagline": "غرف خاصة. كل رمية يمكن التحقق منها.",
   "homeCreateRoomButton": "إنشاء غرفة",
   "homeJoinRoomButton": "الانضمام إلى غرفة",
   "homeRoomCodeFieldLabel": "رمز الغرفة",
