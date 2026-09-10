@@ -52,6 +52,7 @@ class _LudoAppState extends State<LudoApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       locale: _locale,
       supportedLocales: appSupportedLocales,

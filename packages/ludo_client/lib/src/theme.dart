@@ -108,7 +108,7 @@ ThemeData buildAppTheme() {
         backgroundColor: LudoColors.action,
         foregroundColor: LudoColors.actionOn,
         elevation: 0,
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         textStyle: const TextStyle(
           fontFamily: kLudoFontFamily,
@@ -150,6 +150,10 @@ ThemeData buildAppTheme() {
     ),
     segmentedButtonTheme: SegmentedButtonThemeData(
       style: ButtonStyle(
+        visualDensity: VisualDensity.comfortable,
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
         foregroundColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
             return LudoColors.actionOn;
