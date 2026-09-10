@@ -61,6 +61,7 @@ class _GameScreenState extends State<GameScreen> {
     }
 
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(title: Text(loc.gameScreenTitle)),
       body: SafeArea(
         child: Column(
