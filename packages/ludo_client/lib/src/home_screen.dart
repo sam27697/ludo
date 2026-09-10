@@ -241,22 +241,20 @@ class _HomeScreenState extends State<HomeScreen>
       parent: _enter,
       curve: const Interval(0.0, 0.45, curve: Curves.easeOutCubic),
     );
-    final Animation<Offset> brandSlide = Tween<Offset>(
-      begin: const Offset(0, 0.08),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _enter,
-        curve: const Interval(0.0, 0.45, curve: Curves.easeOutCubic),
-      ),
-    );
+    final Animation<Offset> brandSlide =
+        Tween<Offset>(begin: const Offset(0, 0.08), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _enter,
+            curve: const Interval(0.0, 0.45, curve: Curves.easeOutCubic),
+          ),
+        );
     final Animation<double> dieScale = Tween<double>(begin: 0.86, end: 1.0)
         .animate(
-      CurvedAnimation(
-        parent: _enter,
-        curve: const Interval(0.15, 0.7, curve: Curves.easeOutBack),
-      ),
-    );
+          CurvedAnimation(
+            parent: _enter,
+            curve: const Interval(0.15, 0.7, curve: Curves.easeOutBack),
+          ),
+        );
     final Animation<double> dieOpacity = CurvedAnimation(
       parent: _enter,
       curve: const Interval(0.1, 0.55, curve: Curves.easeOut),
@@ -265,15 +263,13 @@ class _HomeScreenState extends State<HomeScreen>
       parent: _enter,
       curve: const Interval(0.4, 1.0, curve: Curves.easeOut),
     );
-    final Animation<Offset> formSlide = Tween<Offset>(
-      begin: const Offset(0, 0.06),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _enter,
-        curve: const Interval(0.4, 1.0, curve: Curves.easeOutCubic),
-      ),
-    );
+    final Animation<Offset> formSlide =
+        Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _enter,
+            curve: const Interval(0.4, 1.0, curve: Curves.easeOutCubic),
+          ),
+        );
 
     final TextStyle? brandStyle = compact
         ? textTheme.headlineLarge?.copyWith(
@@ -312,7 +308,12 @@ class _HomeScreenState extends State<HomeScreen>
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 400),
             child: SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(24, compact ? 4 : 8, 24, compact ? 20 : 32),
+              padding: EdgeInsets.fromLTRB(
+                24,
+                compact ? 4 : 8,
+                24,
+                compact ? 20 : 32,
+              ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -339,18 +340,15 @@ class _HomeScreenState extends State<HomeScreen>
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          Text(
-                                            loc.appTitle,
-                                            style: brandStyle,
-                                          ),
+                                          Text(loc.appTitle, style: brandStyle),
                                           const SizedBox(height: 4),
                                           Text(
                                             loc.homeTagline,
                                             style: textTheme.bodyMedium
                                                 ?.copyWith(
-                                              color: LudoColors.inkMuted,
-                                              height: 1.3,
-                                            ),
+                                                  color: LudoColors.inkMuted,
+                                                  height: 1.3,
+                                                ),
                                           ),
                                         ],
                                       ),

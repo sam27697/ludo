@@ -35,17 +35,20 @@ const List<String> kLudoFontFallbacks = <String>['Noto Sans Arabic'];
 
 TextTheme _ludoTextTheme(TextTheme base) {
   TextStyle face(TextStyle? s) => (s ?? const TextStyle()).copyWith(
-        fontFamily: kLudoFontFamily,
-        fontFamilyFallback: kLudoFontFallbacks,
-      );
+    fontFamily: kLudoFontFamily,
+    fontFamilyFallback: kLudoFontFallbacks,
+  );
 
   return base.copyWith(
     displayLarge: face(base.displayLarge),
     displayMedium: face(base.displayMedium),
     displaySmall: face(base.displaySmall),
-    headlineLarge: face(base.headlineLarge).copyWith(fontWeight: FontWeight.w700),
-    headlineMedium: face(base.headlineMedium).copyWith(fontWeight: FontWeight.w700),
-    headlineSmall: face(base.headlineSmall).copyWith(fontWeight: FontWeight.w600),
+    headlineLarge: face(base.headlineLarge)
+        .copyWith(fontWeight: FontWeight.w700),
+    headlineMedium: face(base.headlineMedium)
+        .copyWith(fontWeight: FontWeight.w700),
+    headlineSmall: face(base.headlineSmall)
+        .copyWith(fontWeight: FontWeight.w600),
     titleLarge: face(base.titleLarge).copyWith(fontWeight: FontWeight.w600),
     titleMedium: face(base.titleMedium),
     titleSmall: face(base.titleSmall),
@@ -135,7 +138,9 @@ ThemeData buildAppTheme() {
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: LudoColors.feltLight.withValues(alpha: 0.7)),
+        borderSide: BorderSide(
+          color: LudoColors.feltLight.withValues(alpha: 0.7),
+        ),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
@@ -207,10 +212,7 @@ class FeltBackdrop extends StatelessWidget {
           stops: <double>[0.0, 0.45, 1.0],
         ),
       ),
-      child: CustomPaint(
-        painter: const _FeltGrainPainter(),
-        child: child,
-      ),
+      child: CustomPaint(painter: const _FeltGrainPainter(), child: child),
     );
   }
 }
