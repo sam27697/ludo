@@ -72,6 +72,68 @@ jobs:
       - run: dart format --output=none --set-exit-if-changed .
       - run: flutter test
 
+      # integration_test/ is a real dev_dependency from the Flutter SDK
+      # (packages/ludo_client/pubspec.yaml), not a folder `flutter test` on
+      # its own reaches, and nothing else in this workflow or in
+      # screenshots.yml runs on every push -- screenshots.yml only runs when
+      # a human dispatches it by hand, to drive a real emulator for store
+      # images. That gap is what let RoomScreen stop being reachable from
+      # screenshots_test.dart for eleven days and sixty-odd merges with
+      # nothing going red. This step is the fix: every finder, tap, pushed
+      # frame and assertion in integration_test/ still executes headlessly
+      # under the flutter-tester device, so a change that breaks the path
+      # the screenshot rig walks turns this red on the push that broke it.
+      # The capture call itself does nothing useful off-device, but it is
+      # not a no-op either -- it still calls its platform channel, and each
+      # file run here carries its own headless guard for that.
+      #
+      # `flutter test -d flutter-tester integration_test/` -- the whole
+      # directory in one invocation -- does not work on this Flutter
+      # version: it fails to launch a second app instance for a second file,
+      # measured failing identically here and on an unconstrained GitHub
+      # runner, so it is not this project's own memory limits. Each file
+      # passes on its own, so this step runs one `flutter test -d
+      # flutter-tester` process per file instead of one process for the
+      # whole directory. `-d flutter-tester` is required either way: this
+      # package has no linux/ desktop scaffold, so the bare `flutter test`
+      # form fails every file here with "No supported devices connected".
+      #
+      # Files are discovered at run time (integration_test/*_test.dart), not
+      # named, so a file added later is covered without anyone remembering
+      # to add it here. Every file runs even after an earlier one fails --
+      # `if flutter test ...; then ... else ...; fi` is exempt from `set -e`
+      # by bash's own rules, which is what keeps the loop going and the
+      # summary reachable after a failure, rather than the step dying on the
+      # first red file and hiding how many others are also broken. A glob
+      # that matches nothing fails the step outright rather than reporting
+      # success, which is how this gate could rot exactly the way it exists
+      # to prevent.
+      - name: integration tests headless, one flutter-tester process per file (a red file below is a screen the app or the screenshot rig can no longer reach)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(integration_test/*_test.dart)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no *_test.dart files found under integration_test/; refusing to report success on an empty or unmatched directory" >&2
+            exit 1
+          fi
+          failed=()
+          for f in "${files[@]}"; do
+            echo "=== $f ==="
+            if flutter test -d flutter-tester "$f"; then
+              echo "PASS $f"
+            else
+              echo "FAIL $f"
+              failed+=("$f")
+            fi
+          done
+          echo "=== summary: ${#files[@]} file(s) run, ${#failed[@]} failed ==="
+          if [ "${#failed[@]}" -gt 0 ]; then
+            printf 'FAILED: %s\n' "${failed[@]}"
+            exit 1
+          fi
+          echo "all integration_test files passed"
+
       # bin/ludo-verify.sh resolves $ROOT from its own location, so it must
       # be invoked from the repository root -- working-directory: . overrides
       # this job's own defaults.run.working-directory (packages/ludo_client,
