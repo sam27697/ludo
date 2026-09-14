@@ -10,6 +10,8 @@
 // yet; it is built and proved standing alone, constructed directly with a
 // controller.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
@@ -27,20 +29,138 @@ class GameScreen extends StatefulWidget {
 }
 
 class _GameScreenState extends State<GameScreen> {
+  // The turn countdown's own local clock. docs/PROTOCOL.md section 6:
+  // TurnState.deadlineMs is milliseconds remaining as measured on the
+  // server at the moment the frame carrying it was sent, never an
+  // absolute time, so there is nothing to read a display value out of
+  // except by anchoring that reading to the wall-clock moment this
+  // widget saw it and counting down from there itself. _countdownSeat
+  // and _countdownDeadlineMs are the (seat, deadlineMs) pair the anchor
+  // was last taken from; _countdownAnchor is that moment.
+  Timer? _countdownTimer;
+  int? _countdownSeat;
+  int? _countdownDeadlineMs;
+  DateTime? _countdownAnchor;
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onControllerChanged);
+    _syncCountdown();
   }
 
   @override
   void dispose() {
+    _countdownTimer?.cancel();
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
   }
 
   void _onControllerChanged() {
-    setState(() {});
+    setState(_syncCountdown);
+  }
+
+  /// Re-anchors the countdown's local clock to the current turn, and
+  /// arms or disarms the periodic tick that keeps it moving once a
+  /// second.
+  ///
+  /// Re-anchoring happens only when the visible `(seat, deadlineMs)` pair
+  /// actually changes. The same pair recurring across frames -- several
+  /// of RoomController's reducers carry the prior segment's `deadlineMs`
+  /// forward unchanged on a frame that is not itself a fresh reading,
+  /// per the doc comments at net/room_controller.dart's `_reduceMoved`,
+  /// `_reduceTurnPassed` and `_reduceGameOver` -- is not a new reading
+  /// and must not restart the clock or the display would jump back up
+  /// while the real deadline keeps approaching underneath it. A
+  /// genuinely new segment always changes at least one half of the
+  /// pair: a different seat is now playing, or a fresh `deadline_ms`
+  /// arrived straight off the wire (`_reduceTurn`, `_reduceRolled`).
+  ///
+  /// No timer runs while the room is not showing a playing board with a
+  /// current turn, and none is armed for a turn whose deadline has
+  /// already reached zero. The one already running is cancelled the
+  /// instant its own tick finds nothing left to count down (see
+  /// `_armCountdownTimer` below) -- requirement 4a: a countdown that
+  /// keeps scheduling frames after zero never lets `pumpAndSettle`
+  /// return, and both test/composed_play_test.dart and
+  /// test/game_screen_test.dart drive a playing board through exactly
+  /// that call.
+  void _syncCountdown() {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    final bool showingPlayingBody =
+        room != null &&
+        room.state == RoomState.playing &&
+        room.seats.length >= 2;
+    final TurnState? turn = showingPlayingBody ? room.turn : null;
+
+    if (turn == null) {
+      _countdownTimer?.cancel();
+      _countdownTimer = null;
+      _countdownSeat = null;
+      _countdownDeadlineMs = null;
+      _countdownAnchor = null;
+      return;
+    }
+
+    if (turn.seat == _countdownSeat &&
+        turn.deadlineMs == _countdownDeadlineMs) {
+      return;
+    }
+
+    _countdownTimer?.cancel();
+    _countdownSeat = turn.seat;
+    _countdownDeadlineMs = turn.deadlineMs;
+    _countdownAnchor = DateTime.now();
+    _countdownTimer = _armCountdownTimer();
+  }
+
+  /// Starts the once-a-second tick, or arms nothing at all when the
+  /// deadline just anchored is already at or past zero. Every tick
+  /// recomputes the remaining time itself rather than trusting a
+  /// counter it decremented, so a slow test host or a delayed frame
+  /// cannot make it undercount; a tick that finds zero remaining
+  /// cancels itself, which is what keeps this compatible with
+  /// requirement 4a.
+  Timer? _armCountdownTimer() {
+    if (_countdownRemainingMs() <= 0) {
+      return null;
+    }
+    return Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (_countdownRemainingMs() <= 0) {
+          _countdownTimer?.cancel();
+          _countdownTimer = null;
+        }
+      });
+    });
+  }
+
+  /// Milliseconds left in the current segment as of right now, per the
+  /// anchor `_syncCountdown` last took. Requirement 2: never negative.
+  int _countdownRemainingMs() {
+    final int? deadlineMs = _countdownDeadlineMs;
+    final DateTime? anchor = _countdownAnchor;
+    if (deadlineMs == null || anchor == null) {
+      return 0;
+    }
+    final int elapsedMs = DateTime.now().difference(anchor).inMilliseconds;
+    final int remainingMs = deadlineMs - elapsedMs;
+    return remainingMs > 0 ? remainingMs : 0;
+  }
+
+  /// The whole seconds requirement 1 asks the countdown to show:
+  /// rounded up, so a segment that has not truly reached zero never
+  /// reads as "0 seconds left" a moment before it actually is.
+  int _countdownRemainingSeconds() {
+    final int remainingMs = _countdownRemainingMs();
+    if (remainingMs <= 0) {
+      return 0;
+    }
+    return (remainingMs + 999) ~/ 1000;
   }
 
   /// The one path every leave affordance on this screen goes through,
@@ -209,6 +329,22 @@ class _GameScreenState extends State<GameScreen> {
               textAlign: TextAlign.center,
             ),
           ],
+          if (turn != null && turn.seat != seat) ...[
+            const SizedBox(height: 8),
+            Text(
+              _waitingForSeatText(loc, room, turn.seat),
+              key: const Key('game-screen-waiting-for-seat'),
+              textAlign: TextAlign.center,
+            ),
+          ],
+          if (turn != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              loc.gameTurnCountdown(_countdownRemainingSeconds()),
+              key: const Key('game-screen-turn-countdown'),
+              textAlign: TextAlign.center,
+            ),
+          ],
           const SizedBox(height: 16),
           Expanded(
             child: LudoBoard(
@@ -359,8 +495,22 @@ String _turnBannerText(AppLocalizations loc, RoomSnapshot room, int? seat) {
       return loc.gameYourTurnMove;
     }
   }
+  return _waitingForSeatText(loc, room, turn.seat);
+}
+
+/// Names the seat `turnSeat` the same way [_turnBannerText] does once it
+/// has decided the turn is not this player's own: the matching seat's
+/// `name` in `loc.gameWaitingForPlayer`, or `loc.gameWaitingForTurn` if no
+/// entry in `room.seats` carries `turnSeat`. Shared by [_turnBannerText]
+/// and the standalone `game-screen-waiting-for-seat` line so the two can
+/// never drift apart on how a seat is named.
+String _waitingForSeatText(
+  AppLocalizations loc,
+  RoomSnapshot room,
+  int turnSeat,
+) {
   for (final SeatState seatState in room.seats) {
-    if (seatState.seat == turn.seat) {
+    if (seatState.seat == turnSeat) {
       return loc.gameWaitingForPlayer(seatState.name);
     }
   }
