@@ -45,7 +45,7 @@
 //     predictable value.
 //   - The turn budget itself is decided by `FakeClock`
 //     (`test/turn_timer_test.dart` and `test/turn_expiry_guard_test.dart`'s
-//     own mechanism): the room is configured with a short turn_seconds and
+//     own mechanism): the room is configured with a short (but valid, docs/RULES.md's 15-second minimum) turn_seconds and
 //     the injected clock is advanced past it instantly. What is NOT driven
 //     by that clock is `turnExpiryInterval`'s own `Timer.periodic`
 //     (`lib/src/wire_server.dart`) -- that timer is real, wall-clock,
@@ -149,7 +149,7 @@ typedef _SteeredGame = ({
 /// Builds a fresh two-seat room whose very first die roll (`k = 1`) is
 /// steered to [wanted]'s single face, joins a guest, fixes both seats'
 /// client seeds so `client_seeds` matches [_clientSeeds], starts the game
-/// with `turn_seconds: 5` and drains every handshake frame (including the
+/// with `turn_seconds: 15` (docs/RULES.md's minimum) and drains every handshake frame (including the
 /// standalone opening `turn` frame, PROTOCOL section 13.1) on both sockets.
 /// [clients] is the caller's own socket list, so its `tearDown` closes
 /// whatever this opens.
@@ -172,7 +172,7 @@ Future<_SteeredGame> _buildSteeredGame(
     harness.wsUri,
     clients,
     players: 2,
-    rules: const <String, Object?>{'turn_seconds': 5},
+    rules: const <String, Object?>{'turn_seconds': 15},
   );
   if (lobby.host.seat != 0 || lobby.guest.seat != 2) {
     fail(
@@ -236,8 +236,7 @@ Future<_Observed> _readRollBranch(WireTestClient client) async {
   expect(
     rolled['t'],
     'rolled',
-    reason:
-        'expected the timer\'s forced roll to broadcast a "rolled" '
+    reason: 'expected the timer\'s forced roll to broadcast a "rolled" '
         'frame first (docs/RULES.md rule 16a); got "${rolled['t']}": '
         '${rolled['d']}',
   );
@@ -252,8 +251,7 @@ Future<_Observed> _readRollBranch(WireTestClient client) async {
     expect(
       turnPassed['t'],
       'turn_passed',
-      reason:
-          'a forced roll that leaves no legal move must be followed by '
+      reason: 'a forced roll that leaves no legal move must be followed by '
           'turn_passed (PROTOCOL section 12.1); got "${turnPassed['t']}": '
           '${turnPassed['d']}',
     );
@@ -264,8 +262,7 @@ Future<_Observed> _readRollBranch(WireTestClient client) async {
     expect(
       turn['t'],
       'turn',
-      reason:
-          'turn_passed must be followed by turn for the next seat '
+      reason: 'turn_passed must be followed by turn for the next seat '
           '(PROTOCOL section 12.1); got "${turn['t']}": ${turn['d']}',
     );
     types.add('turn');
@@ -284,8 +281,7 @@ Future<_Observed> _readMoveBranch(WireTestClient client) async {
   expect(
     moved['t'],
     'moved',
-    reason:
-        'expected the timer\'s forced move to broadcast a "moved" '
+    reason: 'expected the timer\'s forced move to broadcast a "moved" '
         'frame first (docs/RULES.md rule 15); got "${moved['t']}": '
         '${moved['d']}',
   );
@@ -295,8 +291,7 @@ Future<_Observed> _readMoveBranch(WireTestClient client) async {
   expect(
     after['t'],
     anyOf('turn', 'game_over'),
-    reason:
-        'moved must be followed by exactly one of turn or game_over '
+    reason: 'moved must be followed by exactly one of turn or game_over '
         '(PROTOCOL section 12.2); got "${after['t']}": ${after['d']}',
   );
   return (
@@ -312,7 +307,7 @@ Future<_Observed> _readMoveBranch(WireTestClient client) async {
 /// `Timer.periodic` needs.
 class _SweepCountingRegistry extends RoomRegistry {
   _SweepCountingRegistry({required Clock clock, required Random secure})
-    : super(clock: clock, secure: secure);
+      : super(clock: clock, secure: secure);
 
   int sweeps = 0;
 
@@ -325,7 +320,8 @@ class _SweepCountingRegistry extends RoomRegistry {
 
 void main() {
   group('turn-expiry applied -- the success-path log line, order 136', () {
-    test('L1: await_roll -- exactly one applied line, room/seat/phase correct, '
+    test(
+        'L1: await_roll -- exactly one applied line, room/seat/phase correct, '
         'frames matching what a connected client actually received', () async {
       final List<WireTestClient> clients = <WireTestClient>[];
       final List<String> lines = <String>[];
@@ -339,7 +335,7 @@ void main() {
           // leaves a legal move. This steers the single-frame branch: the
           // forced roll must not end the turn.
           game = await _buildSteeredGame(clients, <int>[6]);
-          game.harness.clock.advance(const Duration(seconds: 5));
+          game.harness.clock.advance(const Duration(seconds: 15));
           observed = await _readRollBranch(
             _seatFor(game.lobby, game.onTurn).client,
           );
@@ -371,8 +367,7 @@ void main() {
       expect(
         applied,
         hasLength(1),
-        reason:
-            'room ${game.lobby.code}, seat ${game.onTurn}: expected '
+        reason: 'room ${game.lobby.code}, seat ${game.onTurn}: expected '
             'exactly one "turn-expiry applied" line for this one '
             'ExpiredTurn; got ${applied.length}: $applied. All captured '
             'print lines: $lines',
@@ -396,13 +391,13 @@ void main() {
       expect(
         tokens['frames'],
         observed.types.join('+'),
-        reason:
-            'line was: "${applied.single}"; the client actually '
+        reason: 'line was: "${applied.single}"; the client actually '
             'received, in order: ${observed.types}',
       );
     }, timeout: const Timeout(Duration(seconds: 30)));
 
-    test('L2: seq is the seq inside the last frame the client received, never '
+    test(
+        'L2: seq is the seq inside the last frame the client received, never '
         'a value the server also computed for the log', () async {
       final List<WireTestClient> clients = <WireTestClient>[];
       final List<String> lines = <String>[];
@@ -412,7 +407,7 @@ void main() {
       await runZoned(
         () async {
           game = await _buildSteeredGame(clients, <int>[6]);
-          game.harness.clock.advance(const Duration(seconds: 5));
+          game.harness.clock.advance(const Duration(seconds: 15));
           observed = await _readRollBranch(
             _seatFor(game.lobby, game.onTurn).client,
           );
@@ -434,8 +429,7 @@ void main() {
       expect(
         applied,
         hasLength(1),
-        reason:
-            'room ${game.lobby.code}, seat ${game.onTurn}: expected '
+        reason: 'room ${game.lobby.code}, seat ${game.onTurn}: expected '
             'exactly one "turn-expiry applied" line; got ${applied.length}: '
             '$applied. All captured print lines: $lines. Frames the '
             'client received, in order: ${observed.types}',
@@ -445,8 +439,7 @@ void main() {
       expect(
         wireSeq,
         isA<int>(),
-        reason:
-            'setup requires the last frame received '
+        reason: 'setup requires the last frame received '
             '("${observed.types.isEmpty ? '<none>' : observed.types.last}") '
             'to carry an integer seq for this property to mean anything; '
             'got $wireSeq off the wire',
@@ -456,8 +449,7 @@ void main() {
       expect(
         tokens['seq'],
         '$wireSeq',
-        reason:
-            'line was: "${applied.single}"; the last frame the '
+        reason: 'line was: "${applied.single}"; the last frame the '
             'client received on the wire was a '
             '"${observed.types.last}" frame whose own d.seq is $wireSeq '
             '-- the log\'s seq must equal that value, decoded from the '
@@ -466,7 +458,8 @@ void main() {
       );
     }, timeout: const Timeout(Duration(seconds: 30)));
 
-    test('L3: await_move -- phase=await_move, and frames match what a '
+    test(
+        'L3: await_move -- phase=await_move, and frames match what a '
         'connected client actually received for the forced move', () async {
       final List<WireTestClient> clients = <WireTestClient>[];
       final List<String> lines = <String>[];
@@ -486,8 +479,7 @@ void main() {
           expect(
             rolled['t'],
             'rolled',
-            reason:
-                'setup: the manual roll from seat ${game.onTurn} in '
+            reason: 'setup: the manual roll from seat ${game.onTurn} in '
                 'room ${game.lobby.code} must be accepted; got '
                 '"${rolled['t']}": ${rolled['d']}',
           );
@@ -503,7 +495,7 @@ void main() {
               '[6], client_seeds=$_clientSeeds, room ${game.lobby.code}.',
             );
           }
-          game.harness.clock.advance(const Duration(seconds: 5));
+          game.harness.clock.advance(const Duration(seconds: 15));
           observed = await _readMoveBranch(onTurnSeat.client);
         },
         zoneSpecification: ZoneSpecification(
@@ -523,8 +515,7 @@ void main() {
       expect(
         applied,
         hasLength(1),
-        reason:
-            'room ${game.lobby.code}, seat ${game.onTurn}: expected '
+        reason: 'room ${game.lobby.code}, seat ${game.onTurn}: expected '
             'exactly one "turn-expiry applied" line for this one '
             'ExpiredTurn; got ${applied.length}: $applied. All captured '
             'print lines: $lines. Frames the client received, in order: '
@@ -549,8 +540,7 @@ void main() {
       expect(
         tokens['frames'],
         observed.types.join('+'),
-        reason:
-            'line was: "${applied.single}"; the client actually '
+        reason: 'line was: "${applied.single}"; the client actually '
             'received, in order: ${observed.types}',
       );
     }, timeout: const Timeout(Duration(seconds: 30)));
@@ -571,7 +561,7 @@ void main() {
             // itself ends the turn and PROTOCOL section 12.1 requires
             // rolled+turn_passed+turn, three frames, for this one expiry.
             game = await _buildSteeredGame(clients, <int>[1]);
-            game.harness.clock.advance(const Duration(seconds: 5));
+            game.harness.clock.advance(const Duration(seconds: 15));
             observed = await _readRollBranch(
               _seatFor(game.lobby, game.onTurn).client,
             );
@@ -604,8 +594,7 @@ void main() {
         expect(
           applied,
           hasLength(1),
-          reason:
-              'room ${game.lobby.code}, seat ${game.onTurn}: the '
+          reason: 'room ${game.lobby.code}, seat ${game.onTurn}: the '
               'client received 3 frames (${observed.types}) for this one '
               'expiry, but the log line must still be printed once per '
               'turn, not once per frame; got ${applied.length} applied '
@@ -615,7 +604,8 @@ void main() {
       timeout: const Timeout(Duration(seconds: 30)),
     );
 
-    test('L5: silence -- a sweep over a turn that has not expired prints no '
+    test(
+        'L5: silence -- a sweep over a turn that has not expired prints no '
         'applied line at all, across several genuine real sweeps', () async {
       final FakeClock clock = FakeClock(DateTime.utc(2026, 1, 1));
       final _SweepCountingRegistry registry = _SweepCountingRegistry(
@@ -670,8 +660,7 @@ void main() {
           await _waitUntil(
             () => registry.sweeps >= 3,
             timeout: const Duration(seconds: 8),
-            describe: () =>
-                'the turn-expiry sweep only ran '
+            describe: () => 'the turn-expiry sweep only ran '
                 '${registry.sweeps} time(s) in 8 real seconds for room '
                 '$code; the periodic timer may have stopped ticking '
                 'entirely, which would make this control meaningless '
@@ -689,8 +678,7 @@ void main() {
       expect(
         applied,
         isEmpty,
-        reason:
-            'room $code: a sweep over a turn that has not expired '
+        reason: 'room $code: a sweep over a turn that has not expired '
             'must print no "turn-expiry applied" line at all; got '
             '${applied.length}: $applied, across ${registry.sweeps} real '
             'sweep(s) that genuinely ran',
