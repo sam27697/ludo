@@ -246,13 +246,28 @@ class WireServer {
     }
     for (final ExpiredTurn one in expired) {
       try {
-        for (final OutFrame frame in buildExpiryFrames(one)) {
+        final List<OutFrame> frames = buildExpiryFrames(one);
+        for (final OutFrame frame in frames) {
           _hub.broadcast(
             code: one.code,
             type: frame.type,
             data: frame.data,
           );
         }
+        final String phase = one.roll != null
+            ? 'await_roll'
+            : one.move != null
+                ? 'await_move'
+                : 'unknown';
+        final String framesJoined = frames.isEmpty
+            ? 'none'
+            : frames.map((OutFrame frame) => frame.type).join('+');
+        final Object? lastSeq =
+            frames.isEmpty ? null : frames.last.data['seq'];
+        final String seq = lastSeq is int ? '$lastSeq' : '-';
+        // ignore: avoid_print
+        print('turn-expiry applied room=${one.code} seat=${one.seat} '
+            'phase=$phase frames=$framesJoined seq=$seq');
       } catch (error, stack) {
         // ignore: avoid_print
         print('turn-expiry publish failed room=${one.code} '
