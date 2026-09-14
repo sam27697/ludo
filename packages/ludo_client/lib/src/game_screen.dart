@@ -10,8 +10,6 @@
 // yet; it is built and proved standing alone, constructed directly with a
 // controller.
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
@@ -48,21 +46,20 @@ class _GameScreenState extends State<GameScreen> {
   /// The one path every leave affordance on this screen goes through,
   /// in-game AppBar action and connection-lost body alike.
   ///
-  /// `controller.leave()` is fired and not waited on. Its own contract
-  /// already guarantees it never throws -- the `leave_room` request it
-  /// sends is best-effort and its outcome, success or failure, is never
-  /// surfaced as an error -- so nothing here is catching or hiding a
-  /// failure that would otherwise have been reported. The problem this
-  /// order names is not an exception, it is wall-clock time: on a socket
-  /// the server has already dropped, that request can sit on the
-  /// connection's ten-second `requestTimeout` before `leave()`'s own
-  /// best-effort catch lets it return. A player watching this screen
-  /// cannot be made to wait on that. So this method does not wait either:
-  /// it starts `leave()` in the background and returns to the previous
-  /// route on the same frame, whatever the server does or does not answer
-  /// with afterwards.
+  /// This pops and nothing else. It does not call `controller.leave()`.
+  /// `home_screen.dart` created this controller and already owns retiring
+  /// it: both of its entry points `await Navigator.push(...)`, and once
+  /// that returns -- which happens the instant this pop lands -- they
+  /// `await controller.leave()` before `controller.dispose()`, in that
+  /// order, on purpose. Calling `leave()` here as well would race that:
+  /// on a socket the server has already dropped, this screen's own call
+  /// can still be suspended inside `leave()`'s awaited request when
+  /// `home_screen.dart`'s `dispose()` lands, and the eventual timeout
+  /// reaches back into a controller that has already been disposed. So
+  /// this screen's only job is to get the player off it promptly, on a
+  /// dead server or a live one, and leave the actual leaving to the code
+  /// that was reviewed to do it in the right order.
   void _leave() {
-    unawaited(widget.controller.leave());
     Navigator.of(context).pop();
   }
 
