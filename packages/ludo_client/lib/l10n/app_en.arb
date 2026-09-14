@@ -229,5 +229,9 @@
   "gameOverEnded": "Game over",
   "@gameOverEnded": {
     "description": "Shown on the game screen when the game has finished but no winning seat can be named, either because the server sent none or because it named a seat no longer present in the room."
+  },
+  "gameLeaveButton": "Leave",
+  "@gameLeaveButton": {
+    "description": "Label and tooltip of the button that leaves the room from the game screen, both the in-game AppBar action present in every state and the button shown in the connection-lost state."
   }
 }

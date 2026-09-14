@@ -11,6 +11,14 @@ analyzer:
     unused_import: error
     dead_code: error
     todo: ignore
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
 
 linter:
   rules:

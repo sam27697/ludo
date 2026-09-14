@@ -47,5 +47,6 @@
   "gameDieValue": "الرمية: {value}",
   "gameOverYouWin": "لقد فزت",
   "gameOverPlayerWins": "فاز {name}",
-  "gameOverEnded": "انتهت اللعبة"
+  "gameOverEnded": "انتهت اللعبة",
+  "gameLeaveButton": "مغادرة"
 }
