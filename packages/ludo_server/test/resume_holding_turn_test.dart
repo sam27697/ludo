@@ -398,7 +398,8 @@ void main() {
     return turnData;
   }
 
-  group('a non-host seat holding the turn drops and resumes on a fresh '
+  group(
+      'a non-host seat holding the turn drops and resumes on a fresh '
       'socket', () {
     test(
         'await_roll: dropped before rolling -- the resumed room snapshot '
@@ -438,8 +439,7 @@ void main() {
       // drained before the host's socket is read again below
       // (readAndDrain on the resumed seat's own roll), or that push is
       // mistaken for the roll's own broadcast copy.
-      await drainPresence(lobby.host.client, lobby.guest.seat,
-          connected: true);
+      await drainPresence(lobby.host.client, lobby.guest.seat, connected: true);
       final Map<String, Object?> roomData =
           resumeFrame['d']! as Map<String, Object?>;
       final Map<String, Object?> resumedTurn = turnObject(roomData);
@@ -608,8 +608,7 @@ void main() {
       // Same reconnect presence as the await_roll scenario above: the
       // host's still-open socket sees it and it must be drained before
       // the host's socket is read again below.
-      await drainPresence(lobby.host.client, lobby.guest.seat,
-          connected: true);
+      await drainPresence(lobby.host.client, lobby.guest.seat, connected: true);
       final Map<String, Object?> roomData =
           resumeFrame['d']! as Map<String, Object?>;
       final Map<String, Object?> resumedTurn = turnObject(roomData);
