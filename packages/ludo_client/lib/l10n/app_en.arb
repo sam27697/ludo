@@ -4,6 +4,10 @@
   "@appTitle": {
     "description": "The application name, shown as the window/task title and on the home screen."
   },
+  "homeTagline": "Private rooms. Every roll can be checked.",
+  "@homeTagline": {
+    "description": "One short supporting sentence under the brand name on the home screen."
+  },
   "homeCreateRoomButton": "Create Room",
   "@homeCreateRoomButton": {
     "description": "Button on the home screen that starts creating a new room."
