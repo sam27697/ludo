@@ -262,8 +262,7 @@ class WireServer {
         final String framesJoined = frames.isEmpty
             ? 'none'
             : frames.map((OutFrame frame) => frame.type).join('+');
-        final Object? lastSeq =
-            frames.isEmpty ? null : frames.last.data['seq'];
+        final Object? lastSeq = frames.isEmpty ? null : frames.last.data['seq'];
         final String seq = lastSeq is int ? '$lastSeq' : '-';
         // ignore: avoid_print
         print('turn-expiry applied room=${one.code} seat=${one.seat} '
