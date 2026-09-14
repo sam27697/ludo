@@ -29,6 +29,31 @@ When the four secrets are configured, the job:
 Nothing written in step 1 survives past the run. GitHub Actions runners are
 discarded after the job finishes.
 
+## The version code
+
+Every bundle the `client` job builds is stamped with an Android version
+code computed as `git rev-list --count HEAD` -- the number of commits
+reachable from the commit being built, not the `+3` in
+`packages/ludo_client/pubspec.yaml`. That line stays fixed for local
+builds; CI always overrides it with `--build-number=<commit count>`.
+
+This only works because the checkout step above it fetches full history
+(`fetch-depth: 0`); a shallow clone would under-count and produce a lower
+version code than a previous build already used.
+
+Before building, the job checks the computed number against a floor kept
+in the workflow itself (`LUDO_UPLOAD_VERSION_CODE_FLOOR` in the "enforce
+version code floor" step), currently 3 -- the highest version code ever
+built for upload. If the computed number is not strictly greater than the
+floor, the job fails rather than build a bundle Play would reject as a
+duplicate or a downgrade. Raise that number in the workflow only after a
+version code higher than it has genuinely been uploaded to Play; it is not
+a value to bump to make a failing build pass.
+
+The computed number is printed on its own line in the "compute version
+code from commit count" step's log, so the version code a given run built
+can be read from the Actions run afterward without downloading the bundle.
+
 ## Generating the upload keystore
 
 The keystore is a PKCS12 file, generated with `openssl`, not a JKS file
