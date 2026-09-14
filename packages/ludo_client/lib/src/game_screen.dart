@@ -32,15 +32,20 @@ class _GameScreenState extends State<GameScreen> {
   // The turn countdown's own local clock. docs/PROTOCOL.md section 6:
   // TurnState.deadlineMs is milliseconds remaining as measured on the
   // server at the moment the frame carrying it was sent, never an
-  // absolute time, so there is nothing to read a display value out of
-  // except by anchoring that reading to the wall-clock moment this
-  // widget saw it and counting down from there itself. _countdownSeat
-  // and _countdownDeadlineMs are the (seat, deadlineMs) pair the anchor
-  // was last taken from; _countdownAnchor is that moment.
+  // absolute time, so this widget owns counting the rest of it down
+  // itself: _countdownRemainingSeconds starts at the whole seconds the
+  // last fresh reading carried and a once-a-second Timer.periodic ticks
+  // it down from there, rather than reading a wall clock. Deliberately
+  // not built on DateTime.now(): flutter_test's fake time only fakes
+  // Timer, not DateTime, so a countdown that measured elapsed wall time
+  // would read as barely-elapsed real time under every widget test that
+  // pumps a virtual clock forward, this package's own suite included.
+  // _countdownSeat and _countdownDeadlineMs are the raw `(seat,
+  // deadlineMs)` pair the current countdown was last started from.
   Timer? _countdownTimer;
   int? _countdownSeat;
   int? _countdownDeadlineMs;
-  DateTime? _countdownAnchor;
+  int _countdownRemainingSeconds = 0;
 
   @override
   void initState() {
@@ -60,11 +65,10 @@ class _GameScreenState extends State<GameScreen> {
     setState(_syncCountdown);
   }
 
-  /// Re-anchors the countdown's local clock to the current turn, and
-  /// arms or disarms the periodic tick that keeps it moving once a
-  /// second.
+  /// Restarts the countdown for the current turn, and arms or disarms the
+  /// once-a-second tick that keeps it moving.
   ///
-  /// Re-anchoring happens only when the visible `(seat, deadlineMs)` pair
+  /// Restarting happens only when the visible `(seat, deadlineMs)` pair
   /// actually changes. The same pair recurring across frames -- several
   /// of RoomController's reducers carry the prior segment's `deadlineMs`
   /// forward unchanged on a frame that is not itself a fresh reading,
@@ -79,7 +83,7 @@ class _GameScreenState extends State<GameScreen> {
   /// No timer runs while the room is not showing a playing board with a
   /// current turn, and none is armed for a turn whose deadline has
   /// already reached zero. The one already running is cancelled the
-  /// instant its own tick finds nothing left to count down (see
+  /// instant its own tick counts down to nothing (see
   /// `_armCountdownTimer` below) -- requirement 4a: a countdown that
   /// keeps scheduling frames after zero never lets `pumpAndSettle`
   /// return, and both test/composed_play_test.dart and
@@ -99,7 +103,7 @@ class _GameScreenState extends State<GameScreen> {
       _countdownTimer = null;
       _countdownSeat = null;
       _countdownDeadlineMs = null;
-      _countdownAnchor = null;
+      _countdownRemainingSeconds = 0;
       return;
     }
 
@@ -111,56 +115,36 @@ class _GameScreenState extends State<GameScreen> {
     _countdownTimer?.cancel();
     _countdownSeat = turn.seat;
     _countdownDeadlineMs = turn.deadlineMs;
-    _countdownAnchor = DateTime.now();
-    _countdownTimer = _armCountdownTimer();
+    // Requirement 1: the whole seconds remaining, rounded up so a segment
+    // that has not truly reached zero never reads as "0 seconds left" a
+    // moment before it actually is.
+    _countdownRemainingSeconds = turn.deadlineMs <= 0
+        ? 0
+        : (turn.deadlineMs + 999) ~/ 1000;
+    _countdownTimer = _countdownRemainingSeconds > 0
+        ? _armCountdownTimer()
+        : null;
   }
 
-  /// Starts the once-a-second tick, or arms nothing at all when the
-  /// deadline just anchored is already at or past zero. Every tick
-  /// recomputes the remaining time itself rather than trusting a
-  /// counter it decremented, so a slow test host or a delayed frame
-  /// cannot make it undercount; a tick that finds zero remaining
-  /// cancels itself, which is what keeps this compatible with
-  /// requirement 4a.
-  Timer? _armCountdownTimer() {
-    if (_countdownRemainingMs() <= 0) {
-      return null;
-    }
+  /// The once-a-second tick. Requirement 2: clamps at zero and never
+  /// goes negative. Requirement 4a: the tick that brings the display to
+  /// zero cancels itself, so nothing here ever schedules another frame
+  /// once there is nothing left to count down.
+  Timer _armCountdownTimer() {
     return Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) {
         return;
       }
       setState(() {
-        if (_countdownRemainingMs() <= 0) {
+        if (_countdownRemainingSeconds > 1) {
+          _countdownRemainingSeconds -= 1;
+        } else {
+          _countdownRemainingSeconds = 0;
           _countdownTimer?.cancel();
           _countdownTimer = null;
         }
       });
     });
-  }
-
-  /// Milliseconds left in the current segment as of right now, per the
-  /// anchor `_syncCountdown` last took. Requirement 2: never negative.
-  int _countdownRemainingMs() {
-    final int? deadlineMs = _countdownDeadlineMs;
-    final DateTime? anchor = _countdownAnchor;
-    if (deadlineMs == null || anchor == null) {
-      return 0;
-    }
-    final int elapsedMs = DateTime.now().difference(anchor).inMilliseconds;
-    final int remainingMs = deadlineMs - elapsedMs;
-    return remainingMs > 0 ? remainingMs : 0;
-  }
-
-  /// The whole seconds requirement 1 asks the countdown to show:
-  /// rounded up, so a segment that has not truly reached zero never
-  /// reads as "0 seconds left" a moment before it actually is.
-  int _countdownRemainingSeconds() {
-    final int remainingMs = _countdownRemainingMs();
-    if (remainingMs <= 0) {
-      return 0;
-    }
-    return (remainingMs + 999) ~/ 1000;
   }
 
   /// The one path every leave affordance on this screen goes through,
@@ -340,7 +324,7 @@ class _GameScreenState extends State<GameScreen> {
           if (turn != null) ...[
             const SizedBox(height: 8),
             Text(
-              loc.gameTurnCountdown(_countdownRemainingSeconds()),
+              loc.gameTurnCountdown(_countdownRemainingSeconds),
               key: const Key('game-screen-turn-countdown'),
               textAlign: TextAlign.center,
             ),
