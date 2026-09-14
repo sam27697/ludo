@@ -4,15 +4,16 @@ import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'deep_link.dart';
+import 'die_mark.dart';
 import 'lobby_screen.dart' show LobbyAction;
 import 'net/room_controller.dart';
 import 'room_code.dart';
 import 'room_route.dart';
 import 'server_config.dart';
+import 'theme.dart';
 
-/// Home screen: app title, a name field, a player-count selector, Create
-/// Room, and Join Room with a code field validated locally against the room
-/// code shape before anything navigates.
+/// Home screen: one branded composition — wordmark, tagline, die mark, and
+/// the create/join controls. Knowing the code is the only way into a room.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
@@ -44,17 +45,23 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _codeController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
   String? _errorText;
   int _players = 4;
   StreamSubscription<Uri>? _linkSubscription;
+  late final AnimationController _enter;
 
   @override
   void initState() {
     super.initState();
     _codeController.addListener(_clearErrorOnEdit);
+    _enter = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..forward();
     try {
       widget.initialLinkReader().then(
         (uri) {
@@ -144,6 +151,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _codeController.removeListener(_clearErrorOnEdit);
     _codeController.dispose();
     _nameController.dispose();
+    _enter.dispose();
     super.dispose();
   }
 
@@ -218,10 +226,72 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final loc = AppLocalizations.of(context);
+    final AppLocalizations loc = AppLocalizations.of(context);
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final double viewHeight = MediaQuery.sizeOf(context).height;
+    // Default widget-test surface is 800x600; keep create/join on-screen
+    // there. Real phones are taller and get the stacked brand + die hero.
+    final bool compact = viewHeight < 640;
+    final double dieSize = compact ? 72 : 148;
+    final double afterBrand = compact ? 12 : 28;
+    final double afterDie = compact ? 16 : 32;
+    final double sectionGap = compact ? 14 : 28;
+
+    final Animation<double> brandOpacity = CurvedAnimation(
+      parent: _enter,
+      curve: const Interval(0.0, 0.45, curve: Curves.easeOutCubic),
+    );
+    final Animation<Offset> brandSlide =
+        Tween<Offset>(begin: const Offset(0, 0.08), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _enter,
+            curve: const Interval(0.0, 0.45, curve: Curves.easeOutCubic),
+          ),
+        );
+    final Animation<double> dieScale = Tween<double>(begin: 0.86, end: 1.0)
+        .animate(
+          CurvedAnimation(
+            parent: _enter,
+            curve: const Interval(0.15, 0.7, curve: Curves.easeOutBack),
+          ),
+        );
+    final Animation<double> dieOpacity = CurvedAnimation(
+      parent: _enter,
+      curve: const Interval(0.1, 0.55, curve: Curves.easeOut),
+    );
+    final Animation<double> formOpacity = CurvedAnimation(
+      parent: _enter,
+      curve: const Interval(0.4, 1.0, curve: Curves.easeOut),
+    );
+    final Animation<Offset> formSlide =
+        Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _enter,
+            curve: const Interval(0.4, 1.0, curve: Curves.easeOutCubic),
+          ),
+        );
+
+    final TextStyle? brandStyle = compact
+        ? textTheme.headlineLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: LudoColors.ink,
+            letterSpacing: -0.5,
+            height: 1.05,
+          )
+        : textTheme.displaySmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: LudoColors.ink,
+            letterSpacing: -0.5,
+            height: 1.05,
+          );
+
     return Scaffold(
+      backgroundColor: LudoColors.paper,
       appBar: AppBar(
-        title: Text(loc.appTitle),
+        // Brand lives in the body at hero scale; the bar only carries the
+        // locale toggle so contrast gates and the toggle key still hold.
+        backgroundColor: LudoColors.paperElevated,
+        title: const SizedBox.shrink(),
         actions: [
           TextButton(
             key: const Key('locale-toggle-button'),
@@ -233,71 +303,155 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 360),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  key: const Key('home-name-field'),
-                  controller: _nameController,
-                  textAlign: TextAlign.center,
-                  decoration: InputDecoration(
-                    labelText: loc.homeNameFieldLabel,
-                    border: const OutlineInputBorder(),
+      body: FeltBackdrop(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                24,
+                compact ? 4 : 8,
+                24,
+                compact ? 20 : 32,
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  FadeTransition(
+                    opacity: brandOpacity,
+                    child: SlideTransition(
+                      position: brandSlide,
+                      child: FadeTransition(
+                        opacity: dieOpacity,
+                        child: ScaleTransition(
+                          scale: dieScale,
+                          child: compact
+                              ? Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    DieMark(
+                                      size: dieSize,
+                                      semanticsLabel: loc.appTitle,
+                                    ),
+                                    const SizedBox(width: 16),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(loc.appTitle, style: brandStyle),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            loc.homeTagline,
+                                            style: textTheme.bodyMedium
+                                                ?.copyWith(
+                                                  color: LudoColors.inkMuted,
+                                                  height: 1.3,
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Column(
+                                  children: [
+                                    Text(
+                                      loc.appTitle,
+                                      textAlign: TextAlign.center,
+                                      style: brandStyle,
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      loc.homeTagline,
+                                      textAlign: TextAlign.center,
+                                      style: textTheme.bodyLarge?.copyWith(
+                                        color: LudoColors.inkMuted,
+                                        height: 1.35,
+                                      ),
+                                    ),
+                                    SizedBox(height: afterBrand),
+                                    Center(
+                                      child: DieMark(
+                                        size: dieSize,
+                                        semanticsLabel: loc.appTitle,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  loc.homePlayersSelectorLabel,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.labelLarge,
-                ),
-                const SizedBox(height: 8),
-                _PlayersSelector(
-                  key: const Key('home-players-selector'),
-                  value: _players,
-                  onChanged: (value) => setState(() => _players = value),
-                ),
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  key: const Key('create-room-button'),
-                  onPressed: _createRoom,
-                  child: Text(loc.homeCreateRoomButton),
-                ),
-                const SizedBox(height: 32),
-                TextField(
-                  key: const Key('room-code-field'),
-                  controller: _codeController,
-                  textAlign: TextAlign.center,
-                  textCapitalization: TextCapitalization.characters,
-                  decoration: InputDecoration(
-                    labelText: loc.homeRoomCodeFieldLabel,
-                    hintText: loc.homeRoomCodeFieldHint,
-                    errorText: _errorText,
-                    // Unset, InputDecoration truncates errorText to one line
-                    // with an ellipsis (see InputDecoration.errorMaxLines in
-                    // the framework). homeRoomCodeInvalid needs four lines to
-                    // clear at this field's width in either locale (measured
-                    // with TextPainter against the field's actual layout
-                    // width), and an error a player cannot read to the end is
-                    // worse than no error, so let it wrap instead of clipping
-                    // it.
-                    errorMaxLines: 4,
-                    border: const OutlineInputBorder(),
+                  SizedBox(height: afterDie),
+                  FadeTransition(
+                    opacity: formOpacity,
+                    child: SlideTransition(
+                      position: formSlide,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextField(
+                            key: const Key('home-name-field'),
+                            controller: _nameController,
+                            textAlign: TextAlign.center,
+                            decoration: InputDecoration(
+                              labelText: loc.homeNameFieldLabel,
+                              isDense: compact,
+                            ),
+                          ),
+                          SizedBox(height: compact ? 12 : 20),
+                          Text(
+                            loc.homePlayersSelectorLabel,
+                            textAlign: TextAlign.center,
+                            style: textTheme.labelLarge?.copyWith(
+                              color: LudoColors.inkMuted,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          _PlayersSelector(
+                            key: const Key('home-players-selector'),
+                            value: _players,
+                            onChanged: (value) =>
+                                setState(() => _players = value),
+                          ),
+                          SizedBox(height: compact ? 14 : 24),
+                          ElevatedButton(
+                            key: const Key('create-room-button'),
+                            onPressed: _createRoom,
+                            child: Text(loc.homeCreateRoomButton),
+                          ),
+                          SizedBox(height: sectionGap),
+                          TextField(
+                            key: const Key('room-code-field'),
+                            controller: _codeController,
+                            textAlign: TextAlign.center,
+                            textCapitalization: TextCapitalization.characters,
+                            decoration: InputDecoration(
+                              labelText: loc.homeRoomCodeFieldLabel,
+                              hintText: loc.homeRoomCodeFieldHint,
+                              errorText: _errorText,
+                              // Unset, InputDecoration truncates errorText to
+                              // one line with an ellipsis. homeRoomCodeInvalid
+                              // needs four lines to clear at this field's
+                              // width in either locale.
+                              errorMaxLines: 4,
+                              isDense: compact,
+                            ),
+                          ),
+                          SizedBox(height: compact ? 8 : 12),
+                          ElevatedButton(
+                            key: const Key('join-room-button'),
+                            onPressed: _joinRoom,
+                            child: Text(loc.homeJoinRoomButton),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton(
-                  key: const Key('join-room-button'),
-                  onPressed: _joinRoom,
-                  child: Text(loc.homeJoinRoomButton),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

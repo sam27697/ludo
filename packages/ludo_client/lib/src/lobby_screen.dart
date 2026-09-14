@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
+import 'theme.dart';
 
 /// The one request LobbyScreen issues, once, from initState.
 enum LobbyAction { create, join }
@@ -118,6 +119,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     };
 
     return Scaffold(
+      backgroundColor: LudoColors.paper,
       body: SafeArea(
         child: Column(
           children: [
