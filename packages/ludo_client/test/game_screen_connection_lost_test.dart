@@ -60,7 +60,6 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
-import 'package:ludo_client/src/board.dart';
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
@@ -229,7 +228,13 @@ Future<(RoomController, FakeTransport, _Connector)> _connectPlaying(
     _frame(
       type: 'room',
       re: id,
-      data: _roomJson(state: state, players: players, seats: seats, turn: turn, seq: seq),
+      data: _roomJson(
+        state: state,
+        players: players,
+        seats: seats,
+        turn: turn,
+        seq: seq,
+      ),
     ),
   );
   await future;
@@ -348,8 +353,7 @@ void main() {
       expect(
         find.byKey(_rollKey),
         findsNothing,
-        reason:
-            'C1: the roll button must be absent once the phase has failed',
+        reason: 'C1: the roll button must be absent once the phase has failed',
       );
     },
   );
@@ -419,8 +423,7 @@ void main() {
       expect(
         find.byKey(_rollKey),
         findsNothing,
-        reason:
-            'C2: the roll button must be absent once the phase has closed',
+        reason: 'C2: the roll button must be absent once the phase has closed',
       );
     },
   );
@@ -428,84 +431,81 @@ void main() {
   // ==========================================================================
   // C3: reconnect is wired.
   // ==========================================================================
-  testWidgets(
-    'C3: tapping game-screen-reconnect-button causes exactly one new '
-    'connect() attempt at the transport -- proved behaviourally, not by '
-    'reading onPressed off the widget',
-    (tester) async {
-      final (controller, transport, connector) = await _connectPlaying(
-        tester,
-        mySeat: 0,
-        seats: midGameSeats,
-        turn: midGameTurn(),
-      );
-      addTearDown(controller.dispose);
+  testWidgets('C3: tapping game-screen-reconnect-button causes exactly one new '
+      'connect() attempt at the transport -- proved behaviourally, not by '
+      'reading onPressed off the widget', (tester) async {
+    final (controller, transport, connector) = await _connectPlaying(
+      tester,
+      mySeat: 0,
+      seats: midGameSeats,
+      turn: midGameTurn(),
+    );
+    addTearDown(controller.dispose);
 
-      transport.endFromFarSide();
+    transport.endFromFarSide();
+    await tester.pump();
+    await tester.pump();
+    expect(
+      controller.phase,
+      RoomPhase.closed,
+      reason: 'fixture is broken: the far side vanishing must close phase',
+    );
+    expect(
+      controller.seatToken,
+      isNotNull,
+      reason:
+          'fixture is broken: a cached seat token is required for '
+          'reconnect() to be legal from RoomPhase.closed',
+    );
+
+    await _mount(tester, controller);
+
+    final int callsBefore = connector.calls.length;
+    final FakeTransport resumeTransport = FakeTransport();
+    connector.enqueue(resumeTransport);
+
+    expect(
+      find.byKey(_reconnectButtonKey),
+      findsOneWidget,
+      reason: 'C3: the reconnect button must be present to tap',
+    );
+    final ElevatedButton button = tester.widget<ElevatedButton>(
+      find.byKey(_reconnectButtonKey),
+    );
+    expect(
+      button,
+      isA<ElevatedButton>(),
+      reason: 'C3: game-screen-reconnect-button must be an ElevatedButton',
+    );
+
+    await tester.tap(find.byKey(_reconnectButtonKey));
+    await tester.pump();
+
+    expect(
+      connector.calls.length,
+      callsBefore + 1,
+      reason:
+          'C3: tapping game-screen-reconnect-button must call '
+          'controller.reconnect(), which opens exactly one new transport; '
+          'expected ${callsBefore + 1} total connect() calls, got '
+          '${connector.calls.length}',
+    );
+
+    // Resolve the resume request the tap armed so no outstanding timer
+    // survives past the test body (standing lesson 9).
+    if (resumeTransport.sentRaw.isNotEmpty) {
+      final String resumeId = _idOf(resumeTransport.sentRaw.last);
+      resumeTransport.pushText(
+        _frame(
+          type: 'room',
+          re: resumeId,
+          data: _roomJson(seats: midGameSeats, turn: midGameTurn(), seq: 1),
+        ),
+      );
       await tester.pump();
       await tester.pump();
-      expect(
-        controller.phase,
-        RoomPhase.closed,
-        reason: 'fixture is broken: the far side vanishing must close phase',
-      );
-      expect(
-        controller.seatToken,
-        isNotNull,
-        reason:
-            'fixture is broken: a cached seat token is required for '
-            'reconnect() to be legal from RoomPhase.closed',
-      );
-
-      await _mount(tester, controller);
-
-      final int callsBefore = connector.calls.length;
-      final FakeTransport resumeTransport = FakeTransport();
-      connector.enqueue(resumeTransport);
-
-      expect(
-        find.byKey(_reconnectButtonKey),
-        findsOneWidget,
-        reason: 'C3: the reconnect button must be present to tap',
-      );
-      final ElevatedButton button = tester.widget<ElevatedButton>(
-        find.byKey(_reconnectButtonKey),
-      );
-      expect(
-        button,
-        isA<ElevatedButton>(),
-        reason: 'C3: game-screen-reconnect-button must be an ElevatedButton',
-      );
-
-      await tester.tap(find.byKey(_reconnectButtonKey));
-      await tester.pump();
-
-      expect(
-        connector.calls.length,
-        callsBefore + 1,
-        reason:
-            'C3: tapping game-screen-reconnect-button must call '
-            'controller.reconnect(), which opens exactly one new transport; '
-            'expected ${callsBefore + 1} total connect() calls, got '
-            '${connector.calls.length}',
-      );
-
-      // Resolve the resume request the tap armed so no outstanding timer
-      // survives past the test body (standing lesson 9).
-      if (resumeTransport.sentRaw.isNotEmpty) {
-        final String resumeId = _idOf(resumeTransport.sentRaw.last);
-        resumeTransport.pushText(
-          _frame(
-            type: 'room',
-            re: resumeId,
-            data: _roomJson(seats: midGameSeats, turn: midGameTurn(), seq: 1),
-          ),
-        );
-        await tester.pump();
-        await tester.pump();
-      }
-    },
-  );
+    }
+  });
 
   // ==========================================================================
   // C4: an in-game exit exists.
@@ -521,7 +521,11 @@ void main() {
         turn: midGameTurn(),
       );
       addTearDown(controller.dispose);
-      expect(controller.phase, RoomPhase.connected, reason: 'fixture is broken');
+      expect(
+        controller.phase,
+        RoomPhase.connected,
+        reason: 'fixture is broken',
+      );
 
       await _mount(tester, controller);
 
@@ -553,7 +557,11 @@ void main() {
         turn: midGameTurn(),
       );
       addTearDown(controller.dispose);
-      expect(controller.phase, RoomPhase.connected, reason: 'fixture is broken');
+      expect(
+        controller.phase,
+        RoomPhase.connected,
+        reason: 'fixture is broken',
+      );
 
       final int sentBefore = transport.sentRaw.length;
 
@@ -637,7 +645,11 @@ void main() {
         turn: midGameTurn(),
       );
       addTearDown(controller.dispose);
-      expect(controller.phase, RoomPhase.connected, reason: 'fixture is broken');
+      expect(
+        controller.phase,
+        RoomPhase.connected,
+        reason: 'fixture is broken',
+      );
       expect(
         controller.room!.state,
         RoomState.playing,
@@ -656,8 +668,7 @@ void main() {
       expect(
         find.byKey(_boardKey),
         findsOneWidget,
-        reason:
-            'C6: a healthy, connected, playing game must render the board',
+        reason: 'C6: a healthy, connected, playing game must render the board',
       );
     },
   );
@@ -751,8 +762,7 @@ void main() {
       expect(
         find.byKey(_leaveButtonKey),
         findsOneWidget,
-        reason:
-            'the connection-lost state must carry game-screen-leave-button',
+        reason: 'the connection-lost state must carry game-screen-leave-button',
       );
       await tester.tap(find.byKey(_leaveButtonKey));
       await tester.pump(const Duration(milliseconds: 500));
