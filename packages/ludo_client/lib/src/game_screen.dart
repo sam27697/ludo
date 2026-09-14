@@ -43,6 +43,26 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {});
   }
 
+  /// The one path every leave affordance on this screen goes through,
+  /// in-game AppBar action and connection-lost body alike.
+  ///
+  /// This pops and nothing else. It does not call `controller.leave()`.
+  /// `home_screen.dart` created this controller and already owns retiring
+  /// it: both of its entry points `await Navigator.push(...)`, and once
+  /// that returns -- which happens the instant this pop lands -- they
+  /// `await controller.leave()` before `controller.dispose()`, in that
+  /// order, on purpose. Calling `leave()` here as well would race that:
+  /// on a socket the server has already dropped, this screen's own call
+  /// can still be suspended inside `leave()`'s awaited request when
+  /// `home_screen.dart`'s `dispose()` lands, and the eventual timeout
+  /// reaches back into a controller that has already been disposed. So
+  /// this screen's only job is to get the player off it promptly, on a
+  /// dead server or a live one, and leave the actual leaving to the code
+  /// that was reviewed to do it in the right order.
+  void _leave() {
+    Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -50,7 +70,13 @@ class _GameScreenState extends State<GameScreen> {
     final RoomSnapshot? room = controller.room;
 
     final Widget body;
-    if (room == null) {
+    if (controller.phase == RoomPhase.failed ||
+        controller.phase == RoomPhase.closed) {
+      // Rule 1: consulted before room, and decisive regardless of what the
+      // last room snapshot said. The board a dead socket last drew is not
+      // shown again underneath this.
+      body = _connectionLostBody(loc, controller);
+    } else if (room == null) {
       body = _loadingBody();
     } else if (room.state == RoomState.finished) {
       body = _gameOverBody(loc, controller, room);
@@ -62,12 +88,65 @@ class _GameScreenState extends State<GameScreen> {
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      appBar: AppBar(title: Text(loc.gameScreenTitle)),
+      appBar: AppBar(
+        title: Text(loc.gameScreenTitle),
+        actions: [
+          IconButton(
+            key: const Key('game-screen-appbar-leave'),
+            icon: const Icon(Icons.logout),
+            tooltip: loc.gameLeaveButton,
+            onPressed: _leave,
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Column(
           children: [
             if (controller.hasDesynced) _desyncBanner(context, loc),
             Expanded(child: body),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Rule 1 and rule 2: `controller.phase` is `RoomPhase.failed` or
+  /// `RoomPhase.closed`. Reuses `loc.lobbyConnectionLost` and
+  /// `loc.lobbyReconnectButton` from the identical state `lobby_screen.dart`
+  /// already shows (`_closedBody`) rather than inventing near-duplicates;
+  /// the meaning is the same connection, the same loss, the same fix.
+  /// `game-screen-error-message` shows `controller.errorMessage` itself,
+  /// exactly as rule 2 asks, whatever the server or the transport said.
+  Widget _connectionLostBody(AppLocalizations loc, RoomController controller) {
+    final String? errorMessage = controller.errorMessage;
+    return Center(
+      key: const Key('game-screen-connection-lost'),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(loc.lobbyConnectionLost, textAlign: TextAlign.center),
+            if (errorMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                errorMessage,
+                key: const Key('game-screen-error-message'),
+                textAlign: TextAlign.center,
+              ),
+            ],
+            const SizedBox(height: 16),
+            ElevatedButton(
+              key: const Key('game-screen-reconnect-button'),
+              onPressed: controller.reconnect,
+              child: Text(loc.lobbyReconnectButton),
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton(
+              key: const Key('game-screen-leave-button'),
+              onPressed: _leave,
+              child: Text(loc.gameLeaveButton),
+            ),
           ],
         ),
       ),
