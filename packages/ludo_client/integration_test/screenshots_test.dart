@@ -614,6 +614,23 @@ void main() {
     // for pumpAndSettle to chase.
     await tester.pumpAndSettle();
 
+    // This is the first capture of the whole run, taken right after
+    // convertFlutterSurfaceToImage() has swapped the surface -- the
+    // coldest moment of the run, and exactly the shape
+    // _settleForScreenshot's own doc comment describes. The pumpAndSettle
+    // above only proves the framework stopped scheduling frames; it says
+    // nothing about whether the platform surface has actually received a
+    // painted frame, which is what left this capture blank before.
+    final AppLocalizations enHomeLoc = AppLocalizations.of(
+      tester.element(find.byType(HomeScreen)),
+    );
+    await _settleForScreenshot(
+      tester,
+      find.text(enHomeLoc.homeCreateRoomButton),
+      'the English Create Room button label '
+      '("${enHomeLoc.homeCreateRoomButton}") laid out on the home screen '
+      'before the first capture',
+    );
     await _expectHomeScreen(tester, localeName: 'en');
     await binding.takeScreenshot('01-home-en');
 
@@ -725,6 +742,17 @@ void main() {
       code: roomCode,
       expectedSeatCount: 3,
     );
+    // Audited against the same "no bare pumpAndSettle proves pixels"
+    // question 01-home-en failed: this capture is not gated by a bare
+    // pumpAndSettle() at all. _pumpUntilFound above already waited on
+    // find.byType(LobbyScreen) by name, and _expectLobbyScreen just above
+    // reads the room code and counts the joined seats straight off the
+    // mounted tree, so the content this screenshot is about to show has
+    // already been asserted present. _settleForScreenshot itself is not
+    // used here: its last line is an unconditional pumpAndSettle() (see
+    // its own doc comment, "Safe here and only for this capture"), and by
+    // this point LobbyScreen has mounted the connecting-state ticker the
+    // file header describes, which that pumpAndSettle would chase forever.
     await binding.takeScreenshot('03-lobby-en');
 
     final Finder startButton = find.byKey(const Key('lobby-start-button'));
@@ -829,6 +857,14 @@ void main() {
       'the game board after the mid-game moved pushes',
     );
 
+    // Same audit as 03-lobby-en above: no bare pumpAndSettle gates this
+    // capture. _pumpUntilFound waited on find.byKey('game-screen-board') by
+    // name, and _expectGameScreenMidGame just above reads
+    // controller.room.state and the actual token positions off the same
+    // RoomController GameScreen renders from. _settleForScreenshot is not
+    // used here for the same reason it is not used for 03-lobby-en: its
+    // trailing pumpAndSettle() would chase GameScreen's own ticker forever
+    // once GameScreen has mounted.
     await _expectGameScreenMidGame(
       tester,
       localeName: 'en',
@@ -989,6 +1025,13 @@ void main() {
       'the game board after the mid-game moved pushes',
     );
 
+    // Same audit as 03-lobby-en and 04-game-en above: no bare
+    // pumpAndSettle gates this capture, _pumpUntilFound and
+    // _expectGameScreenMidGame already verify the named content is on
+    // screen, and _settleForScreenshot is not used for the same reason:
+    // GameScreen has mounted its ticker by this point and
+    // _settleForScreenshot's trailing pumpAndSettle() would chase it
+    // forever.
     await _expectGameScreenMidGame(
       tester,
       localeName: 'ar',
