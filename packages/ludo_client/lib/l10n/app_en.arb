@@ -216,6 +216,16 @@
       }
     }
   },
+  "gameTurnCountdown": "{seconds}s left",
+  "@gameTurnCountdown": {
+    "description": "Shown on the game screen next to the turn banner whenever the current turn carries a deadline, counting down the whole seconds remaining before the server takes the turn. Never negative: it clamps at 0 and holds there until the next turn frame arrives.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
   "gameOverYouWin": "You win",
   "@gameOverYouWin": {
     "description": "Shown on the game screen when the game has finished and the winning seat is this player's own."
