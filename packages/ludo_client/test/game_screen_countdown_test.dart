@@ -82,6 +82,32 @@
 //      without unmounting, and proves both that the countdown re-anchors to
 //      the new deadline and that no timer from the superseded segment is
 //      still ticking alongside it.
+//
+// work/ludo/orders/145-waiting-line-said-once-proof.md answers a screenshot
+// of the real, rendered Arabic game screen saying the waiting sentence
+// twice, once as game-screen-turn-banner and once as the standalone
+// game-screen-waiting-for-seat line beneath it, because _turnBannerText
+// falls through to the same _waitingForSeatText call the standalone line
+// also makes. game-screen-waiting-for-seat itself is also scheduled to be
+// deleted from _playingBody by a second, concurrent order that this file
+// does not read, so nothing below may require that key to be present; an
+// assertion that requires its absence is still sound after that deletion
+// and is kept:
+//
+//   1. P4 is retargeted from game-screen-waiting-for-seat onto
+//      game-screen-turn-banner, keeping the exact shape order 143 gave it:
+//      two independent connections, two differently-named seats on turn,
+//      and a requirement that the two rendered strings differ.
+//   2. P5 gains a first arm that reads the waiting sentence off the banner
+//      while the turn is on another seat, so its own-turn arm has a real
+//      rendered string to prove is absent with find.text(...), rather than
+//      only proving an already-doomed key is missing.
+//   3. P10 (new) is what this order exists for: with the turn on another
+//      seat, the string read off game-screen-turn-banner must match exactly
+//      one widget in the whole mounted tree, run in both locales because the
+//      photographed defect was Arabic. It is expected to fail on this base
+//      commit with two matches -- the banner and the standalone line saying
+//      the identical thing.
 
 import 'dart:convert';
 
@@ -266,8 +292,9 @@ Future<(RoomController, FakeTransport)> _connectPlaying(
 
 // --- widget harness, mirroring game_screen_test.dart's own ----------------
 
-Widget _harness(Widget child) {
+Widget _harness(Widget child, {Locale locale = const Locale('en')}) {
   return MaterialApp(
+    locale: locale,
     supportedLocales: appSupportedLocales,
     localizationsDelegates: const [
       AppLocalizations.delegate,
@@ -279,13 +306,20 @@ Widget _harness(Widget child) {
   );
 }
 
-Future<void> _mount(WidgetTester tester, RoomController controller) async {
-  await tester.pumpWidget(_harness(GameScreen(controller: controller)));
+Future<void> _mount(
+  WidgetTester tester,
+  RoomController controller, {
+  Locale locale = const Locale('en'),
+}) async {
+  await tester.pumpWidget(
+    _harness(GameScreen(controller: controller), locale: locale),
+  );
   await tester.pump();
 }
 
 const Key _countdownKey = Key('game-screen-turn-countdown');
 const Key _waitingForSeatKey = Key('game-screen-waiting-for-seat');
+const Key _turnBannerKey = Key('game-screen-turn-banner');
 const Key _boardKey = Key('game-screen-board');
 const Key _rollKey = Key('game-screen-roll-button');
 
@@ -480,14 +514,39 @@ void main() {
   );
 
   // ==========================================================================
-  // P4: waiting for another seat.
+  // P4: waiting for another seat, retargeted by order 145 onto
+  // game-screen-turn-banner.
   // ==========================================================================
+  //
+  // Order 145: on the base commit this file was first written against,
+  // _turnBannerText's not-my-turn branch already falls straight through to
+  // the same _waitingForSeatText call the standalone game-screen-waiting-
+  // for-seat line also makes, so the banner names the seat on turn exactly
+  // as that standalone line did. A second, concurrent order deletes that
+  // standalone line from _playingBody entirely, so nothing below may depend
+  // on game-screen-waiting-for-seat being present; the shape order 143 gave
+  // this case -- two independent connections, two differently-named seats
+  // on turn, the two rendered strings required to differ -- is kept exactly,
+  // reading both strings off game-screen-turn-banner instead. A
+  // _waitingForSeatText mutated to ignore turnSeat and return a constant
+  // still fails this case: on the branch both arms exercise (turn.seat !=
+  // my own seat), _turnBannerText's own return value *is* that
+  // _waitingForSeatText call, so a turnSeat-blind mutant renders the same
+  // banner text on both arms and the isNot comparison below catches it
+  // exactly as it did when the case read game-screen-waiting-for-seat. This
+  // was checked, not just argued statically: a scratch copy of the whole
+  // ludo_client package was made outside the repository, its
+  // _waitingForSeatText body replaced with `return 'constant-mutant';`, and
+  // this exact case run against that copy with --plain-name "P4" -- it
+  // failed with "Expected: not 'constant-mutant', Actual: 'constant-mutant'"
+  // -- and then run again against an unmodified copy of the same scratch
+  // package, where it passed.
   testWidgets(
     'P4: in a playing room where the turn belongs to a seat that is not '
-    'this player\'s, game-screen-waiting-for-seat is present and names the '
-    'seat on turn, proved by mounting two separate connections that each '
-    'wait for a different, differently-named seat and requiring the two '
-    'rendered strings to differ, rather than asserting exact wording',
+    'this player\'s, game-screen-turn-banner names the seat on turn, '
+    'proved by mounting two separate connections that each wait for a '
+    'different, differently-named seat and requiring the two rendered '
+    'strings to differ, rather than asserting exact wording',
     (tester) async {
       // Arm A: the turn is on seat 1 ("Bob"), my own seat is 0.
       final (controllerBob, _) = await _connectPlaying(
@@ -506,18 +565,18 @@ void main() {
       await _mount(tester, controllerBob);
 
       expect(
-        find.byKey(_waitingForSeatKey),
+        find.byKey(_turnBannerKey),
         findsOneWidget,
         reason:
             'P4: with the turn on seat 1 and my own seat 0, '
-            'game-screen-waiting-for-seat must be present; none was found',
+            'game-screen-turn-banner must be present; none was found',
       );
-      final String textForBob = _renderedTextAt(tester, _waitingForSeatKey);
+      final String textForBob = _renderedTextAt(tester, _turnBannerKey);
       expect(
         textForBob,
         isNotEmpty,
         reason:
-            'P4: game-screen-waiting-for-seat must name the seat on turn, '
+            'P4: game-screen-turn-banner must name the seat on turn, '
             'not render an empty string',
       );
 
@@ -543,18 +602,18 @@ void main() {
       await _mount(tester, controllerSam);
 
       expect(
-        find.byKey(_waitingForSeatKey),
+        find.byKey(_turnBannerKey),
         findsOneWidget,
         reason:
             'P4: with the turn on seat 0 and my own seat 1, '
-            'game-screen-waiting-for-seat must be present; none was found',
+            'game-screen-turn-banner must be present; none was found',
       );
-      final String textForSam = _renderedTextAt(tester, _waitingForSeatKey);
+      final String textForSam = _renderedTextAt(tester, _turnBannerKey);
       expect(
         textForSam,
         isNotEmpty,
         reason:
-            'P4: game-screen-waiting-for-seat must name the seat on turn, '
+            'P4: game-screen-turn-banner must name the seat on turn, '
             'not render an empty string',
       );
 
@@ -566,7 +625,7 @@ void main() {
         textForSam,
         isNot(textForBob),
         reason:
-            'P4: game-screen-waiting-for-seat must name the seat actually '
+            'P4: game-screen-turn-banner must name the seat actually '
             'on turn -- waiting for seat 1 ("Bob") rendered "$textForBob" '
             'and waiting for seat 0 ("Sam") rendered "$textForSam"; a '
             'rendering that ignores which seat is on turn would produce '
@@ -577,13 +636,64 @@ void main() {
   );
 
   // ==========================================================================
-  // P5: the control, my own turn.
+  // P5: the control, my own turn. Strengthened by order 145.
   // ==========================================================================
+  //
+  // Order 145: on this file's base commit, game-screen-waiting-for-seat is
+  // already absent on my own turn regardless of what the screen actually
+  // says, and a second, concurrent order deletes that key from
+  // _playingBody outright, so after it lands the key is absent on every
+  // turn and the old assertion alone would pass no matter what the screen
+  // rendered. A first arm below mounts a connection where the turn is on
+  // another seat and reads the waiting sentence straight off
+  // game-screen-turn-banner, with no localized string typed into this file;
+  // the control arm proper then requires that exact sentence to be found
+  // nowhere at all in the tree once the turn moves to my own seat, in
+  // addition to the still-kept findsNothing on the doomed key.
   testWidgets(
     'P5 (control): in a playing room where the turn belongs to this player, '
-    'game-screen-waiting-for-seat is absent; the board and the roll button '
-    'are present',
+    'the waiting sentence is nowhere in the tree and game-screen-waiting-'
+    'for-seat is absent; the board and the roll button are present',
     (tester) async {
+      // Arm A: capture the waiting sentence game-screen-turn-banner renders
+      // while the turn belongs to another seat, so the control arm below has
+      // a real rendered string to prove absent rather than a guess at the
+      // wording.
+      final (controllerWaiting, _) = await _connectPlaying(
+        tester,
+        mySeat: 0,
+        seats: twoSeats,
+        turn: _turnJson(seat: 1, phase: 'await_roll', deadlineMs: 45000, k: 0),
+      );
+      addTearDown(controllerWaiting.dispose);
+      expect(
+        controllerWaiting.room!.turn!.seat,
+        isNot(controllerWaiting.seat),
+        reason:
+            'fixture is broken: the capture arm\'s turn must not belong to '
+            'my seat',
+      );
+
+      await _mount(tester, controllerWaiting);
+      expect(
+        find.byKey(_turnBannerKey),
+        findsOneWidget,
+        reason:
+            'P5: game-screen-turn-banner must be present to read the '
+            'waiting sentence from before this case can prove it absent '
+            'elsewhere',
+      );
+      final String waitingSentence = _renderedTextAt(tester, _turnBannerKey);
+      expect(
+        waitingSentence,
+        isNotEmpty,
+        reason:
+            'P5: the waiting sentence read off game-screen-turn-banner '
+            'must not be an empty string',
+      );
+
+      // Arm B: the control proper -- a second, independent connection where
+      // the turn belongs to this player.
       final (controller, _) = await _connectPlaying(
         tester,
         mySeat: 0,
@@ -605,6 +715,16 @@ void main() {
         reason:
             'P5: with the turn on my own seat, game-screen-waiting-for-seat '
             'must be absent',
+      );
+      expect(
+        find.text(waitingSentence),
+        findsNothing,
+        reason:
+            'P5: with the turn on my own seat, the waiting sentence '
+            '"$waitingSentence" (read off game-screen-turn-banner in arm A, '
+            'where the turn was on seat 1) must not be found anywhere in '
+            'the tree; finding it would mean the screen said the waiting '
+            'sentence on my own turn, which nothing here should render',
       );
       expect(
         find.byKey(_boardKey),
@@ -945,6 +1065,94 @@ void main() {
       );
     },
   );
+
+  // ==========================================================================
+  // P10 (new, order 145): the waiting sentence is on screen exactly once.
+  // ==========================================================================
+  //
+  // work/ludo/evidence/144-game-ar-duplicate-waiting-line.png shows the real
+  // Arabic game screen rendering the same sentence twice, one line the
+  // turn banner and one line the (now doomed) standalone waiting-for-seat
+  // widget beneath it. No case above can see that: every one of them reads
+  // a single named key in isolation and asks what that one widget says,
+  // never what the whole mounted tree says together, so a screen that
+  // repeats a sentence on two different widgets is invisible to all of
+  // them.
+  //
+  // What this case does instead: with the turn on a seat that is not this
+  // player's, read whatever string game-screen-turn-banner is actually
+  // showing -- no localized string is typed into this file, the sentence
+  // used for the comparison is always the one the widget itself rendered --
+  // and require find.text(...) of that exact string to match exactly one
+  // widget anywhere in the tree. A screen that says the sentence once
+  // passes; a screen that says it twice, on the banner and on a second,
+  // independent widget, fails with two matches. Run in both locales this
+  // package supports, per appSupportedLocales, because the photographed
+  // defect was specifically the Arabic rendering.
+  for (final locale in appSupportedLocales) {
+    testWidgets(
+      'locale ${locale.languageCode} -- P10: with the turn on a seat that is '
+      'not this player\'s, the sentence rendered by game-screen-turn-banner '
+      'is found exactly once in the whole mounted tree',
+      (tester) async {
+        final (controller, _) = await _connectPlaying(
+          tester,
+          mySeat: 0,
+          seats: twoSeats,
+          turn: _turnJson(
+            seat: 1,
+            phase: 'await_roll',
+            deadlineMs: 45000,
+            k: 0,
+          ),
+        );
+        addTearDown(controller.dispose);
+        expect(
+          controller.room!.turn!.seat,
+          isNot(controller.seat),
+          reason:
+              'locale ${locale.languageCode} -- fixture is broken: the '
+              'turn must not belong to my own seat',
+        );
+
+        await _mount(tester, controller, locale: locale);
+
+        expect(
+          find.byKey(_turnBannerKey),
+          findsOneWidget,
+          reason:
+              'locale ${locale.languageCode} -- P10: game-screen-turn-'
+              'banner must be present before this case can read the '
+              'sentence it renders',
+        );
+        final String waitingSentence = _renderedTextAt(tester, _turnBannerKey);
+        expect(
+          waitingSentence,
+          isNotEmpty,
+          reason:
+              'locale ${locale.languageCode} -- P10: the sentence read '
+              'off game-screen-turn-banner must not be an empty string',
+        );
+
+        final int matches = find.text(waitingSentence).evaluate().length;
+        expect(
+          matches,
+          1,
+          reason:
+              'locale ${locale.languageCode} -- P10: the sentence '
+              '"$waitingSentence", read off game-screen-turn-banner with '
+              'the turn on seat 1 and my own seat 0, must be found on '
+              'exactly one widget in the whole mounted tree; found '
+              '$matches. A screen that renders it a second time on an '
+              'independent widget (as game-screen-waiting-for-seat does '
+              'on this commit, reproduced with the sequence: connect '
+              'mySeat 0, turn seat 1, deadlineMs 45000, locale '
+              '${locale.languageCode}) is exactly what this count is '
+              'built to catch',
+        );
+      },
+    );
+  }
 }
 
 /// Reads the rendered text at [key] the same way [_wholeSecondsShown] locates

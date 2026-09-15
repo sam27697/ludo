@@ -313,14 +313,6 @@ class _GameScreenState extends State<GameScreen> {
               textAlign: TextAlign.center,
             ),
           ],
-          if (turn != null && turn.seat != seat) ...[
-            const SizedBox(height: 8),
-            Text(
-              _waitingForSeatText(loc, room, turn.seat),
-              key: const Key('game-screen-waiting-for-seat'),
-              textAlign: TextAlign.center,
-            ),
-          ],
           if (turn != null) ...[
             const SizedBox(height: 8),
             Text(
@@ -485,9 +477,7 @@ String _turnBannerText(AppLocalizations loc, RoomSnapshot room, int? seat) {
 /// Names the seat `turnSeat` the same way [_turnBannerText] does once it
 /// has decided the turn is not this player's own: the matching seat's
 /// `name` in `loc.gameWaitingForPlayer`, or `loc.gameWaitingForTurn` if no
-/// entry in `room.seats` carries `turnSeat`. Shared by [_turnBannerText]
-/// and the standalone `game-screen-waiting-for-seat` line so the two can
-/// never drift apart on how a seat is named.
+/// entry in `room.seats` carries `turnSeat`. Called from [_turnBannerText].
 String _waitingForSeatText(
   AppLocalizations loc,
   RoomSnapshot room,
