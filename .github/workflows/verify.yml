@@ -62,7 +62,13 @@ jobs:
       run:
         working-directory: packages/ludo_client
     steps:
+      # fetch-depth: 0 -- the version code computed below is
+      # `git rev-list --count HEAD`, and the default shallow checkout
+      # (depth 1) would return 1 no matter how large the repository's real
+      # history is.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: "3.47.1"
@@ -214,7 +220,44 @@ jobs:
           chmod 600 android/key.properties
           echo "wrote android/key.properties and $keystore_path; release build will sign with the upload key"
 
-      - run: flutter build appbundle --release
+      # Android's version code has to strictly increase across every bundle
+      # CI ever builds, or Play refuses the upload as a duplicate of one it
+      # has already seen. Computed as the commit count rather than
+      # github.run_number: run_number belongs to this workflow file's own
+      # identity and resets to 1 if verify.yml is ever renamed or replaced,
+      # which would start handing out version codes Play has already taken.
+      # The commit count belongs to the repository itself, not to this
+      # workflow, and only ever goes up. Requires the checkout above to have
+      # fetched full history (fetch-depth: 0) -- a shallow clone returns a
+      # truncated count.
+      - name: compute version code from commit count
+        id: versioncode
+        run: |
+          set -euo pipefail
+          code="$(git rev-list --count HEAD)"
+          echo "version_code=$code" >> "$GITHUB_OUTPUT"
+          echo "$code"
+
+      # LUDO_UPLOAD_VERSION_CODE_FLOOR is the highest Android version code
+      # ever built for upload -- 3, from the hand-edited version: 1.0.0+3 in
+      # pubspec.yaml, with version code 2 already sitting on the closed
+      # testing track. Raise it only when a version code higher than this
+      # has genuinely been uploaded to Play; the point of the check below is
+      # to stop a wrong or stale computed version code before it reaches
+      # Play, not to be adjusted to make the check stop complaining.
+      - name: enforce version code floor
+        env:
+          VERSION_CODE: ${{ steps.versioncode.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          LUDO_UPLOAD_VERSION_CODE_FLOOR=3
+          if [ "$VERSION_CODE" -le "$LUDO_UPLOAD_VERSION_CODE_FLOOR" ]; then
+            echo "computed version code $VERSION_CODE is not strictly greater than the floor $LUDO_UPLOAD_VERSION_CODE_FLOOR; refusing to build" >&2
+            exit 1
+          fi
+          echo "version code $VERSION_CODE clears the floor of $LUDO_UPLOAD_VERSION_CODE_FLOOR"
+
+      - run: flutter build appbundle --release --build-number=${{ steps.versioncode.outputs.version_code }}
 
       # The build output must contain exactly one .aab at its canonical
       # output location, and this step fails outright if it does not.
