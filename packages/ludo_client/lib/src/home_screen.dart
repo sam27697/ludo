@@ -478,6 +478,19 @@ class _PlayersSelector extends StatelessWidget {
   Widget build(BuildContext context) {
     final loc = AppLocalizations.of(context);
     return SegmentedButton<int>(
+      // SegmentedButton defaults showSelectedIcon to true, which draws a
+      // leading check inside the selected segment only. That icon and its
+      // gap come out of the same fixed segment width the label has to fit
+      // in, so whichever segment is selected loses width the other two
+      // keep, and its label wraps where theirs does not (work/ludo/orders/
+      // 146-players-selector-wrap.md). Turning the icon off gives every
+      // segment the same width regardless of selection, instead of shrinking
+      // or truncating the label to fit the width the icon left behind.
+      // Selection stays visible without it: segmentedButtonTheme
+      // (lib/src/theme.dart) already paints the selected segment with its
+      // own container colour and foreground colour by WidgetState.selected,
+      // independently of the icon.
+      showSelectedIcon: false,
       segments: [
         ButtonSegment(value: 2, label: Text(loc.homePlayersTwo)),
         ButtonSegment(value: 3, label: Text(loc.homePlayersThree)),
