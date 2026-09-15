@@ -59,6 +59,29 @@
 //   test/game_screen_test.dart's H2 branch 1 and H3.6c already reach, but
 //   checked here for a different key. This should be checked against
 //   whatever the implementer also concluded about deadline_ms's nullability.
+//
+// work/ludo/orders/143-countdown-proof-gaps.md closes three gaps an
+// adversarial pre-review found in this file, confirmed by the master and
+// recorded in order 141's verdict:
+//
+//   1. P4 is rewritten to drive two connections, on two different seats with
+//      two different seat names, and require the two rendered
+//      game-screen-waiting-for-seat strings to differ. The original body
+//      built one scenario and only checked the text was non-empty, so its own
+//      description ("proved by ... requiring the rendered text to differ")
+//      described a comparison the body never made.
+//   2. P8 (new) proves the countdown's periodic timer stops scheduling once
+//      it reaches zero, while the widget stays mounted -- not by reading the
+//      framework's own end-of-test pending-timer check, which cannot see this
+//      defect: GameScreen.dispose cancels _countdownTimer unconditionally, so
+//      a countdown that kept ticking after zero is swept up the instant the
+//      widget is torn down, before any case relying on unmount could catch
+//      it. See P8's own comment for the mechanism used instead.
+//   3. P9 (new) drives a second `turn` push through the same fake_transport
+//      idiom this file already uses, on a different (seat, deadlineMs) pair,
+//      without unmounting, and proves both that the countdown re-anchors to
+//      the new deadline and that no timer from the superseded segment is
+//      still ticking alongside it.
 
 import 'dart:convert';
 
@@ -462,9 +485,11 @@ void main() {
   testWidgets(
     'P4: in a playing room where the turn belongs to a seat that is not '
     'this player\'s, game-screen-waiting-for-seat is present and names the '
-    'seat on turn, proved by varying which seat is named and requiring the '
-    'rendered text to differ rather than asserting exact wording',
+    'seat on turn, proved by mounting two separate connections that each '
+    'wait for a different, differently-named seat and requiring the two '
+    'rendered strings to differ, rather than asserting exact wording',
     (tester) async {
+      // Arm A: the turn is on seat 1 ("Bob"), my own seat is 0.
       final (controllerBob, _) = await _connectPlaying(
         tester,
         mySeat: 0,
@@ -475,7 +500,7 @@ void main() {
       expect(
         controllerBob.room!.turn!.seat,
         isNot(controllerBob.seat),
-        reason: 'fixture is broken: the turn must not belong to my seat',
+        reason: 'fixture is broken: arm A\'s turn must not belong to my seat',
       );
 
       await _mount(tester, controllerBob);
@@ -494,6 +519,59 @@ void main() {
         reason:
             'P4: game-screen-waiting-for-seat must name the seat on turn, '
             'not render an empty string',
+      );
+
+      // Arm B: the same two seats, the same two names, but the turn and my
+      // own seat are swapped -- the turn is now on seat 0 ("Sam") and I sit
+      // in seat 1. A second, independent connection and mount is used rather
+      // than pushing a turn frame through arm A's connection, because this
+      // case is about which seat is named, not about a turn transition
+      // (P9 below covers that path).
+      final (controllerSam, _) = await _connectPlaying(
+        tester,
+        mySeat: 1,
+        seats: twoSeats,
+        turn: _turnJson(seat: 0, phase: 'await_roll', deadlineMs: 45000, k: 0),
+      );
+      addTearDown(controllerSam.dispose);
+      expect(
+        controllerSam.room!.turn!.seat,
+        isNot(controllerSam.seat),
+        reason: 'fixture is broken: arm B\'s turn must not belong to my seat',
+      );
+
+      await _mount(tester, controllerSam);
+
+      expect(
+        find.byKey(_waitingForSeatKey),
+        findsOneWidget,
+        reason:
+            'P4: with the turn on seat 0 and my own seat 1, '
+            'game-screen-waiting-for-seat must be present; none was found',
+      );
+      final String textForSam = _renderedTextAt(tester, _waitingForSeatKey);
+      expect(
+        textForSam,
+        isNotEmpty,
+        reason:
+            'P4: game-screen-waiting-for-seat must name the seat on turn, '
+            'not render an empty string',
+      );
+
+      // The point of the case: naming a different seat must render
+      // different text. A _waitingForSeatText that ignored turnSeat and
+      // always returned some constant non-empty string would pass every
+      // assertion above and only fail here.
+      expect(
+        textForSam,
+        isNot(textForBob),
+        reason:
+            'P4: game-screen-waiting-for-seat must name the seat actually '
+            'on turn -- waiting for seat 1 ("Bob") rendered "$textForBob" '
+            'and waiting for seat 0 ("Sam") rendered "$textForSam"; a '
+            'rendering that ignores which seat is on turn would produce '
+            'the same text for both and is exactly what this comparison '
+            'is here to catch',
       );
     },
   );
@@ -614,6 +692,259 @@ void main() {
       await tester.pump();
     },
   );
+
+  // ==========================================================================
+  // P8 (new, order 143 gap 2): the periodic timer stops scheduling once it
+  // reaches zero, proven while the widget stays mounted.
+  // ==========================================================================
+  //
+  // flutter_test unmounts whatever widget tree is left standing at the end of
+  // every testWidgets body and only then checks for a pending Timer
+  // (test/binding.dart's _runTestBody: "Unmount any remaining widgets" runs
+  // before _verifyInvariants). GameScreen.dispose cancels _countdownTimer
+  // unconditionally, so that automatic unmount-and-check sequence cancels and
+  // hides a countdown that kept rescheduling after zero before it is ever
+  // asked whether it was still scheduling anything -- P7 exercises that exact
+  // sequence and cannot see this defect for that reason. Reading the rendered
+  // value cannot see it either: a countdown clamped at zero every second by a
+  // timer that forgot to cancel itself renders identically to one whose timer
+  // is actually gone (both P3 and P7 already read the value, never whether
+  // anything is still scheduled).
+  //
+  // What is used instead: the Text widget GameScreen builds at
+  // game-screen-turn-countdown is a fresh object on every rebuild, because
+  // every call to State.build reconstructs its whole return value -- Flutter
+  // does not diff a build's output against the last one before replacing it.
+  // Capturing that widget's identity, advancing fake time well past the
+  // deadline again, and re-capturing it therefore answers "did GameScreen
+  // rebuild since the last sample" directly, with no dependence on whether
+  // anything about the rendered value happened to change. A rebuild only
+  // happens because something called setState; nothing on this screen does
+  // that once mounted except the countdown's own timer tick and a
+  // RoomController frame, and this case sends neither after the deadline.
+  // If the periodic tick kept re-arming after clamping to zero, that stray
+  // tick calls setState every second and this identity comparison catches
+  // it; if it self-cancels as requirement 4 of order 141's contract
+  // requires, nothing calls setState again and the same Text instance
+  // persists.
+  //
+  // This was checked against a mutated scratch copy of game_screen.dart, not
+  // argued statically alone: lib/src/game_screen.dart was copied outside the
+  // repository, its imports repointed to package:ludo_client so the copy's
+  // RoomController/GameScreen types stay the exact types this file's own
+  // fixtures construct, and the else branch's `_countdownTimer?.cancel();
+  // _countdownTimer = null;` (the two lines order 143 names as the surviving
+  // mutation) was deleted. Against the unmodified copy, the identity
+  // comparison below held (same instance, case passes); against the mutated
+  // copy it did not (a new instance appeared after the second advance, case
+  // fails) -- measured by running both through this same fixture idiom, not
+  // by reasoning about the framework's internals alone.
+  testWidgets(
+    'P8: game-screen-turn-countdown stops scheduling rebuilds once the '
+    'countdown reaches zero, checked by identity of the rendered widget '
+    'across a further advance while still mounted, not by the rendered '
+    'value or by anything the end-of-test unmount-and-check could paper over',
+    (tester) async {
+      final (controller, _) = await _connectPlaying(
+        tester,
+        mySeat: 0,
+        seats: twoSeats,
+        turn: _turnJson(seat: 0, phase: 'await_roll', deadlineMs: 3000, k: 0),
+      );
+      addTearDown(controller.dispose);
+
+      await _mount(tester, controller);
+      expect(
+        find.byKey(_countdownKey),
+        findsOneWidget,
+        reason:
+            'P8: game-screen-turn-countdown must be present before this '
+            'case can measure anything about its timer self-cancelling',
+      );
+
+      // Cross the 3000ms deadline in one bounded pump, then confirm the
+      // clamp reads zero -- this much is already covered by P3 and is only
+      // a sanity check here, not this case's own assertion.
+      await tester.pump(const Duration(seconds: 5));
+      expect(
+        _wholeSecondsShown(tester, _countdownKey),
+        0,
+        reason:
+            'P8: fixture is broken: 5 seconds of pumped time past a 3000ms '
+            'deadline must already read as clamped to 0',
+      );
+
+      final Widget beforeFurtherAdvance = _renderedTextWidgetAt(
+        tester,
+        _countdownKey,
+      );
+
+      // Advance well past another full tick interval with nothing else
+      // touching the controller or the widget tree. A self-cancelled timer
+      // schedules nothing here; a leaked one fires three more times.
+      await tester.pump(const Duration(seconds: 3));
+
+      final Widget afterFurtherAdvance = _renderedTextWidgetAt(
+        tester,
+        _countdownKey,
+      );
+      expect(
+        identical(afterFurtherAdvance, beforeFurtherAdvance),
+        isTrue,
+        reason:
+            'P8: game-screen-turn-countdown must not be rebuilt by a '
+            'further 3 seconds of pumped time once the countdown has '
+            'already clamped to zero -- rendering the same widget instance '
+            'both before and after means nothing called setState in '
+            'between; a periodic timer that forgot to cancel itself at zero '
+            'would call setState every further second and this case '
+            'reproduces with deadlineMs: 3000, mySeat: 0, seat: 0, phase: '
+            "'await_roll'",
+      );
+    },
+  );
+
+  // ==========================================================================
+  // P9 (new, order 143 gap 3): a turn transition on a mounted widget
+  // re-anchors the countdown and leaves no timer from the previous segment
+  // running.
+  // ==========================================================================
+  //
+  // No case above ever pushes a second `turn` while the widget stays
+  // mounted, so _syncCountdown's "cancel the running timer before re-arming
+  // for the new (seat, deadlineMs) pair" branch has never run under test.
+  // Checking only that the countdown reads the new deadline is not enough:
+  // _countdownRemainingSeconds is reassigned from the fresh deadline
+  // unconditionally on every genuinely new (seat, deadlineMs) pair, mutation
+  // or not, so a re-anchor check alone passes whether or not the previous
+  // segment's timer was ever cancelled. What distinguishes the two is what
+  // happens next -- if the old timer is still ticking, it goes on
+  // decrementing the same shared _countdownRemainingSeconds field the new
+  // timer decrements, so a fixed further advance shows a smaller number than
+  // a single live timer would ever produce.
+  //
+  // This was checked against a mutated scratch copy, the same way as P8:
+  // lib/src/game_screen.dart copied outside the repository, imports
+  // repointed to package:ludo_client, and this time the
+  // `_countdownTimer?.cancel();` line in _syncCountdown immediately before
+  // `_countdownSeat = turn.seat;` (the line order 143 names as the surviving
+  // mutation for this gap) deleted. Run through this exact fixture idiom --
+  // connect on seat 1 with a 45000ms deadline, advance 40 seconds, push a
+  // `turn` frame moving to seat 0 with a fresh 10000ms deadline, advance 3
+  // more seconds -- the unmodified copy read 7 (10 minus 3, one timer
+  // decrementing once a second); the mutated copy read 4 (10 minus 6: the
+  // superseded timer, never cancelled, ticks alongside the new one and both
+  // decrement the same field on every one of those 3 seconds). The
+  // re-anchor check alone (the fixture reading 10 immediately after the
+  // pushed frame) passed identically on both copies, which is exactly what
+  // this case's own comment above says it would do and why the exact-value
+  // check after a further advance is the actual assertion, not the
+  // re-anchor.
+  testWidgets(
+    'P9: pushing a second turn frame with a different (seat, deadlineMs) '
+    'pair while the widget stays mounted re-anchors game-screen-turn-'
+    'countdown to the new deadline and leaves no timer from the superseded '
+    'segment still decrementing it, checked by an exact further-advance '
+    'value a leaked second timer cannot produce',
+    (tester) async {
+      final (controller, transport) = await _connectPlaying(
+        tester,
+        mySeat: 0,
+        seats: twoSeats,
+        turn: _turnJson(seat: 1, phase: 'await_roll', deadlineMs: 45000, k: 0),
+      );
+      addTearDown(controller.dispose);
+
+      await _mount(tester, controller);
+      expect(
+        _wholeSecondsShown(tester, _countdownKey),
+        45,
+        reason:
+            'P9: fixture is broken: the first segment must start at the '
+            '45000ms deadline put on the wire',
+      );
+
+      // Run the first segment most of the way down, so its timer has fired
+      // repeatedly and is unambiguously live before the transition arrives.
+      await tester.pump(const Duration(seconds: 40));
+      expect(
+        _wholeSecondsShown(tester, _countdownKey),
+        5,
+        reason:
+            'P9: fixture is broken: 40 seconds of pumped time against a '
+            '45000ms deadline must read 5',
+      );
+
+      // The turn transition: a different seat, a fresh deadline, pushed as
+      // a real `turn` frame through the same FakeTransport this file's
+      // _connectPlaying already drives, per docs/PROTOCOL.md section 5's
+      // `turn` push shape ({seat, deadline_ms, seq}) and
+      // net/room_controller.dart's _reduceTurn, which requires `seq` to be
+      // exactly the room's previous seq plus one.
+      final int nextSeq = controller.room!.seq + 1;
+      transport.pushText(
+        _frame(
+          type: 'turn',
+          data: <String, Object?>{
+            'seat': 0,
+            'deadline_ms': 10000,
+            'seq': nextSeq,
+          },
+        ),
+      );
+      // Two pumps: the pushed frame is delivered to RoomController through
+      // FakeTransport's StreamController, which schedules delivery as a
+      // microtask rather than resolving inline. The first pump flushes that
+      // microtask, which runs the reducer and calls setState, which
+      // schedules a frame too late for that same pump to draw; the second
+      // pump draws it. game_screen_test.dart's own push-then-pump-twice
+      // sites (for example its 'rolled' reply after a roll request) use the
+      // identical idiom for the identical reason.
+      await tester.pump();
+      await tester.pump();
+      expect(
+        controller.room!.turn!.seat,
+        0,
+        reason:
+            'P9: fixture is broken: the pushed turn frame must have reached '
+            'RoomController and moved the turn to seat 0',
+      );
+      expect(
+        _wholeSecondsShown(tester, _countdownKey),
+        10,
+        reason:
+            'P9: the re-anchor half -- immediately after a turn push '
+            'carrying deadline_ms 10000, game-screen-turn-countdown must '
+            'read 10, not a value derived from the superseded 45000ms '
+            'deadline',
+      );
+
+      // The half that actually distinguishes a cancelled previous timer
+      // from a leaked one: a further, fixed advance. One live timer takes
+      // 10 down to 7 over 3 seconds; a second, superseded timer still
+      // ticking alongside it decrements the same shared field on every one
+      // of those 3 seconds too, landing on 4 instead.
+      await tester.pump(const Duration(seconds: 3));
+      final int shownAfterTransition = _wholeSecondsShown(
+        tester,
+        _countdownKey,
+      );
+      expect(
+        shownAfterTransition,
+        7,
+        reason:
+            'P9: 3 seconds of pumped time after a turn transition to a '
+            '10000ms deadline must read 7 -- a single live timer '
+            'decrementing once a second. Got $shownAfterTransition; a '
+            'timer from the superseded 45000ms segment left running '
+            'alongside the new one would decrement the same counter twice '
+            'a second and read 4 here, which is what this assertion is '
+            'built to catch, reproduced with the sequence: connect turn '
+            'seat 1 deadlineMs 45000, advance 40s, push turn seat 0 '
+            'deadlineMs 10000 seq $nextSeq, advance 3s',
+      );
+    },
+  );
 }
 
 /// Reads the rendered text at [key] the same way [_wholeSecondsShown] locates
@@ -639,4 +970,34 @@ String _renderedTextAt(WidgetTester tester, Key key) {
   );
   final Text text = tester.widget<Text>(descendant.first);
   return text.data ?? '';
+}
+
+/// Locates the same Text [_wholeSecondsShown] and [_renderedTextAt] read from
+/// [key], but returns the widget instance itself rather than a value parsed
+/// or copied out of it. Used by P8, which needs to tell whether
+/// [GameScreen] rebuilt at all between two samples -- every call to
+/// State.build constructs a brand new Text object regardless of whether the
+/// string it carries changed, so two samples taken across a pump with no
+/// rebuild in between are the same object (`identical`), and two samples
+/// taken across a pump that did rebuild are not, independently of what
+/// either one renders.
+Widget _renderedTextWidgetAt(WidgetTester tester, Key key) {
+  final Finder finder = find.byKey(key);
+  final Widget widget = tester.widget(finder);
+  if (widget is Text) {
+    return widget;
+  }
+  final Finder descendant = find.descendant(
+    of: finder,
+    matching: find.byType(Text),
+  );
+  expect(
+    descendant,
+    findsAtLeastNWidgets(1),
+    reason:
+        'the widget keyed $key is a ${widget.runtimeType}, not a '
+        'Text, and carries no Text descendant to read a widget instance '
+        'from',
+  );
+  return tester.widget<Text>(descendant.first);
 }
