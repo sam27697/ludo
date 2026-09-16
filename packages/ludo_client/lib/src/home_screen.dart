@@ -461,7 +461,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 minimumSize: const Size(48, 48),
                               ),
                               child: Text(
-                                loc.homePlayersSelectorLabel,
+                                loc.homePlayersDisclosureClosed,
                                 textAlign: TextAlign.center,
                               ),
                             )
