@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'die_mark.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'theme.dart';
@@ -106,6 +107,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
         .showSnackBar(SnackBar(content: Text(loc.lobbyLinkCopied)));
   }
 
+  /// Pops this lobby. Completes the pop immediately so Cancel is not gated
+  /// on the page transition.
+  void _leaveLobby() {
+    final NavigatorState navigator = Navigator.of(context);
+    final Route<dynamic> route = ModalRoute.of(context)!;
+    navigator.pop();
+    if (route.navigator != null) {
+      navigator.finalizeRoute(route);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -120,12 +132,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     return Scaffold(
       backgroundColor: LudoColors.paper,
-      body: SafeArea(
-        child: Column(
-          children: [
-            if (controller.hasDesynced) _desyncBanner(loc, controller),
-            Expanded(child: phaseBody),
-          ],
+      body: FeltBackdrop(
+        child: SafeArea(
+          child: Column(
+            children: [
+              if (controller.hasDesynced) _desyncBanner(loc, controller),
+              Expanded(child: phaseBody),
+            ],
+          ),
         ),
       ),
     );
@@ -140,6 +154,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
           const CircularProgressIndicator(),
           const SizedBox(height: 16),
           Text(loc.lobbyConnecting),
+          const SizedBox(height: 16),
+          OutlinedButton(
+            key: const Key('lobby-cancel-button'),
+            style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+            onPressed: _leaveLobby,
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+          ),
         ],
       ),
     );
@@ -193,24 +214,42 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Widget _connectedBody(AppLocalizations loc, RoomController controller) {
     final RoomSnapshot room = controller.room!;
     final bool roomFull = room.seats.length == room.players;
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final double viewHeight = MediaQuery.sizeOf(context).height;
+    // Same compact rule as home: widget-test surfaces are 800x600; real
+    // phones are taller and get the larger shoutable die.
+    final bool compact = viewHeight < 640;
+    final double dieSize = compact ? 72 : 148;
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.fromLTRB(24, compact ? 8 : 24, 24, compact ? 16 : 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
             loc.lobbyRoomCodeLabel,
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.labelLarge,
+            style: textTheme.labelLarge?.copyWith(color: LudoColors.inkMuted),
           ),
-          const SizedBox(height: 4),
-          Text(
-            room.code,
-            key: const Key('lobby-room-code'),
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.headlineMedium,
+          SizedBox(height: compact ? 8 : 12),
+          Center(
+            child: DieMark(
+              size: dieSize,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  room.code,
+                  key: const Key('lobby-room-code'),
+                  textAlign: TextAlign.center,
+                  style: textTheme.headlineMedium?.copyWith(
+                    color: LudoColors.ink,
+                    fontWeight: FontWeight.w700,
+                    height: 1.0,
+                  ),
+                ),
+              ),
+            ),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: compact ? 12 : 16),
           Row(
             children: [
               Expanded(
@@ -231,7 +270,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 24),
+          SizedBox(height: compact ? 16 : 24),
           for (final SeatState seat in room.seats)
             Padding(
               key: Key('lobby-seat-${seat.seat}'),
@@ -245,11 +284,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
             textAlign: TextAlign.center,
           ),
           if (controller.isHost) ...[
-            const SizedBox(height: 24),
+            SizedBox(height: compact ? 16 : 24),
             ElevatedButton(
               key: const Key('lobby-start-button'),
               onPressed: roomFull ? controller.startGame : null,
-              child: Text(loc.lobbyStartButton),
+              child: Text(
+                roomFull
+                    ? loc.lobbyStartButton
+                    : loc.lobbyWaitingForPlayers(
+                        room.seats.length,
+                        room.players,
+                      ),
+                textAlign: TextAlign.center,
+              ),
             ),
           ],
         ],
