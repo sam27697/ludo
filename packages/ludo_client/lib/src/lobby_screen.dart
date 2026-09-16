@@ -219,7 +219,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     // Same compact rule as home: widget-test surfaces are 800x600; real
     // phones are taller and get the larger shoutable die.
     final bool compact = viewHeight < 640;
-    final double dieSize = compact ? 72 : 148;
+    final double dieSize = dieMarkSize(compact);
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(24, compact ? 8 : 24, 24, compact ? 16 : 24),
       child: Column(
