@@ -50,5 +50,6 @@
   "gameOverYouWin": "لقد فزت",
   "gameOverPlayerWins": "فاز {name}",
   "gameOverEnded": "انتهت اللعبة",
-  "gameLeaveButton": "مغادرة"
+  "gameLeaveButton": "مغادرة",
+  "gameNewRoomButton": "طاولة جديدة"
 }
