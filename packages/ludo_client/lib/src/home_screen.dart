@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'deep_link.dart';
 import 'die_mark.dart';
+import 'game_screen.dart' show GameScreenResult;
 import 'lobby_screen.dart' show LobbyAction;
 import 'net/room_controller.dart';
 import 'room_code.dart';
@@ -186,7 +187,7 @@ class _HomeScreenState extends State<HomeScreen>
     final String name = _resolvedName(loc);
     final int players = _players;
     final RoomController controller = widget.controllerFactory();
-    await Navigator.of(context).push(
+    final Object? result = await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => RoomRoute(
           controller: controller,
@@ -209,6 +210,12 @@ class _HomeScreenState extends State<HomeScreen>
     // route has already popped by the time we get here.
     await controller.leave();
     controller.dispose();
+    if (!mounted) {
+      return;
+    }
+    if (result == GameScreenResult.newTable) {
+      await _createRoom();
+    }
   }
 
   Future<void> _joinRoom() async {
@@ -225,7 +232,7 @@ class _HomeScreenState extends State<HomeScreen>
     });
     final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
-    await Navigator.of(context).push(
+    final Object? result = await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => RoomRoute(
           controller: controller,
@@ -241,6 +248,12 @@ class _HomeScreenState extends State<HomeScreen>
     // deliberate, not a bug.
     await controller.leave();
     controller.dispose();
+    if (!mounted) {
+      return;
+    }
+    if (result == GameScreenResult.newTable) {
+      await _createRoom();
+    }
   }
 
   /// Primary action is [ElevatedButton]; the quieter twin is [OutlinedButton].
