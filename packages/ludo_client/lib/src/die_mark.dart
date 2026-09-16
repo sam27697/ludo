@@ -13,6 +13,7 @@ class DieMark extends StatelessWidget {
     this.size = 160,
     this.rotation = -0.12,
     this.semanticsLabel,
+    this.onTap,
     this.child,
   });
 
@@ -24,6 +25,10 @@ class DieMark extends StatelessWidget {
   /// Optional accessibility label; callers should pass [appTitle].
   final String? semanticsLabel;
 
+  /// Optional tap handler. When set, the mark is a button (brand die as a
+  /// create shortcut). Callers that omit this keep the decorative mark.
+  final VoidCallback? onTap;
+
   /// Optional overlay on the die face (for example a room code). Painted
   /// after the face and pips, inset so it stays inside the rounded square.
   /// Existing callers that omit this keep the pip-only mark.
@@ -31,7 +36,7 @@ class DieMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Widget paint = Transform.rotate(
+    Widget paint = Transform.rotate(
       angle: rotation,
       child: CustomPaint(
         size: Size.square(size),
@@ -47,10 +52,21 @@ class DieMark extends StatelessWidget {
               ),
       ),
     );
-    if (semanticsLabel == null) {
+    if (onTap != null) {
+      paint = GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: paint,
+      );
+    }
+    if (semanticsLabel == null && onTap == null) {
       return paint;
     }
-    return Semantics(label: semanticsLabel, child: paint);
+    return Semantics(
+      label: semanticsLabel,
+      button: onTap != null,
+      child: paint,
+    );
   }
 }
 

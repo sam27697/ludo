@@ -182,10 +182,13 @@ class _HomeScreenState extends State<HomeScreen>
     return typed.isEmpty ? loc.homeDefaultPlayerName : typed;
   }
 
-  Future<void> _createRoom() async {
+  /// Creates a room with [players] seats (defaults to the selector value) and
+  /// the resolved display name. The brand die passes 4 so a tap always opens
+  /// a four-seat table even if the disclosure was left on another count.
+  Future<void> _createRoom({int? players}) async {
     final AppLocalizations loc = AppLocalizations.of(context);
     final String name = _resolvedName(loc);
-    final int players = _players;
+    final int seatCount = players ?? _players;
     final RoomController controller = widget.controllerFactory();
     final Object? result = await Navigator.of(context).push(
       MaterialPageRoute(
@@ -193,7 +196,7 @@ class _HomeScreenState extends State<HomeScreen>
           controller: controller,
           action: LobbyAction.create,
           playerName: name,
-          players: players,
+          players: seatCount,
         ),
       ),
     );
@@ -380,8 +383,10 @@ class _HomeScreenState extends State<HomeScreen>
                                   crossAxisAlignment: CrossAxisAlignment.center,
                                   children: [
                                     DieMark(
+                                      key: const Key('home-die-create'),
                                       size: dieSize,
                                       semanticsLabel: loc.appTitle,
+                                      onTap: () => _createRoom(players: 4),
                                     ),
                                     const SizedBox(width: 16),
                                     Expanded(
@@ -423,8 +428,10 @@ class _HomeScreenState extends State<HomeScreen>
                                     SizedBox(height: afterBrand),
                                     Center(
                                       child: DieMark(
+                                        key: const Key('home-die-create'),
                                         size: dieSize,
                                         semanticsLabel: loc.appTitle,
+                                        onTap: () => _createRoom(players: 4),
                                       ),
                                     ),
                                   ],
