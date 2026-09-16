@@ -179,64 +179,62 @@ void main() {
     );
   });
 
-  testWidgets(
-    'closed home-players-disclosure names the default four seats',
-    (tester) async {
-      await tester.pumpWidget(_homeScreenApp());
-      await tester.pumpAndSettle();
+  testWidgets('closed home-players-disclosure names the default four seats', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_homeScreenApp());
+    await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(_selectorKey),
-        findsNothing,
-        reason:
-            'fixture is broken: home-players-selector must stay closed '
-            'so this assertion reads the disclosure label only',
-      );
-      expect(
-        find.byKey(_disclosureKey),
-        findsOneWidget,
-        reason:
-            'fixture is broken: home-players-disclosure must be on '
-            'screen on first paint',
-      );
+    expect(
+      find.byKey(_selectorKey),
+      findsNothing,
+      reason:
+          'fixture is broken: home-players-selector must stay closed '
+          'so this assertion reads the disclosure label only',
+    );
+    expect(
+      find.byKey(_disclosureKey),
+      findsOneWidget,
+      reason:
+          'fixture is broken: home-players-disclosure must be on '
+          'screen on first paint',
+    );
 
-      final AppLocalizations loc = _loc(tester);
-      expect(
-        loc.homePlayersFour,
-        isNotEmpty,
-        reason: 'fixture is broken: homePlayersFour must not be empty',
-      );
+    final AppLocalizations loc = _loc(tester);
+    expect(
+      loc.homePlayersFour,
+      isNotEmpty,
+      reason: 'fixture is broken: homePlayersFour must not be empty',
+    );
 
-      final Finder disclosureTexts = find.descendant(
-        of: find.byKey(_disclosureKey),
-        matching: find.byType(Text),
-      );
-      expect(
-        disclosureTexts,
-        findsWidgets,
-        reason:
-            'home-players-disclosure must expose Text so the closed '
-            'label can be read',
-      );
+    final Finder disclosureTexts = find.descendant(
+      of: find.byKey(_disclosureKey),
+      matching: find.byType(Text),
+    );
+    expect(
+      disclosureTexts,
+      findsWidgets,
+      reason:
+          'home-players-disclosure must expose Text so the closed '
+          'label can be read',
+    );
 
-      final String closedLabel = tester
-          .widgetList<Text>(disclosureTexts)
-          .map((Text text) => text.data ?? '')
-          .join();
-      final bool namesFour =
-          closedLabel.contains('4') ||
-          closedLabel.contains(loc.homePlayersFour);
-      expect(
-        namesFour,
-        isTrue,
-        reason:
-            'on first paint the closed home-players-disclosure text '
-            'must include the digit 4 or the localised '
-            'homePlayersFour ("${loc.homePlayersFour}"); got '
-            '"$closedLabel"',
-      );
-    },
-  );
+    final String closedLabel = tester
+        .widgetList<Text>(disclosureTexts)
+        .map((Text text) => text.data ?? '')
+        .join();
+    final bool namesFour =
+        closedLabel.contains('4') || closedLabel.contains(loc.homePlayersFour);
+    expect(
+      namesFour,
+      isTrue,
+      reason:
+          'on first paint the closed home-players-disclosure text '
+          'must include the digit 4 or the localised '
+          'homePlayersFour ("${loc.homePlayersFour}"); got '
+          '"$closedLabel"',
+    );
+  });
 
   testWidgets(
     'home-players-selector is absent until home-players-disclosure is tapped',
