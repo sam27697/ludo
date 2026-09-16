@@ -4,6 +4,10 @@ import 'package:flutter/material.dart';
 
 import 'theme.dart';
 
+/// Face size for [DieMark] on short vs tall viewports. Home and lobby share
+/// this so compact and shoutable layouts stay locked together.
+double dieMarkSize(bool compact) => compact ? 72 : 148;
+
 /// The product mark: a rounded die with one pip per seat colour. Matches the
 /// store icon language (die, not the four-quadrant board grid) so the home
 /// screen and the launcher read as the same brand.

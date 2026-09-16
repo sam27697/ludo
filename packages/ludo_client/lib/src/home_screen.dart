@@ -281,7 +281,7 @@ class _HomeScreenState extends State<HomeScreen>
     // Default widget-test surface is 800x600; keep create/join on-screen
     // there. Real phones are taller and get the stacked brand + die hero.
     final bool compact = viewHeight < 640;
-    final double dieSize = compact ? 72 : 148;
+    final double dieSize = dieMarkSize(compact);
     final double afterBrand = compact ? 12 : 28;
     final double afterDie = compact ? 16 : 32;
     final double sectionGap = compact ? 14 : 28;
