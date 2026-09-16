@@ -235,6 +235,30 @@ Future<void> _mount(WidgetTester tester, Locale locale) async {
   await tester.pumpWidget(_harness(locale));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 1000));
+  await _openPlayersDisclosure(tester);
+}
+
+/// Opens the seat-count selector. It stays hidden until the player taps
+/// home-players-disclosure; every measurement in this file is of that
+/// selector, so the mount must open it. Bounded pumps only, matching
+/// [_mount] (see that comment for why not pumpAndSettle).
+Future<void> _openPlayersDisclosure(WidgetTester tester) async {
+  final Finder disclosure = find.byKey(const Key('home-players-disclosure'));
+  expect(
+    disclosure,
+    findsOneWidget,
+    reason:
+        'fixture is broken: home-players-disclosure must be on screen '
+        'so this file can open the seat-count selector it measures',
+  );
+  await tester.tap(disclosure);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+  expect(
+    _selectorFinder,
+    findsOneWidget,
+    reason: 'tapping home-players-disclosure must reveal home-players-selector',
+  );
 }
 
 final Finder _selectorFinder = find.byKey(const Key('home-players-selector'));
