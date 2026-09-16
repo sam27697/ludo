@@ -32,14 +32,17 @@
 //      a malformed seat_assigned arriving after a VALID one must clear an
 //      already-populated seat/seatToken back to null is not stated and is
 //      left untested.
-//   4. fake_async is confirmed NOT a dev_dependency of packages/ludo_client
-//      (read from pubspec.yaml before writing this file), so per the
-//      order's instruction it was not added. The requestTimeout tests use a
-//      short real Duration and await the actual Future the API returns;
-//      nothing here sleeps blind.
+//   4. fake_async is now declared as a dev_dependency of packages/ludo_client
+//      (pubspec.yaml, added for test/net/room_controller_test.dart), so
+//      rule 9's requestTimeout tests below drive the 30ms timer with
+//      FakeAsync.elapse rather than a real Duration and a real await. See
+//      work order 151 for why: a real wall-clock 30ms timer inside a plain
+//      test() raced the event loop under a loaded machine.
 
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/src/net/connection.dart';
 import 'package:ludo_client/src/net/frame.dart';
@@ -880,51 +883,118 @@ void main() {
   });
 
   // --- Rule 9: requestTimeout. -----------------------------------------------
+  //
+  // Both cases below run inside fakeAsync: the 30ms requestTimeout is driven
+  // by FakeAsync.elapse, not by a real Duration and a real await, so the
+  // pass/fail of these tests cannot depend on how fast this machine happens
+  // to be. Nothing here sleeps, real or fake, past the exact instant it means
+  // to.
+  //
+  // _openConnection is async (it awaits connection.open()), so it cannot be
+  // awaited directly inside a fakeAsync callback, which fake_async requires
+  // to be synchronous. It is instead called and its result captured with
+  // .then(), and async.flushMicrotasks() is used to run it to completion;
+  // open()'s only await is of the connector's future, which for
+  // _openConnection's connector (`(Uri url) async => transport`) resolves on
+  // the microtask queue with no real or fake delay, so a single
+  // flushMicrotasks() is enough to observe the opened connection.
   group('rule 9: requestTimeout', () {
     test('no reply within requestTimeout completes the request with '
-        'RequestTimeoutException carrying the request\'s t', () async {
-      final (connection, transport) = await _openConnection(
-        requestTimeout: const Duration(milliseconds: 30),
-      );
-      addTearDown(connection.close);
-      final future = connection.ping();
-      await expectLater(
-        future,
-        throwsA(
+        'RequestTimeoutException carrying the request\'s t', () {
+      fakeAsync((FakeAsync async) {
+        (RoomConnection, FakeTransport)? opened;
+        unawaited(
+          _openConnection(requestTimeout: const Duration(milliseconds: 30))
+              .then((value) => opened = value),
+        );
+        async.flushMicrotasks();
+        final (connection, transport) = opened!;
+
+        Object? caughtError;
+        var completed = false;
+        connection.ping().then<void>(
+          (_) {
+            completed = true;
+          },
+          onError: (Object e) {
+            caughtError = e;
+            completed = true;
+          },
+        );
+
+        async.elapse(const Duration(milliseconds: 30));
+        async.flushMicrotasks();
+
+        expect(
+          completed,
+          isTrue,
+          reason: 'ping() must complete once requestTimeout has elapsed',
+        );
+        expect(
+          caughtError,
           isA<RequestTimeoutException>().having((e) => e.type, 'type', 'ping'),
-        ),
-      );
+        );
+
+        unawaited(connection.close());
+        async.flushMicrotasks();
+      });
     });
 
     test('a reply arriving after the timeout is treated as an unmatched push, '
-        'lands on frames, and does not throw into the zone', () async {
-      final (connection, transport) = await _openConnection(
-        requestTimeout: const Duration(milliseconds: 30),
-      );
-      addTearDown(connection.close);
+        'lands on frames, and does not throw into the zone', () {
+      fakeAsync((FakeAsync async) {
+        (RoomConnection, FakeTransport)? opened;
+        unawaited(
+          _openConnection(requestTimeout: const Duration(milliseconds: 30))
+              .then((value) => opened = value),
+        );
+        async.flushMicrotasks();
+        final (connection, transport) = opened!;
 
-      final framesLog = <Frame>[];
-      connection.frames.listen(framesLog.add);
+        final framesLog = <Frame>[];
+        connection.frames.listen(framesLog.add);
 
-      final future = connection.ping();
-      await pumpEventQueue();
-      final id = _idOf(transport.sentRaw.last);
+        Object? caughtError;
+        var completed = false;
+        connection.ping().then<void>(
+          (_) {
+            completed = true;
+          },
+          onError: (Object e) {
+            caughtError = e;
+            completed = true;
+          },
+        );
+        async.flushMicrotasks();
+        final id = _idOf(transport.sentRaw.last);
 
-      await expectLater(future, throwsA(isA<RequestTimeoutException>()));
+        async.elapse(const Duration(milliseconds: 30));
+        async.flushMicrotasks();
 
-      transport.pushText(_serverFrame(type: 'pong', re: id));
-      await pumpEventQueue();
+        expect(
+          completed,
+          isTrue,
+          reason: 'ping() must have timed out before the late reply arrives',
+        );
+        expect(caughtError, isA<RequestTimeoutException>());
 
-      expect(framesLog, hasLength(1));
-      expect(framesLog.single.type, 'pong');
-      expect(framesLog.single.re, id);
-      expect(
-        connection.isOpen,
-        isTrue,
-        reason:
-            'a late reply must not be treated as a protocol '
-            'violation that closes the connection',
-      );
+        transport.pushText(_serverFrame(type: 'pong', re: id));
+        async.flushMicrotasks();
+
+        expect(framesLog, hasLength(1));
+        expect(framesLog.single.type, 'pong');
+        expect(framesLog.single.re, id);
+        expect(
+          connection.isOpen,
+          isTrue,
+          reason:
+              'a late reply must not be treated as a protocol '
+              'violation that closes the connection',
+        );
+
+        unawaited(connection.close());
+        async.flushMicrotasks();
+      });
     });
   });
 
