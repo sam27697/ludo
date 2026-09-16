@@ -364,7 +364,9 @@ void main() {
         for (final RoomController controller in factory.controllers) {
           try {
             controller.dispose();
-          } catch (_) {}
+          } catch (_) {
+            // already disposed
+          }
         }
       });
 
@@ -466,7 +468,9 @@ void main() {
         for (final RoomController controller in factory.controllers) {
           try {
             controller.dispose();
-          } catch (_) {}
+          } catch (_) {
+            // already disposed
+          }
         }
       });
 
