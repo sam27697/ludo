@@ -70,6 +70,10 @@
   "@homePlayersSelectorLabel": {
     "description": "Caption above the 2/3/4 seat-count selector on the home screen."
   },
+  "homePlayersDisclosureClosed": "Number of players: 4",
+  "@homePlayersDisclosureClosed": {
+    "description": "Closed disclosure on the home screen that names the default four-seat table before the selector is opened."
+  },
   "homePlayersTwo": "2 players",
   "@homePlayersTwo": {
     "description": "Label of the segment that selects a two-seat room."
