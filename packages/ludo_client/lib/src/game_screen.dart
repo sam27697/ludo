@@ -26,9 +26,18 @@ import 'net/snapshot.dart';
 enum GameScreenResult { newTable }
 
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key, required this.controller});
+  const GameScreen({
+    super.key,
+    required this.controller,
+    this.onRequestNewTable,
+  });
 
   final RoomController controller;
+
+  /// When set, the finished-board next-table button calls this instead of
+  /// popping [GameScreenResult.newTable]. [RoomRoute] uses it to turn the
+  /// same route into a fresh create lobby without revealing Home.
+  final VoidCallback? onRequestNewTable;
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -170,14 +179,20 @@ class _GameScreenState extends State<GameScreen> {
   /// dead server or a live one, and leave the actual leaving to the code
   /// that was reviewed to do it in the right order.
   ///
-  /// The finished-board next-table control is not this path: it pops
-  /// [GameScreenResult.newTable] so HomeScreen can open a fresh table
-  /// after that same leave()/dispose() sequence.
+  /// The finished-board next-table control is not this path: it either
+  /// pops [GameScreenResult.newTable] so HomeScreen can open a fresh
+  /// table after that same leave()/dispose() sequence, or calls
+  /// [GameScreen.onRequestNewTable] when the parent keeps the route.
   void _leave() {
     Navigator.of(context).pop();
   }
 
   void _requestNewTable() {
+    final VoidCallback? keepRoute = widget.onRequestNewTable;
+    if (keepRoute != null) {
+      keepRoute();
+      return;
+    }
     Navigator.of(context).pop(GameScreenResult.newTable);
   }
 
