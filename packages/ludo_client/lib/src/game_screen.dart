@@ -195,11 +195,11 @@ class _GameScreenState extends State<GameScreen> {
       appBar: AppBar(
         title: Text(loc.gameScreenTitle),
         actions: [
-          IconButton(
+          TextButton(
             key: const Key('game-screen-appbar-leave'),
-            icon: const Icon(Icons.logout),
-            tooltip: loc.gameLeaveButton,
+            style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
             onPressed: _leave,
+            child: Text(loc.gameLeaveButton),
           ),
         ],
       ),
