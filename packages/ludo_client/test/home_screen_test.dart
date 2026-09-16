@@ -278,6 +278,27 @@ Future<void> _flushAnyOutstandingRequestTimeout(WidgetTester tester) async {
   await tester.pump();
 }
 
+/// Opens the seat-count selector. It stays hidden until the player taps
+/// home-players-disclosure; tests that need the selector must open it first.
+Future<void> _openPlayersDisclosure(WidgetTester tester) async {
+  final Finder disclosure = find.byKey(const Key('home-players-disclosure'));
+  expect(
+    disclosure,
+    findsOneWidget,
+    reason:
+        'home-players-disclosure must be on screen so the player can '
+        'open the seat-count selector',
+  );
+  await tester.ensureVisible(disclosure);
+  await tester.tap(disclosure);
+  await tester.pumpAndSettle();
+  expect(
+    find.byKey(const Key('home-players-selector')),
+    findsOneWidget,
+    reason: 'tapping home-players-disclosure must reveal home-players-selector',
+  );
+}
+
 void main() {
   testWidgets('home screen renders and shows both actions', (tester) async {
     await tester.pumpWidget(const LudoApp());
@@ -486,6 +507,7 @@ void main() {
     ) async {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
+      await _openPlayersDisclosure(tester);
 
       final Finder selectorKey = find.byKey(const Key('home-players-selector'));
       expect(selectorKey, findsOneWidget);
@@ -507,6 +529,7 @@ void main() {
       (tester) async {
         await tester.pumpWidget(_homeScreenApp());
         await tester.pumpAndSettle();
+        await _openPlayersDisclosure(tester);
 
         final context = tester.element(find.byType(Scaffold));
         final loc = AppLocalizations.of(context);
