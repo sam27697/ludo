@@ -304,7 +304,15 @@ class RoomController extends ChangeNotifier {
         // Best-effort. The socket may already be gone; that is not this
         // method's problem to report.
       }
+      // _connection was already nulled above, so dispose() -- if it ran
+      // while leaveRoom() was in flight -- found nothing to close. This
+      // connection is this method's alone to close either way, disposed or
+      // not: closing it touches no ChangeNotifier state and is not the
+      // mutation the disposed guard below exists to skip.
       unawaited(connection.close());
+    }
+    if (_disposed) {
+      return;
     }
     _phase = RoomPhase.closed;
     notifyListeners();
