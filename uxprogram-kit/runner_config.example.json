@@ -1,0 +1,31 @@
+{
+  "_how": "Each engine is a command list. {prompt_file} becomes the path of a file holding the prompt, {prompt_text} the prompt itself, {project} the project path. Use absolute executable paths on Windows. Probe every engine before a long run: python run_program.py probe --project PATH --engine NAME",
+  "_independence": "R2 and R5 judge the work. Put them on a different model family than the one that builds (R3), and not a weaker one. The machine gates still decide pass or fail.",
+  "engines": {
+    "grok": {
+      "command": ["grok", "--prompt-file", "{prompt_file}", "--max-turns", "120", "--always-approve"],
+      "timeout_minutes": 60,
+      "env": {}
+    },
+    "claude": {
+      "command": ["claude", "-p", "{prompt_text}", "--max-turns", "80", "--permission-mode", "acceptEdits", "--allowedTools", "Bash,Read,Edit,Write,Glob,Grep"],
+      "timeout_minutes": 45,
+      "env": {}
+    },
+    "cursor": {
+      "command": ["cursor-agent", "-p", "--force", "--trust", "{prompt_text}"],
+      "timeout_minutes": 45,
+      "env": {}
+    }
+  },
+  "roles": {
+    "orchestrator": "grok",
+    "R1": "grok",
+    "R2": "claude",
+    "R3": "grok",
+    "R4": "grok",
+    "R5": "claude"
+  },
+  "max_sessions": 400,
+  "stall_limit": 2
+}
