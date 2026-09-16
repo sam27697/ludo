@@ -19,6 +19,12 @@ import 'board.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 
+/// Distinct [Navigator.pop] result from the finished-board next-table
+/// button. The AppBar leave control pops with no result, so the screen
+/// that pushed this route can leave() and dispose the old controller
+/// without opening another table.
+enum GameScreenResult { newTable }
+
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key, required this.controller});
 
@@ -163,8 +169,16 @@ class _GameScreenState extends State<GameScreen> {
   /// this screen's only job is to get the player off it promptly, on a
   /// dead server or a live one, and leave the actual leaving to the code
   /// that was reviewed to do it in the right order.
+  ///
+  /// The finished-board next-table control is not this path: it pops
+  /// [GameScreenResult.newTable] so HomeScreen can open a fresh table
+  /// after that same leave()/dispose() sequence.
   void _leave() {
     Navigator.of(context).pop();
+  }
+
+  void _requestNewTable() {
+    Navigator.of(context).pop(GameScreenResult.newTable);
   }
 
   @override
@@ -195,11 +209,11 @@ class _GameScreenState extends State<GameScreen> {
       appBar: AppBar(
         title: Text(loc.gameScreenTitle),
         actions: [
-          IconButton(
+          TextButton(
             key: const Key('game-screen-appbar-leave'),
-            icon: const Icon(Icons.logout),
-            tooltip: loc.gameLeaveButton,
+            style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
             onPressed: _leave,
+            child: Text(loc.gameLeaveButton),
           ),
         ],
       ),
@@ -395,7 +409,8 @@ class _GameScreenState extends State<GameScreen> {
   /// H6.2 and H7: the game has finished. The board (when there are still at
   /// least two seats to draw it from) and the winner text; the Roll button
   /// and the four token buttons are absent, not merely disabled, because
-  /// there is nothing left to press.
+  /// there is nothing left to press. The next-table button is the honest
+  /// action on this ending: it is not the AppBar leave control.
   Widget _gameOverBody(
     AppLocalizations loc,
     RoomController controller,
@@ -422,6 +437,13 @@ class _GameScreenState extends State<GameScreen> {
               ),
             ),
           ],
+          const SizedBox(height: 16),
+          ElevatedButton(
+            key: const Key('game-screen-new-room-button'),
+            style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
+            onPressed: _requestNewTable,
+            child: Text(loc.gameNewRoomButton),
+          ),
         ],
       ),
     );

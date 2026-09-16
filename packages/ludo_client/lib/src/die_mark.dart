@@ -4,6 +4,10 @@ import 'package:flutter/material.dart';
 
 import 'theme.dart';
 
+/// Face size for [DieMark] on short vs tall viewports. Home and lobby share
+/// this so compact and shoutable layouts stay locked together.
+double dieMarkSize(bool compact) => compact ? 72 : 148;
+
 /// The product mark: a rounded die with one pip per seat colour. Matches the
 /// store icon language (die, not the four-quadrant board grid) so the home
 /// screen and the launcher read as the same brand.
@@ -13,6 +17,7 @@ class DieMark extends StatelessWidget {
     this.size = 160,
     this.rotation = -0.12,
     this.semanticsLabel,
+    this.child,
   });
 
   final double size;
@@ -23,6 +28,11 @@ class DieMark extends StatelessWidget {
   /// Optional accessibility label; callers should pass [appTitle].
   final String? semanticsLabel;
 
+  /// Optional overlay on the die face (for example a room code). Painted
+  /// after the face and pips, inset so it stays inside the rounded square.
+  /// Existing callers that omit this keep the pip-only mark.
+  final Widget? child;
+
   @override
   Widget build(BuildContext context) {
     final Widget paint = Transform.rotate(
@@ -30,6 +40,15 @@ class DieMark extends StatelessWidget {
       child: CustomPaint(
         size: Size.square(size),
         painter: const _DieMarkPainter(),
+        child: child == null
+            ? null
+            : SizedBox.square(
+                dimension: size,
+                child: Padding(
+                  padding: EdgeInsets.all(size * 0.22),
+                  child: Center(child: child),
+                ),
+              ),
       ),
     );
     if (semanticsLabel == null) {

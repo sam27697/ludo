@@ -16,6 +16,7 @@
   "homeNameFieldLabel": "اسمك",
   "homeDefaultPlayerName": "لاعب",
   "homePlayersSelectorLabel": "عدد اللاعبين",
+  "homePlayersDisclosureClosed": "عدد اللاعبين: 4",
   "homePlayersTwo": "لاعبان",
   "homePlayersThree": "3 لاعبين",
   "homePlayersFour": "4 لاعبين",
@@ -50,5 +51,6 @@
   "gameOverYouWin": "لقد فزت",
   "gameOverPlayerWins": "فاز {name}",
   "gameOverEnded": "انتهت اللعبة",
-  "gameLeaveButton": "مغادرة"
+  "gameLeaveButton": "مغادرة",
+  "gameNewRoomButton": "طاولة جديدة"
 }
