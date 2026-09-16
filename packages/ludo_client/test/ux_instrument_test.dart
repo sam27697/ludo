@@ -126,20 +126,20 @@ Future<void> _saveShot(WidgetTester tester, String name) async {
       fail('screenshot $name produced no PNG bytes');
     }
     File('${dir.path}/$name.png').writeAsBytesSync(bytes.buffer.asUint8List());
-    print('SHOT ${dir.path}/$name.png ${bytes.lengthInBytes} bytes');
+    stdout.writeln('SHOT ${dir.path}/$name.png ${bytes.lengthInBytes} bytes');
   });
 }
 
 void _printSize(WidgetTester tester, Key key, String label) {
   final Finder finder = find.byKey(key);
   if (finder.evaluate().isEmpty) {
-    print('SIZE $label MISSING');
+    stdout.writeln('SIZE $label MISSING');
     return;
   }
   final Size size = tester.getSize(finder);
   final bool ok =
       size.width + 0.01 >= _androidMin && size.height + 0.01 >= _androidMin;
-  print(
+  stdout.writeln(
     'SIZE $label ${size.width.toStringAsFixed(1)}x${size.height.toStringAsFixed(1)} '
     'min=$_androidMin pass=$ok',
   );
@@ -151,8 +151,8 @@ Future<void> _printGuideline(
   String name,
 ) async {
   final Evaluation result = await guideline.evaluate(tester);
-  print(
-    'GUIDELINE $name passed=${result.passed} reason=${result.reason ?? "none"}',
+  stdout.writeln(
+    'GUIDELINE $name passed=${result.passed} reason=${result.reason ?? 'none'}',
   );
 }
 
@@ -222,7 +222,7 @@ void main() {
     );
     await _saveShot(tester, '02-home-ar');
 
-    print('PROBE: PASS home');
+    stdout.writeln('PROBE: PASS home');
   });
 
   testWidgets('create-room walk reaches lobby then game', (tester) async {
@@ -304,6 +304,6 @@ void main() {
     _printSize(tester, const Key('game-screen-appbar-leave'), 'leave');
     await _saveShot(tester, '04-game-en');
 
-    print('PROBE: PASS create-room walk');
+    stdout.writeln('PROBE: PASS create-room walk');
   });
 }
