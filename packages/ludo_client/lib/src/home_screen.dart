@@ -51,6 +51,8 @@ class _HomeScreenState extends State<HomeScreen>
   final TextEditingController _nameController = TextEditingController();
   String? _errorText;
   int _players = 4;
+  bool _playersSelectorOpen = false;
+  String? _nameLocaleDefault;
   StreamSubscription<Uri>? _linkSubscription;
   late final AnimationController _enter;
 
@@ -141,6 +143,25 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() {
       _errorText = null;
     });
+  }
+
+  /// Prefills the name field with the localised default on first paint, and
+  /// rewrites it when the locale changes if the field is still blank or still
+  /// holds the previous locale's default. A name the player typed is left
+  /// alone. LudoApp's locale toggle updates [Localizations], which is an
+  /// inherited widget, so this is the place that sees the new default.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final String nextDefault = AppLocalizations.of(context)
+        .homeDefaultPlayerName;
+    final String current = _nameController.text;
+    if (current.isEmpty || current == _nameLocaleDefault) {
+      if (current != nextDefault) {
+        _nameController.text = nextDefault;
+      }
+    }
+    _nameLocaleDefault = nextDefault;
   }
 
   @override
@@ -417,20 +438,36 @@ class _HomeScreenState extends State<HomeScreen>
                             ),
                           ),
                           SizedBox(height: compact ? 12 : 20),
-                          Text(
-                            loc.homePlayersSelectorLabel,
-                            textAlign: TextAlign.center,
-                            style: textTheme.labelLarge?.copyWith(
-                              color: LudoColors.inkMuted,
+                          if (!_playersSelectorOpen)
+                            TextButton(
+                              key: const Key('home-players-disclosure'),
+                              onPressed: () =>
+                                  setState(() => _playersSelectorOpen = true),
+                              style: TextButton.styleFrom(
+                                foregroundColor: LudoColors.inkMuted,
+                                minimumSize: const Size(48, 48),
+                              ),
+                              child: Text(
+                                loc.homePlayersSelectorLabel,
+                                textAlign: TextAlign.center,
+                              ),
+                            )
+                          else ...[
+                            Text(
+                              loc.homePlayersSelectorLabel,
+                              textAlign: TextAlign.center,
+                              style: textTheme.labelLarge?.copyWith(
+                                color: LudoColors.inkMuted,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          _PlayersSelector(
-                            key: const Key('home-players-selector'),
-                            value: _players,
-                            onChanged: (value) =>
-                                setState(() => _players = value),
-                          ),
+                            const SizedBox(height: 8),
+                            _PlayersSelector(
+                              key: const Key('home-players-selector'),
+                              value: _players,
+                              onChanged: (value) =>
+                                  setState(() => _players = value),
+                            ),
+                          ],
                           SizedBox(height: compact ? 14 : 24),
                           _weightedButton(
                             key: const Key('create-room-button'),
