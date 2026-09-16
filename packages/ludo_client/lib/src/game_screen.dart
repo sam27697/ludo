@@ -53,6 +53,12 @@ class _GameScreenState extends State<GameScreen> {
   int? _countdownDeadlineMs;
   int _countdownRemainingSeconds = 0;
 
+  // Spike A1-T08: a committed vertical drag on the board leaves immediately.
+  // AppBar Leave stays. No undo window in this spike (optional per dispatch);
+  // measure accidental triggers against the distance threshold instead.
+  static const double _boardSwipeLeaveMinDistance = 80;
+  double _boardSwipeDragDy = 0;
+
   @override
   void initState() {
     super.initState();
@@ -179,6 +185,36 @@ class _GameScreenState extends State<GameScreen> {
 
   void _requestNewTable() {
     Navigator.of(context).pop(GameScreenResult.newTable);
+  }
+
+  void _onBoardSwipeDragUpdate(DragUpdateDetails details) {
+    _boardSwipeDragDy += details.delta.dy;
+  }
+
+  void _onBoardSwipeDragEnd(DragEndDetails details) {
+    final double distance = _boardSwipeDragDy.abs();
+    _boardSwipeDragDy = 0;
+    if (distance < _boardSwipeLeaveMinDistance) {
+      return;
+    }
+    _leave();
+  }
+
+  void _onBoardSwipeDragCancel() {
+    _boardSwipeDragDy = 0;
+  }
+
+  /// Board wrapped so a committed vertical drag leaves the room.
+  /// AppBar Leave stays the explicit verb.
+  Widget _swipeableBoard(Widget board) {
+    return GestureDetector(
+      key: const Key('game-screen-board-swipe'),
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragUpdate: _onBoardSwipeDragUpdate,
+      onVerticalDragEnd: _onBoardSwipeDragEnd,
+      onVerticalDragCancel: _onBoardSwipeDragCancel,
+      child: board,
+    );
   }
 
   @override
@@ -337,10 +373,12 @@ class _GameScreenState extends State<GameScreen> {
           ],
           const SizedBox(height: 16),
           Expanded(
-            child: LudoBoard(
-              key: const Key('game-screen-board'),
-              tokens: _tokensOf(room),
-              seatsInPlay: _seatsInPlayOf(room),
+            child: _swipeableBoard(
+              LudoBoard(
+                key: const Key('game-screen-board'),
+                tokens: _tokensOf(room),
+                seatsInPlay: _seatsInPlayOf(room),
+              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -430,10 +468,12 @@ class _GameScreenState extends State<GameScreen> {
           if (hasBoard) ...[
             const SizedBox(height: 16),
             Expanded(
-              child: LudoBoard(
-                key: const Key('game-screen-board'),
-                tokens: _tokensOf(room),
-                seatsInPlay: _seatsInPlayOf(room),
+              child: _swipeableBoard(
+                LudoBoard(
+                  key: const Key('game-screen-board'),
+                  tokens: _tokensOf(room),
+                  seatsInPlay: _seatsInPlayOf(room),
+                ),
               ),
             ),
           ],
