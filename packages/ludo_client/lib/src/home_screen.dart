@@ -133,16 +133,14 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
-  /// Clears a standing error the moment the player edits the code field,
-  /// so a message raised by a bad link or a failed Join tap does not sit
-  /// under a code the player has since corrected. Runs on every keystroke,
-  /// not just submission.
+  /// Rebuilds on every keystroke so Create/Join emphasis can follow the
+  /// code field, and clears a standing error so a message raised by a bad
+  /// link or a failed Join tap does not sit under a code the player has
+  /// since corrected.
   void _clearErrorOnEdit() {
-    if (_errorText != null) {
-      setState(() {
-        _errorText = null;
-      });
-    }
+    setState(() {
+      _errorText = null;
+    });
   }
 
   @override
@@ -224,9 +222,26 @@ class _HomeScreenState extends State<HomeScreen>
     controller.dispose();
   }
 
+  /// Primary action is [ElevatedButton]; the quieter twin is [OutlinedButton].
+  Widget _weightedButton({
+    required Key key,
+    required VoidCallback onPressed,
+    required String label,
+    required bool primary,
+  }) {
+    final Widget child = Text(label);
+    if (primary) {
+      return ElevatedButton(key: key, onPressed: onPressed, child: child);
+    }
+    return OutlinedButton(key: key, onPressed: onPressed, child: child);
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
+    final bool joinPrimary = isValidRoomCode(
+      normalizeRoomCode(_codeController.text),
+    );
     final TextTheme textTheme = Theme.of(context).textTheme;
     final double viewHeight = MediaQuery.sizeOf(context).height;
     // Default widget-test surface is 800x600; keep create/join on-screen
@@ -417,10 +432,11 @@ class _HomeScreenState extends State<HomeScreen>
                                 setState(() => _players = value),
                           ),
                           SizedBox(height: compact ? 14 : 24),
-                          ElevatedButton(
+                          _weightedButton(
                             key: const Key('create-room-button'),
                             onPressed: _createRoom,
-                            child: Text(loc.homeCreateRoomButton),
+                            label: loc.homeCreateRoomButton,
+                            primary: !joinPrimary,
                           ),
                           SizedBox(height: sectionGap),
                           TextField(
@@ -441,10 +457,11 @@ class _HomeScreenState extends State<HomeScreen>
                             ),
                           ),
                           SizedBox(height: compact ? 8 : 12),
-                          ElevatedButton(
+                          _weightedButton(
                             key: const Key('join-room-button'),
                             onPressed: _joinRoom,
-                            child: Text(loc.homeJoinRoomButton),
+                            label: loc.homeJoinRoomButton,
+                            primary: joinPrimary,
                           ),
                         ],
                       ),
