@@ -2,14 +2,14 @@
 // brand theme and asserts Flutter's textContrastGuideline. Keeps board and
 // theme colour moves from landing under-contrast chrome text.
 
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
-import 'package:ludo_client/src/app.dart' show appSupportedLocales, buildAppTheme;
+import 'package:ludo_client/src/app.dart'
+    show appSupportedLocales, buildAppTheme;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
