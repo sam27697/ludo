@@ -302,9 +302,9 @@ class _HomeScreenState extends State<HomeScreen>
     // there. Real phones are taller and get the stacked brand + die hero.
     final bool compact = viewHeight < 640;
     final double dieSize = dieMarkSize(compact);
-    final double afterBrand = compact ? 12 : 28;
-    final double afterDie = compact ? 16 : 32;
-    final double sectionGap = compact ? 14 : 28;
+    final double afterBrand = compact ? kSpace3 : kSpace6;
+    final double afterDie = compact ? kSpace4 : kSpace7;
+    final double sectionGap = compact ? kSpace3 : kSpace6;
 
     final Animation<double> brandOpacity = CurvedAnimation(
       parent: _enter,
