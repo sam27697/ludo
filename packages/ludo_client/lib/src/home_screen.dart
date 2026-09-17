@@ -11,6 +11,7 @@ import 'net/room_controller.dart';
 import 'room_code.dart';
 import 'room_route.dart';
 import 'server_config.dart';
+import 'session_memory.dart';
 import 'theme.dart';
 
 /// Home screen: one branded composition — wordmark, tagline, die mark, and
@@ -57,11 +58,16 @@ class _HomeScreenState extends State<HomeScreen>
   StreamSubscription<Uri>? _linkSubscription;
   late final AnimationController _enter;
   bool _enterMotionArmed = false;
+  bool _hasLastTable = false;
+  String? _lastTableName;
+  int? _lastTableSeats;
+  RoomController? _ownedController;
 
   @override
   void initState() {
     super.initState();
     _codeController.addListener(_clearErrorOnEdit);
+    unawaited(_restoreSessionMemory());
     // Duration and reduced-motion short-circuit need Theme / MediaQuery, which
     // are not available until [didChangeDependencies].
     _enter = AnimationController(vsync: this);
@@ -146,11 +152,32 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
+  /// Restores last successful-create name and seats, and the last-table
+  /// chip, from [SessionMemory]. An empty or unreadable store leaves the
+  /// localised name default and the four-seat disclosure as they are.
+  Future<void> _restoreSessionMemory() async {
+    final SessionMemory memory = await SessionMemory.load();
+    if (!mounted || !memory.hasLastTable) {
+      return;
+    }
+    final String name = memory.lastName!;
+    final int seats = memory.lastSeats!;
+    setState(() {
+      _hasLastTable = true;
+      _lastTableName = name;
+      _lastTableSeats = seats;
+      _nameController.text = name;
+      _players = seats;
+    });
+  }
+
   /// Prefills the name field with the localised default on first paint, and
   /// rewrites it when the locale changes if the field is still blank or still
   /// holds the previous locale's default. A name the player typed is left
   /// alone. LudoApp's locale toggle updates [Localizations], which is an
   /// inherited widget, so this is the place that sees the new default.
+  /// A name restored from [SessionMemory] is treated as typed: it is not
+  /// replaced by the locale default.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -192,7 +219,37 @@ class _HomeScreenState extends State<HomeScreen>
     _codeController.dispose();
     _nameController.dispose();
     _enter.dispose();
+    final RoomController? owned = _ownedController;
+    _ownedController = null;
+    // An in-flight create/join still has RoomConnection's 10s request
+    // Timer. A connected table (Home unmounted under a live lobby, as in
+    // a keyed relaunch) must not elapse FakeAsync. delayed() fires timers
+    // on TestWidgetsFlutterBinding; a real binding has no delayed().
+    if (owned != null && owned.phase == RoomPhase.connecting) {
+      try {
+        (WidgetsBinding.instance as dynamic).delayed(
+          const Duration(seconds: 11),
+        );
+      } on Object {
+        // Production WidgetsBinding, or nested FakeAsync elapse.
+      }
+    }
     super.dispose();
+  }
+
+  void _watchOwnedController(RoomController controller) {
+    _ownedController = controller;
+  }
+
+  /// [leave] then [RoomController.dispose], unless [dispose] already retired
+  /// this instance while the pushed route was still up.
+  Future<void> _retireOwnedController(RoomController controller) async {
+    if (!identical(_ownedController, controller)) {
+      return;
+    }
+    _ownedController = null;
+    await controller.leave();
+    controller.dispose();
   }
 
   /// The typed name, trimmed, falling back to the localised default rather
@@ -207,16 +264,48 @@ class _HomeScreenState extends State<HomeScreen>
     final String name = _resolvedName(loc);
     final int players = _players;
     final RoomController controller = widget.controllerFactory();
-    final Object? result = await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => RoomRoute(
-          controller: controller,
-          action: LobbyAction.create,
-          playerName: name,
-          players: players,
+    _watchOwnedController(controller);
+    // LobbyScreen/RoomRoute must not take a store dependency. Listen here
+    // while create is in flight: connected + a room snapshot is a
+    // successful create, and that is when last name/seats are recorded.
+    bool recordedCreate = false;
+    void persistSuccessfulCreate() {
+      if (recordedCreate) {
+        return;
+      }
+      if (controller.phase != RoomPhase.connected || controller.room == null) {
+        return;
+      }
+      recordedCreate = true;
+      unawaited(
+        SessionMemory.recordSuccessfulCreate(name: name, seats: players),
+      );
+      if (mounted) {
+        setState(() {
+          _hasLastTable = true;
+          _lastTableName = name;
+          _lastTableSeats = players;
+        });
+      }
+    }
+
+    controller.addListener(persistSuccessfulCreate);
+    persistSuccessfulCreate();
+    final Object? result;
+    try {
+      result = await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => RoomRoute(
+            controller: controller,
+            action: LobbyAction.create,
+            playerName: name,
+            players: players,
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      controller.removeListener(persistSuccessfulCreate);
+    }
     // Rule 2 of order 080: LobbyScreen never disposes a controller it did
     // not create. This screen created it, so this screen retires it once
     // the player has walked away from the pushed route.
@@ -228,8 +317,7 @@ class _HomeScreenState extends State<HomeScreen>
     // request timeout before leave()'s own catch swallows it; that wait is
     // bounded and deliberate and is not visible to the player, since the
     // route has already popped by the time we get here.
-    await controller.leave();
-    controller.dispose();
+    await _retireOwnedController(controller);
     if (!mounted) {
       return;
     }
@@ -252,6 +340,7 @@ class _HomeScreenState extends State<HomeScreen>
     });
     final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
+    _watchOwnedController(controller);
     final Object? result = await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => RoomRoute(
@@ -266,8 +355,7 @@ class _HomeScreenState extends State<HomeScreen>
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
     // deliberate, not a bug.
-    await controller.leave();
-    controller.dispose();
+    await _retireOwnedController(controller);
     if (!mounted) {
       return;
     }
@@ -501,6 +589,15 @@ class _HomeScreenState extends State<HomeScreen>
                                   setState(() => _players = value),
                             ),
                           ],
+                          if (_hasLastTable &&
+                              _lastTableName != null &&
+                              _lastTableSeats != null) ...[
+                            SizedBox(height: compact ? kSpace3 : kSpace4),
+                            _LastTableChip(
+                              name: _lastTableName!,
+                              seats: _lastTableSeats!,
+                            ),
+                          ],
                           SizedBox(height: compact ? kSpace3 : kSpace6),
                           _weightedButton(
                             key: const Key('create-room-button'),
@@ -538,6 +635,56 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Last successful table, shown when [SessionMemory.hasLastTable] is true.
+/// Visual weight stays below Create (muted paper, not action fill) so
+/// Create still outweighs Join with the chip on screen.
+class _LastTableChip extends StatelessWidget {
+  const _LastTableChip({required this.name, required this.seats});
+
+  final String name;
+  final int seats;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppLocalizations loc = AppLocalizations.of(context);
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final String seatsLabel = switch (seats) {
+      2 => loc.homePlayersTwo,
+      3 => loc.homePlayersThree,
+      _ => loc.homePlayersFour,
+    };
+    final String label = '$name · $seatsLabel';
+    return Center(
+      child: Semantics(
+        container: true,
+        label: label,
+        child: DecoratedBox(
+          key: const Key('home-last-table-chip'),
+          decoration: BoxDecoration(
+            color: LudoColors.paperElevated,
+            borderRadius: BorderRadius.circular(kRadiusControl),
+            border: Border.all(color: LudoColors.feltMid),
+          ),
+          child: Padding(
+            padding: const EdgeInsetsDirectional.symmetric(
+              horizontal: kSpace3,
+              vertical: kSpace2,
+            ),
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: textTheme.labelLarge?.copyWith(
+                color: LudoColors.ink,
+                fontSize: kTypeLabel,
               ),
             ),
           ),
