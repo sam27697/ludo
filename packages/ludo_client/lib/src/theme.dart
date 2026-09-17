@@ -206,13 +206,21 @@ ThemeData buildAppTheme() {
     ),
     // AppBar only threads foreground into IconTheme / IconButtonTheme, never
     // TextButtonTheme — so a locale toggle TextButton must be set here once.
+    // Disabled inkMuted keeps secondary actions AA on paper/surface.
     textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(foregroundColor: scheme.onSurface),
+      style: TextButton.styleFrom(
+        foregroundColor: scheme.onSurface,
+        disabledForegroundColor: LudoColors.inkMuted,
+      ),
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         backgroundColor: LudoColors.action,
         foregroundColor: LudoColors.actionOn,
+        // Explicit disabled ink so host Start waiting-reason stays ≥4.5:1
+        // on paper/surface (Material's default 0.38 onSurface does not).
+        disabledForegroundColor: LudoColors.inkMuted,
+        disabledBackgroundColor: LudoColors.paperElevated,
         elevation: 0,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         shape: RoundedRectangleBorder(
@@ -229,6 +237,7 @@ ThemeData buildAppTheme() {
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         foregroundColor: LudoColors.ink,
+        disabledForegroundColor: LudoColors.inkMuted,
         side: const BorderSide(color: LudoColors.feltMid, width: 1.2),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         shape: RoundedRectangleBorder(
