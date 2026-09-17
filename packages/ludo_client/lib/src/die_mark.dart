@@ -4,6 +4,68 @@ import 'package:flutter/material.dart';
 
 import 'theme.dart';
 
+/// Face size for [DieMark] on short vs tall viewports. Home and lobby share
+/// this so compact and shoutable layouts stay locked together.
+double dieMarkSize(bool compact) => compact ? 72 : 148;
+
+/// Pip diameter on the compact game-chrome seat strip (space-2 on the 4/8 scale).
+const double kSeatPipSize = 8;
+
+/// Felt-edge thickness on game chrome (space-1 on the 4/8 scale).
+const double kFeltEdgeThickness = 4;
+
+/// Compact seat-identity strip: one solid pip per [LudoColors.seats] entry, in
+/// seat order. Shared by game chrome so waiting, playing, and game-over all
+/// carry the same brand cue without duplicating layout.
+class SeatPipStrip extends StatelessWidget {
+  const SeatPipStrip({super.key, this.pipSize = kSeatPipSize});
+
+  final double pipSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsetsDirectional.symmetric(
+        horizontal: kSpace4,
+        vertical: kSpace2,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          for (int i = 0; i < LudoColors.seats.length; i++) ...<Widget>[
+            if (i > 0) const SizedBox(width: kSpace2),
+            Container(
+              key: Key('game-seat-pip-$i'),
+              width: pipSize,
+              height: pipSize,
+              decoration: BoxDecoration(
+                color: LudoColors.seats[i],
+                shape: BoxShape.circle,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Thin felt-coloured bar that frames the game seat-pip strip. Colour is
+/// [LudoColors.feltMid] (also accepted as [LudoBrand.felt] when those match).
+class FeltEdge extends StatelessWidget {
+  const FeltEdge({super.key, this.thickness = kFeltEdgeThickness});
+
+  final double thickness;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: LudoColors.feltMid,
+      child: SizedBox(height: thickness, width: double.infinity),
+    );
+  }
+}
+
 /// The product mark: a rounded die with one pip per seat colour. Matches the
 /// store icon language (die, not the four-quadrant board grid) so the home
 /// screen and the launcher read as the same brand.
@@ -13,6 +75,7 @@ class DieMark extends StatelessWidget {
     this.size = 160,
     this.rotation = -0.12,
     this.semanticsLabel,
+    this.child,
   });
 
   final double size;
@@ -23,6 +86,11 @@ class DieMark extends StatelessWidget {
   /// Optional accessibility label; callers should pass [appTitle].
   final String? semanticsLabel;
 
+  /// Optional overlay on the die face (for example a room code). Painted
+  /// after the face and pips, inset so it stays inside the rounded square.
+  /// Existing callers that omit this keep the pip-only mark.
+  final Widget? child;
+
   @override
   Widget build(BuildContext context) {
     final Widget paint = Transform.rotate(
@@ -30,6 +98,15 @@ class DieMark extends StatelessWidget {
       child: CustomPaint(
         size: Size.square(size),
         painter: const _DieMarkPainter(),
+        child: child == null
+            ? null
+            : SizedBox.square(
+                dimension: size,
+                child: Padding(
+                  padding: EdgeInsets.all(size * 0.22),
+                  child: Center(child: child),
+                ),
+              ),
       ),
     );
     if (semanticsLabel == null) {

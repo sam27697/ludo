@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'die_mark.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'theme.dart';
@@ -106,10 +107,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
         .showSnackBar(SnackBar(content: Text(loc.lobbyLinkCopied)));
   }
 
+  /// Pops this lobby. Completes the pop immediately so Cancel is not gated
+  /// on the page transition.
+  void _leaveLobby() {
+    final NavigatorState navigator = Navigator.of(context);
+    final Route<dynamic> route = ModalRoute.of(context)!;
+    navigator.pop();
+    if (route.navigator != null) {
+      navigator.finalizeRoute(route);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
     final RoomController controller = widget.controller;
+    final bool connected = controller.phase == RoomPhase.connected;
 
     final Widget phaseBody = switch (controller.phase) {
       RoomPhase.idle || RoomPhase.connecting => _connectingBody(loc),
@@ -120,12 +133,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     return Scaffold(
       backgroundColor: LudoColors.paper,
-      body: SafeArea(
-        child: Column(
-          children: [
-            if (controller.hasDesynced) _desyncBanner(loc, controller),
-            Expanded(child: phaseBody),
-          ],
+      body: FeltBackdrop(
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Same signature chrome as GameScreen: felt edge frames the
+              // seat-pip strip so home→lobby→game stays one continuous table.
+              // Only on the connected gathering body to avoid crowding
+              // connecting / error / closed states.
+              if (connected) ...[
+                const FeltEdge(key: Key('game-felt-edge')),
+                const SeatPipStrip(key: Key('game-seat-pip-strip')),
+              ],
+              if (controller.hasDesynced) _desyncBanner(loc, controller),
+              Expanded(child: phaseBody),
+            ],
+          ),
         ),
       ),
     );
@@ -138,8 +161,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           const CircularProgressIndicator(),
-          const SizedBox(height: 16),
+          const SizedBox(height: kSpace4),
           Text(loc.lobbyConnecting),
+          const SizedBox(height: kSpace4),
+          OutlinedButton(
+            key: const Key('lobby-cancel-button'),
+            style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+            onPressed: _leaveLobby,
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+          ),
         ],
       ),
     );
@@ -149,7 +179,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return Center(
       key: const Key('lobby-error'),
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(kSpace6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -157,7 +187,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               lobbyErrorMessage(loc, controller.errorCode),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: kSpace4),
             ElevatedButton(
               key: const Key('lobby-retry-button'),
               onPressed: _issueRequest,
@@ -173,12 +203,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return Center(
       key: const Key('lobby-closed'),
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(kSpace6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(loc.lobbyConnectionLost, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
+            const SizedBox(height: kSpace4),
             ElevatedButton(
               key: const Key('lobby-reconnect-button'),
               onPressed: controller.reconnect,
@@ -193,24 +223,47 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Widget _connectedBody(AppLocalizations loc, RoomController controller) {
     final RoomSnapshot room = controller.room!;
     final bool roomFull = room.seats.length == room.players;
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final double viewHeight = MediaQuery.sizeOf(context).height;
+    // Same compact rule as home: widget-test surfaces are 800x600; real
+    // phones are taller and get the larger shoutable die.
+    final bool compact = viewHeight < 640;
+    final double dieSize = dieMarkSize(compact);
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.fromLTRB(
+        kSpace6,
+        compact ? kSpace2 : kSpace6,
+        kSpace6,
+        compact ? kSpace4 : kSpace6,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
             loc.lobbyRoomCodeLabel,
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.labelLarge,
+            style: textTheme.labelLarge?.copyWith(color: LudoColors.inkMuted),
           ),
-          const SizedBox(height: 4),
-          Text(
-            room.code,
-            key: const Key('lobby-room-code'),
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.headlineMedium,
+          SizedBox(height: compact ? kSpace2 : kSpace3),
+          Center(
+            child: DieMark(
+              size: dieSize,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  room.code,
+                  key: const Key('lobby-room-code'),
+                  textAlign: TextAlign.center,
+                  style: textTheme.headlineMedium?.copyWith(
+                    color: LudoColors.ink,
+                    fontWeight: FontWeight.w700,
+                    height: 1.0,
+                  ),
+                ),
+              ),
+            ),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: compact ? kSpace3 : kSpace4),
           Row(
             children: [
               Expanded(
@@ -221,7 +274,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   child: Text(loc.lobbyCopyLinkButton),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: kSpace3),
               Expanded(
                 child: OutlinedButton(
                   key: const Key('lobby-copy-code-button'),
@@ -231,25 +284,33 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 24),
+          SizedBox(height: compact ? kSpace4 : kSpace6),
           for (final SeatState seat in room.seats)
             Padding(
               key: Key('lobby-seat-${seat.seat}'),
-              padding: const EdgeInsets.symmetric(vertical: 4),
+              padding: const EdgeInsets.symmetric(vertical: kSpace1),
               child: Text(seat.name, textAlign: TextAlign.center),
             ),
-          const SizedBox(height: 16),
+          const SizedBox(height: kSpace4),
           Text(
             loc.lobbyWaitingForPlayers(room.seats.length, room.players),
             key: const Key('lobby-waiting'),
             textAlign: TextAlign.center,
           ),
           if (controller.isHost) ...[
-            const SizedBox(height: 24),
+            SizedBox(height: compact ? kSpace4 : kSpace6),
             ElevatedButton(
               key: const Key('lobby-start-button'),
               onPressed: roomFull ? controller.startGame : null,
-              child: Text(loc.lobbyStartButton),
+              child: Text(
+                roomFull
+                    ? loc.lobbyStartButton
+                    : loc.lobbyWaitingForPlayers(
+                        room.seats.length,
+                        room.players,
+                      ),
+                textAlign: TextAlign.center,
+              ),
             ),
           ],
         ],
@@ -262,7 +323,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
       key: const Key('lobby-desync-banner'),
       color: Theme.of(context).colorScheme.errorContainer,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(
+          horizontal: kSpace4,
+          vertical: kSpace2,
+        ),
         child: Row(
           children: [
             Expanded(

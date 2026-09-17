@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'deep_link.dart';
 import 'die_mark.dart';
+import 'game_screen.dart' show GameScreenResult;
 import 'lobby_screen.dart' show LobbyAction;
 import 'net/room_controller.dart';
 import 'room_code.dart';
@@ -51,17 +52,19 @@ class _HomeScreenState extends State<HomeScreen>
   final TextEditingController _nameController = TextEditingController();
   String? _errorText;
   int _players = 4;
+  bool _playersSelectorOpen = false;
+  String? _nameLocaleDefault;
   StreamSubscription<Uri>? _linkSubscription;
   late final AnimationController _enter;
+  bool _enterMotionArmed = false;
 
   @override
   void initState() {
     super.initState();
     _codeController.addListener(_clearErrorOnEdit);
-    _enter = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..forward();
+    // Duration and reduced-motion short-circuit need Theme / MediaQuery, which
+    // are not available until [didChangeDependencies].
+    _enter = AnimationController(vsync: this);
     try {
       widget.initialLinkReader().then(
         (uri) {
@@ -133,15 +136,52 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
-  /// Clears a standing error the moment the player edits the code field,
-  /// so a message raised by a bad link or a failed Join tap does not sit
-  /// under a code the player has since corrected. Runs on every keystroke,
-  /// not just submission.
+  /// Rebuilds on every keystroke so Create/Join emphasis can follow the
+  /// code field, and clears a standing error so a message raised by a bad
+  /// link or a failed Join tap does not sit under a code the player has
+  /// since corrected.
   void _clearErrorOnEdit() {
-    if (_errorText != null) {
-      setState(() {
-        _errorText = null;
-      });
+    setState(() {
+      _errorText = null;
+    });
+  }
+
+  /// Prefills the name field with the localised default on first paint, and
+  /// rewrites it when the locale changes if the field is still blank or still
+  /// holds the previous locale's default. A name the player typed is left
+  /// alone. LudoApp's locale toggle updates [Localizations], which is an
+  /// inherited widget, so this is the place that sees the new default.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final String nextDefault = AppLocalizations.of(context)
+        .homeDefaultPlayerName;
+    final String current = _nameController.text;
+    if (current.isEmpty || current == _nameLocaleDefault) {
+      if (current != nextDefault) {
+        _nameController.text = nextDefault;
+      }
+    }
+    _nameLocaleDefault = nextDefault;
+    _armEnterMotion();
+  }
+
+  /// Wires [_enter] to [LudoBrand.motionLong] once, and jumps to completed
+  /// immediately when [MediaQuery.disableAnimationsOf] is true.
+  ///
+  /// Falls back to [kMotionLong] when a harness mounts [HomeScreen] without
+  /// [buildAppTheme] (no [LudoBrand] extension).
+  void _armEnterMotion() {
+    if (_enterMotionArmed) {
+      return;
+    }
+    _enterMotionArmed = true;
+    final LudoBrand? brand = Theme.of(context).extension<LudoBrand>();
+    _enter.duration = brand?.motionLong ?? kMotionLong;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _enter.value = 1.0;
+    } else {
+      _enter.forward();
     }
   }
 
@@ -167,7 +207,7 @@ class _HomeScreenState extends State<HomeScreen>
     final String name = _resolvedName(loc);
     final int players = _players;
     final RoomController controller = widget.controllerFactory();
-    await Navigator.of(context).push(
+    final Object? result = await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => RoomRoute(
           controller: controller,
@@ -190,6 +230,12 @@ class _HomeScreenState extends State<HomeScreen>
     // route has already popped by the time we get here.
     await controller.leave();
     controller.dispose();
+    if (!mounted) {
+      return;
+    }
+    if (result == GameScreenResult.newTable) {
+      await _createRoom();
+    }
   }
 
   Future<void> _joinRoom() async {
@@ -206,7 +252,7 @@ class _HomeScreenState extends State<HomeScreen>
     });
     final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
-    await Navigator.of(context).push(
+    final Object? result = await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => RoomRoute(
           controller: controller,
@@ -222,20 +268,43 @@ class _HomeScreenState extends State<HomeScreen>
     // deliberate, not a bug.
     await controller.leave();
     controller.dispose();
+    if (!mounted) {
+      return;
+    }
+    if (result == GameScreenResult.newTable) {
+      await _createRoom();
+    }
+  }
+
+  /// Primary action is [ElevatedButton]; the quieter twin is [OutlinedButton].
+  Widget _weightedButton({
+    required Key key,
+    required VoidCallback onPressed,
+    required String label,
+    required bool primary,
+  }) {
+    final Widget child = Text(label);
+    if (primary) {
+      return ElevatedButton(key: key, onPressed: onPressed, child: child);
+    }
+    return OutlinedButton(key: key, onPressed: onPressed, child: child);
   }
 
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
+    final bool joinPrimary = isValidRoomCode(
+      normalizeRoomCode(_codeController.text),
+    );
     final TextTheme textTheme = Theme.of(context).textTheme;
     final double viewHeight = MediaQuery.sizeOf(context).height;
     // Default widget-test surface is 800x600; keep create/join on-screen
     // there. Real phones are taller and get the stacked brand + die hero.
     final bool compact = viewHeight < 640;
-    final double dieSize = compact ? 72 : 148;
-    final double afterBrand = compact ? 12 : 28;
-    final double afterDie = compact ? 16 : 32;
-    final double sectionGap = compact ? 14 : 28;
+    final double dieSize = dieMarkSize(compact);
+    final double afterBrand = compact ? kSpace3 : kSpace6;
+    final double afterDie = compact ? kSpace4 : kSpace7;
+    final double sectionGap = compact ? kSpace3 : kSpace6;
 
     final Animation<double> brandOpacity = CurvedAnimation(
       parent: _enter,
@@ -309,10 +378,10 @@ class _HomeScreenState extends State<HomeScreen>
             constraints: const BoxConstraints(maxWidth: 400),
             child: SingleChildScrollView(
               padding: EdgeInsets.fromLTRB(
-                24,
-                compact ? 4 : 8,
-                24,
-                compact ? 20 : 32,
+                kSpace6,
+                compact ? kSpace1 : kSpace2,
+                kSpace6,
+                compact ? kSpace5 : kSpace7,
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -334,14 +403,14 @@ class _HomeScreenState extends State<HomeScreen>
                                       size: dieSize,
                                       semanticsLabel: loc.appTitle,
                                     ),
-                                    const SizedBox(width: 16),
+                                    const SizedBox(width: kSpace4),
                                     Expanded(
                                       child: Column(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
                                           Text(loc.appTitle, style: brandStyle),
-                                          const SizedBox(height: 4),
+                                          const SizedBox(height: kSpace1),
                                           Text(
                                             loc.homeTagline,
                                             style: textTheme.bodyMedium
@@ -362,7 +431,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       textAlign: TextAlign.center,
                                       style: brandStyle,
                                     ),
-                                    const SizedBox(height: 10),
+                                    const SizedBox(height: kSpace2),
                                     Text(
                                       loc.homeTagline,
                                       textAlign: TextAlign.center,
@@ -401,26 +470,43 @@ class _HomeScreenState extends State<HomeScreen>
                               isDense: compact,
                             ),
                           ),
-                          SizedBox(height: compact ? 12 : 20),
-                          Text(
-                            loc.homePlayersSelectorLabel,
-                            textAlign: TextAlign.center,
-                            style: textTheme.labelLarge?.copyWith(
-                              color: LudoColors.inkMuted,
+                          SizedBox(height: compact ? kSpace3 : kSpace5),
+                          if (!_playersSelectorOpen)
+                            TextButton(
+                              key: const Key('home-players-disclosure'),
+                              onPressed: () =>
+                                  setState(() => _playersSelectorOpen = true),
+                              style: TextButton.styleFrom(
+                                foregroundColor: LudoColors.inkMuted,
+                                minimumSize: const Size(48, 48),
+                              ),
+                              child: Text(
+                                loc.homePlayersDisclosureClosed,
+                                textAlign: TextAlign.center,
+                              ),
+                            )
+                          else ...[
+                            Text(
+                              loc.homePlayersSelectorLabel,
+                              textAlign: TextAlign.center,
+                              style: textTheme.labelLarge?.copyWith(
+                                color: LudoColors.inkMuted,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          _PlayersSelector(
-                            key: const Key('home-players-selector'),
-                            value: _players,
-                            onChanged: (value) =>
-                                setState(() => _players = value),
-                          ),
-                          SizedBox(height: compact ? 14 : 24),
-                          ElevatedButton(
+                            const SizedBox(height: kSpace2),
+                            _PlayersSelector(
+                              key: const Key('home-players-selector'),
+                              value: _players,
+                              onChanged: (value) =>
+                                  setState(() => _players = value),
+                            ),
+                          ],
+                          SizedBox(height: compact ? kSpace3 : kSpace6),
+                          _weightedButton(
                             key: const Key('create-room-button'),
                             onPressed: _createRoom,
-                            child: Text(loc.homeCreateRoomButton),
+                            label: loc.homeCreateRoomButton,
+                            primary: !joinPrimary,
                           ),
                           SizedBox(height: sectionGap),
                           TextField(
@@ -440,11 +526,12 @@ class _HomeScreenState extends State<HomeScreen>
                               isDense: compact,
                             ),
                           ),
-                          SizedBox(height: compact ? 8 : 12),
-                          ElevatedButton(
+                          SizedBox(height: compact ? kSpace2 : kSpace3),
+                          _weightedButton(
                             key: const Key('join-room-button'),
                             onPressed: _joinRoom,
-                            child: Text(loc.homeJoinRoomButton),
+                            label: loc.homeJoinRoomButton,
+                            primary: joinPrimary,
                           ),
                         ],
                       ),
