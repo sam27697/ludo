@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
+import 'die_mark.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 
@@ -220,6 +221,11 @@ class _GameScreenState extends State<GameScreen> {
       body: SafeArea(
         child: Column(
           children: [
+            // Signature chrome: felt edge frames the seat-pip strip so every
+            // body below (waiting, playing, game-over, and the rest) inherits
+            // the same table cue without each state painting its own copy.
+            const FeltEdge(key: Key('game-felt-edge')),
+            const SeatPipStrip(key: Key('game-seat-pip-strip')),
             if (controller.hasDesynced) _desyncBanner(context, loc),
             Expanded(child: body),
           ],
@@ -346,6 +352,7 @@ class _GameScreenState extends State<GameScreen> {
           const SizedBox(height: 16),
           ElevatedButton(
             key: const Key('game-screen-roll-button'),
+            style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
             onPressed: rollEnabled ? controller.roll : null,
             child: Text(loc.gameRollButton),
           ),
