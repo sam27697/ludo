@@ -19,6 +19,7 @@ import 'board.dart';
 import 'die_mark.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
+import 'theme.dart';
 
 /// Distinct [Navigator.pop] result from the finished-board next-table
 /// button. The AppBar leave control pops with no result, so the screen
@@ -246,7 +247,7 @@ class _GameScreenState extends State<GameScreen> {
     return Center(
       key: const Key('game-screen-connection-lost'),
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(kSpace4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -316,7 +317,7 @@ class _GameScreenState extends State<GameScreen> {
         turn.phase == TurnPhase.awaitRoll;
 
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(kSpace3),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -398,7 +399,7 @@ class _GameScreenState extends State<GameScreen> {
   ) {
     return Expanded(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: kSpace1),
         child: ElevatedButton(
           key: Key('game-screen-token-$index'),
           onPressed: _tokenEnabled(room, seat, index)
@@ -425,7 +426,7 @@ class _GameScreenState extends State<GameScreen> {
   ) {
     final bool hasBoard = room.seats.length >= 2;
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(kSpace3),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -461,7 +462,10 @@ class _GameScreenState extends State<GameScreen> {
   Widget _desyncBanner(BuildContext context, AppLocalizations loc) {
     return Container(
       color: Theme.of(context).colorScheme.errorContainer,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(
+        horizontal: kSpace3,
+        vertical: kSpace2,
+      ),
       width: double.infinity,
       child: Text(
         loc.lobbyDesynced,
