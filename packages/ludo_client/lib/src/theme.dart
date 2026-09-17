@@ -163,19 +163,45 @@ TextTheme _ludoTextTheme(TextTheme base) {
   );
 }
 
-/// Shared Material theme. Seeded on felt teal so every screen inherits the
-/// same product colour, not Material's default purple seed.
+/// Shared Material theme. Hand-built [ColorScheme] from [LudoColors] only —
+/// no seed-derived slots, so every role is a brand or seat token.
 ThemeData buildAppTheme() {
-  final ColorScheme scheme = ColorScheme.fromSeed(
-    seedColor: LudoColors.action,
+  const ColorScheme scheme = ColorScheme(
     brightness: Brightness.light,
     primary: LudoColors.action,
     onPrimary: LudoColors.actionOn,
+    primaryContainer: LudoColors.feltLight,
+    onPrimaryContainer: LudoColors.ink,
     secondary: LudoColors.feltMid,
     onSecondary: LudoColors.actionOn,
+    secondaryContainer: LudoColors.paperWashTop,
+    onSecondaryContainer: LudoColors.ink,
+    tertiary: LudoColors.feltDeep,
+    onTertiary: LudoColors.actionOn,
+    tertiaryContainer: LudoColors.paperWashBottom,
+    onTertiaryContainer: LudoColors.ink,
+    error: LudoColors.error,
+    onError: LudoColors.actionOn,
+    errorContainer: LudoColors.paperWashTop,
+    onErrorContainer: LudoColors.ink,
     surface: LudoColors.paperElevated,
     onSurface: LudoColors.ink,
-    error: LudoColors.error,
+    surfaceDim: LudoColors.paperWashBottom,
+    surfaceBright: LudoColors.paperElevated,
+    surfaceContainerLowest: LudoColors.dieFace,
+    surfaceContainerLow: LudoColors.paper,
+    surfaceContainer: LudoColors.paperWashTop,
+    surfaceContainerHigh: LudoColors.paperWashBottom,
+    surfaceContainerHighest: LudoColors.paperWashBottom,
+    onSurfaceVariant: LudoColors.inkMuted,
+    outline: LudoColors.feltMid,
+    outlineVariant: LudoColors.feltLight,
+    shadow: LudoColors.ink,
+    scrim: LudoColors.feltDeep,
+    inverseSurface: LudoColors.feltDeep,
+    onInverseSurface: LudoColors.paper,
+    inversePrimary: LudoColors.feltLight,
+    surfaceTint: LudoColors.action,
   );
 
   final ThemeData base = ThemeData(
