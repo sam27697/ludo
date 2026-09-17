@@ -266,7 +266,7 @@ class _GameScreenState extends State<GameScreen> {
               child: Text(loc.lobbyReconnectButton),
             ),
             const SizedBox(height: 8),
-            ElevatedButton(
+            OutlinedButton(
               key: const Key('game-screen-leave-button'),
               onPressed: _leave,
               child: Text(loc.gameLeaveButton),
