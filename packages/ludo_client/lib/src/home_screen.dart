@@ -403,14 +403,14 @@ class _HomeScreenState extends State<HomeScreen>
                                       size: dieSize,
                                       semanticsLabel: loc.appTitle,
                                     ),
-                                    const SizedBox(width: 16),
+                                    const SizedBox(width: kSpace4),
                                     Expanded(
                                       child: Column(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
                                           Text(loc.appTitle, style: brandStyle),
-                                          const SizedBox(height: 4),
+                                          const SizedBox(height: kSpace1),
                                           Text(
                                             loc.homeTagline,
                                             style: textTheme.bodyMedium
@@ -431,7 +431,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       textAlign: TextAlign.center,
                                       style: brandStyle,
                                     ),
-                                    const SizedBox(height: 10),
+                                    const SizedBox(height: kSpace2),
                                     Text(
                                       loc.homeTagline,
                                       textAlign: TextAlign.center,
@@ -470,7 +470,7 @@ class _HomeScreenState extends State<HomeScreen>
                               isDense: compact,
                             ),
                           ),
-                          SizedBox(height: compact ? 12 : 20),
+                          SizedBox(height: compact ? kSpace3 : kSpace5),
                           if (!_playersSelectorOpen)
                             TextButton(
                               key: const Key('home-players-disclosure'),
@@ -493,7 +493,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 color: LudoColors.inkMuted,
                               ),
                             ),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: kSpace2),
                             _PlayersSelector(
                               key: const Key('home-players-selector'),
                               value: _players,
@@ -501,7 +501,7 @@ class _HomeScreenState extends State<HomeScreen>
                                   setState(() => _players = value),
                             ),
                           ],
-                          SizedBox(height: compact ? 14 : 24),
+                          SizedBox(height: compact ? kSpace3 : kSpace6),
                           _weightedButton(
                             key: const Key('create-room-button'),
                             onPressed: _createRoom,
@@ -526,7 +526,7 @@ class _HomeScreenState extends State<HomeScreen>
                               isDense: compact,
                             ),
                           ),
-                          SizedBox(height: compact ? 8 : 12),
+                          SizedBox(height: compact ? kSpace2 : kSpace3),
                           _weightedButton(
                             key: const Key('join-room-button'),
                             onPressed: _joinRoom,
