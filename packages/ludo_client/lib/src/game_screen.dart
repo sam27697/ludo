@@ -1,10 +1,11 @@
 // The screen a player looks at while a game is being played: the board with
 // everyone's tokens where the server says they are, whose turn it is, a Roll
 // button, a way to choose which token to move, and an honest end-of-game
-// state. Nothing here decides a rule, rolls a die, or advances a turn on its
-// own; every frame this screen draws comes straight from RoomController, and
-// pressing Roll or a token button sends the intention and waits for the
-// server's own reply to change anything.
+// state. Nothing here decides a rule, rolls a die, or invents a legal list.
+// When the server names exactly one legal token on this player's await-move,
+// this screen sends that move itself (no hold, no undo). Every other frame
+// it draws comes straight from RoomController, and pressing Roll or a token
+// button sends the intention and waits for the server's own reply.
 //
 // Not wired into navigation by this order. Nothing routes to this screen
 // yet; it is built and proved standing alone, constructed directly with a
@@ -55,11 +56,16 @@ class _GameScreenState extends State<GameScreen> {
   int? _countdownDeadlineMs;
   int _countdownRemainingSeconds = 0;
 
+  // seq of the await-move already queued for a unique-legal auto-move, so a
+  // second listener pulse on the same snapshot cannot send the token twice.
+  int? _autoPlayedSeq;
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onControllerChanged);
     _syncCountdown();
+    _scheduleForcedMoveIfNeeded();
   }
 
   @override
@@ -71,6 +77,62 @@ class _GameScreenState extends State<GameScreen> {
 
   void _onControllerChanged() {
     setState(_syncCountdown);
+    _scheduleForcedMoveIfNeeded();
+  }
+
+  /// The single legal token when this seated player is in await-move and the
+  /// server's legal list has length 1. Null in every other case: not our
+  /// seat, wrong phase, empty or multi-token legal, no room, not connected.
+  int? _forcedLegalToken() {
+    final RoomController controller = widget.controller;
+    if (controller.phase != RoomPhase.connected) {
+      return null;
+    }
+    final RoomSnapshot? room = controller.room;
+    if (room == null || room.state != RoomState.playing) {
+      return null;
+    }
+    final TurnState? turn = room.turn;
+    final int? seat = controller.seat;
+    if (turn == null || seat == null) {
+      return null;
+    }
+    if (turn.seat != seat || turn.phase != TurnPhase.awaitMove) {
+      return null;
+    }
+    final List<int>? legal = turn.legal;
+    if (legal == null || legal.length != 1) {
+      return null;
+    }
+    return legal.single;
+  }
+
+  /// Spike C1-T05: when legal length is 1, call [RoomController.move] on the
+  /// next frame with that token. No 3s hold, no Undo chip, no announce.
+  void _scheduleForcedMoveIfNeeded() {
+    final int? token = _forcedLegalToken();
+    final RoomSnapshot? room = widget.controller.room;
+    if (token == null || room == null) {
+      return;
+    }
+    if (_autoPlayedSeq == room.seq) {
+      return;
+    }
+    final int seq = room.seq;
+    _autoPlayedSeq = seq;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      if (widget.controller.room?.seq != seq) {
+        return;
+      }
+      if (_forcedLegalToken() != token) {
+        return;
+      }
+      debugPrint('SPIKE C1-T05 auto-move token=$token seq=$seq');
+      widget.controller.move(token);
+    });
   }
 
   /// Restarts the countdown for the current turn, and arms or disarms the
