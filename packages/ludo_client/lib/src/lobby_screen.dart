@@ -179,7 +179,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return Center(
       key: const Key('lobby-error'),
       child: Padding(
-        padding: const EdgeInsets.all(kSpace4),
+        padding: const EdgeInsets.all(kSpace6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -203,7 +203,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return Center(
       key: const Key('lobby-closed'),
       child: Padding(
-        padding: const EdgeInsets.all(kSpace4),
+        padding: const EdgeInsets.all(kSpace6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -231,10 +231,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final double dieSize = dieMarkSize(compact);
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
-        kSpace4,
-        compact ? kSpace2 : kSpace4,
-        kSpace4,
-        compact ? kSpace3 : kSpace4,
+        kSpace6,
+        compact ? kSpace2 : kSpace6,
+        kSpace6,
+        compact ? kSpace4 : kSpace6,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -324,7 +324,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       color: Theme.of(context).colorScheme.errorContainer,
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: kSpace3,
+          horizontal: kSpace4,
           vertical: kSpace2,
         ),
         child: Row(
