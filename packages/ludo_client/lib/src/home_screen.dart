@@ -56,15 +56,15 @@ class _HomeScreenState extends State<HomeScreen>
   String? _nameLocaleDefault;
   StreamSubscription<Uri>? _linkSubscription;
   late final AnimationController _enter;
+  bool _enterMotionArmed = false;
 
   @override
   void initState() {
     super.initState();
     _codeController.addListener(_clearErrorOnEdit);
-    _enter = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..forward();
+    // Duration and reduced-motion short-circuit need Theme / MediaQuery, which
+    // are not available until [didChangeDependencies].
+    _enter = AnimationController(vsync: this);
     try {
       widget.initialLinkReader().then(
         (uri) {
@@ -163,6 +163,26 @@ class _HomeScreenState extends State<HomeScreen>
       }
     }
     _nameLocaleDefault = nextDefault;
+    _armEnterMotion();
+  }
+
+  /// Wires [_enter] to [LudoBrand.motionLong] once, and jumps to completed
+  /// immediately when [MediaQuery.disableAnimationsOf] is true.
+  ///
+  /// Falls back to [kMotionLong] when a harness mounts [HomeScreen] without
+  /// [buildAppTheme] (no [LudoBrand] extension).
+  void _armEnterMotion() {
+    if (_enterMotionArmed) {
+      return;
+    }
+    _enterMotionArmed = true;
+    final LudoBrand? brand = Theme.of(context).extension<LudoBrand>();
+    _enter.duration = brand?.motionLong ?? kMotionLong;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _enter.value = 1.0;
+    } else {
+      _enter.forward();
+    }
   }
 
   @override
