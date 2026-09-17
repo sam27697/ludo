@@ -131,7 +131,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     };
 
     return Scaffold(
-      backgroundColor: LudoColors.paper,
+      backgroundColor: ludoPaperOf(context),
       body: FeltBackdrop(
         child: SafeArea(
           child: Column(
@@ -215,6 +215,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final RoomSnapshot room = controller.room!;
     final bool roomFull = room.seats.length == room.players;
     final TextTheme textTheme = Theme.of(context).textTheme;
+    final Color ink = ludoInkOf(context);
+    final Color inkMuted = ludoInkMutedOf(context);
     final double viewHeight = MediaQuery.sizeOf(context).height;
     // Same compact rule as home: widget-test surfaces are 800x600; real
     // phones are taller and get the larger shoutable die.
@@ -228,7 +230,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           Text(
             loc.lobbyRoomCodeLabel,
             textAlign: TextAlign.center,
-            style: textTheme.labelLarge?.copyWith(color: LudoColors.inkMuted),
+            style: textTheme.labelLarge?.copyWith(color: inkMuted),
           ),
           SizedBox(height: compact ? 8 : 12),
           Center(
@@ -241,7 +243,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   key: const Key('lobby-room-code'),
                   textAlign: TextAlign.center,
                   style: textTheme.headlineMedium?.copyWith(
-                    color: LudoColors.ink,
+                    color: ink,
                     fontWeight: FontWeight.w700,
                     height: 1.0,
                   ),

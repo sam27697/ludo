@@ -340,26 +340,31 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         );
 
+    final Color ink = ludoInkOf(context);
+    final Color inkMuted = ludoInkMutedOf(context);
+    final Color paper = ludoPaperOf(context);
+    final Color paperElevated = ludoPaperElevatedOf(context);
+
     final TextStyle? brandStyle = compact
         ? textTheme.headlineLarge?.copyWith(
             fontWeight: FontWeight.w700,
-            color: LudoColors.ink,
+            color: ink,
             letterSpacing: -0.5,
             height: 1.05,
           )
         : textTheme.displaySmall?.copyWith(
             fontWeight: FontWeight.w700,
-            color: LudoColors.ink,
+            color: ink,
             letterSpacing: -0.5,
             height: 1.05,
           );
 
     return Scaffold(
-      backgroundColor: LudoColors.paper,
+      backgroundColor: paper,
       appBar: AppBar(
         // Brand lives in the body at hero scale; the bar only carries the
         // locale toggle so contrast gates and the toggle key still hold.
-        backgroundColor: LudoColors.paperElevated,
+        backgroundColor: paperElevated,
         title: const SizedBox.shrink(),
         actions: [
           TextButton(
@@ -415,7 +420,7 @@ class _HomeScreenState extends State<HomeScreen>
                                             loc.homeTagline,
                                             style: textTheme.bodyMedium
                                                 ?.copyWith(
-                                                  color: LudoColors.inkMuted,
+                                                  color: inkMuted,
                                                   height: 1.3,
                                                 ),
                                           ),
@@ -436,7 +441,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       loc.homeTagline,
                                       textAlign: TextAlign.center,
                                       style: textTheme.bodyLarge?.copyWith(
-                                        color: LudoColors.inkMuted,
+                                        color: inkMuted,
                                         height: 1.35,
                                       ),
                                     ),
@@ -477,7 +482,7 @@ class _HomeScreenState extends State<HomeScreen>
                               onPressed: () =>
                                   setState(() => _playersSelectorOpen = true),
                               style: TextButton.styleFrom(
-                                foregroundColor: LudoColors.inkMuted,
+                                foregroundColor: inkMuted,
                                 minimumSize: const Size(48, 48),
                               ),
                               child: Text(
@@ -490,7 +495,7 @@ class _HomeScreenState extends State<HomeScreen>
                               loc.homePlayersSelectorLabel,
                               textAlign: TextAlign.center,
                               style: textTheme.labelLarge?.copyWith(
-                                color: LudoColors.inkMuted,
+                                color: inkMuted,
                               ),
                             ),
                             const SizedBox(height: 8),

@@ -48,6 +48,38 @@ abstract final class LudoColorsDark {
   static const Color felt = Color(0xFF14665C);
 }
 
+/// Neon underfelt arcade-night spike palette (Wild direction). Deep-void
+/// paper with cyan action fringe; ink/paper and action/paper pairs meet
+/// WCAG AA (at least 4.5:1). Used only by [buildNeonUnderfeltTheme].
+abstract final class LudoColorsNeon {
+  static const Color feltDeep = Color(0xFF061820);
+  static const Color feltMid = Color(0xFF0A3D4A);
+  static const Color feltLight = Color(0xFF1A6B7A);
+
+  /// Deep void paper - deliberately not Bold mint [LudoColors.paper].
+  static const Color paper = Color(0xFF070B14);
+  static const Color paperElevated = Color(0xFF0F1624);
+
+  static const Color ink = Color(0xFFE8F4FF);
+  static const Color inkMuted = Color(0xFF9BB4C8);
+
+  static const Color action = Color(0xFF00D4E8);
+  static const Color actionOn = Color(0xFF070B14);
+
+  static const Color error = Color(0xFFFF4D6A);
+
+  static const Color paperWashTop = Color(0xFF0A1220);
+  static const Color paperWashBottom = Color(0xFF050810);
+
+  /// Electric seat glows for the arcade-night direction.
+  static const List<Color> seats = <Color>[
+    Color(0xFFFF3D71),
+    Color(0xFF39FF14),
+    Color(0xFFFFE600),
+    Color(0xFF00B7FF),
+  ];
+}
+
 /// Latin UI face. Arabic falls back to Noto Sans Arabic via [fontFamilyFallback].
 const String kLudoFontFamily = 'Poppins';
 const List<String> kLudoFontFallbacks = <String>['Noto Sans Arabic'];
@@ -96,6 +128,15 @@ class LudoBrand extends ThemeExtension<LudoBrand> {
     ink: LudoColorsDark.ink,
     paper: LudoColorsDark.paper,
     felt: LudoColorsDark.felt,
+    motionShort: kMotionShort,
+    motionLong: kMotionLong,
+  );
+
+  static const LudoBrand neon = LudoBrand(
+    action: LudoColorsNeon.action,
+    ink: LudoColorsNeon.ink,
+    paper: LudoColorsNeon.paper,
+    felt: LudoColorsNeon.feltDeep,
     motionShort: kMotionShort,
     motionLong: kMotionLong,
   );
@@ -309,6 +350,180 @@ ThemeData buildAppTheme() {
   );
 }
 
+/// Neon underfelt arcade-night spike theme. Deep-void paper and cyan
+/// action fringe; [LudoBrand.paper] diverges from Bold mint so contrast
+/// gates cannot be satisfied by a mint alias.
+ThemeData buildNeonUnderfeltTheme() {
+  final ColorScheme scheme = ColorScheme.fromSeed(
+    seedColor: LudoColorsNeon.action,
+    brightness: Brightness.dark,
+    primary: LudoColorsNeon.action,
+    onPrimary: LudoColorsNeon.actionOn,
+    secondary: LudoColorsNeon.feltMid,
+    onSecondary: LudoColorsNeon.ink,
+    surface: LudoColorsNeon.paperElevated,
+    onSurface: LudoColorsNeon.ink,
+    error: LudoColorsNeon.error,
+  );
+
+  final ThemeData base = ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.dark,
+    colorScheme: scheme,
+    scaffoldBackgroundColor: LudoColorsNeon.paper,
+    fontFamily: kLudoFontFamily,
+    fontFamilyFallback: kLudoFontFallbacks,
+    extensions: const <ThemeExtension<dynamic>>[LudoBrand.neon],
+  );
+
+  return base.copyWith(
+    textTheme: _ludoTextTheme(base.textTheme),
+    primaryTextTheme: _ludoTextTheme(base.primaryTextTheme),
+    appBarTheme: AppBarTheme(
+      backgroundColor: LudoColorsNeon.paperElevated,
+      foregroundColor: LudoColorsNeon.ink,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      centerTitle: true,
+      titleTextStyle: TextStyle(
+        fontFamily: kLudoFontFamily,
+        fontFamilyFallback: kLudoFontFallbacks,
+        fontWeight: FontWeight.w600,
+        fontSize: kTypeTitle,
+        color: LudoColorsNeon.ink,
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        foregroundColor: scheme.onSurface,
+        disabledForegroundColor: LudoColorsNeon.inkMuted,
+      ),
+    ),
+    elevatedButtonTheme: ElevatedButtonThemeData(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: LudoColorsNeon.action,
+        foregroundColor: LudoColorsNeon.actionOn,
+        disabledForegroundColor: LudoColorsNeon.inkMuted,
+        disabledBackgroundColor: LudoColorsNeon.paperElevated,
+        elevation: 0,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(kRadiusControl),
+        ),
+        textStyle: const TextStyle(
+          fontFamily: kLudoFontFamily,
+          fontFamilyFallback: kLudoFontFallbacks,
+          fontWeight: FontWeight.w600,
+          fontSize: kTypeLabel,
+        ),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: LudoColorsNeon.ink,
+        disabledForegroundColor: LudoColorsNeon.inkMuted,
+        side: const BorderSide(color: LudoColorsNeon.feltLight, width: 1.2),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(kRadiusControl),
+        ),
+      ),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: LudoColorsNeon.paperElevated,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(kRadiusControl),
+        borderSide: const BorderSide(color: LudoColorsNeon.feltLight),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(kRadiusControl),
+        borderSide: BorderSide(
+          color: LudoColorsNeon.feltLight.withValues(alpha: 0.7),
+        ),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(kRadiusControl),
+        borderSide: const BorderSide(color: LudoColorsNeon.action, width: 1.6),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(kRadiusControl),
+        borderSide: BorderSide(color: scheme.error),
+      ),
+      labelStyle: const TextStyle(color: LudoColorsNeon.inkMuted),
+      hintStyle: TextStyle(
+        color: LudoColorsNeon.inkMuted.withValues(alpha: 0.7),
+      ),
+    ),
+    segmentedButtonTheme: SegmentedButtonThemeData(
+      style: ButtonStyle(
+        visualDensity: VisualDensity.comfortable,
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(kRadiusControl),
+          ),
+        ),
+        foregroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return LudoColorsNeon.actionOn;
+          }
+          return LudoColorsNeon.ink;
+        }),
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return LudoColorsNeon.action;
+          }
+          return LudoColorsNeon.paperElevated;
+        }),
+      ),
+    ),
+    progressIndicatorTheme: const ProgressIndicatorThemeData(
+      color: LudoColorsNeon.action,
+    ),
+    snackBarTheme: SnackBarThemeData(
+      backgroundColor: LudoColorsNeon.feltDeep,
+      contentTextStyle: const TextStyle(
+        fontFamily: kLudoFontFamily,
+        fontFamilyFallback: kLudoFontFallbacks,
+        color: LudoColorsNeon.ink,
+      ),
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(kRadiusControl),
+      ),
+    ),
+  );
+}
+
+/// True when the active [LudoBrand] paper reads as deep-void (neon spike).
+bool isNeonUnderfeltTheme(BuildContext context) {
+  final LudoBrand? brand = Theme.of(context).extension<LudoBrand>();
+  if (brand == null) {
+    return false;
+  }
+  return ThemeData.estimateBrightnessForColor(brand.paper) == Brightness.dark;
+}
+
+Color ludoInkOf(BuildContext context) {
+  return Theme.of(context).extension<LudoBrand>()?.ink ?? LudoColors.ink;
+}
+
+Color ludoPaperOf(BuildContext context) {
+  return Theme.of(context).extension<LudoBrand>()?.paper ?? LudoColors.paper;
+}
+
+Color ludoInkMutedOf(BuildContext context) {
+  return isNeonUnderfeltTheme(context)
+      ? LudoColorsNeon.inkMuted
+      : LudoColors.inkMuted;
+}
+
+Color ludoPaperElevatedOf(BuildContext context) {
+  return isNeonUnderfeltTheme(context)
+      ? LudoColorsNeon.paperElevated
+      : LudoColors.paperElevated;
+}
+
 /// Full-bleed felt atmosphere used behind the home composition. A soft
 /// vertical wash plus a faint grid so the screen does not read as a flat
 /// fill, without competing with the die mark.
@@ -319,31 +534,47 @@ class FeltBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: <Color>[
+    final bool neon = isNeonUnderfeltTheme(context);
+    final Color paper = ludoPaperOf(context);
+    final List<Color> washes = neon
+        ? <Color>[
+            LudoColorsNeon.paperWashTop,
+            paper,
+            LudoColorsNeon.paperWashBottom,
+          ]
+        : <Color>[
             LudoColors.paperWashTop,
             LudoColors.paper,
             LudoColors.paperWashBottom,
-          ],
-          stops: <double>[0.0, 0.45, 1.0],
+          ];
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: washes,
+          stops: const <double>[0.0, 0.45, 1.0],
         ),
       ),
-      child: CustomPaint(painter: const _FeltGrainPainter(), child: child),
+      child: CustomPaint(
+        painter: _FeltGrainPainter(neon: neon),
+        child: child,
+      ),
     );
   }
 }
 
 class _FeltGrainPainter extends CustomPainter {
-  const _FeltGrainPainter();
+  const _FeltGrainPainter({required this.neon});
+
+  final bool neon;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final Color mid = neon ? LudoColorsNeon.feltMid : LudoColors.feltMid;
+    final Color light = neon ? LudoColorsNeon.feltLight : LudoColors.feltLight;
     final Paint line = Paint()
-      ..color = LudoColors.feltMid.withValues(alpha: 0.045)
+      ..color = mid.withValues(alpha: neon ? 0.08 : 0.045)
       ..strokeWidth = 1;
 
     const double step = 28;
@@ -359,7 +590,7 @@ class _FeltGrainPainter extends CustomPainter {
         center: const Alignment(0, -0.35),
         radius: 1.05,
         colors: <Color>[
-          LudoColors.feltLight.withValues(alpha: 0.18),
+          light.withValues(alpha: neon ? 0.22 : 0.18),
           Colors.transparent,
         ],
       ).createShader(Offset.zero & size);
@@ -367,5 +598,6 @@ class _FeltGrainPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _FeltGrainPainter oldDelegate) =>
+      oldDelegate.neon != neon;
 }
