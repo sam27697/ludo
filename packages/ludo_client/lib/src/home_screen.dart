@@ -56,15 +56,15 @@ class _HomeScreenState extends State<HomeScreen>
   String? _nameLocaleDefault;
   StreamSubscription<Uri>? _linkSubscription;
   late final AnimationController _enter;
+  bool _enterMotionArmed = false;
 
   @override
   void initState() {
     super.initState();
     _codeController.addListener(_clearErrorOnEdit);
-    _enter = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..forward();
+    // Duration and reduced-motion short-circuit need Theme / MediaQuery, which
+    // are not available until [didChangeDependencies].
+    _enter = AnimationController(vsync: this);
     try {
       widget.initialLinkReader().then(
         (uri) {
@@ -163,6 +163,26 @@ class _HomeScreenState extends State<HomeScreen>
       }
     }
     _nameLocaleDefault = nextDefault;
+    _armEnterMotion();
+  }
+
+  /// Wires [_enter] to [LudoBrand.motionLong] once, and jumps to completed
+  /// immediately when [MediaQuery.disableAnimationsOf] is true.
+  ///
+  /// Falls back to [kMotionLong] when a harness mounts [HomeScreen] without
+  /// [buildAppTheme] (no [LudoBrand] extension).
+  void _armEnterMotion() {
+    if (_enterMotionArmed) {
+      return;
+    }
+    _enterMotionArmed = true;
+    final LudoBrand? brand = Theme.of(context).extension<LudoBrand>();
+    _enter.duration = brand?.motionLong ?? kMotionLong;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _enter.value = 1.0;
+    } else {
+      _enter.forward();
+    }
   }
 
   @override
@@ -282,9 +302,9 @@ class _HomeScreenState extends State<HomeScreen>
     // there. Real phones are taller and get the stacked brand + die hero.
     final bool compact = viewHeight < 640;
     final double dieSize = dieMarkSize(compact);
-    final double afterBrand = compact ? 12 : 28;
-    final double afterDie = compact ? 16 : 32;
-    final double sectionGap = compact ? 14 : 28;
+    final double afterBrand = compact ? kSpace3 : kSpace6;
+    final double afterDie = compact ? kSpace4 : kSpace7;
+    final double sectionGap = compact ? kSpace3 : kSpace6;
 
     final Animation<double> brandOpacity = CurvedAnimation(
       parent: _enter,
@@ -358,10 +378,10 @@ class _HomeScreenState extends State<HomeScreen>
             constraints: const BoxConstraints(maxWidth: 400),
             child: SingleChildScrollView(
               padding: EdgeInsets.fromLTRB(
-                24,
-                compact ? 4 : 8,
-                24,
-                compact ? 20 : 32,
+                kSpace6,
+                compact ? kSpace1 : kSpace2,
+                kSpace6,
+                compact ? kSpace5 : kSpace7,
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -383,14 +403,14 @@ class _HomeScreenState extends State<HomeScreen>
                                       size: dieSize,
                                       semanticsLabel: loc.appTitle,
                                     ),
-                                    const SizedBox(width: 16),
+                                    const SizedBox(width: kSpace4),
                                     Expanded(
                                       child: Column(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
                                           Text(loc.appTitle, style: brandStyle),
-                                          const SizedBox(height: 4),
+                                          const SizedBox(height: kSpace1),
                                           Text(
                                             loc.homeTagline,
                                             style: textTheme.bodyMedium
@@ -411,7 +431,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       textAlign: TextAlign.center,
                                       style: brandStyle,
                                     ),
-                                    const SizedBox(height: 10),
+                                    const SizedBox(height: kSpace2),
                                     Text(
                                       loc.homeTagline,
                                       textAlign: TextAlign.center,
@@ -450,7 +470,7 @@ class _HomeScreenState extends State<HomeScreen>
                               isDense: compact,
                             ),
                           ),
-                          SizedBox(height: compact ? 12 : 20),
+                          SizedBox(height: compact ? kSpace3 : kSpace5),
                           if (!_playersSelectorOpen)
                             TextButton(
                               key: const Key('home-players-disclosure'),
@@ -473,7 +493,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 color: LudoColors.inkMuted,
                               ),
                             ),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: kSpace2),
                             _PlayersSelector(
                               key: const Key('home-players-selector'),
                               value: _players,
@@ -481,7 +501,7 @@ class _HomeScreenState extends State<HomeScreen>
                                   setState(() => _players = value),
                             ),
                           ],
-                          SizedBox(height: compact ? 14 : 24),
+                          SizedBox(height: compact ? kSpace3 : kSpace6),
                           _weightedButton(
                             key: const Key('create-room-button'),
                             onPressed: _createRoom,
@@ -506,7 +526,7 @@ class _HomeScreenState extends State<HomeScreen>
                               isDense: compact,
                             ),
                           ),
-                          SizedBox(height: compact ? 8 : 12),
+                          SizedBox(height: compact ? kSpace2 : kSpace3),
                           _weightedButton(
                             key: const Key('join-room-button'),
                             onPressed: _joinRoom,
