@@ -105,13 +105,14 @@ List<Match> _themeColorLiteralsOutsideTokenBlocks(String src) {
 Set<String> _distinctHexInLib() {
   final Directory lib = Directory(p.join(_findPackageRoot().path, 'lib'));
   final Set<String> hexes = <String>{};
-  for (final File file in lib
-      .listSync(recursive: true)
-      .whereType<File>()
-      .where((File f) => f.path.endsWith('.dart'))
-      .where(
-        (File f) => !f.path.contains('${p.separator}l10n${p.separator}gen'),
-      )) {
+  for (final File file
+      in lib
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((File f) => f.path.endsWith('.dart'))
+          .where(
+            (File f) => !f.path.contains('${p.separator}l10n${p.separator}gen'),
+          )) {
     for (final Match m in _hex8.allMatches(file.readAsStringSync())) {
       hexes.add(m.group(0)!.toUpperCase());
     }
@@ -120,54 +121,56 @@ Set<String> _distinctHexInLib() {
 }
 
 void main() {
-  test('board.dart seat fills use LudoColors.seats, not a private hex list', () {
-    final String src = _boardSource();
-    expect(
-      RegExp(r'\bLudoColors\.seats\b').hasMatch(src),
-      isTrue,
-      reason: 'board.dart must paint seat fills from LudoColors.seats',
-    );
-    expect(
-      RegExp(r'\b_seatColors\b').hasMatch(src),
-      isFalse,
-      reason: 'board.dart must not keep a private duplicate seat colour list',
-    );
-    expect(
-      RegExp(
-        r'Color\(0xFFD32F2F\)|Color\(0xFF388E3C\)|'
-        r'Color\(0xFFFBC02D\)|Color\(0xFF1976D2\)',
-      ).hasMatch(src),
-      isFalse,
-      reason: 'board.dart must not restate the seat palette as raw hex',
-    );
-  });
-
   test(
-    'board.dart has zero Color(0x) literals; theme.dart keeps them in token blocks',
+    'board.dart seat fills use LudoColors.seats, not a private hex list',
     () {
-      final String board = _boardSource();
-      final List<Match> boardLiterals = _colorHexLiteral.allMatches(board).toList();
+      final String src = _boardSource();
       expect(
-        boardLiterals,
-        isEmpty,
-        reason:
-            'board.dart must have zero Color(0x…) literals; found '
-            '${boardLiterals.length}: '
-            '${boardLiterals.map((Match m) => m.group(0)).join(', ')}',
+        RegExp(r'\bLudoColors\.seats\b').hasMatch(src),
+        isTrue,
+        reason: 'board.dart must paint seat fills from LudoColors.seats',
       );
-
-      final String theme = _themeSource();
-      final List<Match> outside = _themeColorLiteralsOutsideTokenBlocks(theme);
       expect(
-        outside,
-        isEmpty,
-        reason:
-            'theme.dart Color(0x…) literals may appear only inside LudoColors / '
-            'named token declaration blocks; found outside: '
-            '${outside.map((Match m) => m.group(0)).join(', ')}',
+        RegExp(r'\b_seatColors\b').hasMatch(src),
+        isFalse,
+        reason: 'board.dart must not keep a private duplicate seat colour list',
+      );
+      expect(
+        RegExp(
+          r'Color\(0xFFD32F2F\)|Color\(0xFF388E3C\)|'
+          r'Color\(0xFFFBC02D\)|Color\(0xFF1976D2\)',
+        ).hasMatch(src),
+        isFalse,
+        reason: 'board.dart must not restate the seat palette as raw hex',
       );
     },
   );
+
+  test('board.dart has zero Color(0x) literals; theme.dart keeps them in token blocks', () {
+    final String board = _boardSource();
+    final List<Match> boardLiterals = _colorHexLiteral
+        .allMatches(board)
+        .toList();
+    expect(
+      boardLiterals,
+      isEmpty,
+      reason:
+          'board.dart must have zero Color(0x…) literals; found '
+          '${boardLiterals.length}: '
+          '${boardLiterals.map((Match m) => m.group(0)).join(', ')}',
+    );
+
+    final String theme = _themeSource();
+    final List<Match> outside = _themeColorLiteralsOutsideTokenBlocks(theme);
+    expect(
+      outside,
+      isEmpty,
+      reason:
+          'theme.dart Color(0x…) literals may appear only inside LudoColors / '
+          'named token declaration blocks; found outside: '
+          '${outside.map((Match m) => m.group(0)).join(', ')}',
+    );
+  });
 
   test('Material chrome greys are absent from board.dart and theme.dart', () {
     const List<String> greys = <String>[
@@ -192,44 +195,44 @@ void main() {
     }
   });
 
-  test('board fill and grid inks use named tokens; warm-cream fill is gone', () {
-    final String board = _boardSource();
-    expect(
-      RegExp(r'0xFFF7F3E9', caseSensitive: false).hasMatch(board),
-      isFalse,
-      reason:
-          'warm-cream board fill 0xFFF7F3E9 must be removed or aliased to a '
-          'named token outside board.dart',
-    );
-    expect(
-      RegExp(r'\bLudoColors\.\w+\b').hasMatch(board),
-      isTrue,
-      reason: 'board fill/grid inks must reference named LudoColors tokens',
-    );
-  });
-
   test(
-    'distinct hex colours in lib ≤ 22 and board.dart hex count is zero',
+    'board fill and grid inks use named tokens; warm-cream fill is gone',
     () {
       final String board = _boardSource();
-      final List<Match> boardHex = _hex8.allMatches(board).toList();
       expect(
-        boardHex,
-        isEmpty,
+        RegExp(r'0xFFF7F3E9', caseSensitive: false).hasMatch(board),
+        isFalse,
         reason:
-            'board.dart hex count must move 10→0; found ${boardHex.length}: '
-            '${boardHex.map((Match m) => m.group(0)).join(', ')}',
+            'warm-cream board fill 0xFFF7F3E9 must be removed or aliased to a '
+            'named token outside board.dart',
       );
-
-      final Set<String> distinct = _distinctHexInLib();
       expect(
-        distinct.length,
-        lessThanOrEqualTo(22),
-        reason:
-            'distinct_hex_colors in packages/ludo_client/lib must stay ≤ 22 '
-            '(ratchet); found ${distinct.length}: '
-            '${(distinct.toList()..sort()).join(', ')}',
+        RegExp(r'\bLudoColors\.\w+\b').hasMatch(board),
+        isTrue,
+        reason: 'board fill/grid inks must reference named LudoColors tokens',
       );
     },
   );
+
+  test('distinct hex colours in lib ≤ 22 and board.dart hex count is zero', () {
+    final String board = _boardSource();
+    final List<Match> boardHex = _hex8.allMatches(board).toList();
+    expect(
+      boardHex,
+      isEmpty,
+      reason:
+          'board.dart hex count must move 10→0; found ${boardHex.length}: '
+          '${boardHex.map((Match m) => m.group(0)).join(', ')}',
+    );
+
+    final Set<String> distinct = _distinctHexInLib();
+    expect(
+      distinct.length,
+      lessThanOrEqualTo(22),
+      reason:
+          'distinct_hex_colors in packages/ludo_client/lib must stay ≤ 22 '
+          '(ratchet); found ${distinct.length}: '
+          '${(distinct.toList()..sort()).join(', ')}',
+    );
+  });
 }
