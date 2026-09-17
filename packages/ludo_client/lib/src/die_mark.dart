@@ -8,6 +8,64 @@ import 'theme.dart';
 /// this so compact and shoutable layouts stay locked together.
 double dieMarkSize(bool compact) => compact ? 72 : 148;
 
+/// Pip diameter on the compact game-chrome seat strip (space-2 on the 4/8 scale).
+const double kSeatPipSize = 8;
+
+/// Felt-edge thickness on game chrome (space-1 on the 4/8 scale).
+const double kFeltEdgeThickness = 4;
+
+/// Compact seat-identity strip: one solid pip per [LudoColors.seats] entry, in
+/// seat order. Shared by game chrome so waiting, playing, and game-over all
+/// carry the same brand cue without duplicating layout.
+class SeatPipStrip extends StatelessWidget {
+  const SeatPipStrip({super.key, this.pipSize = kSeatPipSize});
+
+  final double pipSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsetsDirectional.symmetric(
+        horizontal: 16,
+        vertical: 8,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          for (int i = 0; i < LudoColors.seats.length; i++) ...<Widget>[
+            if (i > 0) const SizedBox(width: 8),
+            Container(
+              key: Key('game-seat-pip-$i'),
+              width: pipSize,
+              height: pipSize,
+              decoration: BoxDecoration(
+                color: LudoColors.seats[i],
+                shape: BoxShape.circle,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Thin felt-coloured bar that frames the game seat-pip strip. Colour is
+/// [LudoColors.feltMid] (also accepted as [LudoBrand.felt] when those match).
+class FeltEdge extends StatelessWidget {
+  const FeltEdge({super.key, this.thickness = kFeltEdgeThickness});
+
+  final double thickness;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: LudoColors.feltMid,
+      child: SizedBox(height: thickness, width: double.infinity),
+    );
+  }
+}
+
 /// The product mark: a rounded die with one pip per seat colour. Matches the
 /// store icon language (die, not the four-quadrant board grid) so the home
 /// screen and the launcher read as the same brand.
