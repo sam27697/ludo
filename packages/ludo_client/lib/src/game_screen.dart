@@ -247,7 +247,7 @@ class _GameScreenState extends State<GameScreen> {
     return Center(
       key: const Key('game-screen-connection-lost'),
       child: Padding(
-        padding: const EdgeInsets.all(kSpace4),
+        padding: const EdgeInsets.all(kSpace6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -317,7 +317,7 @@ class _GameScreenState extends State<GameScreen> {
         turn.phase == TurnPhase.awaitRoll;
 
     return Padding(
-      padding: const EdgeInsets.all(kSpace3),
+      padding: const EdgeInsets.all(kSpace4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -426,7 +426,7 @@ class _GameScreenState extends State<GameScreen> {
   ) {
     final bool hasBoard = room.seats.length >= 2;
     return Padding(
-      padding: const EdgeInsets.all(kSpace3),
+      padding: const EdgeInsets.all(kSpace4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -463,7 +463,7 @@ class _GameScreenState extends State<GameScreen> {
     return Container(
       color: Theme.of(context).colorScheme.errorContainer,
       padding: const EdgeInsets.symmetric(
-        horizontal: kSpace3,
+        horizontal: kSpace4,
         vertical: kSpace2,
       ),
       width: double.infinity,

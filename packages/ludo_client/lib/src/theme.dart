@@ -63,12 +63,15 @@ const Duration kMotionLong = Duration(milliseconds: 400);
 /// Single control radius role used across buttons, inputs, chips, snackbars.
 const double kRadiusControl = 12;
 
-/// Named spacing tokens for EdgeInsets. 4 / 8 / 16 / 24 on the 4/8 scale
-/// (tokens.md space-1, space-2, space-4, space-6).
+/// Named spacing tokens for EdgeInsets. 4 / 8 / 12 / 16 / 20 / 24 / 32 on
+/// the 4/8 scale (tokens.md space-1 through space-7).
 const double kSpace1 = 4;
 const double kSpace2 = 8;
-const double kSpace3 = 16;
-const double kSpace4 = 24;
+const double kSpace3 = 12;
+const double kSpace4 = 16;
+const double kSpace5 = 20;
+const double kSpace6 = 24;
+const double kSpace7 = 32;
 
 /// Brand colours and motion readable from [Theme.of] via ThemeExtension.
 @immutable

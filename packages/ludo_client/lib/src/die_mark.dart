@@ -26,8 +26,8 @@ class SeatPipStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsetsDirectional.symmetric(
-        horizontal: 16,
-        vertical: 8,
+        horizontal: kSpace4,
+        vertical: kSpace2,
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,

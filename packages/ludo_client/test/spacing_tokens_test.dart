@@ -1,6 +1,7 @@
 // Source scans that keep lobby and game padding on named spacing tokens:
-// theme.dart publishes the 4 / 8 / 16 / 24 scale, and EdgeInsets arguments
-// in the lobby and game screens reference those names instead of literals.
+// theme.dart publishes the 4 / 8 / 12 / 16 / 20 / 24 / 32 scale, and
+// EdgeInsets arguments in the lobby and game screens reference those names
+// instead of literals.
 
 import 'dart:io';
 
@@ -81,15 +82,18 @@ Map<String, double> _spaceTokenValues(String src) {
   return found;
 }
 
-/// Canonical kSpace1..kSpace4 values when those exact names exist.
+/// Canonical kSpace1..kSpace7 values when those exact names exist.
 const Map<String, double> _canonicalSpaceValues = <String, double>{
   'kSpace1': 4,
   'kSpace2': 8,
-  'kSpace3': 16,
-  'kSpace4': 24,
+  'kSpace3': 12,
+  'kSpace4': 16,
+  'kSpace5': 20,
+  'kSpace6': 24,
+  'kSpace7': 32,
 };
 
-const List<double> _requiredSpaceScale = <double>[4, 8, 16, 24];
+const List<double> _requiredSpaceScale = <double>[4, 8, 12, 16, 20, 24, 32];
 
 class _EdgeInsetsCall {
   const _EdgeInsetsCall({
@@ -157,9 +161,10 @@ List<_EdgeInsetsCall> _edgeInsetsCalls(String src, String fileLabel) {
   return calls;
 }
 
-/// Bare 4 / 8 / 16 / 24 (optional .0) that are not part of an identifier.
+/// Bare 4 / 8 / 12 / 16 / 20 / 24 / 32 (optional .0) that are not part of
+/// an identifier.
 final RegExp _bareScaleLiteral = RegExp(
-  r'(?<![A-Za-z0-9_])(4|8|16|24)(?:\.0+)?(?![A-Za-z0-9_.])',
+  r'(?<![A-Za-z0-9_])(4|8|12|16|20|24|32)(?:\.0+)?(?![A-Za-z0-9_.])',
 );
 
 List<String> _bareScaleHits(List<_EdgeInsetsCall> calls) {
@@ -190,7 +195,8 @@ bool _callsReferenceTokens(
 }
 
 void main() {
-  test('theme.dart defines spacing constants kSpace1=4 kSpace2=8 kSpace3=16 kSpace4=24', () {
+  test('theme.dart defines spacing constants kSpace1=4 kSpace2=8 kSpace3=12 '
+      'kSpace4=16 kSpace5=20 kSpace6=24 kSpace7=32', () {
     final Map<String, double> tokens = _spaceTokenValues(_themeSource());
 
     for (final MapEntry<String, double> required
@@ -211,7 +217,8 @@ void main() {
       isNotEmpty,
       reason:
           'theme.dart must declare named spacing constants (kSpace1=4, '
-          'kSpace2=8, kSpace3=16, kSpace4=24, or equivalent space* names)',
+          'kSpace2=8, kSpace3=12, kSpace4=16, kSpace5=20, kSpace6=24, '
+          'kSpace7=32, or equivalent space* names)',
     );
     final Set<double> values = tokens.values.toSet();
     for (final double required in _requiredSpaceScale) {
@@ -225,58 +232,61 @@ void main() {
     }
   });
 
-  test('lobby_screen and game_screen EdgeInsets have zero bare 4/8/16/24', () {
-    final Map<String, double> tokens = _spaceTokenValues(_themeSource());
-    final Set<String> names = tokens.keys.toSet();
+  test(
+    'lobby_screen and game_screen EdgeInsets have zero bare 4/8/12/16/20/24/32',
+    () {
+      final Map<String, double> tokens = _spaceTokenValues(_themeSource());
+      final Set<String> names = tokens.keys.toSet();
 
-    final String lobby = _lobbySource();
-    final String game = _gameSource();
-    final List<_EdgeInsetsCall> lobbyCalls = _edgeInsetsCalls(
-      lobby,
-      'lobby_screen.dart',
-    );
-    final List<_EdgeInsetsCall> gameCalls = _edgeInsetsCalls(
-      game,
-      'game_screen.dart',
-    );
+      final String lobby = _lobbySource();
+      final String game = _gameSource();
+      final List<_EdgeInsetsCall> lobbyCalls = _edgeInsetsCalls(
+        lobby,
+        'lobby_screen.dart',
+      );
+      final List<_EdgeInsetsCall> gameCalls = _edgeInsetsCalls(
+        game,
+        'game_screen.dart',
+      );
 
-    expect(
-      lobbyCalls,
-      isNotEmpty,
-      reason: 'lobby_screen.dart must still declare EdgeInsets padding',
-    );
-    expect(
-      gameCalls,
-      isNotEmpty,
-      reason: 'game_screen.dart must still declare EdgeInsets padding',
-    );
+      expect(
+        lobbyCalls,
+        isNotEmpty,
+        reason: 'lobby_screen.dart must still declare EdgeInsets padding',
+      );
+      expect(
+        gameCalls,
+        isNotEmpty,
+        reason: 'game_screen.dart must still declare EdgeInsets padding',
+      );
 
-    final List<String> bare = <String>[
-      ..._bareScaleHits(lobbyCalls),
-      ..._bareScaleHits(gameCalls),
-    ];
-    expect(
-      bare,
-      isEmpty,
-      reason:
-          'EdgeInsets arguments in lobby_screen.dart and game_screen.dart '
-          'must not use bare 4/8/16/24; found ${bare.length}: '
-          '${bare.join('; ')}',
-    );
+      final List<String> bare = <String>[
+        ..._bareScaleHits(lobbyCalls),
+        ..._bareScaleHits(gameCalls),
+      ];
+      expect(
+        bare,
+        isEmpty,
+        reason:
+            'EdgeInsets arguments in lobby_screen.dart and game_screen.dart '
+            'must not use bare 4/8/12/16/20/24/32; found ${bare.length}: '
+            '${bare.join('; ')}',
+      );
 
-    expect(
-      _callsReferenceTokens(lobbyCalls, names),
-      isTrue,
-      reason:
-          'lobby_screen.dart EdgeInsets must reference theme.dart spacing '
-          'constants; known tokens: ${names.join(', ')}',
-    );
-    expect(
-      _callsReferenceTokens(gameCalls, names),
-      isTrue,
-      reason:
-          'game_screen.dart EdgeInsets must reference theme.dart spacing '
-          'constants; known tokens: ${names.join(', ')}',
-    );
-  });
+      expect(
+        _callsReferenceTokens(lobbyCalls, names),
+        isTrue,
+        reason:
+            'lobby_screen.dart EdgeInsets must reference theme.dart spacing '
+            'constants; known tokens: ${names.join(', ')}',
+      );
+      expect(
+        _callsReferenceTokens(gameCalls, names),
+        isTrue,
+        reason:
+            'game_screen.dart EdgeInsets must reference theme.dart spacing '
+            'constants; known tokens: ${names.join(', ')}',
+      );
+    },
+  );
 }
