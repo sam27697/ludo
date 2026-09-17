@@ -13,7 +13,6 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
@@ -22,6 +21,7 @@ import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
 
@@ -314,59 +314,6 @@ Future<void> _hostThenRelaunchHome(
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
   await tester.pumpAndSettle();
-}
-
-/// In-memory [SharedPreferences.setMockInitialValues] for these widget
-/// tests. Starts empty so Home has no last-table memory until a successful
-/// create writes one; later reads see those writes in the same test.
-class SharedPreferences {
-  static const String _prefix = 'flutter.';
-  static const MethodChannel _channel = MethodChannel(
-    'plugins.flutter.io/shared_preferences',
-  );
-
-  static String _storeKey(String key) =>
-      key.startsWith(_prefix) ? key : '$_prefix$key';
-
-  static void setMockInitialValues(Map<String, Object> values) {
-    final Map<String, Object> memory = <String, Object>{
-      for (final MapEntry<String, Object> entry in values.entries)
-        _storeKey(entry.key): entry.value,
-    };
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(_channel, (MethodCall methodCall) async {
-          final Object? raw = methodCall.arguments;
-          final Map<Object?, Object?> args = raw is Map<Object?, Object?>
-              ? raw
-              : const <Object?, Object?>{};
-          switch (methodCall.method) {
-            case 'getAll':
-              return memory;
-            case 'getAllWithPrefix':
-              final String prefix = args['prefix'] as String? ?? '';
-              return <String, Object>{
-                for (final MapEntry<String, Object> entry in memory.entries)
-                  if (entry.key.startsWith(prefix)) entry.key: entry.value,
-              };
-            case 'remove':
-              memory.remove(args['key']);
-              return true;
-            case 'clear':
-              memory.clear();
-              return true;
-            default:
-              if (methodCall.method.startsWith('set')) {
-                final String? key = args['key'] as String?;
-                final Object? value = args['value'];
-                if (key != null && value != null) {
-                  memory[key] = value;
-                }
-                return true;
-              }
-              return null;
-          }
-        });
-  }
 }
 
 void main() {
