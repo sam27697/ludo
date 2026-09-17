@@ -3,7 +3,6 @@
 // in {4, 8, 10, 12, 14, 16, 20, 24, 32}. Off-scale 10 maps to kSpace2 or
 // kSpace3; off-scale 14 maps to kSpace3 or kSpace4.
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
