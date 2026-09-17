@@ -253,20 +253,20 @@ class _GameScreenState extends State<GameScreen> {
           children: [
             Text(loc.lobbyConnectionLost, textAlign: TextAlign.center),
             if (errorMessage != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: kSpace2),
               Text(
                 errorMessage,
                 key: const Key('game-screen-error-message'),
                 textAlign: TextAlign.center,
               ),
             ],
-            const SizedBox(height: 16),
+            const SizedBox(height: kSpace4),
             ElevatedButton(
               key: const Key('game-screen-reconnect-button'),
               onPressed: controller.reconnect,
               child: Text(loc.lobbyReconnectButton),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: kSpace2),
             OutlinedButton(
               key: const Key('game-screen-leave-button'),
               onPressed: _leave,
@@ -327,7 +327,7 @@ class _GameScreenState extends State<GameScreen> {
             textAlign: TextAlign.center,
           ),
           if (turn != null && turn.value != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: kSpace2),
             Text(
               loc.gameDieValue(turn.value!),
               key: const Key('game-screen-dice-value'),
@@ -335,14 +335,14 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ],
           if (turn != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: kSpace2),
             Text(
               loc.gameTurnCountdown(_countdownRemainingSeconds),
               key: const Key('game-screen-turn-countdown'),
               textAlign: TextAlign.center,
             ),
           ],
-          const SizedBox(height: 16),
+          const SizedBox(height: kSpace4),
           Expanded(
             child: LudoBoard(
               key: const Key('game-screen-board'),
@@ -350,14 +350,14 @@ class _GameScreenState extends State<GameScreen> {
               seatsInPlay: _seatsInPlayOf(room),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: kSpace4),
           ElevatedButton(
             key: const Key('game-screen-roll-button'),
             style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
             onPressed: rollEnabled ? controller.roll : null,
             child: Text(loc.gameRollButton),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: kSpace2),
           // Four buttons in a single row leave too little width for either
           // locale's label at a phone's width -- "Token 1" and "قطعة 4" both
           // wrap mid-word once each button is down to a few dozen logical
@@ -374,7 +374,7 @@ class _GameScreenState extends State<GameScreen> {
               _tokenButton(loc, controller, room, seat, 1),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: kSpace2),
           Row(
             children: [
               _tokenButton(loc, controller, room, seat, 2),
@@ -436,7 +436,7 @@ class _GameScreenState extends State<GameScreen> {
             textAlign: TextAlign.center,
           ),
           if (hasBoard) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: kSpace4),
             Expanded(
               child: LudoBoard(
                 key: const Key('game-screen-board'),
@@ -445,7 +445,7 @@ class _GameScreenState extends State<GameScreen> {
               ),
             ),
           ],
-          const SizedBox(height: 16),
+          const SizedBox(height: kSpace4),
           ElevatedButton(
             key: const Key('game-screen-new-room-button'),
             style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),

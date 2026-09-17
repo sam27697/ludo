@@ -33,7 +33,7 @@ class SeatPipStrip extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
           for (int i = 0; i < LudoColors.seats.length; i++) ...<Widget>[
-            if (i > 0) const SizedBox(width: 8),
+            if (i > 0) const SizedBox(width: kSpace2),
             Container(
               key: Key('game-seat-pip-$i'),
               width: pipSize,
