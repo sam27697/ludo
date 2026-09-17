@@ -161,9 +161,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           const CircularProgressIndicator(),
-          const SizedBox(height: 16),
+          const SizedBox(height: kSpace4),
           Text(loc.lobbyConnecting),
-          const SizedBox(height: 16),
+          const SizedBox(height: kSpace4),
           OutlinedButton(
             key: const Key('lobby-cancel-button'),
             style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
@@ -187,7 +187,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               lobbyErrorMessage(loc, controller.errorCode),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: kSpace4),
             ElevatedButton(
               key: const Key('lobby-retry-button'),
               onPressed: _issueRequest,
@@ -208,7 +208,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(loc.lobbyConnectionLost, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
+            const SizedBox(height: kSpace4),
             ElevatedButton(
               key: const Key('lobby-reconnect-button'),
               onPressed: controller.reconnect,
@@ -244,7 +244,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             textAlign: TextAlign.center,
             style: textTheme.labelLarge?.copyWith(color: LudoColors.inkMuted),
           ),
-          SizedBox(height: compact ? 8 : 12),
+          SizedBox(height: compact ? kSpace2 : kSpace3),
           Center(
             child: DieMark(
               size: dieSize,
@@ -263,7 +263,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ),
           ),
-          SizedBox(height: compact ? 12 : 16),
+          SizedBox(height: compact ? kSpace3 : kSpace4),
           Row(
             children: [
               Expanded(
@@ -274,7 +274,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   child: Text(loc.lobbyCopyLinkButton),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: kSpace3),
               Expanded(
                 child: OutlinedButton(
                   key: const Key('lobby-copy-code-button'),
@@ -284,21 +284,21 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ],
           ),
-          SizedBox(height: compact ? 16 : 24),
+          SizedBox(height: compact ? kSpace4 : kSpace6),
           for (final SeatState seat in room.seats)
             Padding(
               key: Key('lobby-seat-${seat.seat}'),
               padding: const EdgeInsets.symmetric(vertical: kSpace1),
               child: Text(seat.name, textAlign: TextAlign.center),
             ),
-          const SizedBox(height: 16),
+          const SizedBox(height: kSpace4),
           Text(
             loc.lobbyWaitingForPlayers(room.seats.length, room.players),
             key: const Key('lobby-waiting'),
             textAlign: TextAlign.center,
           ),
           if (controller.isHost) ...[
-            SizedBox(height: compact ? 16 : 24),
+            SizedBox(height: compact ? kSpace4 : kSpace6),
             ElevatedButton(
               key: const Key('lobby-start-button'),
               onPressed: roomFull ? controller.startGame : null,
