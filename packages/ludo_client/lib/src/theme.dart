@@ -258,7 +258,10 @@ ThemeData buildAppTheme() {
         disabledForegroundColor: LudoColors.inkMuted,
         disabledBackgroundColor: LudoColors.paperElevated,
         elevation: 0,
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: kSpace5,
+          vertical: kSpace3,
+        ),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(kRadiusControl),
         ),
@@ -275,7 +278,10 @@ ThemeData buildAppTheme() {
         foregroundColor: LudoColors.ink,
         disabledForegroundColor: LudoColors.inkMuted,
         side: const BorderSide(color: LudoColors.feltMid, width: 1.2),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: kSpace4,
+          vertical: kSpace3,
+        ),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(kRadiusControl),
         ),
