@@ -122,6 +122,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
     final RoomController controller = widget.controller;
+    final bool connected = controller.phase == RoomPhase.connected;
 
     final Widget phaseBody = switch (controller.phase) {
       RoomPhase.idle || RoomPhase.connecting => _connectingBody(loc),
@@ -136,6 +137,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
         child: SafeArea(
           child: Column(
             children: [
+              // Same signature chrome as GameScreen: felt edge frames the
+              // seat-pip strip so home→lobby→game stays one continuous table.
+              // Only on the connected gathering body to avoid crowding
+              // connecting / error / closed states.
+              if (connected) ...[
+                const FeltEdge(key: Key('game-felt-edge')),
+                const SeatPipStrip(key: Key('game-seat-pip-strip')),
+              ],
               if (controller.hasDesynced) _desyncBanner(loc, controller),
               Expanded(child: phaseBody),
             ],
