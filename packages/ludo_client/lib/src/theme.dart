@@ -163,7 +163,7 @@ TextTheme _ludoTextTheme(TextTheme base) {
   );
 }
 
-/// Shared Material theme. Hand-built [ColorScheme] from [LudoColors] only —
+/// Shared Material theme. Hand-built [ColorScheme] from [LudoColors] only:
 /// no seed-derived slots, so every role is a brand or seat token.
 ThemeData buildAppTheme() {
   const ColorScheme scheme = ColorScheme(
