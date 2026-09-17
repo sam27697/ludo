@@ -20,7 +20,14 @@ abstract final class LudoColors {
   static const Color action = Color(0xFF0F6B5F);
   static const Color actionOn = Color(0xFFF7FBFA);
 
-  /// Seat colours — same as [board.dart], kept here for the brand die.
+  /// Status / feedback. Material error red, named once for the paintbox.
+  static const Color error = Color(0xFFB3261E);
+
+  /// Soft mint washes behind the home felt composition (not flat paper).
+  static const Color paperWashTop = Color(0xFFD8EEE8);
+  static const Color paperWashBottom = Color(0xFFD2E8E2);
+
+  /// Seat colours: single source for board yards/tokens and the brand die.
   static const List<Color> seats = <Color>[
     Color(0xFFD32F2F),
     Color(0xFF388E3C),
@@ -168,7 +175,7 @@ ThemeData buildAppTheme() {
     onSecondary: LudoColors.actionOn,
     surface: LudoColors.paperElevated,
     onSurface: LudoColors.ink,
-    error: const Color(0xFFB3261E),
+    error: LudoColors.error,
   );
 
   final ThemeData base = ThemeData(
@@ -309,9 +316,9 @@ class FeltBackdrop extends StatelessWidget {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: <Color>[
-            Color(0xFFD8EEE8),
+            LudoColors.paperWashTop,
             LudoColors.paper,
-            Color(0xFFD2E8E2),
+            LudoColors.paperWashBottom,
           ],
           stops: <double>[0.0, 0.45, 1.0],
         ),
