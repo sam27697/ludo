@@ -12,6 +12,7 @@ import 'dart:math' as math;
 import 'package:flutter/widgets.dart';
 
 import 'board_geometry.dart';
+import 'theme.dart';
 
 export 'board_geometry.dart';
 
@@ -163,9 +164,9 @@ class _TokenMarker extends StatelessWidget {
         child: DecoratedBox(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: _seatColors[seat],
+            color: LudoColors.seats[seat],
             border: Border.all(
-              color: const Color(0xFF000000).withValues(alpha: 0.55),
+              color: LudoColors.ink.withValues(alpha: 0.55),
               width: math.max(1, tokenSize * 0.06),
             ),
           ),
@@ -175,19 +176,12 @@ class _TokenMarker extends StatelessWidget {
   }
 }
 
-/// Presentation only. Nothing in this file branches on colour; every branch
-/// above is on seat, and this list is the one place seat becomes a colour.
-const List<Color> _seatColors = [
-  Color(0xFFD32F2F), // seat 0
-  Color(0xFF388E3C), // seat 1
-  Color(0xFFFBC02D), // seat 2
-  Color(0xFF1976D2), // seat 3
-];
-
 /// Paints the static board: the grid, the four yards, the shared track, the
 /// four home columns and the centre. None of this determines where a token
 /// goes; it is drawn from the same [cellFor] a token uses, so the background
 /// and the tokens can never show a track that disagrees with each other.
+///
+/// Seat fills and board inks come from [LudoColors]: one paintbox with theme.
 class _BoardPainter extends CustomPainter {
   const _BoardPainter();
 
@@ -195,10 +189,7 @@ class _BoardPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final cellSize = size.width / 15;
 
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = const Color(0xFFF7F3E9),
-    );
+    canvas.drawRect(Offset.zero & size, Paint()..color = LudoColors.dieFace);
 
     const yardCorners = [
       (0, 0), // seat 0, top-left
@@ -215,7 +206,7 @@ class _BoardPainter extends CustomPainter {
         row,
         6,
         6,
-        _seatColors[seat].withValues(alpha: 0.16),
+        LudoColors.seats[seat].withValues(alpha: 0.16),
       );
     }
 
@@ -226,7 +217,7 @@ class _BoardPainter extends CustomPainter {
           canvas,
           cellSize,
           cell,
-          _seatColors[seat].withValues(alpha: 0.32),
+          LudoColors.seats[seat].withValues(alpha: 0.32),
         );
       }
     }
@@ -237,7 +228,7 @@ class _BoardPainter extends CustomPainter {
         canvas,
         cellSize,
         cell,
-        const Color(0xFFFFFFFF).withValues(alpha: 0.65),
+        LudoColors.paperElevated.withValues(alpha: 0.65),
       );
     }
 
@@ -248,11 +239,11 @@ class _BoardPainter extends CustomPainter {
       6,
       3,
       3,
-      const Color(0xFFBDBDBD).withValues(alpha: 0.5),
+      LudoColors.inkMuted.withValues(alpha: 0.5),
     );
 
     final gridPaint = Paint()
-      ..color = const Color(0xFF9E9E9E).withValues(alpha: 0.6)
+      ..color = LudoColors.inkMuted.withValues(alpha: 0.6)
       ..strokeWidth = 1;
     for (var i = 0; i <= 15; i++) {
       final offset = i * cellSize;
@@ -267,7 +258,7 @@ class _BoardPainter extends CustomPainter {
     canvas.drawRect(
       Offset.zero & size,
       Paint()
-        ..color = const Color(0xFF424242)
+        ..color = LudoColors.ink
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2,
     );

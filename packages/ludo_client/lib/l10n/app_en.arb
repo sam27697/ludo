@@ -36,28 +36,6 @@
   "@homeLocaleToggleLabel": {
     "description": "Label of the language toggle button, naming the language it switches to."
   },
-  "roomScreenTitle": "Room",
-  "@roomScreenTitle": {
-    "description": "App bar title of the placeholder room screen."
-  },
-  "roomScreenCodeLabel": "Room code: {code}",
-  "@roomScreenCodeLabel": {
-    "description": "Shows the room code on the placeholder room screen.",
-    "placeholders": {
-      "code": {
-        "type": "String",
-        "example": "AB23CD"
-      }
-    }
-  },
-  "roomScreenNoCode": "No room code has been assigned yet.",
-  "@roomScreenNoCode": {
-    "description": "Shown on the placeholder room screen instead of a code when there is no server connection to assign one, such as right after tapping Create Room."
-  },
-  "roomScreenNotImplemented": "The connection to the server is not implemented yet. This screen does not do anything else right now.",
-  "@roomScreenNotImplemented": {
-    "description": "Honest placeholder text explaining that the room screen has no working connection yet."
-  },
   "homeNameFieldLabel": "Your name",
   "@homeNameFieldLabel": {
     "description": "Label of the text field on the home screen where the player types the name shown to other players."
