@@ -9,13 +9,10 @@
   "homeRoomCodeInvalid": "هذا لا يبدو رمز غرفة صحيحًا. تحقق من الحروف والأرقام وحاول مرة أخرى.",
   "homeLocaleToggleTooltip": "تغيير اللغة",
   "homeLocaleToggleLabel": "English",
-  "roomScreenTitle": "الغرفة",
-  "roomScreenCodeLabel": "رمز الغرفة: {code}",
-  "roomScreenNoCode": "لم يتم تعيين رمز غرفة بعد.",
-  "roomScreenNotImplemented": "الاتصال بالخادم غير مطبق بعد. لا تقوم هذه الشاشة بأي شيء آخر الآن.",
   "homeNameFieldLabel": "اسمك",
   "homeDefaultPlayerName": "لاعب",
   "homePlayersSelectorLabel": "عدد اللاعبين",
+  "homePlayersDisclosureClosed": "عدد اللاعبين: 4",
   "homePlayersTwo": "لاعبان",
   "homePlayersThree": "3 لاعبين",
   "homePlayersFour": "4 لاعبين",
@@ -50,5 +47,6 @@
   "gameOverYouWin": "لقد فزت",
   "gameOverPlayerWins": "فاز {name}",
   "gameOverEnded": "انتهت اللعبة",
-  "gameLeaveButton": "مغادرة"
+  "gameLeaveButton": "مغادرة",
+  "gameNewRoomButton": "طاولة جديدة"
 }

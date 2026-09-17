@@ -16,8 +16,16 @@ import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
+import 'die_mark.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
+import 'theme.dart';
+
+/// Distinct [Navigator.pop] result from the finished-board next-table
+/// button. The AppBar leave control pops with no result, so the screen
+/// that pushed this route can leave() and dispose the old controller
+/// without opening another table.
+enum GameScreenResult { newTable }
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key, required this.controller});
@@ -163,8 +171,16 @@ class _GameScreenState extends State<GameScreen> {
   /// this screen's only job is to get the player off it promptly, on a
   /// dead server or a live one, and leave the actual leaving to the code
   /// that was reviewed to do it in the right order.
+  ///
+  /// The finished-board next-table control is not this path: it pops
+  /// [GameScreenResult.newTable] so HomeScreen can open a fresh table
+  /// after that same leave()/dispose() sequence.
   void _leave() {
     Navigator.of(context).pop();
+  }
+
+  void _requestNewTable() {
+    Navigator.of(context).pop(GameScreenResult.newTable);
   }
 
   @override
@@ -195,17 +211,22 @@ class _GameScreenState extends State<GameScreen> {
       appBar: AppBar(
         title: Text(loc.gameScreenTitle),
         actions: [
-          IconButton(
+          TextButton(
             key: const Key('game-screen-appbar-leave'),
-            icon: const Icon(Icons.logout),
-            tooltip: loc.gameLeaveButton,
+            style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
             onPressed: _leave,
+            child: Text(loc.gameLeaveButton),
           ),
         ],
       ),
       body: SafeArea(
         child: Column(
           children: [
+            // Signature chrome: felt edge frames the seat-pip strip so every
+            // body below (waiting, playing, game-over, and the rest) inherits
+            // the same table cue without each state painting its own copy.
+            const FeltEdge(key: Key('game-felt-edge')),
+            const SeatPipStrip(key: Key('game-seat-pip-strip')),
             if (controller.hasDesynced) _desyncBanner(context, loc),
             Expanded(child: body),
           ],
@@ -226,27 +247,27 @@ class _GameScreenState extends State<GameScreen> {
     return Center(
       key: const Key('game-screen-connection-lost'),
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(kSpace6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(loc.lobbyConnectionLost, textAlign: TextAlign.center),
             if (errorMessage != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: kSpace2),
               Text(
                 errorMessage,
                 key: const Key('game-screen-error-message'),
                 textAlign: TextAlign.center,
               ),
             ],
-            const SizedBox(height: 16),
+            const SizedBox(height: kSpace4),
             ElevatedButton(
               key: const Key('game-screen-reconnect-button'),
               onPressed: controller.reconnect,
               child: Text(loc.lobbyReconnectButton),
             ),
-            const SizedBox(height: 8),
-            ElevatedButton(
+            const SizedBox(height: kSpace2),
+            OutlinedButton(
               key: const Key('game-screen-leave-button'),
               onPressed: _leave,
               child: Text(loc.gameLeaveButton),
@@ -296,7 +317,7 @@ class _GameScreenState extends State<GameScreen> {
         turn.phase == TurnPhase.awaitRoll;
 
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(kSpace4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -306,7 +327,7 @@ class _GameScreenState extends State<GameScreen> {
             textAlign: TextAlign.center,
           ),
           if (turn != null && turn.value != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: kSpace2),
             Text(
               loc.gameDieValue(turn.value!),
               key: const Key('game-screen-dice-value'),
@@ -314,14 +335,14 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ],
           if (turn != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: kSpace2),
             Text(
               loc.gameTurnCountdown(_countdownRemainingSeconds),
               key: const Key('game-screen-turn-countdown'),
               textAlign: TextAlign.center,
             ),
           ],
-          const SizedBox(height: 16),
+          const SizedBox(height: kSpace4),
           Expanded(
             child: LudoBoard(
               key: const Key('game-screen-board'),
@@ -329,13 +350,14 @@ class _GameScreenState extends State<GameScreen> {
               seatsInPlay: _seatsInPlayOf(room),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: kSpace4),
           ElevatedButton(
             key: const Key('game-screen-roll-button'),
+            style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
             onPressed: rollEnabled ? controller.roll : null,
             child: Text(loc.gameRollButton),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: kSpace2),
           // Four buttons in a single row leave too little width for either
           // locale's label at a phone's width -- "Token 1" and "قطعة 4" both
           // wrap mid-word once each button is down to a few dozen logical
@@ -352,7 +374,7 @@ class _GameScreenState extends State<GameScreen> {
               _tokenButton(loc, controller, room, seat, 1),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: kSpace2),
           Row(
             children: [
               _tokenButton(loc, controller, room, seat, 2),
@@ -377,7 +399,7 @@ class _GameScreenState extends State<GameScreen> {
   ) {
     return Expanded(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: kSpace1),
         child: ElevatedButton(
           key: Key('game-screen-token-$index'),
           onPressed: _tokenEnabled(room, seat, index)
@@ -395,7 +417,8 @@ class _GameScreenState extends State<GameScreen> {
   /// H6.2 and H7: the game has finished. The board (when there are still at
   /// least two seats to draw it from) and the winner text; the Roll button
   /// and the four token buttons are absent, not merely disabled, because
-  /// there is nothing left to press.
+  /// there is nothing left to press. The next-table button is the honest
+  /// action on this ending: it is not the AppBar leave control.
   Widget _gameOverBody(
     AppLocalizations loc,
     RoomController controller,
@@ -403,7 +426,7 @@ class _GameScreenState extends State<GameScreen> {
   ) {
     final bool hasBoard = room.seats.length >= 2;
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(kSpace4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -413,7 +436,7 @@ class _GameScreenState extends State<GameScreen> {
             textAlign: TextAlign.center,
           ),
           if (hasBoard) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: kSpace4),
             Expanded(
               child: LudoBoard(
                 key: const Key('game-screen-board'),
@@ -422,6 +445,13 @@ class _GameScreenState extends State<GameScreen> {
               ),
             ),
           ],
+          const SizedBox(height: kSpace4),
+          ElevatedButton(
+            key: const Key('game-screen-new-room-button'),
+            style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
+            onPressed: _requestNewTable,
+            child: Text(loc.gameNewRoomButton),
+          ),
         ],
       ),
     );
@@ -432,7 +462,10 @@ class _GameScreenState extends State<GameScreen> {
   Widget _desyncBanner(BuildContext context, AppLocalizations loc) {
     return Container(
       color: Theme.of(context).colorScheme.errorContainer,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(
+        horizontal: kSpace4,
+        vertical: kSpace2,
+      ),
       width: double.infinity,
       child: Text(
         loc.lobbyDesynced,

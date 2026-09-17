@@ -6,7 +6,7 @@ import 'deep_link.dart';
 import 'home_screen.dart';
 import 'theme.dart';
 
-export 'theme.dart' show buildAppTheme, LudoColors;
+export 'theme.dart' show buildAppTheme, LudoBrand, LudoColors, LudoColorsDark;
 
 /// The two locales this app ships with. Order matters only for
 /// [MaterialApp.supportedLocales]; the toggle in [HomeScreen] switches

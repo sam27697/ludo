@@ -184,6 +184,22 @@ Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
   await tester.pump(const Duration(milliseconds: 400));
 }
 
+/// Opens the seat-count selector. It stays hidden until the player taps
+/// home-players-disclosure; tests that pick a non-default count must open
+/// it first. Bounded pumps only: nothing here mounts a LobbyScreen yet.
+Future<void> _openPlayersDisclosure(WidgetTester tester) async {
+  final Finder disclosure = find.byKey(const Key('home-players-disclosure'));
+  expect(
+    disclosure,
+    findsOneWidget,
+    reason:
+        'home-players-disclosure must be on screen so the player can '
+        'open the seat-count selector',
+  );
+  await tester.tap(disclosure);
+  await tester.pump();
+}
+
 void main() {
   // ==========================================================================
   // C1: create, share, start, play, win.
@@ -203,6 +219,7 @@ void main() {
         // A non-default player count (3, not the selector's default of 4):
         // standing lesson 6 says a forwarding claim proved only at the
         // default value proves nothing.
+        await _openPlayersDisclosure(tester);
         final homeContext = tester.element(find.byType(Scaffold));
         final homeLoc = AppLocalizations.of(homeContext);
         await tester.tap(
