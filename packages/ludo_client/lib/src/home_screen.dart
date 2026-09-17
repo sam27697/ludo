@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'deep_link.dart';
@@ -659,6 +660,9 @@ class _HomeScreenState extends State<HomeScreen>
                             controller: _codeController,
                             textAlign: TextAlign.center,
                             textCapitalization: TextCapitalization.characters,
+                            inputFormatters: const <TextInputFormatter>[
+                              _RoomCodeInputFormatter(),
+                            ],
                             decoration: InputDecoration(
                               labelText: loc.homeRoomCodeFieldLabel,
                               hintText: loc.homeRoomCodeFieldHint,
@@ -696,6 +700,43 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     );
+  }
+}
+
+/// Strips spaces/dashes and upper-cases as the player types or pastes, so
+/// the field shows the same form [normalizeRoomCode] will send on Join.
+/// Selection offsets are mapped through the stripped prefix so the caret
+/// does not jump to the end.
+class _RoomCodeInputFormatter extends TextInputFormatter {
+  const _RoomCodeInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final String normalized = normalizeRoomCode(newValue.text);
+    if (normalized == newValue.text) {
+      return newValue;
+    }
+    return TextEditingValue(
+      text: normalized,
+      selection: TextSelection(
+        baseOffset: _offset(newValue.text, newValue.selection.baseOffset),
+        extentOffset: _offset(newValue.text, newValue.selection.extentOffset),
+        affinity: newValue.selection.affinity,
+        isDirectional: newValue.selection.isDirectional,
+      ),
+    );
+  }
+
+  /// Maps [offset] in [raw] onto the normalised string.
+  static int _offset(String raw, int offset) {
+    if (offset <= 0) {
+      return offset;
+    }
+    final int end = offset < raw.length ? offset : raw.length;
+    return normalizeRoomCode(raw.substring(0, end)).length;
   }
 }
 
