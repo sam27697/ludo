@@ -13,7 +13,6 @@ import 'package:ludo_client/src/app.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
-import 'package:ludo_client/src/server_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const Key _codeKey = Key('room-code-field');
