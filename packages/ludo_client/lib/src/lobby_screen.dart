@@ -179,7 +179,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return Center(
       key: const Key('lobby-error'),
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(kSpace4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -203,7 +203,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return Center(
       key: const Key('lobby-closed'),
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(kSpace4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -230,7 +230,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final bool compact = viewHeight < 640;
     final double dieSize = dieMarkSize(compact);
     return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(24, compact ? 8 : 24, 24, compact ? 16 : 24),
+      padding: EdgeInsets.fromLTRB(
+        kSpace4,
+        compact ? kSpace2 : kSpace4,
+        kSpace4,
+        compact ? kSpace3 : kSpace4,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -283,7 +288,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           for (final SeatState seat in room.seats)
             Padding(
               key: Key('lobby-seat-${seat.seat}'),
-              padding: const EdgeInsets.symmetric(vertical: 4),
+              padding: const EdgeInsets.symmetric(vertical: kSpace1),
               child: Text(seat.name, textAlign: TextAlign.center),
             ),
           const SizedBox(height: 16),
@@ -318,7 +323,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
       key: const Key('lobby-desync-banner'),
       color: Theme.of(context).colorScheme.errorContainer,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(
+          horizontal: kSpace3,
+          vertical: kSpace2,
+        ),
         child: Row(
           children: [
             Expanded(
