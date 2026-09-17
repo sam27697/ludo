@@ -602,6 +602,10 @@ class _HomeScreenState extends State<HomeScreen>
                             key: const Key('home-name-field'),
                             controller: _nameController,
                             textAlign: TextAlign.center,
+                            textInputAction: TextInputAction.go,
+                            onSubmitted: (_) {
+                              _createRoom();
+                            },
                             decoration: InputDecoration(
                               labelText: loc.homeNameFieldLabel,
                               isDense: compact,
@@ -660,6 +664,12 @@ class _HomeScreenState extends State<HomeScreen>
                             controller: _codeController,
                             textAlign: TextAlign.center,
                             textCapitalization: TextCapitalization.characters,
+                            textInputAction: TextInputAction.go,
+                            onSubmitted: (_) {
+                              if (joinPrimary) {
+                                _joinRoom();
+                              }
+                            },
                             inputFormatters: const <TextInputFormatter>[
                               _RoomCodeInputFormatter(),
                             ],
