@@ -61,6 +61,7 @@ class _HomeScreenState extends State<HomeScreen>
   bool _hasLastTable = false;
   String? _lastTableName;
   int? _lastTableSeats;
+  List<String> _recentCodes = const <String>[];
   RoomController? _ownedController;
 
   @override
@@ -152,22 +153,33 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
-  /// Restores last successful-create name and seats, and the last-table
-  /// chip, from [SessionMemory]. An empty or unreadable store leaves the
-  /// localised name default and the four-seat disclosure as they are.
+  /// Restores last successful-create name and seats, the last-table chip,
+  /// and recent join codes from [SessionMemory]. An empty or unreadable
+  /// store leaves the localised name default, the four-seat disclosure,
+  /// and no recent chips as they are.
   Future<void> _restoreSessionMemory() async {
     final SessionMemory memory = await SessionMemory.load();
-    if (!mounted || !memory.hasLastTable) {
+    if (!mounted) {
       return;
     }
-    final String name = memory.lastName!;
-    final int seats = memory.lastSeats!;
+    final bool hasTable = memory.hasLastTable;
+    final bool hasCodes = memory.recentCodes.isNotEmpty;
+    if (!hasTable && !hasCodes) {
+      return;
+    }
     setState(() {
-      _hasLastTable = true;
-      _lastTableName = name;
-      _lastTableSeats = seats;
-      _nameController.text = name;
-      _players = seats;
+      if (hasCodes) {
+        _recentCodes = List<String>.from(memory.recentCodes);
+      }
+      if (hasTable) {
+        final String name = memory.lastName!;
+        final int seats = memory.lastSeats!;
+        _hasLastTable = true;
+        _lastTableName = name;
+        _lastTableSeats = seats;
+        _nameController.text = name;
+        _players = seats;
+      }
     });
   }
 
@@ -341,16 +353,46 @@ class _HomeScreenState extends State<HomeScreen>
     final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
     _watchOwnedController(controller);
-    final Object? result = await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => RoomRoute(
-          controller: controller,
-          action: LobbyAction.join,
-          code: normalized,
-          playerName: name,
+    // LobbyScreen/RoomRoute must not take a store dependency. Listen here
+    // while join is in flight: connected + a room snapshot is a
+    // successful join, and that is when the typed code is recorded.
+    bool recordedJoin = false;
+    void persistSuccessfulJoin() {
+      if (recordedJoin) {
+        return;
+      }
+      if (controller.phase != RoomPhase.connected || controller.room == null) {
+        return;
+      }
+      recordedJoin = true;
+      unawaited(SessionMemory.recordSuccessfulJoin(normalized));
+      if (mounted) {
+        setState(() {
+          _recentCodes = SessionMemory.prependRecentCode(
+            _recentCodes,
+            normalized,
+          );
+        });
+      }
+    }
+
+    controller.addListener(persistSuccessfulJoin);
+    persistSuccessfulJoin();
+    final Object? result;
+    try {
+      result = await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => RoomRoute(
+            controller: controller,
+            action: LobbyAction.join,
+            code: normalized,
+            playerName: name,
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      controller.removeListener(persistSuccessfulJoin);
+    }
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
@@ -362,6 +404,12 @@ class _HomeScreenState extends State<HomeScreen>
     if (result == GameScreenResult.newTable) {
       await _createRoom();
     }
+  }
+
+  /// Fills the code field from a recent-chip tap. Does not navigate;
+  /// Join stays the next tap.
+  void _fillCodeFromRecent(String code) {
+    _codeController.text = code;
   }
 
   /// Primary action is [ElevatedButton]; the quieter twin is [OutlinedButton].
@@ -630,6 +678,13 @@ class _HomeScreenState extends State<HomeScreen>
                             label: loc.homeJoinRoomButton,
                             primary: joinPrimary,
                           ),
+                          if (_recentCodes.isNotEmpty) ...[
+                            SizedBox(height: compact ? kSpace2 : kSpace3),
+                            _RecentCodes(
+                              codes: _recentCodes,
+                              onSelect: _fillCodeFromRecent,
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -685,6 +740,80 @@ class _LastTableChip extends StatelessWidget {
               style: textTheme.labelLarge?.copyWith(
                 color: LudoColors.ink,
                 fontSize: kTypeLabel,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Recent successful join codes, shown under Join when the store has any.
+/// Visual weight stays below Join (muted paper, not action fill) so a chip
+/// tap fills the field and Join remains the next tap.
+class _RecentCodes extends StatelessWidget {
+  const _RecentCodes({required this.codes, required this.onSelect});
+
+  final List<String> codes;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      key: const Key('home-recent-codes'),
+      alignment: WrapAlignment.center,
+      spacing: kSpace2,
+      runSpacing: kSpace2,
+      children: [
+        for (final String code in codes)
+          _RecentCodeChip(code: code, onPressed: () => onSelect(code)),
+      ],
+    );
+  }
+}
+
+/// One recent room code. Tapping fills [HomeScreen]'s code field only.
+class _RecentCodeChip extends StatelessWidget {
+  const _RecentCodeChip({required this.code, required this.onPressed});
+
+  final String code;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    return Semantics(
+      button: true,
+      label: code,
+      child: Material(
+        color: LudoColors.paperElevated,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(kRadiusControl),
+          side: const BorderSide(color: LudoColors.feltMid),
+        ),
+        child: InkWell(
+          key: Key('home-recent-code-$code'),
+          onTap: onPressed,
+          customBorder: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(kRadiusControl),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            child: Padding(
+              padding: const EdgeInsetsDirectional.symmetric(
+                horizontal: kSpace3,
+                vertical: kSpace2,
+              ),
+              child: Center(
+                child: Text(
+                  code,
+                  textAlign: TextAlign.center,
+                  style: textTheme.labelLarge?.copyWith(
+                    color: LudoColors.ink,
+                    fontSize: kTypeLabel,
+                  ),
+                ),
               ),
             ),
           ),
