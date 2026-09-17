@@ -30,7 +30,7 @@ abstract final class LudoColors {
 }
 
 /// Dark-mode brand colours. Sample ink/paper and action/paper pairs meet
-/// WCAG AA (≥4.5:1). Wired for stubs and future dark ThemeData.
+/// WCAG AA (at least 4.5:1). Wired for stubs and future dark ThemeData.
 abstract final class LudoColorsDark {
   static const Color paper = Color(0xFF0A1F1C);
   static const Color paperElevated = Color(0xFF12302B);
@@ -49,7 +49,7 @@ const List<String> kLudoFontFallbacks = <String>['Noto Sans Arabic'];
 const double kTypeTitle = 18;
 const double kTypeLabel = 16;
 
-/// Motion duration tokens — short UI ≤300ms, long transitions ≤500ms.
+/// Motion duration tokens: short UI at most 300ms, long transitions at most 500ms.
 const Duration kMotionShort = Duration(milliseconds: 200);
 const Duration kMotionLong = Duration(milliseconds: 400);
 

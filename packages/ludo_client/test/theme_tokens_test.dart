@@ -60,7 +60,9 @@ List<File> _libDartFiles() {
       .listSync(recursive: true)
       .whereType<File>()
       .where((File f) => f.path.endsWith('.dart'))
-      .where((File f) => !f.path.contains('${p.separator}l10n${p.separator}gen'))
+      .where(
+        (File f) => !f.path.contains('${p.separator}l10n${p.separator}gen'),
+      )
       .toList();
 }
 
@@ -81,9 +83,8 @@ double _contrastRatio(Color a, Color b) {
 }
 
 Color? _parseColorLiteral(String expression) {
-  final Match? hex = RegExp(
-    r'Color\(0x([0-9A-Fa-f]{8})\)',
-  ).firstMatch(expression);
+  final Match? hex = RegExp(r'Color\(0x([0-9A-Fa-f]{8})\)')
+      .firstMatch(expression);
   if (hex != null) {
     return Color(int.parse(hex.group(1)!, radix: 16));
   }
@@ -104,9 +105,8 @@ Map<String, Color> _darkRoleColors(String src) {
 
   final String region = src.substring(start.start);
   for (final String role in <String>['ink', 'paper', 'action']) {
-    final Match? roleMatch = RegExp(
-      '$role\\s*[=:]\\s*([^,\\n;]+)',
-    ).firstMatch(region);
+    final Match? roleMatch = RegExp('$role\\s*[=:]\\s*([^,\\n;]+)')
+        .firstMatch(region);
     if (roleMatch == null) {
       continue;
     }
@@ -129,8 +129,9 @@ bool _themeExtensionDeclaresBrandMotion(String src) {
 
   final int classStart = classMatch.start;
   final int nextClass = src.indexOf(RegExp(r'\nclass\s+'), classStart + 1);
-  final String body =
-      nextClass < 0 ? src.substring(classStart) : src.substring(classStart, nextClass);
+  final String body = nextClass < 0
+      ? src.substring(classStart)
+      : src.substring(classStart, nextClass);
 
   const List<String> required = <String>[
     'action',
@@ -157,9 +158,7 @@ bool _radiiAcceptable(String src) {
     return false;
   }
 
-  final bool onlyTwelve = args.every(
-    (String a) => a == '12' || a == '12.0',
-  );
+  final bool onlyTwelve = args.every((String a) => a == '12' || a == '12.0');
   if (onlyTwelve) {
     return true;
   }
@@ -186,7 +185,8 @@ Set<String> _fontSizeLiteralsIn(String src) {
 }
 
 bool _themeFontSizesAreNamedTokens(String src) {
-  final Iterable<Match> matches = RegExp(r'fontSize:\s*([^\n,]+)').allMatches(src);
+  final Iterable<Match> matches = RegExp(r'fontSize:\s*([^\n,]+)')
+      .allMatches(src);
   if (matches.isEmpty) {
     return false;
   }
@@ -290,8 +290,10 @@ void main() {
     );
 
     final double inkOnPaper = _contrastRatio(roles['ink']!, roles['paper']!);
-    final double actionOnPaper =
-        _contrastRatio(roles['action']!, roles['paper']!);
+    final double actionOnPaper = _contrastRatio(
+      roles['action']!,
+      roles['paper']!,
+    );
     expect(
       inkOnPaper,
       greaterThanOrEqualTo(4.5),
