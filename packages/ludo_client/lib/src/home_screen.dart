@@ -378,10 +378,10 @@ class _HomeScreenState extends State<HomeScreen>
             constraints: const BoxConstraints(maxWidth: 400),
             child: SingleChildScrollView(
               padding: EdgeInsets.fromLTRB(
-                24,
-                compact ? 4 : 8,
-                24,
-                compact ? 20 : 32,
+                kSpace6,
+                compact ? kSpace1 : kSpace2,
+                kSpace6,
+                compact ? kSpace5 : kSpace7,
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
