@@ -268,47 +268,14 @@ Future<void> _mount(WidgetTester tester, RoomController controller) async {
   await tester.pump();
 }
 
-Object? _readDynamic(Object target, String getter) {
-  try {
-    switch (getter) {
-      case 'verifyUrl':
-        // ignore: avoid_dynamic_calls
-        return (target as dynamic).verifyUrl;
-      case 'verify_url':
-        // ignore: avoid_dynamic_calls
-        return (target as dynamic).verify_url;
-      default:
-        return null;
-    }
-  } on NoSuchMethodError {
-    return null;
-  } catch (_) {
-    return null;
-  }
-}
-
-String? _urlString(Object? value) {
-  if (value is String && value.trim().isNotEmpty) {
-    return value;
-  }
-  if (value is Uri) {
-    return value.toString();
-  }
-  return null;
-}
-
 String? _retainedVerifyUrl(RoomController controller) {
   final RoomSnapshot? room = controller.room;
-  for (final Object? host in <Object?>[room, controller]) {
-    if (host == null) {
-      continue;
-    }
-    for (final String getter in <String>['verifyUrl', 'verify_url']) {
-      final String? url = _urlString(_readDynamic(host, getter));
-      if (url != null) {
-        return url;
-      }
-    }
+  if (room == null) {
+    return null;
+  }
+  final String? url = room.verifyUrl;
+  if (url != null && url.trim().isNotEmpty) {
+    return url;
   }
   return null;
 }
