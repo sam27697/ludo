@@ -56,6 +56,9 @@ dependencies:
   # Last successful create name and seats, on-device only (D-C1-02).
   shared_preferences: ^2.5.3
 
+  # Open game_over verify_url in an external browser (D-D1-04).
+  url_launcher: ^6.3.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

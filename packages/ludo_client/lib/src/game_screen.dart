@@ -19,6 +19,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
@@ -42,7 +44,8 @@ class GameScreen extends StatefulWidget {
   State<GameScreen> createState() => _GameScreenState();
 }
 
-class _GameScreenState extends State<GameScreen> {
+class _GameScreenState extends State<GameScreen>
+    with SingleTickerProviderStateMixin {
   // The turn countdown's own local clock. docs/PROTOCOL.md section 6:
   // TurnState.deadlineMs is milliseconds remaining as measured on the
   // server at the moment the frame carrying it was sent, never an
@@ -70,9 +73,20 @@ class _GameScreenState extends State<GameScreen> {
   int? _pendingAutoMoveToken;
   int? _autoMoveHandledK;
 
+  // Local Roll juice. HapticFeedback.lightImpact and this opacity pulse
+  // fire on tap without waiting for `rolled`. They never invent a die
+  // face: `game-screen-dice-value` still paints only `turn.value`. The
+  // controller rests at 1 so the control stays fully visible; a tap dips
+  // and returns within LudoBrand.motionShort. Reduced-motion skips the
+  // dip and stays at rest.
+  static const double _rollPulseDim = 0.72;
+  late final AnimationController _rollPulse;
+  int _rollPulseGen = 0;
+
   @override
   void initState() {
     super.initState();
+    _rollPulse = AnimationController(vsync: this, value: 1.0);
     widget.controller.addListener(_onControllerChanged);
     _syncCountdown();
   }
@@ -80,6 +94,8 @@ class _GameScreenState extends State<GameScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final LudoBrand? brand = Theme.of(context).extension<LudoBrand>();
+    _rollPulse.duration = brand?.motionShort ?? kMotionShort;
     _syncAutoMove();
   }
 
@@ -87,6 +103,7 @@ class _GameScreenState extends State<GameScreen> {
   void dispose() {
     _countdownTimer?.cancel();
     _autoMoveTimer?.cancel();
+    _rollPulse.dispose();
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
   }
@@ -294,8 +311,71 @@ class _GameScreenState extends State<GameScreen> {
     Navigator.of(context).pop();
   }
 
+  /// Local juice on an enabled Roll tap: light haptic and a short opacity
+  /// pulse, then the same `controller.roll()` the button already sent.
+  /// Neither the haptic nor the pulse waits on `rolled`.
+  void _onRollPressed() {
+    HapticFeedback.lightImpact();
+    _playRollPulse();
+    widget.controller.roll();
+  }
+
+  void _playRollPulse() {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _rollPulse.value = 1.0;
+      return;
+    }
+    final int gen = ++_rollPulseGen;
+    _rollPulse.animateTo(_rollPulseDim).whenComplete(() {
+      if (!mounted || gen != _rollPulseGen) {
+        return;
+      }
+      if (MediaQuery.disableAnimationsOf(context)) {
+        _rollPulse.value = 1.0;
+        return;
+      }
+      _rollPulse.animateTo(1.0);
+    });
+  }
+
   void _requestNewTable() {
     Navigator.of(context).pop(GameScreenResult.newTable);
+  }
+
+  /// Opens the match `verify_url` in an external browser. The app does not
+  /// prove the rolls itself; a failure to open is shown honestly.
+  Future<void> _openVerifyUrl() async {
+    final String? raw = widget.controller.room?.verifyUrl;
+    if (raw == null || raw.isEmpty) {
+      return;
+    }
+    final Uri? uri = Uri.tryParse(raw);
+    if (uri == null || (!uri.isScheme('https') && !uri.isScheme('http'))) {
+      _showVerifyOpenFailed();
+      return;
+    }
+    bool opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } on PlatformException {
+      opened = false;
+    } on ArgumentError {
+      opened = false;
+    }
+    if (!opened && mounted) {
+      _showVerifyOpenFailed();
+    }
+  }
+
+  void _showVerifyOpenFailed() {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(AppLocalizations.of(context).gameVerifyOpenFailed),
+      ),
+    );
   }
 
   @override
@@ -466,11 +546,15 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
           const SizedBox(height: kSpace4),
-          ElevatedButton(
-            key: const Key('game-screen-roll-button'),
-            style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
-            onPressed: rollEnabled ? controller.roll : null,
-            child: Text(loc.gameRollButton),
+          FadeTransition(
+            key: const Key('game-screen-roll-pulse'),
+            opacity: _rollPulse,
+            child: ElevatedButton(
+              key: const Key('game-screen-roll-button'),
+              style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
+              onPressed: rollEnabled ? _onRollPressed : null,
+              child: Text(loc.gameRollButton),
+            ),
           ),
           if (_pendingAutoMoveToken != null) ...[
             const SizedBox(height: kSpace2),
@@ -552,13 +636,16 @@ class _GameScreenState extends State<GameScreen> {
   /// least two seats to draw it from) and the winner text; the Roll button
   /// and the four token buttons are absent, not merely disabled, because
   /// there is nothing left to press. The next-table button is the honest
-  /// action on this ending: it is not the AppBar leave control.
+  /// action on this ending: it is not the AppBar leave control. Verify
+  /// opens `verify_url` externally; roll history is the last three faces.
   Widget _gameOverBody(
     AppLocalizations loc,
     RoomController controller,
     RoomSnapshot room,
   ) {
     final bool hasBoard = room.seats.length >= 2;
+    final String? verifyUrl = room.verifyUrl;
+    final bool canVerify = verifyUrl != null && verifyUrl.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.all(kSpace4),
       child: Column(
@@ -580,6 +667,15 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ],
           const SizedBox(height: kSpace4),
+          _rollHistory(loc, room),
+          const SizedBox(height: kSpace4),
+          OutlinedButton(
+            key: const Key('game-screen-verify-button'),
+            style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+            onPressed: canVerify ? _openVerifyUrl : null,
+            child: Text(loc.gameVerifyButton),
+          ),
+          const SizedBox(height: kSpace2),
           ElevatedButton(
             key: const Key('game-screen-new-room-button'),
             style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
@@ -588,6 +684,34 @@ class _GameScreenState extends State<GameScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Last faces with their `k` on the finished board. Empty when no `rolled`
+  /// frames landed on this controller before game-over.
+  Widget _rollHistory(AppLocalizations loc, RoomSnapshot room) {
+    final List<(int k, int face)> rolls = room.recentRolls;
+    return Column(
+      key: const Key('game-screen-roll-history'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          loc.gameRollHistoryHeading,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.labelLarge
+              ?.copyWith(fontSize: kTypeLabel, color: LudoColors.inkMuted),
+        ),
+        if (rolls.isEmpty)
+          Text(loc.gameRollHistoryEmpty, textAlign: TextAlign.center)
+        else
+          for (final (int k, int face) in rolls) ...[
+            const SizedBox(height: kSpace1),
+            Text(
+              loc.gameRollHistoryEntry(k, face),
+              textAlign: TextAlign.center,
+            ),
+          ],
+      ],
     );
   }
 

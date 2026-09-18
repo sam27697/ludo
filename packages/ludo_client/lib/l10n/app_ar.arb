@@ -49,5 +49,10 @@
   "gameOverEnded": "انتهت اللعبة",
   "gameLeaveButton": "مغادرة",
   "gameNewRoomButton": "طاولة جديدة",
-  "gameUndoButton": "تراجع"
+  "gameUndoButton": "تراجع",
+  "gameVerifyButton": "التحقق من الرميات",
+  "gameVerifyOpenFailed": "تعذر فتح صفحة التحقق.",
+  "gameRollHistoryHeading": "آخر الرميات",
+  "gameRollHistoryEmpty": "لا توجد رميات للعرض بعد.",
+  "gameRollHistoryEntry": "{k}: {face}"
 }
