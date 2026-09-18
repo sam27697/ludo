@@ -20,6 +20,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
@@ -341,6 +342,42 @@ class _GameScreenState extends State<GameScreen>
     Navigator.of(context).pop(GameScreenResult.newTable);
   }
 
+  /// Opens the match `verify_url` in an external browser. The app does not
+  /// prove the rolls itself; a failure to open is shown honestly.
+  Future<void> _openVerifyUrl() async {
+    final String? raw = widget.controller.room?.verifyUrl;
+    if (raw == null || raw.isEmpty) {
+      return;
+    }
+    final Uri? uri = Uri.tryParse(raw);
+    if (uri == null || (!uri.isScheme('https') && !uri.isScheme('http'))) {
+      _showVerifyOpenFailed();
+      return;
+    }
+    bool opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } on PlatformException {
+      opened = false;
+    } on ArgumentError {
+      opened = false;
+    }
+    if (!opened && mounted) {
+      _showVerifyOpenFailed();
+    }
+  }
+
+  void _showVerifyOpenFailed() {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(AppLocalizations.of(context).gameVerifyOpenFailed),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -599,13 +636,16 @@ class _GameScreenState extends State<GameScreen>
   /// least two seats to draw it from) and the winner text; the Roll button
   /// and the four token buttons are absent, not merely disabled, because
   /// there is nothing left to press. The next-table button is the honest
-  /// action on this ending: it is not the AppBar leave control.
+  /// action on this ending: it is not the AppBar leave control. Verify
+  /// opens `verify_url` externally; roll history is the last three faces.
   Widget _gameOverBody(
     AppLocalizations loc,
     RoomController controller,
     RoomSnapshot room,
   ) {
     final bool hasBoard = room.seats.length >= 2;
+    final String? verifyUrl = room.verifyUrl;
+    final bool canVerify = verifyUrl != null && verifyUrl.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.all(kSpace4),
       child: Column(
@@ -627,6 +667,15 @@ class _GameScreenState extends State<GameScreen>
             ),
           ],
           const SizedBox(height: kSpace4),
+          _rollHistory(loc, room),
+          const SizedBox(height: kSpace4),
+          OutlinedButton(
+            key: const Key('game-screen-verify-button'),
+            style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+            onPressed: canVerify ? _openVerifyUrl : null,
+            child: Text(loc.gameVerifyButton),
+          ),
+          const SizedBox(height: kSpace2),
           ElevatedButton(
             key: const Key('game-screen-new-room-button'),
             style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
@@ -635,6 +684,34 @@ class _GameScreenState extends State<GameScreen>
           ),
         ],
       ),
+    );
+  }
+
+  /// Last faces with their `k` on the finished board. Empty when no `rolled`
+  /// frames landed on this controller before game-over.
+  Widget _rollHistory(AppLocalizations loc, RoomSnapshot room) {
+    final List<(int k, int face)> rolls = room.recentRolls;
+    return Column(
+      key: const Key('game-screen-roll-history'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          loc.gameRollHistoryHeading,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.labelLarge
+              ?.copyWith(fontSize: kTypeLabel, color: LudoColors.inkMuted),
+        ),
+        if (rolls.isEmpty)
+          Text(loc.gameRollHistoryEmpty, textAlign: TextAlign.center)
+        else
+          for (final (int k, int face) in rolls) ...[
+            const SizedBox(height: kSpace1),
+            Text(
+              loc.gameRollHistoryEntry(k, face),
+              textAlign: TextAlign.center,
+            ),
+          ],
+      ],
     );
   }
 
