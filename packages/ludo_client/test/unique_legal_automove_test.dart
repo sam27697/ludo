@@ -238,6 +238,35 @@ List<String> _movesSince(FakeTransport transport, int sentBefore) {
       .toList();
 }
 
+/// Completes the outstanding `move` request so RoomConnection's 10s
+/// reply timer is not still pending when flutter_test verifies invariants.
+/// Same handshake every other GameScreen move test uses.
+Future<void> _completeMove(
+  WidgetTester tester,
+  FakeTransport transport,
+  String moveText, {
+  required int token,
+  required int seq,
+}) async {
+  transport.pushText(
+    _frame(
+      type: 'moved',
+      re: _idOf(moveText),
+      data: <String, Object?>{
+        'seat': 0,
+        'token': token,
+        'from': -1,
+        'to': 5,
+        'captured': <Object?>[],
+        'extra_roll': false,
+        'seq': seq,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+}
+
 List<Map<Object?, Object?>> _listenAccessibility(WidgetTester tester) {
   final List<Map<Object?, Object?>> events = <Map<Object?, Object?>>[];
   tester.binding.defaultBinaryMessenger.setMockMessageHandler(
@@ -341,6 +370,13 @@ void main() {
             'the auto-move must name the unique legal token '
             '$_uniqueToken; got ${_dataOf(moves.single)}',
       );
+      await _completeMove(
+        tester,
+        transport,
+        moves.single,
+        token: _uniqueToken,
+        seq: 3,
+      );
     },
   );
 
@@ -410,6 +446,13 @@ void main() {
             'unique legal token from awaitMove',
       );
       expect(_dataOf(moves.single), <String, Object?>{'token': _uniqueToken});
+      await _completeMove(
+        tester,
+        transport,
+        moves.single,
+        token: _uniqueToken,
+        seq: 3,
+      );
     },
   );
 
@@ -442,6 +485,17 @@ void main() {
             'committing the unique-legal auto-move after 3s must fire a '
             'further Semantics announce; started with $started, after '
             'commit $afterCommit',
+      );
+      final List<String> commitMoves = transport.sentRaw
+          .where((s) => _typeOf(s) == 'move')
+          .toList();
+      expect(commitMoves, isNotEmpty);
+      await _completeMove(
+        tester,
+        transport,
+        commitMoves.last,
+        token: _uniqueToken,
+        seq: 3,
       );
     },
   );
