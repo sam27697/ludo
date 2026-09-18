@@ -5,17 +5,19 @@ import 'package:path/path.dart' as p;
 
 /// Scans lib/ for the shapes of hardcoded, user-visible English text that
 /// this codebase is not allowed to contain: a string literal passed
-/// straight to Text(), or a string literal assigned to a widget property
+/// straight to Text(), a string literal assigned to a widget property
 /// that Flutter renders to the user (labelText, hintText, errorText,
-/// helperText, tooltip/message, semanticLabel).
+/// helperText, tooltip/message, semanticLabel), or a helper that
+/// `return`s a string literal for a widget to paint.
 ///
 /// This is a shape check over source text, not a full parse, so it can miss
 /// something creative and it can in principle flag a legitimate non-visible
 /// use of one of these property names on a class this codebase does not use
 /// yet. What it cannot do is pass vacuously: every user-visible string this
-/// app currently shows is produced by exactly the two patterns below, and a
+/// app currently shows is produced by exactly the patterns below, and a
 /// developer who writes `Text('Create Room')` instead of
-/// `Text(loc.homeCreateRoomButton)` makes this test fail.
+/// `Text(loc.homeCreateRoomButton)`, or `return 'Undo'` from a label helper
+/// that `Text()` then calls, makes this test fail.
 ///
 /// The generated localization delegate under lib/l10n/gen is excluded: it is
 /// the source of truth for the strings themselves, generated from the ARB
@@ -99,6 +101,15 @@ void main() {
       dotAll: true,
     );
 
+    // A helper that returns a user-visible string literal. `Text(_helper())`
+    // does not match the Text('...') pattern above, so a locale switch
+    // that `return 'Undo'` would otherwise slip through.
+    final returnLiteral = RegExp(
+      r'''return\s+['"]''',
+      multiLine: true,
+      dotAll: true,
+    );
+
     final violations = <String>[];
     for (final file in dartFiles) {
       final source = file.readAsStringSync();
@@ -124,8 +135,30 @@ void main() {
           'hardcoded literal for a user-visible property near offset ${match.start}',
         );
       }
+      for (final match in returnLiteral.allMatches(stripped)) {
+        violations.add(
+          '${p.relative(file.path, from: libDir.path)}: '
+          'hardcoded return-string literal near offset ${match.start}',
+        );
+      }
     }
 
     expect(violations, isEmpty, reason: violations.join('\n'));
+  });
+
+  test('Text() string-literal pattern matches a Text Undo widget', () {
+    const String snippet = "child: Text('Undo'),";
+    final RegExp textLiteral = RegExp(
+      r'''Text\s*\(\s*['"]''',
+      multiLine: true,
+      dotAll: true,
+    );
+    expect(
+      textLiteral.hasMatch(snippet),
+      isTrue,
+      reason:
+          'reintroducing a Text(\'Undo\') widget must keep failing this '
+          'scan; the Text() literal pattern no longer matches the snippet',
+    );
   });
 }
