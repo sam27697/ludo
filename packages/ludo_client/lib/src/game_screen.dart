@@ -19,6 +19,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
@@ -42,7 +43,8 @@ class GameScreen extends StatefulWidget {
   State<GameScreen> createState() => _GameScreenState();
 }
 
-class _GameScreenState extends State<GameScreen> {
+class _GameScreenState extends State<GameScreen>
+    with SingleTickerProviderStateMixin {
   // The turn countdown's own local clock. docs/PROTOCOL.md section 6:
   // TurnState.deadlineMs is milliseconds remaining as measured on the
   // server at the moment the frame carrying it was sent, never an
@@ -70,9 +72,20 @@ class _GameScreenState extends State<GameScreen> {
   int? _pendingAutoMoveToken;
   int? _autoMoveHandledK;
 
+  // Local Roll juice. HapticFeedback.lightImpact and this opacity pulse
+  // fire on tap without waiting for `rolled`. They never invent a die
+  // face: `game-screen-dice-value` still paints only `turn.value`. The
+  // controller rests at 1 so the control stays fully visible; a tap dips
+  // and returns within LudoBrand.motionShort. Reduced-motion skips the
+  // dip and stays at rest.
+  static const double _rollPulseDim = 0.72;
+  late final AnimationController _rollPulse;
+  int _rollPulseGen = 0;
+
   @override
   void initState() {
     super.initState();
+    _rollPulse = AnimationController(vsync: this, value: 1.0);
     widget.controller.addListener(_onControllerChanged);
     _syncCountdown();
   }
@@ -80,6 +93,8 @@ class _GameScreenState extends State<GameScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final LudoBrand? brand = Theme.of(context).extension<LudoBrand>();
+    _rollPulse.duration = brand?.motionShort ?? kMotionShort;
     _syncAutoMove();
   }
 
@@ -87,6 +102,7 @@ class _GameScreenState extends State<GameScreen> {
   void dispose() {
     _countdownTimer?.cancel();
     _autoMoveTimer?.cancel();
+    _rollPulse.dispose();
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
   }
@@ -294,6 +310,33 @@ class _GameScreenState extends State<GameScreen> {
     Navigator.of(context).pop();
   }
 
+  /// Local juice on an enabled Roll tap: light haptic and a short opacity
+  /// pulse, then the same `controller.roll()` the button already sent.
+  /// Neither the haptic nor the pulse waits on `rolled`.
+  void _onRollPressed() {
+    HapticFeedback.lightImpact();
+    _playRollPulse();
+    widget.controller.roll();
+  }
+
+  void _playRollPulse() {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _rollPulse.value = 1.0;
+      return;
+    }
+    final int gen = ++_rollPulseGen;
+    _rollPulse.animateTo(_rollPulseDim).whenComplete(() {
+      if (!mounted || gen != _rollPulseGen) {
+        return;
+      }
+      if (MediaQuery.disableAnimationsOf(context)) {
+        _rollPulse.value = 1.0;
+        return;
+      }
+      _rollPulse.animateTo(1.0);
+    });
+  }
+
   void _requestNewTable() {
     Navigator.of(context).pop(GameScreenResult.newTable);
   }
@@ -466,11 +509,15 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
           const SizedBox(height: kSpace4),
-          ElevatedButton(
-            key: const Key('game-screen-roll-button'),
-            style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
-            onPressed: rollEnabled ? controller.roll : null,
-            child: Text(loc.gameRollButton),
+          FadeTransition(
+            key: const Key('game-screen-roll-pulse'),
+            opacity: _rollPulse,
+            child: ElevatedButton(
+              key: const Key('game-screen-roll-button'),
+              style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
+              onPressed: rollEnabled ? _onRollPressed : null,
+              child: Text(loc.gameRollButton),
+            ),
           ),
           if (_pendingAutoMoveToken != null) ...[
             const SizedBox(height: kSpace2),
