@@ -132,7 +132,7 @@ class _GameScreenState extends State<GameScreen> {
     final AppLocalizations loc = AppLocalizations.of(context);
     _announceAutoMove(
       '${loc.gameTokenButton(_pendingAutoMoveToken! + 1)} · '
-      '${_autoMoveUndoLabel(context)}',
+      '${loc.gameUndoButton}',
     );
   }
 
@@ -474,7 +474,7 @@ class _GameScreenState extends State<GameScreen> {
           ),
           if (_pendingAutoMoveToken != null) ...[
             const SizedBox(height: kSpace2),
-            Center(child: _autoMoveUndoChip()),
+            Center(child: _autoMoveUndoChip(loc)),
           ],
           const SizedBox(height: kSpace2),
           // Four buttons in a single row leave too little width for either
@@ -508,12 +508,12 @@ class _GameScreenState extends State<GameScreen> {
   /// Undo for a pending unique-legal auto-move. Outlined so it stays
   /// quieter than Roll and the token buttons; 48dp target, logical padding
   /// via the shared button theme. Cancels the local hold only.
-  Widget _autoMoveUndoChip() {
+  Widget _autoMoveUndoChip(AppLocalizations loc) {
     return OutlinedButton(
       key: const Key('game-automove-undo'),
       style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
       onPressed: _undoPendingAutoMove,
-      child: Text(_autoMoveUndoLabel(context)),
+      child: Text(loc.gameUndoButton),
     );
   }
 
@@ -607,16 +607,6 @@ class _GameScreenState extends State<GameScreen> {
         style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
       ),
     );
-  }
-}
-
-/// Undo label for the unique-legal hold, in the two locales the app ships.
-String _autoMoveUndoLabel(BuildContext context) {
-  switch (Localizations.localeOf(context).languageCode) {
-    case 'ar':
-      return 'تراجع';
-    default:
-      return 'Undo';
   }
 }
 
