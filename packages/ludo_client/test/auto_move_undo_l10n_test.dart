@@ -459,7 +459,7 @@ Future<void> _expectUndoChipMatchesArb(
     isNotEmpty,
     reason:
         'app_en.arb and app_ar.arb must declare an Undo label key; '
-        'game-automove-undo currently paints "${painted}" under '
+        'game-automove-undo currently paints "$painted" under '
         '${locale.languageCode} from a non-arb source',
   );
   final String key = fixture.keys.first;
