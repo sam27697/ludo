@@ -776,9 +776,11 @@ class _LastTableChip extends StatelessWidget {
         child: DecoratedBox(
           key: const Key('home-last-table-chip'),
           decoration: BoxDecoration(
-            color: LudoColors.paperElevated,
+            // Informational, not tappable: wash fill and a lighter felt
+            // edge so this chip cannot be mistaken for a recent-code pill.
+            color: LudoColors.paperWashTop,
             borderRadius: BorderRadius.circular(kRadiusControl),
-            border: Border.all(color: LudoColors.feltMid),
+            border: Border.all(color: LudoColors.feltLight),
           ),
           child: Padding(
             padding: const EdgeInsetsDirectional.symmetric(
@@ -787,6 +789,8 @@ class _LastTableChip extends StatelessWidget {
             ),
             child: Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
               style: textTheme.labelLarge?.copyWith(
                 color: LudoColors.ink,
@@ -837,32 +841,37 @@ class _RecentCodeChip extends StatelessWidget {
     return Semantics(
       button: true,
       label: code,
-      child: Material(
-        color: LudoColors.paperElevated,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(kRadiusControl),
-          side: const BorderSide(color: LudoColors.feltMid),
-        ),
-        child: InkWell(
-          key: Key('home-recent-code-$code'),
-          onTap: onPressed,
-          customBorder: RoundedRectangleBorder(
+      child: IntrinsicWidth(
+        child: Material(
+          color: LudoColors.paperElevated,
+          shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(kRadiusControl),
+            side: const BorderSide(color: LudoColors.feltMid),
           ),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-            child: Padding(
-              padding: const EdgeInsetsDirectional.symmetric(
-                horizontal: kSpace3,
-                vertical: kSpace2,
-              ),
-              child: Center(
-                child: Text(
-                  code,
-                  textAlign: TextAlign.center,
-                  style: textTheme.labelLarge?.copyWith(
-                    color: LudoColors.ink,
-                    fontSize: kTypeLabel,
+          child: InkWell(
+            key: Key('home-recent-code-$code'),
+            onTap: onPressed,
+            customBorder: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(kRadiusControl),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              child: Padding(
+                padding: const EdgeInsetsDirectional.symmetric(
+                  horizontal: kSpace3,
+                  vertical: kSpace2,
+                ),
+                child: Align(
+                  alignment: Alignment.center,
+                  widthFactor: 1,
+                  heightFactor: 1,
+                  child: Text(
+                    code,
+                    textAlign: TextAlign.center,
+                    style: textTheme.labelLarge?.copyWith(
+                      color: LudoColors.ink,
+                      fontSize: kTypeLabel,
+                    ),
                   ),
                 ),
               ),
