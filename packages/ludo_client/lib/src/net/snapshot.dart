@@ -207,6 +207,8 @@ class RoomSnapshot {
     required this.seats,
     required this.turn,
     required this.winner,
+    this.verifyUrl,
+    this.recentRolls = const <(int k, int face)>[],
     required this.seq,
   });
 
@@ -226,6 +228,16 @@ class RoomSnapshot {
   final TurnState? turn;
 
   final int? winner;
+
+  /// Client-only. The `verify_url` from a well-formed `game_over` (and
+  /// from a snapshot that happens to carry the same key). Not required on
+  /// the wire snapshot; [fromJson] records it when present.
+  final String? verifyUrl;
+
+  /// Client-only ring of the last three `(k, face)` pairs from `rolled`.
+  /// Not a snapshot wire field; [fromJson] always starts this empty.
+  final List<(int k, int face)> recentRolls;
+
   final int seq;
 
   /// No cross-field consistency is checked here. docs/PROTOCOL.md section 10
@@ -283,6 +295,7 @@ class RoomSnapshot {
       throw const SnapshotFormatException('winner');
     }
 
+    final String? verifyUrl = _optString(json, 'verify_url');
     final int seq = _reqInt(json, 'seq');
 
     return RoomSnapshot(
@@ -298,14 +311,15 @@ class RoomSnapshot {
       seats: seats,
       turn: turn,
       winner: winner,
+      verifyUrl: verifyUrl,
       seq: seq,
     );
   }
 
   /// A copy with the given fields replaced. Every omitted parameter keeps
   /// this instance's value; there is no way to null out [gameId],
-  /// [clientSeeds], [turn] or [winner] through this method, because nothing
-  /// that constructs a [RoomSnapshot] copy today needs to.
+  /// [clientSeeds], [turn], [winner] or [verifyUrl] through this method,
+  /// because nothing that constructs a [RoomSnapshot] copy today needs to.
   RoomSnapshot copyWith({
     String? code,
     RoomState? state,
@@ -319,6 +333,8 @@ class RoomSnapshot {
     List<SeatState>? seats,
     TurnState? turn,
     int? winner,
+    String? verifyUrl,
+    List<(int k, int face)>? recentRolls,
     int? seq,
   }) {
     return RoomSnapshot(
@@ -334,6 +350,8 @@ class RoomSnapshot {
       seats: seats ?? this.seats,
       turn: turn ?? this.turn,
       winner: winner ?? this.winner,
+      verifyUrl: verifyUrl ?? this.verifyUrl,
+      recentRolls: recentRolls ?? this.recentRolls,
       seq: seq ?? this.seq,
     );
   }
