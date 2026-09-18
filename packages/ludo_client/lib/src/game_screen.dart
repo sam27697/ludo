@@ -18,6 +18,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
@@ -131,7 +132,7 @@ class _GameScreenState extends State<GameScreen> {
     final AppLocalizations loc = AppLocalizations.of(context);
     _announceAutoMove(
       '${loc.gameTokenButton(_pendingAutoMoveToken! + 1)} · '
-      '${MaterialLocalizations.of(context).undoButtonLabel}',
+      '${_autoMoveUndoLabel(context)}',
     );
   }
 
@@ -512,7 +513,7 @@ class _GameScreenState extends State<GameScreen> {
       key: const Key('game-automove-undo'),
       style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
       onPressed: _undoPendingAutoMove,
-      child: Text(MaterialLocalizations.of(context).undoButtonLabel),
+      child: Text(_autoMoveUndoLabel(context)),
     );
   }
 
@@ -606,6 +607,16 @@ class _GameScreenState extends State<GameScreen> {
         style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
       ),
     );
+  }
+}
+
+/// Undo label for the unique-legal hold, in the two locales the app ships.
+String _autoMoveUndoLabel(BuildContext context) {
+  switch (Localizations.localeOf(context).languageCode) {
+    case 'ar':
+      return 'تراجع';
+    default:
+      return 'Undo';
   }
 }
 
