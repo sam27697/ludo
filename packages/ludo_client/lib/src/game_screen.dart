@@ -6,6 +6,11 @@
 // pressing Roll or a token button sends the intention and waits for the
 // server's own reply to change anything.
 //
+// Unique-legal exception, still not a rule: when the server names exactly
+// one legal token, this screen holds for three seconds with an Undo control
+// and then sends that one move if the player does not cancel. Undo clears
+// the local hold only. It never asks the protocol to reverse a move.
+//
 // Not wired into navigation by this order. Nothing routes to this screen
 // yet; it is built and proved standing alone, constructed directly with a
 // controller.
@@ -13,6 +18,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
@@ -55,6 +61,15 @@ class _GameScreenState extends State<GameScreen> {
   int? _countdownDeadlineMs;
   int _countdownRemainingSeconds = 0;
 
+  // Client-side unique-legal hold. Armed once per turn.k when legal has
+  // exactly one token; cancelled by Undo, a manual token press, or the
+  // turn leaving that unique-legal awaitMove. controller.move is not
+  // called until the hold elapses without cancel.
+  static const Duration _autoMoveHold = Duration(seconds: 3);
+  Timer? _autoMoveTimer;
+  int? _pendingAutoMoveToken;
+  int? _autoMoveHandledK;
+
   @override
   void initState() {
     super.initState();
@@ -63,14 +78,114 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncAutoMove();
+  }
+
+  @override
   void dispose() {
     _countdownTimer?.cancel();
+    _autoMoveTimer?.cancel();
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
   }
 
   void _onControllerChanged() {
-    setState(_syncCountdown);
+    setState(() {
+      _syncCountdown();
+      _syncAutoMove();
+    });
+  }
+
+  /// True when this seat is awaiting a move and the server named exactly
+  /// one legal token. The hold is a screen convenience on top of that
+  /// already-authoritative list, not a second legality check.
+  bool _isUniqueLegalAwaitMove() {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    final TurnState? turn = room?.turn;
+    return room != null &&
+        room.state == RoomState.playing &&
+        turn != null &&
+        turn.seat == controller.seat &&
+        turn.phase == TurnPhase.awaitMove &&
+        turn.legal != null &&
+        turn.legal!.length == 1;
+  }
+
+  /// Arms the 3s unique-legal hold once per `turn.k`, or drops a pending
+  /// hold when the turn is no longer that unique-legal awaitMove.
+  void _syncAutoMove() {
+    if (!_isUniqueLegalAwaitMove()) {
+      _clearPendingHold();
+      return;
+    }
+    final TurnState turn = widget.controller.room!.turn!;
+    if (_autoMoveHandledK == turn.k) {
+      return;
+    }
+    _autoMoveHandledK = turn.k;
+    _pendingAutoMoveToken = turn.legal!.single;
+    _autoMoveTimer?.cancel();
+    _autoMoveTimer = Timer(_autoMoveHold, _commitPendingAutoMove);
+    final AppLocalizations loc = AppLocalizations.of(context);
+    _announceAutoMove(
+      '${loc.gameTokenButton(_pendingAutoMoveToken! + 1)} · '
+      '${loc.gameUndoButton}',
+    );
+  }
+
+  void _clearPendingHold() {
+    _autoMoveTimer?.cancel();
+    _autoMoveTimer = null;
+    _pendingAutoMoveToken = null;
+  }
+
+  void _commitPendingAutoMove() {
+    if (!mounted) {
+      return;
+    }
+    final int? token = _pendingAutoMoveToken;
+    if (token == null) {
+      return;
+    }
+    _autoMoveTimer = null;
+    _pendingAutoMoveToken = null;
+    final AppLocalizations loc = AppLocalizations.of(context);
+    _announceAutoMove(loc.gameTokenButton(token + 1));
+    setState(() {});
+    widget.controller.move(token);
+  }
+
+  void _undoPendingAutoMove() {
+    if (_pendingAutoMoveToken == null) {
+      return;
+    }
+    _clearPendingHold();
+    _announceAutoMove(AppLocalizations.of(context).gameYourTurnMove);
+    setState(() {});
+  }
+
+  /// A token tap is an explicit move: drop the hold without announcing
+  /// undo, then let the press send the same move the hold would have.
+  void _cancelPendingHoldForManualMove() {
+    if (_pendingAutoMoveToken == null) {
+      return;
+    }
+    _clearPendingHold();
+    setState(() {});
+  }
+
+  void _announceAutoMove(String message) {
+    if (!mounted || message.isEmpty) {
+      return;
+    }
+    SemanticsService.sendAnnouncement(
+      View.of(context),
+      message,
+      Directionality.of(context),
+    );
   }
 
   /// Restarts the countdown for the current turn, and arms or disarms the
@@ -357,6 +472,10 @@ class _GameScreenState extends State<GameScreen> {
             onPressed: rollEnabled ? controller.roll : null,
             child: Text(loc.gameRollButton),
           ),
+          if (_pendingAutoMoveToken != null) ...[
+            const SizedBox(height: kSpace2),
+            Center(child: _autoMoveUndoChip(loc)),
+          ],
           const SizedBox(height: kSpace2),
           // Four buttons in a single row leave too little width for either
           // locale's label at a phone's width -- "Token 1" and "قطعة 4" both
@@ -386,6 +505,18 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
+  /// Undo for a pending unique-legal auto-move. Outlined so it stays
+  /// quieter than Roll and the token buttons; 48dp target, logical padding
+  /// via the shared button theme. Cancels the local hold only.
+  Widget _autoMoveUndoChip(AppLocalizations loc) {
+    return OutlinedButton(
+      key: const Key('game-automove-undo'),
+      style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+      onPressed: _undoPendingAutoMove,
+      child: Text(loc.gameUndoButton),
+    );
+  }
+
   /// One of the four token buttons, [index] 0..3. Kept as its own widget so
   /// the two-row layout in [_playingBody] does not repeat the button itself
   /// four times; the key, the enabled test and the move intention are
@@ -403,7 +534,10 @@ class _GameScreenState extends State<GameScreen> {
         child: ElevatedButton(
           key: Key('game-screen-token-$index'),
           onPressed: _tokenEnabled(room, seat, index)
-              ? () => controller.move(index)
+              ? () {
+                  _cancelPendingHoldForManualMove();
+                  controller.move(index);
+                }
               : null,
           child: FittedBox(
             fit: BoxFit.scaleDown,
