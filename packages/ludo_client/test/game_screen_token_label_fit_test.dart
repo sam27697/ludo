@@ -85,15 +85,53 @@
 // test body before the second loop runs. That is expected and is recorded in
 // this file's own report rather than claimed as an observation this
 // worktree does not have the fixed code to make.
+//
+// ROUND 3 (work/ludo/orders/153-token-label-fit-real-fonts.md): every
+// measurement above, through ROUND 2, was taken under flutter_test's
+// substitute "Ahem" font, not the fonts the app ships. Ahem gives every
+// character an identical fixed-width square glyph as wide as the font size,
+// so a Latin or Arabic string measures far wider under Ahem than it renders
+// in Poppins (Latin) or Noto Sans Arabic (the fallback
+// lib/src/theme.dart's kLudoFontFamily/kLudoFontFallbacks name and
+// pubspec.yaml's `flutter: fonts:` block declares), and a verdict reached
+// under it is not evidence about the app a player installs, in either
+// direction. `setUpAll(_loadAppFonts)` below loads every weight the theme
+// asks for, straight off the same asset paths pubspec.yaml declares, before
+// any test in this file mounts anything; the "sanity" group is the control
+// that proves the load actually took effect rather than merely being
+// requested (see that group's own comment); and every mount below now
+// happens inside `MaterialApp(theme: buildAppTheme(), ...)`, the app's own
+// theme, in place of the bare `MaterialApp` ROUND 1 and ROUND 2 used. This
+// technique, this group's shape, and the wording of this paragraph are
+// copied from test/home_screen_players_fit_test.dart (order 148's merged
+// file), which is this file's template for this round; see that file for
+// the fuller argument.
+//
+// The asymmetry this round's real fonts expose, stated once here rather
+// than at every call site: order 152's run 47 measured this same rig at at
+// least 62 percent narrower than the device for Arabic -- device glyph ink
+// for "4 لاعبين" was 84.00dp in
+// work/ludo/evidence/146-home-ar-selector-fixed-run14.png against the rig's
+// 51.70dp for the same label at the same logical width. Why that gap exists
+// is order 152's question, not this file's, and this file does not
+// investigate it. What it means for reading this file's own Arabic numbers:
+// a green Arabic case below is a lower bound, not a device proof -- if the
+// rig under-measures the Arabic label's ink the way order 152 found, a
+// label that fits inside the rig's box can still wrap on the phone this
+// file cannot reach -- while a red Arabic case is strong evidence, because
+// the rig had to overflow the box despite measuring the label short. Do not
+// read a green Arabic case below as more than that lower bound.
 
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
-import 'package:ludo_client/src/app.dart' show appSupportedLocales;
+import 'package:ludo_client/src/app.dart'
+    show appSupportedLocales, buildAppTheme;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
@@ -107,6 +145,65 @@ const String _testUrl = 'wss://example.test/ws';
 // photographed at (emulator run 34191276162, 04-game-en.png / 05-game-ar.png).
 const Size _devicePhysicalSize = Size(1080, 1848);
 const double _devicePixelRatio = 2.75;
+
+// --- real fonts, loaded once for the whole file -----------------------
+
+/// Every font asset and family name below is copied from this package's own
+/// `pubspec.yaml` `flutter: fonts:` block, not invented here: 'Poppins' at
+/// weights 400/500/600/700 under fonts/Poppins-*.ttf, and 'Noto Sans
+/// Arabic' at weights 400/700 under fonts/NotoSansArabic-*.ttf -- the same
+/// two family names lib/src/theme.dart's `kLudoFontFamily` and
+/// `kLudoFontFallbacks` name. Copied from
+/// test/home_screen_players_fit_test.dart's `_loadAppFonts`, which loads
+/// the identical asset list for the identical reason.
+///
+/// `TestWidgetsFlutterBinding.ensureInitialized()` is called explicitly
+/// before the first `rootBundle.load` below because this runs from
+/// `setUpAll`, outside any `testWidgets` body -- `testWidgets` itself
+/// guarantees a binding by the time its own callback runs, but nothing
+/// guarantees one exists yet the first time `setUpAll` fires.
+Future<void> _loadAppFonts() async {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  final FontLoader poppins = FontLoader('Poppins');
+  for (final String asset in const <String>[
+    'fonts/Poppins-Regular.ttf',
+    'fonts/Poppins-Medium.ttf',
+    'fonts/Poppins-SemiBold.ttf',
+    'fonts/Poppins-Bold.ttf',
+  ]) {
+    poppins.addFont(rootBundle.load(asset));
+  }
+  await poppins.load();
+
+  final FontLoader notoSansArabic = FontLoader('Noto Sans Arabic');
+  for (final String asset in const <String>[
+    'fonts/NotoSansArabic-Regular.ttf',
+    'fonts/NotoSansArabic-Bold.ttf',
+  ]) {
+    notoSansArabic.addFont(rootBundle.load(asset));
+  }
+  await notoSansArabic.load();
+}
+
+/// A from-scratch `TextPainter` measurement of [text] at [style], laid out
+/// with no width limit at all -- unlike every other measurement in this
+/// file, this one is not reconstructed off a live `RenderParagraph`,
+/// because the whole point of the "sanity" group below is to measure a
+/// string this file made up, before or independent of any widget mount, so
+/// there is no render object to read it off. Copied from
+/// test/home_screen_players_fit_test.dart's `_naturalWidthOf`.
+double _naturalWidthOf(String text, TextStyle style, TextDirection direction) {
+  final TextPainter probe = TextPainter(
+    text: TextSpan(text: text, style: style),
+    textDirection: direction,
+  )..layout();
+  try {
+    return probe.width;
+  } finally {
+    probe.dispose();
+  }
+}
 
 // --- server-side id generation for pushed frames, copied from
 // test/game_screen_test.dart ------------------------------------------------
@@ -264,10 +361,21 @@ Future<(RoomController, FakeTransport)> _connectPlaying(
   return (controller, transport);
 }
 
-// --- widget harness, copied from test/game_screen_test.dart ----------------
+// --- widget harness, copied from test/game_screen_test.dart, with the
+// app's own real theme wired in per order 153 ------------------------------
 
+/// The app's own real theme (lib/src/theme.dart `buildAppTheme()`), not a
+/// bare `MaterialApp` with no `theme:`. A bare `MaterialApp` renders
+/// Material 3's own default text theme and default `ElevatedButtonTheme`,
+/// neither of which asks for `kLudoFontFamily`/`kLudoFontFallbacks`, so a
+/// proof mounted without it would not be measuring the same `TextStyle` a
+/// player's phone resolves for this button. test/game_screen_test.dart's own
+/// `_harness`, which this file's harness is otherwise copied from, does not
+/// pass `theme:` at all; this is this file's one deliberate departure from
+/// that copy, per order 153.
 Widget _harness(Widget child, {Locale locale = const Locale('en')}) {
   return MaterialApp(
+    theme: buildAppTheme(),
     locale: locale,
     supportedLocales: appSupportedLocales,
     localizationsDelegates: const [
@@ -430,6 +538,212 @@ double _pinPhoneView(WidgetTester tester) {
 }
 
 void main() {
+  setUpAll(_loadAppFonts);
+
+  group('sanity: the real fonts loaded by setUpAll are actually in effect, '
+      'not the flutter_test Ahem substitute '
+      '(work/ludo/orders/153-token-label-fit-real-fonts.md)', () {
+    testWidgets(
+      'Poppins: two 10-character Latin strings of very different letter '
+      'shapes measure different natural widths',
+      (tester) async {
+        const double fontSize = 48;
+        const String narrow = 'iiiiiiiiii';
+        const String wide = 'WWWWWWWWWW';
+        const TextStyle style = TextStyle(
+          fontFamily: 'Poppins',
+          fontSize: fontSize,
+        );
+
+        final double narrowWidth = _naturalWidthOf(
+          narrow,
+          style,
+          TextDirection.ltr,
+        );
+        final double wideWidth = _naturalWidthOf(
+          wide,
+          style,
+          TextDirection.ltr,
+        );
+        final double ahemPredictedWidth = fontSize * narrow.length;
+
+        // Proof for the record, not decoration: this is the real number
+        // this run measured, quoted verbatim in this file's own run report
+        // rather than assumed.
+        // ignore: avoid_print
+        print(
+          'game_screen_token_label_fit_test sanity (Poppins, fontSize '
+          '$fontSize): "$narrow" natural width = ${narrowWidth}dp, '
+          '"$wide" natural width = ${wideWidth}dp; the Ahem-predicted '
+          'width for any 10-character string at this size would be '
+          'exactly ${ahemPredictedWidth}dp for both strings, since every '
+          'Ahem glyph is an identical fixed square as wide as the font '
+          'size regardless of which character it represents',
+        );
+
+        expect(
+          (narrowWidth - wideWidth).abs(),
+          greaterThan(1.0),
+          reason:
+              'the Poppins font does not appear to have actually loaded: '
+              '"$narrow" and "$wide" are both 10 characters and measured '
+              '${narrowWidth}dp and ${wideWidth}dp, within 1.0dp of each '
+              'other. Under the real, proportional Poppins font these '
+              'must differ substantially ("W" is far wider than "i" in '
+              'any Latin proportional font); two same-length strings '
+              'measuring equal is exactly what the Ahem substitute font '
+              'would produce instead, since Ahem gives every glyph an '
+              'identical fixed-width square regardless of content',
+        );
+        expect(
+          narrowWidth,
+          isNot(closeTo(ahemPredictedWidth, 1.0)),
+          reason:
+              'the Poppins font does not appear to have actually loaded: '
+              '"$narrow" measured ${narrowWidth}dp, within 1.0dp of the '
+              'Ahem-predicted ${ahemPredictedWidth}dp (fontSize '
+              '$fontSize x ${narrow.length} characters) for a substitute '
+              'font whose every glyph is a fixed square as wide as the '
+              'font size',
+        );
+      },
+    );
+
+    testWidgets(
+      'Noto Sans Arabic: two 5-character Arabic strings of very different '
+      'letter shapes measure different natural widths',
+      (tester) async {
+        const double fontSize = 48;
+        // 'ا' (alef) is a single narrow vertical stroke in Arabic script;
+        // 'م' (meem) carries a bowl/loop and is visibly wider in any real
+        // Arabic typeface. Both strings are exactly 5 characters.
+        const String narrow =
+            'اااا'
+            'ا';
+        const String wide =
+            'ممم'
+            'مم';
+        const TextStyle style = TextStyle(
+          fontFamily: 'Noto Sans Arabic',
+          fontSize: fontSize,
+        );
+
+        final double narrowWidth = _naturalWidthOf(
+          narrow,
+          style,
+          TextDirection.rtl,
+        );
+        final double wideWidth = _naturalWidthOf(
+          wide,
+          style,
+          TextDirection.rtl,
+        );
+        final double ahemPredictedWidth = fontSize * narrow.length;
+
+        // ignore: avoid_print
+        print(
+          'game_screen_token_label_fit_test sanity (Noto Sans Arabic, '
+          'fontSize $fontSize): "$narrow" natural width = '
+          '${narrowWidth}dp, "$wide" natural width = ${wideWidth}dp; the '
+          'Ahem-predicted width for any 5-character string at this size '
+          'would be exactly ${ahemPredictedWidth}dp for both strings',
+        );
+
+        expect(
+          (narrowWidth - wideWidth).abs(),
+          greaterThan(1.0),
+          reason:
+              'the Noto Sans Arabic font does not appear to have '
+              'actually loaded: "$narrow" and "$wide" are both 5 '
+              'characters and measured ${narrowWidth}dp and '
+              '${wideWidth}dp, within 1.0dp of each other. Under the '
+              'real, proportional Noto Sans Arabic font these must '
+              'differ ("م" carries a bowl and is wider than the single '
+              'stroke of "ا"); two same-length strings measuring equal '
+              'is exactly what the Ahem substitute font would produce '
+              'instead',
+        );
+        expect(
+          narrowWidth,
+          isNot(closeTo(ahemPredictedWidth, 1.0)),
+          reason:
+              'the Noto Sans Arabic font does not appear to have '
+              'actually loaded: "$narrow" measured ${narrowWidth}dp, '
+              'within 1.0dp of the Ahem-predicted '
+              '${ahemPredictedWidth}dp (fontSize $fontSize x '
+              '${narrow.length} characters)',
+        );
+      },
+    );
+
+    testWidgets(
+      'the mounted token button resolves its label to fontFamily Poppins '
+      'with fontFamilyFallback containing Noto Sans Arabic, off the real '
+      'theme (the check order 146\'s worker used, applied here to this '
+      'control specifically)',
+      (tester) async {
+        _pinPhoneView(tester);
+        final seats = <Map<String, Object?>>[
+          _seatJson(0, name: 'Sam'),
+          _seatJson(1, name: 'Bob'),
+        ];
+        final (controller, _) = await _connectPlaying(
+          tester,
+          mySeat: 0,
+          players: 2,
+          seats: seats,
+          turn: null,
+        );
+        addTearDown(controller.dispose);
+        await _mount(tester, controller, locale: const Locale('en'));
+
+        final RenderParagraph paragraph = _paragraphOfButtonLabel(
+          tester,
+          _tokenKey(0),
+        );
+        final TextStyle? style = paragraph.text.style;
+        expect(
+          style,
+          isNotNull,
+          reason:
+              'fixture is broken: token button 0\'s label RenderParagraph '
+              'carries a null style',
+        );
+
+        // ignore: avoid_print
+        print(
+          'game_screen_token_label_fit_test sanity (theme wiring): token '
+          'button 0\'s resolved TextStyle carries '
+          'fontFamily=${style!.fontFamily}, '
+          'fontFamilyFallback=${style.fontFamilyFallback}',
+        );
+
+        expect(
+          style.fontFamily,
+          'Poppins',
+          reason:
+              'expected token button 0\'s label resolved '
+              'TextStyle.fontFamily to be "Poppins" '
+              '(lib/src/theme.dart kLudoFontFamily), got '
+              '"${style.fontFamily}" -- this file is not mounted inside '
+              'the app\'s real theme, or the theme changed which family '
+              'it asks for',
+        );
+        expect(
+          style.fontFamilyFallback,
+          contains('Noto Sans Arabic'),
+          reason:
+              'expected token button 0\'s label resolved '
+              'TextStyle.fontFamilyFallback to contain "Noto Sans '
+              'Arabic" (lib/src/theme.dart kLudoFontFallbacks), got '
+              '${style.fontFamilyFallback}',
+        );
+
+        tester.view.reset();
+      },
+    );
+  });
+
   group('H4: the four token buttons fit their label on one line, unshrunk, '
       'at phone width '
       '(work/ludo/orders/132b-token-button-overflow-proof.md)', () {
@@ -463,6 +777,26 @@ void main() {
 
         for (int i = 0; i < 4; i++) {
           final int lines = _lineCountOfButtonLabel(tester, _tokenKey(i));
+          final double naturalWidth = _naturalSingleLineWidthOfButtonLabel(
+            tester,
+            _tokenKey(i),
+          );
+          final double boxMaxWidth = _paragraphOfButtonLabel(
+            tester,
+            _tokenKey(i),
+          ).constraints.maxWidth;
+
+          // Proof for the record, not decoration: this is the real
+          // per-button line count and width pair this run measured under
+          // the real fonts and the real theme, quoted verbatim in this
+          // file's own run report rather than assumed.
+          // ignore: avoid_print
+          print(
+            'game_screen_token_label_fit_test table row: locale=en '
+            'button=$i lines=$lines naturalWidth=${naturalWidth}dp '
+            'boxMaxWidth=${boxMaxWidth}dp',
+          );
+
           expect(
             lines,
             1,
@@ -472,8 +806,12 @@ void main() {
                 '${logicalWidth.toStringAsFixed(2)}dp (physical '
                 '${_devicePhysicalSize.width.toStringAsFixed(0)}x'
                 '${_devicePhysicalSize.height.toStringAsFixed(0)}, dpr '
-                '$_devicePixelRatio); a token button label must render on '
-                'a single line at a real phone width',
+                '$_devicePixelRatio); measured under the real Poppins/Noto '
+                'Sans Arabic fonts and the real app theme, the label\'s '
+                'natural (unbounded) width is '
+                '${naturalWidth.toStringAsFixed(2)}dp against a box of '
+                '${boxMaxWidth.toStringAsFixed(2)}dp; a token button label '
+                'must render on a single line at a real phone width',
           );
         }
 
@@ -500,6 +838,15 @@ void main() {
           final String impliedScale = allowedWidth.isFinite && allowedWidth > 0
               ? (naturalWidth / allowedWidth).toStringAsFixed(3)
               : 'undefined (FittedBox was given an unbounded width)';
+
+          // ignore: avoid_print
+          print(
+            'game_screen_token_label_fit_test scale row: locale=en '
+            'button=$i naturalWidth=${naturalWidth}dp '
+            'fittedBoxAllowedWidth=${allowedWidth}dp '
+            'impliedScale=$impliedScale',
+          );
+
           expect(
             naturalWidth <= allowedWidth,
             isTrue,
@@ -542,6 +889,28 @@ void main() {
 
         for (int i = 0; i < 4; i++) {
           final int lines = _lineCountOfButtonLabel(tester, _tokenKey(i));
+          final double naturalWidth = _naturalSingleLineWidthOfButtonLabel(
+            tester,
+            _tokenKey(i),
+          );
+          final double boxMaxWidth = _paragraphOfButtonLabel(
+            tester,
+            _tokenKey(i),
+          ).constraints.maxWidth;
+
+          // Proof for the record, not decoration: this is the real
+          // per-button line count and width pair this run measured under
+          // the real fonts and the real theme, quoted verbatim in this
+          // file's own run report rather than assumed. Read this number
+          // against this file's header comment on the Arabic asymmetry: a
+          // green line here is a lower bound, not a device proof.
+          // ignore: avoid_print
+          print(
+            'game_screen_token_label_fit_test table row: locale=ar '
+            'button=$i lines=$lines naturalWidth=${naturalWidth}dp '
+            'boxMaxWidth=${boxMaxWidth}dp',
+          );
+
           expect(
             lines,
             1,
@@ -551,8 +920,12 @@ void main() {
                 '${logicalWidth.toStringAsFixed(2)}dp (physical '
                 '${_devicePhysicalSize.width.toStringAsFixed(0)}x'
                 '${_devicePhysicalSize.height.toStringAsFixed(0)}, dpr '
-                '$_devicePixelRatio); a token button label must render on '
-                'a single line at a real phone width',
+                '$_devicePixelRatio); measured under the real Poppins/Noto '
+                'Sans Arabic fonts and the real app theme, the label\'s '
+                'natural (unbounded) width is '
+                '${naturalWidth.toStringAsFixed(2)}dp against a box of '
+                '${boxMaxWidth.toStringAsFixed(2)}dp; a token button label '
+                'must render on a single line at a real phone width',
           );
         }
 
@@ -579,6 +952,15 @@ void main() {
           final String impliedScale = allowedWidth.isFinite && allowedWidth > 0
               ? (naturalWidth / allowedWidth).toStringAsFixed(3)
               : 'undefined (FittedBox was given an unbounded width)';
+
+          // ignore: avoid_print
+          print(
+            'game_screen_token_label_fit_test scale row: locale=ar '
+            'button=$i naturalWidth=${naturalWidth}dp '
+            'fittedBoxAllowedWidth=${allowedWidth}dp '
+            'impliedScale=$impliedScale',
+          );
+
           expect(
             naturalWidth <= allowedWidth,
             isTrue,
