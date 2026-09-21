@@ -358,6 +358,30 @@ jobs:
             echo "android.permission.INTERNET is missing from the merged release manifest; the shipped app would not be able to open a socket" >&2
             exit 1
           }
+          # The same shape of defect one layer along. An app targeting API
+          # 30 or above only sees the activities it declares a <queries>
+          # entry for, so a merged manifest with no VIEW/https query has no
+          # browser to hand game_over's verify_url to: url_launcher returns
+          # false and the winner is told the link could not be opened.
+          # url_launcher_android declares no queries of its own, so this can
+          # only come from the app manifest, and nothing in a debug run or a
+          # widget test would notice it missing. Both lines have to be there:
+          # the action alone would pass against the PROCESS_TEXT query the
+          # Flutter template ships.
+          python3 - "$manifest" <<'PY' || exit 1
+          import re, sys
+          xml = open(sys.argv[1], encoding='utf-8').read()
+          intents = [i for b in re.findall(r'<queries>.*?</queries>', xml, re.S)
+                       for i in re.findall(r'<intent>.*?</intent>', b, re.S)]
+          ok = any('android.intent.action.VIEW' in i and 'scheme="https"' in i
+                   for i in intents)
+          if not ok:
+              print('no <queries> block in the merged release manifest declares '
+                    'a VIEW intent for the https scheme; the shipped app cannot '
+                    'resolve a browser for verify_url', file=sys.stderr)
+              sys.exit(1)
+          print('confirmed: the merged release manifest queries VIEW/https')
+          PY
           echo "confirmed from the build's own merged manifest: applicationId=app.fayad.ludo, targetSdk=36, minSdk=24, INTERNET granted"
 
       # Guarded the same way the signing material was written: only runs
