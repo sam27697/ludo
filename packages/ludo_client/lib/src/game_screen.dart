@@ -6,6 +6,11 @@
 // pressing Roll or a token button sends the intention and waits for the
 // server's own reply to change anything.
 //
+// Unique-legal exception, still not a rule: when the server names exactly
+// one legal token, this screen holds for three seconds with an Undo control
+// and then sends that one move if the player does not cancel. Undo clears
+// the local hold only. It never asks the protocol to reverse a move.
+//
 // Not wired into navigation by this order. Nothing routes to this screen
 // yet; it is built and proved standing alone, constructed directly with a
 // controller.
@@ -13,6 +18,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
@@ -36,7 +44,8 @@ class GameScreen extends StatefulWidget {
   State<GameScreen> createState() => _GameScreenState();
 }
 
-class _GameScreenState extends State<GameScreen> {
+class _GameScreenState extends State<GameScreen>
+    with SingleTickerProviderStateMixin {
   // The turn countdown's own local clock. docs/PROTOCOL.md section 6:
   // TurnState.deadlineMs is milliseconds remaining as measured on the
   // server at the moment the frame carrying it was sent, never an
@@ -55,22 +64,145 @@ class _GameScreenState extends State<GameScreen> {
   int? _countdownDeadlineMs;
   int _countdownRemainingSeconds = 0;
 
+  // Client-side unique-legal hold. Armed once per turn.k when legal has
+  // exactly one token; cancelled by Undo, a manual token press, or the
+  // turn leaving that unique-legal awaitMove. controller.move is not
+  // called until the hold elapses without cancel.
+  static const Duration _autoMoveHold = Duration(seconds: 3);
+  Timer? _autoMoveTimer;
+  int? _pendingAutoMoveToken;
+  int? _autoMoveHandledK;
+
+  // Local Roll juice. HapticFeedback.lightImpact and this opacity pulse
+  // fire on tap without waiting for `rolled`. They never invent a die
+  // face: `game-screen-dice-value` still paints only `turn.value`. The
+  // controller rests at 1 so the control stays fully visible; a tap dips
+  // and returns within LudoBrand.motionShort. Reduced-motion skips the
+  // dip and stays at rest.
+  static const double _rollPulseDim = 0.72;
+  late final AnimationController _rollPulse;
+  int _rollPulseGen = 0;
+
   @override
   void initState() {
     super.initState();
+    _rollPulse = AnimationController(vsync: this, value: 1.0);
     widget.controller.addListener(_onControllerChanged);
     _syncCountdown();
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final LudoBrand? brand = Theme.of(context).extension<LudoBrand>();
+    _rollPulse.duration = brand?.motionShort ?? kMotionShort;
+    _syncAutoMove();
+  }
+
+  @override
   void dispose() {
     _countdownTimer?.cancel();
+    _autoMoveTimer?.cancel();
+    _rollPulse.dispose();
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
   }
 
   void _onControllerChanged() {
-    setState(_syncCountdown);
+    setState(() {
+      _syncCountdown();
+      _syncAutoMove();
+    });
+  }
+
+  /// True when this seat is awaiting a move and the server named exactly
+  /// one legal token. The hold is a screen convenience on top of that
+  /// already-authoritative list, not a second legality check.
+  bool _isUniqueLegalAwaitMove() {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    final TurnState? turn = room?.turn;
+    return room != null &&
+        room.state == RoomState.playing &&
+        turn != null &&
+        turn.seat == controller.seat &&
+        turn.phase == TurnPhase.awaitMove &&
+        turn.legal != null &&
+        turn.legal!.length == 1;
+  }
+
+  /// Arms the 3s unique-legal hold once per `turn.k`, or drops a pending
+  /// hold when the turn is no longer that unique-legal awaitMove.
+  void _syncAutoMove() {
+    if (!_isUniqueLegalAwaitMove()) {
+      _clearPendingHold();
+      return;
+    }
+    final TurnState turn = widget.controller.room!.turn!;
+    if (_autoMoveHandledK == turn.k) {
+      return;
+    }
+    _autoMoveHandledK = turn.k;
+    _pendingAutoMoveToken = turn.legal!.single;
+    _autoMoveTimer?.cancel();
+    _autoMoveTimer = Timer(_autoMoveHold, _commitPendingAutoMove);
+    final AppLocalizations loc = AppLocalizations.of(context);
+    _announceAutoMove(
+      '${loc.gameTokenButton(_pendingAutoMoveToken! + 1)} · '
+      '${loc.gameUndoButton}',
+    );
+  }
+
+  void _clearPendingHold() {
+    _autoMoveTimer?.cancel();
+    _autoMoveTimer = null;
+    _pendingAutoMoveToken = null;
+  }
+
+  void _commitPendingAutoMove() {
+    if (!mounted) {
+      return;
+    }
+    final int? token = _pendingAutoMoveToken;
+    if (token == null) {
+      return;
+    }
+    _autoMoveTimer = null;
+    _pendingAutoMoveToken = null;
+    final AppLocalizations loc = AppLocalizations.of(context);
+    _announceAutoMove(loc.gameTokenButton(token + 1));
+    setState(() {});
+    widget.controller.move(token);
+  }
+
+  void _undoPendingAutoMove() {
+    if (_pendingAutoMoveToken == null) {
+      return;
+    }
+    _clearPendingHold();
+    _announceAutoMove(AppLocalizations.of(context).gameYourTurnMove);
+    setState(() {});
+  }
+
+  /// A token tap is an explicit move: drop the hold without announcing
+  /// undo, then let the press send the same move the hold would have.
+  void _cancelPendingHoldForManualMove() {
+    if (_pendingAutoMoveToken == null) {
+      return;
+    }
+    _clearPendingHold();
+    setState(() {});
+  }
+
+  void _announceAutoMove(String message) {
+    if (!mounted || message.isEmpty) {
+      return;
+    }
+    SemanticsService.sendAnnouncement(
+      View.of(context),
+      message,
+      Directionality.of(context),
+    );
   }
 
   /// Restarts the countdown for the current turn, and arms or disarms the
@@ -179,8 +311,71 @@ class _GameScreenState extends State<GameScreen> {
     Navigator.of(context).pop();
   }
 
+  /// Local juice on an enabled Roll tap: light haptic and a short opacity
+  /// pulse, then the same `controller.roll()` the button already sent.
+  /// Neither the haptic nor the pulse waits on `rolled`.
+  void _onRollPressed() {
+    HapticFeedback.lightImpact();
+    _playRollPulse();
+    widget.controller.roll();
+  }
+
+  void _playRollPulse() {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _rollPulse.value = 1.0;
+      return;
+    }
+    final int gen = ++_rollPulseGen;
+    _rollPulse.animateTo(_rollPulseDim).whenComplete(() {
+      if (!mounted || gen != _rollPulseGen) {
+        return;
+      }
+      if (MediaQuery.disableAnimationsOf(context)) {
+        _rollPulse.value = 1.0;
+        return;
+      }
+      _rollPulse.animateTo(1.0);
+    });
+  }
+
   void _requestNewTable() {
     Navigator.of(context).pop(GameScreenResult.newTable);
+  }
+
+  /// Opens the match `verify_url` in an external browser. The app does not
+  /// prove the rolls itself; a failure to open is shown honestly.
+  Future<void> _openVerifyUrl() async {
+    final String? raw = widget.controller.room?.verifyUrl;
+    if (raw == null || raw.isEmpty) {
+      return;
+    }
+    final Uri? uri = Uri.tryParse(raw);
+    if (uri == null || (!uri.isScheme('https') && !uri.isScheme('http'))) {
+      _showVerifyOpenFailed();
+      return;
+    }
+    bool opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } on PlatformException {
+      opened = false;
+    } on ArgumentError {
+      opened = false;
+    }
+    if (!opened && mounted) {
+      _showVerifyOpenFailed();
+    }
+  }
+
+  void _showVerifyOpenFailed() {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(AppLocalizations.of(context).gameVerifyOpenFailed),
+      ),
+    );
   }
 
   @override
@@ -351,12 +546,20 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
           const SizedBox(height: kSpace4),
-          ElevatedButton(
-            key: const Key('game-screen-roll-button'),
-            style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
-            onPressed: rollEnabled ? controller.roll : null,
-            child: Text(loc.gameRollButton),
+          FadeTransition(
+            key: const Key('game-screen-roll-pulse'),
+            opacity: _rollPulse,
+            child: ElevatedButton(
+              key: const Key('game-screen-roll-button'),
+              style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
+              onPressed: rollEnabled ? _onRollPressed : null,
+              child: Text(loc.gameRollButton),
+            ),
           ),
+          if (_pendingAutoMoveToken != null) ...[
+            const SizedBox(height: kSpace2),
+            Center(child: _autoMoveUndoChip(loc)),
+          ],
           const SizedBox(height: kSpace2),
           // Four buttons in a single row leave too little width for either
           // locale's label at a phone's width -- "Token 1" and "قطعة 4" both
@@ -386,6 +589,18 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
+  /// Undo for a pending unique-legal auto-move. Outlined so it stays
+  /// quieter than Roll and the token buttons; 48dp target, logical padding
+  /// via the shared button theme. Cancels the local hold only.
+  Widget _autoMoveUndoChip(AppLocalizations loc) {
+    return OutlinedButton(
+      key: const Key('game-automove-undo'),
+      style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+      onPressed: _undoPendingAutoMove,
+      child: Text(loc.gameUndoButton),
+    );
+  }
+
   /// One of the four token buttons, [index] 0..3. Kept as its own widget so
   /// the two-row layout in [_playingBody] does not repeat the button itself
   /// four times; the key, the enabled test and the move intention are
@@ -403,7 +618,10 @@ class _GameScreenState extends State<GameScreen> {
         child: ElevatedButton(
           key: Key('game-screen-token-$index'),
           onPressed: _tokenEnabled(room, seat, index)
-              ? () => controller.move(index)
+              ? () {
+                  _cancelPendingHoldForManualMove();
+                  controller.move(index);
+                }
               : null,
           child: FittedBox(
             fit: BoxFit.scaleDown,
@@ -418,13 +636,16 @@ class _GameScreenState extends State<GameScreen> {
   /// least two seats to draw it from) and the winner text; the Roll button
   /// and the four token buttons are absent, not merely disabled, because
   /// there is nothing left to press. The next-table button is the honest
-  /// action on this ending: it is not the AppBar leave control.
+  /// action on this ending: it is not the AppBar leave control. Verify
+  /// opens `verify_url` externally; roll history is the last three faces.
   Widget _gameOverBody(
     AppLocalizations loc,
     RoomController controller,
     RoomSnapshot room,
   ) {
     final bool hasBoard = room.seats.length >= 2;
+    final String? verifyUrl = room.verifyUrl;
+    final bool canVerify = verifyUrl != null && verifyUrl.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.all(kSpace4),
       child: Column(
@@ -446,6 +667,15 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ],
           const SizedBox(height: kSpace4),
+          _rollHistory(loc, room),
+          const SizedBox(height: kSpace4),
+          OutlinedButton(
+            key: const Key('game-screen-verify-button'),
+            style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+            onPressed: canVerify ? _openVerifyUrl : null,
+            child: Text(loc.gameVerifyButton),
+          ),
+          const SizedBox(height: kSpace2),
           ElevatedButton(
             key: const Key('game-screen-new-room-button'),
             style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
@@ -454,6 +684,34 @@ class _GameScreenState extends State<GameScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Last faces with their `k` on the finished board. Empty when no `rolled`
+  /// frames landed on this controller before game-over.
+  Widget _rollHistory(AppLocalizations loc, RoomSnapshot room) {
+    final List<(int k, int face)> rolls = room.recentRolls;
+    return Column(
+      key: const Key('game-screen-roll-history'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          loc.gameRollHistoryHeading,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.labelLarge
+              ?.copyWith(fontSize: kTypeLabel, color: LudoColors.inkMuted),
+        ),
+        if (rolls.isEmpty)
+          Text(loc.gameRollHistoryEmpty, textAlign: TextAlign.center)
+        else
+          for (final (int k, int face) in rolls) ...[
+            const SizedBox(height: kSpace1),
+            Text(
+              loc.gameRollHistoryEntry(k, face),
+              textAlign: TextAlign.center,
+            ),
+          ],
+      ],
     );
   }
 

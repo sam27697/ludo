@@ -48,5 +48,11 @@
   "gameOverPlayerWins": "فاز {name}",
   "gameOverEnded": "انتهت اللعبة",
   "gameLeaveButton": "مغادرة",
-  "gameNewRoomButton": "طاولة جديدة"
+  "gameNewRoomButton": "طاولة جديدة",
+  "gameUndoButton": "تراجع",
+  "gameVerifyButton": "التحقق من الرميات",
+  "gameVerifyOpenFailed": "تعذر فتح صفحة التحقق.",
+  "gameRollHistoryHeading": "آخر الرميات",
+  "gameRollHistoryEmpty": "لا توجد رميات للعرض بعد.",
+  "gameRollHistoryEntry": "{k}: {face}"
 }

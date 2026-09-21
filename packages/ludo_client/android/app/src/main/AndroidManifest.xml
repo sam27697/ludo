@@ -73,5 +73,23 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- The Verify control on the finished board opens game_over's
+             verify_url, an absolute https link (docs/PROTOCOL.md section
+             11.2), in the phone's browser. An app that targets API 30 or
+             above cannot see an activity it has not declared a query for,
+             so without this block PackageManager resolves no browser,
+             url_launcher returns false and the button answers a player
+             who won a game with "could not open". url_launcher_android
+             ships no queries of its own, so the app has to declare this
+             one. https only, because verify_url is always https.
+
+             The INTERNET permission above is the same lesson: something
+             the shipped manifest has to carry that no debug run would
+             ever miss. verify.yml asserts this block survives into the
+             merged release manifest. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
     </queries>
 </manifest>
