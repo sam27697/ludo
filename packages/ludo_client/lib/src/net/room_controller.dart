@@ -668,6 +668,7 @@ class RoomController extends ChangeNotifier {
       clientSeeds: clientSeeds,
       turn: turn,
       seq: seqValue,
+      recentRolls: const <(int k, int face)>[],
     );
     notifyListeners();
   }
@@ -753,7 +754,11 @@ class RoomController extends ChangeNotifier {
       legal: legal,
       sixes: null,
     );
-    _room = room.copyWith(turn: turn, seq: seqValue);
+    _room = room.copyWith(
+      turn: turn,
+      seq: seqValue,
+      recentRolls: _appendRecentRoll(room.recentRolls, k, value),
+    );
     notifyListeners();
   }
 
@@ -894,14 +899,14 @@ class RoomController extends ChangeNotifier {
   }
 
   /// `{winner, verify_url}`. Sets `state` to finished and `winner`.
-  /// `verify_url` is required so a malformed frame is caught and is
-  /// otherwise not stored; nothing renders it yet. If `turn` is present its
-  /// `phase` becomes finished with `value`, `legal` and `sixes` cleared and
-  /// `seat`, `deadlineMs` and `k` kept, per docs/PROTOCOL.md sections 14.1
-  /// and 14.2: a finished game's `turn` is not null. `winner` here is a
-  /// room-level field, not an index into a seat, so the absent-seat rule
-  /// does not apply to it: that rule only guards a frame field literally
-  /// named `seat`.
+  /// `verify_url` is required so a malformed frame is caught, and is
+  /// stored on the snapshot for the finished-board verify control. If
+  /// `turn` is present its `phase` becomes finished with `value`, `legal`
+  /// and `sixes` cleared and `seat`, `deadlineMs` and `k` kept, per
+  /// docs/PROTOCOL.md sections 14.1 and 14.2: a finished game's `turn` is
+  /// not null. `winner` here is a room-level field, not an index into a
+  /// seat, so the absent-seat rule does not apply to it: that rule only
+  /// guards a frame field literally named `seat`.
   void _reduceGameOver(Frame frame, RoomSnapshot room) {
     final int? winnerValue = _asInt(frame.data, 'winner');
     final String? verifyUrl = _asString(frame.data, 'verify_url');
@@ -932,11 +937,13 @@ class RoomController extends ChangeNotifier {
         ? room.copyWith(
             state: RoomState.finished,
             winner: winnerValue,
+            verifyUrl: verifyUrl,
             seq: seqValue,
           )
         : room.copyWith(
             state: RoomState.finished,
             winner: winnerValue,
+            verifyUrl: verifyUrl,
             turn: turn,
             seq: seqValue,
           );
@@ -1102,4 +1109,17 @@ List<int>? _asIntList(Map<String, Object?> data, String key) {
     result.add(element);
   }
   return result;
+}
+
+/// Last three `(k, face)` pairs from contiguous `rolled` frames. Oldest
+/// drops off the front when a fourth arrives.
+List<(int k, int face)> _appendRecentRoll(
+  List<(int k, int face)> current,
+  int k,
+  int face,
+) {
+  final List<(int k, int face)> next = List<(int k, int face)>.from(current)
+    ..add((k, face));
+  const int limit = 3;
+  return next.length <= limit ? next : next.sublist(next.length - limit);
 }
