@@ -1,4 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The app talks to wss://ludo.provefair.app and does nothing
+         useful without a socket. Flutter only puts this permission in
+         the debug and profile manifests, so every debug and profile
+         build connected and the release build shipped to Play could
+         not open a single socket: version code 2 answered every Create
+         Room with "failed to connect to server". Do not remove it, and
+         do not rely on the debug manifest to prove connectivity works.
+         verify.yml asserts this line survives into the merged release
+         manifest. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="Ludo RNG"
         android:name="${applicationName}"
@@ -20,9 +30,31 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+            <!-- app_links reads the incoming link itself; without this,
+                 Flutter's own built-in deep-link handling swallows the
+                 intent first and app_links never sees it. -->
+            <meta-data
+              android:name="flutter_deeplinking_enabled"
+              android:value="false"
+              />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- Android App Links: production host only. stg.ludo.provefair.app
+                 is deliberately absent: a staging host in a shipped manifest
+                 is a claim the app makes to every installed phone, and it buys
+                 nothing. Verification depends on
+                 https://ludo.provefair.app/.well-known/assetlinks.json
+                 matching the Play App Signing key; see docs/RELEASE.md. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="https"
+                    android:host="ludo.provefair.app"
+                    android:pathPrefix="/r/"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
@@ -40,6 +72,24 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- The Verify control on the finished board opens game_over's
+             verify_url, an absolute https link (docs/PROTOCOL.md section
+             11.2), in the phone's browser. An app that targets API 30 or
+             above cannot see an activity it has not declared a query for,
+             so without this block PackageManager resolves no browser,
+             url_launcher returns false and the button answers a player
+             who won a game with "could not open". url_launcher_android
+             ships no queries of its own, so the app has to declare this
+             one. https only, because verify_url is always https.
+
+             The INTERNET permission above is the same lesson: something
+             the shipped manifest has to carry that no debug run would
+             ever miss. verify.yml asserts this block survives into the
+             merged release manifest. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
         </intent>
     </queries>
 </manifest>

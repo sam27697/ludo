@@ -4,6 +4,10 @@
   "@appTitle": {
     "description": "The application name, shown as the window/task title and on the home screen."
   },
+  "homeTagline": "Private rooms. Every roll can be checked.",
+  "@homeTagline": {
+    "description": "One short supporting sentence under the brand name on the home screen."
+  },
   "homeCreateRoomButton": "Create Room",
   "@homeCreateRoomButton": {
     "description": "Button on the home screen that starts creating a new room."
@@ -32,26 +36,236 @@
   "@homeLocaleToggleLabel": {
     "description": "Label of the language toggle button, naming the language it switches to."
   },
-  "roomScreenTitle": "Room",
-  "@roomScreenTitle": {
-    "description": "App bar title of the placeholder room screen."
+  "homeNameFieldLabel": "Your name",
+  "@homeNameFieldLabel": {
+    "description": "Label of the text field on the home screen where the player types the name shown to other players."
   },
-  "roomScreenCodeLabel": "Room code: {code}",
-  "@roomScreenCodeLabel": {
-    "description": "Shows the room code on the placeholder room screen.",
+  "homeDefaultPlayerName": "Player",
+  "@homeDefaultPlayerName": {
+    "description": "Name sent to the server when the player leaves the name field empty."
+  },
+  "homePlayersSelectorLabel": "Number of players",
+  "@homePlayersSelectorLabel": {
+    "description": "Caption above the 2/3/4 seat-count selector on the home screen."
+  },
+  "homePlayersDisclosureClosed": "Number of players: 4",
+  "@homePlayersDisclosureClosed": {
+    "description": "Closed disclosure on the home screen that names the default four-seat table before the selector is opened."
+  },
+  "homePlayersTwo": "2 players",
+  "@homePlayersTwo": {
+    "description": "Label of the segment that selects a two-seat room."
+  },
+  "homePlayersThree": "3 players",
+  "@homePlayersThree": {
+    "description": "Label of the segment that selects a three-seat room."
+  },
+  "homePlayersFour": "4 players",
+  "@homePlayersFour": {
+    "description": "Label of the segment that selects a four-seat room."
+  },
+  "lobbyConnecting": "Connecting to the room...",
+  "@lobbyConnecting": {
+    "description": "Shown on the lobby screen while the socket to the server is opening and the create or join request is in flight."
+  },
+  "lobbyConnectionLost": "Connection lost.",
+  "@lobbyConnectionLost": {
+    "description": "Shown on the lobby screen when the socket has closed and the player can choose to reconnect."
+  },
+  "lobbyRoomCodeLabel": "Room code",
+  "@lobbyRoomCodeLabel": {
+    "description": "Caption shown above the room code on the lobby screen."
+  },
+  "lobbyCopyLinkButton": "Copy link",
+  "@lobbyCopyLinkButton": {
+    "description": "Button on the lobby screen that copies the shareable room link to the clipboard."
+  },
+  "lobbyCopyCodeButton": "Copy code",
+  "@lobbyCopyCodeButton": {
+    "description": "Button on the lobby screen that copies the bare room code to the clipboard."
+  },
+  "lobbyLinkCopied": "Copied to the clipboard.",
+  "@lobbyLinkCopied": {
+    "description": "Snackbar shown after either the copy-link or the copy-code button on the lobby screen is pressed."
+  },
+  "lobbyWaitingForPlayers": "Waiting for players ({seated} of {total})",
+  "@lobbyWaitingForPlayers": {
+    "description": "Shown on the lobby screen with the number of seats currently filled and the number of seats the room needs.",
     "placeholders": {
-      "code": {
-        "type": "String",
-        "example": "AB23CD"
+      "seated": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
       }
     }
   },
-  "roomScreenNoCode": "No room code has been assigned yet.",
-  "@roomScreenNoCode": {
-    "description": "Shown on the placeholder room screen instead of a code when there is no server connection to assign one, such as right after tapping Create Room."
+  "lobbyDesynced": "The lobby view may be out of date. Resync to be sure.",
+  "@lobbyDesynced": {
+    "description": "Banner shown on the lobby screen when the controller has detected a gap in the sequence of updates it has received."
   },
-  "roomScreenNotImplemented": "The connection to the server is not implemented yet. This screen does not do anything else right now.",
-  "@roomScreenNotImplemented": {
-    "description": "Honest placeholder text explaining that the room screen has no working connection yet."
+  "lobbyResyncButton": "Resync",
+  "@lobbyResyncButton": {
+    "description": "Button on the desync banner that reopens the connection and resumes the room."
+  },
+  "lobbyReconnectButton": "Reconnect",
+  "@lobbyReconnectButton": {
+    "description": "Button shown on the lobby screen after the connection has closed, to open it again."
+  },
+  "lobbyRetryButton": "Try again",
+  "@lobbyRetryButton": {
+    "description": "Button shown on the lobby screen after a failed create or join, to send the same request again."
+  },
+  "lobbyStartButton": "Start game",
+  "@lobbyStartButton": {
+    "description": "Button shown to the host on the lobby screen that starts the game once every seat is filled."
+  },
+  "lobbyErrorNoSuchRoom": "That room does not exist. Check the code and try again.",
+  "@lobbyErrorNoSuchRoom": {
+    "description": "Error shown on the lobby screen when the server reports NO_SUCH_ROOM."
+  },
+  "lobbyErrorRoomFull": "That room is already full.",
+  "@lobbyErrorRoomFull": {
+    "description": "Error shown on the lobby screen when the server reports ROOM_FULL."
+  },
+  "lobbyErrorRoomStarted": "That room has already started its game.",
+  "@lobbyErrorRoomStarted": {
+    "description": "Error shown on the lobby screen when the server reports ROOM_STARTED."
+  },
+  "lobbyErrorRateLimited": "Too many attempts. Wait a moment and try again.",
+  "@lobbyErrorRateLimited": {
+    "description": "Error shown on the lobby screen when the server reports RATE_LIMITED."
+  },
+  "lobbyErrorTransport": "Could not reach the server. Check your connection and try again.",
+  "@lobbyErrorTransport": {
+    "description": "Error shown on the lobby screen when the connector itself failed, before any request reached the server."
+  },
+  "lobbyErrorGeneric": "Something went wrong. Try again.",
+  "@lobbyErrorGeneric": {
+    "description": "Error shown on the lobby screen for any code not covered by a more specific message, including no code at all."
+  },
+  "gameScreenTitle": "Game",
+  "@gameScreenTitle": {
+    "description": "App bar title of the game screen."
+  },
+  "gameWaitingForStart": "Waiting for the game to start",
+  "@gameWaitingForStart": {
+    "description": "Shown on the game screen when the room has not started playing yet, or is playing with fewer than two seated players."
+  },
+  "gameWaitingForTurn": "Waiting for the next turn",
+  "@gameWaitingForTurn": {
+    "description": "Turn banner shown on the game screen when the room carries no current turn, or when the current turn names a seat no longer present in the room."
+  },
+  "gameWaitingForPlayer": "Waiting for {name}",
+  "@gameWaitingForPlayer": {
+    "description": "Turn banner shown on the game screen naming the seat whose turn it currently is, when it is not this player's own turn.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
+  "gameYourTurnRoll": "Your turn. Roll the die.",
+  "@gameYourTurnRoll": {
+    "description": "Turn banner shown on the game screen when it is this player's own turn and the server is waiting on a roll."
+  },
+  "gameYourTurnMove": "Your turn. Choose a token to move.",
+  "@gameYourTurnMove": {
+    "description": "Turn banner shown on the game screen when it is this player's own turn and the server is waiting on a token choice."
+  },
+  "gameRollButton": "Roll",
+  "@gameRollButton": {
+    "description": "Label of the button on the game screen that sends the roll intention to the server."
+  },
+  "gameTokenButton": "Token {number}",
+  "@gameTokenButton": {
+    "description": "Label of one of the four token buttons on the game screen. The number shown to the player runs 1 to 4 while the protocol token index underneath runs 0 to 3.",
+    "placeholders": {
+      "number": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
+  "gameDieValue": "Rolled {value}",
+  "@gameDieValue": {
+    "description": "Shown on the game screen with the value of the last roll, while the server is waiting on a token choice.",
+    "placeholders": {
+      "value": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "gameTurnCountdown": "{seconds}s left",
+  "@gameTurnCountdown": {
+    "description": "Shown on the game screen next to the turn banner whenever the current turn carries a deadline, counting down the whole seconds remaining before the server takes the turn. Never negative: it clamps at 0 and holds there until the next turn frame arrives.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
+  "gameOverYouWin": "You win",
+  "@gameOverYouWin": {
+    "description": "Shown on the game screen when the game has finished and the winning seat is this player's own."
+  },
+  "gameOverPlayerWins": "{name} wins",
+  "@gameOverPlayerWins": {
+    "description": "Shown on the game screen when the game has finished and the winning seat is present in the room, naming that seat's player.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
+  "gameOverEnded": "Game over",
+  "@gameOverEnded": {
+    "description": "Shown on the game screen when the game has finished but no winning seat can be named, either because the server sent none or because it named a seat no longer present in the room."
+  },
+  "gameLeaveButton": "Leave",
+  "@gameLeaveButton": {
+    "description": "Label and tooltip of the button that leaves the room from the game screen, both the in-game AppBar action present in every state and the button shown in the connection-lost state."
+  },
+  "gameNewRoomButton": "New table",
+  "@gameNewRoomButton": {
+    "description": "Button on the finished game screen that leaves this room and opens a new table. Distinct from the AppBar Leave control; it does not rematch the same room."
+  },
+  "gameUndoButton": "Undo",
+  "@gameUndoButton": {
+    "description": "Label of the outlined control on the game screen that cancels a pending unique-legal auto-move during the three-second hold. Cancels the local hold only; it does not reverse a move on the server."
+  },
+  "gameVerifyButton": "Verify rolls",
+  "@gameVerifyButton": {
+    "description": "Button on the finished game screen that opens the match verification page in an external browser. Uses verifiable wording; it does not claim the rolls are proven on this device."
+  },
+  "gameVerifyOpenFailed": "Could not open the verification page.",
+  "@gameVerifyOpenFailed": {
+    "description": "Shown when tapping Verify rolls cannot open the external verification URL."
+  },
+  "gameRollHistoryHeading": "Last rolls",
+  "@gameRollHistoryHeading": {
+    "description": "Heading above the last few roll faces shown on the finished game screen."
+  },
+  "gameRollHistoryEmpty": "No rolls to show yet.",
+  "@gameRollHistoryEmpty": {
+    "description": "Shown under the last-rolls heading when the finished game has no recorded faces."
+  },
+  "gameRollHistoryEntry": "{k}: {face}",
+  "@gameRollHistoryEntry": {
+    "description": "One recent roll on the finished game screen: the roll index k and the die face.",
+    "placeholders": {
+      "k": {
+        "type": "int",
+        "example": "108"
+      },
+      "face": {
+        "type": "int",
+        "example": "4"
+      }
+    }
   }
 }

@@ -31,6 +31,19 @@ target/
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
 
+# Cloud Agent toolchains. The Dart and Flutter SDKs the environment installs
+# under the repo root at /workspace/toolchains (see .cursor/environment.json
+# and bin/ludo-verify.sh's resolve_dart/resolve_flutter fallbacks). Never
+# committed; they are reinstalled by the environment, not tracked here.
+/toolchains/
+
+# The UX program's working directory. PROGRAM.md rule 6 says never commit it,
+# and packages/ludo_client/test/ux_instrument_test.dart writes its baseline
+# screenshots into .uxprogram/shots/ on every `flutter test` run, so an
+# ordinary test run left about a megabyte of untracked PNGs sitting in
+# `git status` waiting for the next `git add -A` to stage them.
+/.uxprogram/
+
 # Dart and Flutter
 .dart_tool/
 .packages
@@ -60,6 +73,9 @@ captures/
 # Go
 vendor/
 *.test
+
+# Python
+__pycache__/
 
 # IDE and editor
 .idea/

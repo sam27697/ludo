@@ -19,14 +19,27 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'clock.dart';
 import 'connection.dart';
+import 'link_pages.dart';
+import 'privacy_page.dart';
 import 'rate_limit.dart';
 import 'registry.dart';
+import 'room_code.dart';
+import 'snapshot.dart';
 
 /// How often the housekeeping timer fires: `RoomRegistry.reap()` and
 /// `RateLimiter.prune()` both run on this cadence. `docs/PROTOCOL.md` does
 /// not pin an exact number; the work order asks for "around once a minute"
 /// and this is that.
 const Duration housekeepingInterval = Duration(minutes: 1);
+
+/// How often the turn timer sweeps for expired segments. Separate from
+/// [housekeepingInterval] on purpose: reaping an idle room a minute late
+/// costs nothing, but a turn budget of `rules.turn_seconds` swept once a
+/// minute would overrun by up to a further minute, which is the same stall
+/// this timer exists to end, only shorter. One second is the coarsest sweep
+/// whose worst-case overrun a player would not notice against a 45-second
+/// budget, and the sweep itself only walks the room map.
+const Duration turnExpiryInterval = Duration(seconds: 1);
 
 /// The header a reverse proxy is expected to set with the real client
 /// address. Only trusted when the immediate peer address is in the
@@ -37,6 +50,55 @@ const String forwardedForHeader = 'x-forwarded-for';
 /// game protocol message: it is answered before the WebSocket upgrade is
 /// ever attempted, and it is the only path this server treats specially.
 const String _healthPath = '/health';
+
+/// The exact, case-sensitive path of the privacy policy page. Matched
+/// alongside its trailing-slash form by the same pre-upgrade check
+/// [_healthPath] uses; see order 049.
+const String _privacyPath = '/privacy';
+
+/// The trailing-slash form of [_privacyPath]. A separate constant rather
+/// than a computed one so both paths read as literal strings at every call
+/// site.
+const String _privacyPathWithSlash = '/privacy/';
+
+/// The exact, case-sensitive path of the Digital Asset Links document.
+/// Matched, like [_healthPath] and [_privacyPath], before the WebSocket
+/// upgrade is ever attempted. See order 076 and `docs/RELEASE.md:139-159`:
+/// the fingerprint this document carries has to be the Play App Signing
+/// key's, never the upload key's.
+const String _assetLinksPath = '/.well-known/assetlinks.json';
+
+/// Matches `/r/<anything with no further slash>`, the shared-room landing
+/// page. The captured group is handed to [buildRoomLandingPageHtml] only
+/// after being upper-cased and checked with `isWellFormedRoomCode`; this
+/// pattern alone says nothing about whether the code is well-formed.
+final RegExp _roomLinkPathPattern = RegExp(r'^/r/([^/]+)$');
+
+/// Builds the `assetlinks.json` body for [rawFingerprint], or returns null
+/// when [rawFingerprint] is null, empty, or does not match
+/// [appSigningFingerprintShape]. A shape mismatch is treated exactly like an
+/// absent value -- served as a 404, never as the malformed value itself --
+/// because a misconfigured fingerprint fails Android's verification exactly
+/// as silently as an absent one does, and there is no way to tell from the
+/// string alone whether it is the app signing key or, wrongly, the upload
+/// key; see `docs/RELEASE.md:139-159`. The value itself is never logged.
+///
+/// [rawFingerprint] is trimmed of surrounding whitespace and upper-cased
+/// before the shape check, so a value that is otherwise valid is accepted
+/// regardless of how it was typed or pasted; the normalised value is what
+/// gets checked against [appSigningFingerprintShape] and what is passed to
+/// [buildAssetLinksJson], so the served document always carries the
+/// canonical upper-case form.
+String? _buildAssetLinksJsonOrNull(String? rawFingerprint) {
+  if (rawFingerprint == null || rawFingerprint.isEmpty) {
+    return null;
+  }
+  final String normalisedFingerprint = rawFingerprint.trim().toUpperCase();
+  if (!isValidAppSigningFingerprintShape(normalisedFingerprint)) {
+    return null;
+  }
+  return buildAssetLinksJson(normalisedFingerprint);
+}
 
 /// Owns the listening socket and everything that turns an accepted
 /// connection into a [Connection]. Built once per running server; `start`
@@ -49,9 +111,27 @@ class WireServer {
     Random? random,
     Set<String> trustedProxies = const <String>{},
     this.version = 'dev',
+    String? privacyContactEmail,
+    String? appSigningSha256,
   })  : _random = random ?? Random.secure(),
         _trustedProxies = trustedProxies,
-        _hub = _ConnectionHub();
+        _hub = _ConnectionHub(),
+        _privacyHtml = buildPrivacyPageHtml(contactEmail: privacyContactEmail),
+        _assetLinksJson = _buildAssetLinksJsonOrNull(
+          // `bin/server.dart` is the entry point that reads every other
+          // piece of environment-driven configuration (PORT,
+          // TRUSTED_PROXIES, LUDO_VERSION, PRIVACY_CONTACT_EMAIL) and passes
+          // each down as an explicit constructor argument here -- but that
+          // file is out of scope for order 076, so this one value falls
+          // back to reading LUDO_APP_SIGNING_SHA256 from the process
+          // environment directly when no caller supplies it explicitly.
+          // Every existing call site (bin/server.dart unmodified, and every
+          // test harness that does not pass this argument) keeps working
+          // exactly as it does today, with the fallback taking effect only
+          // in the running process's own environment, read once here and
+          // never again.
+          appSigningSha256 ?? Platform.environment['LUDO_APP_SIGNING_SHA256'],
+        );
 
   final RoomRegistry registry;
   final RateLimiter rateLimiter;
@@ -69,10 +149,23 @@ class WireServer {
   /// ignored outright, never inspected at all.
   final Set<String> _trustedProxies;
 
+  /// The complete `/privacy` document, built once from the constructor's
+  /// `privacyContactEmail` argument at construction time so serving it never
+  /// touches the filesystem or re-renders anything at request time.
+  final String _privacyHtml;
+
+  /// The complete `assetlinks.json` body, built once at construction time,
+  /// or null when no shape-valid fingerprint was available. Null means
+  /// `GET /.well-known/assetlinks.json` answers 404 with an empty body --
+  /// never `[]`, which would be the different and much stronger claim that
+  /// no application is associated with this domain at all.
+  final String? _assetLinksJson;
+
   final _ConnectionHub _hub;
 
   HttpServer? _httpServer;
   Timer? _housekeeping;
+  Timer? _turnExpiry;
 
   /// The instant [start] completed, per the injected [clock]. Null before
   /// [start] has returned, in which case reported uptime is zero.
@@ -83,8 +176,19 @@ class WireServer {
   /// port, readable back afterwards from [port].
   Future<void> start({required Object address, required int port}) async {
     final shelf.Handler handler = (shelf.Request request) {
-      if (request.requestedUri.path == _healthPath) {
+      final String path = request.requestedUri.path;
+      if (path == _healthPath) {
         return _handleHealth(request);
+      }
+      if (path == _privacyPath || path == _privacyPathWithSlash) {
+        return _handlePrivacy(request);
+      }
+      if (path == _assetLinksPath) {
+        return _handleAssetLinks(request);
+      }
+      final RegExpMatch? roomLinkMatch = _roomLinkPathPattern.firstMatch(path);
+      if (roomLinkMatch != null) {
+        return _handleRoomLink(request, roomLinkMatch.group(1)!);
       }
       final String ip = _clientIp(request);
       final shelf.Handler upgrade = webSocketHandler((
@@ -100,6 +204,9 @@ class WireServer {
     _housekeeping = Timer.periodic(housekeepingInterval, (_) {
       _runHousekeeping();
     });
+    _turnExpiry = Timer.periodic(turnExpiryInterval, (_) {
+      _runTurnExpiry();
+    });
     _startedAt = clock.now;
   }
 
@@ -112,8 +219,60 @@ class WireServer {
   Future<void> close() async {
     _housekeeping?.cancel();
     _housekeeping = null;
+    _turnExpiry?.cancel();
+    _turnExpiry = null;
     await _httpServer?.close(force: true);
     _httpServer = null;
+  }
+
+  /// `docs/RULES.md` section 3.3. The registry decides and applies; this
+  /// only publishes what it decided, to every socket in the room, with no
+  /// `re` on any frame because no request is being answered. Two separate
+  /// guards protect two separate failures, and they must not be collapsed
+  /// into one: the outer `try` protects `registry.expireTurns()` itself, so
+  /// a throw computing which rooms expired cannot escape this periodic
+  /// timer and take every room in the process down with it; the inner `try`
+  /// protects one room's publish, so a throw broadcasting one room's expiry
+  /// cannot stop the publish for every other room this same sweep decided
+  /// on.
+  void _runTurnExpiry() {
+    final List<ExpiredTurn> expired;
+    try {
+      expired = registry.expireTurns();
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('turn-expiry sweep failed error=$error\n$stack');
+      return;
+    }
+    for (final ExpiredTurn one in expired) {
+      try {
+        final List<OutFrame> frames = buildExpiryFrames(one);
+        for (final OutFrame frame in frames) {
+          _hub.broadcast(
+            code: one.code,
+            type: frame.type,
+            data: frame.data,
+          );
+        }
+        final String phase = one.roll != null
+            ? 'await_roll'
+            : one.move != null
+                ? 'await_move'
+                : 'unknown';
+        final String framesJoined = frames.isEmpty
+            ? 'none'
+            : frames.map((OutFrame frame) => frame.type).join('+');
+        final Object? lastSeq = frames.isEmpty ? null : frames.last.data['seq'];
+        final String seq = lastSeq is int ? '$lastSeq' : '-';
+        // ignore: avoid_print
+        print('turn-expiry applied room=${one.code} seat=${one.seat} '
+            'phase=$phase frames=$framesJoined seq=$seq');
+      } catch (error, stack) {
+        // ignore: avoid_print
+        print('turn-expiry publish failed room=${one.code} '
+            'seat=${one.seat} error=$error\n$stack');
+      }
+    }
   }
 
   void _runHousekeeping() {
@@ -183,6 +342,86 @@ class WireServer {
         'cache-control': 'no-store',
       },
     );
+  }
+
+  /// `GET /privacy` and `HEAD /privacy` (and their trailing-slash forms,
+  /// which are matched identically, not redirected) never reach the
+  /// WebSocket upgrade path either, for the same reason [_handleHealth]
+  /// doesn't. Any other method is a `405` naming `GET` and `HEAD` in
+  /// `allow`.
+  shelf.Response _handlePrivacy(shelf.Request request) {
+    const Map<String, String> headers = <String, String>{
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'public, max-age=3600',
+    };
+    switch (request.method) {
+      case 'GET':
+        return shelf.Response.ok(_privacyHtml, headers: headers);
+      case 'HEAD':
+        return shelf.Response.ok('', headers: headers);
+      default:
+        return shelf.Response(405, headers: const <String, String>{
+          'allow': 'GET, HEAD',
+        });
+    }
+  }
+
+  /// `GET /.well-known/assetlinks.json` and `HEAD` of the same, never
+  /// reaching the WebSocket upgrade path either. With no shape-valid
+  /// fingerprint configured, answers `404` with an empty body -- see
+  /// [_assetLinksJson]'s doc comment for why that, and not `[]`, is the
+  /// honest answer. Any other method is a `405` naming `GET` and `HEAD`.
+  shelf.Response _handleAssetLinks(shelf.Request request) {
+    switch (request.method) {
+      case 'GET':
+      case 'HEAD':
+        final String? body = _assetLinksJson;
+        if (body == null) {
+          return shelf.Response(404, body: '');
+        }
+        const Map<String, String> headers = <String, String>{
+          'content-type': 'application/json',
+        };
+        return shelf.Response.ok(
+          request.method == 'HEAD' ? '' : body,
+          headers: headers,
+        );
+      default:
+        return shelf.Response(405, headers: const <String, String>{
+          'allow': 'GET, HEAD',
+        });
+    }
+  }
+
+  /// `GET /r/<CODE>` and `HEAD` of the same, never reaching the WebSocket
+  /// upgrade path either. [rawCode] is whatever text matched the path
+  /// pattern in [start]'s handler, upper-cased and checked against
+  /// `isWellFormedRoomCode` here -- the only validation this route performs.
+  /// It deliberately never asks [registry] whether a room with this code
+  /// exists: a valid-shape code answers `200` whether or not the room is
+  /// real, because the code is the only thing protecting a private room and
+  /// a route that answered differently for a live code than a dead one
+  /// would let brute-forcing codes work.
+  shelf.Response _handleRoomLink(shelf.Request request, String rawCode) {
+    switch (request.method) {
+      case 'GET':
+      case 'HEAD':
+        final String code = rawCode.toUpperCase();
+        if (!isWellFormedRoomCode(code)) {
+          return shelf.Response.notFound('');
+        }
+        const Map<String, String> headers = <String, String>{
+          'content-type': 'text/html; charset=utf-8',
+        };
+        return shelf.Response.ok(
+          request.method == 'HEAD' ? '' : buildRoomLandingPageHtml(code),
+          headers: headers,
+        );
+      default:
+        return shelf.Response(405, headers: const <String, String>{
+          'allow': 'GET, HEAD',
+        });
+    }
   }
 
   /// Whole seconds since [start] completed, from the injected [clock]. Zero

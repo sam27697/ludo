@@ -7,6 +7,7 @@
 
 import 'dart:math';
 
+import 'package:fair_dice/fair_dice.dart' show DiceChain, drawDie, hexEncode;
 import 'package:ludo_engine/ludo_engine.dart' as engine;
 
 import 'clock.dart';
@@ -32,6 +33,7 @@ enum ProtocolError {
   wrongPhase,
   illegalMove,
   badSeatToken,
+  seedAlreadySet,
   gameOver,
   internal,
 }
@@ -84,13 +86,187 @@ class ResumeFailure extends ResumeResult {
 sealed class StartResult {}
 
 class StartOk extends StartResult {
-  StartOk({required this.room});
+  StartOk({
+    required this.room,
+    required this.serverSeeded,
+    required this.gameStartedSeq,
+    required this.turnSeq,
+    required this.nextDeadlineMs,
+  });
   final Room room;
+
+  /// Seats that had no `client_seed` when this call ran and were given a
+  /// server-drawn one, in ascending seat order, each paired with `room.seq`
+  /// at the instant that particular fix happened. `docs/PROTOCOL.md`
+  /// section 5 puts `seat_seed` on the list of pushes that carry `seq` and
+  /// section 6's `Room.seq` doc calls every such push its own
+  /// state-changing call -- so each entry here needs its own `seq`, not the
+  /// room's final one once every fix (and the game start itself) has
+  /// landed.
+  final List<SeededSeat> serverSeeded;
+
+  /// `game_started`'s own `seq`, read the instant this call's own state
+  /// change (the room moving to PLAYING) advanced the counter to it -- not
+  /// recomputed later from `turnSeq`, and not read back out of `room.seq`
+  /// after the counter has moved again for the `turn` frame below.
+  final int gameStartedSeq;
+
+  /// `docs/PROTOCOL.md` section 13.1: the standalone `turn` frame that
+  /// always follows `game_started` takes the next `seq` after it, one
+  /// greater than `game_started`'s own.
+  final int turnSeq;
+
+  /// The opening segment's `deadline_ms` for that `turn` frame: what is
+  /// left of the segment `_restartSegment` already started earlier in this
+  /// same call, read fresh rather than assumed to still be the full
+  /// `rules.turnSeconds * 1000` it began at.
+  final int nextDeadlineMs;
 }
 
 class StartFailure extends StartResult {
   StartFailure(this.error);
   final ProtocolError error;
+}
+
+/// One seat fixed with a server-drawn seed during a single `start_game`
+/// call, paired with the room's `seq` at the moment of that specific fix.
+class SeededSeat {
+  SeededSeat({required this.seat, required this.seq});
+  final Seat seat;
+  final int seq;
+}
+
+sealed class SetSeedResult {}
+
+class SetSeedOk extends SetSeedResult {
+  SetSeedOk({required this.room, required this.seat});
+  final Room room;
+  final Seat seat;
+}
+
+class SetSeedFailure extends SetSeedResult {
+  SetSeedFailure(this.error);
+  final ProtocolError error;
+}
+
+sealed class RollResult {}
+
+/// `roll`, `docs/PROTOCOL.md` section 12.1. Carries everything the wire
+/// layer needs to build the `rolled` frame, and -- when the roll ends the
+/// turn -- the `turn_passed` and `turn` frames that follow it, without the
+/// wire layer recomputing a face, a chain link or a `seq`.
+///
+/// [events] is `Applied.events` from the engine call this roll made,
+/// unmodified: the `Rolled` event it always contains carries the seat, the
+/// value and the legal set, and a `TurnEnded`/`TurnBegan` pair is present
+/// exactly when the turn passed. [k] and [reveal] have no engine
+/// equivalent -- the engine does not know about the dice chain -- so they
+/// are carried here explicitly, alongside every `seq` and `deadline_ms`
+/// this call decided, each already read from the room's own counter and
+/// clock at the instant that specific frame was fixed.
+class RollOk extends RollResult {
+  RollOk({
+    required this.room,
+    required this.events,
+    required this.k,
+    required this.reveal,
+    required this.rolledSeq,
+    required this.rolledDeadlineMs,
+    this.turnPassedSeq,
+    this.turnSeq,
+    this.nextDeadlineMs,
+  });
+
+  final Room room;
+  final List<engine.GameEvent> events;
+
+  /// 1-based within this game. `chain.reveal(k)` was read for exactly this
+  /// value and no other.
+  final int k;
+
+  /// `s[k]`, 64 lowercase hex characters.
+  final String reveal;
+
+  final int rolledSeq;
+
+  /// The `rolled` frame's own `deadline_ms`. When the roll leaves a legal
+  /// move pending this is a freshly restarted segment (the full
+  /// `rules.turnSeconds`); when the roll ends the turn it is what was left
+  /// of the segment that was already running, because that segment does not
+  /// restart until the `turn` frame below.
+  final int rolledDeadlineMs;
+
+  /// Set together, and only, when the roll ended the turn: the `seq` for
+  /// `turn_passed` and for the `turn` frame that follows it.
+  final int? turnPassedSeq;
+  final int? turnSeq;
+
+  /// The freshly restarted segment's `deadline_ms` for the `turn` frame,
+  /// set together with [turnSeq].
+  final int? nextDeadlineMs;
+}
+
+class RollFailure extends RollResult {
+  RollFailure(this.error);
+  final ProtocolError error;
+}
+
+sealed class MoveResult {}
+
+/// `move`, `docs/PROTOCOL.md` section 12.2. Carries everything the wire
+/// layer needs to build the `moved` frame and exactly one of `game_over` or
+/// `turn`, whichever applies, again without recomputing anything the
+/// registry already decided.
+class MoveOk extends MoveResult {
+  MoveOk({
+    required this.room,
+    required this.events,
+    required this.movedSeq,
+    this.gameOverSeq,
+    this.verifyUrl,
+    this.turnSeq,
+    this.nextDeadlineMs,
+  });
+
+  final Room room;
+  final List<engine.GameEvent> events;
+  final int movedSeq;
+
+  /// Set together, and only, when this move won the game.
+  final int? gameOverSeq;
+  final String? verifyUrl;
+
+  /// Set together, and only, when the game continues: either the turn
+  /// passed, or the same seat was granted an extra roll. Section 12.2 sends
+  /// a `turn` frame for the seat that now holds the turn either way.
+  final int? turnSeq;
+  final int? nextDeadlineMs;
+}
+
+class MoveFailure extends MoveResult {
+  MoveFailure(this.error);
+  final ProtocolError error;
+}
+
+/// One turn the server's own timer acted on, and the result the wire layer
+/// has to publish for it. [roll] and [move] are mutually exclusive and
+/// exactly one of them is set: a segment that ran out while the seat still
+/// owed a roll produces a [RollOk], one that ran out while it owed a token
+/// selection produces a [MoveOk]. Both carry precisely what the matching
+/// client-driven path carries, so the wire layer builds the same frames from
+/// them and nothing about a timer-played turn is special downstream.
+class ExpiredTurn {
+  ExpiredTurn({required this.code, required this.seat, this.roll, this.move});
+
+  /// The room this happened in. Carried explicitly because the wire layer
+  /// broadcasts by code and should not have to reach into the result.
+  final String code;
+
+  /// The seat the server acted for, 0..3.
+  final int seat;
+
+  final RollOk? roll;
+  final MoveOk? move;
 }
 
 sealed class SetPlayersResult {}
@@ -131,6 +307,18 @@ const int _minName = 1;
 const int _maxName = 24;
 const int _minTurnSeconds = 15;
 const int _maxTurnSeconds = 120;
+
+/// `docs/PROTOCOL.md` section 11.2/11.3: the server secret a chain is
+/// rooted at is 32 bytes, a server-drawn seed handed to a seed-less seat at
+/// `start_game` is 16 bytes (32 lowercase hex characters), and `game_id` is
+/// 8 bytes (16 lowercase hex characters).
+const int _serverSecretBytes = 32;
+const int _serverSeedBytes = 16;
+const int _gameIdBytes = 8;
+
+const int _minClientSeed = 1;
+const int _maxClientSeed = 64;
+final RegExp _clientSeedPattern = RegExp(r'^[A-Za-z0-9_-]+$');
 
 /// In-memory rooms: creation, codes, seats, seat tokens, lifecycle and
 /// reaping. No WebSocket, no HTTP, no timer driven by the wall clock --
@@ -191,6 +379,12 @@ class RoomRegistry {
       seatToken: generateSeatToken(_secure),
       connected: true,
     );
+    // docs/PROTOCOL.md section 11.1: the chain is built, and its commitment
+    // fixed, before this room exists anywhere a `set_seed` could reach it --
+    // `_rooms[code] = room` below is the first point at which the code this
+    // chain belongs to resolves to anything at all, so no player seed can
+    // possibly have been accepted before this line runs.
+    final DiceChain chain = DiceChain.build(_drawBytes(_serverSecretBytes));
     final Room room = Room(
       code: code,
       createdAt: _clock.now,
@@ -200,6 +394,7 @@ class RoomRegistry {
       hostSeat: hostSeatIndex,
       seats: <Seat>[hostSeat],
       game: null,
+      chain: chain,
     );
     _rooms[code] = room;
     _refreshIdleTracking(room);
@@ -274,6 +469,29 @@ class RoomRegistry {
     if (room.seats.length != room.players) {
       return StartFailure(ProtocolError.notEnoughPlayers);
     }
+
+    // docs/PROTOCOL.md section 11.2: every seat that sent no `set_seed`
+    // gets a server-drawn seed here, before `client_seeds` is frozen. Each
+    // of these is its own fixed-seed state change (section 5 puts
+    // `seat_seed` on the "carrying seq" list), separate from the state
+    // change that is the game starting, so each gets its own `seq`.
+    // `room.seats` is already ordered by ascending seat index (the
+    // invariant `joinRoom` and `setPlayers` both maintain), so iterating it
+    // in place produces the seats in the order `client_seeds` needs.
+    final List<SeededSeat> serverSeeded = <SeededSeat>[];
+    for (final Seat s in room.seats) {
+      if (s.clientSeed == null) {
+        s.clientSeed = hexEncode(_drawBytes(_serverSeedBytes));
+        s.seedOrigin = 'server';
+        room.seq++;
+        serverSeeded.add(SeededSeat(seat: s, seq: room.seq));
+      }
+    }
+
+    room.gameId = hexEncode(_drawBytes(_gameIdBytes));
+    room.clientSeeds =
+        room.seats.map((Seat s) => '${s.seat}:${s.clientSeed}').join('|');
+
     final List<int> seatIndices = room.seats.map((Seat s) => s.seat).toList()
       ..sort();
     final engine.GameConfig config = engine.GameConfig(
@@ -286,18 +504,260 @@ class RoomRegistry {
     );
     room.game = engine.newGame(config);
     room.state = RoomState.playing;
+    // docs/PROTOCOL.md section 6: a segment starts, and the full
+    // rules.turnSeconds is restored, when a seat's turn begins -- the
+    // opening seat's turn begins here, at start_game, along with every
+    // other one this call fixes.
+    _restartSegment(room);
     room.seq++;
-    return StartOk(room: room);
+    final int gameStartedSeq = room.seq;
+    // docs/PROTOCOL.md section 13.1: a standalone `turn` frame always
+    // follows `game_started`, carrying its own `seq` one greater than
+    // `game_started`'s, and the opening segment's `deadline_ms` -- what is
+    // left of the segment `_restartSegment` just started above, not a
+    // second restart of it.
+    room.seq++;
+    final int turnSeq = room.seq;
+    final int nextDeadlineMs = _remainingSegmentMs(room);
+    return StartOk(
+      room: room,
+      serverSeeded: serverSeeded,
+      gameStartedSeq: gameStartedSeq,
+      turnSeq: turnSeq,
+      nextDeadlineMs: nextDeadlineMs,
+    );
+  }
+
+  /// `roll`, `docs/PROTOCOL.md` section 12.1. The rejection ladder below is
+  /// the section's own table, in order, first failure wins: nothing is
+  /// touched before a rejection, so a client that retries a rejected roll
+  /// gets the `k` it would have had.
+  RollResult roll({required String code, required String seatToken}) {
+    final Room? room = _rooms[code];
+    if (room == null) {
+      return RollFailure(ProtocolError.noSuchRoom);
+    }
+    final Seat? seat = _findSeat(room, seatToken);
+    if (seat == null) {
+      return RollFailure(ProtocolError.badSeatToken);
+    }
+    if (room.state == RoomState.finished) {
+      return RollFailure(ProtocolError.gameOver);
+    }
+    if (room.state == RoomState.lobby) {
+      return RollFailure(ProtocolError.wrongPhase);
+    }
+    final engine.GameState game = room.game!;
+    if (seat.seat != game.currentSeat) {
+      return RollFailure(ProtocolError.notYourTurn);
+    }
+    if (game.phase != engine.GamePhase.awaitRoll) {
+      return RollFailure(ProtocolError.wrongPhase);
+    }
+
+    // Section 12.1's own rule, and the one thing that must be impossible:
+    // "k advances and chain.reveal(k) is read on exactly one code path, the
+    // one that has already passed every rejection above." Everything from
+    // here on always returns a success result carrying the frame.
+    final int k = room.rollCount + 1;
+    if (k > room.chain.chainLength) {
+      // The N = 4096 chain rollover is out of scope for this order. A game
+      // that reaches this point must not silently wrap (chain.reveal would
+      // alias an earlier, already-published link) and must not throw an
+      // unhandled RangeError out of chain.reveal either. Refuse cleanly:
+      // the counter, the chain and the engine are all left untouched, and
+      // the caller logs this as docs/PROTOCOL.md section 7 requires for
+      // INTERNAL, with the room code and the sequence number.
+      return RollFailure(ProtocolError.internal);
+    }
+    final String reveal = room.chain.reveal(k);
+    final int value = drawDie(reveal, room.gameId!, room.clientSeeds!, k, 0);
+
+    final engine.ApplyResult applied =
+        engine.apply(game, engine.RollIntention(seat.seat, value));
+    if (applied is engine.Rejected) {
+      // Unreachable given the ladder above already matches the engine's own
+      // ordering for this intention, but the engine's contract is "never
+      // throws, every refusal is a Rejected" and this call site honours
+      // that rather than assuming: nothing above has touched room state, so
+      // this, too, advances nothing.
+      return RollFailure(_mapEngineError(applied.error));
+    }
+    final engine.Applied appliedOk = applied as engine.Applied;
+    room.game = appliedOk.state;
+    room.rollCount = k;
+
+    room.seq++;
+    final int rolledSeq = room.seq;
+
+    final bool turnEnded =
+        appliedOk.events.whereType<engine.TurnEnded>().isNotEmpty;
+
+    int rolledDeadlineMs;
+    int? turnPassedSeq;
+    int? turnSeq;
+    int? nextDeadlineMs;
+
+    if (!turnEnded) {
+      // The roll leaves a legal move pending: the segment restarts now.
+      rolledDeadlineMs = _restartSegment(room);
+    } else {
+      // The turn is about to pass. This rolled frame reports what was left
+      // of the segment that was already running; that segment does not
+      // restart until the turn frame for the next seat, below -- a moved
+      // that ends a turn does not restart it either, by the same rule, and
+      // this is a roll's analogue of that.
+      rolledDeadlineMs = _remainingSegmentMs(room);
+      room.seq++;
+      turnPassedSeq = room.seq;
+      room.seq++;
+      turnSeq = room.seq;
+      nextDeadlineMs = _restartSegment(room);
+    }
+
+    return RollOk(
+      room: room,
+      events: appliedOk.events,
+      k: k,
+      reveal: reveal,
+      rolledSeq: rolledSeq,
+      rolledDeadlineMs: rolledDeadlineMs,
+      turnPassedSeq: turnPassedSeq,
+      turnSeq: turnSeq,
+      nextDeadlineMs: nextDeadlineMs,
+    );
+  }
+
+  /// `move`, `docs/PROTOCOL.md` section 12.2. Same ladder shape as [roll],
+  /// with `WRONG_PHASE` when the turn is awaiting a roll rather than a move.
+  /// [token] has already passed the wire layer's `BAD_FIELD` check (absent,
+  /// not an integer, or outside `0..3`) by the time it reaches here -- that
+  /// is why this method's own signature takes a plain `int` -- but the range
+  /// is re-checked below anyway, the same defence in depth every other
+  /// registry call applies to what its own caller already validated.
+  MoveResult move({
+    required String code,
+    required String seatToken,
+    required int token,
+  }) {
+    final Room? room = _rooms[code];
+    if (room == null) {
+      return MoveFailure(ProtocolError.noSuchRoom);
+    }
+    final Seat? seat = _findSeat(room, seatToken);
+    if (seat == null) {
+      return MoveFailure(ProtocolError.badSeatToken);
+    }
+    if (room.state == RoomState.finished) {
+      return MoveFailure(ProtocolError.gameOver);
+    }
+    if (room.state == RoomState.lobby) {
+      return MoveFailure(ProtocolError.wrongPhase);
+    }
+    final engine.GameState game = room.game!;
+    if (seat.seat != game.currentSeat) {
+      return MoveFailure(ProtocolError.notYourTurn);
+    }
+    if (game.phase != engine.GamePhase.awaitMove) {
+      return MoveFailure(ProtocolError.wrongPhase);
+    }
+    if (token < 0 || token > 3) {
+      return MoveFailure(ProtocolError.badField);
+    }
+
+    final engine.ApplyResult applied =
+        engine.apply(game, engine.MoveIntention(seat.seat, token));
+    if (applied is engine.Rejected) {
+      return MoveFailure(_mapEngineError(applied.error));
+    }
+    final engine.Applied appliedOk = applied as engine.Applied;
+    room.game = appliedOk.state;
+
+    room.seq++;
+    final int movedSeq = room.seq;
+
+    final bool won = appliedOk.events.whereType<engine.GameWon>().isNotEmpty;
+
+    int? gameOverSeq;
+    String? verifyUrl;
+    int? turnSeq;
+    int? nextDeadlineMs;
+
+    if (won) {
+      room.state = RoomState.finished;
+      room.seq++;
+      gameOverSeq = room.seq;
+      verifyUrl = 'https://provefair.app/v/${room.gameId}';
+    } else {
+      // Rule 12 of docs/RULES.md, via the engine's own ExtraRoll/TurnBegan
+      // events: either the same seat rolls again or the next seat's turn
+      // begins. Section 12.2 sends a `turn` frame either way, and section 6
+      // restarts the segment either way.
+      room.seq++;
+      turnSeq = room.seq;
+      nextDeadlineMs = _restartSegment(room);
+    }
+
+    return MoveOk(
+      room: room,
+      events: appliedOk.events,
+      movedSeq: movedSeq,
+      gameOverSeq: gameOverSeq,
+      verifyUrl: verifyUrl,
+      turnSeq: turnSeq,
+      nextDeadlineMs: nextDeadlineMs,
+    );
+  }
+
+  /// `set_seed`, `docs/PROTOCOL.md` section 11.2. The rejection ladder here
+  /// is deliberately not the room-exists / seat-authorised / phase-correct
+  /// order every other method in this file uses: room existence still runs
+  /// first, but phase then overtakes seat authorisation, per section 11.2's
+  /// own table, so a request that is wrong in both ways answers
+  /// `WRONG_PHASE` rather than `BAD_SEAT_TOKEN`. A room that no longer
+  /// exists at all -- never created, or reaped since -- answers
+  /// `NO_SUCH_ROOM`, the same as every other entry point in this file.
+  SetSeedResult setSeed({
+    required String code,
+    required String seatToken,
+    required Object? clientSeed,
+  }) {
+    final Room? room = _rooms[code];
+    if (room == null) {
+      return SetSeedFailure(ProtocolError.noSuchRoom);
+    }
+    if (room.state != RoomState.lobby) {
+      return SetSeedFailure(ProtocolError.wrongPhase);
+    }
+    final Seat? seat = _findSeat(room, seatToken);
+    if (seat == null) {
+      return SetSeedFailure(ProtocolError.badSeatToken);
+    }
+    final String? validSeed = _validClientSeed(clientSeed);
+    if (validSeed == null) {
+      return SetSeedFailure(ProtocolError.badField);
+    }
+    if (seat.clientSeed != null) {
+      return SetSeedFailure(ProtocolError.seedAlreadySet);
+    }
+    seat.clientSeed = validSeed;
+    seat.seedOrigin = 'player';
+    room.seq++;
+    return SetSeedOk(room: room, seat: seat);
   }
 
   /// Changes the configured player count of a LOBBY room and re-seats
   /// everyone already present onto the canonical seat set for the new
   /// count, per `docs/RULES.md` rule 2a and `docs/PROTOCOL.md` section 3.
   ///
-  /// Every seat keeps its `name`, its `seatToken` and its `connected` flag
-  /// across the re-seat; only the seat index moves. The seat currently at
-  /// the lowest index takes the lowest index of the new set, and so on,
-  /// preserving join order.
+  /// Every seat keeps its `name`, its `seatToken`, its `connected` flag and
+  /// its `clientSeed`/`seedOrigin` across the re-seat; only the seat index
+  /// moves. The seat currently at the lowest index takes the lowest index
+  /// of the new set, and so on, preserving join order. Carrying the seed
+  /// across matters: `docs/PROTOCOL.md` section 11.3 says a seat's seed
+  /// never changes once fixed, and rebuilding a fresh `Seat` here without
+  /// its seed would silently erase a fixed one, letting the same occupant
+  /// `set_seed` again under a new index and defeating "once per seat".
   SetPlayersResult setPlayers({
     required String code,
     required String seatToken,
@@ -334,6 +794,8 @@ class RoomRegistry {
           name: ordered[i].name,
           seatToken: ordered[i].seatToken,
           connected: ordered[i].connected,
+          clientSeed: ordered[i].clientSeed,
+          seedOrigin: ordered[i].seedOrigin,
         ),
     ];
 
@@ -437,6 +899,166 @@ class RoomRegistry {
     return toRemove.length;
   }
 
+  /// `docs/RULES.md` section 3.3: a seat that lets its segment run out does
+  /// not hold the table. Swept on a fixed cadence by the wire layer, never
+  /// by a client frame, and never by anything that reads room state -- the
+  /// only side effect of calling this is the turns it plays.
+  ///
+  /// Rule 15 for a segment that expires in `await_move`: exactly one legal
+  /// move is played; where several exist the ascending token index decides;
+  /// where none exist the turn already passed under rule 7 and no segment
+  /// was ever armed, so there is nothing here to act on.
+  ///
+  /// Rule 16a for a segment that expires in `await_roll` -- the case rule 14
+  /// never named, and the one that actually hung a table, because a seat
+  /// that drops before rolling owes an action no other seat can take. The
+  /// server rolls for it, through the same [roll] this file already exposes,
+  /// so the dice chain advances by exactly one link on exactly one code path
+  /// and a timer-drawn die is verifiable the same way every other die is.
+  ///
+  /// Deliberately not filtered on `seat.connected`: rules 14 and 15 put the
+  /// timer on the segment, not on the socket, and a connected player who
+  /// walks away hangs the table exactly as hard as a disconnected one.
+  List<ExpiredTurn> expireTurns() {
+    final List<ExpiredTurn> acted = <ExpiredTurn>[];
+    for (final Room room in _rooms.values.toList(growable: false)) {
+      if (room.state != RoomState.playing) {
+        continue;
+      }
+      final engine.GameState? game = room.game;
+      if (game == null || game.phase == engine.GamePhase.finished) {
+        continue;
+      }
+      if (_remainingSegmentMs(room) > 0) {
+        continue;
+      }
+      // From here on this room's segment has expired and this sweep owes
+      // it an action: either an ExpiredTurn is appended below, or one of
+      // the branches below calls _declineExpiredSegment, which restarts
+      // the segment and logs why, before the loop moves to the next room.
+      // Leaving neither behind is exactly the bug this method used to
+      // have -- the same declined room re-entering this sweep, and doing
+      // nothing, once a second for as long as the room lives.
+      final String phase = _turnExpiryPhaseToken(game.phase);
+      final Seat? seat = _seatAt(room, game.currentSeat);
+      if (seat == null) {
+        _declineExpiredSegment(
+          room: room,
+          seatIndex: game.currentSeat,
+          phase: phase,
+          reason: 'no_seat',
+        );
+        continue;
+      }
+      if (game.phase == engine.GamePhase.awaitRoll) {
+        final RollResult result =
+            roll(code: room.code, seatToken: seat.seatToken);
+        if (result is RollOk) {
+          acted.add(
+            ExpiredTurn(code: room.code, seat: seat.seat, roll: result),
+          );
+        } else if (result is RollFailure) {
+          _declineExpiredSegment(
+            room: room,
+            seatIndex: seat.seat,
+            phase: phase,
+            reason: 'roll_failed',
+            error: result.error,
+          );
+        }
+      } else if (game.phase == engine.GamePhase.awaitMove) {
+        final List<int> legal = List<int>.of(engine.legalTokens(game))..sort();
+        if (legal.isEmpty) {
+          _declineExpiredSegment(
+            room: room,
+            seatIndex: seat.seat,
+            phase: phase,
+            reason: 'no_legal_tokens',
+          );
+          continue;
+        }
+        final MoveResult result = move(
+          code: room.code,
+          seatToken: seat.seatToken,
+          token: legal.first,
+        );
+        if (result is MoveOk) {
+          acted.add(
+            ExpiredTurn(code: room.code, seat: seat.seat, move: result),
+          );
+        } else if (result is MoveFailure) {
+          _declineExpiredSegment(
+            room: room,
+            seatIndex: seat.seat,
+            phase: phase,
+            reason: 'move_failed',
+            error: result.error,
+          );
+        }
+      } else {
+        // Not reachable with today's engine.GamePhase (only awaitRoll,
+        // awaitMove and finished exist, and finished was filtered above),
+        // but expireTurns must stay total if that enum ever grows a phase
+        // this method has not been taught to act on.
+        _declineExpiredSegment(
+          room: room,
+          seatIndex: seat.seat,
+          phase: phase,
+          reason: 'unhandled_phase',
+        );
+      }
+    }
+    return acted;
+  }
+
+  /// The lower-snake-case phase token the frozen turn-expiry-skipped log
+  /// line uses, per `docs/PROTOCOL.md` and order 124 -- never the Dart
+  /// enum's own `toString()`.
+  String _turnExpiryPhaseToken(engine.GamePhase phase) {
+    switch (phase) {
+      case engine.GamePhase.awaitRoll:
+        return 'await_roll';
+      case engine.GamePhase.awaitMove:
+        return 'await_move';
+      case engine.GamePhase.finished:
+        return 'other';
+    }
+  }
+
+  /// Called from every path through [expireTurns] that has passed the
+  /// `_remainingSegmentMs(room) > 0` check and is not adding an
+  /// [ExpiredTurn] for [room] to the result. Restarts the segment -- so
+  /// this seat gets a fresh full turn budget rather than the sweep
+  /// hammering the same expired room again next tick -- and prints exactly
+  /// one line in the frozen `turn-expiry skipped` format, with `error=`
+  /// appended only when [error] is given.
+  void _declineExpiredSegment({
+    required Room room,
+    required int seatIndex,
+    required String phase,
+    required String reason,
+    ProtocolError? error,
+  }) {
+    _restartSegment(room);
+    final String errorSuffix = error == null ? '' : ' error=${error.name}';
+    // ignore: avoid_print
+    print('turn-expiry skipped room=${room.code} seat=$seatIndex '
+        'phase=$phase reason=$reason$errorSuffix');
+  }
+
+  /// The seated player at engine seat index [index], or null when that index
+  /// holds nobody. Distinct from [_findSeat], which looks a seat up by its
+  /// token; the timer has no token to start from, only the seat the engine
+  /// says currently owes an action.
+  Seat? _seatAt(Room room, int index) {
+    for (final Seat seat in room.seats) {
+      if (seat.seat == index) {
+        return seat;
+      }
+    }
+    return null;
+  }
+
   Room? lookup(String code) => _rooms[code];
 
   /// How many rooms this registry currently holds, including one that has
@@ -451,6 +1073,30 @@ class RoomRegistry {
     } else {
       _lobbyIdleSince.remove(room.code);
     }
+  }
+
+  /// `docs/PROTOCOL.md` section 6: restarts the current turn segment on the
+  /// registry's own injected clock and returns the freshly restored
+  /// `deadline_ms` (always `rules.turnSeconds * 1000`, since the elapsed
+  /// time from a segment that starts this instant is zero).
+  int _restartSegment(Room room) {
+    room.turnSegmentStartedAt = _clock.now;
+    return room.rules.turnSeconds * 1000;
+  }
+
+  /// `docs/PROTOCOL.md` section 6: `max(0, turn_seconds * 1000 - elapsed)`
+  /// for the segment already running, without restarting it. Zero if no
+  /// segment has ever started, which should not happen once a game exists
+  /// but is not something this method should throw over.
+  int _remainingSegmentMs(Room room) {
+    final DateTime? startedAt = room.turnSegmentStartedAt;
+    if (startedAt == null) {
+      return 0;
+    }
+    final int budgetMs = room.rules.turnSeconds * 1000;
+    final int elapsedMs = _clock.now.difference(startedAt).inMilliseconds;
+    final int remaining = budgetMs - elapsedMs;
+    return remaining > 0 ? remaining : 0;
   }
 
   Seat? _findSeat(Room room, String seatToken) {
@@ -480,6 +1126,60 @@ class RoomRegistry {
     final int hi = _secure.nextInt(1 << 32);
     final int lo = _secure.nextInt(1 << 32);
     return (hi << 32) | lo;
+  }
+
+  /// [n] bytes straight off this registry's CSPRNG. The only source of
+  /// randomness for a chain's server secret, a server-drawn seat seed and a
+  /// `game_id` -- all three are byte strings with no further structure, so
+  /// there is nothing beyond this to draw them with.
+  List<int> _drawBytes(int n) =>
+      List<int>.generate(n, (int _) => _secure.nextInt(256));
+}
+
+/// `docs/PROTOCOL.md` section 11.2: `client_seed` absent, not a string,
+/// empty, over 64 characters, or containing anything outside
+/// `[A-Za-z0-9_-]` is `BAD_FIELD`. Returns the seed unchanged when valid,
+/// null otherwise -- this never trims, lowercases or truncates, because a
+/// seed that fails the check is rejected, not repaired.
+String? _validClientSeed(Object? raw) {
+  if (raw is! String) {
+    return null;
+  }
+  if (raw.length < _minClientSeed || raw.length > _maxClientSeed) {
+    return null;
+  }
+  if (!_clientSeedPattern.hasMatch(raw)) {
+    return null;
+  }
+  return raw;
+}
+
+/// Maps an `engine.EngineError` onto the one `ProtocolError` `docs/PROTOCOL.md`
+/// section 7 answers with for it. Only reachable as defence in depth: every
+/// call site above already runs the identical ladder before ever calling
+/// `engine.apply`, so a live `Rejected` here means that duplication drifted,
+/// not that a player found a legitimate way to trigger it.
+ProtocolError _mapEngineError(engine.EngineError error) {
+  switch (error) {
+    case engine.EngineError.notYourTurn:
+      return ProtocolError.notYourTurn;
+    case engine.EngineError.wrongPhase:
+      return ProtocolError.wrongPhase;
+    case engine.EngineError.illegalMove:
+      return ProtocolError.illegalMove;
+    case engine.EngineError.gameFinished:
+      return ProtocolError.gameOver;
+    case engine.EngineError.seatNotInPlay:
+      return ProtocolError.badSeatToken;
+    case engine.EngineError.noSuchToken:
+      // docs/PROTOCOL.md section 12.2: a token outside 0..3 is BAD_FIELD,
+      // the same code the wire layer's own pre-check already answers for
+      // it, before rule legality is ever considered.
+      return ProtocolError.badField;
+    case engine.EngineError.badFace:
+      // The server is the only source of a roll's face and always draws one
+      // in 1..6; a badFace rejection here means that stopped being true.
+      return ProtocolError.internal;
   }
 }
 
