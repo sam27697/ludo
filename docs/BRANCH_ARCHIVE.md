@@ -43,6 +43,18 @@ To bring a branch back:
 
 The dates are each branch's last commit, not the date it was archived.
 
+Three refs are not in the table because they came after the archive commit was
+built. `asam/youthful-curie-6ic7v5` is the branch this consolidation was
+assembled on, merged into `main` by pull request 54. `probe-branch-test` is a
+throwaway from working out which ref namespaces this repository's push
+credentials accept: they accept `refs/heads/*` and refuse deletions, tags and
+every other namespace, which is why the anchor above is a branch and why the
+branch list still has to be cleared from somewhere else. `integrate/run48` is
+the first branch squash-merged after the archive, and the shape every later one
+will have: its commits are not in `main`'s history, but merging it into `main`
+would change nothing and GitHub keeps its originals at `refs/pull/<n>/head`.
+`tool/prune_branches.sh` recognises all three.
+
 | branch | commit | last commit | disposition |
 |---|---|---|---|
 | `client/board-geometry` | `5337a45` | 2026-08-28 | already in main |
