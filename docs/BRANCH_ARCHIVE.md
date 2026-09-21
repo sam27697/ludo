@@ -16,13 +16,27 @@ environment from pull request 38. The fifth was wire-smoke diagnostics for a
 reconnect stall that the resume watchdog had already closed, and it was left
 where it was. Every other branch was deleted.
 
-Nothing was thrown away. Every tip listed below is a parent of the commit
-tagged `workshop-archive-2026-09-21`, so all of it stays reachable and
-fetchable for as long as that tag exists.
+Nothing was thrown away. Every tip listed below is a parent of one commit,
+`archive/workshop-2026-09-21`, which carries no change of its own: its tree is
+main's and its only job is to keep those commits reachable once the branches
+are gone.
 
-To bring one back:
+An anchor like this belongs on a tag rather than a branch, and moving it is one
+command from a checkout that can write tags:
 
-    git fetch origin --tags
+    git tag -a workshop-archive-2026-09-21 origin/archive/workshop-2026-09-21 \
+        -m "Every branch besides main as of 2026-09-21, kept reachable"
+    git push origin workshop-archive-2026-09-21
+    git push origin :archive/workshop-2026-09-21
+    # then point ARCHIVE_REF in tool/prune_branches.sh at the tag
+
+`tool/prune_branches.sh` is what clears the branch list. It refuses to delete a
+branch whose tip is reachable from neither the anchor nor `main`, so it cannot
+be the thing that loses work, and it prints the plan unless given `--yes`.
+
+To bring a branch back:
+
+    git fetch origin
     git branch <name> <commit>       # the commit column below
     # or read one file out of it without a checkout:
     git show <commit>:<path>
