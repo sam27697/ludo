@@ -50,7 +50,16 @@ PATTERNS = [
 COMPILED = [(cat, re.compile(rx, re.IGNORECASE)) for cat, rx in PATTERNS]
 EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF\u2B50\u2B55]")
 IDENTITY = re.compile(r"(\bbot\b|\[bot\]|agent|assistant|claude|anthropic|openai|copilot|cursor|grok|gemini|antigravity|noreply@(?:anthropic|openai|x\.ai))", re.IGNORECASE)
-SKIP_PREFIXES = (".uxprogram/",)
+# This tool takes no argument that lets a caller pass an exclusion prefix in
+# (checked: --base, --head and --allow-file are the whole interface), so the
+# workflow cannot supply this repository's path and this line is edited by
+# hand instead. This repository vendors the kit at uxprogram-kit/, not at
+# .uxprogram/ -- .uxprogram/ is this project's own gitignored runtime
+# directory, unrelated to where the kit lives here. A future re-sync of the
+# kit from upstream will silently overwrite this line back to the kit's own
+# default and put uxprogram-kit/ back inside the scanned tree; whoever does
+# that re-sync has to reapply this change.
+SKIP_PREFIXES = ("uxprogram-kit/",)
 
 
 def scan_text(text):

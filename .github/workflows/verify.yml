@@ -453,3 +453,70 @@ jobs:
           path: ${{ env.AAB_REPO_PATH }}
           if-no-files-found: error
           retention-days: 14
+
+  # Catches a commit carrying a model authorship tell -- the mechanism is
+  # uxprogram-kit/kit/tools/authorship_scan.py, vendored by PR #54; this job
+  # does not add scanning logic of its own, only the range it runs the
+  # scanner over and when. Runs on pull_request only, gated with an `if:`
+  # on the job rather than restricting the workflow's own `on:` block, which
+  # stays push and pull_request for the jobs above. A push-triggered run
+  # would scan a range built from commits already on main, and 22 of those
+  # already carry the trailer this gate exists to catch -- a push-triggered
+  # copy of this job would be red on main from the day it landed and would
+  # get switched off within a week. Its own job, not a step folded into
+  # `verify` or `client`, for the same reason those two are already split:
+  # when this goes red it must be unambiguous that it is the authorship gate
+  # and not the Dart harness or the Android client that broke.
+  authorship:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 -- git merge-base below needs the commit graph back
+      # to where the pull request's branch actually diverged from main, the
+      # same reason the `client` job above already sets it for its own
+      # commit count; a shallow clone leaves merge-base nothing to walk.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      # The merge base of the pull request's base and head, not the base
+      # sha GitHub reports, as the start of the scanned range.
+      #
+      # The merge base equals the reported base sha whenever that sha is
+      # already an ancestor of the head, which is every ordinary pull
+      # request -- so in the normal case this step changes nothing.
+      #
+      # Where they differ (a stale or divergent reported base sha), the
+      # merge base scans a superset of what the reported base sha would
+      # scan, never a subset: git merge-base(A, B) is always an ancestor of
+      # A, so its reachable set is a subset of A's, which makes
+      # merge-base..B a superset of A..B. It is still the right range start
+      # because it is defined for any pair of commits, including a stale or
+      # divergent reported base, and it never scans less than the reported
+      # base would -- so the gate cannot be narrowed by a base sha that has
+      # drifted.
+      #
+      # What this does not solve: if the target branch gains a commit
+      # carrying a tell after the pull request opens and the author merges
+      # that branch forward, that commit is inside the scanned range and
+      # this gate fires on it. The remedy when that happens is the
+      # allowlist file the scanner already supports, not a change to this
+      # step.
+      - name: compute merge base
+        id: range
+        run: |
+          set -euo pipefail
+          base="$(git merge-base ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }})"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "merge base: $base"
+
+      # uxprogram-kit/ is excluded inside the scanner itself (SKIP_PREFIXES
+      # in authorship_scan.py) because the scanner takes no argument that
+      # would let this step pass the exclusion in -- see the comment above
+      # that line for why and for what a kit re-sync does to it.
+      - name: authorship scan
+        run: |
+          set -euo pipefail
+          python3 uxprogram-kit/kit/tools/authorship_scan.py \
+            --base ${{ steps.range.outputs.base }} \
+            --head ${{ github.event.pull_request.head.sha }}
