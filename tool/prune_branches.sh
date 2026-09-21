@@ -38,7 +38,22 @@ if [ -z "$archive" ]; then
 fi
 main="$(git rev-parse -q --verify refs/remotes/origin/main)"
 
-doomed=(); unanchored=()
+# True when merging the branch into main would change nothing, which is what
+# a squash merge leaves behind: the branch's commits are not in main's history
+# but every line of its content is. This repository merges that way, so
+# without this test the script would refuse from the first squashed pull
+# request landed after the archive commit onward, which is to say permanently.
+# Deleting such a branch drops its own commit objects; the content is in main
+# and GitHub keeps the originals at refs/pull/<n>/head, so what is lost is the
+# branch name, not the work. Needs merge-tree's two-argument form, git 2.38 or
+# newer. Older git leaves the answer as no, which only ever refuses more.
+content_already_in_main() {
+  local sha="$1" merged
+  merged="$(git merge-tree --write-tree "$sha" "$main" 2>/dev/null | head -1)" || return 1
+  [ -n "$merged" ] && [ "$merged" = "$(git rev-parse "$main^{tree}")" ]
+}
+
+doomed=(); squashed=(); unanchored=()
 while read -r ref; do
   b="${ref#refs/heads/}"
   for k in "${KEEP[@]}"; do [ "$b" = "$k" ] && continue 2; done
@@ -46,6 +61,8 @@ while read -r ref; do
   if [ -z "$sha" ]; then continue; fi
   if git merge-base --is-ancestor "$sha" "$archive" || git merge-base --is-ancestor "$sha" "$main"; then
     doomed+=("$b")
+  elif content_already_in_main "$sha"; then
+    squashed+=("$b")
   else
     unanchored+=("$b")
   fi
@@ -63,8 +80,16 @@ fi
 
 echo "archive commit: $archive ($(git cat-file -p "$archive" | grep -c '^parent ') branch tips anchored)"
 echo "keeping: ${KEEP[*]}"
-echo "deleting ${#doomed[@]} branches, all of them reachable from the archive commit or from main:"
+echo "deleting ${#doomed[@]} branches whose commits are reachable from the archive commit or from main:"
 printf '  %s\n' "${doomed[@]}"
+if [ "${#squashed[@]}" -gt 0 ]; then
+  echo
+  echo "and ${#squashed[@]} squash-merged: their commits are not in main's history,"
+  echo "but merging them into main would change nothing, and GitHub keeps the"
+  echo "originals at refs/pull/<n>/head:"
+  printf '  %s\n' "${squashed[@]}"
+  doomed+=("${squashed[@]}")
+fi
 
 if [ "$APPLY" -ne 1 ]; then
   echo
