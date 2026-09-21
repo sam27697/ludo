@@ -31,6 +31,12 @@ target/
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
 
+# Cloud Agent toolchains. The Dart and Flutter SDKs the environment installs
+# under the repo root at /workspace/toolchains (see .cursor/environment.json
+# and bin/ludo-verify.sh's resolve_dart/resolve_flutter fallbacks). Never
+# committed; they are reinstalled by the environment, not tracked here.
+/toolchains/
+
 # Dart and Flutter
 .dart_tool/
 .packages
