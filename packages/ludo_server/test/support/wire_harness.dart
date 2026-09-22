@@ -40,7 +40,20 @@ class ServerHarness {
   /// draw sequence, and therefore whose whole die-face sequence, is fixed
   /// rather than drawn from real entropy. Nothing under `lib/` or `bin/`
   /// is aware this parameter exists.
-  static ServerHarness build({Random? secure}) {
+  ///
+  /// [automaticTurnExpiry] is additive, order 155/156: `WireServer` takes
+  /// `bool automaticTurnExpiry = true`
+  /// (`lib/src/wire_server.dart:117`), and every existing call site of this
+  /// method calls it with no argument and gets exactly what it always got,
+  /// a server whose periodic sweep is live. A caller that supplies `false`
+  /// -- `resume_after_expiry_test.dart`, so far the only one -- gets a
+  /// server with no background turn-expiry timer, so the sweep only runs
+  /// when that caller's own `ServerHarness.server.runTurnExpiryOnce()`
+  /// drives it, once, synchronously, with no real wall-clock wait.
+  static ServerHarness build({
+    Random? secure,
+    bool automaticTurnExpiry = true,
+  }) {
     final FakeClock clock = FakeClock(DateTime.utc(2026, 8, 28));
     final RoomRegistry registry =
         RoomRegistry(clock: clock, secure: secure ?? Random.secure());
@@ -49,6 +62,7 @@ class ServerHarness {
       registry: registry,
       rateLimiter: rateLimiter,
       clock: clock,
+      automaticTurnExpiry: automaticTurnExpiry,
     );
     return ServerHarness._(clock, registry, server);
   }
