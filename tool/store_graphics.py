@@ -14,6 +14,8 @@ still present without the layout that causes the resemblance.
 Everything is drawn at 4x and downsampled with Lanczos, so edges anti-alias and
 output is deterministic.
 """
+import os
+
 from PIL import Image, ImageDraw, ImageFont
 
 S = 4  # supersample
@@ -28,8 +30,10 @@ SEAT = [(0xD3, 0x2F, 0x2F), (0x38, 0x8E, 0x3C), (0xFB, 0xC0, 0x2D), (0x19, 0x76,
 WORD      = (0xFA, 0xF7, 0xF0)
 SUB       = (0xC9, 0xBE, 0xEA)
 
-FONT_BOLD = "/usr/share/fonts/truetype/google-fonts/Poppins-Bold.ttf"
-FONT_MED  = "/usr/share/fonts/truetype/google-fonts/Poppins-Medium.ttf"
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_FONT_DIR = os.path.join(_REPO_ROOT, "packages", "ludo_client", "fonts")
+FONT_BOLD = os.path.join(_FONT_DIR, "Poppins-Bold.ttf")
+FONT_MED  = os.path.join(_FONT_DIR, "Poppins-Medium.ttf")
 
 
 def vertical_gradient(w, h):
@@ -108,8 +112,7 @@ def make_feature(path, w=1024, h=500):
 
 
 if __name__ == "__main__":
-    import os
-    out = os.path.dirname(os.path.abspath(__file__))
+    out = os.path.join(_REPO_ROOT, "assets", "store")
     print(make_icon(os.path.join(out, "icon-512.png")))
     print(make_feature(os.path.join(out, "feature-1024x500.png")))
     # the size that decides whether anyone taps it
