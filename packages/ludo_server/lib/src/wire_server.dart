@@ -12,6 +12,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:meta/meta.dart';
 import 'package:shelf/shelf.dart' as shelf;
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
@@ -113,6 +114,7 @@ class WireServer {
     this.version = 'dev',
     String? privacyContactEmail,
     String? appSigningSha256,
+    this.automaticTurnExpiry = true,
   })  : _random = random ?? Random.secure(),
         _trustedProxies = trustedProxies,
         _hub = _ConnectionHub(),
@@ -137,6 +139,12 @@ class WireServer {
   final RateLimiter rateLimiter;
   final Clock clock;
   final Random _random;
+
+  /// Test seam. When false, [start] does not create the periodic turn-expiry
+  /// timer, and the sweep runs only when [runTurnExpiryOnce] is called.
+  /// Always true in production: `bin/server.dart` never passes it, and a
+  /// server built without this timer never ends a turn on its own.
+  final bool automaticTurnExpiry;
 
   /// The build identifier reported by `GET /health`. Not otherwise used;
   /// this server does not act differently for one version than another.
@@ -204,9 +212,11 @@ class WireServer {
     _housekeeping = Timer.periodic(housekeepingInterval, (_) {
       _runHousekeeping();
     });
-    _turnExpiry = Timer.periodic(turnExpiryInterval, (_) {
-      _runTurnExpiry();
-    });
+    if (automaticTurnExpiry) {
+      _turnExpiry = Timer.periodic(turnExpiryInterval, (_) {
+        _runTurnExpiry();
+      });
+    }
     _startedAt = clock.now;
   }
 
@@ -224,6 +234,14 @@ class WireServer {
     await _httpServer?.close(force: true);
     _httpServer = null;
   }
+
+  /// Runs one turn-expiry sweep synchronously, exactly as the periodic timer
+  /// created by [start] does -- the same call, the same guards, the same
+  /// broadcasts. Exists so a test that has advanced its injected [Clock] past
+  /// a segment's budget can observe the sweep act on that instant instead of
+  /// waiting out a real second. Never called by production code.
+  @visibleForTesting
+  void runTurnExpiryOnce() => _runTurnExpiry();
 
   /// `docs/RULES.md` section 3.3. The registry decides and applies; this
   /// only publishes what it decided, to every socket in the room, with no
