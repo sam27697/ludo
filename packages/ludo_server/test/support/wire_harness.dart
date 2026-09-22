@@ -41,8 +41,8 @@ class ServerHarness {
   /// rather than drawn from real entropy. Nothing under `lib/` or `bin/`
   /// is aware this parameter exists.
   ///
-  /// [automaticTurnExpiry] is additive, order 155/156: `WireServer` has
-  /// always taken `bool automaticTurnExpiry = true`
+  /// [automaticTurnExpiry] is additive, order 155/156: `WireServer` takes
+  /// `bool automaticTurnExpiry = true`
   /// (`lib/src/wire_server.dart:117`), and every existing call site of this
   /// method calls it with no argument and gets exactly what it always got,
   /// a server whose periodic sweep is live. A caller that supplies `false`

@@ -34,7 +34,7 @@
 // **Measured, not assumed going in** (per this order's own text: "you do
 // not know the answer in advance"): in both S1 and S2, `_handleResume`
 // (`lib/src/connection.dart:371`) answers with a `room` snapshot built from
-// `buildRoomSnapshot(ok.room, ...)` (`connection.dart:398`), where `ok.room`
+// `buildRoomSnapshot(ok.room, ...)` (`connection.dart:404`), where `ok.room`
 // is `registry.resume`'s own `_rooms[code]` lookup
 // (`lib/src/registry.dart:436`) -- the *same* mutable `Room` the sweep's
 // `roll`/`move` calls (`registry.dart:535`, `registry.dart:638`) already
@@ -71,8 +71,8 @@ import 'support/scripted_bytes.dart';
 import 'support/wire_harness.dart';
 
 /// The fixed 2-player seat mapping (host=0, guest=2,
-/// `lib/src/registry.dart:967-978`), checked rather than trusted -- see
-/// `buildSteeredLobby`'s own assertion below.
+/// `lib/src/registry.dart:1186-1197`'s `_seatIndicesFor`), checked rather
+/// than trusted -- see `buildSteeredLobby`'s own assertion below.
 const List<int> _steeredSeats = <int>[0, 2];
 
 const String _hostSteerSeed = 'resume-after-expiry-host-seed';
@@ -120,10 +120,11 @@ List<int> _findAwaitRollExpiryFaces() {
 /// S2's face sequence: the host's first roll leaves no legal move (same
 /// handoff as S1), the non-host seat's first roll is a 6 (the only way a
 /// fresh, all-in-yard board leaves a legal move), and its *third* roll --
-/// the extra roll rule 12 grants for that 6, once the yard token it left has
-/// exited onto the track -- is steered so that roll's own move neither wins
-/// nor grants a further extra roll, so the turn genuinely changes hands when
-/// the sweep plays it. Found, not guessed: `findFaceSequence`'s `accepts`
+/// the extra roll rule 9 (docs/RULES.md:94) grants for that 6, once the
+/// yard token it left has exited onto the track -- is steered so that
+/// roll's own move neither wins nor grants a further extra roll, so the
+/// turn genuinely changes hands when the sweep plays it. Found, not
+/// guessed: `findFaceSequence`'s `accepts`
 /// closure below simulates the forced move `docs/RULES.md` rule 15 commits
 /// the sweep to (`legal.first`, the same policy `registry.dart:967`'s
 /// `expireTurns` uses) and only accepts a face whose own move is a plain
@@ -629,7 +630,7 @@ void main() {
       // The non-host seat rolls its steered 6 (the only face that leaves a
       // legal move on a fresh, all-in-yard board) and moves the token that
       // roll frees, on its own still-open socket -- this grants an extra
-      // roll (docs/RULES.md rule 10: any 6 does, whether or not it also
+      // roll (rule 9, docs/RULES.md:94: any 6 does, whether or not it also
       // captures).
       final Map<String, Object?> firstRoll = await sendAndRead(
         lobby.guest.client,
