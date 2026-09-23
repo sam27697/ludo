@@ -5,14 +5,17 @@
 // RoomController. Written from work/ludo/orders/158-client-resume-after-
 // expiry-render.md alone, on base commit dd310e6.
 //
-// This is a measurement order, not a fix order. R6 in particular carries a
-// named hypothesis from the master -- that lib/src/game_screen.dart's
-// _syncCountdown memo does not key on turn.k and so can leave a stale
-// countdown on screen across a resume -- and this file measures it rather
-// than assuming it. Every number this file's R6 case asserts is derived and
-// explained in that case's own comment, checked against the actual reducer
-// code in lib/src/net/room_controller.dart and lib/src/game_screen.dart, not
-// guessed.
+// This is a measurement order, not a fix order. R6 guards against a
+// regression in lib/src/game_screen.dart's _syncCountdown: a resumed turn
+// that shares the pre-drop turn's exact deadline_ms but carries a different
+// turn.k must still reset the on-screen countdown to that turn's own full
+// segment, not carry the dead-socket seconds forward. (The master once
+// measured a defect here -- a countdown memo that compared only (seat,
+// deadlineMs) and never turn.k, leaving the old countdown running across the
+// resume -- and that defect has since been fixed.) Every number this file's
+// R6 case asserts is derived and explained in that case's own comment,
+// checked against the actual reducer code in lib/src/net/room_controller.dart
+// and lib/src/game_screen.dart, not guessed.
 //
 // GameScreen is driven the same way test/game_screen_connection_lost_test.dart
 // and test/game_screen_countdown_test.dart drive RoomController: a real
@@ -686,51 +689,49 @@ void main() {
 
   // ==========================================================================
   // R6: the turn comes back around to seat 0 with the same integer
-  // deadline_ms as the pre-drop turn but a different turn.k. This is a
-  // hypothesis of the master's, not a finding, and is measured rather than
-  // assumed.
+  // deadline_ms as the pre-drop turn but a different turn.k. This guards
+  // against a regression the master once measured here: a countdown memo
+  // that ignored turn.k could mistake this resumed turn for the pre-drop
+  // one already on screen and leave a stale countdown running across the
+  // resume.
   // ==========================================================================
   //
-  // lib/src/game_screen.dart:250-253's _syncCountdown early-returns from
-  // restarting the countdown when `turn.seat == _countdownSeat &&
-  // turn.deadlineMs == _countdownDeadlineMs`, never comparing turn.k. Here
-  // the resumed turn is (seat: 0, deadlineMs: 42000): an exact match on
-  // both halves of that pair against the pre-drop turn (seat: 0, deadlineMs:
-  // 42000, k: 2), even though turn.k has moved to 7, a materially different
-  // turn (a capture bonus or a six granting seat 0 a fresh turn after the
-  // sweep played its way around the table). Because the memo matches, the
-  // countdown's own Timer -- armed once at initState for the pre-drop turn
-  // and never cancelled by anything in between, since neither the phase
-  // moving to closed nor the phase moving to connecting changes room.turn
-  // or the (seat, deadlineMs) pair the memo compares -- is never reset: it
-  // keeps ticking down through the entire disconnect and through the
-  // reconnect, decrementing _countdownRemainingSeconds by one for every
-  // second of fake time this test pumps, whether or not the socket is
-  // alive and whether or not the widget is even showing a countdown to
-  // look at.
+  // lib/src/game_screen.dart's _syncCountdown restarts the on-screen
+  // countdown whenever the resumed turn is a different turn from the one it
+  // last synced against, and two turns that share seat and deadline_ms but
+  // carry different turn.k values are still different turns. Here the
+  // resumed turn is (seat: 0, deadlineMs: 42000, k: 7) against the pre-drop
+  // turn's (seat: 0, deadlineMs: 42000, k: 2); the difference in k is what
+  // marks this as a fresh turn (a capture bonus or a six granting seat 0 a
+  // fresh turn after the sweep played its way around the table), not a
+  // re-delivery of the one already ticking down. Because the restart guard
+  // compares turn.k, the countdown is reset to the resumed turn's own full
+  // segment: the 15 seconds spent with the socket dead are not carried
+  // forward into that reset.
   //
   // The arithmetic this case's exact-value assertions depend on: the
   // countdown starts at ceil(42000 / 1000) = 42 (confirmed by this case's
   // own first assertion, and matching test/game_screen_countdown_test.dart
   // P1's identical finding for a fresh deadline). 15 seconds of fake time
   // are then pumped while the phase is closed (modelling the scenario's
-  // step 3, "time passes"), each one ticking the still-armed Timer down by
-  // one: 42 - 15 = 27. Tapping reconnect and running the connect+request
-  // chain to actually send the resume request (via tester.runAsync(() =>
+  // step 3, "time passes"), but because the resumed turn's different
+  // turn.k resets the countdown rather than carrying that elapsed time
+  // forward, none of those 15 seconds show up in what the resumed countdown
+  // reads. Tapping reconnect and running the connect+request chain to
+  // actually send the resume request (via tester.runAsync(() =>
   // pumpEventQueue())) drains only microtasks, not fake seconds -- this is
   // the same idiom _connectPlaying already uses for the identical step, and
   // test/game_screen_countdown_test.dart's P1 confirms empirically that
   // idiom does not itself perturb the countdown -- so no further ticks are
-  // spent getting the resume request sent. If _syncCountdown correctly
-  // restarted the countdown for this resume (a turn.k-aware fix would), the
-  // rendered value after the resume lands would be a fresh 42; if it does
-  // not, per the memo described above, the value carries the 15 seconds of
-  // dead-socket time forward and reads 27. A further 3 seconds of fake time
-  // pumped afterwards, with nothing else touching the controller, then
-  // distinguishes "the same old Timer, still running, never reset" (27 - 3
-  // = 24) from any other explanation that might coincidentally produce 27
-  // once (a fresh Timer restarted at resume and then advanced 3 more
-  // seconds would instead read 42 - 3 = 39, nowhere near 24).
+  // spent getting the resume request sent. The rendered value right after
+  // the resume lands must therefore be a fresh 42, the resumed turn's own
+  // full segment, not 27 (42 - 15): a reading of 27 here would mean the 15
+  // dead-socket seconds were carried forward instead of reset, which is
+  // exactly the regression this case exists to catch. A further 3 seconds
+  // of fake time pumped afterwards, with nothing else touching the
+  // controller, then distinguishes a Timer genuinely restarted at the
+  // resume (42 - 3 = 39) from one that merely never stopped (27 - 3 = 24,
+  // the defective reading this case used to assert before the fix).
   testWidgets(
     'R6: a resumed turn back on seat 0 sharing the pre-drop turn\'s exact '
     'integer deadline_ms but carrying a different turn.k -- measured, not '
@@ -860,29 +861,30 @@ void main() {
       );
       expect(
         shownRightAfterResume,
-        27,
+        42,
         reason:
             'R6: immediately after this resume lands, game-screen-turn-'
             'countdown reads $shownRightAfterResume; this case\'s own '
-            'header comment expects and explains exactly 27, carried '
-            'forward from the pre-drop countdown\'s 42 seconds minus the '
-            '15 seconds of fake time pumped while the socket was dead, '
-            'because _syncCountdown\'s (seat, deadlineMs) memo matched '
-            '(seat 0, deadline_ms 42000) against the pre-drop turn and '
-            'never compared turn.k, so the countdown was never reset for '
-            'what turn.k 7 actually is: a fresh turn. A reading of 42 '
-            'here would mean the countdown was correctly reset. Reproduce '
-            'with: mySeat 0, four seats, pre-drop turn (seat 0, '
+            'header comment expects and explains exactly 42, the resumed '
+            'turn\'s own full segment (ceil(42000 / 1000)), because '
+            'turn.k has moved from 2 to 7 and the countdown\'s restart '
+            'guard treats that as a different turn, resetting the '
+            'countdown rather than carrying forward the 15 seconds of '
+            'fake time pumped while the socket was dead. A reading of 27 '
+            'here would mean those 15 dead-socket seconds were carried '
+            'forward instead -- the regression this case guards against. '
+            'Reproduce with: mySeat 0, four seats, pre-drop turn (seat 0, '
             'await_roll, deadline_ms 42000, k 2), endFromFarSide, pump 15s '
             'while closed, tap reconnect, answer resume with turn (seat 0, '
             'await_roll, deadline_ms 42000, k 7)',
       );
 
-      // Distinguishes a still-running, never-reset Timer from any other
-      // explanation for 27: a further 3 seconds of fake time, with nothing
-      // else touching the controller, takes a live-but-unreset Timer from
-      // 27 to 24. A Timer that had actually been restarted at the resume
-      // (to a fresh 42) would instead read 39 here, not 24.
+      // Distinguishes a Timer genuinely restarted at the resume from any
+      // other explanation for 42: a further 3 seconds of fake time, with
+      // nothing else touching the controller, takes a freshly restarted
+      // Timer from 42 to 39. A Timer that had merely never stopped from
+      // before the resume would instead still read 27 minus these same 3
+      // seconds, 24, not 39.
       await tester.pump(const Duration(seconds: 3));
       final int shownAfterFurtherAdvance = _wholeSecondsShown(
         tester,
@@ -890,20 +892,19 @@ void main() {
       );
       expect(
         shownAfterFurtherAdvance,
-        24,
+        39,
         reason:
             'R6: 3 further seconds of fake time after the resume landed '
             'must read $shownAfterFurtherAdvance. The header comment '
-            'above expects and explains exactly 24: the same Timer that '
-            'was already running before the resume, never cancelled and '
-            'never restarted by it, continuing to decrement the one '
-            'shared _countdownRemainingSeconds field it always has. A '
-            'Timer genuinely restarted at the resume would instead read '
-            '39 (a fresh 42 minus these same 3 seconds); a Timer that had '
-            'somehow stopped rather than merely failed to reset would '
-            'still read 27, unchanged. Neither 39 nor 27 is what this '
-            'case found; 24 is, which is why it asserts 24 and not a '
-            'looser bound',
+            'above expects and explains exactly 39: a fresh 42 (the '
+            'resumed turn\'s own full segment) minus these same 3 '
+            'seconds, proving the countdown\'s Timer was genuinely '
+            'restarted at the resume rather than merely left running. A '
+            'reading of 24 here would mean the pre-drop Timer was still '
+            'running, never reset (27 - 3); a reading of 27, unchanged, '
+            'would mean the Timer had somehow stopped rather than been '
+            'reset. Neither is what a correct reset produces; 39 is, '
+            'which is why this case asserts 39 and not a looser bound',
       );
     },
   );
