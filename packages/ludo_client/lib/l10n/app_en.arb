@@ -208,6 +208,16 @@
       }
     }
   },
+  "gameSeatOffline": "{name} is offline",
+  "@gameSeatOffline": {
+    "description": "Shown on the game screen under the turn banner when the seat whose turn it currently is has a dropped socket, so the countdown visibly running on nobody has a reason attached to it.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
   "gameOverYouWin": "You win",
   "@gameOverYouWin": {
     "description": "Shown on the game screen when the game has finished and the winning seat is this player's own."
