@@ -615,20 +615,18 @@ void main() {
 
   // ==========================================================================
   // P4: from P2's state, the turn moves on to seat 3, who is connected --
-  // the line must be gone. Green on this branch, but for the wrong reason:
-  // the line is never rendered at all yet, so this does not yet catch a
-  // line that appeared correctly and then never left, which is the failure
-  // a real player would actually report. It becomes that real assertion
-  // the day order 163's fix lands next to this file.
+  // the line must be gone. This is the case that catches a line which
+  // appeared correctly on a dropped seat and then never left, which is the
+  // failure a real player would actually report. Proved to bite: deleting
+  // the connected check in _offlineTurnSeat, so the line shows whenever the
+  // turn names a seat, reddens P1, P4 and P5 and nothing else.
   // ==========================================================================
   testWidgets(
     'P4: from P2\'s state, the turn moves on to seat 3, who is connected -- '
-    'game-screen-turn-seat-offline must be gone again. Green on this '
-    'branch, but for the wrong reason: the line is never rendered at all '
-    'yet, so this case does not yet catch a line that appears correctly '
-    'on a dropped seat and then never clears when the turn moves on -- '
-    'the failure a real player would actually report. It becomes that '
-    'real assertion once order 163\'s fix lands next to this file',
+    'game-screen-turn-seat-offline must be gone again. This catches a line '
+    'that appears correctly on a dropped seat and then never clears when '
+    'the turn moves on, which is the failure a real player would actually '
+    'report',
     (tester) async {
       final (controller, transport, _) = await _connectFourSeatGame(
         tester,
@@ -674,16 +672,15 @@ void main() {
 
   // ==========================================================================
   // P5: from P2's state, seat 2 returns with the turn still on seat 2 --
-  // the line must be gone. Same shape and same caveat as P4: green on this
-  // branch for the wrong reason, becomes a real assertion once the fix
-  // lands.
+  // the line must be gone. Same shape as P4 and proved to bite by the same
+  // mutation: the line must clear when the seat comes back, not only when
+  // the turn moves away from it.
   // ==========================================================================
   testWidgets(
     'P5: from P2\'s state, seat 2 returns with the turn still on seat 2 -- '
-    'game-screen-turn-seat-offline must be gone. Green on this branch, '
-    'but for the wrong reason, same as P4: the line is never rendered at '
-    'all yet. It becomes a real assertion once order 163\'s fix lands '
-    'next to this file',
+    'game-screen-turn-seat-offline must be gone. Same shape as P4: the '
+    'line must clear when the seat comes back, not only when the turn '
+    'moves away from it',
     (tester) async {
       final (controller, transport, _) = await _connectFourSeatGame(
         tester,
