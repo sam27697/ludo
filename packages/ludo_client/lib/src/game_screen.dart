@@ -57,11 +57,13 @@ class _GameScreenState extends State<GameScreen>
   // Timer, not DateTime, so a countdown that measured elapsed wall time
   // would read as barely-elapsed real time under every widget test that
   // pumps a virtual clock forward, this package's own suite included.
-  // _countdownSeat and _countdownDeadlineMs are the raw `(seat,
-  // deadlineMs)` pair the current countdown was last started from.
+  // _countdownSeat, _countdownDeadlineMs and _countdownK are the raw
+  // `(seat, deadlineMs, k)` triple the current countdown was last
+  // started from.
   Timer? _countdownTimer;
   int? _countdownSeat;
   int? _countdownDeadlineMs;
+  int? _countdownK;
   int _countdownRemainingSeconds = 0;
 
   // Client-side unique-legal hold. Armed once per turn.k when legal has
@@ -208,17 +210,22 @@ class _GameScreenState extends State<GameScreen>
   /// Restarts the countdown for the current turn, and arms or disarms the
   /// once-a-second tick that keeps it moving.
   ///
-  /// Restarting happens only when the visible `(seat, deadlineMs)` pair
-  /// actually changes. The same pair recurring across frames -- several
-  /// of RoomController's reducers carry the prior segment's `deadlineMs`
-  /// forward unchanged on a frame that is not itself a fresh reading,
-  /// per the doc comments at net/room_controller.dart's `_reduceMoved`,
-  /// `_reduceTurnPassed` and `_reduceGameOver` -- is not a new reading
-  /// and must not restart the clock or the display would jump back up
-  /// while the real deadline keeps approaching underneath it. A
-  /// genuinely new segment always changes at least one half of the
-  /// pair: a different seat is now playing, or a fresh `deadline_ms`
-  /// arrived straight off the wire (`_reduceTurn`, `_reduceRolled`).
+  /// Restarting happens only when the visible `(seat, deadlineMs, k)`
+  /// triple actually changes. The same triple recurring across frames --
+  /// several of RoomController's reducers carry the prior segment's
+  /// `deadlineMs` forward unchanged on a frame that is not itself a fresh
+  /// reading, per the doc comments at net/room_controller.dart's
+  /// `_reduceMoved`, `_reduceTurnPassed` and `_reduceGameOver` -- is not
+  /// a new reading and must not restart the clock or the display would
+  /// jump back up while the real deadline keeps approaching underneath
+  /// it. A genuinely new segment always changes at least one member of
+  /// the triple: a different seat is now playing, a fresh `deadline_ms`
+  /// arrived straight off the wire (`_reduceTurn`, `_reduceRolled`), or
+  /// `turn.k` moved on even though the seat and a stale-looking
+  /// `deadline_ms` happen to coincide with the segment before it -- the
+  /// case a disconnect and resume can produce, since `k` is the one
+  /// field the server always advances for a genuinely new turn and never
+  /// replays.
   ///
   /// No timer runs while the room is not showing a playing board with a
   /// current turn, and none is armed for a turn whose deadline has
@@ -243,18 +250,21 @@ class _GameScreenState extends State<GameScreen>
       _countdownTimer = null;
       _countdownSeat = null;
       _countdownDeadlineMs = null;
+      _countdownK = null;
       _countdownRemainingSeconds = 0;
       return;
     }
 
     if (turn.seat == _countdownSeat &&
-        turn.deadlineMs == _countdownDeadlineMs) {
+        turn.deadlineMs == _countdownDeadlineMs &&
+        turn.k == _countdownK) {
       return;
     }
 
     _countdownTimer?.cancel();
     _countdownSeat = turn.seat;
     _countdownDeadlineMs = turn.deadlineMs;
+    _countdownK = turn.k;
     // Requirement 1: the whole seconds remaining, rounded up so a segment
     // that has not truly reached zero never reads as "0 seconds left" a
     // moment before it actually is.
