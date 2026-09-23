@@ -18,14 +18,19 @@
 // string, not a zero-height box, absent -- which is why every negative case
 // below asserts findsNothing rather than an empty Text.data.
 //
-// This file is proof written against code that does not exist yet. It may
-// not, and does not, reference AppLocalizations.gameSeatOffline: that
-// getter is not generated on this branch, and calling it here would turn
-// an honest red (findsNothing where findsOneWidget is required) into a
-// compile error, which is not a result this order accepts. Instead it
-// asserts on the key, on the rendered Text.data, and on the relationship
-// between the English and Arabic renderings, all of which compile against
-// 4a49b72 whether or not lib/src/game_screen.dart has been touched.
+// This file was first written as proof against code that did not exist yet,
+// on a branch cut from 4a49b72 before order 163's fix, where it could not
+// reference AppLocalizations.gameSeatOffline at all: that getter was not
+// generated there, and calling it would have turned an honest red
+// (findsNothing where findsOneWidget is required) into a compile error,
+// which that order did not accept. This branch is cut instead from
+// integrate/run52-offline, which carries order 163's fix, so
+// AppLocalizations.gameSeatOffline is generated and P6en/P6ar assert
+// against it directly, per the master's own return on this order's first
+// round (see that round's VERDICT for the measurement): each locale's
+// rendered Text.data must equal that same widget tree's own
+// loc.gameSeatOffline('Cy'), which is strictly stronger than only checking
+// the two locales differ from each other.
 //
 // The harness below is copied from test/game_screen_opponent_drop_test.dart
 // rather than reinvented, per the order's instruction to mirror it: the
@@ -39,13 +44,11 @@
 // instruction not to import private helpers across test files and not to
 // edit the file being copied from.
 //
-// P2, P3 and P6 are expected to fail on this branch, on the offline key
-// being absent (findsOneWidget finding zero widgets), because the code
-// that renders it has not landed here. That red is this order's product.
-// P1, P4 and P5 are expected to pass, P1 because the key is legitimately
-// never rendered when the seat on turn is connected, P4 and P5 because the
-// key is (for now) never rendered at all -- both become real assertions of
-// the fix's own correctness the day order 163 lands next to this file.
+// All six cases are expected to pass on this branch: order 163's fix has
+// already landed on integrate/run52-offline, so P1's control, P2 and P3's
+// two arrival orders, P4 and P5's clearing cases, and P6en/P6ar's locale
+// contract are all real assertions of the fix's own correctness here, not
+// merely structural checks against an offline key that never renders.
 
 import 'dart:convert';
 
@@ -360,10 +363,21 @@ class _ScenarioDriver {
 /// Mounts a fresh controller on the four-seat fixture (turn starting on
 /// seat 1), drives it through P2's exact sequence -- seat 2 drops, then
 /// seat 1's turn hands off into seat 2 -- under [locale], and asserts the
-/// offline key is present before returning its rendered Text.data. Shared
-/// by P6's two locale mounts so both go through the identical scenario
-/// P2 itself measures, differing only in which locale the MaterialApp
-/// resolves.
+/// offline key is present before returning its rendered Text.data. Called
+/// once per case by P6en and P6ar, each from its own fresh `testWidgets`
+/// body and therefore its own fresh widget tree: GameScreen has no
+/// `didUpdateWidget`, so a second `tester.pumpWidget` inside one body
+/// updates the existing element instead of creating a new one, and
+/// `_GameScreenState.initState` (where the RoomController's listener gets
+/// attached) never runs a second time. A prior version of this file mounted
+/// both locales inside a single case and measured, by instrumenting the
+/// rig, that the second mount's listener stayed attached to the first
+/// mount's controller, so the second mount rendered one push stale --
+/// naming Bob's turn banner while controller.room.turn.seat had already
+/// moved to seat 2 -- and its offline-key assertion passed for the wrong
+/// reason (the frame it painted genuinely had no offline seat on turn, but
+/// only because it was the wrong frame). Two separate cases, two separate
+/// elements, is the only honest way to measure both locales.
 Future<String?> _mountP2ScenarioAndGetOfflineText(
   WidgetTester tester, {
   required Locale locale,
@@ -384,14 +398,14 @@ Future<String?> _mountP2ScenarioAndGetOfflineText(
     controller.room!.turn?.seat,
     2,
     reason:
-        'fixture is broken: P6 ($localeLabel) needs the turn to land on '
+        'fixture is broken: P6$localeLabel needs the turn to land on '
         'seat 2 after seat 1\'s handoff, same as P2',
   );
   expect(
     controller.room!.seats[2].connected,
     isFalse,
     reason:
-        'fixture is broken: P6 ($localeLabel) needs seat 2 disconnected '
+        'fixture is broken: P6$localeLabel needs seat 2 disconnected '
         'before the turn reaches it, same as P2',
   );
 
@@ -399,7 +413,7 @@ Future<String?> _mountP2ScenarioAndGetOfflineText(
     find.byKey(_offlineKey),
     findsOneWidget,
     reason:
-        'P6 ($localeLabel): game-screen-turn-seat-offline must be in the '
+        'P6$localeLabel: game-screen-turn-seat-offline must be in the '
         'tree once seat 2 has dropped and the turn is on it -- this is '
         'P2\'s own end state, mounted under Locale($localeLabel) instead '
         'of the default',
@@ -710,71 +724,114 @@ void main() {
   );
 
   // ==========================================================================
-  // P6: the locale contract. Mounts P2's exact scenario twice, once under
-  // Locale('en') and once under Locale('ar'), and checks the two renderings
-  // agree on containing the dropped seat's name but disagree with each
-  // other -- the clause that catches a hardcoded English literal shipped
-  // in place of an ARB lookup, the most likely way this change gets the
-  // Arabic wrong. Red on this branch, for the same reason as P2: the key
-  // is absent under both locales.
+  // P6en / P6ar: the locale contract, split into two cases each with its
+  // own fresh widget tree. P2's exact scenario is mounted once under
+  // Locale('en') and, separately, once under Locale('ar'); each case reads
+  // AppLocalizations off its own tree's own BuildContext (the same tree it
+  // just mounted, via tester.element(find.byType(GameScreen))) and asserts
+  // the rendered Text.data equals that tree's own
+  // loc.gameSeatOffline('Cy') exactly. That is strictly stronger than a
+  // not-equal-to-the-other-locale check: it does not just prove the two
+  // renderings differ from each other, it proves each one is the string
+  // its own locale's ARB entry actually specifies. A hardcoded English
+  // literal shipped in place of an ARB lookup would still render
+  // "Cy is offline" under Locale('ar') while that tree's own
+  // loc.gameSeatOffline('Cy') resolves app_ar.arb's "انقطع اتصال {name}"
+  // to "انقطع اتصال Cy", and P6ar's equality assertion fails on exactly
+  // that mismatch. Split into two cases (rather than the single
+  // two-mount case this order returned once) because GameScreen has no
+  // didUpdateWidget: a second tester.pumpWidget inside one body updates
+  // the existing element instead of creating a fresh one, so the second
+  // mount's controller listener never gets attached and the second mount
+  // renders a whole turn stale -- see _mountP2ScenarioAndGetOfflineText's
+  // own header comment for the measurement behind this. On this branch
+  // order 163's fix has landed, so both cases are expected to pass.
   // ==========================================================================
   testWidgets(
-    'P6: the locale contract -- P2\'s scenario mounted under Locale(en) '
-    'and under Locale(ar) must both show a non-empty '
-    'game-screen-turn-seat-offline naming Cy, and the two renderings must '
-    'not read identically to each other, which is what catches a '
-    'hardcoded English literal shipped in place of an ARB lookup for the '
-    'Arabic build. Red on this branch: the key is absent under both '
-    'locales',
+    'P6en: P2\'s scenario mounted under Locale(en) must show a non-empty '
+    'game-screen-turn-seat-offline naming Cy whose Text.data equals this '
+    'tree\'s own AppLocalizations.gameSeatOffline(\'Cy\') exactly -- the '
+    'en half of the locale contract, in its own fresh widget tree so a '
+    'second mount elsewhere in this file cannot leave this one\'s '
+    'controller listener unattached',
     (tester) async {
       final String? enText = await _mountP2ScenarioAndGetOfflineText(
         tester,
         locale: const Locale('en'),
         localeLabel: 'en',
       );
+      final AppLocalizations loc = AppLocalizations.of(
+        tester.element(find.byType(GameScreen)),
+      );
+
+      expect(
+        enText,
+        isNotEmpty,
+        reason:
+            'P6en: game-screen-turn-seat-offline must render a non-empty '
+            'string under Locale(en); got "$enText"',
+      );
+      expect(
+        enText,
+        contains('Cy'),
+        reason: 'P6en: must name Cy, seat 2; got "$enText"',
+      );
+      expect(
+        enText,
+        loc.gameSeatOffline('Cy'),
+        reason:
+            'P6en: game-screen-turn-seat-offline\'s Text.data must equal '
+            'this tree\'s own loc.gameSeatOffline(\'Cy\') exactly, not '
+            'merely differ from the Arabic rendering elsewhere in this '
+            'file; got "$enText", expected '
+            '"${loc.gameSeatOffline('Cy')}"',
+      );
+    },
+  );
+
+  testWidgets(
+    'P6ar: P2\'s scenario mounted under Locale(ar) must show a non-empty '
+    'game-screen-turn-seat-offline naming Cy whose Text.data equals this '
+    'tree\'s own AppLocalizations.gameSeatOffline(\'Cy\') exactly -- the '
+    'ar half of the locale contract, in its own fresh widget tree so a '
+    'second mount elsewhere in this file cannot leave this one\'s '
+    'controller listener unattached. A hardcoded English literal shipped '
+    'in place of an ARB lookup would still render "Cy is offline" here '
+    'and fail this exact assertion, which is the case this order exists '
+    'to prove',
+    (tester) async {
       final String? arText = await _mountP2ScenarioAndGetOfflineText(
         tester,
         locale: const Locale('ar'),
         localeLabel: 'ar',
       );
-
-      expect(
-        enText,
-        isNotEmpty,
-        reason:
-            'P6 (en): game-screen-turn-seat-offline must render a '
-            'non-empty string under Locale(en); got "$enText"',
-      );
-      expect(
-        enText,
-        contains('Cy'),
-        reason: 'P6 (en): must name Cy, seat 2; got "$enText"',
+      final AppLocalizations loc = AppLocalizations.of(
+        tester.element(find.byType(GameScreen)),
       );
 
       expect(
         arText,
         isNotEmpty,
         reason:
-            'P6 (ar): game-screen-turn-seat-offline must render a '
-            'non-empty string under Locale(ar); got "$arText"',
+            'P6ar: game-screen-turn-seat-offline must render a non-empty '
+            'string under Locale(ar); got "$arText"',
       );
       expect(
         arText,
         contains('Cy'),
-        reason: 'P6 (ar): must name Cy, seat 2; got "$arText"',
+        reason: 'P6ar: must name Cy, seat 2; got "$arText"',
       );
-
       expect(
-        arText == enText,
-        isFalse,
+        arText,
+        loc.gameSeatOffline('Cy'),
         reason:
-            'P6: the en and ar renderings must not be equal -- '
-            'app_en.arb\'s gameSeatOffline reads "{name} is offline" and '
-            'app_ar.arb\'s reads "انقطع اتصال {name}", two different '
-            'strings for the same key, so en ("$enText") equalling ar '
-            '("$arText") would mean a hardcoded English literal shipped '
-            'in place of an ARB lookup, which is the most likely way '
-            'this change gets the Arabic build wrong',
+            'P6ar: game-screen-turn-seat-offline\'s Text.data must equal '
+            'this tree\'s own loc.gameSeatOffline(\'Cy\') exactly; a '
+            'hardcoded English literal shipped in place of an ARB lookup '
+            'would render "Cy is offline" here while this tree\'s own '
+            'loc.gameSeatOffline(\'Cy\') resolves app_ar.arb\'s '
+            '"انقطع اتصال {name}" to "${loc.gameSeatOffline('Cy')}", so '
+            'this is exactly the mismatch that catches it; got "$arText"',
       );
     },
   );
