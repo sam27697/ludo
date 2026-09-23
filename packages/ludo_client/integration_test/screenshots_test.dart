@@ -72,7 +72,8 @@ import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
-import 'package:ludo_client/src/net/snapshot.dart' show RoomSnapshot, RoomState;
+import 'package:ludo_client/src/net/snapshot.dart'
+    show RoomSnapshot, RoomState, SeatState;
 import 'package:ludo_client/src/server_config.dart';
 
 import '../test/net/fake_transport.dart';
@@ -871,6 +872,112 @@ void main() {
       controller: controller,
     );
     await binding.takeScreenshot('04-game-en');
+
+    // ==========================================================================
+    // 06: continuing this same room and this same controller (per the
+    // order: "continue it, do not restart it"). The local seat here is 0
+    // (Priya, the host who created this room above); the turn hands to
+    // seat 1 (Karim), and seat 1's socket then drops, so the offline line
+    // renders next to the turn banner it explains, in English.
+    //
+    // seq stands at 9 here (game_started pushed seq 4, then five pushMoved
+    // pushes brought it to 9, both above), so the two pushes below carry
+    // seq 10 and seq 11 to stay contiguous with RoomController's own gap
+    // check (_reduceTurn and _reducePresence, room_controller.dart): a seq
+    // that is not exactly room.seq + 1 is silently treated as a resync
+    // trigger rather than an applied update, and this capture would fire
+    // over a screen that never moved.
+    //
+    // No bare pumpAndSettle gates this capture, same audit as
+    // 03-lobby-en, 04-game-en and 05-game-ar above: GameScreen has already
+    // mounted its own countdown ticker, so pumpAndSettle would chase it
+    // forever. Each push below is followed by the same two tester.pump()
+    // calls this file already uses after its 'room' and 'game_started'
+    // pushes, and the state that push produced is asserted directly off
+    // controller.room and the mounted tree before the screenshot fires.
+    // ==========================================================================
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'turn',
+        data: <String, Object?>{'seat': 1, 'deadline_ms': 45000, 'seq': seq},
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'presence',
+        data: <String, Object?>{'seat': 1, 'connected': false, 'seq': seq},
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      controller.room!.turn!.seat,
+      1,
+      reason:
+          'capture 06 pushed a turn frame naming seat 1 (Karim); expected '
+          'controller.room!.turn!.seat to read 1 before the capture '
+          'fires, got ${controller.room!.turn!.seat}',
+    );
+    expect(
+      controller.room!.seats[1].connected,
+      isFalse,
+      reason:
+          'capture 06 pushed presence {seat: 1, connected: false}; '
+          'expected controller.room!.seats[1] (Karim) to read '
+          'disconnected before the capture fires, got connected='
+          '${controller.room!.seats[1].connected}',
+    );
+
+    final Finder offlineFinder06 = find.byKey(
+      const Key('game-screen-turn-seat-offline'),
+    );
+    expect(
+      offlineFinder06,
+      findsOneWidget,
+      reason:
+          'expected game-screen-turn-seat-offline in the tree once the '
+          'turn is on seat 1 and seat 1 is disconnected '
+          '(game_screen.dart _offlineTurnSeat); found something else, or '
+          'more than one',
+    );
+
+    final AppLocalizations enGameLoc06 = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    final String expectedOfflineText06 = enGameLoc06.gameSeatOffline('Karim');
+    final Text offlineText06 = tester.widget<Text>(offlineFinder06);
+    expect(
+      offlineText06.data,
+      expectedOfflineText06,
+      reason:
+          'expected game-screen-turn-seat-offline\'s Text.data to equal '
+          'this tree\'s own AppLocalizations.gameSeatOffline("Karim") '
+          '("$expectedOfflineText06"), got "${offlineText06.data}"',
+    );
+
+    final String expectedBannerText06 = enGameLoc06.gameWaitingForPlayer(
+      'Karim',
+    );
+    final Text bannerText06 = tester.widget<Text>(
+      find.byKey(const Key('game-screen-turn-banner')),
+    );
+    expect(
+      bannerText06.data,
+      expectedBannerText06,
+      reason:
+          'expected game-screen-turn-banner to still read the '
+          'waiting-for-Karim string ("$expectedBannerText06") alongside '
+          'the offline line, so the capture shows the pair a player '
+          'actually sees; got "${bannerText06.data}"',
+    );
+
+    await binding.takeScreenshot('06-game-offline-en');
   });
 
   // ==========================================================================
@@ -1038,5 +1145,152 @@ void main() {
       controller: controller,
     );
     await binding.takeScreenshot('05-game-ar');
+
+    // ==========================================================================
+    // 07: continuing this same room and this same controller. This is the
+    // Arabic value of gameSeatOffline's first time rendering: order 163's
+    // verdict named that gap, order 164 closed it in a widget test, and
+    // this closes it on the same RTL layout and font shaping the store
+    // listing actually ships.
+    //
+    // This test's own local seat is not assumed here -- read at runtime
+    // from controller.seat -- and the seat the turn hands to and then
+    // drops is whichever other seat is actually present in
+    // controller.room!.seats.
+    // ==========================================================================
+    final int localSeat07 = controller.seat!;
+    final SeatState offlineSeatState07 = controller.room!.seats.firstWhere(
+      (SeatState s) => s.seat != localSeat07,
+      orElse: () => throw TestFailure(
+        'capture 07 needs a seated seat other than the local seat '
+        '($localSeat07) in controller.room!.seats to hand the turn to '
+        'and disconnect; seats present: '
+        '${controller.room!.seats.map((SeatState s) => s.seat).toList()}',
+      ),
+    );
+    final int offlineSeat07 = offlineSeatState07.seat;
+    final String offlineSeatName07 = offlineSeatState07.name;
+
+    // Read, not assumed, per the order: controller.seat is $localSeat07
+    // here (this test's own join_room flow was assigned that seat above,
+    // by the server's seat_assigned push), and the seat picked to hand
+    // the turn to and disconnect is seat $offlineSeat07
+    // ("$offlineSeatName07"), the only entry in controller.room!.seats
+    // other than the local seat. Printed once, plainly, so a later
+    // reader does not have to re-derive it from the pushes below.
+    // ignore: avoid_print
+    print(
+      'screenshots_test: capture 07 read controller.seat as '
+      '$localSeat07 and picked seat $offlineSeat07 '
+      '("$offlineSeatName07") -- the only other seated seat in '
+      'controller.room!.seats -- to hand the turn to and disconnect',
+    );
+
+    // seq stands at 7 here (game_started pushed seq 2, then five
+    // pushMoved pushes brought it to 7, both above), so the two pushes
+    // below carry seq 8 and seq 9 to stay contiguous with
+    // RoomController's own gap check (_reduceTurn and _reducePresence,
+    // room_controller.dart), same reasoning as capture 06 above.
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'turn',
+        data: <String, Object?>{
+          'seat': offlineSeat07,
+          'deadline_ms': 45000,
+          'seq': seq,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'presence',
+        data: <String, Object?>{
+          'seat': offlineSeat07,
+          'connected': false,
+          'seq': seq,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      controller.room!.turn!.seat,
+      offlineSeat07,
+      reason:
+          'capture 07 pushed a turn frame naming seat $offlineSeat07 '
+          '("$offlineSeatName07", the seat picked above as the only seat '
+          'other than the local seat $localSeat07); expected '
+          'controller.room!.turn!.seat to read $offlineSeat07 before the '
+          'capture fires, got ${controller.room!.turn!.seat}',
+    );
+    expect(
+      controller.room!.seats[offlineSeat07].connected,
+      isFalse,
+      reason:
+          'capture 07 pushed presence {seat: $offlineSeat07, connected: '
+          'false}; expected controller.room!.seats[$offlineSeat07] '
+          '("$offlineSeatName07") to read disconnected before the '
+          'capture fires, got connected='
+          '${controller.room!.seats[offlineSeat07].connected}',
+    );
+
+    final Finder offlineFinder07 = find.byKey(
+      const Key('game-screen-turn-seat-offline'),
+    );
+    expect(
+      offlineFinder07,
+      findsOneWidget,
+      reason:
+          'expected game-screen-turn-seat-offline in the tree once the '
+          'turn is on seat $offlineSeat07 ("$offlineSeatName07") and '
+          'that seat is disconnected (game_screen.dart '
+          '_offlineTurnSeat); found something else, or more than one',
+    );
+
+    final AppLocalizations arGameLoc07 = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    final String expectedOfflineText07 = arGameLoc07.gameSeatOffline(
+      offlineSeatName07,
+    );
+    final Text offlineText07 = tester.widget<Text>(offlineFinder07);
+    // This is the assertion that proves the Arabic value of
+    // gameSeatOffline is what is on the Arabic screen: an equality
+    // against the tree's own AppLocalizations lookup, not a contains or
+    // a non-empty check.
+    expect(
+      offlineText07.data,
+      expectedOfflineText07,
+      reason:
+          'expected game-screen-turn-seat-offline\'s Text.data to equal '
+          'this tree\'s own AppLocalizations.gameSeatOffline'
+          '("$offlineSeatName07") ("$expectedOfflineText07"), got '
+          '"${offlineText07.data}"',
+    );
+
+    final String expectedBannerText07 = arGameLoc07.gameWaitingForPlayer(
+      offlineSeatName07,
+    );
+    final Text bannerText07 = tester.widget<Text>(
+      find.byKey(const Key('game-screen-turn-banner')),
+    );
+    expect(
+      bannerText07.data,
+      expectedBannerText07,
+      reason:
+          'expected game-screen-turn-banner to still read the '
+          'waiting-for-$offlineSeatName07 string '
+          '("$expectedBannerText07") alongside the offline line, so the '
+          'capture shows the pair a player actually sees; got '
+          '"${bannerText07.data}"',
+    );
+
+    await binding.takeScreenshot('07-game-offline-ar');
   });
 }
