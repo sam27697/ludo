@@ -520,3 +520,30 @@ jobs:
           python3 uxprogram-kit/kit/tools/authorship_scan.py \
             --base ${{ steps.range.outputs.base }} \
             --head ${{ github.event.pull_request.head.sha }}
+
+  # Proves the kit's own gate tools still catch what they claim to catch.
+  # uxprogram-kit/kit/tools/selftest.py builds a throwaway git repository,
+  # plants known defects, and checks that evidence.py, scope_check.py,
+  # authorship_scan.py, negative_space.py, effort_calc.py, report_gate.py and
+  # ux_probe.mjs (where a browser is available to it) each catch them and
+  # pass clean input. authorship_scan.py is the exact script the authorship
+  # job above runs against every pull request; nothing else in this workflow
+  # proves that scanner still catches anything after someone edits its
+  # pattern. Its own job, not a step folded into authorship or verify, for
+  # the same reason those are already split: a red here means a gate tool
+  # itself stopped detecting what it exists to detect, not that some commit
+  # tripped one of those gates -- folding the two together would make a
+  # broken detector look identical to a caught defect.
+  #
+  # Runs on every trigger this workflow already has, with no `if:`, unlike
+  # authorship. selftest.py builds its own temporary git repository under
+  # tempfile.mkdtemp and sets its own git identity inside it
+  # (selftest.py:85-87) instead of reading anything from this checkout or
+  # from the pushed range, so it has none of the stale-base-sha problem the
+  # comment on authorship's own checkout step above describes, and is safe
+  # to run on every push, not only on pull requests.
+  kit-selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: python3 uxprogram-kit/kit/tools/selftest.py
