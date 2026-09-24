@@ -44,6 +44,7 @@
   "gameTokenButton": "قطعة {number}",
   "gameDieValue": "الرمية: {value}",
   "gameTurnCountdown": "باقي {seconds} ثانية",
+  "gameSeatOffline": "انقطع اتصال {name}",
   "gameOverYouWin": "لقد فزت",
   "gameOverPlayerWins": "فاز {name}",
   "gameOverEnded": "انتهت اللعبة",
