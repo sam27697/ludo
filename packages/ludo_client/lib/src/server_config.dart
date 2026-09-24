@@ -23,5 +23,6 @@ RoomController defaultRoomControllerFactory() {
   return RoomController(
     serverUrl: Uri.parse(kDefaultServerUrl),
     connect: connectWsTransport,
+    autoReconnectDelays: kAutoReconnectDelays,
   );
 }

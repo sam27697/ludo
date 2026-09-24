@@ -46,17 +46,50 @@ const Set<String> _stateChangingTypes = <String>{
   'game_over',
 };
 
+/// The production automatic-reconnect schedule: five attempts, the delay
+/// before each one doubling until the last step. Passed to
+/// [RoomController] by `defaultRoomControllerFactory`
+/// (lib/src/server_config.dart), the only place in lib/ that uses it.
+const List<Duration> kAutoReconnectDelays = <Duration>[
+  Duration(seconds: 1),
+  Duration(seconds: 2),
+  Duration(seconds: 4),
+  Duration(seconds: 8),
+  Duration(seconds: 15),
+];
+
+/// The three codes rule 2 (`_failFromRequest`) produces from something other
+/// than the server naming a protocol error: a transport that would not open,
+/// a request that timed out, and a connection that closed under a request.
+/// Every other code -- every server protocol code and the client's own
+/// `'protocol'` -- is not retryable.
+const Set<String> _retryableErrorCodes = <String>{
+  'transport',
+  'timeout',
+  'closed',
+};
+
 /// Holds the one [RoomConnection] a lobby screen is driving at any moment,
 /// re-creates it across a drop, and exposes the whole thing as a
 /// [ChangeNotifier] with no method that ever throws.
 class RoomController extends ChangeNotifier {
-  RoomController({required this.serverUrl, required TransportConnector connect})
-    : _connect = connect; // ignore: prefer_initializing_formals
+  RoomController({
+    required this.serverUrl,
+    required TransportConnector connect,
+    List<Duration> autoReconnectDelays = const <Duration>[],
+  }) : _connect = connect, // ignore: prefer_initializing_formals
+       autoReconnectDelays = List<Duration>.unmodifiable(autoReconnectDelays);
 
   /// The address every connection this controller opens is opened against.
   final Uri serverUrl;
 
   final TransportConnector _connect;
+
+  /// The bounded backoff schedule an automatic sequence (C5, C10) follows.
+  /// An unmodifiable copy of whatever was passed in. Empty means automatic
+  /// reconnection is off: no timer is ever created and this controller
+  /// behaves exactly as it did before this field existed.
+  final List<Duration> autoReconnectDelays;
 
   RoomPhase _phase = RoomPhase.idle;
   RoomSnapshot? _room;
@@ -86,6 +119,30 @@ class RoomController extends ChangeNotifier {
 
   bool _disposed = false;
 
+  /// Set by an unsolicited `error` frame (C3) or a reconnect attempt --
+  /// automatic or manual -- failing with a non-retryable code (C3). Cleared
+  /// only when [phase] next reaches [RoomPhase.connected]. Gates [_eligible]
+  /// only; it has no getter of its own.
+  bool _blocked = false;
+
+  /// True once [leave] has been called, ever. One-way, like [_disposed].
+  bool _leftCalled = false;
+
+  /// The timer for the next scheduled automatic attempt, while one is
+  /// pending. Null the rest of the time, including while an attempt opened
+  /// by that timer is in flight.
+  Timer? _reconnectTimer;
+
+  /// True from the moment an automatic sequence starts (C5, C10) until it
+  /// ends: an attempt lands in [RoomPhase.connected], a retryable failure
+  /// exhausts [autoReconnectDelays], a non-retryable failure blocks it, or
+  /// [leave] / [dispose] cuts it short. At most one sequence is ever running.
+  bool _sequenceRunning = false;
+
+  /// The index into [autoReconnectDelays] the next scheduled attempt, if
+  /// any, will use.
+  int _nextDelayIndex = 0;
+
   RoomPhase get phase => _phase;
   RoomSnapshot? get room => _room;
   int? get seat => _cachedSeat;
@@ -94,8 +151,24 @@ class RoomController extends ChangeNotifier {
   String? get errorCode => _errorCode;
   String? get errorMessage => _errorMessage;
 
+  /// True exactly while a sequence's timer is scheduled and has neither
+  /// fired nor been cancelled (C9). False while an attempt is in flight, and
+  /// false when there is no sequence at all.
+  bool get autoReconnectPending => _reconnectTimer != null;
+
   bool get isHost =>
       _room != null && _cachedSeat != null && _room!.hostSeat == _cachedSeat;
+
+  /// C4: whether this controller may start, or continue, an automatic
+  /// reconnect sequence right now.
+  bool get _eligible =>
+      autoReconnectDelays.isNotEmpty &&
+      _room != null &&
+      _cachedSeatToken != null &&
+      _room!.state != RoomState.finished &&
+      !_leftCalled &&
+      !_disposed &&
+      !_blocked;
 
   /// Every inbound frame, in arrival order, forwarded from whichever
   /// [RoomConnection] is current. A broadcast controller of its own, not the
@@ -149,6 +222,7 @@ class RoomController extends ChangeNotifier {
       }
       _room = snapshot;
       _phase = RoomPhase.connected;
+      _blocked = false;
       _errorCode = null;
       _errorMessage = null;
       _syncSeatCache();
@@ -162,6 +236,14 @@ class RoomController extends ChangeNotifier {
   /// and both [room] and [seatToken] are present; otherwise a no-op that
   /// changes nothing and does not notify. Opens a *new* connection and sends
   /// `resume` with the cached room code and seat token.
+  ///
+  /// This is a manual attempt (C8): it cancels any pending automatic timer
+  /// and ends the running sequence, if there is one, before it does anything
+  /// else. Its own outcome stands on its own -- a retryable failure here does
+  /// not schedule another attempt -- and a later drop of the connection this
+  /// call opens starts a fresh sequence, per C5. When [autoReconnectDelays]
+  /// is empty there is never a timer or a sequence to cancel, so this method
+  /// does exactly what it always has.
   Future<void> reconnect() async {
     final RoomSnapshot? room = _room;
     final String? token = _cachedSeatToken;
@@ -171,7 +253,20 @@ class RoomController extends ChangeNotifier {
         token == null) {
       return;
     }
+    _cancelAutoReconnect();
+    await _attemptReconnect(automatic: false, room: room, token: token);
+  }
 
+  /// The body every reconnect attempt runs, manual or automatic: phase to
+  /// [RoomPhase.connecting], open a new [RoomConnection], send `resume` with
+  /// the cached room code and seat token. [automatic] governs only what
+  /// happens after a failure (C7, C8); the attempt itself is identical
+  /// either way, and is the same body [reconnect] has always run.
+  Future<void> _attemptReconnect({
+    required bool automatic,
+    required RoomSnapshot room,
+    required String token,
+  }) async {
     _phase = RoomPhase.connecting;
     notifyListeners();
 
@@ -181,6 +276,7 @@ class RoomController extends ChangeNotifier {
     );
     final bool opened = await _openAndAttach(connection);
     if (!opened) {
+      _afterReconnectAttemptFailure(automatic);
       return;
     }
 
@@ -194,14 +290,120 @@ class RoomController extends ChangeNotifier {
       }
       _room = snapshot;
       _phase = RoomPhase.connected;
+      _blocked = false;
       _hasDesynced = false;
       _errorCode = null;
       _errorMessage = null;
       _syncSeatCache();
       notifyListeners();
+      if (automatic) {
+        // A later drop starts a fresh sequence from autoReconnectDelays[0].
+        _cancelAutoReconnect();
+      }
     } catch (error) {
       _failFromRequest(error);
+      _afterReconnectAttemptFailure(automatic);
     }
+  }
+
+  /// What C7 and C8 say happens after a reconnect attempt -- manual or
+  /// automatic -- lands in [RoomPhase.failed]. A non-retryable code blocks
+  /// the controller (C3) regardless of which kind of attempt this was. Only
+  /// an automatic attempt ever schedules another one, and only when the
+  /// sequence it belongs to is still running: [leave] or [dispose] may have
+  /// ended it while this attempt was in flight, and that is not undone here.
+  void _afterReconnectAttemptFailure(bool automatic) {
+    if (_disposed) {
+      return;
+    }
+    final bool retryable = _retryableErrorCodes.contains(_errorCode);
+    if (!retryable) {
+      _blocked = true;
+    }
+    if (!automatic) {
+      return;
+    }
+    if (!_sequenceRunning) {
+      return;
+    }
+    if (!retryable) {
+      _sequenceRunning = false;
+      return;
+    }
+    if (_nextDelayIndex < autoReconnectDelays.length) {
+      _scheduleNextAttempt();
+    } else {
+      _sequenceRunning = false;
+    }
+  }
+
+  /// C5, C10: begins a fresh sequence. [immediate] runs the first attempt at
+  /// once, with no delay (C10); otherwise the first attempt waits for
+  /// `autoReconnectDelays[0]` (C5).
+  void _startSequence({required bool immediate}) {
+    _sequenceRunning = true;
+    _nextDelayIndex = 0;
+    if (immediate) {
+      unawaited(_runAutomaticAttempt());
+    } else {
+      _scheduleNextAttempt();
+    }
+  }
+
+  /// Schedules the next automatic attempt for `autoReconnectDelays[
+  /// _nextDelayIndex]` and advances the index past it.
+  void _scheduleNextAttempt() {
+    final Duration delay = autoReconnectDelays[_nextDelayIndex];
+    _nextDelayIndex++;
+    _reconnectTimer = Timer(delay, _onReconnectTimerFired);
+  }
+
+  /// C7: what a pending timer's firing does.
+  void _onReconnectTimerFired() {
+    _reconnectTimer = null;
+    if (!_eligible ||
+        !(_phase == RoomPhase.closed || _phase == RoomPhase.failed)) {
+      _sequenceRunning = false;
+      return;
+    }
+    unawaited(_runAutomaticAttempt());
+  }
+
+  /// Runs one automatic attempt. [_eligible] guarantees [room] and
+  /// [seatToken] are non-null at every call site that reaches this.
+  Future<void> _runAutomaticAttempt() async {
+    final RoomSnapshot? room = _room;
+    final String? token = _cachedSeatToken;
+    if (room == null || token == null) {
+      // Not reachable while _eligible held at the call site, kept only so
+      // this never dereferences a null defensively rather than by contract.
+      _sequenceRunning = false;
+      return;
+    }
+    await _attemptReconnect(automatic: true, room: room, token: token);
+  }
+
+  /// Cancels any pending automatic timer and ends the running sequence, if
+  /// there is one. A no-op, both here and at every call site, when
+  /// [autoReconnectDelays] is empty: nothing ever schedules a timer in that
+  /// case, so there is never anything to cancel.
+  void _cancelAutoReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _sequenceRunning = false;
+  }
+
+  /// C10: the foreground hook. Never throws. A no-op unless this controller
+  /// is eligible (C4) and [phase] is [RoomPhase.closed] or
+  /// [RoomPhase.failed] -- which also covers "an attempt is already in
+  /// flight", since that leaves [phase] at [RoomPhase.connecting].
+  void onAppResumed() {
+    if (!_eligible ||
+        !(_phase == RoomPhase.closed || _phase == RoomPhase.failed)) {
+      return;
+    }
+    _cancelAutoReconnect();
+    _startSequence(immediate: true);
   }
 
   /// Host-only. Forwards to the connection when [phase] is
@@ -293,6 +495,8 @@ class RoomController extends ChangeNotifier {
     if (_disposed) {
       return;
     }
+    _leftCalled = true;
+    _cancelAutoReconnect();
     final RoomConnection? connection = _connection;
     _connection = null;
     unawaited(_frameSub?.cancel());
@@ -321,6 +525,7 @@ class RoomController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _cancelAutoReconnect();
     unawaited(_frameSub?.cancel());
     _frameSub = null;
     unawaited(_connection?.close());
@@ -369,6 +574,11 @@ class RoomController extends ChangeNotifier {
         }
         _phase = RoomPhase.closed;
         notifyListeners();
+        // C5: the current connection ended on its own. If eligible and no
+        // sequence is already running, that is a drop starting one.
+        if (_eligible && !_sequenceRunning) {
+          _startSequence(immediate: false);
+        }
       }),
     );
     _syncSeatCache();
@@ -403,6 +613,15 @@ class RoomController extends ChangeNotifier {
       _framesController.add(frame);
     }
     _syncSeatCache();
+    if (frame.type == 'error' && frame.re == null) {
+      // C3: an error frame the server sent unprompted, not a reply to
+      // anything this controller asked. Section 7.1: the server sends
+      // exactly this before every close it initiates for cause, including
+      // 4004 -- a newer socket of the same player taking this seat over --
+      // and retrying that one would make two phones of one player fight
+      // over the seat forever.
+      _blocked = true;
+    }
     if (_stateChangingTypes.contains(frame.type)) {
       _reduce(frame);
     }
