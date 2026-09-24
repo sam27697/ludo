@@ -650,6 +650,122 @@ void main() {
     expect(controller.seat, seatBefore);
   });
 
+  test('R-4 gates (R2): resumeRoom while phase is failed with a room still '
+      'held (roll() answered BAD_SEAT_TOKEN) is a no-op', () async {
+    // R2's phase clause alone already rejects resumeRoom out of connected,
+    // so a controller that merely holds a room through joinRoom never
+    // reaches the room == null clause: it is still connected, and the
+    // phase check above rejects it first. The room clause only decides
+    // anything at phase failed with room non-null, which needs an
+    // in-room request to fail without joinRoom's own room being cleared
+    // (order 170 E2/G1: roll() answered a non-retryable code such as
+    // BAD_SEAT_TOKEN goes through _failFromRequest, landing failed while
+    // room, seat and seatToken are left exactly as they were).
+    final _Connector connector = _Connector();
+    final FakeTransport transport = FakeTransport();
+    connector.enqueue(transport);
+    final RoomController controller = _newController(connector);
+    addTearDown(controller.dispose);
+
+    await _joinRoom(controller, transport, code: 'K7M2QP', seat: 0);
+    expect(
+      controller.phase,
+      RoomPhase.connected,
+      reason:
+          'fixture is broken: joinRoom must have succeeded before this '
+          'test fails an in-room request against it',
+    );
+
+    final Future<void> rollFuture = controller.roll();
+    await pumpEventQueue();
+    final String rollId = _idOf(transport.sentRaw.last);
+    transport.pushText(
+      _frame(
+        type: 'error',
+        re: rollId,
+        data: <String, Object?>{
+          'code': 'BAD_SEAT_TOKEN',
+          'message': 'no such seat',
+        },
+      ),
+    );
+    await rollFuture;
+
+    expect(
+      controller.phase,
+      RoomPhase.failed,
+      reason:
+          'fixture is broken: roll() answered BAD_SEAT_TOKEN must have '
+          'landed the controller in failed before this test calls '
+          'resumeRoom against it',
+    );
+    expect(
+      controller.room,
+      isNotNull,
+      reason:
+          'fixture is broken: a failed in-room request must leave room '
+          'exactly as it was, not clear it, or this case is not '
+          'exercising the room clause at all',
+    );
+
+    int notifyCount = 0;
+    controller.addListener(() => notifyCount++);
+    final int callsBefore = connector.calls.length;
+    final RoomSnapshot? roomBefore = controller.room;
+    final int? seatBefore = controller.seat;
+    final String? seatTokenBefore = controller.seatToken;
+
+    await controller.resumeRoom(
+      code: 'ANOTHR',
+      seat: 3,
+      seatToken: 'tok-should-not-land-either',
+    );
+
+    expect(
+      connector.calls.length,
+      callsBefore,
+      reason:
+          'R2: phase failed with a room still held must make resumeRoom '
+          'a no-op that opens no connection; the room clause, not the '
+          'phase clause, is what must be doing the rejecting here',
+    );
+    expect(
+      notifyCount,
+      0,
+      reason:
+          'R2: resumeRoom rejected by the room clause while failed must '
+          'not notify',
+    );
+    expect(
+      controller.room,
+      same(roomBefore),
+      reason: 'R2: the rejected call must change nothing about the held room',
+    );
+    expect(
+      controller.room?.code,
+      'K7M2QP',
+      reason:
+          'the room from the joinRoom that is still held must remain the '
+          'joined one, not the resumeRoom argument code ANOTHR',
+    );
+    expect(controller.seat, seatBefore);
+    expect(
+      controller.seat,
+      0,
+      reason:
+          'seat must remain the joinRoom seat, not the resumeRoom '
+          'argument seat 3',
+    );
+    expect(controller.seatToken, seatTokenBefore);
+    expect(
+      controller.seatToken,
+      'tok-join-0',
+      reason:
+          'seatToken must remain the joinRoom token, not the resumeRoom '
+          "argument token 'tok-should-not-land-either'",
+    );
+  });
+
   // --- R-5 open failure (R3). ------------------------------------------------
   test('R-5 open failure (R3): the connector rejects, resumeRoom lands failed '
       "/ 'transport' with room, seat and seatToken all null", () async {
