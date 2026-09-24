@@ -514,6 +514,7 @@ class _GameScreenState extends State<GameScreen>
   ) {
     final TurnState? turn = room.turn;
     final int? seat = controller.seat;
+    final SeatState? offlineTurnSeat = _offlineTurnSeat(room);
 
     final bool rollEnabled =
         room.state == RoomState.playing &&
@@ -531,6 +532,14 @@ class _GameScreenState extends State<GameScreen>
             key: const Key('game-screen-turn-banner'),
             textAlign: TextAlign.center,
           ),
+          if (offlineTurnSeat != null) ...[
+            const SizedBox(height: kSpace2),
+            Text(
+              loc.gameSeatOffline(offlineTurnSeat.name),
+              key: const Key('game-screen-turn-seat-offline'),
+              textAlign: TextAlign.center,
+            ),
+          ],
           if (turn != null && turn.value != null) ...[
             const SizedBox(height: kSpace2),
             Text(
@@ -790,6 +799,26 @@ String _waitingForSeatText(
     }
   }
   return loc.gameWaitingForTurn;
+}
+
+/// The seat whose turn it currently is, when that seat's socket has
+/// dropped: `room.turn` names a seat, that seat has an entry in
+/// `room.seats`, and that entry's `connected` is `false`. Null in every
+/// other case, including when there is no current turn at all or when the
+/// turn names a seat absent from `room.seats`. Backs the offline line
+/// `_playingBody` renders under the turn banner; does not touch
+/// [_turnBannerText] or [_waitingForSeatText].
+SeatState? _offlineTurnSeat(RoomSnapshot room) {
+  final TurnState? turn = room.turn;
+  if (turn == null) {
+    return null;
+  }
+  for (final SeatState seatState in room.seats) {
+    if (seatState.seat == turn.seat) {
+      return seatState.connected ? null : seatState;
+    }
+  }
+  return null;
 }
 
 /// H4: button `index` is enabled only when every one of these holds.
