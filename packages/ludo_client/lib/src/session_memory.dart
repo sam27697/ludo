@@ -1,5 +1,5 @@
 // Durable last-create defaults, recent join codes and the current seat for
-// HomeScreen and the room controller. SharedPreferences is the store
+// HomeScreen. SharedPreferences is the store
 // (D-C1-02): last name, seat count, recent room codes and the seat record
 // survive a process kill so a returning host or joiner is not asked to
 // type them again and a resumed session is not asked to rejoin from
@@ -105,10 +105,21 @@ class SessionMemory {
         recentCodes: _cappedRecentCodes(
           prefs.getStringList(_codesKey) ?? const <String>[],
         ),
-        seatRecord: _seatRecordFrom(prefs.getStringList(_seatKey)),
+        seatRecord: _readSeatRecord(prefs),
       );
     } on Object {
       return const SessionMemory();
+    }
+  }
+
+  /// The stored seat record, if any, isolated so that a stored value of the
+  /// wrong type (which makes the platform's own `getStringList` throw)
+  /// yields `null` here without disturbing the rest of [load].
+  static SeatRecord? _readSeatRecord(SharedPreferences prefs) {
+    try {
+      return _seatRecordFrom(prefs.getStringList(_seatKey));
+    } on Object {
+      return null;
     }
   }
 
