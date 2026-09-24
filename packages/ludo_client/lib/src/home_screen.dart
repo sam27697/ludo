@@ -49,7 +49,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final TextEditingController _codeController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
   String? _errorText;
@@ -68,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _codeController.addListener(_clearErrorOnEdit);
     unawaited(_restoreSessionMemory());
     // Duration and reduced-motion short-circuit need Theme / MediaQuery, which
@@ -227,6 +228,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _linkSubscription?.cancel();
     _codeController.removeListener(_clearErrorOnEdit);
     _codeController.dispose();
@@ -252,6 +254,21 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _watchOwnedController(RoomController controller) {
     _ownedController = controller;
+  }
+
+  /// C11: the app returning to the foreground is the other trigger, besides
+  /// a drop, that should retry a dead connection without the player having
+  /// to find the reconnect button themselves. This screen stays mounted
+  /// underneath the pushed lobby or game route for the whole life of a room
+  /// (see [_watchOwnedController], [_retireOwnedController]), which is why
+  /// the hook lives here rather than on either of those screens. A no-op on
+  /// every other lifecycle state, and a no-op on [RoomController.onAppResumed]
+  /// itself when there is nothing to resume.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _ownedController?.onAppResumed();
+    }
   }
 
   /// [leave] then [RoomController.dispose], unless [dispose] already retired
