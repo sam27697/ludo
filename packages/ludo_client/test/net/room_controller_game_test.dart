@@ -2575,7 +2575,10 @@ void main() {
 
     test('clause 4: a request that fails drives the phase to failed and sets '
         'errorCode/errorMessage verbatim, pinned the way the D5: resync '
-        'failure group above pins its own', () async {
+        'failure group above pins its own. The four race codes '
+        '(NOT_YOUR_TURN, WRONG_PHASE, ILLEGAL_MOVE, GAME_OVER) are order '
+        "170's E1 and are proved in "
+        'room_controller_rejected_intention_test.dart, not here.', () async {
       final (RoomController controller, FakeTransport transport, _) =
           await _connectedController(seq: 1);
       addTearDown(controller.dispose);
@@ -2588,8 +2591,8 @@ void main() {
           type: 'error',
           re: id,
           data: <String, Object?>{
-            'code': 'WRONG_PHASE',
-            'message': 'a move is pending',
+            'code': 'BAD_SEAT_TOKEN',
+            'message': 'seat token no longer valid',
           },
         ),
       );
@@ -2600,8 +2603,8 @@ void main() {
         reason: 'roll() must never throw, even on a server error',
       );
       expect(controller.phase, RoomPhase.failed);
-      expect(controller.errorCode, 'WRONG_PHASE');
-      expect(controller.errorMessage, 'a move is pending');
+      expect(controller.errorCode, 'BAD_SEAT_TOKEN');
+      expect(controller.errorMessage, 'seat token no longer valid');
     });
   });
 
@@ -2832,7 +2835,10 @@ void main() {
 
     test('clause 4: a request that fails drives the phase to failed and sets '
         'errorCode/errorMessage verbatim, pinned the way the D5: resync '
-        'failure group above pins its own', () async {
+        'failure group above pins its own. The four race codes '
+        '(NOT_YOUR_TURN, WRONG_PHASE, ILLEGAL_MOVE, GAME_OVER) are order '
+        "170's E1 and are proved in "
+        'room_controller_rejected_intention_test.dart, not here.', () async {
       final (RoomController controller, FakeTransport transport, _) =
           await _connectedController(seq: 1);
       addTearDown(controller.dispose);
@@ -2845,8 +2851,8 @@ void main() {
           type: 'error',
           re: id,
           data: <String, Object?>{
-            'code': 'ILLEGAL_MOVE',
-            'message': 'token not in legal',
+            'code': 'BAD_SEAT_TOKEN',
+            'message': 'seat token no longer valid',
           },
         ),
       );
@@ -2857,8 +2863,8 @@ void main() {
         reason: 'move() must never throw, even on a server error',
       );
       expect(controller.phase, RoomPhase.failed);
-      expect(controller.errorCode, 'ILLEGAL_MOVE');
-      expect(controller.errorMessage, 'token not in legal');
+      expect(controller.errorCode, 'BAD_SEAT_TOKEN');
+      expect(controller.errorMessage, 'seat token no longer valid');
     });
   });
 
