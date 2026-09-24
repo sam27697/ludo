@@ -8,6 +8,15 @@
   "@homeTagline": {
     "description": "One short supporting sentence under the brand name on the home screen."
   },
+  "homeRejoinButton": "Back to game {code}",
+  "@homeRejoinButton": {
+    "description": "Button on the home screen, shown above the name field when a seat record survives from a previous session, that rejoins the room at the seat it names.",
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
   "homeCreateRoomButton": "Create Room",
   "@homeCreateRoomButton": {
     "description": "Button on the home screen that starts creating a new room."

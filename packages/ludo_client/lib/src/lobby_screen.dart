@@ -10,10 +10,11 @@ import '../l10n/gen/app_localizations.dart';
 import 'die_mark.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
+import 'session_memory.dart' show SeatRecord;
 import 'theme.dart';
 
 /// The one request LobbyScreen issues, once, from initState.
-enum LobbyAction { create, join }
+enum LobbyAction { create, join, resume }
 
 /// The base every shareable room link is built from. One constant, one
 /// place. Room links are served by the game server's own GET /r/<CODE>
@@ -47,6 +48,7 @@ class LobbyScreen extends StatefulWidget {
     required this.playerName,
     this.code,
     this.players = 4,
+    this.resume,
   });
 
   final RoomController controller;
@@ -59,6 +61,10 @@ class LobbyScreen extends StatefulWidget {
 
   /// The seat count requested on create; ignored on join.
   final int players;
+
+  /// Required in practice when [action] is [LobbyAction.resume]; ignored
+  /// otherwise. The seat the resume request is sent for.
+  final SeatRecord? resume;
 
   @override
   State<LobbyScreen> createState() => _LobbyScreenState();
@@ -95,6 +101,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
         );
       case LobbyAction.join:
         widget.controller.joinRoom(code: widget.code!, name: widget.playerName);
+      case LobbyAction.resume:
+        final SeatRecord resume = widget.resume!;
+        widget.controller.resumeRoom(
+          code: resume.code,
+          seat: resume.seat,
+          seatToken: resume.seatToken,
+        );
     }
   }
 

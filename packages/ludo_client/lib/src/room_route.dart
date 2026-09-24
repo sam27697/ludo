@@ -12,6 +12,7 @@ import 'game_screen.dart';
 import 'lobby_screen.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
+import 'session_memory.dart' show SeatRecord;
 
 class RoomRoute extends StatefulWidget {
   const RoomRoute({
@@ -21,6 +22,7 @@ class RoomRoute extends StatefulWidget {
     required this.playerName,
     this.code,
     this.players = 4,
+    this.resume,
   });
 
   final RoomController controller;
@@ -32,6 +34,9 @@ class RoomRoute extends StatefulWidget {
 
   /// Forwarded to [LobbyScreen] unchanged; see its own field for the meaning.
   final int players;
+
+  /// Forwarded to [LobbyScreen] unchanged; see its own field for the meaning.
+  final SeatRecord? resume;
 
   @override
   State<RoomRoute> createState() => _RoomRouteState();
@@ -101,6 +106,7 @@ class _RoomRouteState extends State<RoomRoute> {
       playerName: widget.playerName,
       code: widget.code,
       players: widget.players,
+      resume: widget.resume,
     );
   }
 }
