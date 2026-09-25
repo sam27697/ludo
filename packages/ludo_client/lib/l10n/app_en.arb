@@ -81,6 +81,10 @@
   "@lobbyConnectionLost": {
     "description": "Shown on the lobby screen when the socket has closed and the player can choose to reconnect."
   },
+  "lobbyReconnecting": "Reconnecting...",
+  "@lobbyReconnecting": {
+    "description": "Shown on the lobby screen and the game screen while an automatic reconnect attempt is scheduled or in flight."
+  },
   "lobbyRoomCodeLabel": "Room code",
   "@lobbyRoomCodeLabel": {
     "description": "Caption shown above the room code on the lobby screen."

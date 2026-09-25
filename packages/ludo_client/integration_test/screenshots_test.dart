@@ -423,6 +423,37 @@ Future<void> _settleForScreenshot(
   await tester.pumpAndSettle();
 }
 
+/// Order 181's settle for captures 10 and 11: [frameCount] real-duration
+/// pumps of [frame] each, and nothing else -- no readiness finder, no
+/// pumpAndSettle. Both captures photograph a screen `LobbyScreen` or
+/// `GameScreen` has already mounted, each holding a ticker that runs
+/// forever once mounted (file header), so, unlike _settleForScreenshot
+/// above, this helper cannot end in a pumpAndSettle() without hanging.
+///
+/// The same real-time gap _settleForScreenshot's own doc comment describes
+/// between the widget tree and the platform surface applies here: this is
+/// the bounded, ticker-safe way to hold the frame open for the compositor
+/// before `takeScreenshot`, real wall time under
+/// `LiveTestWidgetsFlutterBinding.pump(duration)`, not the instantly
+/// advanced fake clock a plain `WidgetTester` runs on.
+///
+/// The default 30 pumps of 32ms matches _settleForScreenshot's own
+/// `minRealFrames`/`frame` defaults. Callers of this helper must first have
+/// raised the fixture's `autoReconnectDelays` far past that wall-clock
+/// length: a short delay (the 1s/2s pair captures 10 and 11 use for their
+/// own fixture assertions) can fire its first automatic attempt during
+/// this wait, which dials `connect` again and moves the screen off the
+/// very state being held open for the capture.
+Future<void> _pumpRealDurationFrames(
+  WidgetTester tester, {
+  int frameCount = 30,
+  Duration frame = const Duration(milliseconds: 32),
+}) async {
+  for (var i = 0; i < frameCount; i++) {
+    await tester.pump(frame);
+  }
+}
+
 /// Asserts the home screen is on screen, in the locale named by
 /// [localeName] ('en' or 'ar'), before a home-screen capture is taken.
 Future<void> _expectHomeScreen(
@@ -1376,4 +1407,439 @@ void main() {
 
     await SessionMemory.clearSeat();
   });
+
+  // ==========================================================================
+  // 10: order 180's R2 reconnecting line, on GameScreen, in English. Reached
+  // by dropping a real transport under a real RoomController mid-game, with a
+  // non-empty auto-reconnect schedule so autoReconnectPending reads true the
+  // instant the drop lands, the same mechanism
+  // test/reconnecting_line_test.dart's R2 case drives against the widget
+  // directly. Mounted here through _reconnectingCaptureHarness rather than
+  // through HomeScreen -> RoomRoute: unlike 03/04/05 above, this capture is
+  // not a step on the route a player taps through, it is a state the app
+  // reaches on its own while already on the game screen, so there is no tap
+  // sequence for it to be a step of.
+  // ==========================================================================
+  testWidgets('capture 10-game-reconnecting-en', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    final FakeTransport transport = FakeTransport();
+    final RoomController controller = RoomController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: (Uri url) async => transport,
+      // Order 181: raised from [1s, 2s] to keep the first automatic
+      // reconnect attempt from firing during the real-duration settle
+      // below, which runs about a second of wall time (see
+      // _pumpRealDurationFrames's own doc comment and the file's capture
+      // 10/11 fixtures). Five minutes is far past that.
+      autoReconnectDelays: const <Duration>[
+        Duration(minutes: 5),
+        Duration(minutes: 5),
+      ],
+    );
+    addTearDown(controller.dispose);
+
+    final Future<void> createFuture = controller.createRoom(
+      name: 'Priya',
+      players: 2,
+    );
+    await tester.pump();
+    await tester.pump();
+    final String createId = _idOf(transport.sentRaw.last);
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-10'},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: 'SHOT10',
+          state: 'PLAYING',
+          players: 2,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Priya'),
+            _seatJson(1, name: 'Karim'),
+          ],
+          turn: <String, Object?>{
+            'seat': 0,
+            'phase': 'await_roll',
+            'deadline_ms': 45000,
+            'k': 0,
+          },
+          seq: 1,
+        ),
+      ),
+    );
+    await createFuture;
+    expect(
+      controller.phase,
+      RoomPhase.connected,
+      reason:
+          'capture 10 fixture is broken: the create reply must land '
+          'connected before the drop below',
+    );
+
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        GameScreen(controller: controller),
+        locale: const Locale('en'),
+      ),
+    );
+    await tester.pump();
+
+    transport.endFromFarSide();
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      controller.phase,
+      RoomPhase.closed,
+      reason:
+          'capture 10 fixture is broken: the transport drop must close '
+          'the phase before this capture fires',
+    );
+    expect(
+      controller.autoReconnectPending,
+      isTrue,
+      reason:
+          'capture 10 fixture is broken: a non-empty autoReconnectDelays '
+          'drop must leave a pending automatic attempt before this capture '
+          'fires',
+    );
+
+    expect(
+      find.byKey(const Key('game-screen-connection-lost')),
+      findsOneWidget,
+      reason:
+          'expected game-screen-connection-lost on screen before capture 10',
+    );
+    final Finder reconnectingFinder = find.byKey(
+      const Key('game-screen-reconnecting'),
+    );
+    expect(
+      reconnectingFinder,
+      findsOneWidget,
+      reason: 'expected game-screen-reconnecting on screen before capture 10',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    final Text reconnectingText = tester.widget<Text>(reconnectingFinder);
+    expect(
+      reconnectingText.data,
+      loc.lobbyReconnecting,
+      reason:
+          'expected game-screen-reconnecting\'s text to read this tree\'s '
+          'own AppLocalizations.lobbyReconnecting ("${loc.lobbyReconnecting}'
+          '") before capture 10, got "${reconnectingText.data}"',
+    );
+
+    // Order 181: the assertions above read the tree two bare pump()s after
+    // the drop, before the platform compositor has had any real time to
+    // catch up (see _pumpRealDurationFrames's own doc comment and the file
+    // header). Hold the frame open for real wall time, then re-read
+    // everything the capture depends on immediately before takeScreenshot,
+    // so the assertions describe the frame actually photographed.
+    await _pumpRealDurationFrames(tester);
+
+    expect(
+      controller.phase,
+      RoomPhase.closed,
+      reason:
+          'capture 10: after the post-drop settle, expected '
+          'controller.phase to still read RoomPhase.closed immediately '
+          'before the capture, got ${controller.phase}',
+    );
+    expect(
+      controller.autoReconnectPending,
+      isTrue,
+      reason:
+          'capture 10: after the post-drop settle, expected '
+          'controller.autoReconnectPending to still read true immediately '
+          'before the capture, got false -- an automatic attempt may have '
+          'fired during the wait',
+    );
+    expect(
+      find.byKey(const Key('game-screen-connection-lost')),
+      findsOneWidget,
+      reason:
+          'capture 10: after the post-drop settle, expected '
+          'game-screen-connection-lost still on screen immediately before '
+          'the capture',
+    );
+    final Finder settledReconnectingFinder10 = find.byKey(
+      const Key('game-screen-reconnecting'),
+    );
+    expect(
+      settledReconnectingFinder10,
+      findsOneWidget,
+      reason:
+          'capture 10: after the post-drop settle, expected '
+          'game-screen-reconnecting still on screen immediately before the '
+          'capture',
+    );
+    final Text settledReconnectingText10 = tester.widget<Text>(
+      settledReconnectingFinder10,
+    );
+    expect(
+      settledReconnectingText10.data,
+      loc.lobbyReconnecting,
+      reason:
+          'capture 10: after the post-drop settle, expected '
+          'game-screen-reconnecting\'s text to still read this tree\'s own '
+          'AppLocalizations.lobbyReconnecting ("${loc.lobbyReconnecting}"), '
+          'got "${settledReconnectingText10.data}"',
+    );
+    expect(
+      find.byKey(const Key('game-screen-board')),
+      findsNothing,
+      reason:
+          'capture 10: game_screen.dart\'s _connectionLostBody, the body '
+          'this phase builds, never constructs game-screen-board -- only '
+          '_playingBody and _gameOverBody do -- so expected it absent '
+          'immediately before the capture, found it present',
+    );
+
+    await binding.takeScreenshot('10-game-reconnecting-en');
+  });
+
+  // ==========================================================================
+  // 11: order 180's R1 reconnecting line, on LobbyScreen, in Arabic. Reached
+  // the same way test/reconnecting_line_test.dart's R1-AR case reaches it: a
+  // real host lobby, connected, then dropped, with a non-empty auto-reconnect
+  // schedule so lobby-closed shows lobby-reconnecting the instant the drop
+  // lands. LobbyScreen is mounted first, on a fresh idle controller, and
+  // driven to connected by its own initState request -- the same order
+  // test/lobby_screen_test.dart's own suite uses throughout, and the reason
+  // is the same here: handing LobbyScreen an already-connected controller
+  // would make initState's own create_room request re-fire.
+  // ==========================================================================
+  testWidgets('capture 11-lobby-reconnecting-ar', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    final FakeTransport transport = FakeTransport();
+    final RoomController controller = RoomController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: (Uri url) async => transport,
+      // Order 181: raised from [1s, 2s] for the same reason as capture 10
+      // above -- the real-duration settle below runs about a second of
+      // wall time, and a short delay could fire its first automatic
+      // attempt inside that wait.
+      autoReconnectDelays: const <Duration>[
+        Duration(minutes: 5),
+        Duration(minutes: 5),
+      ],
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.create,
+          playerName: 'Dee',
+          players: 4,
+        ),
+        locale: const Locale('ar'),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      transport.sentRaw,
+      isNotEmpty,
+      reason:
+          'capture 11 fixture is broken: LobbyScreen.initState must '
+          'have sent create_room by now',
+    );
+    final String createId = _idOf(transport.sentRaw.last);
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-11'},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: 'SHOT11',
+          players: 4,
+          seats: <Map<String, Object?>>[_seatJson(0, name: 'Dee')],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(
+      controller.phase,
+      RoomPhase.connected,
+      reason:
+          'capture 11 fixture is broken: the create reply must land '
+          'connected before the drop below',
+    );
+
+    transport.endFromFarSide();
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      controller.phase,
+      RoomPhase.closed,
+      reason:
+          'capture 11 fixture is broken: the transport drop must close '
+          'the phase before this capture fires',
+    );
+    expect(
+      controller.autoReconnectPending,
+      isTrue,
+      reason:
+          'capture 11 fixture is broken: a non-empty autoReconnectDelays '
+          'drop must leave a pending automatic attempt before this capture '
+          'fires',
+    );
+
+    expect(
+      find.byKey(const Key('lobby-closed')),
+      findsOneWidget,
+      reason: 'expected lobby-closed on screen before capture 11',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(LobbyScreen)),
+    );
+    expect(
+      loc.localeName,
+      'ar',
+      reason: 'capture 11 fixture is broken: this case must be in Arabic',
+    );
+    final Finder reconnectingFinder = find.byKey(
+      const Key('lobby-reconnecting'),
+    );
+    expect(
+      reconnectingFinder,
+      findsOneWidget,
+      reason: 'expected lobby-reconnecting on screen before capture 11',
+    );
+    final Text reconnectingText = tester.widget<Text>(reconnectingFinder);
+    expect(
+      reconnectingText.data,
+      loc.lobbyReconnecting,
+      reason:
+          'expected lobby-reconnecting\'s text to read this tree\'s own '
+          'AppLocalizations.lobbyReconnecting ("${loc.lobbyReconnecting}") '
+          'before capture 11, got "${reconnectingText.data}"',
+    );
+
+    // Order 181: the assertions above read the tree two bare pump()s after
+    // the drop, before the platform compositor has had any real time to
+    // catch up (see _pumpRealDurationFrames's own doc comment and the file
+    // header). CI run 36098947846 on c9addaa produced
+    // 11-lobby-reconnecting-ar.png showing the connected gathering lobby
+    // from before the drop even though every one of the assertions above
+    // passed. Hold the frame open for real wall time, then re-read
+    // everything the capture depends on immediately before takeScreenshot,
+    // so the assertions describe the frame actually photographed.
+    await _pumpRealDurationFrames(tester);
+
+    expect(
+      controller.phase,
+      RoomPhase.closed,
+      reason:
+          'capture 11: after the post-drop settle, expected '
+          'controller.phase to still read RoomPhase.closed immediately '
+          'before the capture, got ${controller.phase}',
+    );
+    expect(
+      controller.autoReconnectPending,
+      isTrue,
+      reason:
+          'capture 11: after the post-drop settle, expected '
+          'controller.autoReconnectPending to still read true immediately '
+          'before the capture, got false -- an automatic attempt may have '
+          'fired during the wait',
+    );
+    expect(
+      find.byKey(const Key('lobby-closed')),
+      findsOneWidget,
+      reason:
+          'capture 11: after the post-drop settle, expected lobby-closed '
+          'still on screen immediately before the capture',
+    );
+    final Finder settledReconnectingFinder11 = find.byKey(
+      const Key('lobby-reconnecting'),
+    );
+    expect(
+      settledReconnectingFinder11,
+      findsOneWidget,
+      reason:
+          'capture 11: after the post-drop settle, expected '
+          'lobby-reconnecting still on screen immediately before the '
+          'capture',
+    );
+    final Text settledReconnectingText11 = tester.widget<Text>(
+      settledReconnectingFinder11,
+    );
+    expect(
+      settledReconnectingText11.data,
+      loc.lobbyReconnecting,
+      reason:
+          'capture 11: after the post-drop settle, expected '
+          'lobby-reconnecting\'s text to still read this tree\'s own '
+          'AppLocalizations.lobbyReconnecting ("${loc.lobbyReconnecting}"), '
+          'got "${settledReconnectingText11.data}"',
+    );
+    expect(
+      find.byKey(const Key('lobby-room-code')),
+      findsNothing,
+      reason:
+          'capture 11: lobby_screen.dart\'s _closedBody, the body this '
+          'phase builds, never constructs lobby-room-code -- only '
+          '_connectedBody does -- so expected it absent (the gathering '
+          'body must be gone) immediately before the capture, found it '
+          'present',
+    );
+    expect(
+      find.byKey(const Key('lobby-copy-code-button')),
+      findsNothing,
+      reason:
+          'capture 11: lobby_screen.dart\'s _closedBody, the body this '
+          'phase builds, never constructs lobby-copy-code-button -- only '
+          '_connectedBody does -- so expected it absent (the gathering '
+          'body must be gone) immediately before the capture, found it '
+          'present',
+    );
+
+    await binding.takeScreenshot('11-lobby-reconnecting-ar');
+  });
+}
+
+/// A bare MaterialApp around [child] alone -- the same scaffolding
+/// [_ScreenshotHarness] assembles around HomeScreen (same theme, same
+/// supportedLocales, same localizationsDelegates), but with no HomeScreen and
+/// no locale toggle, for the two captures above that photograph GameScreen
+/// and LobbyScreen directly rather than a step reached by tapping through
+/// HomeScreen.
+Widget _reconnectingCaptureHarness(Widget child, {required Locale locale}) {
+  return MaterialApp(
+    theme: buildAppTheme(),
+    locale: locale,
+    supportedLocales: appSupportedLocales,
+    localizationsDelegates: const [
+      AppLocalizations.delegate,
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ],
+    home: child,
+  );
 }
