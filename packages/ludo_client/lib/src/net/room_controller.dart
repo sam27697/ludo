@@ -90,6 +90,24 @@ const Set<String> _rejectedIntentionCodes = <String>{
   'GAME_OVER',
 };
 
+/// S1: the two codes the server answers `start_game` with when the request
+/// itself was fine but raced the server's own state and lost -- something
+/// that was true when this client sent it and stopped being true before the
+/// server read it. Neither is a fault to recover from: the frames already
+/// arriving on the same open socket carry the truth -- `game_started` if the
+/// race went the other way, `player_left` if a seat emptied first -- and a
+/// host who sees them a moment later is not looking at anything broken. Its
+/// own set, not [_rejectedIntentionCodes] (S3): `setPlayers`, `roll` and
+/// `move` are untouched by it.
+const Set<String> _startGameRejectedCodes = <String>{
+  // the room had already left the lobby, most often the second of two taps
+  // on Start inside one round trip
+  'ROOM_STARTED',
+  // a seat emptied -- a friend leaving -- between the host tapping Start and
+  // the server reading the request
+  'NOT_ENOUGH_PLAYERS',
+};
+
 /// Holds the one [RoomConnection] a lobby screen is driving at any moment,
 /// re-creates it across a drop, and exposes the whole thing as a
 /// [ChangeNotifier] with no method that ever throws.
@@ -435,19 +453,34 @@ class RoomController extends ChangeNotifier {
   }
 
   /// Schedules the next automatic attempt for `autoReconnectDelays[
-  /// _nextDelayIndex]` and advances the index past it.
+  /// _nextDelayIndex]` and advances the index past it. N1: this is always a
+  /// false-to-true transition of [autoReconnectPending] (the timer is null
+  /// at every call site that reaches this), so the notification that
+  /// follows is never an empty one under N2.
   void _scheduleNextAttempt() {
     final Duration delay = autoReconnectDelays[_nextDelayIndex];
     _nextDelayIndex++;
     _reconnectTimer = Timer(delay, _onReconnectTimerFired);
+    if (!_disposed) {
+      notifyListeners();
+    }
   }
 
-  /// C7: what a pending timer's firing does.
+  /// C7: what a pending timer's firing does. N1: clearing [_reconnectTimer]
+  /// is always a true-to-false transition of [autoReconnectPending] (a timer
+  /// only exists here because it just fired). When the sequence goes on to
+  /// an attempt, [_attemptReconnect]'s own notify -- reached synchronously,
+  /// before control returns to the event loop -- carries that change; when
+  /// it does not (no longer eligible, or the phase moved on while this timer
+  /// was pending), nothing else notifies, so this does.
   void _onReconnectTimerFired() {
     _reconnectTimer = null;
     if (!_eligible ||
         !(_phase == RoomPhase.closed || _phase == RoomPhase.failed)) {
       _sequenceRunning = false;
+      if (!_disposed) {
+        notifyListeners();
+      }
       return;
     }
     unawaited(_runAutomaticAttempt());
@@ -471,10 +504,24 @@ class RoomController extends ChangeNotifier {
   /// there is one. A no-op, both here and at every call site, when
   /// [autoReconnectDelays] is empty: nothing ever schedules a timer in that
   /// case, so there is never anything to cancel.
+  ///
+  /// N1: called from [reconnect], [onAppResumed] and [leave]. The first two
+  /// always go on, in the same synchronous stretch, to a notify of their own
+  /// -- reached before control returns to the event loop -- that carries
+  /// this change along with theirs. [leave] does not: when the connection it
+  /// is tearing down is still set, it awaits `leaveRoom()` before its own
+  /// notify, and control returns to the event loop in between. So this
+  /// notifies here itself, and only when [autoReconnectPending] actually
+  /// changed (N2): a timer was pending and no longer is, or there was
+  /// nothing to cancel and nothing changes.
   void _cancelAutoReconnect() {
+    final bool wasPending = _reconnectTimer != null;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _sequenceRunning = false;
+    if (wasPending && !_disposed) {
+      notifyListeners();
+    }
   }
 
   /// C10: the foreground hook. Never throws. A no-op unless this controller
@@ -525,7 +572,7 @@ class RoomController extends ChangeNotifier {
     try {
       await connection.startGame();
     } catch (error) {
-      _failFromInRoomRequest(error);
+      _failFromStartGame(error);
     }
   }
 
@@ -1343,6 +1390,22 @@ class RoomController extends ChangeNotifier {
   void _failFromRollOrMove(Object error) {
     if (error is ProtocolErrorException &&
         _rejectedIntentionCodes.contains(error.code)) {
+      return;
+    }
+    _failFromInRoomRequest(error);
+  }
+
+  /// S1: what [startGame] does with a caught error, ahead of everything
+  /// else. A rejected code ([_startGameRejectedCodes]) changes nothing:
+  /// [phase] stays [RoomPhase.connected], the connection this request ran on
+  /// stays the current one, and the frames already arriving on it -- the
+  /// truth this race left behind -- are what this controller reduces, not
+  /// this method. S2: every other failure -- including a
+  /// [ProtocolErrorException] carrying any other code -- falls through to
+  /// [_failFromInRoomRequest] exactly as it did on `24e9d8b`.
+  void _failFromStartGame(Object error) {
+    if (error is ProtocolErrorException &&
+        _startGameRejectedCodes.contains(error.code)) {
       return;
     }
     _failFromInRoomRequest(error);
