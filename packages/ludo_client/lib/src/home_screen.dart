@@ -9,6 +9,7 @@ import 'die_mark.dart';
 import 'game_screen.dart' show GameScreenResult;
 import 'lobby_screen.dart' show LobbyAction;
 import 'net/room_controller.dart';
+import 'net/snapshot.dart';
 import 'room_code.dart';
 import 'room_route.dart';
 import 'server_config.dart';
@@ -64,6 +65,17 @@ class _HomeScreenState extends State<HomeScreen>
   int? _lastTableSeats;
   List<String> _recentCodes = const <String>[];
   RoomController? _ownedController;
+  // H3: the seat rejoin button shows exactly when this is non-null. Only
+  // ever set from _restoreSessionMemory's one-time load and cleared by H2.
+  SeatRecord? _seatRecord;
+  // H1's per-controller dedupe: the last record written to SessionMemory
+  // for the controller currently owned, so a chatty controller does not
+  // write the same seat on every notification. Reset whenever a new
+  // controller is watched.
+  SeatRecord? _lastRecordedSeatWritten;
+  // H2's per-controller dedupe for the finished/seat-gone clear, reset the
+  // same way.
+  bool _seatClearedForOwned = false;
 
   @override
   void initState() {
@@ -156,9 +168,10 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   /// Restores last successful-create name and seats, the last-table chip,
-  /// and recent join codes from [SessionMemory]. An empty or unreadable
-  /// store leaves the localised name default, the four-seat disclosure,
-  /// and no recent chips as they are.
+  /// recent join codes, and a seat record held across a process kill (H3)
+  /// from [SessionMemory]. An empty or unreadable store leaves the
+  /// localised name default, the four-seat disclosure, no recent chips and
+  /// no rejoin button as they are.
   Future<void> _restoreSessionMemory() async {
     final SessionMemory memory = await SessionMemory.load();
     if (!mounted) {
@@ -166,7 +179,8 @@ class _HomeScreenState extends State<HomeScreen>
     }
     final bool hasTable = memory.hasLastTable;
     final bool hasCodes = memory.recentCodes.isNotEmpty;
-    if (!hasTable && !hasCodes) {
+    final SeatRecord? seatRecord = memory.seatRecord;
+    if (!hasTable && !hasCodes && seatRecord == null) {
       return;
     }
     setState(() {
@@ -181,6 +195,9 @@ class _HomeScreenState extends State<HomeScreen>
         _lastTableSeats = seats;
         _nameController.text = name;
         _players = seats;
+      }
+      if (seatRecord != null) {
+        _seatRecord = seatRecord;
       }
     });
   }
@@ -236,6 +253,9 @@ class _HomeScreenState extends State<HomeScreen>
     _enter.dispose();
     final RoomController? owned = _ownedController;
     _ownedController = null;
+    // H1/H2: this screen's own life is the other end of the "as long as
+    // HomeScreen owns a controller" window; stop watching before it goes.
+    owned?.removeListener(_onOwnedControllerChanged);
     // An in-flight create/join still has RoomConnection's 10s request
     // Timer. A connected table (Home unmounted under a live lobby, as in
     // a keyed relaunch) must not elapse FakeAsync. delayed() fires timers
@@ -254,6 +274,61 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _watchOwnedController(RoomController controller) {
     _ownedController = controller;
+    _lastRecordedSeatWritten = null;
+    _seatClearedForOwned = false;
+    controller.addListener(_onOwnedControllerChanged);
+  }
+
+  /// H1: writes the seat this controller currently holds the moment it is
+  /// worth resuming -- connected, a room snapshot, that room not finished,
+  /// a seat and a seat token both present -- at most once per distinct
+  /// record for as long as this controller is the one owned. Covers create,
+  /// join and H4's resume alike, since all three route through
+  /// [_watchOwnedController].
+  ///
+  /// H2(a)/(c): clears that same record, and hides the H3 button in the
+  /// same frame, the moment the owned controller's room is observed
+  /// finished or the controller is observed failed with a seat or room
+  /// that is gone for good. H2(b), the "the player left" clear, runs from
+  /// [_retireOwnedController] instead, since walking off the route is not
+  /// something a notification on the controller ever announces on its own.
+  void _onOwnedControllerChanged() {
+    final RoomController? controller = _ownedController;
+    if (controller == null) {
+      return;
+    }
+    final RoomSnapshot? room = controller.room;
+    if (controller.phase == RoomPhase.connected &&
+        room != null &&
+        room.state != RoomState.finished) {
+      final int? seat = controller.seat;
+      final String? seatToken = controller.seatToken;
+      if (seat != null && seatToken != null) {
+        final SeatRecord record = SeatRecord(
+          code: room.code,
+          seat: seat,
+          seatToken: seatToken,
+        );
+        if (record != _lastRecordedSeatWritten) {
+          _lastRecordedSeatWritten = record;
+          unawaited(SessionMemory.recordSeat(record));
+        }
+      }
+    }
+    final bool finished = room != null && room.state == RoomState.finished;
+    final bool seatGone =
+        controller.phase == RoomPhase.failed &&
+        (controller.errorCode == 'BAD_SEAT_TOKEN' ||
+            controller.errorCode == 'NO_SUCH_ROOM');
+    if ((finished || seatGone) && !_seatClearedForOwned) {
+      _seatClearedForOwned = true;
+      unawaited(SessionMemory.clearSeat());
+      if (mounted) {
+        setState(() {
+          _seatRecord = null;
+        });
+      }
+    }
   }
 
   /// C11: the app returning to the foreground is the other trigger, besides
@@ -273,13 +348,25 @@ class _HomeScreenState extends State<HomeScreen>
 
   /// [leave] then [RoomController.dispose], unless [dispose] already retired
   /// this instance while the pushed route was still up.
+  ///
+  /// H2(b): once [leave] completes, the seat record is cleared and the H3
+  /// button hidden unconditionally -- the player walked off the route, and
+  /// leaving is leaving, whether or not a record was ever written for this
+  /// controller.
   Future<void> _retireOwnedController(RoomController controller) async {
     if (!identical(_ownedController, controller)) {
       return;
     }
+    controller.removeListener(_onOwnedControllerChanged);
     _ownedController = null;
     await controller.leave();
     controller.dispose();
+    unawaited(SessionMemory.clearSeat());
+    if (mounted) {
+      setState(() {
+        _seatRecord = null;
+      });
+    }
   }
 
   /// The typed name, trimmed, falling back to the localised default rather
@@ -424,6 +511,41 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
+  /// H4: the H3 button's tap. Builds a controller the same way create and
+  /// join do, watches it the same way, and pushes the same [RoomRoute],
+  /// with [LobbyAction.resume] and [record] standing in for the code and
+  /// players a create or join would otherwise carry. H1, on the controller
+  /// this watches, is what records the seat again once the resume lands;
+  /// nothing here writes [SessionMemory] directly.
+  Future<void> _rejoinRoom(SeatRecord record) async {
+    final AppLocalizations loc = AppLocalizations.of(context);
+    final String name = _resolvedName(loc);
+    final RoomController controller = widget.controllerFactory();
+    _watchOwnedController(controller);
+    final Object? result = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => RoomRoute(
+          controller: controller,
+          action: LobbyAction.resume,
+          code: record.code,
+          playerName: name,
+          resume: record,
+        ),
+      ),
+    );
+    // See the matching comment in _createRoom: leave() must be awaited
+    // before dispose() so a leave_room request actually reaches the wire,
+    // and the up-to-10-second worst case on a dead socket is bounded and
+    // deliberate, not a bug.
+    await _retireOwnedController(controller);
+    if (!mounted) {
+      return;
+    }
+    if (result == GameScreenResult.newTable) {
+      await _createRoom();
+    }
+  }
+
   /// Fills the code field from a recent-chip tap. Does not navigate;
   /// Join stays the next tap.
   void _fillCodeFromRecent(String code) {
@@ -450,6 +572,7 @@ class _HomeScreenState extends State<HomeScreen>
     final bool joinPrimary = isValidRoomCode(
       normalizeRoomCode(_codeController.text),
     );
+    final SeatRecord? seatRecord = _seatRecord;
     final TextTheme textTheme = Theme.of(context).textTheme;
     final double viewHeight = MediaQuery.sizeOf(context).height;
     // Default widget-test surface is 800x600; keep create/join on-screen
@@ -615,6 +738,16 @@ class _HomeScreenState extends State<HomeScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          if (seatRecord != null) ...[
+                            ElevatedButton(
+                              key: const Key('home-rejoin-button'),
+                              onPressed: () => _rejoinRoom(seatRecord),
+                              child: Text(
+                                loc.homeRejoinButton(seatRecord.code),
+                              ),
+                            ),
+                            SizedBox(height: compact ? kSpace3 : kSpace5),
+                          ],
                           TextField(
                             key: const Key('home-name-field'),
                             controller: _nameController,

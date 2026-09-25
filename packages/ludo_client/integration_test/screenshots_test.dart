@@ -75,6 +75,8 @@ import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart'
     show RoomSnapshot, RoomState, SeatState;
 import 'package:ludo_client/src/server_config.dart';
+import 'package:ludo_client/src/session_memory.dart'
+    show SeatRecord, SessionMemory;
 
 import '../test/net/fake_transport.dart';
 
@@ -1292,5 +1294,86 @@ void main() {
     );
 
     await binding.takeScreenshot('07-game-offline-ar');
+  });
+
+  // ==========================================================================
+  // 08, 09: order 175's H3 rejoin button, in both locales. Written directly
+  // through SessionMemory.recordSeat -- the same store home_screen.dart
+  // itself writes to (order 172's S3, order 175's H1) -- rather than
+  // reached by driving a create or join flow, because what these two
+  // capture is the button a *relaunch* shows: a fresh HomeScreen reading a
+  // record that was already on the device when it mounted, not a button
+  // this same widget tree happened to write for itself a moment earlier.
+  // Order 176: "do not tap the button in the drive" -- neither capture below
+  // pushes a route; both stay on HomeScreen throughout.
+  // ==========================================================================
+  testWidgets('capture 08-home-rejoin-en, 09-home-rejoin-ar', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    const String rejoinCode = 'K7M2QP';
+    await SessionMemory.recordSeat(
+      const SeatRecord(code: rejoinCode, seat: 0, seatToken: 'tok-shot-rejoin'),
+    );
+
+    final factory = _ScreenshotControllerFactory();
+    await tester.pumpWidget(
+      _ScreenshotHarness(controllerFactory: factory.call),
+    );
+    // Safe here and only here, same as 01-home-en above: nothing has
+    // tapped Create Room, Join Room or home-rejoin-button yet, so no
+    // pushed route and no runaway ticker for pumpAndSettle to chase.
+    await tester.pumpAndSettle();
+
+    final AppLocalizations enHomeLoc = AppLocalizations.of(
+      tester.element(find.byType(HomeScreen)),
+    );
+    final String enRejoinLabel = enHomeLoc.homeRejoinButton(rejoinCode);
+    await _settleForScreenshot(
+      tester,
+      find.text(enRejoinLabel),
+      'the English home-rejoin-button label ("$enRejoinLabel") laid out on '
+      'the home screen before capture 08, after SessionMemory.recordSeat '
+      'wrote a record for code "$rejoinCode"',
+    );
+    await _expectHomeScreen(tester, localeName: 'en');
+    expect(
+      find.byKey(const Key('home-rejoin-button')),
+      findsOneWidget,
+      reason:
+          'expected home-rejoin-button on screen before capture 08; a '
+          'fresh HomeScreen must read back the seat record '
+          '(code "$rejoinCode") SessionMemory.recordSeat wrote before this '
+          'harness was ever pumped',
+    );
+    await binding.takeScreenshot('08-home-rejoin-en');
+
+    await tester.tap(find.byKey(const Key('locale-toggle-button')));
+    await tester.pumpAndSettle();
+    // Same shape as 02-home-ar above: a toggle immediately followed by a
+    // screenshot, with nothing else to give a native platform compositor
+    // more real time. See _settleForScreenshot's own doc comment.
+    final AppLocalizations arHomeLoc = AppLocalizations.of(
+      tester.element(find.byType(HomeScreen)),
+    );
+    final String arRejoinLabel = arHomeLoc.homeRejoinButton(rejoinCode);
+    await _settleForScreenshot(
+      tester,
+      find.text(arRejoinLabel),
+      'the Arabic home-rejoin-button label ("$arRejoinLabel") laid out on '
+      'the home screen after the locale toggle, before capture 09',
+    );
+    await _expectHomeScreen(tester, localeName: 'ar');
+    expect(
+      find.byKey(const Key('home-rejoin-button')),
+      findsOneWidget,
+      reason:
+          'expected home-rejoin-button still on screen after the locale '
+          'toggle, before capture 09',
+    );
+    await binding.takeScreenshot('09-home-rejoin-ar');
+
+    await SessionMemory.clearSeat();
   });
 }

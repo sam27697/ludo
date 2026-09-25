@@ -69,6 +69,27 @@ const Set<String> _retryableErrorCodes = <String>{
   'closed',
 };
 
+/// E1: the four codes the server answers `roll()` or `move()` with when the
+/// request itself was fine but raced the server's own state and lost --
+/// something that was true when this client sent it and stopped being true
+/// before the server read it. None of these is a fault to recover from: the
+/// frames already arriving on the same open socket carry the truth, and a
+/// player who sees them a moment later is not looking at anything broken.
+const Set<String> _rejectedIntentionCodes = <String>{
+  // the turn had already passed to someone else, most often the second of
+  // two taps inside one round trip, or a tap that lands as the turn timer
+  // plays the move for this player instead
+  'NOT_YOUR_TURN',
+  // the phase had already moved on, the same race as above seen from a
+  // request that named the wrong step rather than the wrong player
+  'WRONG_PHASE',
+  // the board had already moved on: a move sent against a legal-move list
+  // this client had not yet been told was stale
+  'ILLEGAL_MOVE',
+  // the game had already finished before this request arrived
+  'GAME_OVER',
+};
+
 /// Holds the one [RoomConnection] a lobby screen is driving at any moment,
 /// re-creates it across a drop, and exposes the whole thing as a
 /// [ChangeNotifier] with no method that ever throws.
@@ -191,6 +212,69 @@ class RoomController extends ChangeNotifier {
       request: (RoomConnection connection) =>
           connection.joinRoom(code: code, name: name),
     );
+  }
+
+  /// R: resumes a seat this controller never held, using a room code and
+  /// seat token that survived a process kill (order 172's store) rather than
+  /// ones this controller ever learned from a live connection of its own.
+  /// Never throws, like every other method on this class.
+  ///
+  /// R2: accepted only from a controller that has never touched a room --
+  /// not disposed, [leave] never called, [room] still null -- and only from
+  /// [RoomPhase.idle] or [RoomPhase.failed]. Otherwise a no-op that changes
+  /// nothing and does not notify.
+  Future<void> resumeRoom({
+    required String code,
+    required int seat,
+    required String seatToken,
+  }) async {
+    if (_disposed ||
+        _leftCalled ||
+        _room != null ||
+        !(_phase == RoomPhase.idle || _phase == RoomPhase.failed)) {
+      return;
+    }
+
+    _phase = RoomPhase.connecting;
+    notifyListeners();
+
+    final RoomConnection connection = RoomConnection(
+      url: serverUrl,
+      connect: _connect,
+    );
+    final bool opened = await _openAndAttach(connection);
+    if (!opened) {
+      // R3: an open failure is failed / 'transport', exactly as today --
+      // _openAndAttach already did that.
+      return;
+    }
+
+    try {
+      final RoomSnapshot snapshot = await connection.resume(
+        code: code,
+        seatToken: seatToken,
+      );
+      if (_disposed) {
+        return;
+      }
+      // R4: the snapshot carries no "your seat" field and the server sends
+      // no seat_assigned on a resume (docs/PROTOCOL.md section 6), so the
+      // seat travels with the token this call was given, not with whatever
+      // _syncSeatCache() would otherwise read off the connection.
+      _room = snapshot;
+      _cachedSeat = seat;
+      _cachedSeatToken = seatToken;
+      _phase = RoomPhase.connected;
+      _blocked = false;
+      _errorCode = null;
+      _errorMessage = null;
+      notifyListeners();
+    } catch (error) {
+      // R5: every code arrives verbatim in errorCode; room, seat and
+      // seatToken are left exactly as they were before this call (null on a
+      // fresh controller); G3, no sequence starts.
+      _failFromRequest(error);
+    }
   }
 
   /// Shared body of [createRoom] and [joinRoom]: both are accepted only from
@@ -422,7 +506,7 @@ class RoomController extends ChangeNotifier {
       _room = snapshot;
       notifyListeners();
     } catch (error) {
-      _failFromRequest(error);
+      _failFromInRoomRequest(error);
     }
   }
 
@@ -441,7 +525,7 @@ class RoomController extends ChangeNotifier {
     try {
       await connection.startGame();
     } catch (error) {
-      _failFromRequest(error);
+      _failFromInRoomRequest(error);
     }
   }
 
@@ -458,7 +542,7 @@ class RoomController extends ChangeNotifier {
     try {
       await connection.roll();
     } catch (error) {
-      _failFromRequest(error);
+      _failFromRollOrMove(error);
     }
   }
 
@@ -483,7 +567,7 @@ class RoomController extends ChangeNotifier {
     try {
       await connection.move(token);
     } catch (error) {
-      _failFromRequest(error);
+      _failFromRollOrMove(error);
     }
   }
 
@@ -1247,6 +1331,44 @@ class RoomController extends ChangeNotifier {
             notifyListeners();
           },
         );
+  }
+
+  /// E1: what [roll] and [move] do with a caught error, ahead of everything
+  /// else. A rejected intention (_rejectedIntentionCodes) changes nothing:
+  /// [phase] stays [RoomPhase.connected], the connection this request ran on
+  /// stays the current one, and the frames already arriving on it are what
+  /// re-bases this controller, not this method. E2: every other failure --
+  /// including a [ProtocolErrorException] carrying any other code -- falls
+  /// through to [_failFromInRoomRequest] exactly as it did on `449fc30`.
+  void _failFromRollOrMove(Object error) {
+    if (error is ProtocolErrorException &&
+        _rejectedIntentionCodes.contains(error.code)) {
+      return;
+    }
+    _failFromInRoomRequest(error);
+  }
+
+  /// G1: what [setPlayers], [startGame] and, past E1, [roll] and [move] do
+  /// with a failure. [_failFromRequest] first, exactly as every one of them
+  /// did before G existed; then, if that landed this controller in
+  /// [RoomPhase.failed] with a retryable code and it is eligible (C4) with no
+  /// sequence already running, starts one exactly as C5 does: a single timer
+  /// for `autoReconnectDelays[0]`, then C7 as written. G2: the
+  /// `_sequenceRunning` guard here is the same one C5's `connection.done`
+  /// handler reads, so whichever of the two sees a dead socket first is the
+  /// one that starts the sequence, and the other finds it already running.
+  void _failFromInRoomRequest(Object error) {
+    _failFromRequest(error);
+    if (_disposed || _phase != RoomPhase.failed) {
+      return;
+    }
+    if (!_retryableErrorCodes.contains(_errorCode)) {
+      return;
+    }
+    if (!_eligible || _sequenceRunning) {
+      return;
+    }
+    _startSequence(immediate: false);
   }
 
   /// Maps an error caught from a request made on an already-open connection
