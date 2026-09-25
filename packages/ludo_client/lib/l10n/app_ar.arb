@@ -19,6 +19,7 @@
   "homePlayersFour": "4 لاعبين",
   "lobbyConnecting": "جارٍ الاتصال بالغرفة...",
   "lobbyConnectionLost": "انقطع الاتصال.",
+  "lobbyReconnecting": "جارٍ إعادة الاتصال...",
   "lobbyRoomCodeLabel": "رمز الغرفة",
   "lobbyCopyLinkButton": "نسخ الرابط",
   "lobbyCopyCodeButton": "نسخ الرمز",

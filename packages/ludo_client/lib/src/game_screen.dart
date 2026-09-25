@@ -433,6 +433,9 @@ class _GameScreenState extends State<GameScreen>
             const FeltEdge(key: Key('game-felt-edge')),
             const SeatPipStrip(key: Key('game-seat-pip-strip')),
             if (controller.hasDesynced) _desyncBanner(context, loc),
+            if (controller.phase == RoomPhase.connecting &&
+                controller.room != null)
+              _reconnectingBanner(context, loc),
             Expanded(child: body),
           ],
         ),
@@ -462,6 +465,14 @@ class _GameScreenState extends State<GameScreen>
               Text(
                 errorMessage,
                 key: const Key('game-screen-error-message'),
+                textAlign: TextAlign.center,
+              ),
+            ],
+            if (controller.autoReconnectPending) ...[
+              const SizedBox(height: kSpace2),
+              Text(
+                loc.lobbyReconnecting,
+                key: const Key('game-screen-reconnecting'),
                 textAlign: TextAlign.center,
               ),
             ],
@@ -748,6 +759,29 @@ class _GameScreenState extends State<GameScreen>
         loc.lobbyDesynced,
         key: const Key('game-screen-desync-banner'),
         style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
+      ),
+    );
+  }
+
+  /// R3: shown while `phase` is `RoomPhase.connecting` with `room` still
+  /// set, i.e. an automatic or manual reconnect is in flight on top of the
+  /// last board this screen drew. Styled like [_desyncBanner] but with
+  /// `colorScheme.secondaryContainer` rather than the error colour: this is
+  /// not a fault, only a wait.
+  Widget _reconnectingBanner(BuildContext context, AppLocalizations loc) {
+    return Container(
+      color: Theme.of(context).colorScheme.secondaryContainer,
+      padding: const EdgeInsets.symmetric(
+        horizontal: kSpace4,
+        vertical: kSpace2,
+      ),
+      width: double.infinity,
+      child: Text(
+        loc.lobbyReconnecting,
+        key: const Key('game-screen-reconnecting-banner'),
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.onSecondaryContainer,
+        ),
       ),
     );
   }
