@@ -1376,4 +1376,285 @@ void main() {
 
     await SessionMemory.clearSeat();
   });
+
+  // ==========================================================================
+  // 10: order 180's R2 reconnecting line, on GameScreen, in English. Reached
+  // by dropping a real transport under a real RoomController mid-game, with a
+  // non-empty auto-reconnect schedule so autoReconnectPending reads true the
+  // instant the drop lands, the same mechanism
+  // test/reconnecting_line_test.dart's R2 case drives against the widget
+  // directly. Mounted here through _reconnectingCaptureHarness rather than
+  // through HomeScreen -> RoomRoute: unlike 03/04/05 above, this capture is
+  // not a step on the route a player taps through, it is a state the app
+  // reaches on its own while already on the game screen, so there is no tap
+  // sequence for it to be a step of.
+  // ==========================================================================
+  testWidgets('capture 10-game-reconnecting-en', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    final FakeTransport transport = FakeTransport();
+    final RoomController controller = RoomController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: (Uri url) async => transport,
+      autoReconnectDelays: const <Duration>[
+        Duration(seconds: 1),
+        Duration(seconds: 2),
+      ],
+    );
+    addTearDown(controller.dispose);
+
+    final Future<void> createFuture = controller.createRoom(
+      name: 'Priya',
+      players: 2,
+    );
+    await tester.pump();
+    await tester.pump();
+    final String createId = _idOf(transport.sentRaw.last);
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-10'},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: 'SHOT10',
+          state: 'PLAYING',
+          players: 2,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Priya'),
+            _seatJson(1, name: 'Karim'),
+          ],
+          turn: <String, Object?>{
+            'seat': 0,
+            'phase': 'await_roll',
+            'deadline_ms': 45000,
+            'k': 0,
+          },
+          seq: 1,
+        ),
+      ),
+    );
+    await createFuture;
+    expect(
+      controller.phase,
+      RoomPhase.connected,
+      reason:
+          'capture 10 fixture is broken: the create reply must land '
+          'connected before the drop below',
+    );
+
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        GameScreen(controller: controller),
+        locale: const Locale('en'),
+      ),
+    );
+    await tester.pump();
+
+    transport.endFromFarSide();
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      controller.phase,
+      RoomPhase.closed,
+      reason:
+          'capture 10 fixture is broken: the transport drop must close '
+          'the phase before this capture fires',
+    );
+    expect(
+      controller.autoReconnectPending,
+      isTrue,
+      reason:
+          'capture 10 fixture is broken: a non-empty autoReconnectDelays '
+          'drop must leave a pending automatic attempt before this capture '
+          'fires',
+    );
+
+    expect(
+      find.byKey(const Key('game-screen-connection-lost')),
+      findsOneWidget,
+      reason:
+          'expected game-screen-connection-lost on screen before capture 10',
+    );
+    final Finder reconnectingFinder = find.byKey(
+      const Key('game-screen-reconnecting'),
+    );
+    expect(
+      reconnectingFinder,
+      findsOneWidget,
+      reason: 'expected game-screen-reconnecting on screen before capture 10',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    final Text reconnectingText = tester.widget<Text>(reconnectingFinder);
+    expect(
+      reconnectingText.data,
+      loc.lobbyReconnecting,
+      reason:
+          'expected game-screen-reconnecting\'s text to read this tree\'s '
+          'own AppLocalizations.lobbyReconnecting ("${loc.lobbyReconnecting}'
+          '") before capture 10, got "${reconnectingText.data}"',
+    );
+
+    await binding.takeScreenshot('10-game-reconnecting-en');
+  });
+
+  // ==========================================================================
+  // 11: order 180's R1 reconnecting line, on LobbyScreen, in Arabic. Reached
+  // the same way test/reconnecting_line_test.dart's R1-AR case reaches it: a
+  // real host lobby, connected, then dropped, with a non-empty auto-reconnect
+  // schedule so lobby-closed shows lobby-reconnecting the instant the drop
+  // lands. LobbyScreen is mounted first, on a fresh idle controller, and
+  // driven to connected by its own initState request -- the same order
+  // test/lobby_screen_test.dart's own suite uses throughout, and the reason
+  // is the same here: handing LobbyScreen an already-connected controller
+  // would make initState's own create_room request re-fire.
+  // ==========================================================================
+  testWidgets('capture 11-lobby-reconnecting-ar', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    final FakeTransport transport = FakeTransport();
+    final RoomController controller = RoomController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: (Uri url) async => transport,
+      autoReconnectDelays: const <Duration>[
+        Duration(seconds: 1),
+        Duration(seconds: 2),
+      ],
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.create,
+          playerName: 'Dee',
+          players: 4,
+        ),
+        locale: const Locale('ar'),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      transport.sentRaw,
+      isNotEmpty,
+      reason:
+          'capture 11 fixture is broken: LobbyScreen.initState must '
+          'have sent create_room by now',
+    );
+    final String createId = _idOf(transport.sentRaw.last);
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-11'},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: 'SHOT11',
+          players: 4,
+          seats: <Map<String, Object?>>[_seatJson(0, name: 'Dee')],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(
+      controller.phase,
+      RoomPhase.connected,
+      reason:
+          'capture 11 fixture is broken: the create reply must land '
+          'connected before the drop below',
+    );
+
+    transport.endFromFarSide();
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      controller.phase,
+      RoomPhase.closed,
+      reason:
+          'capture 11 fixture is broken: the transport drop must close '
+          'the phase before this capture fires',
+    );
+    expect(
+      controller.autoReconnectPending,
+      isTrue,
+      reason:
+          'capture 11 fixture is broken: a non-empty autoReconnectDelays '
+          'drop must leave a pending automatic attempt before this capture '
+          'fires',
+    );
+
+    expect(
+      find.byKey(const Key('lobby-closed')),
+      findsOneWidget,
+      reason: 'expected lobby-closed on screen before capture 11',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(LobbyScreen)),
+    );
+    expect(
+      loc.localeName,
+      'ar',
+      reason: 'capture 11 fixture is broken: this case must be in Arabic',
+    );
+    final Finder reconnectingFinder = find.byKey(
+      const Key('lobby-reconnecting'),
+    );
+    expect(
+      reconnectingFinder,
+      findsOneWidget,
+      reason: 'expected lobby-reconnecting on screen before capture 11',
+    );
+    final Text reconnectingText = tester.widget<Text>(reconnectingFinder);
+    expect(
+      reconnectingText.data,
+      loc.lobbyReconnecting,
+      reason:
+          'expected lobby-reconnecting\'s text to read this tree\'s own '
+          'AppLocalizations.lobbyReconnecting ("${loc.lobbyReconnecting}") '
+          'before capture 11, got "${reconnectingText.data}"',
+    );
+
+    await binding.takeScreenshot('11-lobby-reconnecting-ar');
+  });
+}
+
+/// A bare MaterialApp around [child] alone -- the same scaffolding
+/// [_ScreenshotHarness] assembles around HomeScreen (same theme, same
+/// supportedLocales, same localizationsDelegates), but with no HomeScreen and
+/// no locale toggle, for the two captures above that photograph GameScreen
+/// and LobbyScreen directly rather than a step reached by tapping through
+/// HomeScreen.
+Widget _reconnectingCaptureHarness(Widget child, {required Locale locale}) {
+  return MaterialApp(
+    theme: buildAppTheme(),
+    locale: locale,
+    supportedLocales: appSupportedLocales,
+    localizationsDelegates: const [
+      AppLocalizations.delegate,
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ],
+    home: child,
+  );
 }
