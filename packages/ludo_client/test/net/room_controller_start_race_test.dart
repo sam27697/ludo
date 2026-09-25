@@ -669,4 +669,75 @@ void main() {
       async.flushMicrotasks();
     });
   });
+
+  // ==========================================================================
+  // S-B (RETURN 1, item 3): S1's "not blocked" has no detecting assertion
+  // without this -- a mutation that sets _blocked = true on a rejected start
+  // code passes every other case in this file, because none of them ever
+  // drop the connection afterwards to ask whether a later automatic sequence
+  // is still allowed to start.
+  // ==========================================================================
+  test('S-B: delays non-empty, startGame() rejected ROOM_STARTED, then the '
+      'transport closes on its own -- autoReconnectPending becomes true, '
+      'proving the rejection left this controller eligible for a sequence '
+      'a blocked controller would refuse', () {
+    fakeAsync((FakeAsync async) {
+      final (
+        RoomController controller,
+        FakeTransport transport,
+        _Connector connector,
+      ) = _connectedControllerSync(
+        async,
+        autoReconnectDelays: _delays,
+      );
+
+      unawaited(controller.startGame());
+      async.flushMicrotasks();
+      final String id = _idOf(transport.sentRaw.last);
+      transport.pushText(
+        _frame(
+          type: 'error',
+          re: id,
+          data: <String, Object?>{
+            'code': 'ROOM_STARTED',
+            'message': 'the room already left the lobby',
+          },
+        ),
+      );
+      async.flushMicrotasks();
+
+      expect(
+        controller.phase,
+        RoomPhase.connected,
+        reason:
+            'fixture is broken: S1 must have kept phase connected after '
+            'the rejection, or this case cannot go on to test what happens '
+            'on a later drop',
+      );
+
+      transport.endFromFarSide();
+      async.flushMicrotasks();
+
+      expect(
+        controller.phase,
+        RoomPhase.closed,
+        reason:
+            'fixture is broken: the later drop must land in closed before '
+            'this case can ask whether a sequence is still allowed to '
+            'start',
+      );
+      expect(
+        controller.autoReconnectPending,
+        isTrue,
+        reason:
+            'S1: "not blocked" -- a rejected start race must not leave '
+            'this controller unable to start an automatic sequence on a '
+            'later, unrelated drop; a mutation of the fix that set '
+            '_blocked = true on the rejected code would leave this false',
+      );
+
+      controller.dispose();
+      async.flushMicrotasks();
+    });
+  });
 }
