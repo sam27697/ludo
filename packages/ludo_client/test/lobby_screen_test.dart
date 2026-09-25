@@ -1078,7 +1078,9 @@ void main() {
     });
 
     testWidgets(
-      'lobby-waiting shows loc.lobbyWaitingForPlayers(occupied, total)',
+      'lobby-waiting shows loc.lobbyWaitingForPlayers(occupied, total), for '
+      'a guest (order 183: a host has no lobby-waiting line, see the "order '
+      '183: waiting line" group)',
       (tester) async {
         final connector = _Connector();
         final transport = FakeTransport();
@@ -1095,19 +1097,27 @@ void main() {
           tester,
           LobbyScreen(
             controller: controller,
-            action: LobbyAction.create,
-            playerName: 'Amir',
-            players: 4,
+            action: LobbyAction.join,
+            code: 'ABC234',
+            playerName: 'Sam',
           ),
           transport,
         );
+        // Seat 1, host seat 0: this client is not the host.
         await _resolveConnected(
           tester,
           transport,
           id,
-          seatForThisClient: 0,
+          seatForThisClient: 1,
+          hostSeat: 0,
           players: 4,
           seats: seats,
+        );
+
+        expect(
+          controller.isHost,
+          isFalse,
+          reason: 'test setup: this scenario mounts as a guest, not a host',
         );
 
         final context = tester.element(find.byType(LobbyScreen));
@@ -1689,7 +1699,8 @@ void main() {
 
     testWidgets(
       'pumped in Locale(ar), the connected body shows Arabic strings for '
-      'lobby-waiting and the desync banner',
+      'lobby-waiting and the desync banner, for a guest (order 183: a host '
+      'has no lobby-waiting line, see the "order 183: waiting line" group)',
       (tester) async {
         final connector = _Connector();
         final transport = FakeTransport();
@@ -1701,23 +1712,32 @@ void main() {
           tester,
           LobbyScreen(
             controller: controller,
-            action: LobbyAction.create,
+            action: LobbyAction.join,
+            code: 'ABC234',
             playerName: 'سام',
-            players: 4,
           ),
           transport,
           locale: const Locale('ar'),
         );
         final seats = <Map<String, Object?>>[
-          _seatJson(0, name: 'سام', connected: true),
+          _seatJson(0, name: 'المضيف', connected: true),
+          _seatJson(1, name: 'سام', connected: true),
         ];
+        // Seat 1, host seat 0: this client is not the host.
         await _resolveConnected(
           tester,
           transport,
           id,
-          seatForThisClient: 0,
+          seatForThisClient: 1,
+          hostSeat: 0,
           players: 4,
           seats: seats,
+        );
+
+        expect(
+          controller.isHost,
+          isFalse,
+          reason: 'test setup: this scenario mounts as a guest, not a host',
         );
 
         final locAr = lookupAppLocalizations(const Locale('ar'));
@@ -1726,7 +1746,7 @@ void main() {
         );
         expect(
           waitingTextAr.data,
-          locAr.lobbyWaitingForPlayers(1, 4),
+          locAr.lobbyWaitingForPlayers(2, 4),
           reason:
               'rule 8/4: lobby-waiting must be a Text of the Arabic '
               'lobbyWaitingForPlayers string when the locale is ar; got '
@@ -1788,6 +1808,525 @@ void main() {
         );
         await tester.pump();
         await tester.pump();
+      },
+    );
+  });
+
+  // --- Order 183: the seated/total count appears once. For a host it moves
+  // --- onto lobby-start-button's own label (which was already reading it
+  // --- while disabled: see test/lobby_screen_die_code_start_label_test.dart,
+  // --- "disabled Start label includes seated and total counts", pinned and
+  // --- unchanged by this order); lobby-waiting itself must be absent for a
+  // --- host. A guest has no start button, so lobby-waiting stays a guest's
+  // --- only place for the count, unchanged by this order (the two "rule 4"
+  // --- and "Arabic and RTL" cases moved above to a guest mount are exactly
+  // --- that: unaffected, just re-homed to the seat that still shows the
+  // --- line).
+  group('order 183: waiting line', () {
+    testWidgets('W-H1: host, room short of full: lobby-waiting is absent; '
+        'lobby-start-button is present, disabled, labelled with the '
+        'seated/total count', (tester) async {
+      final connector = _Connector();
+      final transport = FakeTransport();
+      connector.enqueue(transport);
+      final controller = _newController(connector);
+      addTearDown(controller.dispose);
+
+      final seats = <Map<String, Object?>>[
+        _seatJson(0, name: 'Sam', connected: true),
+        _seatJson(1, name: 'Amir', connected: true),
+      ];
+
+      final id = await _mountAndCaptureRequest(
+        tester,
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.create,
+          playerName: 'Sam',
+          players: 4,
+        ),
+        transport,
+      );
+      await _resolveConnected(
+        tester,
+        transport,
+        id,
+        seatForThisClient: 0,
+        hostSeat: 0,
+        players: 4,
+        seats: seats,
+      );
+
+      expect(
+        controller.isHost,
+        isTrue,
+        reason: 'test setup: this scenario mounts as the host',
+      );
+      expect(
+        controller.room!.seats.length,
+        2,
+        reason: 'test setup: W-H1 needs a room short of full, 2 of 4',
+      );
+      expect(
+        controller.room!.players,
+        4,
+        reason: 'test setup: W-H1 needs a room short of full, 2 of 4',
+      );
+
+      expect(
+        find.byKey(const Key('lobby-waiting')),
+        findsNothing,
+        reason:
+            'order 183, W-H1: the host must not show lobby-waiting; the '
+            'seated/total count belongs on lobby-start-button alone, so '
+            'a host mount must find nothing keyed lobby-waiting; the '
+            'widget was found anyway',
+      );
+
+      final startFinder = find.byKey(const Key('lobby-start-button'));
+      expect(
+        startFinder,
+        findsOneWidget,
+        reason:
+            'order 183, W-H1: lobby-start-button must be present for a '
+            'host, even with the room short of full',
+      );
+      final button = tester.widget<ElevatedButton>(startFinder);
+      expect(
+        button.onPressed,
+        isNull,
+        reason:
+            'order 183, W-H1: with 2 of 4 seats filled, '
+            'lobby-start-button must be disabled (onPressed null)',
+      );
+
+      final context = tester.element(find.byType(LobbyScreen));
+      final loc = AppLocalizations.of(context);
+      final label = tester.widget<Text>(
+        find.descendant(of: startFinder, matching: find.byType(Text)),
+      );
+      expect(
+        label.data,
+        loc.lobbyWaitingForPlayers(2, 4),
+        reason:
+            'order 183, W-H1: the disabled lobby-start-button label must '
+            'read loc.lobbyWaitingForPlayers(seated, total) == '
+            'loc.lobbyWaitingForPlayers(2, 4); got "${label.data}"',
+      );
+    });
+
+    testWidgets(
+      'W-H2: host, room full: lobby-waiting is absent; lobby-start-button '
+      'is present, enabled, labelled loc.lobbyStartButton',
+      (tester) async {
+        final connector = _Connector();
+        final transport = FakeTransport();
+        connector.enqueue(transport);
+        final controller = _newController(connector);
+        addTearDown(controller.dispose);
+
+        final seats = List<Map<String, Object?>>.generate(
+          4,
+          (i) => _seatJson(i, name: 'p$i', connected: true),
+        );
+
+        final id = await _mountAndCaptureRequest(
+          tester,
+          LobbyScreen(
+            controller: controller,
+            action: LobbyAction.create,
+            playerName: 'p0',
+            players: 4,
+          ),
+          transport,
+        );
+        await _resolveConnected(
+          tester,
+          transport,
+          id,
+          seatForThisClient: 0,
+          hostSeat: 0,
+          players: 4,
+          seats: seats,
+        );
+
+        expect(
+          controller.isHost,
+          isTrue,
+          reason: 'test setup: this scenario mounts as the host',
+        );
+        expect(
+          controller.room!.seats.length,
+          controller.room!.players,
+          reason: 'test setup: W-H2 needs a full room',
+        );
+
+        expect(
+          find.byKey(const Key('lobby-waiting')),
+          findsNothing,
+          reason:
+              'order 183, W-H2: the host must not show lobby-waiting; the '
+              'seated/total count belongs on lobby-start-button alone, so '
+              'a host mount must find nothing keyed lobby-waiting even '
+              'with a full room; the widget was found anyway',
+        );
+
+        final startFinder = find.byKey(const Key('lobby-start-button'));
+        expect(
+          startFinder,
+          findsOneWidget,
+          reason:
+              'order 183, W-H2: lobby-start-button must be present for '
+              'a host with a full room',
+        );
+        final button = tester.widget<ElevatedButton>(startFinder);
+        expect(
+          button.onPressed,
+          isNotNull,
+          reason:
+              'order 183, W-H2: with a full room, lobby-start-button must '
+              'be enabled (onPressed non-null)',
+        );
+
+        final context = tester.element(find.byType(LobbyScreen));
+        final loc = AppLocalizations.of(context);
+        final label = tester.widget<Text>(
+          find.descendant(of: startFinder, matching: find.byType(Text)),
+        );
+        expect(
+          label.data,
+          loc.lobbyStartButton,
+          reason:
+              'order 183, W-H2: with a full room the lobby-start-button '
+              'label must be loc.lobbyStartButton, not the seated/total '
+              'count; got "${label.data}"',
+        );
+      },
+    );
+
+    testWidgets(
+      'W-G1: guest, room short of full: lobby-waiting findsOneWidget with '
+      'the seated/total count; no lobby-start-button',
+      (tester) async {
+        final connector = _Connector();
+        final transport = FakeTransport();
+        connector.enqueue(transport);
+        final controller = _newController(connector);
+        addTearDown(controller.dispose);
+
+        final seats = <Map<String, Object?>>[
+          _seatJson(0, name: 'Sam', connected: true),
+          _seatJson(1, name: 'Amir', connected: true),
+        ];
+
+        final id = await _mountAndCaptureRequest(
+          tester,
+          LobbyScreen(
+            controller: controller,
+            action: LobbyAction.join,
+            code: 'ABC234',
+            playerName: 'Amir',
+          ),
+          transport,
+        );
+        // Seat 1, host seat 0: this client is not the host.
+        await _resolveConnected(
+          tester,
+          transport,
+          id,
+          seatForThisClient: 1,
+          hostSeat: 0,
+          players: 4,
+          seats: seats,
+        );
+
+        expect(
+          controller.isHost,
+          isFalse,
+          reason: 'test setup: this scenario mounts as a guest',
+        );
+        expect(
+          controller.room!.seats.length,
+          2,
+          reason: 'test setup: W-G1 needs a room short of full, 2 of 4',
+        );
+        expect(
+          controller.room!.players,
+          4,
+          reason: 'test setup: W-G1 needs a room short of full, 2 of 4',
+        );
+
+        final context = tester.element(find.byType(LobbyScreen));
+        final loc = AppLocalizations.of(context);
+        final waitingFinder = find.byKey(const Key('lobby-waiting'));
+        expect(
+          waitingFinder,
+          findsOneWidget,
+          reason:
+              'order 183, W-G1: a guest must still show lobby-waiting; '
+              'the line stays for anyone with no start button',
+        );
+        final waitingText = tester.widget<Text>(waitingFinder);
+        expect(
+          waitingText.data,
+          loc.lobbyWaitingForPlayers(2, 4),
+          reason:
+              'order 183, W-G1: lobby-waiting must read '
+              'loc.lobbyWaitingForPlayers(seated, total) == '
+              'loc.lobbyWaitingForPlayers(2, 4); got '
+              '"${waitingText.data}"',
+        );
+        expect(
+          find.byKey(const Key('lobby-start-button')),
+          findsNothing,
+          reason:
+              'order 183, W-G1: a guest has no start button, so '
+              'lobby-start-button must be absent',
+        );
+      },
+    );
+
+    testWidgets('W-G2: guest, room full: lobby-waiting findsOneWidget reading '
+        'loc.lobbyWaitingForPlayers(total, total); no lobby-start-button', (
+      tester,
+    ) async {
+      final connector = _Connector();
+      final transport = FakeTransport();
+      connector.enqueue(transport);
+      final controller = _newController(connector);
+      addTearDown(controller.dispose);
+
+      final seats = List<Map<String, Object?>>.generate(
+        4,
+        (i) => _seatJson(i, name: 'p$i', connected: true),
+      );
+
+      final id = await _mountAndCaptureRequest(
+        tester,
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.join,
+          code: 'ABC234',
+          playerName: 'p1',
+        ),
+        transport,
+      );
+      // Seat 1, host seat 0: this client is not the host.
+      await _resolveConnected(
+        tester,
+        transport,
+        id,
+        seatForThisClient: 1,
+        hostSeat: 0,
+        players: 4,
+        seats: seats,
+      );
+
+      expect(
+        controller.isHost,
+        isFalse,
+        reason: 'test setup: this scenario mounts as a guest',
+      );
+      expect(
+        controller.room!.seats.length,
+        controller.room!.players,
+        reason: 'test setup: W-G2 needs a full room',
+      );
+
+      final context = tester.element(find.byType(LobbyScreen));
+      final loc = AppLocalizations.of(context);
+      final waitingFinder = find.byKey(const Key('lobby-waiting'));
+      expect(
+        waitingFinder,
+        findsOneWidget,
+        reason:
+            'order 183, W-G2: a guest must still show lobby-waiting '
+            'even with a full room; this is today\'s text, pinned, not '
+            'a claim about what it ought to say',
+      );
+      final waitingText = tester.widget<Text>(waitingFinder);
+      expect(
+        waitingText.data,
+        loc.lobbyWaitingForPlayers(4, 4),
+        reason:
+            'order 183, W-G2: lobby-waiting must read '
+            'loc.lobbyWaitingForPlayers(total, total) == '
+            'loc.lobbyWaitingForPlayers(4, 4); got '
+            '"${waitingText.data}"',
+      );
+      expect(
+        find.byKey(const Key('lobby-start-button')),
+        findsNothing,
+        reason:
+            'order 183, W-G2: a guest has no start button, so '
+            'lobby-start-button must be absent even with a full room',
+      );
+    });
+
+    testWidgets(
+      'W-AR host: pumped in Locale(ar), a host with a room short of full '
+      'shows no lobby-waiting, and lobby-start-button carries the count',
+      (tester) async {
+        final connector = _Connector();
+        final transport = FakeTransport();
+        connector.enqueue(transport);
+        final controller = _newController(connector);
+        addTearDown(controller.dispose);
+
+        final seats = <Map<String, Object?>>[
+          _seatJson(0, name: 'سام', connected: true),
+          _seatJson(1, name: 'أمير', connected: true),
+        ];
+
+        final id = await _mountAndCaptureRequest(
+          tester,
+          LobbyScreen(
+            controller: controller,
+            action: LobbyAction.create,
+            playerName: 'سام',
+            players: 4,
+          ),
+          transport,
+          locale: const Locale('ar'),
+        );
+        await _resolveConnected(
+          tester,
+          transport,
+          id,
+          seatForThisClient: 0,
+          hostSeat: 0,
+          players: 4,
+          seats: seats,
+        );
+
+        expect(
+          controller.isHost,
+          isTrue,
+          reason: 'test setup: this scenario mounts as the host',
+        );
+        expect(
+          controller.room!.seats.length,
+          2,
+          reason: 'test setup: W-AR host needs a room short of full, 2 of 4',
+        );
+
+        expect(
+          find.byKey(const Key('lobby-waiting')),
+          findsNothing,
+          reason:
+              'order 183, W-AR host: the host must not show lobby-waiting '
+              'in Locale(ar) either; the seated/total count belongs on '
+              'lobby-start-button alone',
+        );
+
+        final startFinder = find.byKey(const Key('lobby-start-button'));
+        expect(
+          startFinder,
+          findsOneWidget,
+          reason:
+              'order 183, W-AR host: lobby-start-button must be present '
+              'for a host, even with the room short of full',
+        );
+        final button = tester.widget<ElevatedButton>(startFinder);
+        expect(
+          button.onPressed,
+          isNull,
+          reason:
+              'order 183, W-AR host: with 2 of 4 seats filled, '
+              'lobby-start-button must be disabled (onPressed null)',
+        );
+
+        final context = tester.element(find.byType(LobbyScreen));
+        final loc = AppLocalizations.of(context);
+        final label = tester.widget<Text>(
+          find.descendant(of: startFinder, matching: find.byType(Text)),
+        );
+        expect(
+          label.data,
+          loc.lobbyWaitingForPlayers(2, 4),
+          reason:
+              'order 183, W-AR host: the disabled lobby-start-button '
+              'label must read that tree\'s own AppLocalizations.'
+              'lobbyWaitingForPlayers(2, 4); got "${label.data}"',
+        );
+      },
+    );
+
+    testWidgets(
+      'W-AR guest: pumped in Locale(ar), a guest with a room short of full '
+      'still shows lobby-waiting with the count',
+      (tester) async {
+        final connector = _Connector();
+        final transport = FakeTransport();
+        connector.enqueue(transport);
+        final controller = _newController(connector);
+        addTearDown(controller.dispose);
+
+        final seats = <Map<String, Object?>>[
+          _seatJson(0, name: 'سام', connected: true),
+          _seatJson(1, name: 'أمير', connected: true),
+        ];
+
+        final id = await _mountAndCaptureRequest(
+          tester,
+          LobbyScreen(
+            controller: controller,
+            action: LobbyAction.join,
+            code: 'ABC234',
+            playerName: 'أمير',
+          ),
+          transport,
+          locale: const Locale('ar'),
+        );
+        // Seat 1, host seat 0: this client is not the host.
+        await _resolveConnected(
+          tester,
+          transport,
+          id,
+          seatForThisClient: 1,
+          hostSeat: 0,
+          players: 4,
+          seats: seats,
+        );
+
+        expect(
+          controller.isHost,
+          isFalse,
+          reason: 'test setup: this scenario mounts as a guest',
+        );
+        expect(
+          controller.room!.seats.length,
+          2,
+          reason: 'test setup: W-AR guest needs a room short of full, 2 of 4',
+        );
+
+        final context = tester.element(find.byType(LobbyScreen));
+        final loc = AppLocalizations.of(context);
+        final waitingFinder = find.byKey(const Key('lobby-waiting'));
+        expect(
+          waitingFinder,
+          findsOneWidget,
+          reason:
+              'order 183, W-AR guest: a guest must still show '
+              'lobby-waiting in Locale(ar); the line stays for anyone '
+              'with no start button',
+        );
+        final waitingText = tester.widget<Text>(waitingFinder);
+        expect(
+          waitingText.data,
+          loc.lobbyWaitingForPlayers(2, 4),
+          reason:
+              'order 183, W-AR guest: lobby-waiting must read that '
+              'tree\'s own AppLocalizations.lobbyWaitingForPlayers(2, 4); '
+              'got "${waitingText.data}"',
+        );
+        expect(
+          find.byKey(const Key('lobby-start-button')),
+          findsNothing,
+          reason:
+              'order 183, W-AR guest: a guest has no start button, so '
+              'lobby-start-button must be absent',
+        );
       },
     );
   });
