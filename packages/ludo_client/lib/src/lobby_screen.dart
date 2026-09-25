@@ -336,12 +336,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
               padding: const EdgeInsets.symmetric(vertical: kSpace1),
               child: Text(seat.name, textAlign: TextAlign.center),
             ),
-          const SizedBox(height: kSpace4),
-          Text(
-            loc.lobbyWaitingForPlayers(room.seats.length, room.players),
-            key: const Key('lobby-waiting'),
-            textAlign: TextAlign.center,
-          ),
+          if (!controller.isHost) ...[
+            const SizedBox(height: kSpace4),
+            Text(
+              loc.lobbyWaitingForPlayers(room.seats.length, room.players),
+              key: const Key('lobby-waiting'),
+              textAlign: TextAlign.center,
+            ),
+          ],
           if (controller.isHost) ...[
             SizedBox(height: compact ? kSpace4 : kSpace6),
             ElevatedButton(
