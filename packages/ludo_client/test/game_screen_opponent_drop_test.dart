@@ -17,13 +17,18 @@
 //     to `_reducePresence`, which sets that seat's `connected`. Both are
 //     read directly above (see the imports and the reducer's own doc
 //     comment) and are exercised, not assumed, by O1 below.
-//   - `grep -ni "offline\|absent\|away\|disc\|presence\|connected"
-//     lib/src/game_screen.dart` turns up nothing but a single unrelated
-//     doc-comment use of the word "absent" describing buttons that vanish
-//     at game-over. `GameScreen` never reads `SeatState.connected`
-//     anywhere. O2 measures the consequence of that directly, by diffing
-//     the rendered screen before and after seat 2 drops, rather than by
-//     repeating the grep as an assertion.
+//   - `grep -n "connected" lib/src/game_screen.dart` turns up two lines,
+//     both inside `_offlineTurnSeat`: a doc comment at :806 and the field
+//     read itself at :818 (`seatState.connected ? null : seatState`).
+//     `_offlineTurnSeat` looks at exactly one seat, the one named by
+//     `room.turn`, and backs the `game-screen-turn-seat-offline` line
+//     proved in test/game_screen_turn_seat_offline_test.dart. Nowhere else
+//     in the widget is a seat's presence consulted. O2 below drops seat 2
+//     while the turn sits on seat 1 (`initialTurnSeat: 1`), so seat 2 is
+//     never the seat `_offlineTurnSeat` is looking at; it measures the
+//     consequence of that directly, by diffing the rendered screen before
+//     and after seat 2 drops, rather than by repeating the grep as an
+//     assertion.
 //
 // Driven the same way test/game_screen_connection_lost_test.dart and
 // test/game_screen_test.dart drive RoomController: a real RoomController
@@ -488,11 +493,14 @@ void main() {
   // O2: what the screen shows about a disconnected seat -- measured, not
   // assumed.
   // ==========================================================================
-  testWidgets('O2: pushing presence {seat: 2, connected: false} changes nothing '
-      'GameScreen renders -- it shows a disconnected opponent identically '
-      'to a connected one, because game_screen.dart never reads '
-      'SeatState.connected anywhere (see this file\'s header comment for '
-      'the grep that confirmed it)', (tester) async {
+  testWidgets('O2: pushing presence {seat: 2, connected: false} while the '
+      'turn sits on seat 1 changes nothing GameScreen renders -- a dropped '
+      'seat that does not hold the turn renders identically to a connected '
+      'one, because game_screen.dart\'s only presence cue, '
+      '_offlineTurnSeat, is keyed to room.turn.seat and seat 2 never holds '
+      'it here (see this file\'s header comment for the grep that '
+      'confirmed it, and test/game_screen_turn_seat_offline_test.dart for '
+      'the turn-seat case)', (tester) async {
     final (controller, transport, _) = await _connectFourSeatGame(
       tester,
       initialTurnSeat: 1,
@@ -531,14 +539,14 @@ void main() {
       textsAfter,
       textsBefore,
       reason:
-          'O2: the master\'s reading is that game_screen.dart renders a '
-          'disconnected opponent identically to a connected one, which '
-          'this asserts directly: every Text under GameScreen must read '
-          'exactly the same before and after seat 2 drops. Before: '
-          '$textsBefore. After: $textsAfter. If these differ, some '
-          'widget does distinguish connected from disconnected and the '
-          "master's grep was wrong -- say which widget and how, because "
-          'that overturns this comment, not just this assertion',
+          'O2: a seat that does not hold the turn must render identically '
+          'whether it is connected or not, which this asserts directly: '
+          'every Text under GameScreen must read exactly the same before '
+          'and after seat 2 drops. Before: $textsBefore. After: '
+          '$textsAfter. If these differ, some widget is distinguishing '
+          'connected from disconnected for a seat that is not on turn -- '
+          'say which widget and how, because that overturns this file\'s '
+          'header comment, not just this assertion',
     );
 
     final LudoBoard boardAfter = tester.widget<LudoBoard>(
@@ -573,13 +581,16 @@ void main() {
       );
     }
 
-    // This is the current, honestly-stated contract: GameScreen carries
-    // no presence affordance at all, so a player watching the countdown
-    // run down on seat 2 is given no visual reason for it. Revisit this
-    // whole test the day a presence affordance is added to
-    // game_screen.dart -- at that point every assertion above should
-    // start failing, on purpose, and should be replaced with assertions
-    // on whatever that affordance is.
+    // GameScreen's one presence affordance, game-screen-turn-seat-offline
+    // (see this file's header comment and
+    // test/game_screen_turn_seat_offline_test.dart), is keyed to
+    // room.turn.seat, not to seat 2 -- the turn stays on seat 1 for the
+    // whole of this test, so a player watching the countdown run down on
+    // seat 2 is given no visual reason for it here. Revisit this whole
+    // test the day a presence affordance not keyed to the turn seat is
+    // added to game_screen.dart -- at that point some assertion above
+    // should start failing, on purpose, and should be replaced with
+    // assertions on whatever that affordance is.
   });
 
   // ==========================================================================
@@ -844,13 +855,14 @@ void main() {
             'state',
       );
 
-      // O2 found no rendered state at all that distinguishes a connected
-      // seat from a disconnected one, so there is no stale "absent" cue
-      // to check for here. What is checked instead is convergence: a
-      // controller that actually lived through the drop and the return
-      // must render identically to a controller whose one and only room
-      // snapshot already encodes the same final state, seat 2 connected,
-      // with no drop ever mentioned to it.
+      // By the point these texts are captured, seat 2 is connected again
+      // and the turn has already moved past it to seat 3, so
+      // _offlineTurnSeat (game_screen.dart) finds nothing to report and
+      // there is no stale "absent" cue to check for here. What is checked
+      // instead is convergence: a controller that actually lived through
+      // the drop and the return must render identically to a controller
+      // whose one and only room snapshot already encodes the same final
+      // state, seat 2 connected, with no drop ever mentioned to it.
       final List<String?> scenarioTexts = _gameScreenTexts(tester);
       final LudoBoard scenarioBoard = tester.widget<LudoBoard>(
         find.byKey(_boardKey),
