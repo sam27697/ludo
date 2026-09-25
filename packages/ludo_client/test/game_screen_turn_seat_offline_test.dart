@@ -1,36 +1,23 @@
-// Order 164: the proof, written before the fix, that GameScreen tells a
-// player watching a 45-second countdown run down on a dropped opponent why
-// it is running.
+// Order 164: proof that GameScreen tells a player watching a 45-second
+// countdown run down on a dropped opponent why it is running.
 //
-// Order 159 measured (test/game_screen_opponent_drop_test.dart, O2) that
-// game_screen.dart renders a disconnected seat identically to a connected
-// one: the whole rendered screen diffs equal before and after seat 2's
-// presence flips to false. The master re-measured that on 4a49b72
-// (`grep -rn "\.connected" lib/` returns only `RoomPhase.connected` hits,
-// a different thing entirely) and confirmed it again by prototype. Order
-// 163 is implementing the fix, in a worktree this file cannot see, against
-// the pinned contract reproduced in this order: immediately after the
-// game-screen-turn-banner Text and before the existing dice-value block, a
-// SizedBox and a Text keyed game-screen-turn-seat-offline render, and
-// nothing else does, exactly when room.turn is not null, some seat entry
-// matches room.turn!.seat, and that entry's connected is false. When any of
-// those three fail, neither widget is in the tree at all -- not an empty
-// string, not a zero-height box, absent -- which is why every negative case
-// below asserts findsNothing rather than an empty Text.data.
+// Order 159 measured (test/game_screen_opponent_drop_test.dart, O2) that a
+// dropped seat which does not hold the turn renders identically to a
+// connected one. Order 163 (landed as PR #61) added the narrower case this
+// file measures: immediately after the game-screen-turn-banner Text and
+// before the existing dice-value block, a SizedBox and a Text keyed
+// game-screen-turn-seat-offline render, and nothing else does, exactly when
+// room.turn is not null, some seat entry matches room.turn!.seat, and that
+// entry's connected is false. When any of those three fail, neither widget
+// is in the tree at all -- not an empty string, not a zero-height box,
+// absent -- which is why every negative case below asserts findsNothing
+// rather than an empty Text.data.
 //
-// This file was first written as proof against code that did not exist yet,
-// on a branch cut from 4a49b72 before order 163's fix, where it could not
-// reference AppLocalizations.gameSeatOffline at all: that getter was not
-// generated there, and calling it would have turned an honest red
-// (findsNothing where findsOneWidget is required) into a compile error,
-// which that order did not accept. This branch is cut instead from
-// integrate/run52-offline, which carries order 163's fix, so
-// AppLocalizations.gameSeatOffline is generated and P6en/P6ar assert
-// against it directly, per the master's own return on this order's first
-// round (see that round's VERDICT for the measurement): each locale's
-// rendered Text.data must equal that same widget tree's own
-// loc.gameSeatOffline('Cy'), which is strictly stronger than only checking
-// the two locales differ from each other.
+// AppLocalizations.gameSeatOffline is generated, so P6en and P6ar assert
+// against it directly: each locale's rendered Text.data must
+// equal that same widget tree's own loc.gameSeatOffline('Cy'), which is
+// strictly stronger than only checking the two locales differ from each
+// other.
 //
 // The harness below is copied from test/game_screen_opponent_drop_test.dart
 // rather than reinvented, per the order's instruction to mirror it: the
@@ -44,11 +31,10 @@
 // instruction not to import private helpers across test files and not to
 // edit the file being copied from.
 //
-// All six cases are expected to pass on this branch: order 163's fix has
-// already landed on integrate/run52-offline, so P1's control, P2 and P3's
-// two arrival orders, P4 and P5's clearing cases, and P6en/P6ar's locale
-// contract are all real assertions of the fix's own correctness here, not
-// merely structural checks against an offline key that never renders.
+// All six cases pass: P1's control, P2 and P3's two arrival orders, P4 and
+// P5's clearing cases, and P6en/P6ar's locale contract are all real
+// assertions of the fix's own correctness, not merely structural checks
+// against an offline key that never renders.
 
 import 'dart:convert';
 
@@ -468,14 +454,11 @@ void main() {
 
   // ==========================================================================
   // P2: seat 2 drops, then the turn arrives at seat 2 -- the turn reducer
-  // landing on a seat that is already absent. Red on this branch: the
-  // offline line does not exist yet.
+  // landing on a seat that is already absent.
   // ==========================================================================
   testWidgets('P2: seat 2 drops and then the turn arrives at seat 2 -- '
       'game-screen-turn-seat-offline must appear naming Cy, so a player '
-      'watching the countdown run down on seat 2 is told why. Red on this '
-      'branch: the turn reducer is landing on an already-absent seat, and '
-      'order 163\'s fix has not landed in this worktree', (tester) async {
+      'watching the countdown run down on seat 2 is told why', (tester) async {
     final (controller, transport, _) = await _connectFourSeatGame(
       tester,
       initialTurnSeat: 1,
@@ -538,18 +521,15 @@ void main() {
 
   // ==========================================================================
   // P3: the turn is already on seat 2, then seat 2 drops -- the presence
-  // reducer landing under a live turn, the other order from P2. Red on
-  // this branch, for the same reason as P2, but an implementation can
-  // plausibly get one of these two orderings right and the other wrong,
-  // which is why both are measured separately rather than treated as
-  // duplicates.
+  // reducer landing under a live turn, the other order from P2. An
+  // implementation can plausibly get one of these two orderings right and
+  // the other wrong, which is why both are measured separately rather than
+  // treated as duplicates.
   // ==========================================================================
   testWidgets(
     'P3: the turn is already on seat 2 and then seat 2 drops -- the same '
     'end state as P2, reached in the other order; game-screen-turn-seat-'
-    'offline must appear naming Cy here too. Red on this branch: the '
-    'presence reducer is landing under a live turn, and order 163\'s fix '
-    'has not landed in this worktree',
+    'offline must appear naming Cy here too',
     (tester) async {
       final (controller, transport, _) = await _connectFourSeatGame(
         tester,

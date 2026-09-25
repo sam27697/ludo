@@ -42,9 +42,7 @@
 // path for a stale snapshot to come from. Both scenarios below found the
 // resumed snapshot correct: the live post-sweep turn, matching the registry,
 // not the pre-drop one. That is reported here as a measurement of this run,
-// against this commit, not as a property proven for all time -- which is
-// exactly why the control section below breaks it on purpose and shows the
-// break.
+// against this commit, not as a property proven for all time.
 //
 // In S1 the resumed seat still holds the turn (now `await_move`, on the
 // rolled face the sweep drew) and a legal move from it is accepted. In S2
