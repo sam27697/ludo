@@ -16,8 +16,7 @@
 // is read but not depended on for most cases here: L1, L2, R1, R2, R3 all
 // give the widget tree a chance to rebuild through an independent
 // notification anyway (a phase change), so they would still pass even if
-// N1 alone were missing. R-P is written specifically to fail without N1;
-// see its own comment for the reasoning and what was and was not measured.
+// N1 alone were missing. R-P does too, measured: see ambiguity 2.
 //
 // Ambiguities found while writing this file, reported rather than invented
 // around:
@@ -38,20 +37,15 @@
 //      never exercises (nothing in that file ever passes a non-empty
 //      autoReconnectDelays to RoomController). Kept for that reason.
 //
-//   2. R-P and N1. This case is built so that, reasoning from the source
-//      (room_controller.dart's _openAndAttach and _scheduleNextAttempt), it
-//      would fail if _scheduleNextAttempt's own notifyListeners() call (the
-//      one order 177 added) were removed: the drop handler's own notify for
-//      the RoomPhase.closed transition fires *before* _startSequence sets
-//      the timer, so with that later notify gone, nothing would mark the
-//      widget dirty while autoReconnectPending flips to true, and the short,
-//      bounded pumps below (well under the scheduled delay, so the timer
-//      itself never fires and produces some other notify) would never
-//      trigger a rebuild that could show game-screen-reconnecting. This
-//      order's file list forbids touching lib/, so this was reasoned from
-//      the source, not measured by reverting N1 and watching this case turn
-//      red; that revert-and-watch step is left to whoever reviews this
-//      against the source, as the order asks.
+//   2. R-P and N1. Written in the belief that it would fail if
+//      _scheduleNextAttempt's notifyListeners() (order 177's N1) were
+//      removed. Measured on 257ae39 by reverting exactly that call: R-P
+//      stays green, 9 of 9. The drop handler's notify for
+//      RoomPhase.closed only marks the widget dirty; the rebuild runs at
+//      the next pump, after _startSequence has already set the timer, so
+//      build reads autoReconnectPending as true either way. R-P proves the
+//      line reaches the screen through pumps alone. It does not prove N1;
+//      test/net/room_controller_pending_notify_test.dart does.
 //
 // Standing lessons this file follows throughout: no pumpAndSettle once
 // LobbyScreen or GameScreen is mounted (LobbyScreen's connecting state and
@@ -1143,9 +1137,8 @@ void main() {
 
       // Deliberately short, bounded pumps, well under _delays[0] (1s), so
       // the scheduled automatic attempt itself never fires and produces a
-      // notify of its own -- see this file's header comment, ambiguity 2:
-      // the only notification carrying autoReconnectPending's true value
-      // into this window is _scheduleNextAttempt's own (order 177's N1).
+      // notify of its own. See the header comment, ambiguity 2, for what
+      // this case does and does not detect.
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 1));
       await tester.pump(const Duration(milliseconds: 1));
