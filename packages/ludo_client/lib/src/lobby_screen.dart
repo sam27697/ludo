@@ -21,6 +21,17 @@ enum LobbyAction { create, join, resume }
 /// route.
 const String kRoomLinkBase = 'https://ludo.provefair.app/r/';
 
+/// The codes a `failed` room can carry that are worth retrying
+/// automatically: a transport that would not open, a request that timed
+/// out, and a connection that closed under a request. Mirrors
+/// `_retryableErrorCodes` in `net/room_controller.dart`, which is private to
+/// that file, so this is its own copy rather than an import of it.
+const Set<String> _retryableLobbyErrorCodes = <String>{
+  'transport',
+  'timeout',
+  'closed',
+};
+
 /// Maps a RoomController error code to a localised message. Pure and
 /// top-level so it can be tested without pumping a widget.
 String lobbyErrorMessage(AppLocalizations loc, String? code) {
@@ -137,10 +148,23 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final RoomController controller = widget.controller;
     final bool connected = controller.phase == RoomPhase.connected;
 
+    // L1: a `failed` phase with a room still set and a retryable errorCode
+    // is the same "connection lost, an automatic reconnect may already be
+    // under way" state `closed` is, not the create/join/resume error body.
+    // Retrying it with `_issueRequest` would re-create the room out from
+    // under the friends already waiting in the old one.
+    final bool retryableFailure =
+        controller.phase == RoomPhase.failed &&
+        controller.room != null &&
+        _retryableLobbyErrorCodes.contains(controller.errorCode);
+
     final Widget phaseBody = switch (controller.phase) {
       RoomPhase.idle || RoomPhase.connecting => _connectingBody(loc),
       RoomPhase.connected => _connectedBody(loc, controller),
-      RoomPhase.failed => _errorBody(loc, controller),
+      RoomPhase.failed =>
+        retryableFailure
+            ? _closedBody(loc, controller)
+            : _errorBody(loc, controller),
       RoomPhase.closed => _closedBody(loc, controller),
     };
 
@@ -221,6 +245,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(loc.lobbyConnectionLost, textAlign: TextAlign.center),
+            if (controller.autoReconnectPending) ...[
+              const SizedBox(height: kSpace2),
+              Text(
+                loc.lobbyReconnecting,
+                key: const Key('lobby-reconnecting'),
+                textAlign: TextAlign.center,
+              ),
+            ],
             const SizedBox(height: kSpace4),
             ElevatedButton(
               key: const Key('lobby-reconnect-button'),
