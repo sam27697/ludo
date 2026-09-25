@@ -723,4 +723,282 @@ void main() {
       async.flushMicrotasks();
     });
   });
+
+  // ==========================================================================
+  // N-LW (RETURN 1, item 1; RED on base): leave()'s own await window.
+  // ==========================================================================
+  test('N-LW: a timer pending, then leave() called without awaiting it -- '
+      'the N1 check must hold inside leave()\'s own await window, before '
+      'its future completes, and again after it settles', () {
+    // N-L (above) only ever checks N1 after awaiting leave() to completion,
+    // by which point leave()'s own final notifyListeners() (phase closed)
+    // has already reported the settled state and nothing distinguishes a
+    // controller that notified the cancellation from one that did not. The
+    // defect this case exists to catch is entirely inside the window
+    // leave() spends suspended at `await connection.leaveRoom()`: control
+    // returns to the event loop with _cancelAutoReconnect() already having
+    // cleared the timer, but nothing yet said so.
+    //
+    // Giving this case a last recorded value to measure that moment against
+    // is not free: once a timer is genuinely pending, phase is closed or
+    // failed and that connection's transport is already closed, so there is
+    // no live transport left to push a further frame on to force an honest
+    // notification the way this case's own drop cannot (FakeTransport
+    // .pushText after close is a harness error, not something a real socket
+    // can do either). _openFresh (createRoom, joinRoom) is the one path
+    // that opens a *fresh* transport without ever touching the pending
+    // timer on its way to connected (RETURN 1, item 2; N-J below turns
+    // exactly this into its own case) -- its own connecting/connected
+    // notifications, on that fresh transport, read the timer's real,
+    // still-pending state honestly, for a reason that has nothing to do
+    // with the timer itself. That is what this case uses to give itself a
+    // last recorded value, and it is why leave() below runs against a
+    // connection that is live, not the dead one an ordinary drop leaves
+    // behind: the defect under test -- _cancelAutoReconnect() cancelling
+    // ahead of leave()'s own notify, inside the same await window -- does
+    // not depend on which connection leave() happens to be awaiting
+    // leaveRoom() on.
+    //
+    // _openFresh's own gate is idle or failed, not closed, so the pending
+    // timer here has to come from an in-room request failing (G1, the same
+    // unanswered-roll()-times-out path N-G and N-J both use) rather than
+    // from an ordinary drop, which would leave phase closed and joinRoom()
+    // a silent no-op.
+    fakeAsync((FakeAsync async) {
+      final (
+        RoomController controller,
+        FakeTransport transport0,
+        _Connector connector,
+      ) = _connectedControllerSync(
+        async,
+        autoReconnectDelays: _delays,
+      );
+
+      unawaited(controller.roll());
+      async.flushMicrotasks();
+      async.elapse(_requestTimeout);
+      async.flushMicrotasks();
+      expect(
+        controller.phase,
+        RoomPhase.failed,
+        reason:
+            'fixture is broken: an unanswered roll() left past '
+            'RequestTimeoutException must land in failed before this '
+            'test calls leave()',
+      );
+      expect(
+        controller.autoReconnectPending,
+        isTrue,
+        reason:
+            'fixture is broken: G1 must have armed a pending timer before '
+            'this test calls leave()',
+      );
+
+      final List<bool> recorded = _trackPending(controller);
+
+      final FakeTransport transport1 = FakeTransport();
+      connector.enqueue(transport1);
+      unawaited(controller.joinRoom(code: 'K7M2QP', name: 'Ann'));
+      async.flushMicrotasks();
+      final String joinId = _idOf(transport1.sentRaw.last);
+      transport1.pushText(
+        _frame(
+          type: 'seat_assigned',
+          data: <String, Object?>{'seat': 1, 'seat_token': 'tok-178n-lw'},
+        ),
+      );
+      transport1.pushText(
+        _frame(type: 'room', re: joinId, data: _roomJson(hostSeat: 1)),
+      );
+      async.flushMicrotasks();
+
+      expect(
+        controller.phase,
+        RoomPhase.connected,
+        reason:
+            'fixture is broken: joinRoom() on the fresh transport must '
+            'have landed in connected while the earlier sequence\'s timer '
+            'is still pending -- recorded=$recorded',
+      );
+      expect(
+        controller.autoReconnectPending,
+        isTrue,
+        reason:
+            'fixture is broken: the earlier timer must still be pending '
+            'right after joinRoom() settles -- recorded=$recorded',
+      );
+      expect(
+        recorded.last,
+        isTrue,
+        reason:
+            'fixture is broken: joinRoom()\'s own connecting and '
+            'connected notifications must have honestly captured the '
+            'still-pending timer -- recorded=$recorded',
+      );
+
+      final Future<void> leaveFuture = controller.leave();
+      // leave() runs synchronously through _cancelAutoReconnect() and only
+      // then reaches `await connection.leaveRoom()`; by the time this
+      // statement returns, that await has already suspended the method and
+      // control is back here, with the cancellation already applied but
+      // leave()'s own future nowhere near complete.
+      _expectN1(
+        controller,
+        recorded,
+        'inside leave()\'s await window, immediately after the call '
+        'returns and before its future completes',
+      );
+
+      final String leaveId = _idOf(transport1.sentRaw.last);
+      transport1.pushText(
+        _frame(
+          type: 'player_left',
+          re: leaveId,
+          data: <String, Object?>{'seat': 1, 'seq': 2},
+        ),
+      );
+      async.flushMicrotasks();
+      unawaited(leaveFuture);
+
+      expect(controller.phase, RoomPhase.closed);
+      expect(
+        controller.autoReconnectPending,
+        isFalse,
+        reason:
+            'C8: leave() must cancel the pending timer -- '
+            'recorded=$recorded',
+      );
+      _expectN1(controller, recorded, 'after leave() settles');
+
+      final int recordedBeforeDispose = recorded.length;
+      controller.dispose();
+      async.flushMicrotasks();
+
+      expect(
+        recorded.length,
+        recordedBeforeDispose,
+        reason:
+            'no notification may ever fire after dispose() -- '
+            'recorded=$recorded',
+      );
+    });
+  });
+
+  // ==========================================================================
+  // N-J (RETURN 1, item 2; RED on base): a timer firing into
+  // _onReconnectTimerFired's end branch while phase has moved on.
+  // ==========================================================================
+  test('N-J: delays [1s, 2s], connected, roll() never answered, the clock '
+      'passes the request timeout -- then joinRoom() on a fresh transport, '
+      'answered while the earlier sequence\'s timer is still pending, so '
+      'phase is connected when the clock elapses the delay and that stray '
+      'timer fires: getter is false and the N1 check holds', () {
+    // No case anywhere else in this file lets a scheduled timer fire while
+    // _eligible is false or phase has moved off closed/failed:
+    // _onReconnectTimerFired's branch that does that -- clearing the timer,
+    // ending the sequence, and (177's fix) notifying because nothing else
+    // in that call is going to -- is reachable only because _openFresh
+    // (createRoom, joinRoom) never cancels a pending timer on its way to a
+    // gate of idle or failed. G1's own sequence (armed by an unanswered
+    // roll() timing out) is left dangling exactly that way here.
+    fakeAsync((FakeAsync async) {
+      final (
+        RoomController controller,
+        FakeTransport transport0,
+        _Connector connector,
+      ) = _connectedControllerSync(
+        async,
+        autoReconnectDelays: _delays,
+      );
+      final List<bool> recorded = _trackPending(controller);
+
+      unawaited(controller.roll());
+      async.flushMicrotasks();
+      expect(
+        transport0.sentRaw,
+        isNotEmpty,
+        reason: 'fixture is broken: roll() must have reached the wire',
+      );
+
+      async.elapse(_requestTimeout);
+      async.flushMicrotasks();
+
+      expect(
+        controller.phase,
+        RoomPhase.failed,
+        reason:
+            'fixture is broken: an unanswered roll() left past '
+            'RequestTimeoutException must land in failed',
+      );
+      expect(controller.errorCode, 'timeout');
+      expect(
+        controller.autoReconnectPending,
+        isTrue,
+        reason:
+            'fixture is broken: G1 must have armed the sequence\'s first '
+            'timer -- recorded=$recorded',
+      );
+
+      final FakeTransport transport1 = FakeTransport();
+      connector.enqueue(transport1);
+      unawaited(controller.joinRoom(code: 'K7M2QP', name: 'Ann'));
+      async.flushMicrotasks();
+      final String joinId = _idOf(transport1.sentRaw.last);
+      transport1.pushText(
+        _frame(
+          type: 'seat_assigned',
+          data: <String, Object?>{'seat': 1, 'seat_token': 'tok-178n-join'},
+        ),
+      );
+      transport1.pushText(
+        _frame(type: 'room', re: joinId, data: _roomJson(hostSeat: 1)),
+      );
+      async.flushMicrotasks();
+
+      expect(
+        controller.phase,
+        RoomPhase.connected,
+        reason:
+            'fixture is broken: joinRoom() on the fresh transport must '
+            'have landed in connected while the earlier sequence\'s timer '
+            'is still pending -- _openFresh never cancels it -- '
+            'recorded=$recorded',
+      );
+      expect(
+        connector.calls.length,
+        2,
+        reason:
+            'fixture is broken: joinRoom() must have opened its own, '
+            'second connection',
+      );
+      expect(
+        controller.autoReconnectPending,
+        isTrue,
+        reason:
+            'fixture is broken: the earlier timer must still be pending '
+            'right after joinRoom() settles, before this case elapses the '
+            'delay -- recorded=$recorded',
+      );
+
+      async.elapse(_delays[0]);
+      async.flushMicrotasks();
+
+      expect(
+        controller.autoReconnectPending,
+        isFalse,
+        reason:
+            'C7: the stray timer firing while phase is connected must '
+            'clear itself and end that sequence -- recorded=$recorded',
+      );
+      _expectN1(
+        controller,
+        recorded,
+        'after the stray timer fires into the end branch of '
+        '_onReconnectTimerFired',
+      );
+
+      controller.dispose();
+      async.flushMicrotasks();
+    });
+  });
 }
