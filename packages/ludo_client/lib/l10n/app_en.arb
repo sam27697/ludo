@@ -149,7 +149,7 @@
   "@lobbyErrorRoomStarted": {
     "description": "Error shown on the lobby screen when the server reports ROOM_STARTED."
   },
-  "lobbyErrorRateLimited": "Too many attempts. Wait a moment and try again.",
+  "lobbyErrorRateLimited": "Too many rooms from this network. Try again later.",
   "@lobbyErrorRateLimited": {
     "description": "Error shown on the lobby screen when the server reports RATE_LIMITED."
   },

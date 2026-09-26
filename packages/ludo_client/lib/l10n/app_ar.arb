@@ -34,7 +34,7 @@
   "lobbyErrorNoSuchRoom": "هذه الغرفة غير موجودة. تحقق من الرمز وحاول مرة أخرى.",
   "lobbyErrorRoomFull": "هذه الغرفة ممتلئة بالفعل.",
   "lobbyErrorRoomStarted": "بدأت هذه الغرفة لعبتها بالفعل.",
-  "lobbyErrorRateLimited": "محاولات كثيرة جدًا. انتظر قليلاً ثم حاول مرة أخرى.",
+  "lobbyErrorRateLimited": "غرف كثيرة من هذه الشبكة. حاول مرة أخرى لاحقًا.",
   "lobbyErrorTransport": "تعذر الوصول إلى الخادم. تحقق من اتصالك وحاول مرة أخرى.",
   "lobbyErrorGeneric": "حدث خطأ ما. حاول مرة أخرى.",
   "gameScreenTitle": "اللعبة",
