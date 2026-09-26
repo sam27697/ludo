@@ -74,6 +74,8 @@ import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart'
     show RoomSnapshot, RoomState, SeatState;
+import 'package:ludo_client/src/room_code.dart'
+    show isValidRoomCode, normalizeRoomCode;
 import 'package:ludo_client/src/server_config.dart';
 import 'package:ludo_client/src/session_memory.dart'
     show SeatRecord, SessionMemory;
@@ -1863,7 +1865,23 @@ void main() {
     await _expectHomeScreen(tester, localeName: 'ar');
 
     const String joinerName = 'Omar';
-    const String roomCode = 'SHOT12';
+    // Drawn only from room_code.dart's roomCodeAlphabet ('0', 'O', '1' and
+    // 'I' are all excluded): HomeScreen._joinRoom sets homeRoomCodeInvalid
+    // and returns before building a controller for any code that fails
+    // isValidRoomCode, so a code drawn carelessly here never reaches a
+    // controller, let alone the server.
+    const String roomCode = 'GST4ZQ';
+
+    expect(
+      isValidRoomCode(normalizeRoomCode(roomCode)),
+      isTrue,
+      reason:
+          'capture 12 fixture is broken: "$roomCode" must be a '
+          'syntactically valid room code (room_code.dart\'s '
+          'roomCodeAlphabet) or HomeScreen._joinRoom (home_screen.dart) '
+          'sets homeRoomCodeInvalid and returns before building a '
+          'controller, and the tap below never reaches LobbyScreen at all',
+    );
 
     await tester.enterText(
       find.byKey(const Key('home-name-field')),
@@ -2012,6 +2030,66 @@ void main() {
     // capture 03's takeScreenshot for why a bare pumpAndSettle is not safe
     // past this point).
     await _pumpRealDurationFrames(tester);
+
+    // Capture 11 re-reads everything it depends on immediately before its
+    // own takeScreenshot, after this same real-duration settle, because run
+    // 36098947846 on c9addaa showed the settle alone can let a stale frame
+    // reach the screenshot even though every assertion taken beforehand
+    // passed. Re-assert the two things this capture is actually about --
+    // the waiting-for-host literal and the leave button's position -- so
+    // the frame this photographs is the frame just described, not the one
+    // from before the wait.
+    final Finder settledWaitingFinder12 = find.byKey(
+      const Key('lobby-waiting'),
+    );
+    expect(
+      settledWaitingFinder12,
+      findsOneWidget,
+      reason:
+          'capture 12: after the post-join settle, expected lobby-waiting '
+          'still on screen immediately before the capture',
+    );
+    final Text settledWaitingText12 = tester.widget<Text>(
+      settledWaitingFinder12,
+    );
+    expect(
+      settledWaitingText12.data,
+      expectedWaitingText,
+      reason:
+          'capture 12: after the post-join settle, expected '
+          'lobby-waiting\'s Text to still read the literal '
+          '"$expectedWaitingText" immediately before the capture, got '
+          '"${settledWaitingText12.data}"',
+    );
+    final Finder settledLeaveFinder12 = find.byKey(
+      const Key('lobby-leave-button'),
+    );
+    expect(
+      settledLeaveFinder12,
+      findsOneWidget,
+      reason:
+          'capture 12: after the post-join settle, expected '
+          'lobby-leave-button still on screen immediately before the '
+          'capture',
+    );
+    final Rect settledLeaveRect12 = tester.getRect(settledLeaveFinder12);
+    final bool settledLeaveButtonInsideView12 =
+        settledLeaveRect12.left >= 0 &&
+        settledLeaveRect12.top >= 0 &&
+        settledLeaveRect12.right <= viewSize.width &&
+        settledLeaveRect12.bottom <= viewSize.height;
+    expect(
+      settledLeaveButtonInsideView12,
+      isTrue,
+      reason:
+          'capture 12: after the post-join settle, expected '
+          'lobby-leave-button\'s rect $settledLeaveRect12 to still lie '
+          'entirely inside the view $viewSize immediately before the '
+          'capture (seat "$joinerName", room "$roomCode"); this test does '
+          'not scroll to bring it into view, so a button below the fold '
+          'here is a real finding for the master, not something to work '
+          'around',
+    );
 
     await binding.takeScreenshot('12-lobby-guest-full-ar');
   });
