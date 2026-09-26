@@ -2137,9 +2137,9 @@ void main() {
         waitingFinder,
         findsOneWidget,
         reason:
-            'order 183, W-G2: a guest must still show lobby-waiting '
-            'even with a full room; this is today\'s text, pinned, not '
-            'a claim about what it ought to say',
+            'order 188, W-G2: a guest must still show lobby-waiting '
+            'with a full room, where it names the host as the one '
+            'left to act',
       );
       final waitingText = tester.widget<Text>(waitingFinder);
       expect(
