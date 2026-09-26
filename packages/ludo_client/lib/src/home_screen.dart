@@ -16,6 +16,12 @@ import 'server_config.dart';
 import 'session_memory.dart';
 import 'theme.dart';
 
+/// How long the home scroll view takes to bring a link's target back into
+/// view (order 194). Independent of the brand's own motion tokens in
+/// theme.dart: this is a short, corrective nudge triggered by an incoming
+/// link, not part of the screen's entrance.
+const Duration kLinkScrollDuration = Duration(milliseconds: 300);
+
 /// Home screen: one branded composition — wordmark, tagline, die mark, and
 /// the create/join controls. Knowing the code is the only way into a room.
 class HomeScreen extends StatefulWidget {
@@ -76,6 +82,13 @@ class _HomeScreenState extends State<HomeScreen>
   // H2's per-controller dedupe for the finished/seat-gone clear, reset the
   // same way.
   bool _seatClearedForOwned = false;
+  // Order 194: reach the join button's and the code field's render objects
+  // from _handleLink without disturbing the Key('join-room-button') /
+  // Key('room-code-field') values the rest of the suite finds those widgets
+  // by. Each wraps the widget that already carries that key in a
+  // KeyedSubtree, one layer up.
+  final GlobalKey _joinButtonScrollKey = GlobalKey();
+  final GlobalKey _codeFieldScrollKey = GlobalKey();
 
   @override
   void initState() {
@@ -147,14 +160,48 @@ class _HomeScreenState extends State<HomeScreen>
     }
     final AppLocalizations loc = AppLocalizations.of(context);
     final String? code = roomCodeFromUri(uri);
+    final bool codeIsValid = code != null;
     setState(() {
-      if (code != null) {
+      if (codeIsValid) {
         _codeController.text = code;
         _errorText = null;
       } else {
         _errorText = loc.homeRoomCodeInvalid;
       }
     });
+    // Run 57: the code field a link fills sits at the bottom edge of the
+    // screen and Join Room can be below the fold, so scroll the one the
+    // player actually needs into view once the frame above has painted the
+    // code (or the error) this setState just wrote. Deferred past the
+    // current frame because the target's RenderBox from a GlobalKey attached
+    // this same build is not guaranteed to be laid out until then.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _scrollLinkTargetIntoView(codeIsValid: codeIsValid);
+    });
+  }
+
+  /// Scrolls the join button (a valid code) or the code field (an invalid
+  /// one) fully into the home scroll view's viewport, aligned so the
+  /// target's bottom edge is visible. A no-op if the target's context is not
+  /// available, which should not happen for a mounted screen but is not
+  /// worth crashing over if it ever does.
+  void _scrollLinkTargetIntoView({required bool codeIsValid}) {
+    final BuildContext? targetContext = codeIsValid
+        ? _joinButtonScrollKey.currentContext
+        : _codeFieldScrollKey.currentContext;
+    if (targetContext == null) {
+      return;
+    }
+    final bool reducedMotion = MediaQuery.disableAnimationsOf(context);
+    Scrollable.ensureVisible(
+      targetContext,
+      alignment: 1.0,
+      duration: reducedMotion ? Duration.zero : kLinkScrollDuration,
+      curve: Curves.easeOut,
+    );
   }
 
   /// Rebuilds on every keystroke so Create/Join emphasis can follow the
@@ -809,38 +856,45 @@ class _HomeScreenState extends State<HomeScreen>
                             primary: !joinPrimary,
                           ),
                           SizedBox(height: sectionGap),
-                          TextField(
-                            key: const Key('room-code-field'),
-                            controller: _codeController,
-                            textAlign: TextAlign.center,
-                            textCapitalization: TextCapitalization.characters,
-                            textInputAction: TextInputAction.go,
-                            onSubmitted: (_) {
-                              if (joinPrimary) {
-                                _joinRoom();
-                              }
-                            },
-                            inputFormatters: const <TextInputFormatter>[
-                              _RoomCodeInputFormatter(),
-                            ],
-                            decoration: InputDecoration(
-                              labelText: loc.homeRoomCodeFieldLabel,
-                              hintText: loc.homeRoomCodeFieldHint,
-                              errorText: _errorText,
-                              // Unset, InputDecoration truncates errorText to
-                              // one line with an ellipsis. homeRoomCodeInvalid
-                              // needs four lines to clear at this field's
-                              // width in either locale.
-                              errorMaxLines: 4,
-                              isDense: compact,
+                          KeyedSubtree(
+                            key: _codeFieldScrollKey,
+                            child: TextField(
+                              key: const Key('room-code-field'),
+                              controller: _codeController,
+                              textAlign: TextAlign.center,
+                              textCapitalization: TextCapitalization.characters,
+                              textInputAction: TextInputAction.go,
+                              onSubmitted: (_) {
+                                if (joinPrimary) {
+                                  _joinRoom();
+                                }
+                              },
+                              inputFormatters: const <TextInputFormatter>[
+                                _RoomCodeInputFormatter(),
+                              ],
+                              decoration: InputDecoration(
+                                labelText: loc.homeRoomCodeFieldLabel,
+                                hintText: loc.homeRoomCodeFieldHint,
+                                errorText: _errorText,
+                                // Unset, InputDecoration truncates errorText
+                                // to one line with an ellipsis.
+                                // homeRoomCodeInvalid needs four lines to
+                                // clear at this field's width in either
+                                // locale.
+                                errorMaxLines: 4,
+                                isDense: compact,
+                              ),
                             ),
                           ),
                           SizedBox(height: compact ? kSpace2 : kSpace3),
-                          _weightedButton(
-                            key: const Key('join-room-button'),
-                            onPressed: _joinRoom,
-                            label: loc.homeJoinRoomButton,
-                            primary: joinPrimary,
+                          KeyedSubtree(
+                            key: _joinButtonScrollKey,
+                            child: _weightedButton(
+                              key: const Key('join-room-button'),
+                              onPressed: _joinRoom,
+                              label: loc.homeJoinRoomButton,
+                              primary: joinPrimary,
+                            ),
                           ),
                           if (_recentCodes.isNotEmpty) ...[
                             SizedBox(height: compact ? kSpace2 : kSpace3),
