@@ -63,6 +63,28 @@ void _useFoldedSurface(WidgetTester tester) {
 double _viewHeight(WidgetTester tester) =>
     tester.view.physicalSize.height / tester.view.devicePixelRatio;
 
+/// Settles the tree after a link has been delivered, giving any
+/// post-frame-triggered scroll animation real elapsed frames to run.
+///
+/// A single long pump does not do this: a [Ticker] measures elapsed time
+/// from its own first frame, and a post-frame callback that starts
+/// [Scrollable.ensureVisible] only ticks for the first time on the pump
+/// after the one that ran that callback. A lone
+/// `pump(const Duration(milliseconds: 500))` right after the link is
+/// therefore that animation's first frame, at zero elapsed time, no matter
+/// how long the pump's own duration is. Ten 100 ms pumps after the initial
+/// pump give it ten frames to advance across instead, well past a 300 ms
+/// ease-out, and this same helper is used after every link in this file,
+/// including LS-FOREIGN, so that case measures whether the scroll offset
+/// moved at all rather than whether it moved before an animation had a
+/// chance to.
+Future<void> _settleAfterLink(WidgetTester tester) async {
+  await tester.pump();
+  for (int i = 0; i < 10; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
 // --- shared fixtures, copied from test/home_screen_link_error_test.dart --
 // --- and test/home_screen_code_error_test.dart, not imported --------------
 
@@ -210,8 +232,7 @@ void main() {
       _expectButtonBelowFold(tester, 'LS-COLD');
 
       reader.complete(_roomLink('K7M2QP'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
+      await _settleAfterLink(tester);
 
       expect(
         _codeFieldText(tester),
@@ -242,8 +263,7 @@ void main() {
       _expectButtonBelowFold(tester, 'LS-WARM');
 
       opener.add(_roomLink('H4XR9T'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
+      await _settleAfterLink(tester);
 
       expect(
         _codeFieldText(tester),
@@ -279,8 +299,7 @@ void main() {
       // from roomCodeAlphabet, so roomCodeFromUri returns null for it and
       // the invalid-code error shows.
       opener.add(_roomLink('0O0O0O'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
+      await _settleAfterLink(tester);
 
       final BuildContext context = tester.element(find.byType(HomeScreen));
       final AppLocalizations loc = AppLocalizations.of(context);
@@ -315,8 +334,7 @@ void main() {
       final double offsetBefore = _homeScrollPosition(tester).pixels;
 
       opener.add(_foreignLink('K7M2QP'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
+      await _settleAfterLink(tester);
 
       expect(
         _codeFieldText(tester),
@@ -351,8 +369,7 @@ void main() {
     _expectButtonBelowFold(tester, 'LS-AR');
 
     opener.add(_roomLink('H4XR9T'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
+    await _settleAfterLink(tester);
 
     expect(
       _codeFieldText(tester),
