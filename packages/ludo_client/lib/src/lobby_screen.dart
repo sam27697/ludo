@@ -351,7 +351,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
           if (!controller.isHost) ...[
             const SizedBox(height: kSpace4),
             Text(
-              loc.lobbyWaitingForPlayers(room.seats.length, room.players),
+              roomFull
+                  ? loc.lobbyWaitingForHost
+                  : loc.lobbyWaitingForPlayers(room.seats.length, room.players),
               key: const Key('lobby-waiting'),
               textAlign: TextAlign.center,
             ),
@@ -372,6 +374,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ),
           ],
+          SizedBox(height: compact ? kSpace2 : kSpace3),
+          OutlinedButton(
+            key: const Key('lobby-leave-button'),
+            onPressed: _leaveLobby,
+            child: Text(loc.gameLeaveButton),
+          ),
         ],
       ),
     );
