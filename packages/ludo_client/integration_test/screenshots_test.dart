@@ -779,16 +779,59 @@ void main() {
       expectedSeatCount: 3,
     );
     // Audited against the same "no bare pumpAndSettle proves pixels"
-    // question 01-home-en failed: this capture is not gated by a bare
-    // pumpAndSettle() at all. _pumpUntilFound above already waited on
+    // question 01-home-en failed: _pumpUntilFound above already waited on
     // find.byType(LobbyScreen) by name, and _expectLobbyScreen just above
     // reads the room code and counts the joined seats straight off the
-    // mounted tree, so the content this screenshot is about to show has
-    // already been asserted present. _settleForScreenshot itself is not
-    // used here: its last line is an unconditional pumpAndSettle() (see
-    // its own doc comment, "Safe here and only for this capture"), and by
-    // this point LobbyScreen has mounted the connecting-state ticker the
-    // file header describes, which that pumpAndSettle would chase forever.
+    // mounted tree. That was treated as proof enough for the screenshot
+    // below; it was not. CI runs 36180008997 (run 56) and 36220278224 (run
+    // 57) both produced 03-lobby-en.png showing only Priya's seat and
+    // "Waiting for players (1 of 3)" even though the tree above was
+    // already right -- the platform surface was a frame behind it (see
+    // _pumpRealDurationFrames's own doc comment). _settleForScreenshot
+    // itself is still not used here: its last line is an unconditional
+    // pumpAndSettle() (see its own doc comment, "Safe here and only for
+    // this capture"), and by this point LobbyScreen has mounted the
+    // connecting-state ticker the file header describes, which that
+    // pumpAndSettle would chase forever. Hold the frame open for real wall
+    // time instead, then re-read everything the capture depends on
+    // immediately before takeScreenshot, so the assertions describe the
+    // frame actually photographed.
+    await _pumpRealDurationFrames(tester);
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: 'en',
+      code: roomCode,
+      expectedSeatCount: 3,
+    );
+    final AppLocalizations settledLobbyLoc = AppLocalizations.of(
+      tester.element(find.byType(LobbyScreen)),
+    );
+    final Finder settledStartButton = find.byKey(
+      const Key('lobby-start-button'),
+    );
+    expect(
+      settledStartButton,
+      findsOneWidget,
+      reason:
+          'capture 03: after the post-join settle, expected the host\'s '
+          'Start button still on screen immediately before the capture',
+    );
+    final ElevatedButton settledStartWidget = tester.widget<ElevatedButton>(
+      settledStartButton,
+    );
+    final Text settledStartLabel = settledStartWidget.child! as Text;
+    expect(
+      settledStartLabel.data,
+      settledLobbyLoc.lobbyStartButton,
+      reason:
+          'capture 03: after the post-join settle, the room is full (3 of '
+          '3 seats joined) so expected lobby-start-button\'s label to '
+          'still read loc.lobbyStartButton '
+          '("${settledLobbyLoc.lobbyStartButton}"), got '
+          '"${settledStartLabel.data}"',
+    );
+
     await binding.takeScreenshot('03-lobby-en');
 
     final Finder startButton = find.byKey(const Key('lobby-start-button'));
