@@ -125,9 +125,10 @@ jobs:
           #     failing, because most of what is left to run -- the
           #     reinstall, the app-links measurement, and the logcat dump --
           #     are exactly the things that still need to happen when an
-          #     earlier command failed. The two places a failure is actually
-          #     allowed to end the job are the explicit `exit "$DRIVE_EXIT"`
-          #     in step 8 and `exit "$MEASURE_EXIT"` in step 9 below.
+          #     earlier command failed. The three places a failure is
+          #     actually allowed to end the job are the explicit
+          #     `exit "$DRIVE_EXIT"` in step 9, `exit "$MEASURE_EXIT"` in
+          #     step 10, and `exit "$PROBE_EXIT"` in step 11, all below.
           #     (POSIX sh, not bash: `+e`/`-e` are portable, `set -o
           #     pipefail` and `[[` are not, so neither is used anywhere in
           #     this script.) `--profile`, not `--release` or the debug
@@ -138,7 +139,7 @@ jobs:
           #     run at all. Profile mode keeps the VM service and is the
           #     same choice screenshots.yml makes for the same reason.
           #  4. capture that exit code in DRIVE_EXIT -- this is the gate for
-          #     the smoke test itself, checked explicitly in step 8, not
+          #     the smoke test itself, checked explicitly in step 9, not
           #     left to errexit.
           #  5. reinstall the apk `flutter drive` just built, from
           #     build/app/outputs/flutter-apk/app-profile.apk (already on
@@ -170,20 +171,29 @@ jobs:
           #     `pm get-app-links` answering "Error: ... unavailable" (or
           #     anything else with no state in it) while the dumpsys
           #     fallback also came back empty. That failure is recorded in
-          #     MEASURE_EXIT and acted on in step 9, after step 8, with a
+          #     MEASURE_EXIT and acted on in step 10, after step 9, with a
           #     message naming what came back empty and what INSTALL_EXIT
           #     was, so a red run here does not require re-deriving this
           #     order to understand.
-          #  8. if DRIVE_EXIT was nonzero, dump adb logcat -- both to this
+          #  8. run tool/device_link_probe.sh: it delivers a room link to
+          #     the reinstalled app cold, then warm, and polls uiautomator's
+          #     dump of the accessibility tree for the code each time, the
+          #     same tree Flutter exposes a text field's contents through.
+          #     Capture its exit code in PROBE_EXIT and echo it, the same
+          #     pattern step 4 uses for DRIVE_EXIT. Order 190.
+          #  9. if DRIVE_EXIT was nonzero, dump adb logcat -- both to this
           #     step's own log and to a file under packages/ludo_client so
           #     the upload-artifact step below has something to attach --
           #     then exit with that same code so the job goes red for the
           #     actual reason (the smoke test failing), not for a step that
           #     silently swallowed it.
-          #  9. if step 7 found no usable measurement, exit with
+          #  10. if step 7 found no usable measurement, exit with
           #     MEASURE_EXIT. This only runs when DRIVE_EXIT was zero --
-          #     step 8 above already exited otherwise -- so a run never
+          #     step 9 above already exited otherwise -- so a run never
           #     reports two different failures for one red job.
+          #  11. if step 8's probe exited nonzero, exit with PROBE_EXIT.
+          #     This only runs when DRIVE_EXIT and MEASURE_EXIT were both
+          #     zero -- steps 9 and 10 above already exited otherwise.
           script: >-
             cd packages/ludo_client &&
             echo "device-smoke: api-level 36 (Android 16), device emulator-5554, profile Nexus 5, target google_apis" &&
@@ -211,6 +221,9 @@ jobs:
             if [ "$DOMAIN_VERIFICATION_OK" -eq 1 ]; then MEASURE_OK=1; fi;
             MEASURE_EXIT=0;
             if [ "$MEASURE_OK" -eq 0 ]; then echo "device-smoke: App Link measurement produced no usable state -- pm get-app-links returned [$APP_LINKS], the dumpsys domain-verification fallback returned [$DOMAIN_VERIFICATION], and the reinstall exited $INSTALL_EXIT -- see order 115" >&2; MEASURE_EXIT=1; fi;
+            sh tool/device_link_probe.sh;
+            PROBE_EXIT=$?;
+            echo "device-smoke: device link probe exit code $PROBE_EXIT";
             if [ "$DRIVE_EXIT" -ne 0 ]; then
             echo "device-smoke: flutter drive failed with exit $DRIVE_EXIT -- dumping adb logcat" >&2;
             adb logcat -d | tee device-smoke-logcat.txt 1>&2;
@@ -218,6 +231,9 @@ jobs:
             fi;
             if [ "$MEASURE_EXIT" -ne 0 ]; then
             exit "$MEASURE_EXIT";
+            fi;
+            if [ "$PROBE_EXIT" -ne 0 ]; then
+            exit "$PROBE_EXIT";
             fi
 
       # Only present when the step above actually wrote it, which only
@@ -232,4 +248,17 @@ jobs:
         with:
           name: device-smoke-logcat
           path: packages/ludo_client/device-smoke-logcat.txt
+          if-no-files-found: warn
+
+      # Present on every run, pass or fail: step 8 above (order 190) writes
+      # both screenshots and both accessibility dumps whether or not it
+      # found the code. if-no-files-found is `warn` for the same reason as
+      # the logcat upload above.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: device-link-probe
+          path: |
+            packages/ludo_client/link-*.png
+            packages/ludo_client/link-*.xml
           if-no-files-found: warn
