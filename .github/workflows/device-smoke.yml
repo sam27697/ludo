@@ -127,8 +127,8 @@ jobs:
           #     are exactly the things that still need to happen when an
           #     earlier command failed. The three places a failure is
           #     actually allowed to end the job are the explicit
-          #     `exit "$DRIVE_EXIT"` in step 9, `exit "$MEASURE_EXIT"` in
-          #     step 10, and `exit "$PROBE_EXIT"` in step 11, all below.
+          #     `exit "$DRIVE_EXIT"` in step 10, `exit "$MEASURE_EXIT"` in
+          #     step 11, and `exit "$PROBE_EXIT"` in step 12, all below.
           #     (POSIX sh, not bash: `+e`/`-e` are portable, `set -o
           #     pipefail` and `[[` are not, so neither is used anywhere in
           #     this script.) `--profile`, not `--release` or the debug
@@ -139,7 +139,7 @@ jobs:
           #     run at all. Profile mode keeps the VM service and is the
           #     same choice screenshots.yml makes for the same reason.
           #  4. capture that exit code in DRIVE_EXIT -- this is the gate for
-          #     the smoke test itself, checked explicitly in step 9, not
+          #     the smoke test itself, checked explicitly in step 10, not
           #     left to errexit.
           #  5. reinstall the apk `flutter drive` just built, from
           #     build/app/outputs/flutter-apk/app-profile.apk (already on
@@ -171,29 +171,45 @@ jobs:
           #     `pm get-app-links` answering "Error: ... unavailable" (or
           #     anything else with no state in it) while the dumpsys
           #     fallback also came back empty. That failure is recorded in
-          #     MEASURE_EXIT and acted on in step 10, after step 9, with a
+          #     MEASURE_EXIT and acted on in step 11, after step 10, with a
           #     message naming what came back empty and what INSTALL_EXIT
           #     was, so a red run here does not require re-deriving this
           #     order to understand.
-          #  8. run tool/device_link_probe.sh: it delivers a room link to
-          #     the reinstalled app cold, then warm, and polls uiautomator's
-          #     dump of the accessibility tree for the code each time, the
-          #     same tree Flutter exposes a text field's contents through.
-          #     Capture its exit code in PROBE_EXIT and echo it, the same
-          #     pattern step 4 uses for DRIVE_EXIT. Order 190.
-          #  9. if DRIVE_EXIT was nonzero, dump adb logcat -- both to this
+          #  8. build the real app: `flutter build apk --profile`, which
+          #     overwrites build/app/outputs/flutter-apk/app-profile.apk --
+          #     the same path step 5 reinstalled from -- with app.fayad.ludo
+          #     built from lib/main.dart instead of from the apk flutter
+          #     drive built. The drive apk's entry point is
+          #     integration_test/launch_smoke_test.dart's own main(), which
+          #     pumps LudoApp() with no initial link and no link stream
+          #     wired in, so it cannot be the thing step 9's probe measures
+          #     (run 36220114933, order 190 RESPEC 1). Capture the build's
+          #     exit code in BUILD_EXIT and echo it; if it is zero, install
+          #     that apk from the same path. If BUILD_EXIT is nonzero, the
+          #     probe does not run at all -- PROBE_EXIT is set to BUILD_EXIT
+          #     instead, with one line saying why, so step 12 still reports
+          #     the real failure.
+          #  9. if BUILD_EXIT was zero, run tool/device_link_probe.sh: it
+          #     delivers a room link to the reinstalled app cold, then warm,
+          #     and polls uiautomator's dump of the accessibility tree for
+          #     the code each time, the same tree Flutter exposes a text
+          #     field's contents through. Capture its exit code in
+          #     PROBE_EXIT and echo it, the same pattern step 4 uses for
+          #     DRIVE_EXIT. Order 190.
+          #  10. if DRIVE_EXIT was nonzero, dump adb logcat -- both to this
           #     step's own log and to a file under packages/ludo_client so
           #     the upload-artifact step below has something to attach --
           #     then exit with that same code so the job goes red for the
           #     actual reason (the smoke test failing), not for a step that
           #     silently swallowed it.
-          #  10. if step 7 found no usable measurement, exit with
+          #  11. if step 7 found no usable measurement, exit with
           #     MEASURE_EXIT. This only runs when DRIVE_EXIT was zero --
-          #     step 9 above already exited otherwise -- so a run never
+          #     step 10 above already exited otherwise -- so a run never
           #     reports two different failures for one red job.
-          #  11. if step 8's probe exited nonzero, exit with PROBE_EXIT.
+          #  12. if PROBE_EXIT is nonzero -- set either by step 8's build
+          #     failing or step 9's probe failing -- exit with PROBE_EXIT.
           #     This only runs when DRIVE_EXIT and MEASURE_EXIT were both
-          #     zero -- steps 9 and 10 above already exited otherwise.
+          #     zero -- steps 10 and 11 above already exited otherwise.
           script: >-
             cd packages/ludo_client &&
             echo "device-smoke: api-level 36 (Android 16), device emulator-5554, profile Nexus 5, target google_apis" &&
@@ -221,9 +237,23 @@ jobs:
             if [ "$DOMAIN_VERIFICATION_OK" -eq 1 ]; then MEASURE_OK=1; fi;
             MEASURE_EXIT=0;
             if [ "$MEASURE_OK" -eq 0 ]; then echo "device-smoke: App Link measurement produced no usable state -- pm get-app-links returned [$APP_LINKS], the dumpsys domain-verification fallback returned [$DOMAIN_VERIFICATION], and the reinstall exited $INSTALL_EXIT -- see order 115" >&2; MEASURE_EXIT=1; fi;
+            echo "device-smoke: building app.fayad.ludo from lib/main.dart for the device link probe -- the apk flutter drive built and step 5 reinstalled has no initial link and no link stream wired in, see order 190 RESPEC 1";
+            flutter build apk --profile;
+            BUILD_EXIT=$?;
+            echo "device-smoke: flutter build apk --profile exit code $BUILD_EXIT";
+            if [ "$BUILD_EXIT" -eq 0 ]; then
+            adb install -r build/app/outputs/flutter-apk/app-profile.apk;
+            PROBE_INSTALL_EXIT=$?;
+            echo "device-smoke: probe apk reinstall exit code $PROBE_INSTALL_EXIT";
+            fi;
+            if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo "device-smoke: device link probe did not run -- flutter build apk --profile failed with exit $BUILD_EXIT";
+            PROBE_EXIT="$BUILD_EXIT";
+            else
             sh tool/device_link_probe.sh;
             PROBE_EXIT=$?;
             echo "device-smoke: device link probe exit code $PROBE_EXIT";
+            fi;
             if [ "$DRIVE_EXIT" -ne 0 ]; then
             echo "device-smoke: flutter drive failed with exit $DRIVE_EXIT -- dumping adb logcat" >&2;
             adb logcat -d | tee device-smoke-logcat.txt 1>&2;
