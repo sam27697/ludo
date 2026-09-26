@@ -113,6 +113,10 @@
       }
     }
   },
+  "lobbyWaitingForHost": "Waiting for the host to start the game",
+  "@lobbyWaitingForHost": {
+    "description": "Shown on the lobby screen to a guest once every seat is filled, in place of the seat count, while the host has not yet started the game."
+  },
   "lobbyDesynced": "The lobby view may be out of date. Resync to be sure.",
   "@lobbyDesynced": {
     "description": "Banner shown on the lobby screen when the controller has detected a gap in the sequence of updates it has received."

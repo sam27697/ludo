@@ -25,6 +25,7 @@
   "lobbyCopyCodeButton": "نسخ الرمز",
   "lobbyLinkCopied": "تم النسخ إلى الحافظة.",
   "lobbyWaitingForPlayers": "بانتظار اللاعبين ({seated} من {total})",
+  "lobbyWaitingForHost": "بانتظار المضيف لبدء اللعبة",
   "lobbyDesynced": "قد تكون بيانات الغرفة قديمة. أعد المزامنة للتأكد.",
   "lobbyResyncButton": "إعادة المزامنة",
   "lobbyReconnectButton": "إعادة الاتصال",
