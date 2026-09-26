@@ -2087,9 +2087,8 @@ void main() {
     );
 
     testWidgets('W-G2: guest, room full: lobby-waiting findsOneWidget reading '
-        'loc.lobbyWaitingForPlayers(total, total); no lobby-start-button', (
-      tester,
-    ) async {
+        'the host-starts-it literal, not the players count; no '
+        'lobby-start-button', (tester) async {
       final connector = _Connector();
       final transport = FakeTransport();
       connector.enqueue(transport);
@@ -2133,25 +2132,25 @@ void main() {
         reason: 'test setup: W-G2 needs a full room',
       );
 
-      final context = tester.element(find.byType(LobbyScreen));
-      final loc = AppLocalizations.of(context);
       final waitingFinder = find.byKey(const Key('lobby-waiting'));
       expect(
         waitingFinder,
         findsOneWidget,
         reason:
-            'order 183, W-G2: a guest must still show lobby-waiting '
-            'even with a full room; this is today\'s text, pinned, not '
-            'a claim about what it ought to say',
+            'order 188, W-G2: a guest must still show lobby-waiting '
+            'with a full room, where it names the host as the one '
+            'left to act',
       );
       final waitingText = tester.widget<Text>(waitingFinder);
       expect(
         waitingText.data,
-        loc.lobbyWaitingForPlayers(4, 4),
+        'Waiting for the host to start the game',
         reason:
-            'order 183, W-G2: lobby-waiting must read '
-            'loc.lobbyWaitingForPlayers(total, total) == '
-            'loc.lobbyWaitingForPlayers(4, 4); got '
+            'order 188, W-G2: with a full room, lobby-waiting must read '
+            'the host-starts-it literal "Waiting for the host to start '
+            'the game" (ARB key lobbyWaitingForHost), not the players '
+            'count; nobody else is coming, and what a guest in a full '
+            'room is waiting for is the host pressing Start; got '
             '"${waitingText.data}"',
       );
       expect(

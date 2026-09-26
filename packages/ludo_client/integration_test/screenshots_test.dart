@@ -74,6 +74,8 @@ import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart'
     show RoomSnapshot, RoomState, SeatState;
+import 'package:ludo_client/src/room_code.dart'
+    show isValidRoomCode, normalizeRoomCode;
 import 'package:ludo_client/src/server_config.dart';
 import 'package:ludo_client/src/session_memory.dart'
     show SeatRecord, SessionMemory;
@@ -777,16 +779,59 @@ void main() {
       expectedSeatCount: 3,
     );
     // Audited against the same "no bare pumpAndSettle proves pixels"
-    // question 01-home-en failed: this capture is not gated by a bare
-    // pumpAndSettle() at all. _pumpUntilFound above already waited on
+    // question 01-home-en failed: _pumpUntilFound above already waited on
     // find.byType(LobbyScreen) by name, and _expectLobbyScreen just above
     // reads the room code and counts the joined seats straight off the
-    // mounted tree, so the content this screenshot is about to show has
-    // already been asserted present. _settleForScreenshot itself is not
-    // used here: its last line is an unconditional pumpAndSettle() (see
-    // its own doc comment, "Safe here and only for this capture"), and by
-    // this point LobbyScreen has mounted the connecting-state ticker the
-    // file header describes, which that pumpAndSettle would chase forever.
+    // mounted tree. That was treated as proof enough for the screenshot
+    // below; it was not. CI runs 36180008997 (run 56) and 36220278224 (run
+    // 57) both produced 03-lobby-en.png showing only Priya's seat and
+    // "Waiting for players (1 of 3)" even though the tree above was
+    // already right -- the platform surface was a frame behind it (see
+    // _pumpRealDurationFrames's own doc comment). _settleForScreenshot
+    // itself is still not used here: its last line is an unconditional
+    // pumpAndSettle() (see its own doc comment, "Safe here and only for
+    // this capture"), and by this point LobbyScreen has mounted the
+    // connecting-state ticker the file header describes, which that
+    // pumpAndSettle would chase forever. Hold the frame open for real wall
+    // time instead, then re-read everything the capture depends on
+    // immediately before takeScreenshot, so the assertions describe the
+    // frame actually photographed.
+    await _pumpRealDurationFrames(tester);
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: 'en',
+      code: roomCode,
+      expectedSeatCount: 3,
+    );
+    final AppLocalizations settledLobbyLoc = AppLocalizations.of(
+      tester.element(find.byType(LobbyScreen)),
+    );
+    final Finder settledStartButton = find.byKey(
+      const Key('lobby-start-button'),
+    );
+    expect(
+      settledStartButton,
+      findsOneWidget,
+      reason:
+          'capture 03: after the post-join settle, expected the host\'s '
+          'Start button still on screen immediately before the capture',
+    );
+    final ElevatedButton settledStartWidget = tester.widget<ElevatedButton>(
+      settledStartButton,
+    );
+    final Text settledStartLabel = settledStartWidget.child! as Text;
+    expect(
+      settledStartLabel.data,
+      settledLobbyLoc.lobbyStartButton,
+      reason:
+          'capture 03: after the post-join settle, the room is full (3 of '
+          '3 seats joined) so expected lobby-start-button\'s label to '
+          'still read loc.lobbyStartButton '
+          '("${settledLobbyLoc.lobbyStartButton}"), got '
+          '"${settledStartLabel.data}"',
+    );
+
     await binding.takeScreenshot('03-lobby-en');
 
     final Finder startButton = find.byKey(const Key('lobby-start-button'));
@@ -1820,6 +1865,276 @@ void main() {
     );
 
     await binding.takeScreenshot('11-lobby-reconnecting-ar');
+  });
+
+  // ==========================================================================
+  // 12: a guest, not the host, sitting in a full lobby, in Arabic. Every
+  // capture above that shows LobbyScreen shows the host's own view (03, the
+  // create side of 05/07's flow through capture 05's join, and 11); nobody
+  // has ever pointed a camera at what the other two seats in a full room
+  // actually see once they are not the one who can press Start. Reached the
+  // way capture 05 reaches a joined LobbyScreen -- HomeScreen's own Join
+  // Room button, not a hand-built LobbyScreen -- because the guest-specific
+  // body this capture is about (no lobby-start-button, the
+  // waiting-for-host line, lobby-leave-button) is _connectedBody's own
+  // branch on controller.isHost, and the only way to reach it as a player
+  // actually would is a real join_room round trip, not a widget built
+  // in-place with an assumed seat.
+  //
+  // The Arabic locale is handed to the harness directly, the way capture 11
+  // hands it to _reconnectingCaptureHarness, rather than reached by tapping
+  // locale-toggle-button twice from HomeScreen's own English default the way
+  // 01-04's and 05's captures do -- HomeScreen has no parameter for a
+  // starting locale of its own, so _reconnectingCaptureHarness's existing
+  // `locale` argument is reused unchanged, with HomeScreen standing in for
+  // the bare child every other user of that harness (10, 11) has passed it.
+  // ==========================================================================
+  testWidgets('capture 12-lobby-guest-full-ar', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    final factory = _ScreenshotControllerFactory();
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+        locale: const Locale('ar'),
+      ),
+    );
+    // Safe here and only here, same as 01-home-en and 08/09 above: nothing
+    // has tapped Join Room yet, so LobbyScreen has not mounted and there is
+    // no runaway ticker for pumpAndSettle to chase.
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: 'ar');
+
+    const String joinerName = 'Omar';
+    // Drawn only from room_code.dart's roomCodeAlphabet ('0', 'O', '1' and
+    // 'I' are all excluded): HomeScreen._joinRoom sets homeRoomCodeInvalid
+    // and returns before building a controller for any code that fails
+    // isValidRoomCode, so a code drawn carelessly here never reaches a
+    // controller, let alone the server.
+    const String roomCode = 'GST4ZQ';
+
+    expect(
+      isValidRoomCode(normalizeRoomCode(roomCode)),
+      isTrue,
+      reason:
+          'capture 12 fixture is broken: "$roomCode" must be a '
+          'syntactically valid room code (room_code.dart\'s '
+          'roomCodeAlphabet) or HomeScreen._joinRoom (home_screen.dart) '
+          'sets homeRoomCodeInvalid and returns before building a '
+          'controller, and the tap below never reaches LobbyScreen at all',
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('home-name-field')),
+      joinerName,
+    );
+    await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
+
+    expect(
+      factory.controllers,
+      hasLength(1),
+      reason:
+          'tapping Join Room must build exactly one controller through '
+          'the injected controllerFactory (home_screen.dart)',
+    );
+    final RoomController controller = factory.controllers.single;
+    final FakeTransport transport = factory.transports.single;
+    addTearDown(controller.dispose);
+
+    final List<String> joinMessages = transport.sentRaw
+        .where((s) => _typeOf(s) == 'join_room')
+        .toList();
+    expect(
+      joinMessages,
+      hasLength(1),
+      reason:
+          'expected LobbyScreen.initState, reached through RoomRoute, to '
+          'have sent exactly one join_room request; sent '
+          '${transport.sentRaw.map(_typeOf).toList()}',
+    );
+    final String joinId = _idOf(joinMessages.single);
+
+    // Seat 1: a guest, not the host at seat 0. host_seat 0 and three seats
+    // filled out of three (Karim the host, this joiner, Lina) is what makes
+    // the room full and this client the guest capture 12 is about.
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 1, 'seat_token': 'tok-shot-12'},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: joinId,
+        data: _roomJson(
+          code: roomCode,
+          players: 3,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Karim'),
+            _seatJson(1, name: joinerName),
+            _seatJson(2, name: 'Lina'),
+          ],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      'LobbyScreen after the join_room reply carrying code "$roomCode"',
+    );
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: 'ar',
+      code: roomCode,
+      expectedSeatCount: 3,
+    );
+
+    expect(
+      controller.isHost,
+      isFalse,
+      reason:
+          'capture 12 fixture is broken: this joiner sits at seat 1 while '
+          'the pushed room names seat 0 (Karim) host_seat; expected '
+          'controller.isHost to read false, got true',
+    );
+
+    expect(
+      find.byKey(const Key('lobby-start-button')),
+      findsNothing,
+      reason:
+          'expected no lobby-start-button for a guest: lobby_screen.dart\'s '
+          '_connectedBody only builds lobby-start-button when '
+          'controller.isHost is true, and capture 12\'s controller.isHost '
+          'is false',
+    );
+
+    const String expectedWaitingText = 'بانتظار المضيف لبدء اللعبة';
+    final Finder waitingFinder = find.byKey(const Key('lobby-waiting'));
+    expect(
+      waitingFinder,
+      findsOneWidget,
+      reason:
+          'expected lobby-waiting on screen for a guest in a full lobby '
+          '(lobby_screen.dart\'s _connectedBody, the !controller.isHost '
+          'branch)',
+    );
+    final Text waitingText = tester.widget<Text>(waitingFinder);
+    expect(
+      waitingText.data,
+      expectedWaitingText,
+      reason:
+          'expected lobby-waiting\'s Text to read the literal '
+          '"$expectedWaitingText" for a guest in a full room (order 189), '
+          'got "${waitingText.data}"',
+    );
+
+    final Finder leaveFinder = find.byKey(const Key('lobby-leave-button'));
+    expect(
+      leaveFinder,
+      findsOneWidget,
+      reason:
+          'expected lobby-leave-button on screen for a guest in a full '
+          'lobby (order 189: the connected lobby\'s own way out)',
+    );
+    final Rect leaveRect = tester.getRect(leaveFinder);
+    final Size viewSize =
+        tester.view.physicalSize / tester.view.devicePixelRatio;
+    final bool leaveButtonInsideView =
+        leaveRect.left >= 0 &&
+        leaveRect.top >= 0 &&
+        leaveRect.right <= viewSize.width &&
+        leaveRect.bottom <= viewSize.height;
+    expect(
+      leaveButtonInsideView,
+      isTrue,
+      reason:
+          'expected lobby-leave-button\'s rect $leaveRect to lie entirely '
+          'inside the view $viewSize on this device (seat "$joinerName", '
+          'room "$roomCode"); this test does not scroll to bring it into '
+          'view, so a button below the fold here is a real finding for the '
+          'master, not something to work around',
+    );
+
+    // Settle the way capture 11 does before its own takeScreenshot:
+    // LobbyScreen has already mounted the connecting-state ticker the file
+    // header describes, so no pumpAndSettle from here on, only bounded
+    // real-duration pumps to give the platform compositor time to catch up
+    // (see _pumpRealDurationFrames's own doc comment and the comment above
+    // capture 03's takeScreenshot for why a bare pumpAndSettle is not safe
+    // past this point).
+    await _pumpRealDurationFrames(tester);
+
+    // Capture 11 re-reads everything it depends on immediately before its
+    // own takeScreenshot, after this same real-duration settle, because run
+    // 36098947846 on c9addaa showed the settle alone can let a stale frame
+    // reach the screenshot even though every assertion taken beforehand
+    // passed. Re-assert the two things this capture is actually about --
+    // the waiting-for-host literal and the leave button's position -- so
+    // the frame this photographs is the frame just described, not the one
+    // from before the wait.
+    final Finder settledWaitingFinder12 = find.byKey(
+      const Key('lobby-waiting'),
+    );
+    expect(
+      settledWaitingFinder12,
+      findsOneWidget,
+      reason:
+          'capture 12: after the post-join settle, expected lobby-waiting '
+          'still on screen immediately before the capture',
+    );
+    final Text settledWaitingText12 = tester.widget<Text>(
+      settledWaitingFinder12,
+    );
+    expect(
+      settledWaitingText12.data,
+      expectedWaitingText,
+      reason:
+          'capture 12: after the post-join settle, expected '
+          'lobby-waiting\'s Text to still read the literal '
+          '"$expectedWaitingText" immediately before the capture, got '
+          '"${settledWaitingText12.data}"',
+    );
+    final Finder settledLeaveFinder12 = find.byKey(
+      const Key('lobby-leave-button'),
+    );
+    expect(
+      settledLeaveFinder12,
+      findsOneWidget,
+      reason:
+          'capture 12: after the post-join settle, expected '
+          'lobby-leave-button still on screen immediately before the '
+          'capture',
+    );
+    final Rect settledLeaveRect12 = tester.getRect(settledLeaveFinder12);
+    final bool settledLeaveButtonInsideView12 =
+        settledLeaveRect12.left >= 0 &&
+        settledLeaveRect12.top >= 0 &&
+        settledLeaveRect12.right <= viewSize.width &&
+        settledLeaveRect12.bottom <= viewSize.height;
+    expect(
+      settledLeaveButtonInsideView12,
+      isTrue,
+      reason:
+          'capture 12: after the post-join settle, expected '
+          'lobby-leave-button\'s rect $settledLeaveRect12 to still lie '
+          'entirely inside the view $viewSize immediately before the '
+          'capture (seat "$joinerName", room "$roomCode"); this test does '
+          'not scroll to bring it into view, so a button below the fold '
+          'here is a real finding for the master, not something to work '
+          'around',
+    );
+
+    await binding.takeScreenshot('12-lobby-guest-full-ar');
   });
 }
 
