@@ -216,11 +216,18 @@ class RoomController extends ChangeNotifier {
   /// [reconnect] opens afterwards.
   Stream<Frame> get frames => _framesController.stream;
 
-  Future<void> createRoom({required String name, required int players}) {
+  /// Both rules toggles on by default, matching [RoomToggles]'s own
+  /// defaults. Forwarded to [RoomConnection.createRoom] as `toggles`; never
+  /// as `rules`, and never carrying a turn timer.
+  Future<void> createRoom({
+    required String name,
+    required int players,
+    RoomToggles toggles = const RoomToggles(),
+  }) {
     return _openFresh(
       gate: _phase == RoomPhase.idle || _phase == RoomPhase.failed,
       request: (RoomConnection connection) =>
-          connection.createRoom(name: name, players: players),
+          connection.createRoom(name: name, players: players, toggles: toggles),
     );
   }
 

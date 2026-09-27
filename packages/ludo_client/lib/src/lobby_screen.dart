@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'die_mark.dart';
+import 'net/connection.dart' show RoomToggles;
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'session_memory.dart' show SeatRecord;
@@ -59,6 +60,7 @@ class LobbyScreen extends StatefulWidget {
     required this.playerName,
     this.code,
     this.players = 4,
+    this.toggles = const RoomToggles(),
     this.resume,
   });
 
@@ -72,6 +74,9 @@ class LobbyScreen extends StatefulWidget {
 
   /// The seat count requested on create; ignored on join.
   final int players;
+
+  /// The rules toggles requested on create; ignored on join.
+  final RoomToggles toggles;
 
   /// Required in practice when [action] is [LobbyAction.resume]; ignored
   /// otherwise. The seat the resume request is sent for.
@@ -109,6 +114,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         widget.controller.createRoom(
           name: widget.playerName,
           players: widget.players,
+          toggles: widget.toggles,
         );
       case LobbyAction.join:
         widget.controller.joinRoom(code: widget.code!, name: widget.playerName);
