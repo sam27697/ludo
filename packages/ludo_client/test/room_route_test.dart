@@ -79,6 +79,7 @@ import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
+import 'package:ludo_client/src/net/connection.dart' show RoomToggles;
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
 import 'package:ludo_client/src/net/transport.dart';
@@ -233,9 +234,13 @@ class _InstrumentedController extends RoomController {
   }
 
   @override
-  Future<void> createRoom({required String name, required int players}) {
+  Future<void> createRoom({
+    required String name,
+    required int players,
+    RoomToggles toggles = const RoomToggles(),
+  }) {
     createRoomCalls += 1;
-    return super.createRoom(name: name, players: players);
+    return super.createRoom(name: name, players: players, toggles: toggles);
   }
 
   @override

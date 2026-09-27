@@ -57,9 +57,25 @@
   "@homePlayersSelectorLabel": {
     "description": "Caption above the 2/3/4 seat-count selector on the home screen."
   },
-  "homePlayersDisclosureClosed": "Number of players: 4",
+  "homePlayersDisclosureClosed": "4 players, standard rules",
   "@homePlayersDisclosureClosed": {
     "description": "Closed disclosure on the home screen that names the default four-seat table before the selector is opened."
+  },
+  "homeRuleBlocks": "Blocks",
+  "@homeRuleBlocks": {
+    "description": "Title of the switch, under the open player-count disclosure on the home screen, that turns the blocks rule on or off for the room being created."
+  },
+  "homeRuleBlocksHint": "Two of your tokens on one square cannot be passed",
+  "@homeRuleBlocksHint": {
+    "description": "Subtitle under the blocks switch on the home screen, explaining what the rule does."
+  },
+  "homeRuleCaptureBonus": "Capture bonus",
+  "@homeRuleCaptureBonus": {
+    "description": "Title of the switch, under the open player-count disclosure on the home screen, that turns the capture bonus rule on or off for the room being created."
+  },
+  "homeRuleCaptureBonusHint": "Sending a token home earns another roll",
+  "@homeRuleCaptureBonusHint": {
+    "description": "Subtitle under the capture bonus switch on the home screen, explaining what the rule does."
   },
   "homePlayersTwo": "2 players",
   "@homePlayersTwo": {
