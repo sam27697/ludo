@@ -243,16 +243,34 @@ void main() {
     WireTestLobby lobby,
     WireTestSeat seat,
   ) async {
-    seat.client.send('resume', <String, Object?>{
+    final String resumeId = seat.client.send('resume', <String, Object?>{
       'code': lobby.code,
       'seat_token': seat.token,
     });
+    // docs/PROTOCOL.md section 15 rule 2: resume is answered with
+    // seat_assigned, then room, whether or not the seat moved while it was
+    // away. Every caller of this helper reads a snapshot mid-game, with
+    // the seat's own number unchanged throughout this file, so the seat
+    // named here is always the same one that took it.
+    await expectSeatAssigned(
+      seat.client,
+      expectedSeat: seat.seat,
+      expectedToken: seat.token,
+      because: 'resumeSnapshot on room ${lobby.code} for seat ${seat.seat}',
+    );
     final Map<String, Object?> frame = await seat.client.next();
     expect(
       frame['t'],
       'room',
       reason: 'resume on room ${lobby.code} for seat ${seat.seat} must '
-          'answer with a room snapshot; got "${frame['t']}": ${frame['d']}',
+          'answer with a room snapshot, immediately after seat_assigned; '
+          'got "${frame['t']}": ${frame['d']}',
+    );
+    expect(
+      frame['re'],
+      resumeId,
+      reason: 'the room frame answering resume must carry that resume\'s '
+          'own id; got re=${frame['re']}, expected $resumeId',
     );
     return frame['d']! as Map<String, Object?>;
   }
