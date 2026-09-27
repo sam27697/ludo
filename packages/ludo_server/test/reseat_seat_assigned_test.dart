@@ -517,9 +517,16 @@ void main() {
     host.client.send('set_seed', <String, Object?>{'client_seed': hostSeed});
     final Map<String, Object?> hostSeedReply = await host.client.next();
     expect(hostSeedReply['t'], 'seat_seed');
+    // The guest's copy of the host's seat_seed, drained before the guest
+    // sends its own, or every later read on the guest socket is one frame
+    // behind.
+    final Map<String, Object?> guestCopyOfHostSeed = await guest.client.next();
+    expect(guestCopyOfHostSeed['t'], 'seat_seed');
+    expect((guestCopyOfHostSeed['d']! as Map<String, Object?>)['seat'], 0);
     guest.client.send('set_seed', <String, Object?>{'client_seed': guestSeed});
     final Map<String, Object?> guestSeedReply = await guest.client.next();
     expect(guestSeedReply['t'], 'seat_seed');
+    expect((guestSeedReply['d']! as Map<String, Object?>)['seat'], 2);
     await host.client.next(); // broadcast copy of the guest's own seat_seed
 
     host.client.send('start_game', <String, Object?>{});
