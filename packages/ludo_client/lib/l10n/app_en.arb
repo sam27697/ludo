@@ -153,6 +153,31 @@
   "@lobbyStartButton": {
     "description": "Button shown to the host on the lobby screen that starts the game once every seat is filled."
   },
+  "lobbyStartWithPresent": "{count, plural, other{Start with {count} players}}",
+  "@lobbyStartWithPresent": {
+    "description": "Button shown to the host on the lobby screen, under the Start button, that shrinks the room to the number of seats currently occupied and starts the game with them. Shown only when the room is not full and at least two seats are occupied.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lobbyRuleBlocksOn": "Blocks: on",
+  "@lobbyRuleBlocksOn": {
+    "description": "Line under the seat list on the lobby screen naming the state of the blocks rule for this room, shown to host and guests alike."
+  },
+  "lobbyRuleBlocksOff": "Blocks: off",
+  "@lobbyRuleBlocksOff": {
+    "description": "Line under the seat list on the lobby screen naming the state of the blocks rule for this room, shown to host and guests alike."
+  },
+  "lobbyRuleCaptureBonusOn": "Capture bonus: on",
+  "@lobbyRuleCaptureBonusOn": {
+    "description": "Line under the seat list on the lobby screen naming the state of the capture bonus rule for this room, shown to host and guests alike."
+  },
+  "lobbyRuleCaptureBonusOff": "Capture bonus: off",
+  "@lobbyRuleCaptureBonusOff": {
+    "description": "Line under the seat list on the lobby screen naming the state of the capture bonus rule for this room, shown to host and guests alike."
+  },
   "lobbyErrorNoSuchRoom": "That room does not exist. Check the code and try again.",
   "@lobbyErrorNoSuchRoom": {
     "description": "Error shown on the lobby screen when the server reports NO_SUCH_ROOM."
