@@ -43,6 +43,20 @@ class _SlidingWindow {
     _hits.removeWhere((DateTime t) => now.difference(t) >= window);
     return _hits.isEmpty;
   }
+
+  /// Drops stale hits, then adds one more only if that would not push the
+  /// count past [limit]. Returns whether the hit was admitted and recorded.
+  /// A refused call still prunes, so a window keeps decaying even while an
+  /// IP is over its limit, but leaves no trace of the refused attempt
+  /// itself.
+  bool pruneAndAdmit(DateTime now, Duration window, int limit) {
+    _hits.removeWhere((DateTime t) => now.difference(t) >= window);
+    if (_hits.length >= limit) {
+      return false;
+    }
+    _hits.add(now);
+    return true;
+  }
 }
 
 /// Every rate limiter `docs/PROTOCOL.md` section 7 describes, keyed the way
@@ -60,13 +74,17 @@ class RateLimiter {
   final Map<Object, _SlidingWindow> _messagesByConnection =
       <Object, _SlidingWindow>{};
 
-  /// True if this `create_room` may proceed. Counts the attempt either way,
-  /// per connection scoped by IP.
+  /// True if this `create_room` may proceed. Only an admitted attempt is
+  /// recorded, per connection scoped by IP: a call refused here leaves the
+  /// IP's window exactly as it was, so a host tapping Create while limited
+  /// does not push their own wait further out. An attempt admitted here
+  /// still counts even if a later step of the ladder rejects it, because
+  /// this check runs before payload validation.
   bool recordCreateRoom(String ip) {
     final _SlidingWindow window =
         _createRoomByIp.putIfAbsent(ip, () => _SlidingWindow());
-    final int count = window.recordAndCount(_clock.now, _createRoomWindow);
-    return count <= _createRoomLimit;
+    return window.pruneAndAdmit(
+        _clock.now, _createRoomWindow, _createRoomLimit);
   }
 
   /// True if this `join_room` or `resume` may proceed. Counts the attempt

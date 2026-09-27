@@ -42,10 +42,15 @@ mkdir -p staging
 cp repo/deploy/ludo/env.example staging/.env
 # edit staging/.env now: set PORT (leave at 8080 unless you also change the
 # container-side half of the port mapping in docker-compose.yml) and
-# TRUSTED_PROXIES (see the comments in .env for why this needs confirming
-# against the real network path before it is anything but empty)
+# TRUSTED_PROXIES to the gateway of the ludo-staging_default network (see
+# "What we found" below for how to read it; deploy.sh will tell you if you
+# got it wrong)
 chmod 600 staging/.env
 bash repo/deploy/ludo/deploy.sh main
+# deploy.sh's own gateway check cannot run before the container exists, so
+# the first deploy above will report trusted_proxy=MISSING if .env was left
+# at the empty default. Read the gateway it reports, put it in
+# staging/.env, and deploy again.
 
 mkdir -p production
 cp repo/deploy/ludo/env.example production/.env
@@ -269,20 +274,53 @@ just that the status code came back `200`.
 
 ## What we found, for the next order
 
-- `TRUSTED_PROXIES` is read by `bin/server.dart` and is meant to hold the
-  addresses of proxies allowed to set `X-Forwarded-For`. What address the
-  Dart process actually sees as the immediate TCP peer, once a connection
-  has passed through the root-owned reverse proxy and then through rootless
-  Docker's userspace port forwarding on the way to `127.0.0.1:8199:8080`,
-  is not something this order could determine without shell access to the
-  real host. Rootless Docker's default port-publishing path does not always
-  preserve the original client address; if it does not, every connection
-  looks like it comes from the same forwarding address, and per-IP rate
-  limiting (`docs/PROTOCOL.md` section 7) effectively collapses to one
-  shared bucket for everybody until this is confirmed and, if needed,
-  `TRUSTED_PROXIES` and the reverse proxy's forwarded-for header are wired
-  up correctly together. Confirm this on the real box before staging is
-  used for anything load-related.
+- Resolved (order 199): `TRUSTED_PROXIES` is read by `bin/server.dart` and
+  holds the addresses of proxies allowed to set `X-Forwarded-For` for the
+  per-client rate limiting in `docs/PROTOCOL.md` section 7. What address the
+  Dart process actually sees as the immediate TCP peer is now measured, not
+  guessed: read from `/proc/net/tcp` inside each running container while a
+  WebSocket was held open through the public hostname, it is the Docker
+  network gateway in every case -- `172.18.0.1` on `ludo-staging_default`
+  (subnet `172.18.0.0/16`), `172.20.0.1` on `ludo-production_default`
+  (subnet `172.20.0.0/16`). Separately, five `create_room` from one public
+  address followed by a sixth from a different address, with
+  `TRUSTED_PROXIES` empty, made the sixth answer `RATE_LIMITED`: with
+  nothing trusted, every client fell into the one bucket the gateway address
+  owns. With the gateway trusted, five creates each carrying a different
+  forged `X-Forwarded-For` from one address were followed by a refused
+  sixth -- the shipped reverse proxy replaces a client-supplied
+  `X-Forwarded-For` rather than appending to it, so a trusted gateway cannot
+  be tricked into believing a forged header from the client past it.
+
+  `TRUSTED_PROXIES` is set to `172.18.0.1` in
+  `/srv/apps/ludo/staging/.env` and `172.20.0.1` in
+  `/srv/apps/ludo/production/.env`. Both were measured scoping per client
+  correctly afterwards.
+
+  To re-measure by hand: `docker network inspect ludo-staging_default
+  --format '{{(index .IPAM.Config 0).Gateway}}'` (swap in
+  `ludo-production_default` for production) reads the gateway from the
+  Docker side; `cat /proc/net/tcp` run with `docker exec` inside the
+  container while a client connection is held open and cross-referenced
+  against the container's own `hostname -i` confirms it from the inside.
+  The two should always agree, because the container's only route off its
+  own network is through that gateway.
+
+  This can drift: the gateway above is whatever subnet Docker assigned the
+  compose network when it was created, not a fixed address, and a
+  `docker compose down` followed by `up` (a full reset of the network, not
+  a normal deploy) can bring the network back on a different subnet.
+  `deploy.sh` now checks this on every deploy and reports it in its summary
+  line as `trusted_proxy=ok`, `trusted_proxy=MISSING`, or
+  `trusted_proxy=UNKNOWN` (the last when the container is not on exactly
+  one network, or that network reports no gateway -- check by hand in that
+  case). A `MISSING` result means the current gateway is not in
+  `TRUSTED_PROXIES`, and the deploy's log will have named both values right
+  above the summary line; the fix is to edit the environment's `.env` on
+  the box, set `TRUSTED_PROXIES` to the gateway the log line just reported,
+  and deploy again (`deploy.sh` never edits `.env` itself and does not roll
+  back for this -- the previous image was running under the same `.env`,
+  so a rollback would not have helped either).
 
 - Resolved: `docker-compose.yml`'s `ports:` and `container_name` used to be
   the literals `127.0.0.1:8199:8080` and `ludo-server`, so a
