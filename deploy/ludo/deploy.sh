@@ -15,13 +15,22 @@
 # sha, polls /health over the published loopback port with a bounded number
 # of attempts, and rolls back to whatever image was running before if the
 # new one never comes healthy or if the version /health reports once it is
-# healthy disagrees with the sha just deployed. It prints the sha deployed
-# and the health result as its last line either way, and exits non-zero on
-# a failed deploy after having rolled back.
+# healthy disagrees with the sha just deployed. Once a deploy is healthy and
+# confirmed, it also checks whether the container's Docker network gateway
+# is covered by TRUSTED_PROXIES in $ENV_FILE, appending trusted_proxy=ok,
+# trusted_proxy=MISSING, or trusted_proxy=UNKNOWN to that same last line;
+# this never fails the deploy and never rolls back on its own, and it never
+# edits .env. It prints the sha deployed and the health result as its last
+# line either way, and exits non-zero on a failed deploy after having
+# rolled back.
 #
 # It never prints .env's contents and never echoes an environment variable
 # value; the only things it prints are shas, tags, http status codes, and
-# container log lines the application itself already wrote.
+# container log lines the application itself already wrote. The one
+# exception is the trusted-proxy check at the end: it names the configured
+# TRUSTED_PROXIES value when it does not cover the container's network
+# gateway, because that value is a list of IP addresses, not a secret, and
+# the point of the check is to say what does not match.
 
 set -euo pipefail
 
@@ -225,4 +234,60 @@ if [[ "$reported_version" != "$SHA" ]]; then
 fi
 
 echo "$NEW_TAG" > "$STATE_FILE"
-log "sha=$SHA health=ok version=$reported_version"
+
+# The rate limiter in bin/server.dart scopes by client address, trusting
+# X-Forwarded-For only from peers listed in TRUSTED_PROXIES. The only peer
+# any connection ever has inside this container is the Docker network
+# gateway (measured 2026-09-26: /proc/net/tcp inside the container while a
+# connection was held open through the public hostname), so TRUSTED_PROXIES
+# has to name that gateway or every client collapses into one shared
+# bucket. The gateway is whatever subnet Docker handed the compose network
+# when it was created, not a fixed address, so this reads it from the
+# container actually running rather than assuming it. This never fails the
+# deploy and never touches .env: the previous image ran under the same
+# .env, so rolling back on a mismatch here would fix nothing.
+check_trusted_proxy() {
+  local container="$SERVICE_NAME-$LUDO_ENVIRONMENT"
+  local networks
+  networks="$(docker inspect --format \
+    '{{range $net, $conf := .NetworkSettings.Networks}}{{$net}}={{$conf.Gateway}}{{"\n"}}{{end}}' \
+    "$container" 2>/dev/null || true)"
+
+  local net_count
+  net_count="$(printf '%s\n' "$networks" | grep -c '=' || true)"
+
+  if [[ "$net_count" -ne 1 ]]; then
+    log "trusted_proxy check: '$container' is attached to $net_count networks, expected exactly 1 -- cannot tell which gateway matters"
+    TRUSTED_PROXY_RESULT="UNKNOWN"
+    return
+  fi
+
+  local gateway="${networks#*=}"
+  gateway="${gateway%$'\n'}"
+
+  if [[ -z "$gateway" ]]; then
+    log "trusted_proxy check: the network gateway reported for '$container' is empty"
+    TRUSTED_PROXY_RESULT="UNKNOWN"
+    return
+  fi
+
+  local configured
+  configured="$(sed -n 's/^TRUSTED_PROXIES=//p' "$ENV_FILE" | tail -n1)"
+
+  local proxy_list ip
+  IFS=',' read -ra proxy_list <<< "$configured"
+  for ip in "${proxy_list[@]:-}"; do
+    ip="${ip//[[:space:]]/}"
+    if [[ -n "$ip" && "$ip" == "$gateway" ]]; then
+      TRUSTED_PROXY_RESULT="ok"
+      return
+    fi
+  done
+
+  log "trusted_proxy check: gateway is $gateway, TRUSTED_PROXIES is ${configured:-<empty>} -- every client will share one rate-limit bucket"
+  TRUSTED_PROXY_RESULT="MISSING"
+}
+
+TRUSTED_PROXY_RESULT=""
+check_trusted_proxy
+log "sha=$SHA health=ok version=$reported_version trusted_proxy=$TRUSTED_PROXY_RESULT"

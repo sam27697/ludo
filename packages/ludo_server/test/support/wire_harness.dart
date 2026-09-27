@@ -50,9 +50,19 @@ class ServerHarness {
   /// server with no background turn-expiry timer, so the sweep only runs
   /// when that caller's own `ServerHarness.server.runTurnExpiryOnce()`
   /// drives it, once, synchronously, with no real wall-clock wait.
+  ///
+  /// [trustedProxies] is additive, order 197: `WireServer` takes
+  /// `Set<String> trustedProxies = const <String>{}`
+  /// (`lib/src/wire_server.dart:113`), and every existing call site of this
+  /// method calls it with no argument and gets exactly what it always got,
+  /// a server that trusts no peer and never reads `X-Forwarded-For` from
+  /// anyone. A caller that supplies a non-empty set -- `client_ip_test.dart`,
+  /// so far the only one -- gets a server that believes that header, but
+  /// only from a peer address in the set, per `docs/PROTOCOL.md` section 7.
   static ServerHarness build({
     Random? secure,
     bool automaticTurnExpiry = true,
+    Set<String> trustedProxies = const <String>{},
   }) {
     final FakeClock clock = FakeClock(DateTime.utc(2026, 8, 28));
     final RoomRegistry registry =
@@ -63,6 +73,7 @@ class ServerHarness {
       rateLimiter: rateLimiter,
       clock: clock,
       automaticTurnExpiry: automaticTurnExpiry,
+      trustedProxies: trustedProxies,
     );
     return ServerHarness._(clock, registry, server);
   }

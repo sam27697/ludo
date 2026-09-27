@@ -288,10 +288,28 @@ back into a field the envelope rules constrain.
 
 Rate limits, per connection unless stated:
 
-- `create_room`: 5 per hour per IP, and 3 per hour per device.
+- `create_room`: 5 per hour per IP, and 3 per hour per device. Only an
+  attempt the limiter admits counts toward the 5; a `create_room` answered
+  `RATE_LIMITED` does not. A host who keeps tapping Create while limited must
+  not push their own wait further out. An admitted attempt still counts if a
+  later step of the ladder rejects it (`BAD_FIELD`, say), because the rate
+  limit runs before payload validation. The per-device half is not
+  implemented: nothing in this protocol identifies a device.
 - `join_room` and `resume`: 20 per minute per IP. A wrong code counts. This is
   what makes the 32^6 code space unenumerable rather than merely large.
 - any message: 30 per second, then `RATE_LIMITED`, then close at 60.
+
+"IP" is the immediate TCP peer address, unless that peer is listed in the
+server's `TRUSTED_PROXIES`, in which case it is the leftmost address in the
+`X-Forwarded-For` header (the peer address when that header is absent or
+empty). A header from a peer not in the list is never read. Deployed, every
+connection reaches the process from the Docker network gateway, so with an
+empty list every player in the world shares one bucket: measured on
+2026-09-26, five rooms created from one address made a sixth, from a
+different address, answer `RATE_LIMITED`. The reverse proxy in front of
+both hostnames replaces any `X-Forwarded-For` a client sends (measured the
+same night: five distinct forged values did not buy a sixth room), which is
+what makes trusting the gateway safe. `deploy/ludo/README.md` has the values.
 
 ### 7.1 Close codes
 
