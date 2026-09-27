@@ -57,9 +57,25 @@
   "@homePlayersSelectorLabel": {
     "description": "Caption above the 2/3/4 seat-count selector on the home screen."
   },
-  "homePlayersDisclosureClosed": "Number of players: 4",
+  "homePlayersDisclosureClosed": "4 players, standard rules",
   "@homePlayersDisclosureClosed": {
     "description": "Closed disclosure on the home screen that names the default four-seat table before the selector is opened."
+  },
+  "homeRuleBlocks": "Blocks",
+  "@homeRuleBlocks": {
+    "description": "Title of the switch, under the open player-count disclosure on the home screen, that turns the blocks rule on or off for the room being created."
+  },
+  "homeRuleBlocksHint": "Two of your tokens on one square cannot be passed",
+  "@homeRuleBlocksHint": {
+    "description": "Subtitle under the blocks switch on the home screen, explaining what the rule does."
+  },
+  "homeRuleCaptureBonus": "Capture bonus",
+  "@homeRuleCaptureBonus": {
+    "description": "Title of the switch, under the open player-count disclosure on the home screen, that turns the capture bonus rule on or off for the room being created."
+  },
+  "homeRuleCaptureBonusHint": "Sending a token home earns another roll",
+  "@homeRuleCaptureBonusHint": {
+    "description": "Subtitle under the capture bonus switch on the home screen, explaining what the rule does."
   },
   "homePlayersTwo": "2 players",
   "@homePlayersTwo": {
@@ -136,6 +152,31 @@
   "lobbyStartButton": "Start game",
   "@lobbyStartButton": {
     "description": "Button shown to the host on the lobby screen that starts the game once every seat is filled."
+  },
+  "lobbyStartWithPresent": "{count, plural, other{Start with {count} players}}",
+  "@lobbyStartWithPresent": {
+    "description": "Button shown to the host on the lobby screen, under the Start button, that shrinks the room to the number of seats currently occupied and starts the game with them. Shown only when the room is not full and at least two seats are occupied.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lobbyRuleBlocksOn": "Blocks: on",
+  "@lobbyRuleBlocksOn": {
+    "description": "Line under the seat list on the lobby screen naming the state of the blocks rule for this room, shown to host and guests alike."
+  },
+  "lobbyRuleBlocksOff": "Blocks: off",
+  "@lobbyRuleBlocksOff": {
+    "description": "Line under the seat list on the lobby screen naming the state of the blocks rule for this room, shown to host and guests alike."
+  },
+  "lobbyRuleCaptureBonusOn": "Capture bonus: on",
+  "@lobbyRuleCaptureBonusOn": {
+    "description": "Line under the seat list on the lobby screen naming the state of the capture bonus rule for this room, shown to host and guests alike."
+  },
+  "lobbyRuleCaptureBonusOff": "Capture bonus: off",
+  "@lobbyRuleCaptureBonusOff": {
+    "description": "Line under the seat list on the lobby screen naming the state of the capture bonus rule for this room, shown to host and guests alike."
   },
   "lobbyErrorNoSuchRoom": "That room does not exist. Check the code and try again.",
   "@lobbyErrorNoSuchRoom": {

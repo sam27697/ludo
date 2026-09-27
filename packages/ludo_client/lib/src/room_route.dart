@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 
 import 'game_screen.dart';
 import 'lobby_screen.dart';
+import 'net/connection.dart' show RoomToggles;
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'session_memory.dart' show SeatRecord;
@@ -22,6 +23,7 @@ class RoomRoute extends StatefulWidget {
     required this.playerName,
     this.code,
     this.players = 4,
+    this.toggles = const RoomToggles(),
     this.resume,
   });
 
@@ -34,6 +36,9 @@ class RoomRoute extends StatefulWidget {
 
   /// Forwarded to [LobbyScreen] unchanged; see its own field for the meaning.
   final int players;
+
+  /// Forwarded to [LobbyScreen] unchanged; see its own field for the meaning.
+  final RoomToggles toggles;
 
   /// Forwarded to [LobbyScreen] unchanged; see its own field for the meaning.
   final SeatRecord? resume;
@@ -106,6 +111,7 @@ class _RoomRouteState extends State<RoomRoute> {
       playerName: widget.playerName,
       code: widget.code,
       players: widget.players,
+      toggles: widget.toggles,
       resume: widget.resume,
     );
   }

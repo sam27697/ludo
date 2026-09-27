@@ -262,7 +262,13 @@ void main() {
         );
         expect(
           _dataOf(createMessages.single),
-          <String, Object?>{'name': 'Priya', 'players': 3},
+          <String, Object?>{
+            'name': 'Priya',
+            'players': 3,
+            // Order 202: Home's rule toggles, untouched, reach the wire as
+            // defaults.
+            'rules': <String, Object?>{'blocks': true, 'capture_bonus': true},
+          },
           reason:
               'the name typed on the home screen and the non-default '
               'player count selected there must both reach the wire '

@@ -424,6 +424,69 @@ Future<Map<String, Object?>> expectOpeningTurn(
   return frame;
 }
 
+// -----------------------------------------------------------------------
+// Additive helper below this line, added for order 204 (`docs/PROTOCOL.md`
+// section 15: a re-seat, or a resume, tells the moved/resuming seat its own
+// number via `seat_assigned` before the `room` that follows it). Every call
+// site that used to read "the first frame after resume/set_players is room"
+// now has to consume this frame first, on the socket whose seat it names,
+// or it is mistaken for whatever the next helper actually asked for.
+// -----------------------------------------------------------------------
+
+/// Reads exactly one frame off [client] and asserts it is the `seat_assigned`
+/// frame section 15 requires: frame type `seat_assigned`,
+/// `d['seat'] == expectedSeat`, `d['seat_token'] == expectedToken`, no `re`
+/// (section 5: `seat_assigned` never answers a specific id, not even a
+/// `resume`'s), and no `seq` (section 5/15.4: it is not itself a state
+/// change). Reads with [WireTestClient.next] rather than [receiveType] or
+/// [drainUntil] on purpose: skipping past an out-of-order frame here would
+/// hide the very defect this assertion exists to catch, since section 15
+/// promises this frame arrives with nothing between it and whatever follows
+/// on the same socket. [because] names the scenario under test so a mismatch
+/// says what was being proven, not just the two values that disagreed.
+Future<Map<String, Object?>> expectSeatAssigned(
+  WireTestClient client, {
+  required int expectedSeat,
+  required String expectedToken,
+  required String because,
+}) async {
+  final Map<String, Object?> frame = await client.next();
+  expect(
+    frame['t'],
+    'seat_assigned',
+    reason: 'docs/PROTOCOL.md section 15: $because; expected a '
+        'seat_assigned frame before the room that follows it, got '
+        '"${frame['t']}": ${frame['d']}',
+  );
+  final Map<String, Object?> data = frame['d']! as Map<String, Object?>;
+  expect(
+    data['seat'],
+    expectedSeat,
+    reason: 'section 15: $because; seat_assigned.seat must be '
+        '$expectedSeat, got ${data['seat']}',
+  );
+  expect(
+    data['seat_token'],
+    expectedToken,
+    reason: 'section 15 rule 3: the seat token never changes across a '
+        're-seat or a resume; $because; got seat_token='
+        '${data['seat_token']}, expected the seat\'s own $expectedToken',
+  );
+  expect(
+    frame['re'],
+    isNull,
+    reason: 'section 5: seat_assigned never answers a specific id, even on '
+        'resume; $because; got re=${frame['re']}',
+  );
+  expect(
+    data.containsKey('seq'),
+    isFalse,
+    reason: 'section 5/15.4: seat_assigned never carries seq; $because; '
+        'got seq=${data['seq']}',
+  );
+  return frame;
+}
+
 /// Asserts [frame] is an `error` frame carrying exactly [expectedCode].
 /// [because] is folded into every assertion's failure message so a
 /// mismatch names the scenario it was proving, not just the two codes that

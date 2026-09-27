@@ -63,6 +63,31 @@ class _PendingRequest {
 /// [TransportConnector] documents as worth retrying.
 enum _ConnState { idle, connecting, open, closed }
 
+/// The two rules toggles a host picks when creating a room
+/// (docs/PROTOCOL.md section 4, section 13.4). Never carries `turn_seconds`:
+/// the turn timer stays the server's default, on purpose, for every room
+/// this client creates.
+class RoomToggles {
+  const RoomToggles({this.blocks = true, this.captureBonus = true});
+
+  final bool blocks;
+  final bool captureBonus;
+
+  /// Exactly `{'blocks': .., 'capture_bonus': ..}`, in that order.
+  Map<String, Object?> toJson() {
+    return <String, Object?>{'blocks': blocks, 'capture_bonus': captureBonus};
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is RoomToggles &&
+      other.blocks == blocks &&
+      other.captureBonus == captureBonus;
+
+  @override
+  int get hashCode => Object.hash(blocks, captureBonus);
+}
+
 class RoomConnection {
   // The public parameter names `connect` and `requestTimeout` are pinned by
   // the frozen declaration block; they cannot become `_connect` and
@@ -275,15 +300,23 @@ class RoomConnection {
     return completer.future;
   }
 
+  /// Sends `create_room`. `d` is always `{name, players}` plus, when given,
+  /// a `rules` key: [rules] as-is, or [toggles] via [RoomToggles.toJson].
+  /// Passing both is a caller error, thrown before anything is sent.
   Future<RoomSnapshot> createRoom({
     required String name,
     required int players,
     RulesConfig? rules,
+    RoomToggles? toggles,
   }) async {
+    if (rules != null && toggles != null) {
+      throw ArgumentError('createRoom: pass rules or toggles, not both');
+    }
     final Map<String, Object?> data = <String, Object?>{
       'name': name,
       'players': players,
       if (rules != null) 'rules': rules.toJson(),
+      if (toggles != null) 'rules': toggles.toJson(),
     };
     final Frame frame = await request('create_room', data);
     return _asRoomSnapshot(frame);
