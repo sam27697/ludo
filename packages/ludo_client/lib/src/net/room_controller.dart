@@ -108,6 +108,18 @@ const Set<String> _startGameRejectedCodes = <String>{
   'NOT_ENOUGH_PLAYERS',
 };
 
+/// The two codes [setPlayers] can be refused with that are a race, not a
+/// fault: something that was true when this client sent the request and
+/// stopped being true before the server read it. `NOT_ENOUGH_PLAYERS` here
+/// is a friend joining between the tap and the server reading it -- the
+/// `room` broadcast that join produces already carries the truth. Its own
+/// set, not [_startGameRejectedCodes]: `setPlayers` never follows itself
+/// with `start_game`, so a `setPlayers` caller decides that for itself.
+const Set<String> _setPlayersRejectedCodes = <String>{
+  'NOT_ENOUGH_PLAYERS',
+  'ROOM_STARTED',
+};
+
 /// Holds the one [RoomConnection] a lobby screen is driving at any moment,
 /// re-creates it across a drop, and exposes the whole thing as a
 /// [ChangeNotifier] with no method that ever throws.
@@ -282,12 +294,22 @@ class RoomController extends ChangeNotifier {
       if (_disposed) {
         return;
       }
-      // R4: the snapshot carries no "your seat" field and the server sends
-      // no seat_assigned on a resume (docs/PROTOCOL.md section 6), so the
-      // seat travels with the token this call was given, not with whatever
-      // _syncSeatCache() would otherwise read off the connection.
+      // R4: the snapshot itself carries no "your seat" field, but the server
+      // now sends seat_assigned before the room reply to a resume
+      // (docs/PROTOCOL.md section 15) whenever it moves this seat.
+      // RoomConnection records that seat_assigned on itself the moment it
+      // decodes the frame (connection.dart's _handleIncomingText), ahead of
+      // and independent of anything this controller's own frame
+      // subscription does with it, so connection.seat already carries it by
+      // the time the awaited resume() above completes. Rule 5: that live
+      // value, when there is one, is the truth about this seat, even over
+      // the seat this call itself was given -- a resume from a stale record
+      // moved while it was away must not overwrite the server's own
+      // correction with what is now stale. Only when the connection never
+      // saw a seat_assigned (an older server, or nothing moved) does this
+      // fall back to the resumeRoom argument.
       _room = snapshot;
-      _cachedSeat = seat;
+      _cachedSeat = connection.seat ?? seat;
       _cachedSeatToken = seatToken;
       _phase = RoomPhase.connected;
       _blocked = false;
@@ -560,7 +582,7 @@ class RoomController extends ChangeNotifier {
       _room = snapshot;
       notifyListeners();
     } catch (error) {
-      _failFromInRoomRequest(error);
+      _failFromSetPlayers(error);
     }
   }
 
@@ -1413,6 +1435,22 @@ class RoomController extends ChangeNotifier {
   void _failFromStartGame(Object error) {
     if (error is ProtocolErrorException &&
         _startGameRejectedCodes.contains(error.code)) {
+      return;
+    }
+    _failFromInRoomRequest(error);
+  }
+
+  /// What [setPlayers] does with a caught error, ahead of everything else,
+  /// mirroring [_failFromStartGame]. A rejected code
+  /// ([_setPlayersRejectedCodes]) changes nothing: [phase] stays
+  /// [RoomPhase.connected], the connection this request ran on stays the
+  /// current one, and the `room` broadcast the race already produced is what
+  /// this controller reduces, not this method. Every other failure --
+  /// including a [ProtocolErrorException] carrying any other code -- falls
+  /// through to [_failFromInRoomRequest].
+  void _failFromSetPlayers(Object error) {
+    if (error is ProtocolErrorException &&
+        _setPlayersRejectedCodes.contains(error.code)) {
       return;
     }
     _failFromInRoomRequest(error);
