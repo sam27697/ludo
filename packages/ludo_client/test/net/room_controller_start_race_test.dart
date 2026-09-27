@@ -534,37 +534,42 @@ void main() {
   });
 
   // ==========================================================================
-  // S-C2 (GREEN on base, control for S3): setPlayers() untouched.
+  // S-C2 (control for S3): setPlayers() has its own two-code set since
+  // order 206 (NOT_ENOUGH_PLAYERS and ROOM_STARTED return quietly; see
+  // room_controller_reseat_test.dart C4/C5). A code outside that set must
+  // still fail the controller exactly as before.
   // ==========================================================================
-  test('S-C2 (control): setPlayers(3) answered NOT_ENOUGH_PLAYERS still '
-      'lands in failed with that errorCode -- S3 does not touch '
-      'setPlayers()', () async {
-    final (RoomController controller, FakeTransport transport, _) =
-        await _connectedController();
-    addTearDown(controller.dispose);
+  test(
+    'S-C2 (control): setPlayers(3) answered NOT_HOST, outside order '
+    '206\'s two-code set, still lands in failed with that errorCode',
+    () async {
+      final (RoomController controller, FakeTransport transport, _) =
+          await _connectedController();
+      addTearDown(controller.dispose);
 
-    final Future<void> future = controller.setPlayers(3);
-    await pumpEventQueue();
-    final String id = _idOf(transport.sentRaw.last);
-    transport.pushText(
-      _frame(
-        type: 'error',
-        re: id,
-        data: <String, Object?>{
-          'code': 'NOT_ENOUGH_PLAYERS',
-          'message': 'a seat emptied before the request arrived',
-        },
-      ),
-    );
-    await expectLater(future, completes);
+      final Future<void> future = controller.setPlayers(3);
+      await pumpEventQueue();
+      final String id = _idOf(transport.sentRaw.last);
+      transport.pushText(
+        _frame(
+          type: 'error',
+          re: id,
+          data: <String, Object?>{
+            'code': 'NOT_HOST',
+            'message': 'only the host may change the player count',
+          },
+        ),
+      );
+      await expectLater(future, completes);
 
-    expect(controller.phase, RoomPhase.failed);
-    expect(controller.errorCode, 'NOT_ENOUGH_PLAYERS');
-    expect(
-      controller.errorMessage,
-      'a seat emptied before the request arrived',
-    );
-  });
+      expect(controller.phase, RoomPhase.failed);
+      expect(controller.errorCode, 'NOT_HOST');
+      expect(
+        controller.errorMessage,
+        'only the host may change the player count',
+      );
+    },
+  );
 
   // ==========================================================================
   // S-C3 (GREEN on base, control for S3): roll()/move() untouched.

@@ -421,19 +421,31 @@ void main() {
       final WireTestClient freshGuest =
           await WireTestClient.connect(harness.wsUri);
       clients.add(freshGuest);
-      freshGuest.send('resume', <String, Object?>{
+      final String resumeId = freshGuest.send('resume', <String, Object?>{
         'code': lobby.code,
         'seat_token': lobby.guest.token,
       });
+      // docs/PROTOCOL.md section 15 rule 2: resume is answered with
+      // seat_assigned, then room, whether or not the seat moved while it
+      // was away.
+      await expectSeatAssigned(
+        freshGuest,
+        expectedSeat: lobby.guest.seat,
+        expectedToken: lobby.guest.token,
+        because: 'await_roll: resume must answer seat_assigned before the '
+            'room snapshot',
+      );
       final Map<String, Object?> resumeFrame = await freshGuest.next();
       expect(
         resumeFrame['t'],
         'room',
         reason: 'point of death candidate: resume on a fresh socket for a '
-            'seat holding the turn must answer with a room snapshot '
-            '(connection.dart\'s _handleResume, docs/PROTOCOL.md section '
-            '8); got "${resumeFrame['t']}": ${resumeFrame['d']}',
+            'seat holding the turn must answer with a room snapshot, '
+            'immediately after seat_assigned (connection.dart\'s '
+            '_handleResume, docs/PROTOCOL.md section 8); got '
+            '"${resumeFrame['t']}": ${resumeFrame['d']}',
       );
+      expect(resumeFrame['re'], resumeId);
       // This resume is a genuine flip back to connected, so the host's
       // still-open socket sees a second presence push that must be
       // drained before the host's socket is read again below
@@ -593,18 +605,30 @@ void main() {
       final WireTestClient freshGuest =
           await WireTestClient.connect(harness.wsUri);
       clients.add(freshGuest);
-      freshGuest.send('resume', <String, Object?>{
+      final String resumeId = freshGuest.send('resume', <String, Object?>{
         'code': lobby.code,
         'seat_token': lobby.guest.token,
       });
+      // docs/PROTOCOL.md section 15 rule 2: resume is answered with
+      // seat_assigned, then room, whether or not the seat moved while it
+      // was away.
+      await expectSeatAssigned(
+        freshGuest,
+        expectedSeat: lobby.guest.seat,
+        expectedToken: lobby.guest.token,
+        because: 'await_move: resume must answer seat_assigned before the '
+            'room snapshot',
+      );
       final Map<String, Object?> resumeFrame = await freshGuest.next();
       expect(
         resumeFrame['t'],
         'room',
         reason: 'point of death candidate: resume on a fresh socket for a '
-            'seat holding a pending roll must answer with a room snapshot; '
-            'got "${resumeFrame['t']}": ${resumeFrame['d']}',
+            'seat holding a pending roll must answer with a room snapshot, '
+            'immediately after seat_assigned; got "${resumeFrame['t']}": '
+            '${resumeFrame['d']}',
       );
+      expect(resumeFrame['re'], resumeId);
       // Same reconnect presence as the await_roll scenario above: the
       // host's still-open socket sees it and it must be drained before
       // the host's socket is read again below.

@@ -112,6 +112,21 @@ abstract class RoomHub {
     required Map<String, Object?> data,
     Connection? exceptConn,
   });
+
+  /// Sends one push to whichever socket, if any, is currently attached to
+  /// [code] holding [seatToken]. A no-op when no attached socket holds that
+  /// token: the seat is not connected, or nothing under this process ever
+  /// attached for it. `docs/PROTOCOL.md` section 15 rule 1 -- the seat a
+  /// `set_players` reseat moved is not necessarily the caller's own, so the
+  /// caller's connection needs a way to reach that other seat's socket
+  /// directly, addressed by the one thing that never changes across a
+  /// reseat, without the registry ever having to hold a socket itself.
+  void sendToSeatToken({
+    required String code,
+    required String seatToken,
+    required String type,
+    required Map<String, Object?> data,
+  });
 }
 
 /// One WebSocket connection and the seat it may or may not currently hold.
@@ -399,6 +414,17 @@ class Connection {
     seatToken = ok.seat.seatToken;
     final Connection? displaced = hub.attach(code: ok.room.code, conn: this);
 
+    // docs/PROTOCOL.md section 15 rule 2 (section 8 rule 4): every resume
+    // gets its own `seat_assigned` before the `room`, on this socket,
+    // whether or not the seat's number ever moved while it was away --
+    // including a takeover of a seat that was already connected (section 8
+    // rule 6, `displaced` below). The client takes its seat from this, never
+    // from what it stored before sending `resume`.
+    _send(
+      type: 'seat_assigned',
+      data: buildSeatAssigned(ok.seat),
+      re: null,
+    );
     _send(
       type: 'room',
       data: buildRoomSnapshot(ok.room, now: clock.now),
@@ -566,7 +592,34 @@ class Connection {
     final Map<String, Object?> data =
         buildRoomSnapshot(ok.room, now: clock.now);
 
+    // docs/PROTOCOL.md section 15 rule 1: every connected seat whose number
+    // this call actually changed gets its own `seat_assigned` before the
+    // `room` that carries the new seating reaches it -- the caller's own
+    // copy before its `room` reply below, everyone else's connected moved
+    // seat before the `room` broadcast that follows. A moved seat that is
+    // not connected gets nothing here; it learns its new number on `resume`
+    // (rule 2, `_handleResume`).
+    for (final Seat moved in ok.movedSeats) {
+      if (moved.seatToken == seatToken) {
+        _send(
+          type: 'seat_assigned',
+          data: buildSeatAssigned(moved),
+          re: null,
+        );
+      }
+    }
     _send(type: 'room', data: data, re: envelope.id);
+    for (final Seat moved in ok.movedSeats) {
+      if (moved.seatToken == seatToken || !moved.connected) {
+        continue;
+      }
+      hub.sendToSeatToken(
+        code: ok.room.code,
+        seatToken: moved.seatToken,
+        type: 'seat_assigned',
+        data: buildSeatAssigned(moved),
+      );
+    }
     hub.broadcast(
       code: ok.room.code,
       type: 'room',

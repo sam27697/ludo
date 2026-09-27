@@ -8,6 +8,7 @@ import 'deep_link.dart';
 import 'die_mark.dart';
 import 'game_screen.dart' show GameScreenResult;
 import 'lobby_screen.dart' show LobbyAction;
+import 'net/connection.dart' show RoomToggles;
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'room_code.dart';
@@ -62,6 +63,8 @@ class _HomeScreenState extends State<HomeScreen>
   String? _errorText;
   int _players = 4;
   bool _playersSelectorOpen = false;
+  bool _rulesBlocks = true;
+  bool _rulesCaptureBonus = true;
   String? _nameLocaleDefault;
   StreamSubscription<Uri>? _linkSubscription;
   late final AnimationController _enter;
@@ -427,6 +430,10 @@ class _HomeScreenState extends State<HomeScreen>
     final AppLocalizations loc = AppLocalizations.of(context);
     final String name = _resolvedName(loc);
     final int players = _players;
+    final RoomToggles toggles = RoomToggles(
+      blocks: _rulesBlocks,
+      captureBonus: _rulesCaptureBonus,
+    );
     final RoomController controller = widget.controllerFactory();
     _watchOwnedController(controller);
     // LobbyScreen/RoomRoute must not take a store dependency. Listen here
@@ -464,6 +471,7 @@ class _HomeScreenState extends State<HomeScreen>
             action: LobbyAction.create,
             playerName: name,
             players: players,
+            toggles: toggles,
           ),
         ),
       );
@@ -847,6 +855,45 @@ class _HomeScreenState extends State<HomeScreen>
                                 value: _players,
                                 onChanged: (value) =>
                                     setState(() => _players = value),
+                              ),
+                              SizedBox(height: compact ? kSpace2 : kSpace3),
+                              SwitchListTile(
+                                key: const Key('home-rule-blocks'),
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(
+                                  loc.homeRuleBlocks,
+                                  style: textTheme.labelLarge?.copyWith(
+                                    color: LudoColors.ink,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  loc.homeRuleBlocksHint,
+                                  style: textTheme.bodyMedium?.copyWith(
+                                    color: LudoColors.inkMuted,
+                                  ),
+                                ),
+                                value: _rulesBlocks,
+                                onChanged: (value) =>
+                                    setState(() => _rulesBlocks = value),
+                              ),
+                              SwitchListTile(
+                                key: const Key('home-rule-capture-bonus'),
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(
+                                  loc.homeRuleCaptureBonus,
+                                  style: textTheme.labelLarge?.copyWith(
+                                    color: LudoColors.ink,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  loc.homeRuleCaptureBonusHint,
+                                  style: textTheme.bodyMedium?.copyWith(
+                                    color: LudoColors.inkMuted,
+                                  ),
+                                ),
+                                value: _rulesCaptureBonus,
+                                onChanged: (value) =>
+                                    setState(() => _rulesCaptureBonus = value),
                               ),
                             ],
                             if (_hasLastTable &&

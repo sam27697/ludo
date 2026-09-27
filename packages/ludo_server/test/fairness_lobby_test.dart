@@ -390,7 +390,22 @@ void main() {
         'code': room.roomData['code']! as String,
         'seat_token': room.seatToken,
       });
+      // docs/PROTOCOL.md section 15 rule 2: resume is answered with
+      // seat_assigned, then room.
+      await expectSeatAssigned(
+        room.client,
+        expectedSeat: room.seat,
+        expectedToken: room.seatToken,
+        because: 'resuming into the same room must still answer '
+            'seat_assigned before the room snapshot',
+      );
       final Map<String, Object?> resumed = await room.client.next();
+      expect(
+        resumed['t'],
+        'room',
+        reason: 'the resume\'s seat_assigned must be immediately followed '
+            'by the room snapshot; got "${resumed['t']}": ${resumed['d']}',
+      );
       final Map<String, Object?> resumedData =
           resumed['d']! as Map<String, Object?>;
 
@@ -1118,7 +1133,23 @@ void main() {
         'code': lobby.code,
         'seat_token': lobby.host.token,
       });
+      // docs/PROTOCOL.md section 15 rule 2: resume is answered with
+      // seat_assigned, then room.
+      await expectSeatAssigned(
+        lobby.host.client,
+        expectedSeat: lobby.host.seat,
+        expectedToken: lobby.host.token,
+        because: 'resuming after start_game must still answer '
+            'seat_assigned before the room snapshot',
+      );
       final Map<String, Object?> refreshed = await lobby.host.client.next();
+      expect(
+        refreshed['t'],
+        'room',
+        reason: 'the resume\'s seat_assigned must be immediately followed '
+            'by the room snapshot; got "${refreshed['t']}": '
+            '${refreshed['d']}',
+      );
       final Map<String, Object?> roomData =
           refreshed['d']! as Map<String, Object?>;
       final List<Object?> seats = roomData['seats']! as List<Object?>;
@@ -1325,7 +1356,23 @@ void main() {
         'code': lobby.code,
         'seat_token': lobby.host.token,
       });
+      // docs/PROTOCOL.md section 15 rule 2: resume is answered with
+      // seat_assigned, then room.
+      await expectSeatAssigned(
+        lobby.host.client,
+        expectedSeat: lobby.host.seat,
+        expectedToken: lobby.host.token,
+        because: 'resuming after start_game must still answer '
+            'seat_assigned before the room snapshot',
+      );
       final Map<String, Object?> refreshed = await lobby.host.client.next();
+      expect(
+        refreshed['t'],
+        'room',
+        reason: 'the resume\'s seat_assigned must be immediately followed '
+            'by the room snapshot; got "${refreshed['t']}": '
+            '${refreshed['d']}',
+      );
       final Map<String, Object?> roomData =
           refreshed['d']! as Map<String, Object?>;
       final List<Object?> seats = roomData['seats']! as List<Object?>;

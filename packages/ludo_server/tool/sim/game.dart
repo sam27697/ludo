@@ -432,9 +432,37 @@ Future<void> reconnectSeat({
     'code': code,
     'seat_token': old.token,
   });
+  // docs/PROTOCOL.md section 15 rule 2: resume is answered with
+  // seat_assigned, then room, whether or not the seat moved while it was
+  // away. No scenario in this directory ever calls set_players, so
+  // seatIndex is expected unchanged here, but the frame is still owed on
+  // every resume and is asserted, not skipped.
+  final Frame seatAssigned = await newSocket.next();
+  expectFrameType(seatAssigned, 'seat_assigned',
+      because: 'resume reply 1/2 for seat $seatIndex');
+  final Map<String, Object?> seatAssignedData = frameData(seatAssigned);
+  final int assignedSeat = requireInt(seatAssignedData, 'seat',
+      frame: 'seat_assigned (resume seat $seatIndex)');
+  if (assignedSeat != seatIndex) {
+    throw ScenarioFailure(
+      'resume for seat $seatIndex came back with seat_assigned.seat='
+      '$assignedSeat; no scenario in this directory reseats the room, so '
+      'this must be unchanged',
+    );
+  }
+  final String assignedToken = requireString(seatAssignedData, 'seat_token',
+      frame: 'seat_assigned (resume seat $seatIndex)');
+  if (assignedToken != old.token) {
+    throw ScenarioFailure(
+      'resume for seat $seatIndex came back with a different seat_token on '
+      'seat_assigned; docs/PROTOCOL.md section 15 rule 3 forbids the token '
+      'changing',
+    );
+  }
+
   final Frame roomFrame = await newSocket.next();
   expectFrameType(roomFrame, 'room',
-      because: 'resume reply for seat $seatIndex');
+      because: 'resume reply 2/2 for seat $seatIndex');
   final Map<String, Object?> roomData = frameData(roomFrame);
 
   final String chainCommit = requireString(roomData, 'chain_commit',

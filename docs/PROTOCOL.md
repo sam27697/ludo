@@ -107,7 +107,7 @@ different games.
 | `t` | `d` |
 |---|---|
 | `room` | the full room state, section 6. Sent on create, join, resume, and whenever a client needs resynchronising. |
-| `seat_assigned` | `{ "seat": 0..3, "seat_token": string }`. Sent once, to one client, immediately before its first `room`. |
+| `seat_assigned` | `{ "seat": 0..3, "seat_token": string }`. Sent to one client immediately before the `room` that answers its `create_room`, `join_room` or `resume`, and again whenever `set_players` moves that client to a different seat. Section 15. |
 | `player_joined` | `{ "seat": int, "name": string }` |
 | `player_left` | `{ "seat": int }` |
 | `presence` | `{ "seat": int, "connected": bool }` |
@@ -359,7 +359,9 @@ tested in the simulator gate with one client killed and with two killed at once.
 3. On reconnect the client opens a socket and sends `resume` with `code` and
    `seat_token`. It does not send `join_room`; joining is for new players and
    would be rejected with `ROOM_STARTED`.
-4. The server answers with the full `room` snapshot. The client discards its
+4. The server answers with `seat_assigned` and then the full `room` snapshot
+   (section 15). The client takes its seat from that `seat_assigned`, never from
+   the one it stored, and stores it again. The client discards its
    local state entirely and renders the snapshot. It does not attempt to
    reconcile, replay or animate the gap. The **other** sockets are told the seat
    is back with a `presence` carrying `connected: true`, but only when the
@@ -821,3 +823,40 @@ is set at `start_game` and never cleared. So:
 
 `winner` moves the other way and is the companion field: `null` in LOBBY and
 PLAYING, an integer seat in FINISHED.
+
+## 15. A seat number can change in the lobby, 2026-09-27
+
+`set_players` re-seats everyone onto the canonical set for the new count
+(section 3): `[0, 2]` for two players, `[0, 1, 2]` for three, `[0, 1, 2, 3]`
+for four, filled in the order of the old seat numbers. Until this ruling a
+client learned its seat exactly once, from `seat_assigned`, and nothing ever
+told it the number had moved. The snapshot has no "you" field. So a host at
+seat 0 with one friend at seat 1 of a four-seat room who shrinks the room to
+two moves that friend to seat 2, and the friend's phone goes on believing it is
+seat 1: it never sees its own turn, and a later `resume` restores the wrong
+seat. It was unreachable only because no client offered `set_players`.
+
+The ruling:
+
+1. **After a successful `set_players`, every connected seat whose number
+   changed receives `seat_assigned` with its new `seat` and its unchanged
+   `seat_token`, before the `room` that carries the new seating.** For the
+   host that is before the `room` reply; for everyone else, before the `room`
+   broadcast. A seat whose number did not change receives no `seat_assigned`.
+   A seat that is not connected receives nothing then and learns its seat on
+   `resume` (rule 2).
+2. **`resume` is answered with `seat_assigned`, then `room`**, on the resuming
+   socket, always, whether or not the seat moved while it was away. This covers
+   the seat that was disconnected during a re-seat and a stored seat number
+   that is stale for any other reason. Section 8 rule 4 now says so.
+3. **The seat token never changes.** Only the number does. The token is the
+   identity; the number is where that identity sits at the table.
+4. `seat_assigned` still carries no `seq` (section 5): it is not a state change
+   on its own and is always followed on the same socket by a `room` whose
+   snapshot carries the `seq`.
+5. **A client treats every `seat_assigned` as the truth about its own seat**,
+   at any point in the connection, and overwrites what it held, including the
+   seat it passed to `resume`.
+
+**The server does not do this yet.** Rules 1 and 2 are a server change, rule 5
+a client change.

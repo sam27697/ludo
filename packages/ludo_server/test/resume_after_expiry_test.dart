@@ -517,18 +517,30 @@ void main() {
       final WireTestClient freshGuest =
           await WireTestClient.connect(harness.wsUri);
       clients.add(freshGuest);
-      freshGuest.send('resume', <String, Object?>{
+      final String resumeId = freshGuest.send('resume', <String, Object?>{
         'code': lobby.code,
         'seat_token': lobby.guest.token,
       });
+      // docs/PROTOCOL.md section 15 rule 2: resume is answered with
+      // seat_assigned, then room, whether or not the seat moved while it
+      // was away.
+      await expectSeatAssigned(
+        freshGuest,
+        expectedSeat: lobby.guest.seat,
+        expectedToken: lobby.guest.token,
+        because: 'S1 (await_roll sweep): resume must answer seat_assigned '
+            'before the room snapshot',
+      );
       final Map<String, Object?> resumeFrame = await freshGuest.next();
       expect(
         resumeFrame['t'],
         'room',
-        reason: 'resume on a fresh socket must answer with a room snapshot '
-            '(connection.dart\'s _handleResume, docs/PROTOCOL.md section '
-            '8); got "${resumeFrame['t']}": ${resumeFrame['d']}',
+        reason: 'resume on a fresh socket must answer with a room snapshot, '
+            'immediately after seat_assigned (connection.dart\'s '
+            '_handleResume, docs/PROTOCOL.md section 8); got '
+            '"${resumeFrame['t']}": ${resumeFrame['d']}',
       );
+      expect(resumeFrame['re'], resumeId);
       await drainPresence(lobby.host.client, lobby.guest.seat, connected: true);
       final Map<String, Object?> roomData =
           resumeFrame['d']! as Map<String, Object?>;
@@ -768,17 +780,29 @@ void main() {
       final WireTestClient freshGuest =
           await WireTestClient.connect(harness.wsUri);
       clients.add(freshGuest);
-      freshGuest.send('resume', <String, Object?>{
+      final String resumeId = freshGuest.send('resume', <String, Object?>{
         'code': lobby.code,
         'seat_token': lobby.guest.token,
       });
+      // docs/PROTOCOL.md section 15 rule 2: resume is answered with
+      // seat_assigned, then room, whether or not the seat moved while it
+      // was away.
+      await expectSeatAssigned(
+        freshGuest,
+        expectedSeat: lobby.guest.seat,
+        expectedToken: lobby.guest.token,
+        because: 'S2 (await_move sweep): resume must answer seat_assigned '
+            'before the room snapshot',
+      );
       final Map<String, Object?> resumeFrame = await freshGuest.next();
       expect(
         resumeFrame['t'],
         'room',
-        reason: 'resume on a fresh socket must answer with a room snapshot; '
-            'got "${resumeFrame['t']}": ${resumeFrame['d']}',
+        reason: 'resume on a fresh socket must answer with a room snapshot, '
+            'immediately after seat_assigned; got "${resumeFrame['t']}": '
+            '${resumeFrame['d']}',
       );
+      expect(resumeFrame['re'], resumeId);
       await drainPresence(lobby.host.client, lobby.guest.seat, connected: true);
       final Map<String, Object?> roomData =
           resumeFrame['d']! as Map<String, Object?>;

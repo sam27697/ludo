@@ -226,7 +226,12 @@ Future<void> _completeSuccessfulCreate(
   );
   expect(
     _dataOf(createMessages.single),
-    <String, Object?>{'name': name, 'players': seats},
+    <String, Object?>{
+      'name': name,
+      'players': seats,
+      // Order 202: Home's rule toggles, untouched, reach the wire as defaults.
+      'rules': <String, Object?>{'blocks': true, 'capture_bonus': true},
+    },
     reason:
         'the typed name and chosen seat count must reach the wire before '
         'the create is treated as successful',

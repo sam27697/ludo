@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'die_mark.dart';
+import 'net/connection.dart' show RoomToggles;
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'session_memory.dart' show SeatRecord;
@@ -59,6 +60,7 @@ class LobbyScreen extends StatefulWidget {
     required this.playerName,
     this.code,
     this.players = 4,
+    this.toggles = const RoomToggles(),
     this.resume,
   });
 
@@ -73,6 +75,9 @@ class LobbyScreen extends StatefulWidget {
   /// The seat count requested on create; ignored on join.
   final int players;
 
+  /// The rules toggles requested on create; ignored on join.
+  final RoomToggles toggles;
+
   /// Required in practice when [action] is [LobbyAction.resume]; ignored
   /// otherwise. The seat the resume request is sent for.
   final SeatRecord? resume;
@@ -82,6 +87,11 @@ class LobbyScreen extends StatefulWidget {
 }
 
 class _LobbyScreenState extends State<LobbyScreen> {
+  /// True from the moment [lobby-start-with-present-button] is tapped until
+  /// [controller.setPlayers] and, when it runs, [controller.startGame] both
+  /// settle. While true a second tap sends nothing.
+  bool _startWithPresentInFlight = false;
+
   @override
   void initState() {
     super.initState();
@@ -109,6 +119,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         widget.controller.createRoom(
           name: widget.playerName,
           players: widget.players,
+          toggles: widget.toggles,
         );
       case LobbyAction.join:
         widget.controller.joinRoom(code: widget.code!, name: widget.playerName);
@@ -120,6 +131,38 @@ class _LobbyScreenState extends State<LobbyScreen> {
           seatToken: resume.seatToken,
         );
     }
+  }
+
+  /// The tap handler for `lobby-start-with-present-button`: shrinks the
+  /// room to [count], the seats occupied right now, then starts the game
+  /// with them, but only when that shrink actually landed the room full on
+  /// a controller still connected -- a friend joining between the tap and
+  /// the server reading `set_players` is a race `controller.setPlayers`
+  /// itself already recovers from silently, and this must not paper over
+  /// that recovery by starting a game the fuller room was never asked for.
+  Future<void> _startWithPresent(int count) async {
+    if (_startWithPresentInFlight) {
+      return;
+    }
+    setState(() {
+      _startWithPresentInFlight = true;
+    });
+    await widget.controller.setPlayers(count);
+    if (mounted) {
+      final RoomController controller = widget.controller;
+      final RoomSnapshot? room = controller.room;
+      if (controller.phase == RoomPhase.connected &&
+          room != null &&
+          room.seats.length == room.players) {
+        await controller.startGame();
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _startWithPresentInFlight = false;
+    });
   }
 
   Future<void> _copyToClipboard(String text, AppLocalizations loc) async {
@@ -348,6 +391,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
               padding: const EdgeInsets.symmetric(vertical: kSpace1),
               child: Text(seat.name, textAlign: TextAlign.center),
             ),
+          SizedBox(height: compact ? kSpace2 : kSpace3),
+          Text(
+            room.rules.blocks ? loc.lobbyRuleBlocksOn : loc.lobbyRuleBlocksOff,
+            key: const Key('lobby-rule-blocks'),
+            textAlign: TextAlign.center,
+          ),
+          Text(
+            room.rules.captureBonus
+                ? loc.lobbyRuleCaptureBonusOn
+                : loc.lobbyRuleCaptureBonusOff,
+            key: const Key('lobby-rule-capture-bonus'),
+            textAlign: TextAlign.center,
+          ),
           if (!controller.isHost) ...[
             const SizedBox(height: kSpace4),
             Text(
@@ -373,6 +429,21 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 textAlign: TextAlign.center,
               ),
             ),
+            if (room.state == RoomState.lobby &&
+                !roomFull &&
+                room.seats.length >= 2) ...[
+              const SizedBox(height: kSpace2),
+              ElevatedButton(
+                key: const Key('lobby-start-with-present-button'),
+                onPressed: _startWithPresentInFlight
+                    ? null
+                    : () => _startWithPresent(room.seats.length),
+                child: Text(
+                  loc.lobbyStartWithPresent(room.seats.length),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
           ],
           SizedBox(height: compact ? kSpace2 : kSpace3),
           OutlinedButton(

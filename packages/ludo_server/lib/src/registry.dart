@@ -272,8 +272,18 @@ class ExpiredTurn {
 sealed class SetPlayersResult {}
 
 class SetPlayersOk extends SetPlayersResult {
-  SetPlayersOk({required this.room});
+  SetPlayersOk({required this.room, required this.movedSeats});
   final Room room;
+
+  /// The seats whose index this call actually changed, each the post-reseat
+  /// `Seat` (new `seat`, same `seatToken`), in ascending order of that new
+  /// index. `docs/PROTOCOL.md` section 15 rule 1: every one of these that is
+  /// still connected is owed its own `seat_assigned` before the `room` that
+  /// carries the reseat, and a seat whose index did not change is owed
+  /// nothing. Empty when this call left every occupied index exactly where
+  /// it was, which happens whenever the new count's canonical set already
+  /// agrees with the old one on every occupied slot.
+  final List<Seat> movedSeats;
 }
 
 class SetPlayersFailure extends SetPlayersResult {
@@ -798,6 +808,13 @@ class RoomRegistry {
           seedOrigin: ordered[i].seedOrigin,
         ),
     ];
+    // docs/PROTOCOL.md section 15 rule 1: compared index by index against
+    // `ordered`, which `reseated` was built from one-for-one, so `ordered[i]`
+    // is always the same occupant as `reseated[i]`, just at its old index.
+    final List<Seat> movedSeats = <Seat>[
+      for (int i = 0; i < ordered.length; i++)
+        if (ordered[i].seat != newIndices[i]) reseated[i],
+    ];
 
     room.players = players;
     room.seats = reseated;
@@ -805,7 +822,7 @@ class RoomRegistry {
         reseated.firstWhere((Seat s) => s.seatToken == seatToken).seat;
     room.seq++;
 
-    return SetPlayersOk(room: room);
+    return SetPlayersOk(room: room, movedSeats: movedSeats);
   }
 
   LeaveResult leaveRoom({required String code, required String seatToken}) {
