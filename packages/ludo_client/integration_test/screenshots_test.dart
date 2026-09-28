@@ -2202,6 +2202,34 @@ void main() {
 
     await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
 
+    // A player typing on a real keyboard does not leave the text cursor
+    // handle showing once done, and this is a store screenshot: take focus
+    // off the name field before anything else in this capture happens.
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+
+    final Finder nameFieldEditableFinder = find.descendant(
+      of: find.byKey(const Key('home-name-field')),
+      matching: find.byType(EditableText),
+    );
+    expect(
+      tester.widget<EditableText>(nameFieldEditableFinder).focusNode.hasFocus,
+      isFalse,
+      reason:
+          'capture 13: expected home-name-field to have lost focus right '
+          'after FocusManager.instance.primaryFocus?.unfocus() above, so no '
+          'text cursor handle is painted under it in the screenshot; it '
+          'still has focus',
+    );
+    expect(
+      tester.widget<EditableText>(nameFieldEditableFinder).controller.text,
+      hostName,
+      reason:
+          'capture 13: expected home-name-field to still read "$hostName" '
+          'right after the unfocus above; the create_room assertions below '
+          'depend on the typed name surviving the unfocus',
+    );
+
     // Open the players disclosure: home-players-selector and the two
     // SwitchListTiles mount, both starting on (home_screen.dart's own
     // _rulesBlocks/_rulesCaptureBonus defaults).
@@ -2245,6 +2273,15 @@ void main() {
       captureBonusExpected: true,
       momentDescription:
           'after the screenshot settle, immediately before capture 13',
+    );
+
+    expect(
+      tester.widget<EditableText>(nameFieldEditableFinder).focusNode.hasFocus,
+      isFalse,
+      reason:
+          'capture 13: expected home-name-field to still have no focus '
+          'immediately before the screenshot, so no text cursor handle is '
+          'painted under it; it has focus again',
     );
 
     await binding.takeScreenshot('13-home-rules-ar');
