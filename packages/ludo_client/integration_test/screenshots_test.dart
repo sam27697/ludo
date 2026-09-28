@@ -79,6 +79,7 @@ import 'package:ludo_client/src/room_code.dart'
 import 'package:ludo_client/src/server_config.dart';
 import 'package:ludo_client/src/session_memory.dart'
     show SeatRecord, SessionMemory;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../test/net/fake_transport.dart';
 
@@ -2158,6 +2159,16 @@ void main() {
     _stubScreenshotChannel(tester);
     await binding.convertFlutterSurfaceToImage();
 
+    // Before pumpWidget: every capture ahead of this one in the same suite
+    // run shares this app's SharedPreferences store, and captures 01 and 12
+    // both write to it (recordSuccessfulCreate's last-table chip,
+    // SessionMemory.recordSeat's seat record through
+    // home_screen.dart's _onOwnedControllerChanged). Without clearing it
+    // here, the fresh HomeScreen this case is about to mount would read
+    // back an earlier capture's rejoin button and last-table chip instead
+    // of the clean Home the order asks for.
+    await (await SharedPreferences.getInstance()).clear();
+
     final factory = _ScreenshotControllerFactory();
     // Mounted exactly the way capture 12 mounts HomeScreen: directly in
     // Arabic through _reconnectingCaptureHarness's own `locale` argument,
@@ -2174,6 +2185,18 @@ void main() {
     // there is no runaway ticker for pumpAndSettle to chase.
     await tester.pumpAndSettle();
     await _expectHomeScreen(tester, localeName: 'ar');
+
+    expect(
+      find.byKey(const Key('home-rejoin-button')),
+      findsNothing,
+      reason:
+          'capture 13: expected no home-rejoin-button on a freshly mounted '
+          'HomeScreen after clearing SharedPreferences above; found one, so '
+          'a SessionMemory seat record from an earlier capture in this '
+          'suite run (written through home_screen.dart\'s '
+          '_onOwnedControllerChanged / SessionMemory.recordSeat) survived '
+          'the clear',
+    );
 
     const String hostName = 'Huda';
 
@@ -2497,7 +2520,12 @@ void _expectHomeRulesOpen(
 /// failure the reason names [label], says it is off screen, and gives both
 /// rects -- [label]'s own and the view's -- so a widget left below the fold
 /// on some device is a reproducible finding for the master, not something
-/// this test papers over by scrolling.
+/// this test papers over by scrolling. Both rects are formatted by hand
+/// (left/top/right/bottom, fixed to one decimal) rather than through Rect's
+/// own toString: run 61 (order 207's RETURN 1) found the device build
+/// strips dart:ui's toString, so a failure there printed "its rect Instance
+/// of 'Rect' does not lie entirely inside the view Instance of 'Rect'" --
+/// unreadable, and useless as a reproduction.
 void _expectRectInsideView(
   WidgetTester tester,
   Finder finder, {
@@ -2512,14 +2540,29 @@ void _expectRectInsideView(
       rect.top >= viewRect.top &&
       rect.right <= viewRect.right &&
       rect.bottom <= viewRect.bottom;
+  // left/top/right/bottom formatted by hand, one decimal each, rather than
+  // through Rect's own toString: run 61 (order 207's RETURN 1) showed the
+  // device build strips dart:ui's toString, so this same failure printed
+  // "its rect Instance of 'Rect' does not lie entirely inside the view
+  // Instance of 'Rect'" there -- unreadable, and no reproduction at all.
+  final String rectText =
+      '(left: ${rect.left.toStringAsFixed(1)}, top: '
+      '${rect.top.toStringAsFixed(1)}, right: '
+      '${rect.right.toStringAsFixed(1)}, bottom: '
+      '${rect.bottom.toStringAsFixed(1)})';
+  final String viewRectText =
+      '(left: ${viewRect.left.toStringAsFixed(1)}, top: '
+      '${viewRect.top.toStringAsFixed(1)}, right: '
+      '${viewRect.right.toStringAsFixed(1)}, bottom: '
+      '${viewRect.bottom.toStringAsFixed(1)})';
   expect(
     insideView,
     isTrue,
     reason:
-        '$label is off screen $context: its rect $rect does not lie '
-        'entirely inside the view $viewRect; this test does not scroll to '
-        'bring it into view, so this is a real finding for the master, not '
-        'something to work around',
+        '$label is off screen $context: its rect $rectText does not lie '
+        'entirely inside the view $viewRectText; this test does not scroll '
+        'to bring it into view, so this is a real finding for the master, '
+        'not something to work around',
   );
 }
 
