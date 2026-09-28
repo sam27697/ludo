@@ -92,6 +92,10 @@ class _HomeScreenState extends State<HomeScreen>
   // KeyedSubtree, one layer up.
   final GlobalKey _joinButtonScrollKey = GlobalKey();
   final GlobalKey _codeFieldScrollKey = GlobalKey();
+  // Order 209: reach create-room-button's render object from the players
+  // disclosure's onPressed the same way, without disturbing
+  // Key('create-room-button').
+  final GlobalKey _createButtonScrollKey = GlobalKey();
 
   @override
   void initState() {
@@ -204,6 +208,34 @@ class _HomeScreenState extends State<HomeScreen>
       alignment: 1.0,
       duration: reducedMotion ? Duration.zero : kLinkScrollDuration,
       curve: Curves.easeOut,
+    );
+  }
+
+  /// Scrolls create-room-button back into the home scroll view's viewport
+  /// when opening the players/rules disclosure has pushed it below the
+  /// bottom edge (order 209). keepVisibleAtEnd only moves the scroll
+  /// position when the button's bottom already sits past the viewport's
+  /// bottom, and then only as far as bringing it to that edge, so a button
+  /// that is already visible is left alone rather than pushed further up.
+  /// A null context is a silent no-op, same as [_scrollLinkTargetIntoView].
+  ///
+  /// Instant, not animated (order 209 respec 1): a scroll with a nonzero
+  /// duration runs as a DrivenScrollActivity, and that activity's
+  /// shouldIgnorePointer is true for as long as it is running, so the whole
+  /// Home content stops accepting taps for the length of the animation. A
+  /// player who opens the rules and immediately taps a player count would
+  /// lose that tap. jumpTo has no activity and ignores nothing, and the
+  /// disclosure itself already opens with no animation, so an instant
+  /// scroll matches it.
+  void _scrollCreateButtonIntoView() {
+    final BuildContext? targetContext = _createButtonScrollKey.currentContext;
+    if (targetContext == null) {
+      return;
+    }
+    Scrollable.ensureVisible(
+      targetContext,
+      alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      duration: Duration.zero,
     );
   }
 
@@ -830,8 +862,17 @@ class _HomeScreenState extends State<HomeScreen>
                             if (!_playersSelectorOpen)
                               TextButton(
                                 key: const Key('home-players-disclosure'),
-                                onPressed: () =>
-                                    setState(() => _playersSelectorOpen = true),
+                                onPressed: () {
+                                  setState(() => _playersSelectorOpen = true);
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    if (!mounted) {
+                                      return;
+                                    }
+                                    _scrollCreateButtonIntoView();
+                                  });
+                                },
                                 style: TextButton.styleFrom(
                                   foregroundColor: LudoColors.inkMuted,
                                   minimumSize: const Size(48, 48),
@@ -906,11 +947,14 @@ class _HomeScreenState extends State<HomeScreen>
                               ),
                             ],
                             SizedBox(height: compact ? kSpace3 : kSpace6),
-                            _weightedButton(
-                              key: const Key('create-room-button'),
-                              onPressed: _createRoom,
-                              label: loc.homeCreateRoomButton,
-                              primary: !joinPrimary,
+                            KeyedSubtree(
+                              key: _createButtonScrollKey,
+                              child: _weightedButton(
+                                key: const Key('create-room-button'),
+                                onPressed: _createRoom,
+                                label: loc.homeCreateRoomButton,
+                                primary: !joinPrimary,
+                              ),
                             ),
                             SizedBox(height: sectionGap),
                             KeyedSubtree(
