@@ -2136,6 +2136,253 @@ void main() {
 
     await binding.takeScreenshot('12-lobby-guest-full-ar');
   });
+
+  // ==========================================================================
+  // 13, 14: order 207's two screen changes PR #75 shipped that nobody had
+  // looked at on a device (standing lesson 28) -- Home's open players
+  // disclosure (home-players-disclosure, home-rule-blocks,
+  // home-rule-capture-bonus, home_screen.dart around lines 830-900), and the
+  // host's "start with N" button in a lobby that is not full
+  // (lobby-start-with-present-button, lobby-rule-blocks,
+  // lobby-rule-capture-bonus, lobby_screen.dart around lines 395-452).
+  // Captures 01 and 02 show the disclosure closed; capture 03 is a full
+  // room, so lobby-start-with-present-button never appears in any capture
+  // before this one. One mount, one flow, Arabic throughout (standing
+  // lesson 35): the same route capture 12 walks -- HomeScreen -> RoomRoute
+  // -> LobbyScreen -- stopped short of ever tapping Start.
+  // ==========================================================================
+  testWidgets('capture 13-home-rules-ar, 14-lobby-host-start-with-ar', (
+    tester,
+  ) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    final factory = _ScreenshotControllerFactory();
+    // Mounted exactly the way capture 12 mounts HomeScreen: directly in
+    // Arabic through _reconnectingCaptureHarness's own `locale` argument,
+    // not by tapping locale-toggle-button twice from HomeScreen's English
+    // default the way 01-04's and 05's captures do.
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+        locale: const Locale('ar'),
+      ),
+    );
+    // Safe here and only here, same as 01-home-en, 08/09 and 12 above:
+    // nothing has tapped Create Room yet, so LobbyScreen has not mounted and
+    // there is no runaway ticker for pumpAndSettle to chase.
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: 'ar');
+
+    const String hostName = 'Huda';
+
+    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
+
+    // Open the players disclosure: home-players-selector and the two
+    // SwitchListTiles mount, both starting on (home_screen.dart's own
+    // _rulesBlocks/_rulesCaptureBonus defaults).
+    await tester.tap(find.byKey(const Key('home-players-disclosure')));
+    await tester.pump();
+
+    // One tap on home-rule-blocks: off. home-rule-capture-bonus is never
+    // touched, so it stays on -- one switch in each state on the picture,
+    // per the order.
+    await tester.tap(find.byKey(const Key('home-rule-blocks')));
+    await tester.pump();
+
+    _expectHomeRulesOpen(
+      tester,
+      blocksExpected: false,
+      captureBonusExpected: true,
+      momentDescription:
+          'immediately after the home-rule-blocks tap, before the '
+          'screenshot settle',
+    );
+
+    // Home has no LobbyScreen yet (nothing has tapped Create Room), so
+    // _settleForScreenshot's own trailing pumpAndSettle() is safe here, the
+    // same reasoning 01-home-en and 08/09-home-rejoin rely on above.
+    final Finder rulesSettledFinder = find.byWidgetPredicate(
+      (Widget widget) =>
+          widget is SwitchListTile &&
+          widget.key == const Key('home-rule-blocks') &&
+          widget.value == false,
+    );
+    await _settleForScreenshot(
+      tester,
+      rulesSettledFinder,
+      'home-rule-blocks reading off (SwitchListTile.value == false) after '
+      'the tap, before capture 13',
+    );
+
+    _expectHomeRulesOpen(
+      tester,
+      blocksExpected: false,
+      captureBonusExpected: true,
+      momentDescription:
+          'after the screenshot settle, immediately before capture 13',
+    );
+
+    await binding.takeScreenshot('13-home-rules-ar');
+
+    // Order 207 step 4: after the screenshot, so the picture exists either
+    // way -- a create-room-button left below the fold with the rules open
+    // is a finding for the master, not something this test scrolls around.
+    _expectRectInsideView(
+      tester,
+      find.byKey(const Key('create-room-button')),
+      label: 'create-room-button',
+      context:
+          'with the home rules open (home-rule-blocks off, '
+          'home-rule-capture-bonus on)',
+    );
+
+    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+
+    expect(
+      factory.controllers,
+      hasLength(1),
+      reason:
+          'tapping Create Room must build exactly one controller through '
+          'the injected controllerFactory (home_screen.dart)',
+    );
+    final RoomController controller = factory.controllers.single;
+    final FakeTransport transport = factory.transports.single;
+    addTearDown(controller.dispose);
+
+    final List<String> createMessages = transport.sentRaw
+        .where((s) => _typeOf(s) == 'create_room')
+        .toList();
+    expect(
+      createMessages,
+      hasLength(1),
+      reason:
+          'expected LobbyScreen.initState, reached through RoomRoute, to '
+          'have sent exactly one create_room request; sent '
+          '${transport.sentRaw.map(_typeOf).toList()}',
+    );
+    final String createId = _idOf(createMessages.single);
+
+    // Order 207 step 5: the switch reaching the wire, not only the widget --
+    // read straight off the create_room frame this client actually sent
+    // (test/net/fake_transport.dart's sentRaw), the same idiom _idOf/_typeOf
+    // already read frames with above.
+    final Map<String, Object?> createData =
+        _decode(createMessages.single)['d']! as Map<String, Object?>;
+    final Map<String, Object?> sentRules =
+        createData['rules']! as Map<String, Object?>;
+    expect(
+      sentRules['blocks'],
+      isFalse,
+      reason:
+          'expected the create_room frame\'s rules.blocks to be false '
+          'after the home-rule-blocks tap; frame data was $createData',
+    );
+    expect(
+      sentRules['capture_bonus'],
+      isTrue,
+      reason:
+          'expected the create_room frame\'s rules.capture_bonus to still '
+          'be true (home-rule-capture-bonus was never tapped); frame data '
+          'was $createData',
+    );
+    expect(
+      sentRules.containsKey('turn_seconds'),
+      isFalse,
+      reason:
+          'RoomToggles.toJson (net/connection.dart) never carries '
+          'turn_seconds; expected no turn_seconds key inside rules, frame '
+          'data was $createData',
+    );
+
+    // Order 207 step 6: a room code drawn only from roomCodeAlphabet
+    // (room_code.dart) -- the same fixture-broken guard capture 12 uses
+    // above, applied here for the same reason: a code that fails
+    // isValidRoomCode never reaches a controller at all, and the tap above
+    // would already have failed to push LobbyScreen if this were wrong.
+    const String roomCode = 'STRTW2';
+    expect(
+      isValidRoomCode(normalizeRoomCode(roomCode)),
+      isTrue,
+      reason:
+          'capture 13/14 fixture is broken: "$roomCode" must be a '
+          'syntactically valid room code (room_code.dart\'s '
+          'roomCodeAlphabet)',
+    );
+
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-13'},
+      ),
+    );
+    // _roomJson (above) hardcodes rules and may not be edited, per the
+    // order: build its map, then replace the rules entry on the result with
+    // the fake server's own answer for this capture -- blocks false,
+    // capture_bonus true, turn_seconds 90 -- host_seat 0, players 4, and two
+    // seats taken (this host, and Karim at seat 1).
+    final Map<String, Object?> roomJson = _roomJson(
+      code: roomCode,
+      players: 4,
+      hostSeat: 0,
+      seats: <Map<String, Object?>>[
+        _seatJson(0, name: hostName),
+        _seatJson(1, name: 'Karim'),
+      ],
+      seq: 1,
+    );
+    roomJson['rules'] = <String, Object?>{
+      'blocks': false,
+      'capture_bonus': true,
+      'turn_seconds': 90,
+    };
+    transport.pushText(_frame(type: 'room', re: createId, data: roomJson));
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      'LobbyScreen after the create_room reply carrying code "$roomCode"',
+    );
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: 'ar',
+      code: roomCode,
+      expectedSeatCount: 2,
+    );
+
+    _expectLobbyHostStartWith(
+      tester,
+      controller: controller,
+      momentDescription:
+          'immediately after the room reply, before the screenshot settle',
+    );
+
+    // Settle the way capture 12 does before its own takeScreenshot:
+    // LobbyScreen has already mounted the connecting-state ticker the file
+    // header describes, so no bare pumpAndSettle from here on, only bounded
+    // real-duration pumps to give the platform compositor time to catch up.
+    await _pumpRealDurationFrames(tester);
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: 'ar',
+      code: roomCode,
+      expectedSeatCount: 2,
+    );
+
+    _expectLobbyHostStartWith(
+      tester,
+      controller: controller,
+      momentDescription:
+          'after the post-room-reply settle, immediately before capture 14',
+    );
+
+    await binding.takeScreenshot('14-lobby-host-start-with-ar');
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -2156,5 +2403,240 @@ Widget _reconnectingCaptureHarness(Widget child, {required Locale locale}) {
       GlobalCupertinoLocalizations.delegate,
     ],
     home: child,
+  );
+}
+
+/// Order 207, capture 13: asserts home-players-selector and the two
+/// SwitchListTiles it opens alongside are on screen, that
+/// home-rule-blocks.value reads [blocksExpected] and
+/// home-rule-capture-bonus.value reads [captureBonusExpected], and that
+/// each tile's title reads its own literal straight out of app_ar.arb
+/// (homeRuleBlocks, homeRuleCaptureBonus) -- quoted here, not looked up
+/// through AppLocalizations, per the order. [momentDescription] names which
+/// of the two calls (before or after the screenshot settle) failed, so a
+/// failure does not have to be re-run to know which one it was.
+void _expectHomeRulesOpen(
+  WidgetTester tester, {
+  required bool blocksExpected,
+  required bool captureBonusExpected,
+  required String momentDescription,
+}) {
+  expect(
+    find.byKey(const Key('home-players-selector')),
+    findsOneWidget,
+    reason:
+        'capture 13 ($momentDescription): expected home-players-selector '
+        'on screen once the players disclosure is open',
+  );
+
+  final Finder blocksFinder = find.byKey(const Key('home-rule-blocks'));
+  expect(
+    blocksFinder,
+    findsOneWidget,
+    reason:
+        'capture 13 ($momentDescription): expected home-rule-blocks on '
+        'screen once the players disclosure is open',
+  );
+  final SwitchListTile blocksTile = tester.widget<SwitchListTile>(blocksFinder);
+  expect(
+    blocksTile.value,
+    blocksExpected,
+    reason:
+        'capture 13 ($momentDescription): expected home-rule-blocks\'s '
+        'SwitchListTile.value to be $blocksExpected, got '
+        '${blocksTile.value}',
+  );
+  const String expectedBlocksTitle = 'الحواجز';
+  final Text blocksTitle = blocksTile.title! as Text;
+  expect(
+    blocksTitle.data,
+    expectedBlocksTitle,
+    reason:
+        'capture 13 ($momentDescription): expected home-rule-blocks\'s '
+        'title to read the app_ar.arb homeRuleBlocks literal '
+        '"$expectedBlocksTitle", got "${blocksTitle.data}"',
+  );
+
+  final Finder captureBonusFinder = find.byKey(
+    const Key('home-rule-capture-bonus'),
+  );
+  expect(
+    captureBonusFinder,
+    findsOneWidget,
+    reason:
+        'capture 13 ($momentDescription): expected '
+        'home-rule-capture-bonus on screen once the players disclosure is '
+        'open',
+  );
+  final SwitchListTile captureBonusTile = tester.widget<SwitchListTile>(
+    captureBonusFinder,
+  );
+  expect(
+    captureBonusTile.value,
+    captureBonusExpected,
+    reason:
+        'capture 13 ($momentDescription): expected '
+        'home-rule-capture-bonus\'s SwitchListTile.value to be '
+        '$captureBonusExpected, got ${captureBonusTile.value}',
+  );
+  const String expectedCaptureBonusTitle = 'مكافأة الأكل';
+  final Text captureBonusTitle = captureBonusTile.title! as Text;
+  expect(
+    captureBonusTitle.data,
+    expectedCaptureBonusTitle,
+    reason:
+        'capture 13 ($momentDescription): expected '
+        'home-rule-capture-bonus\'s title to read the app_ar.arb '
+        'homeRuleCaptureBonus literal "$expectedCaptureBonusTitle", got '
+        '"${captureBonusTitle.data}"',
+  );
+}
+
+/// Order 207, captures 13 and 14: asserts [finder]'s rect lies entirely
+/// inside the current view (no scrolling attempted, in either capture). On
+/// failure the reason names [label], says it is off screen, and gives both
+/// rects -- [label]'s own and the view's -- so a widget left below the fold
+/// on some device is a reproducible finding for the master, not something
+/// this test papers over by scrolling.
+void _expectRectInsideView(
+  WidgetTester tester,
+  Finder finder, {
+  required String label,
+  required String context,
+}) {
+  final Rect rect = tester.getRect(finder);
+  final Size viewSize = tester.view.physicalSize / tester.view.devicePixelRatio;
+  final Rect viewRect = Rect.fromLTWH(0, 0, viewSize.width, viewSize.height);
+  final bool insideView =
+      rect.left >= viewRect.left &&
+      rect.top >= viewRect.top &&
+      rect.right <= viewRect.right &&
+      rect.bottom <= viewRect.bottom;
+  expect(
+    insideView,
+    isTrue,
+    reason:
+        '$label is off screen $context: its rect $rect does not lie '
+        'entirely inside the view $viewRect; this test does not scroll to '
+        'bring it into view, so this is a real finding for the master, not '
+        'something to work around',
+  );
+}
+
+/// Order 207, capture 14: asserts the host's not-full-lobby view --
+/// [controller].isHost true, lobby-start-button present and disabled,
+/// lobby-start-with-present-button present, enabled, and reading the
+/// app_ar.arb lobbyStartWithPresent "=2" literal, lobby-rule-blocks and
+/// lobby-rule-capture-bonus reading their own app_ar.arb literals (quoted
+/// here, not looked up through AppLocalizations, per the order), and
+/// lobby-leave-button's rect inside the view. Two lobby-seat-* rows are
+/// asserted by the caller's own _expectLobbyScreen(expectedSeatCount: 2)
+/// immediately before each call here, not repeated inside this helper.
+/// [momentDescription] names which of the two calls (before or after the
+/// post-room-reply settle) failed.
+void _expectLobbyHostStartWith(
+  WidgetTester tester, {
+  required RoomController controller,
+  required String momentDescription,
+}) {
+  expect(
+    controller.isHost,
+    isTrue,
+    reason:
+        'capture 14 ($momentDescription): expected controller.isHost to '
+        'read true -- this client created the room and was seated at '
+        'host_seat 0 -- got false',
+  );
+
+  final Finder startFinder = find.byKey(const Key('lobby-start-button'));
+  expect(
+    startFinder,
+    findsOneWidget,
+    reason:
+        'capture 14 ($momentDescription): expected lobby-start-button on '
+        'screen for the host',
+  );
+  final ElevatedButton startWidget = tester.widget<ElevatedButton>(startFinder);
+  expect(
+    startWidget.onPressed,
+    isNull,
+    reason:
+        'capture 14 ($momentDescription): the room is not full (2 of 4 '
+        'seats joined), so expected lobby-start-button disabled '
+        '(onPressed null), got a non-null callback',
+  );
+
+  final Finder startWithFinder = find.byKey(
+    const Key('lobby-start-with-present-button'),
+  );
+  expect(
+    startWithFinder,
+    findsOneWidget,
+    reason:
+        'capture 14 ($momentDescription): expected '
+        'lobby-start-with-present-button on screen for the host in a room '
+        'that is not full with at least 2 seated (lobby_screen.dart '
+        '_connectedBody)',
+  );
+  final ElevatedButton startWithWidget = tester.widget<ElevatedButton>(
+    startWithFinder,
+  );
+  expect(
+    startWithWidget.onPressed,
+    isNotNull,
+    reason:
+        'capture 14 ($momentDescription): expected '
+        'lobby-start-with-present-button enabled (onPressed non-null); '
+        'nothing has tapped it, so _startWithPresentInFlight should still '
+        'be false',
+  );
+  const String expectedStartWithText = 'ابدأ بلاعبَين';
+  final Text startWithText = startWithWidget.child! as Text;
+  expect(
+    startWithText.data,
+    expectedStartWithText,
+    reason:
+        'capture 14 ($momentDescription): expected '
+        'lobby-start-with-present-button\'s Text to read the app_ar.arb '
+        'lobbyStartWithPresent "=2" literal "$expectedStartWithText" for '
+        '2 seated, got "${startWithText.data}"',
+  );
+
+  const String expectedRuleBlocksText = 'الحواجز: معطّلة';
+  final Text ruleBlocksText = tester.widget<Text>(
+    find.byKey(const Key('lobby-rule-blocks')),
+  );
+  expect(
+    ruleBlocksText.data,
+    expectedRuleBlocksText,
+    reason:
+        'capture 14 ($momentDescription): expected lobby-rule-blocks\'s '
+        'Text to read the app_ar.arb lobbyRuleBlocksOff literal '
+        '"$expectedRuleBlocksText" (the fake server\'s room reply carries '
+        'rules.blocks: false), got "${ruleBlocksText.data}"',
+  );
+
+  const String expectedRuleCaptureBonusText = 'مكافأة الأكل: مفعّلة';
+  final Text ruleCaptureBonusText = tester.widget<Text>(
+    find.byKey(const Key('lobby-rule-capture-bonus')),
+  );
+  expect(
+    ruleCaptureBonusText.data,
+    expectedRuleCaptureBonusText,
+    reason:
+        'capture 14 ($momentDescription): expected '
+        'lobby-rule-capture-bonus\'s Text to read the app_ar.arb '
+        'lobbyRuleCaptureBonusOn literal "$expectedRuleCaptureBonusText" '
+        '(the fake server\'s room reply carries rules.capture_bonus: '
+        'true), got "${ruleCaptureBonusText.data}"',
+  );
+
+  _expectRectInsideView(
+    tester,
+    find.byKey(const Key('lobby-leave-button')),
+    label: 'lobby-leave-button',
+    context:
+        'in the host\'s not-full lobby with lobby-start-with-present-button '
+        'showing ($momentDescription)',
   );
 }
