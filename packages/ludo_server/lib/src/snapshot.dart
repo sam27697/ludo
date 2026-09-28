@@ -128,9 +128,13 @@ String _wirePhase(engine.GamePhase phase) {
   }
 }
 
-/// `seat_assigned`, section 5. Goes to exactly one socket, the one that just
-/// took this seat, and its `seat_token` must never appear anywhere else: not
-/// in a broadcast, not in a log line, not in any other client's snapshot.
+/// `seat_assigned`, section 5. Sent to one socket at a time: the seat that
+/// just took its place on `create_room` or `join_room`, the resuming socket
+/// on every `resume` whether or not its seat number moved while it was away
+/// (section 15 rule 2), and a connected seat whose number `set_players` just
+/// changed (section 15 rule 1). Its `seat_token` must never appear anywhere
+/// else: not in a broadcast, not in a log line, not in any other client's
+/// snapshot.
 Map<String, Object?> buildSeatAssigned(Seat seat) {
   return <String, Object?>{
     'seat': seat.seat,

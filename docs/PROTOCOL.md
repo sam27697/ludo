@@ -858,5 +858,8 @@ The ruling:
    at any point in the connection, and overwrites what it held, including the
    seat it passed to `resume`.
 
-**The server does not do this yet.** Rules 1 and 2 are a server change, rule 5
-a client change.
+Implemented in PR #75 (`2e26b91`): rules 1 and 2 in the server's
+`_handleSetPlayers` and `_handleResume`, rule 5 in the client's
+`RoomConnection` and `RoomController`. The tests that hold them are
+`packages/ludo_server/test/reseat_seat_assigned_test.dart` and
+`packages/ludo_client/test/net/room_controller_reseat_test.dart`.
