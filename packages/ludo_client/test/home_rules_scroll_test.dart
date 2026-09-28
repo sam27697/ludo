@@ -10,9 +10,11 @@
 // the rules/switches are on screen, the home scroll view scrolls with
 // ScrollPositionAlignmentPolicy.keepVisibleAtEnd on create-room-button --
 // bottom edge to the viewport's bottom edge, within 1 logical pixel, only
-// when the button is not already fully in view, instant under
-// MediaQuery.disableAnimations, animated over kLinkScrollDuration
-// (lib/src/home_screen.dart) otherwise.
+// when the button is not already fully in view, and instantly
+// (Duration.zero, a jumpTo). Order 209's respec 1 dropped the animated
+// variant: a scroll with a duration ignores pointer events on the whole
+// Home content while it runs, and ate the first tap on the players
+// selector in test/home_screen_players_fit_test.dart.
 //
 // Written against lib/src/home_screen.dart as it stands on base commit
 // 2e26b91: the body is one SingleChildScrollView with no controller and
@@ -180,22 +182,29 @@ void _expectCreateButtonFullyInViewClosed(WidgetTester tester, String caseId) {
   );
 }
 
-/// Fixture check: create-room-button must not be fully in view the instant
-/// the rules open, before any scroll has had a chance to run, or the case
-/// measures nothing.
-void _expectCreateButtonNotFullyInViewBeforeScroll(
+/// Fixture check: with the rules open, create-room-button must lie below
+/// the fold at the scroll offset the view had before the tap, or the case
+/// measures nothing. Read in unscrolled coordinates (the rect plus however
+/// far the view has moved since [pixelsBeforeTap]) because the scroll is
+/// instant: by the time the frame after the tap can be read, it has
+/// already happened.
+void _expectCreateButtonBelowFoldUnscrolled(
   WidgetTester tester,
-  String caseId,
-) {
+  String caseId, {
+  required double pixelsBeforeTap,
+}) {
   final Rect rect = tester.getRect(find.byKey(const Key('create-room-button')));
+  final double moved = _homeScrollPosition(tester).pixels - pixelsBeforeTap;
+  final Rect unscrolled = rect.shift(Offset(0, moved));
   final double viewHeight = _viewHeight(tester);
   expect(
-    _fullyInView(rect, viewHeight),
+    _fullyInView(unscrolled, viewHeight),
     isFalse,
     reason:
-        '$caseId fixture check: create-room-button must not already be '
-        'fully in view the instant the rules open, before any scroll; got '
-        '${_formatRect(rect)} against a viewport '
+        '$caseId fixture check: with the rules open and no scroll applied, '
+        'create-room-button must sit below the fold; got '
+        '${_formatRect(unscrolled)} (on screen ${_formatRect(rect)}, view '
+        'moved ${moved.toStringAsFixed(1)}) against a viewport '
         '${viewHeight.toStringAsFixed(1)} logical pixels tall. This file '
         'mounts at the size it does specifically to keep the button below '
         'the fold once the rules are open -- if lib/ has changed the '
@@ -247,14 +256,24 @@ void main() {
       _useSurface(tester, _kSurfaceSize);
 
       await tester.pumpWidget(_homeScreenApp());
-      await tester.pump();
+      // Settle Home's entrance motion before anything is measured: a tap
+      // while the content is still sliding in lands the jump at a moving
+      // target, and the slide then carries the button up off the bottom
+      // edge (run 61 measured 32.4 logical pixels). Home has no LobbyScreen
+      // and no live countdown, so pumpAndSettle is safe here.
+      await tester.pumpAndSettle();
 
       _expectCreateButtonFullyInViewClosed(tester, 'RS-1');
+      final double pixelsBeforeTap = _homeScrollPosition(tester).pixels;
 
       await tester.tap(find.byKey(const Key('home-players-disclosure')));
       await tester.pump();
 
-      _expectCreateButtonNotFullyInViewBeforeScroll(tester, 'RS-1');
+      _expectCreateButtonBelowFoldUnscrolled(
+        tester,
+        'RS-1',
+        pixelsBeforeTap: pixelsBeforeTap,
+      );
 
       await _settleAfterRulesOpen(tester);
 
@@ -286,7 +305,12 @@ void main() {
       _useSurface(tester, _kSurfaceSize);
 
       await tester.pumpWidget(_homeScreenApp());
-      await tester.pump();
+      // Settle Home's entrance motion before anything is measured: a tap
+      // while the content is still sliding in lands the jump at a moving
+      // target, and the slide then carries the button up off the bottom
+      // edge (run 61 measured 32.4 logical pixels). Home has no LobbyScreen
+      // and no live countdown, so pumpAndSettle is safe here.
+      await tester.pumpAndSettle();
 
       expect(
         find.byKey(const Key('home-rejoin-button')),
@@ -298,11 +322,16 @@ void main() {
       );
 
       _expectCreateButtonFullyInViewClosed(tester, 'RS-2');
+      final double pixelsBeforeTap = _homeScrollPosition(tester).pixels;
 
       await tester.tap(find.byKey(const Key('home-players-disclosure')));
       await tester.pump();
 
-      _expectCreateButtonNotFullyInViewBeforeScroll(tester, 'RS-2');
+      _expectCreateButtonBelowFoldUnscrolled(
+        tester,
+        'RS-2',
+        pixelsBeforeTap: pixelsBeforeTap,
+      );
 
       await _settleAfterRulesOpen(tester);
 
@@ -314,14 +343,24 @@ void main() {
     _useSurface(tester, _kSurfaceSize);
 
     await tester.pumpWidget(_homeScreenApp(locale: const Locale('ar')));
-    await tester.pump();
+    // Settle Home's entrance motion before anything is measured: a tap
+    // while the content is still sliding in lands the jump at a moving
+    // target, and the slide then carries the button up off the bottom
+    // edge (run 61 measured 32.4 logical pixels). Home has no LobbyScreen
+    // and no live countdown, so pumpAndSettle is safe here.
+    await tester.pumpAndSettle();
 
     _expectCreateButtonFullyInViewClosed(tester, 'RS-3');
+    final double pixelsBeforeTap = _homeScrollPosition(tester).pixels;
 
     await tester.tap(find.byKey(const Key('home-players-disclosure')));
     await tester.pump();
 
-    _expectCreateButtonNotFullyInViewBeforeScroll(tester, 'RS-3');
+    _expectCreateButtonBelowFoldUnscrolled(
+      tester,
+      'RS-3',
+      pixelsBeforeTap: pixelsBeforeTap,
+    );
 
     await _settleAfterRulesOpen(tester);
 
@@ -411,10 +450,8 @@ void main() {
             'RS-5: the home scroll offset must be identical before opening '
             'the rules ($pixelsBeforeTap) and after ($pixelsAfterSettle), '
             'since create-room-button was already fully in view once they '
-            'opened; a scroll that always aligns the button\'s bottom to '
-            'the viewport bottom (alignment: 1.0, with no already-in-view '
-            'guard) or a scroll aimed at the wrong widget both fail exactly '
-            'this case',
+            'opened; a scroll aimed at the wrong widget (join-room-button, '
+            'room-code-field) fails exactly this case',
       );
     },
   );
