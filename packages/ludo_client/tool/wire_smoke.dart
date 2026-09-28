@@ -454,29 +454,24 @@ class Paced {
 /// and reproducible, never because it is believed to be a better move than
 /// any other legal one.
 ///
-/// [seatOverride], a finding: [RoomConnection.seat] is set only from the
-/// wire's `seat_assigned` frame (connection.dart:109-116, 208-216, set
-/// alongside [RoomConnection.seatToken], which the interface this order
-/// pins says is itself "captured from create_room/join_room replies").
-/// `resume()` (connection.dart:303-312) never triggers a `seat_assigned`
-/// -- the server's own `_handleResume`
-/// (packages/ludo_server/lib/src/connection.dart:371-438) only ever sends
-/// `room` and, on a real reconnect, a `presence` broadcast to *other*
-/// sockets (`exceptConn: this`, line 419), unlike `_handleCreateRoom` and
-/// `_handleJoinRoom` (same file, lines 299-303 and 349), which always send
-/// `seat_assigned` on their own socket. So a fresh [RoomConnection] that
-/// only ever calls [RoomConnection.resume] never learns its own seat
-/// through [RoomConnection.seat] -- it stays null for that instance's
-/// whole life. A real app gating its own turn-taking on
-/// [RoomConnection.seat], the way this agent naturally would, would resume
-/// into a snapshot that looks right and then never act again -- exactly
-/// the failure mode the reconnect scenario exists to catch. The seat a
-/// resumed connection is playing is knowable regardless, the same way a
-/// real app already knows it: cached from the `seat_assigned` this same
-/// logical player received at `join_room`, before the drop, and carried
-/// forward across the new socket. [seatOverride] is that cached value; when
-/// given, it takes the place of [RoomConnection.seat] here rather than
-/// waiting on a frame that is never coming.
+/// [seatOverride], measured against today's code: [RoomConnection.seat] is
+/// set by `RoomConnection._handleIncomingText` from any inbound
+/// `seat_assigned` frame, whichever request caused it, and that handler
+/// runs on every frame in the order the socket delivers them, ahead of
+/// matching a frame to the request waiting on it. Since docs/PROTOCOL.md
+/// section 15 rule 2, the server's own `_handleResume` always sends
+/// `seat_assigned` and then `room` on the resuming socket, whether or not
+/// the seat's number moved while it was away -- unlike `_handleCreateRoom`
+/// and `_handleJoinRoom`, which send the same pair for the same reason on
+/// their own requests. Because both frames arrive on the resuming socket in
+/// that order, [RoomConnection.seat] is already set to the resumed seat by
+/// the time the future `resume()` returns has completed: a fresh
+/// [RoomConnection] that only ever calls [RoomConnection.resume] does learn
+/// its own seat through [RoomConnection.seat] now. [seatOverride] is kept
+/// anyway: it makes the seat this harness believes it is playing an
+/// explicit argument at the call site rather than an inference resting on
+/// frame-arrival order, and it costs nothing on a socket where
+/// [RoomConnection.seat] already agrees with it.
 ///
 /// Every failure this agent can observe -- a rejected roll or move, or an
 /// error frame this connection never asked for -- is reported through
@@ -1060,20 +1055,21 @@ Future<ScenarioResult> _playReconnect({
       'game already in progress',
     );
   }
-  // resumed.seat cannot confirm this identity: see the finding on
-  // attachAgent's seatOverride parameter above -- resume() never triggers a
-  // seat_assigned frame, so a fresh RoomConnection's own seat getter stays
-  // null for its whole life even after a resume that genuinely succeeded.
-  // What resume()'s reply does carry is the room's own seat list, so the
-  // check goes there instead: the entry at dropSeat must still be the seat
-  // this harness originally joined as _dropPlayerName, and it must show
-  // connected again. docs/PROTOCOL.md section 13.2 and
-  // packages/ludo_server/lib/src/connection.dart:414-421 both say presence
-  // (and, on the server's own model, the seat's connected flag) only flips
-  // when a resume actually reattaches a seat that was disconnected -- so a
-  // connected seat by that name at that index is real, observable proof
-  // this seat_token resumed seat dropSeat, not merely a snapshot that
-  // happens to look right.
+  // resumed.seat agrees with dropSeat too by this point -- see the finding
+  // on attachAgent's seatOverride parameter above: _handleResume sends its
+  // own seat_assigned before room (docs/PROTOCOL.md section 15 rule 2), and
+  // RoomConnection._handleIncomingText applies it before resume()'s future
+  // resolves. This check does not lean on that: it reads the room's own
+  // seat list instead, so the proof comes from the server's own state
+  // rather than this client's cached field. The entry at dropSeat must
+  // still be the seat this harness originally joined as _dropPlayerName,
+  // and it must show connected again. docs/PROTOCOL.md section 13.2 says
+  // presence (and, on the server's own model, the seat's connected flag)
+  // only flips when a resume actually reattaches a seat that was
+  // disconnected -- confirmed by reading _handleResume -- so a connected
+  // seat by that name at that index is real, observable proof this
+  // seat_token resumed seat dropSeat, not merely a snapshot that happens to
+  // look right.
   SeatState? resumedSeatEntry;
   for (final SeatState seat in resumedSnapshot.seats) {
     if (seat.seat == dropSeat) {
@@ -1101,10 +1097,11 @@ Future<ScenarioResult> _playReconnect({
       'actually reattached the seat must flip this',
     );
   }
-  // seatOverride: dropSeat, not the connection's own (null) seat getter --
-  // see attachAgent's doc comment for why. A real app resuming after a
-  // drop already knows its own seat from before the drop, the same way
-  // this harness does.
+  // seatOverride: dropSeat, passed explicitly rather than leaned on
+  // resumed.seat -- see attachAgent's doc comment for why it is kept even
+  // though resumed.seat already agrees by this point. A real app resuming
+  // after a drop already knows its own seat from before the drop, the same
+  // way this harness does.
   attachAgent(resumed, resumedPaced, reportError, seatOverride: dropSeat);
   // Baseline taken right after the agent is attached, so every send it goes
   // on to make -- and only those -- count toward the claim below. Nothing
