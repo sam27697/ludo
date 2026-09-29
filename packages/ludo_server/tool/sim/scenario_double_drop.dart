@@ -10,17 +10,23 @@
 // Requires at least 3 players (host plus two others to drop). With fewer,
 // this scenario fails cleanly naming the shortfall rather than dropping the
 // same seat twice, which would not be a "double" drop.
+//
+// Order 217 adds, always: checking every `game_over.verify_url`. Behind
+// `--fetch-record`, it also fetches and checks the stored record and says
+// so in the success line.
 
 import 'dart:async';
 
 import 'fairness.dart';
 import 'game.dart';
+import 'record_check.dart';
 import 'scenario.dart';
 import 'wire.dart';
 
 Future<ScenarioResult> runDoubleDrop(
   Uri target,
   int players, {
+  required bool fetchRecord,
   Duration perFrameTimeout = const Duration(seconds: 20),
 }) async {
   const String name = 'double-drop';
@@ -109,16 +115,30 @@ Future<ScenarioResult> runDoubleDrop(
       if (identical(seat.socket, observerSeat.socket)) {
         continue;
       }
-      await assertReceivedGameOver(seat.socket, result.winner);
+      await assertReceivedGameOver(
+        seat.socket,
+        result.winner,
+        expectedVerifyUrl: result.verifyUrl,
+      );
     }
 
-    return ScenarioResult(
-      name: name,
-      passed: true,
-      detail: 'winner=seat ${result.winner}, ${result.rollsVerified} rolls '
-          'verified, seats $targetA and $targetB dropped simultaneously and '
-          'both reconnected, all $players clients confirmed game_over',
-    );
+    String detail = 'winner=seat ${result.winner}, ${result.rollsVerified} '
+        'rolls verified, seats $targetA and $targetB dropped simultaneously '
+        'and both reconnected, all $players clients confirmed game_over';
+
+    if (fetchRecord) {
+      await fetchAndVerifyRecord(
+        verifyUrl: result.verifyUrl,
+        gameId: setup.gameId,
+        chainCommit: setup.chainCommit,
+        clientSeeds: setup.clientSeeds,
+        winner: result.winner,
+        rolls: result.rolls,
+      );
+      detail += ', record fetched and matched ${result.rolls.length} rolls';
+    }
+
+    return ScenarioResult(name: name, passed: true, detail: detail);
   } catch (error) {
     return ScenarioResult(name: name, passed: false, detail: error.toString());
   } finally {
