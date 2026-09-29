@@ -684,14 +684,27 @@ void main() {
     expect(jsResult['ok'], isFalse, reason: 'JS result: $jsResult');
     final List<Object?> jsRolls = jsResult['rolls']! as List<Object?>;
     expect(jsRolls, isNotEmpty);
+    // A die drawn under the wrong game_id still matches the right one by
+    // chance about one roll in six, so "every dieOk is false" is not a
+    // property of a correct checker. What is: dieOk is exactly "the face
+    // recomputed from the stated game_id equals the stated face", and at
+    // least one roll of this record fails it.
+    final List<Object?> statedRolls = mismatched['rolls']! as List<Object?>;
+    for (var i = 0; i < jsRolls.length; i++) {
+      final Map<String, Object?> r = jsRolls[i]! as Map<String, Object?>;
+      final Object? statedDie =
+          (statedRolls[i]! as Map<String, Object?>)['die'];
+      expect(r['dieOk'], r['computedDie'] == statedDie,
+          reason: 'roll ${r['k']}: dieOk must be computedDie == stated die '
+              '($statedDie); JS result: $jsResult');
+    }
     expect(
-      jsRolls.every(
+      jsRolls.any(
         (Object? r) => (r! as Map<String, Object?>)['dieOk'] == false,
       ),
       isTrue,
-      reason: 'every roll\'s die was drawn under a different game_id than '
-          'the one the record states, so every dieOk must be false; JS '
-          'result: $jsResult',
+      reason: 'the dice were drawn under a different game_id, so at least '
+          'one roll must fail the die check; JS result: $jsResult',
     );
 
     final Map<String, Object?> pyResult =
