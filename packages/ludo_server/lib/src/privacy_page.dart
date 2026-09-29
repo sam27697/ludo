@@ -22,7 +22,7 @@ import 'dart:convert';
 
 /// `YYYY-MM-DD`, matching the "Last updated" line in the rendered page.
 /// Bump this string, and only this string, the day the policy text changes.
-const String privacyLastUpdated = '2026-08-28';
+const String privacyLastUpdated = '2026-09-30';
 
 const HtmlEscape _escaper = HtmlEscape();
 
@@ -88,7 +88,11 @@ String buildPrivacyPageHtml({String? contactEmail}) {
       '<p>Every dice roll is accompanied by information that lets you '
       'check the roll was not altered after the fact. That information '
       'is about the game, not about you, and contains no personal '
-      'data.</p>',
+      'data. When a game ends, a record of its rolls is kept on our '
+      'server for 90 days at a web address given only to the players of '
+      'that game, so anyone holding the link can check every roll. The '
+      'record names players by seat number only, never by display name, '
+      'and holds no IP address.</p>',
     )
     ..writeln('<h2>Children.</h2>')
     ..writeln(
