@@ -297,11 +297,45 @@ Future<Map<String, Object?>> _collectStartGameFrames(
   return started;
 }
 
+/// One `rolled` frame the simulator verified during play, kept for the
+/// order 217 record check (`docs/VERIFY.md` section 1.1): `k`, `seat`,
+/// `reveal` and `die` (the frame's `value` -- docs/PROTOCOL.md section 11.2
+/// says "value" is the die) exactly as they came off the wire, in the order
+/// the frames arrived.
+class SeenRoll {
+  SeenRoll({
+    required this.k,
+    required this.seat,
+    required this.reveal,
+    required this.die,
+  });
+
+  final int k;
+  final int seat;
+  final String reveal;
+  final int die;
+}
+
 /// The result of playing one game to its end.
 class PlayResult {
-  PlayResult({required this.winner, required this.rollsVerified});
+  PlayResult({
+    required this.winner,
+    required this.rollsVerified,
+    required this.verifyUrl,
+    required this.rolls,
+  });
   final int winner;
   final int rollsVerified;
+
+  /// `game_over.verify_url` as observed on [observer]'s socket, already
+  /// checked to be a string ending in `/v/<game_id>` for this game
+  /// (order 217, docs/PROTOCOL.md's `game_over` row).
+  final String verifyUrl;
+
+  /// Every `rolled` frame verified during play, in arrival order. Used by
+  /// the `--fetch-record` check to compare against the stored record's
+  /// `rolls` list.
+  final List<SeenRoll> rolls;
 }
 
 /// Plays the turn loop of docs/PROTOCOL.md section 12 to a winner, reading
@@ -332,7 +366,9 @@ Future<PlayResult> playGame({
       .socket
       .send('roll', <String, Object?>{});
 
+  final List<SeenRoll> rollsSeen = <SeenRoll>[];
   int? winner;
+  String? verifyUrl;
   int framesRead = 0;
   while (winner == null) {
     framesRead++;
@@ -350,6 +386,12 @@ Future<PlayResult> playGame({
         fairness.verifyRolled(d);
         rollInFlightForSeat = null;
         final int seat = requireInt(d, 'seat', frame: 'rolled');
+        rollsSeen.add(SeenRoll(
+          k: requireInt(d, 'k', frame: 'rolled'),
+          seat: seat,
+          reveal: requireString(d, 'reveal', frame: 'rolled'),
+          die: requireInt(d, 'value', frame: 'rolled'),
+        ));
         final List<int> legal = requireIntList(d, 'legal', frame: 'rolled');
         if (legal.isNotEmpty) {
           final int token = legal.first;
@@ -370,6 +412,21 @@ Future<PlayResult> playGame({
         break;
       case 'game_over':
         winner = requireInt(d, 'winner', frame: 'game_over');
+        // Order 217, docs/PROTOCOL.md's game_over row: verify_url is a
+        // string ending in /v/<game_id> for this game. Always checked,
+        // whether or not --fetch-record is set; a broken verify_url must
+        // fail every scenario that reaches game_over, not just a run with
+        // the flag on.
+        final String url = requireString(d, 'verify_url', frame: 'game_over');
+        final String expectedSuffix = '/v/${fairness.gameId}';
+        if (!url.endsWith(expectedSuffix)) {
+          throw ScenarioFailure(
+            'game_over.verify_url="$url" does not end with '
+            '"$expectedSuffix" (game_id "${fairness.gameId}" from this '
+            'game\'s game_started)',
+          );
+        }
+        verifyUrl = url;
         break;
       case 'error':
         throw ScenarioFailure(
@@ -390,7 +447,12 @@ Future<PlayResult> playGame({
     }
   }
 
-  return PlayResult(winner: winner, rollsVerified: fairness.rollsVerified);
+  return PlayResult(
+    winner: winner,
+    rollsVerified: fairness.rollsVerified,
+    verifyUrl: verifyUrl!,
+    rolls: rollsSeen,
+  );
 }
 
 Seat _seatFor(Map<int, Seat> seats, int index) {
@@ -509,22 +571,37 @@ Future<void> reconnectSeat({
 /// this can need to skip a great many frames on a long game; each
 /// individual read is still bounded by [perFrame] so a socket that truly
 /// never gets the frame fails promptly rather than hanging.
+///
+/// Also checks, order 217: this socket's `game_over.verify_url` is exactly
+/// [expectedVerifyUrl], the same string the driving observer saw for this
+/// game (docs/PROTOCOL.md's `game_over` row: "every client that receives
+/// game_over receives the same verify_url").
 Future<void> assertReceivedGameOver(
   SimSocket socket,
   int expectedWinner, {
+  required String expectedVerifyUrl,
   int maxFrames = 20000,
   Duration perFrame = const Duration(seconds: 10),
 }) async {
   for (int i = 0; i < maxFrames; i++) {
     final Frame frame = await socket.next(timeout: perFrame);
     if (frameType(frame) == 'game_over') {
-      final int winner =
-          requireInt(frameData(frame), 'winner', frame: 'game_over');
+      final Map<String, Object?> d = frameData(frame);
+      final int winner = requireInt(d, 'winner', frame: 'game_over');
       if (winner != expectedWinner) {
         throw ScenarioFailure(
           '[${socket.label}] received game_over with winner=$winner but '
           'the driving observer saw winner=$expectedWinner for the same '
           'game',
+        );
+      }
+      final String verifyUrl =
+          requireString(d, 'verify_url', frame: 'game_over');
+      if (verifyUrl != expectedVerifyUrl) {
+        throw ScenarioFailure(
+          '[${socket.label}] received game_over with verify_url='
+          '"$verifyUrl" but the driving observer saw verify_url='
+          '"$expectedVerifyUrl" for the same game',
         );
       }
       return;
