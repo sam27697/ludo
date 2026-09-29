@@ -45,6 +45,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:test/test.dart';
 
@@ -57,6 +58,36 @@ const Duration _hangBudget = Duration(seconds: 75);
 /// "listening on port" line before concluding setup itself, not the
 /// thing under test, is broken.
 const Duration _setupBudget = Duration(seconds: 30);
+
+/// The absolute path to this package's own root directory, resolved from
+/// the package configuration rather than from the current working
+/// directory or from `Platform.script`. Copied from
+/// `app_links_route_test.dart`'s helper of the same name and purpose (which
+/// in turn copied it from `privacy_route_test.dart`); that file's own copy
+/// is private to it and this file cannot import a test file to reuse it, so
+/// it is duplicated here rather than left out. Needed because `dart test
+/// packages/ludo_server/test/` (the harness and CI shape) runs with
+/// `Directory.current` at the repository root, where `bin/server.dart` and
+/// `tool/simulator.dart` do not exist; the two subprocesses below must
+/// start in this package's directory regardless of where the test runner
+/// itself was launched from.
+Future<String>? _packageRootFuture;
+
+Future<String> _packageRoot() {
+  return _packageRootFuture ??= () async {
+    final Uri? libUri = await Isolate.resolvePackageUri(
+      Uri.parse('package:ludo_server/ludo_server.dart'),
+    );
+    if (libUri == null) {
+      fail(
+        'could not resolve package:ludo_server/ludo_server.dart to a file '
+        'URI; cannot locate bin/server.dart for the subprocess tests below',
+      );
+    }
+    final Directory packageRoot = File.fromUri(libUri).parent.parent;
+    return packageRoot.path;
+  }();
+}
 
 void main() {
   test(
@@ -71,10 +102,11 @@ void main() {
       _LineCollector? simOut;
       _LineCollector? simErr;
       try {
+        final String packageRoot = await _packageRoot();
         server = await Process.start(
           'dart',
           <String>['run', 'bin/server.dart'],
-          workingDirectory: Directory.current.path,
+          workingDirectory: packageRoot,
           environment: <String, String>{
             'PORT': '0',
             'LUDO_VERIFY_BASE_URL': 'http://127.0.0.1:${blackHole.port}/v/',
@@ -82,7 +114,8 @@ void main() {
         );
         serverOut = _LineCollector(server.stdout);
         serverErr = _LineCollector(server.stderr);
-        final int serverPort = await _readServerPort(serverOut);
+        final int serverPort =
+            await _readServerPort(server, serverOut, serverErr);
 
         sim = await Process.start(
           'dart',
@@ -97,7 +130,7 @@ void main() {
             '2',
             '--fetch-record',
           ],
-          workingDirectory: Directory.current.path,
+          workingDirectory: packageRoot,
         );
         simOut = _LineCollector(sim.stdout);
         simErr = _LineCollector(sim.stderr);
@@ -232,17 +265,36 @@ void main() {
   );
 }
 
-Future<int> _readServerPort(_LineCollector serverOut) async {
+Future<int> _readServerPort(
+  Process server,
+  _LineCollector serverOut,
+  _LineCollector serverErr,
+) async {
   final RegExp portLine = RegExp(r'^ludo_server listening on port (\d+)$');
-  final String line =
-      await serverOut.stream.firstWhere(portLine.hasMatch).timeout(
-            _setupBudget,
-            onTimeout: () => throw StateError(
-              'bin/server.dart did not print its "listening on port" line '
-              'within ${_setupBudget.inSeconds}s; lines so far: '
-              '${serverOut.linesSoFar}',
-            ),
-          );
+  String line;
+  try {
+    line = await serverOut.stream.firstWhere(portLine.hasMatch).timeout(
+          _setupBudget,
+        );
+  } on TimeoutException {
+    fail(
+      'bin/server.dart did not print its "listening on port" line within '
+      '${_setupBudget.inSeconds}s; lines so far: ${serverOut.linesSoFar}',
+    );
+  } on StateError {
+    // Stream.firstWhere throws "Bad state: No element" (with no further
+    // detail) when the source stream closes -- here, the server process
+    // exiting -- without ever producing a matching line. That message
+    // alone does not say why the server is gone, which is what the next
+    // person staring at this test red actually needs. Report the
+    // server's own exit code and everything it wrote to stderr instead.
+    final int exitCode = await server.exitCode;
+    fail(
+      'bin/server.dart exited with code $exitCode before printing its '
+      '"listening on port" line; stdout so far: ${serverOut.linesSoFar}; '
+      'stderr so far: ${serverErr.linesSoFar}',
+    );
+  }
   return int.parse(portLine.firstMatch(line)!.group(1)!);
 }
 
