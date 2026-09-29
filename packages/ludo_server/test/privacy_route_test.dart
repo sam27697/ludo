@@ -38,6 +38,41 @@ const List<String> _methodsRequiringGetOrHead = <String>[
   'PATCH',
 ];
 
+/// The exact paragraph work order 216 specifies for the "Verifiable rolls."
+/// section. Written here from the order's spec and never imported from
+/// `privacy_page.dart`, so a test built from a paragraph the source already
+/// happens to contain cannot pass by construction; a rewrite of the wrong
+/// paragraph, or a paraphrase of this one, fails it.
+const String _ninetyDayVerificationParagraph =
+    'Every dice roll is accompanied by information that lets you check the '
+    'roll was not altered after the fact. That information is about the '
+    'game, not about you, and contains no personal data. When a game ends, '
+    'a record of its rolls is kept on our server for 90 days at a web '
+    'address given only to the players of that game, so anyone holding the '
+    'link can check every roll. The record names players by seat number '
+    'only, never by display name, and holds no IP address.';
+
+/// A fragment of [_ninetyDayVerificationParagraph] distinctive enough to
+/// locate the sentence's position in the raw, untouched HTML body, for the
+/// "sits under the right heading" check below, which needs real tag
+/// positions and so cannot run against tag-stripped text.
+const String _ninetyDaySentenceFragment =
+    'a record of its rolls is kept on our server for 90 days at a web '
+    'address given only to the players of that game';
+
+/// The exact "Last updated" line work order 216 specifies. The literal
+/// date, not `privacyLastUpdated`, so a source that forgets to bump the
+/// constant is caught the same as one that bumps it to the wrong value.
+const String _expectedLastUpdatedLine = 'Last updated: 2026-09-30';
+
+/// The existing "No advertising, no analytics, no tracking." paragraph's
+/// closing sentence, unchanged by work order 216. Asserting this stays
+/// present catches a rewrite that lands in the wrong paragraph, or that
+/// clobbers this sentence while adding the 90-day text nearby.
+const String _unchangedNoAdvertisingSentence =
+    'There is no advertising identifier and no device identifier '
+    'collected.';
+
 Uri _httpUri(ServerHarness harness, String path) => Uri(
       scheme: 'http',
       host: '127.0.0.1',
@@ -64,6 +99,17 @@ Future<List<int>> _bytesOf(HttpClientResponse response) =>
       <int>[],
       (List<int> soFar, List<int> chunk) => soFar..addAll(chunk),
     );
+
+/// Strips every HTML tag out of [html] and collapses any run of whitespace,
+/// including the newlines the server's `StringBuffer.writeln` leaves
+/// between elements, down to a single space, then trims the ends. The
+/// result reads a paragraph as one contiguous string the way a browser's
+/// rendered, tag-free text would, regardless of how the markup happens to
+/// be laid out around it.
+String _stripTagsAndCollapseWhitespace(String html) {
+  final String withoutTags = html.replaceAll(RegExp(r'<[^>]*>'), ' ');
+  return withoutTags.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
 
 /// The absolute path to this package's own root directory (the directory
 /// containing `bin/`, `lib/` and `pubspec.yaml`), resolved from the package
@@ -1076,4 +1122,112 @@ void main() {
       });
     },
   );
+
+  // Work order 216: the paragraph under "Verifiable rolls." states the
+  // 90-day verification record, and the "Last updated" line moves to
+  // 2026-09-30. On origin/main today, before the paired source change
+  // lands, every case in this group is expected to fail.
+  group('work order 216: the 90-day verification record', () {
+    late ServerHarness harness;
+    late String body;
+
+    setUp(() async {
+      harness = ServerHarness.build();
+      active = harness;
+      await harness.start();
+      final HttpClientResponse response = await _send(
+        client,
+        _httpUri(harness, '/privacy'),
+      );
+      body = await _bodyOf(response);
+    });
+
+    test(
+        'the exact 90-day verification record paragraph appears as one '
+        'contiguous string once tags are stripped and whitespace is '
+        'collapsed', () {
+      final String normalized = _stripTagsAndCollapseWhitespace(body);
+
+      expect(
+        normalized.contains(_ninetyDayVerificationParagraph),
+        isTrue,
+        reason: 'expected the exact paragraph work order 216 specifies '
+            '(reproduced literally in this test, not imported from '
+            'privacy_page.dart) to appear as one contiguous string in the '
+            'served document once its tags are stripped and its '
+            'whitespace collapsed to single spaces. Expected paragraph: '
+            '"$_ninetyDayVerificationParagraph". Normalized body was: '
+            '"$normalized"',
+      );
+    });
+
+    test(
+        'the 90-day sentence sits under the Verifiable rolls. heading, '
+        'before the next <h2>', () {
+      final int headingIndex = body.indexOf('Verifiable rolls.');
+      expect(
+        headingIndex,
+        greaterThanOrEqualTo(0),
+        reason: 'expected the heading text "Verifiable rolls." somewhere '
+            'in the document; full body: $body',
+      );
+
+      final int sentenceIndex = body.indexOf(_ninetyDaySentenceFragment);
+      expect(
+        sentenceIndex,
+        greaterThanOrEqualTo(0),
+        reason: 'expected to find the literal fragment '
+            '"$_ninetyDaySentenceFragment" in the document body; full '
+            'body: $body',
+      );
+
+      final List<RegExpMatch> headingTagsAfter = RegExp(r'<h2[^>]*>')
+          .allMatches(body)
+          .where((RegExpMatch match) => match.start > headingIndex)
+          .toList();
+      final int nextHeadingIndex =
+          headingTagsAfter.isEmpty ? body.length : headingTagsAfter.first.start;
+
+      expect(
+        sentenceIndex,
+        greaterThan(headingIndex),
+        reason: 'expected the 90-day sentence (found at index '
+            '$sentenceIndex) to come after the "Verifiable rolls." '
+            'heading (found at index $headingIndex); full body: $body',
+      );
+      expect(
+        sentenceIndex,
+        lessThan(nextHeadingIndex),
+        reason: 'expected the 90-day sentence (found at index '
+            '$sentenceIndex) to come before the next <h2> (found at index '
+            '$nextHeadingIndex), i.e. still under "Verifiable rolls." and '
+            'not under whatever heading follows it; full body: $body',
+      );
+    });
+
+    test('Last updated: 2026-09-30 appears exactly once', () {
+      final int occurrences = RegExp(RegExp.escape(_expectedLastUpdatedLine))
+          .allMatches(body)
+          .length;
+      expect(
+        occurrences,
+        1,
+        reason: 'expected the literal line "$_expectedLastUpdatedLine" to '
+            'appear exactly once in the document, got $occurrences '
+            'occurrence(s); full body: $body',
+      );
+    });
+
+    test(
+        'the existing No advertising paragraph is unchanged, so a '
+        'rewrite of the wrong paragraph fails', () {
+      expect(
+        body.contains(_unchangedNoAdvertisingSentence),
+        isTrue,
+        reason: 'expected the unchanged sentence '
+            '"$_unchangedNoAdvertisingSentence" to still be present in '
+            'the document; full body: $body',
+      );
+    });
+  });
 }
