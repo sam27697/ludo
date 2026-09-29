@@ -10,11 +10,21 @@
 // Uses dart:io's HttpClient directly, no new dependency, per the work
 // order.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'game.dart';
 import 'scenario.dart';
+
+/// How long any single step of a fetch -- connecting, getting the response
+/// headers, or reading the body -- is allowed to take before this file
+/// gives up on it. Applied to `HttpClient.connectionTimeout` and to each
+/// of `client.getUrl(uri)`, `request.close()` and each body read
+/// individually, so a verify host that accepts the TCP connection and then
+/// never answers cannot keep this process alive past its own overall
+/// budget.
+const Duration _fetchTimeout = Duration(seconds: 15);
 
 /// The ten keys docs/VERIFY.md section 1.1 says a format-1 record has,
 /// exactly -- no more, no fewer.
@@ -44,6 +54,7 @@ Future<void> fetchAndVerifyRecord({
   required List<SeenRoll> rolls,
 }) async {
   final HttpClient client = HttpClient();
+  client.connectionTimeout = _fetchTimeout;
   try {
     await _checkJsonRecord(
       client: client,
@@ -71,7 +82,7 @@ Future<void> _checkJsonRecord({
 }) async {
   final Uri jsonUri = Uri.parse('$verifyUrl.json');
   final HttpClientResponse response = await _get(client, jsonUri);
-  final String body = await response.transform(utf8.decoder).join();
+  final String body = await _readBody(response, jsonUri);
 
   if (response.statusCode != 200) {
     throw ScenarioFailure(
@@ -213,7 +224,7 @@ Future<void> _checkHtmlPage({
 }) async {
   final Uri htmlUri = Uri.parse(verifyUrl);
   final HttpClientResponse response = await _get(client, htmlUri);
-  await response.drain<void>();
+  await _drainBody(response, htmlUri);
 
   if (response.statusCode != 200) {
     throw ScenarioFailure(
@@ -231,10 +242,39 @@ Future<void> _checkHtmlPage({
 
 Future<HttpClientResponse> _get(HttpClient client, Uri uri) async {
   try {
-    final HttpClientRequest request = await client.getUrl(uri);
-    return await request.close();
+    final HttpClientRequest request =
+        await client.getUrl(uri).timeout(_fetchTimeout);
+    return await request.close().timeout(_fetchTimeout);
+  } on TimeoutException {
+    throw ScenarioFailure(_noResponseWithinLimit(uri));
   } catch (error) {
     throw ScenarioFailure('fetching the verification record failed: GET '
         '$uri: $error');
   }
 }
+
+/// Reads the whole body of [response] as UTF-8 text, bounded by
+/// [_fetchTimeout], for a fetch of [uri].
+Future<String> _readBody(HttpClientResponse response, Uri uri) async {
+  try {
+    return await response.transform(utf8.decoder).join().timeout(
+          _fetchTimeout,
+        );
+  } on TimeoutException {
+    throw ScenarioFailure(_noResponseWithinLimit(uri));
+  }
+}
+
+/// Reads and discards the whole body of [response], bounded by
+/// [_fetchTimeout], for a fetch of [uri].
+Future<void> _drainBody(HttpClientResponse response, Uri uri) async {
+  try {
+    await response.drain<void>().timeout(_fetchTimeout);
+  } on TimeoutException {
+    throw ScenarioFailure(_noResponseWithinLimit(uri));
+  }
+}
+
+String _noResponseWithinLimit(Uri uri) =>
+    'fetching the verification record failed: GET $uri: no response '
+    'within the ${_fetchTimeout.inSeconds}-second timeout';
