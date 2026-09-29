@@ -495,9 +495,18 @@ class WireServer {
         isHead: isHead,
       );
     }
-    if (rest.endsWith(_verifyJsonSuffix)) {
-      final String id =
-          rest.substring(0, rest.length - _verifyJsonSuffix.length);
+    // `docs/VERIFY.md` section 4: anything under `/v/` that is not
+    // `verify.js` or `verify.py` is answered as the row it most resembles --
+    // a path ending in `.json` in any casing resembles the `.json` row, not
+    // the page row, even though only an exact lowercase `.json` suffix on a
+    // well-formed id can ever actually be found. So the case-insensitive
+    // check below decides which row's not-found shape a mismatched case
+    // gets; only the exact-case suffix is ever allowed to reach the store.
+    if (rest.toLowerCase().endsWith(_verifyJsonSuffix)) {
+      final bool exactSuffix = rest.endsWith(_verifyJsonSuffix);
+      final String id = exactSuffix
+          ? rest.substring(0, rest.length - _verifyJsonSuffix.length)
+          : '';
       return _verifyJsonResponse(id: id, isHead: isHead);
     }
     return _verifyPageResponse(id: rest, isHead: isHead);

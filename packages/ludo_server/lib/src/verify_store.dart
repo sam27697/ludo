@@ -52,6 +52,12 @@ class MemoryVerifyStore implements VerifyStore {
 
   @override
   bool save(String gameId, String json) {
+    // Same guard as `DirectoryVerifyStore.save`: an id `load` could never
+    // read back must never be accepted here either, or the two stores would
+    // disagree about what a caller can rely on.
+    if (!isWellFormedGameId(gameId)) {
+      return false;
+    }
     if (_records.containsKey(gameId)) {
       return false;
     }
