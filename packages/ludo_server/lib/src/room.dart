@@ -181,6 +181,16 @@ class Room {
   /// carrying the same `k` -- a rejected roll leaves this untouched.
   int rollCount = 0;
 
+  /// The seat that rolled each roll of this game, ascending `k`: index `0`
+  /// is roll `k = 1`, and so on, so `rollSeats.length == rollCount` always
+  /// holds. `docs/VERIFY.md` section 1.2: `RoomRegistry.roll()` appends to
+  /// this on the one code path that also sets [rollCount] to that same `k`,
+  /// whether a player rolled or the turn timer did on their behalf --
+  /// both go through that one method, so there is no second place a roll
+  /// could be recorded here without also advancing [rollCount], or the
+  /// reverse.
+  final List<int> rollSeats = <int>[];
+
   /// The moment the currently active turn segment began, per section 6: a
   /// segment starts, and the full `rules.turnSeconds` is restored, on a
   /// seat's turn beginning, on a `rolled` that leaves a legal move pending,
