@@ -1,0 +1,20 @@
+# Production-only override. `provefair.app` and `www.provefair.app` are
+# proxied by the host's reverse proxy (root's, not ours) to
+# 127.0.0.1:8080, and nothing else on the box publishes that port -- it
+# exists so that hostname reaches production's container specifically, the
+# one holding the verification records at /v/<id> (docs/VERIFY.md section
+# 8), rather than whichever environment happened to be redeployed most
+# recently. Nothing else differs between environments, so this file adds
+# nothing but the one port.
+#
+# deploy.sh passes this file with `-f` only when LUDO_ENVIRONMENT=production.
+# Staging must never load it: staging publishing 127.0.0.1:8080 alongside
+# production would either fail to bind (if production is already up) or, on
+# a box where staging happened to start first, would answer
+# provefair.app/v/<id> out of staging's records instead of production's --
+# exactly the failure this file exists to prevent, moved to a different
+# container.
+services:
+  ludo-server:
+    ports:
+      - "127.0.0.1:8080:8080"

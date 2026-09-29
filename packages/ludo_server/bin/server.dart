@@ -59,9 +59,40 @@ Future<void> _run() async {
   final String? privacyContactEmail =
       rawPrivacyContactEmail.isEmpty ? null : rawPrivacyContactEmail;
 
+  // docs/VERIFY.md section 8: a directory store when LUDO_VERIFY_DIR is
+  // set, otherwise an in-memory one that warns it will not survive a
+  // restart -- said once, here, rather than left implicit.
+  final String rawVerifyDir = Platform.environment['LUDO_VERIFY_DIR'] ?? '';
+  final VerifyStore verifyStore;
+  if (rawVerifyDir.isEmpty) {
+    verifyStore = MemoryVerifyStore(const SystemClock());
+    // ignore: avoid_print
+    print('verify store: memory, records are lost on restart');
+  } else {
+    verifyStore = DirectoryVerifyStore(rawVerifyDir);
+  }
+
+  // docs/VERIFY.md section 8: LUDO_VERIFY_BASE_URL must start with
+  // https:// or http:// and end with /, or unset entirely for the default.
+  // A malformed value is a startup failure, same shape as the bind-failure
+  // guard around server.start further down: caught right here, printed to
+  // stderr naming the offending variable, and the process exits non-zero
+  // rather than silently falling back to a value nobody asked for.
+  final String rawVerifyBaseUrl =
+      Platform.environment['LUDO_VERIFY_BASE_URL'] ?? '';
+  final String verifyUrlBase;
+  try {
+    verifyUrlBase = _resolveVerifyUrlBase(rawVerifyBaseUrl);
+  } catch (error) {
+    stderr.writeln('$error');
+    exit(1);
+  }
+
   final RoomRegistry registry = RoomRegistry(
     clock: const SystemClock(),
     secure: Random.secure(),
+    verifyStore: verifyStore,
+    verifyUrlBase: verifyUrlBase,
   );
   final RateLimiter rateLimiter = RateLimiter(clock: const SystemClock());
   final WireServer server = WireServer(
@@ -115,4 +146,20 @@ Future<void> _run() async {
   });
 
   await shutdown.future;
+}
+
+/// `docs/VERIFY.md` section 8: unset or empty is [defaultVerifyUrlBase];
+/// anything else must start with `https://` or `http://` and end with `/`,
+/// or this throws naming the variable, for [_run] to catch and exit on.
+String _resolveVerifyUrlBase(String raw) {
+  if (raw.isEmpty) {
+    return defaultVerifyUrlBase;
+  }
+  final bool wellFormed =
+      (raw.startsWith('https://') || raw.startsWith('http://')) &&
+          raw.endsWith('/');
+  if (!wellFormed) {
+    throw StateError('LUDO_VERIFY_BASE_URL is malformed: $raw');
+  }
+  return raw;
 }

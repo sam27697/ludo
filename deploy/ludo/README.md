@@ -356,6 +356,54 @@ just that the status code came back `200`.
   environment split" above for the one-time move and cleanup this
   requires; `deploy.sh` deliberately does not do that move itself.
 
+## Verification records
+
+Every finished game's proof (docs/VERIFY.md) lives at `/data/verify` inside
+the container, on a named volume declared in `docker-compose.yml`: one
+volume per environment, since compose prefixes an unqualified volume name
+with the project name -- `ludo-staging_verify-data` and
+`ludo-production_verify-data`, never shared, the same as the two compose
+projects themselves. The image creates `/data/verify` owned by
+`10001:10001` before the volume is ever mounted, so a fresh volume inherits
+that ownership.
+
+Retention is 90 days and the server purges its own records on every room
+reap (`RoomRegistry.reap()` calling `verifyStore.purgeOlderThan`); nothing
+else deletes them, and nothing else needs to -- there is no cron job or
+external purge for this to keep in sync with the code.
+
+`provefair.app` and `www.provefair.app` are proxied by the host's reverse
+proxy to `127.0.0.1:8080`, and only the **production** container publishes
+that port, from `docker-compose.production.yml`, an override `deploy.sh`
+loads only for a production deploy. Staging never loads it and never
+publishes 8080 -- publishing it from staging would mean provefair.app could
+answer out of the wrong environment's records depending on which container
+happened to hold the port.
+
+To list what a volume holds, from the `deploy` account:
+
+```
+docker run --rm -v ludo-production_verify-data:/d debian:trixie-slim ls /d
+```
+
+(`ludo-staging_verify-data` for staging). Removing the volume
+(`docker volume rm`, or a `docker compose down -v`) deletes every player's
+proof permanently -- there is no other copy anywhere. `docker compose down`
+without `-v` leaves the volume alone; a normal deploy never runs `down` at
+all, only `up -d`, so a redeploy is not a risk to these records by itself.
+
+What tells you it broke: a finished game's `verify_url` not answering `200`
+from outside (`curl -sS https://provefair.app/v/<game_id>`, or
+`https://stg.ludo.provefair.app/v/<game_id>` on staging). `deploy.sh`
+already checks the production side of this on every production deploy --
+it polls `127.0.0.1:8080/health` after the ordinary health check and rolls
+back if that does not answer `200`, so a production container that came up
+without the second port never gets called a successful deploy. That check
+cannot see past the container's own loopback port, though: if it passes but
+`provefair.app/v/<id>` still fails from outside, the break is DNS, TLS, or
+the reverse proxy, the same as any other hostname-level failure described
+above, not this volume or this container.
+
 ## Out of scope here
 
 TLS, the reverse proxy configuration, and the Android release build are
