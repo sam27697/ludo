@@ -1,12 +1,13 @@
-// Argument parsing for the frozen invocation of order 014:
+// Argument parsing for the frozen invocation of order 014, plus the
+// order 217 addition of --fetch-record:
 //
 //   dart run tool/simulator.dart --target <url>
 //       [--scenario all|full-game|reconnect|double-drop]
-//       [--timeout-seconds N] [--players N]
+//       [--timeout-seconds N] [--players N] [--fetch-record]
 //
-// No third-party argument-parsing package: the whole surface is four flags,
-// each taking exactly one value, and a hand-rolled loop is easier to audit
-// against that frozen list than a dependency would be.
+// No third-party argument-parsing package: the whole surface is a handful
+// of flags, most taking exactly one value, and a hand-rolled loop is easier
+// to audit against that frozen list than a dependency would be.
 
 /// The `--scenario` values this simulator understands, in the order they
 /// run under `all`.
@@ -32,6 +33,7 @@ class SimulatorArgs {
     required this.scenario,
     required this.timeoutSeconds,
     required this.players,
+    required this.fetchRecord,
   });
 
   /// The base WebSocket URL of the server under test, `ws://` or `wss://`,
@@ -47,6 +49,12 @@ class SimulatorArgs {
   /// Seats to play with, 2 to 4. Defaults to 4.
   final int players;
 
+  /// Order 217: after each scenario's game ends, fetch and verify the
+  /// stored record at `<verify_url>.json` and `<verify_url>` against what
+  /// the simulator saw on the wire. Off by default -- see [usage] and
+  /// docs/SIMULATOR.md for why.
+  final bool fetchRecord;
+
   /// The scenario names this run should execute, in a fixed order,
   /// regardless of whether `--scenario` named one of them or `all`.
   List<String> get selectedScenarios =>
@@ -58,6 +66,7 @@ SimulatorArgs parseArgs(List<String> arguments) {
   String scenario = 'all';
   int timeoutSeconds = 180;
   int players = 4;
+  bool fetchRecord = false;
 
   int i = 0;
   while (i < arguments.length) {
@@ -88,6 +97,10 @@ SimulatorArgs parseArgs(List<String> arguments) {
         }
         players = parsed;
         i += 2;
+        break;
+      case '--fetch-record':
+        fetchRecord = true;
+        i += 1;
         break;
       default:
         throw ArgsError('unrecognised argument: $arg');
@@ -132,6 +145,7 @@ SimulatorArgs parseArgs(List<String> arguments) {
     scenario: scenario,
     timeoutSeconds: timeoutSeconds,
     players: players,
+    fetchRecord: fetchRecord,
   );
 }
 
@@ -144,10 +158,17 @@ String _valueAfter(List<String> arguments, int i, String flag) {
 
 /// Printed to stderr alongside any [ArgsError].
 const String usage = '''
-usage: dart run tool/simulator.dart --target <url> [--scenario all|full-game|reconnect|double-drop] [--timeout-seconds N] [--players N]
+usage: dart run tool/simulator.dart --target <url> [--scenario all|full-game|reconnect|double-drop] [--timeout-seconds N] [--players N] [--fetch-record]
 
   --target           required. Base WebSocket URL of a running server, ws:// or wss://.
   --scenario         default: all
   --timeout-seconds  default: 180. Bounds the whole run, not one frame.
   --players          default: 4. Seats to play with, 2 to 4.
+  --fetch-record     default: off. After each game ends, fetch <verify_url>.json
+                      and <verify_url> and check them against the wire. Off by
+                      default because a local server hands out verify_url values
+                      on the default production base -- turning it on against a
+                      local server would check the wrong machine unless
+                      LUDO_VERIFY_BASE_URL points the server at that same
+                      local server.
 ''';

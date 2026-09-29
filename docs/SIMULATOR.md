@@ -29,6 +29,7 @@ Flags:
 | `--scenario` | `all` | `all`, `full-game`, `reconnect`, or `double-drop`. |
 | `--timeout-seconds` | 180 | Bounds the whole run, not one frame. |
 | `--players` | 4 | Seats to play with, 2 to 4. |
+| `--fetch-record` | off | After each scenario's game ends, also fetch and check the stored verification record. See "The verify_url and record checks" below. |
 
 Exit code `0` means every selected scenario passed. Any other exit code means
 at least one failed; nothing else signals the verdict. Output is one line per
@@ -100,6 +101,67 @@ must carry the same `chain_commit` the room started with. `docs/PROTOCOL.md`
 section 11.2 forbids it changing for a given `chain_index`, and a change
 would be a forged roll.
 
+## The verify_url and record checks
+
+Order 217. `docs/VERIFY.md` sections 1.1, 3 and 4 and the `game_over` row of
+`docs/PROTOCOL.md` say a finished game hands every player a `verify_url` and
+the server stores a record of the game at `<verify_url>.json`. Two checks
+cover that.
+
+### Always on, every scenario that reaches `game_over`
+
+For every scenario the simulator checks, on the `game_over` frame each
+socket in the room receives:
+
+1. `verify_url` is present and a string.
+2. It ends with `/v/<game_id>`, where `<game_id>` is the `game_id` this
+   game's `game_started` carried.
+3. Every socket in the room receives the same `verify_url` as the driving
+   observer.
+
+Any of the three failing is a scenario `FAIL`, folded into that scenario's
+usual reason line the same way a fairness breach or an unexpected frame is
+-- there is no separate flag for this and no way to turn it off. A run
+without `--fetch-record` still exercises it on every game that reaches
+`game_over`; the only thing `--fetch-record` adds is fetching the record
+itself.
+
+### `--fetch-record`
+
+Off by default: a locally started server hands out `verify_url` values built
+from the default production base (`docs/VERIFY.md` section 8,
+`https://provefair.app/v/`), and fetching those from a local run would check
+the wrong machine, not this one. Point a local server's own
+`LUDO_VERIFY_BASE_URL` at itself (for example
+`http://127.0.0.1:<port>/v/`) before turning this on against it.
+
+With the flag, after each scenario's game ends, the simulator fetches, with
+`dart:io`'s `HttpClient`:
+
+- `GET <verify_url>.json`: status `200`, `content-type` starting with
+  `application/json`, a body that parses to a JSON object whose key set is
+  exactly the ten keys of `docs/VERIFY.md` section 1.1 (`format`, `game_id`,
+  `chain_commit`, `chain_index`, `chain_length`, `client_seeds`, `seeds`,
+  `rolls`, `winner`, `finished_at`). `format` must be `1`; `game_id`,
+  `chain_commit` and `client_seeds` must equal what the simulator itself saw
+  on the wire for this game; `winner` must equal `game_over`'s winner.
+  `rolls` must have one entry per `rolled` frame the simulator verified, in
+  the same order, each entry's `k`, `seat`, `reveal` and `die` equal to that
+  frame's `k`, `seat`, `reveal` and `value`. The first mismatch is the `FAIL`
+  line, naming the `k` and both values.
+- `GET <verify_url>` (the HTML page): status `200`, `content-type` starting
+  with `text/html`.
+
+A scenario that fetched and matched the record says so in its success line,
+for example:
+
+```
+PASS full-game winner=seat 2, 286 rolls verified against chain_commit=4b871c47..., 4/4 clients confirmed game_over, record fetched and matched 286 rolls
+```
+
+so a run log shows whether the record was checked at all, not just whether
+the scenario otherwise passed.
+
 ## Reading a failure line
 
 Every `FAIL` line says what was expected, what happened, and (where the
@@ -111,6 +173,17 @@ protocol pins an order) the scenario or `k` needed to see it again:
   code and message are folded into the line instead of the raw payload.
 - `k=<n>: ...` -- a fairness check failed at roll number `n`; see above for
   the three things that check.
+- `game_over.verify_url="<url>" does not end with "/v/<game_id>" ...` --
+  the always-on `verify_url` shape check failed; see "The verify_url and
+  record checks" above.
+- `[<socket-label>] received game_over with verify_url="<url>" but the
+  driving observer saw verify_url="<other url>" for the same game` -- two
+  sockets in the same room got different `verify_url` values on their own
+  `game_over` frame.
+- `k=<n>: the record at <url> has <field>=<value>, the wire had <field>=
+  <other value>` (`--fetch-record` only) -- the stored record disagrees
+  with what the simulator itself verified on the wire for roll `n`; see
+  "The verify_url and record checks" above.
 - `<socket-label> expected another frame within <duration> and none
   arrived` -- a frame that step needed never showed up. The label names
   which socket (`host`, `guest-2`, `seat-1-reconnect-1`, ...) stalled.

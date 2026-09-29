@@ -6,7 +6,7 @@
 //
 //   dart run tool/simulator.dart --target <url>
 //       [--scenario all|full-game|reconnect|double-drop]
-//       [--timeout-seconds N] [--players N]
+//       [--timeout-seconds N] [--players N] [--fetch-record]
 //
 // See docs/SIMULATOR.md for what each scenario proves and what each
 // failure line means.
@@ -20,8 +20,8 @@ import 'sim/scenario_double_drop.dart';
 import 'sim/scenario_full_game.dart';
 import 'sim/scenario_reconnect.dart';
 
-typedef _ScenarioRunner = Future<ScenarioResult> Function(
-    Uri target, int players);
+typedef _ScenarioRunner = Future<ScenarioResult>
+    Function(Uri target, int players, {required bool fetchRecord});
 
 const Map<String, _ScenarioRunner> _runners = <String, _ScenarioRunner>{
   'full-game': runFullGame,
@@ -60,7 +60,9 @@ Future<void> main(List<String> arguments) async {
     final _ScenarioRunner runner = _runners[scenarioName]!;
     ScenarioResult result;
     try {
-      result = await runner(args.target, args.players).timeout(remaining);
+      result =
+          await runner(args.target, args.players, fetchRecord: args.fetchRecord)
+              .timeout(remaining);
     } on TimeoutException {
       result = ScenarioResult(
         name: scenarioName,
