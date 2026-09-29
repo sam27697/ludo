@@ -731,14 +731,18 @@ class RoomRegistry {
       // succeeded.
       final int winnerSeat =
           appliedOk.events.whereType<engine.GameWon>().first.seat;
-      final String recordJson = jsonEncode(
-        buildVerifyRecord(
-          room,
-          winner: winnerSeat,
-          finishedAt: _clock.now,
-        ),
-      );
+      // buildVerifyRecord and jsonEncode run inside this same try: a throw
+      // from either (a rollSeats index, a null gameId) is exactly as
+      // recoverable here as a throw from verifyStore.save itself, and must
+      // never escape move() and cost the players their finished game.
       try {
+        final String recordJson = jsonEncode(
+          buildVerifyRecord(
+            room,
+            winner: winnerSeat,
+            finishedAt: _clock.now,
+          ),
+        );
         final bool saved = verifyStore.save(room.gameId!, recordJson);
         if (!saved) {
           stderr.writeln(

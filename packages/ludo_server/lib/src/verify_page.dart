@@ -76,14 +76,18 @@ String buildVerifyPageHtml(String recordJson) {
 
   // The `<script type="application/json">` block below is not parsed as
   // HTML, so its content does not need HTML escaping -- it needs exactly
-  // one guard instead: a literal "<" could otherwise start a "</script>"
-  // sequence inside a seed or a reveal and truncate the element early. The
-  // standard fix, used the same way by every framework that embeds JSON in
-  // a script tag, is to write "<" as its JSON unicode escape "<": a
-  // JSON parser reads it back as the original character, but the browser's
-  // HTML tokenizer never sees the byte "<" and so can never close the tag
-  // on it.
-  final String scriptSafeRecordJson = recordJson.replaceAll('<', r'<');
+  // one guard instead: a literal "<" (byte 0x3c) could otherwise start a
+  // "</script>" sequence inside a seed or a reveal and truncate the element
+  // early. The standard fix, used the same way by every framework that
+  // embeds JSON in a script tag, is to write "<" as the six-character JSON
+  // unicode escape backslash, u, 0, 0, 3, c: a JSON parser reads it back as
+  // the original character, but the browser's HTML tokenizer never sees the
+  // byte 0x3c and so can never close the tag on it. The replacement string
+  // below is deliberately split across two Dart string literals so the six
+  // characters are never contiguous in this file -- at least one editing
+  // tool on this box turns the contiguous form back into a literal "<",
+  // which would make the guard a no-op again.
+  final String scriptSafeRecordJson = recordJson.replaceAll('<', r'\u' '003c');
 
   return '''
 <!DOCTYPE html>
@@ -216,8 +220,7 @@ body {
 </head>
 <body>
 <h1>No record for this id</h1>
-<p>There is no verification record for this id. Records are kept for 90
-days after the game they belong to ends.</p>
+<p>There is no verification record for this id. Records are kept for 90 days after the game they belong to ends.</p>
 </body>
 </html>
 ''';
