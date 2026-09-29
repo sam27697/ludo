@@ -74,6 +74,18 @@ RUN set -eux; \
 
 COPY --from=build /server /server
 
+# /data/verify holds one JSON file per finished game (docs/VERIFY.md section
+# 8), written by the process once it drops to 10001:10001 below, so the
+# directory has to be owned by that uid:gid before USER takes effect --
+# created any later and the process could not write to it. Compose mounts a
+# named volume here per environment; an empty directory created by Docker for
+# a fresh volume mount inherits the ownership and mode of the mount point that
+# already existed in the image, which is the only reason creating it here
+# (rather than leaving it to appear on first write) matters. 0700: only this
+# uid needs to read these files, and they are the entire fairness record for
+# every game the server has finished.
+RUN mkdir -p /data/verify && chown 10001:10001 /data/verify && chmod 0700 /data/verify
+
 # Rootless Docker on the deploy host already maps this container's root to
 # an unprivileged host uid, so this is defence in depth rather than the only
 # defence. A fixed, unused numeric uid:gid; no /etc/passwd entry is needed

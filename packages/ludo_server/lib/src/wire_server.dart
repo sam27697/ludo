@@ -26,6 +26,9 @@ import 'rate_limit.dart';
 import 'registry.dart';
 import 'room_code.dart';
 import 'snapshot.dart';
+import 'verify_page.dart';
+import 'verify_scripts.dart';
+import 'verify_store.dart';
 
 /// How often the housekeeping timer fires: `RoomRegistry.reap()` and
 /// `RateLimiter.prune()` both run on this cadence. `docs/PROTOCOL.md` does
@@ -74,6 +77,19 @@ const String _assetLinksPath = '/.well-known/assetlinks.json';
 /// after being upper-cased and checked with `isWellFormedRoomCode`; this
 /// pattern alone says nothing about whether the code is well-formed.
 final RegExp _roomLinkPathPattern = RegExp(r'^/r/([^/]+)$');
+
+/// Matches `/v/<anything>`, deliberately including further slashes: unlike
+/// [_roomLinkPathPattern], `docs/VERIFY.md` section 4 requires this route to
+/// answer a well-defined not-found response for a trailing slash, an
+/// encoded slash or a `..` in the id, rather than falling through to the
+/// WebSocket upgrade attempt every other unmatched path reaches. Capturing
+/// everything after `/v/` here and letting [_handleVerify] sort the result
+/// out is what makes that possible: every one of those shapes fails
+/// [isWellFormedGameId] and is answered as not found, and none of them ever
+/// reaches [VerifyStore.load] or [VerifyStore.save] to build a path from.
+final RegExp _verifyPathPattern = RegExp(r'^/v/(.*)$');
+
+const String _verifyJsonSuffix = '.json';
 
 /// Builds the `assetlinks.json` body for [rawFingerprint], or returns null
 /// when [rawFingerprint] is null, empty, or does not match
@@ -197,6 +213,10 @@ class WireServer {
       final RegExpMatch? roomLinkMatch = _roomLinkPathPattern.firstMatch(path);
       if (roomLinkMatch != null) {
         return _handleRoomLink(request, roomLinkMatch.group(1)!);
+      }
+      final RegExpMatch? verifyMatch = _verifyPathPattern.firstMatch(path);
+      if (verifyMatch != null) {
+        return _handleVerify(request, verifyMatch.group(1)!);
       }
       final String ip = _clientIp(request);
       final shelf.Handler upgrade = webSocketHandler((
@@ -440,6 +460,135 @@ class WireServer {
           'allow': 'GET, HEAD',
         });
     }
+  }
+
+  /// `GET`/`HEAD /v/verify.js`, `/v/verify.py`, `/v/<id>` and
+  /// `/v/<id>.json`, never reaching the WebSocket upgrade path either.
+  /// `docs/VERIFY.md` section 4: every one of these is `GET`/`HEAD` only,
+  /// any other method a `405` naming `GET, HEAD`, and every response here
+  /// carries `x-content-type-options: nosniff` and
+  /// `referrer-policy: no-referrer` regardless of which of the four this
+  /// turns out to be. [rest] is everything the path pattern matched after
+  /// `/v/`, unvalidated -- deciding what it names, and whether that name is
+  /// well-formed, is entirely this method's job from here on.
+  shelf.Response _handleVerify(shelf.Request request, String rest) {
+    if (request.method != 'GET' && request.method != 'HEAD') {
+      return shelf.Response(405, headers: const <String, String>{
+        'allow': 'GET, HEAD',
+        'x-content-type-options': 'nosniff',
+        'referrer-policy': 'no-referrer',
+      });
+    }
+    final bool isHead = request.method == 'HEAD';
+
+    if (rest == 'verify.js') {
+      return _verifyScriptResponse(
+        body: verifyJsSource,
+        contentType: 'text/javascript; charset=utf-8',
+        isHead: isHead,
+      );
+    }
+    if (rest == 'verify.py') {
+      return _verifyScriptResponse(
+        body: verifyPySource,
+        contentType: 'text/x-python; charset=utf-8',
+        isHead: isHead,
+      );
+    }
+    // `docs/VERIFY.md` section 4: anything under `/v/` that is not
+    // `verify.js` or `verify.py` is answered as the row it most resembles --
+    // a path ending in `.json` in any casing resembles the `.json` row, not
+    // the page row, even though only an exact lowercase `.json` suffix on a
+    // well-formed id can ever actually be found. So the case-insensitive
+    // check below decides which row's not-found shape a mismatched case
+    // gets; only the exact-case suffix is ever allowed to reach the store.
+    if (rest.toLowerCase().endsWith(_verifyJsonSuffix)) {
+      final bool exactSuffix = rest.endsWith(_verifyJsonSuffix);
+      final String id = exactSuffix
+          ? rest.substring(0, rest.length - _verifyJsonSuffix.length)
+          : '';
+      return _verifyJsonResponse(id: id, isHead: isHead);
+    }
+    return _verifyPageResponse(id: rest, isHead: isHead);
+  }
+
+  /// `verify.js` and `verify.py` never change once this process is running
+  /// and never depend on any id, so both are always the "found" row of
+  /// `docs/VERIFY.md` section 4's table: `200` and the five-minute cache,
+  /// never a 404.
+  shelf.Response _verifyScriptResponse({
+    required String body,
+    required String contentType,
+    required bool isHead,
+  }) {
+    final Map<String, String> headers = <String, String>{
+      'content-type': contentType,
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+      'cache-control': 'public, max-age=300',
+    };
+    return shelf.Response.ok(isHead ? '' : body, headers: headers);
+  }
+
+  /// `GET`/`HEAD /v/<id>.json`. [id] is whatever preceded the `.json` suffix
+  /// in the matched path -- not yet checked against [isWellFormedGameId],
+  /// which is the very next thing this method does, before anything of
+  /// [id] ever reaches [RoomRegistry.verifyStore].
+  shelf.Response _verifyJsonResponse(
+      {required String id, required bool isHead}) {
+    final String? stored =
+        isWellFormedGameId(id) ? registry.verifyStore.load(id) : null;
+    final Map<String, String> shared = <String, String>{
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+      'access-control-allow-origin': '*',
+      'content-type': 'application/json',
+    };
+    if (stored == null) {
+      return shelf.Response.notFound(
+        isHead ? '' : '{"error":"not_found"}',
+        headers: <String, String>{...shared, 'cache-control': 'no-store'},
+      );
+    }
+    return shelf.Response.ok(
+      isHead ? '' : stored,
+      headers: <String, String>{
+        ...shared,
+        'cache-control': 'public, max-age=300',
+      },
+    );
+  }
+
+  /// `GET`/`HEAD /v/<id>`. Same validate-before-load rule as
+  /// [_verifyJsonResponse], and the same not-found answer whether [id]
+  /// failed [isWellFormedGameId] outright or was well-formed but has no
+  /// record -- `docs/VERIFY.md` section 4 does not distinguish the two, and
+  /// [buildVerifyNotFoundHtml] does not need to know which one happened.
+  shelf.Response _verifyPageResponse(
+      {required String id, required bool isHead}) {
+    final String? stored =
+        isWellFormedGameId(id) ? registry.verifyStore.load(id) : null;
+    final Map<String, String> shared = <String, String>{
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+      'content-type': 'text/html; charset=utf-8',
+      'content-security-policy': "default-src 'none'; script-src 'self'; "
+          "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; "
+          "frame-ancestors 'none'",
+    };
+    if (stored == null) {
+      return shelf.Response.notFound(
+        isHead ? '' : buildVerifyNotFoundHtml(),
+        headers: <String, String>{...shared, 'cache-control': 'no-store'},
+      );
+    }
+    return shelf.Response.ok(
+      isHead ? '' : buildVerifyPageHtml(stored),
+      headers: <String, String>{
+        ...shared,
+        'cache-control': 'public, max-age=300',
+      },
+    );
   }
 
   /// Whole seconds since [start] completed, from the injected [clock]. Zero

@@ -5,6 +5,8 @@
 // clock, the injected random source, and its arguments). Nothing here reads
 // a wall clock, opens a socket or parses JSON; those are order 007's job.
 
+import 'dart:convert' show jsonEncode;
+import 'dart:io' show stderr;
 import 'dart:math';
 
 import 'package:fair_dice/fair_dice.dart' show DiceChain, drawDie, hexEncode;
@@ -14,6 +16,8 @@ import 'clock.dart';
 import 'room.dart';
 import 'room_code.dart';
 import 'seat_token.dart';
+import 'verify_record.dart';
+import 'verify_store.dart';
 
 /// Every error this package can hand a caller, one to one with the table in
 /// `docs/PROTOCOL.md` section 7. A value is never invented at a call site;
@@ -335,12 +339,28 @@ final RegExp _clientSeedPattern = RegExp(r'^[A-Za-z0-9_-]+$');
 /// every decision here is a pure function of this registry's own state plus
 /// the `Clock` and `Random` it was built with.
 class RoomRegistry {
-  RoomRegistry({required Clock clock, required Random secure})
-      : _clock = clock,
-        _secure = secure;
+  RoomRegistry({
+    required Clock clock,
+    required Random secure,
+    VerifyStore? verifyStore,
+    String verifyUrlBase = defaultVerifyUrlBase,
+  })  : _clock = clock,
+        _secure = secure,
+        verifyStore = verifyStore ?? MemoryVerifyStore(clock),
+        _verifyUrlBase = verifyUrlBase;
 
   final Clock _clock;
   final Random _secure;
+
+  /// docs/VERIFY.md section 3. Where a finished game's record is written at
+  /// the moment it is won, and read back for `/v/<game_id>` and
+  /// `/v/<game_id>.json`. Defaults to an in-memory store when no caller
+  /// supplies one, which is what every existing call site (and every
+  /// existing test) gets, unchanged.
+  final VerifyStore verifyStore;
+
+  /// docs/VERIFY.md section 3: `verify_url` is `'$_verifyUrlBase${room.gameId}'`.
+  final String _verifyUrlBase;
 
   final Map<String, Room> _rooms = <String, Room>{};
 
@@ -596,6 +616,12 @@ class RoomRegistry {
     final engine.Applied appliedOk = applied as engine.Applied;
     room.game = appliedOk.state;
     room.rollCount = k;
+    // docs/VERIFY.md section 1.2: this is the one code path that sets
+    // room.rollCount = k, whether a player rolled or the turn timer did on
+    // their behalf (expireTurns() reaches here through this same method) --
+    // so appending here, and only here, keeps rollSeats.length == rollCount
+    // true without a second place either could drift from the other.
+    room.rollSeats.add(seat.seat);
 
     room.seq++;
     final int rolledSeq = room.seq;
@@ -695,9 +721,42 @@ class RoomRegistry {
 
     if (won) {
       room.state = RoomState.finished;
+      // docs/VERIFY.md section 1: the record is written the moment the game
+      // is won, before this method returns the MoveOk that carries
+      // verify_url below -- so a client that taps Verify the instant
+      // game_over arrives finds the record already there. A failed save
+      // (the store throws, or a record for this game_id somehow already
+      // exists) must never cost a player a finished game: it is logged to
+      // stderr, one line, and play continues exactly as if it had
+      // succeeded.
+      final int winnerSeat =
+          appliedOk.events.whereType<engine.GameWon>().first.seat;
+      // buildVerifyRecord and jsonEncode run inside this same try: a throw
+      // from either (a rollSeats index, a null gameId) is exactly as
+      // recoverable here as a throw from verifyStore.save itself, and must
+      // never escape move() and cost the players their finished game.
+      try {
+        final String recordJson = jsonEncode(
+          buildVerifyRecord(
+            room,
+            winner: winnerSeat,
+            finishedAt: _clock.now,
+          ),
+        );
+        final bool saved = verifyStore.save(room.gameId!, recordJson);
+        if (!saved) {
+          stderr.writeln(
+            'verify_record_not_saved game_id=${room.gameId} reason=exists',
+          );
+        }
+      } catch (error) {
+        stderr.writeln(
+          'verify_record_not_saved game_id=${room.gameId} reason=$error',
+        );
+      }
       room.seq++;
       gameOverSeq = room.seq;
-      verifyUrl = 'https://provefair.app/v/${room.gameId}';
+      verifyUrl = '$_verifyUrlBase${room.gameId}';
     } else {
       // Rule 12 of docs/RULES.md, via the engine's own ExtraRoll/TurnBegan
       // events: either the same seat rolls again or the next seat's turn
@@ -913,6 +972,10 @@ class RoomRegistry {
     _quarantine.removeWhere(
       (String code, DateTime expiry) => !now.isBefore(expiry),
     );
+    // docs/VERIFY.md section 3: retention is enforced here, on the same
+    // housekeeping cadence as everything else this method already sweeps,
+    // rather than on a timer of its own.
+    verifyStore.purgeOlderThan(now.subtract(verifyRetention));
     return toRemove.length;
   }
 

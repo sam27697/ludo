@@ -15,14 +15,18 @@
 # sha, polls /health over the published loopback port with a bounded number
 # of attempts, and rolls back to whatever image was running before if the
 # new one never comes healthy or if the version /health reports once it is
-# healthy disagrees with the sha just deployed. Once a deploy is healthy and
-# confirmed, it also checks whether the container's Docker network gateway
-# is covered by TRUSTED_PROXIES in $ENV_FILE, appending trusted_proxy=ok,
-# trusted_proxy=MISSING, or trusted_proxy=UNKNOWN to that same last line;
-# this never fails the deploy and never rolls back on its own, and it never
-# edits .env. It prints the sha deployed and the health result as its last
-# line either way, and exits non-zero on a failed deploy after having
-# rolled back.
+# healthy disagrees with the sha just deployed. For a production deploy
+# only, it then also polls /health over 127.0.0.1:8080 -- the port
+# provefair.app is proxied to (docs/VERIFY.md section 8) -- and rolls back
+# the same way if that does not answer 200 either, so a deploy cannot be
+# called healthy while the public verification hostname would still 503.
+# Once a deploy is healthy and confirmed, it also checks whether the
+# container's Docker network gateway is covered by TRUSTED_PROXIES in
+# $ENV_FILE, appending trusted_proxy=ok, trusted_proxy=MISSING, or
+# trusted_proxy=UNKNOWN to that same last line; this never fails the deploy
+# and never rolls back on its own, and it never edits .env. It prints the
+# sha deployed and the health result as its last line either way, and exits
+# non-zero on a failed deploy after having rolled back.
 #
 # It never prints .env's contents and never echoes an environment variable
 # value; the only things it prints are shas, tags, http status codes, and
@@ -37,6 +41,7 @@ set -euo pipefail
 ROOT="/srv/apps/ludo"
 REPO_DIR="$ROOT/repo"
 COMPOSE_FILE="$REPO_DIR/deploy/ludo/docker-compose.yml"
+PRODUCTION_COMPOSE_FILE="$REPO_DIR/deploy/ludo/docker-compose.production.yml"
 DOCKERFILE="packages/ludo_server/Dockerfile"
 SERVICE_NAME="ludo-server"
 IMAGE_NAME="ludo-server"
@@ -81,6 +86,13 @@ esac
 HEALTH_PORT="${LUDO_HEALTH_PORT:-$DEFAULT_HEALTH_PORT}"
 HEALTH_URL="http://127.0.0.1:${HEALTH_PORT}/health"
 
+# provefair.app is proxied straight to 127.0.0.1:8080 on the host
+# (docs/VERIFY.md section 8), a port only the production container ever
+# publishes, so there is nothing to poll here for staging -- this is a
+# fixed loopback address, not derived from HEALTH_PORT, and is only ever
+# used once ENVIRONMENT_NAME is confirmed production, below.
+PRODUCTION_VERIFY_HEALTH_URL="http://127.0.0.1:8080/health"
+
 # staging and production are two independent deployments on this box, not
 # one project split by an environment variable at deploy time: each gets
 # its own directory under $ROOT to hold its own .env and its own record of
@@ -116,6 +128,18 @@ PROJECT_NAME="ludo-$ENVIRONMENT_NAME"
 LUDO_ENVIRONMENT="$ENVIRONMENT_NAME"
 LUDO_PORT="$HEALTH_PORT"
 
+# Every `docker compose` call below reads this same list, built once, so a
+# call added later cannot forget the production override by omission --
+# there is one array to extend, not one `-f` flag to remember at each call
+# site. Staging's list is exactly the base file, unchanged from before this
+# override existed. The production override file's own existence is checked
+# after the checkout is reset below, alongside COMPOSE_FILE, since both live
+# inside it.
+COMPOSE_ARGS=(-f "$COMPOSE_FILE")
+if [[ "$ENVIRONMENT_NAME" == "production" ]]; then
+  COMPOSE_ARGS+=(-f "$PRODUCTION_COMPOSE_FILE")
+fi
+
 if [[ ! -f "$ENV_FILE" ]]; then
   if [[ -f "$ROOT/.env" ]]; then
     fail "missing $ENV_FILE -- found $ROOT/.env instead, which is the old shared location from before staging and production got their own directories. Fix by hand, once: mkdir -p \"$ENV_ROOT\" && mv \"$ROOT/.env\" \"$ENV_FILE\" (see deploy/ludo/README.md)"
@@ -137,8 +161,12 @@ git -C "$REPO_DIR" reset --hard --quiet "$RESET_TARGET"
 
 # COMPOSE_FILE lives inside $REPO_DIR, so it only exists to be checked once
 # the reset above has put the right ref's copy on disk; checking it earlier
-# would be checking whatever the previous deploy left behind.
+# would be checking whatever the previous deploy left behind. Same reasoning
+# for the production override, checked only when this deploy is production.
 require_file "$COMPOSE_FILE" "docker-compose.yml (inside the checkout -- see deploy/ludo/README.md)"
+if [[ "$ENVIRONMENT_NAME" == "production" ]]; then
+  require_file "$PRODUCTION_COMPOSE_FILE" "docker-compose.production.yml (inside the checkout -- see deploy/ludo/README.md)"
+fi
 
 SHA="$(git -C "$REPO_DIR" rev-parse --short HEAD)"
 log "resolved ref '$REF' to sha $SHA"
@@ -170,7 +198,7 @@ bring_up() {
   docker compose \
     --project-name "$PROJECT_NAME" \
     --project-directory "$ENV_ROOT" \
-    -f "$COMPOSE_FILE" \
+    "${COMPOSE_ARGS[@]}" \
     --env-file "$ENV_FILE" \
     up -d --remove-orphans
 }
@@ -187,7 +215,7 @@ roll_back_and_fail() {
   docker compose \
     --project-name "$PROJECT_NAME" \
     --project-directory "$ENV_ROOT" \
-    -f "$COMPOSE_FILE" \
+    "${COMPOSE_ARGS[@]}" \
     --env-file "$ENV_FILE" \
     logs --no-color --tail 50 "$SERVICE_NAME" || true
 
@@ -231,6 +259,32 @@ reported_version="$(printf '%s' "$health_body" \
 
 if [[ "$reported_version" != "$SHA" ]]; then
   roll_back_and_fail "version mismatch after deploy: expected sha $SHA, /health reported '${reported_version:-<empty>}'"
+fi
+
+# provefair.app is proxied straight to 127.0.0.1:8080 (docs/VERIFY.md
+# section 8), and only docker-compose.production.yml publishes that port on
+# this container. The poll above already proved the container itself is
+# healthy on its own environment port; this proves the second, production-
+# only port mapping actually took, so a compose file that failed to load
+# the override -- or an override that stopped adding the port -- fails the
+# deploy instead of leaving provefair.app answering 503 under a "healthy"
+# deploy.
+if [[ "$ENVIRONMENT_NAME" == "production" ]]; then
+  verify_port_healthy="no"
+  verify_port_attempt=1
+  while [[ "$verify_port_attempt" -le "$HEALTH_ATTEMPTS" ]]; do
+    verify_port_code="$(curl -s -o /dev/null -w '%{http_code}' "$PRODUCTION_VERIFY_HEALTH_URL" 2>/dev/null || true)"
+    if [[ "$verify_port_code" == "200" ]]; then
+      verify_port_healthy="yes"
+      break
+    fi
+    verify_port_attempt=$((verify_port_attempt + 1))
+    sleep "$HEALTH_INTERVAL_SECONDS"
+  done
+
+  if [[ "$verify_port_healthy" != "yes" ]]; then
+    roll_back_and_fail "health check failed on $PRODUCTION_VERIFY_HEALTH_URL for $NEW_TAG after $HEALTH_ATTEMPTS attempts (last status: ${verify_port_code:-none}) -- provefair.app would answer 503"
+  fi
 fi
 
 echo "$NEW_TAG" > "$STATE_FILE"

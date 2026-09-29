@@ -63,6 +63,17 @@ export 'src/connection.dart' show Connection, RoomHub;
 // broadcasts. Exported so both halves are testable without a socket.
 export 'src/snapshot.dart' show OutFrame, buildExpiryFrames;
 export 'src/privacy_page.dart' show buildPrivacyPageHtml, privacyLastUpdated;
+export 'src/verify_store.dart'
+    show
+        VerifyStore,
+        MemoryVerifyStore,
+        DirectoryVerifyStore,
+        verifyRetention,
+        defaultVerifyUrlBase,
+        isWellFormedGameId;
+export 'src/verify_record.dart' show buildVerifyRecord, verifyRecordFormat;
+export 'src/verify_scripts.dart' show verifyJsSource, verifyPySource;
+export 'src/verify_page.dart' show buildVerifyPageHtml, buildVerifyNotFoundHtml;
 export 'src/wire_server.dart'
     show WireServer, housekeepingInterval, turnExpiryInterval;
 

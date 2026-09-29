@@ -49,8 +49,27 @@ services:
     # otherwise flow into the container. This line is what actually carries
     # it in, and it defaults to "dev" so `docker compose up` on its own,
     # without LUDO_VERSION set, still starts.
+    #
+    # LUDO_VERIFY_DIR is not environment-dependent the way PORT or
+    # TRUSTED_PROXIES are: it is always this container's mount point below,
+    # never a host path, so it belongs here rather than in .env.
     environment:
       LUDO_VERSION: "${LUDO_VERSION:-dev}"
+      LUDO_VERIFY_DIR: /data/verify
+
+    # One record per finished game (docs/VERIFY.md), kept 90 days and purged
+    # by the server itself, nothing else. A named volume rather than a bind
+    # mount so the records survive a redeploy (deploy.sh only ever replaces
+    # the container, never the volume) without depending on a host path
+    # existing outside Docker's own bookkeeping. Compose prefixes an
+    # unqualified volume name with the project name, and the project name is
+    # already `ludo-staging` / `ludo-production` (--project-name on every
+    # `docker compose` call in deploy.sh), so this one name becomes
+    # `ludo-staging_verify-data` and `ludo-production_verify-data` -- two
+    # separate volumes, never shared, the same way the two projects are
+    # never shared.
+    volumes:
+      - verify-data:/data/verify
 
     # A structured-log-per-event server can fill a 4 GB disk if nothing
     # caps it. 10 MB per file, 5 files kept: 50 MB ceiling for this
@@ -77,3 +96,11 @@ services:
       timeout: 3s
       start_period: 10s
       retries: 3
+
+# Declared, not just referenced above, so compose creates it rather than
+# refusing to start over a missing volume. Left with no driver options: the
+# default local driver, one volume per project (see the comment on the
+# service's own `volumes:` above for how staging and production end up with
+# two, never one shared).
+volumes:
+  verify-data:
