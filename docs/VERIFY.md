@@ -170,7 +170,7 @@ from the record is HTML-escaped. It shows, in this order:
 
 The record itself is embedded as
 `<script type="application/json" id="record">` holding the stored JSON with
-`<` written as `<`, so a seed can never close the element.
+every `<` character replaced by the six-character JSON escape (a backslash, then `u003c`), so a seed can never close the element. In Dart source, write that replacement so the six characters are not contiguous in the file, for example `r'\u' '003c'`, because at least one editing tool on this box turns the contiguous form into a literal `<`.
 `<script src="/v/verify.js"></script>` loads the checker. No other script, no
 external resource, no font, no image.
 
