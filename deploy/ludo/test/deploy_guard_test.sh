@@ -473,6 +473,48 @@ case_08d_wait_seconds_empty_counts_as_unset() {
   finish_case "$name" "$why"
 }
 
+# Case 8, third part (S4 amendment, master's decision run 64): a positive
+# integer is ^[1-9][0-9]*$, so a leading zero is invalid input, not a smaller
+# valid number. Fails at once with the exact S4 message, before any git or
+# docker call.
+case_08e_wait_seconds_invalid_leading_zero() {
+  local name="08e_wait_seconds_invalid_leading_zero"
+  make_sandbox
+  local sandbox="$CURRENT_SANDBOX"
+  printf '{"status":"ok","version":"x","rooms":0}' > "$sandbox/health_body"
+
+  timed_run_deploy "$sandbox" 10 "LUDO_DEPLOY_WAIT_SECONDS=08"
+
+  local why=""
+  [[ "$DEPLOY_EXIT" -ne 0 ]] || why+="expected non-zero exit, got 0. "
+  output_has_exact_line "deploy.sh: LUDO_DEPLOY_WAIT_SECONDS must be a positive integer" \
+    || why+="no output line is exactly 'deploy.sh: LUDO_DEPLOY_WAIT_SECONDS must be a positive integer'. "
+  log_empty "$sandbox/git.log" || why+="git.log not empty: $(tr '\n' '|' < "$sandbox/git.log"). "
+  log_empty "$sandbox/docker.log" || why+="docker.log not empty: $(tr '\n' '|' < "$sandbox/docker.log"). "
+
+  finish_case "$name" "$why"
+}
+
+# Case 8, fourth part (S4 amendment): same leading-zero rule for
+# LUDO_DEPLOY_POLL_SECONDS.
+case_08f_poll_seconds_invalid_leading_zero() {
+  local name="08f_poll_seconds_invalid_leading_zero"
+  make_sandbox
+  local sandbox="$CURRENT_SANDBOX"
+  printf '{"status":"ok","version":"x","rooms":0}' > "$sandbox/health_body"
+
+  timed_run_deploy "$sandbox" 10 "LUDO_DEPLOY_POLL_SECONDS=007"
+
+  local why=""
+  [[ "$DEPLOY_EXIT" -ne 0 ]] || why+="expected non-zero exit, got 0. "
+  output_has_exact_line "deploy.sh: LUDO_DEPLOY_POLL_SECONDS must be a positive integer" \
+    || why+="no output line is exactly 'deploy.sh: LUDO_DEPLOY_POLL_SECONDS must be a positive integer'. "
+  log_empty "$sandbox/git.log" || why+="git.log not empty: $(tr '\n' '|' < "$sandbox/git.log"). "
+  log_empty "$sandbox/docker.log" || why+="docker.log not empty: $(tr '\n' '|' < "$sandbox/docker.log"). "
+
+  finish_case "$name" "$why"
+}
+
 # Case 9 (S5, last line): force and wait both set -- force wins, no sleep.
 case_09_force_wins_over_wait() {
   local name="09_force_wins_over_wait"
@@ -600,6 +642,8 @@ main() {
   case_08b_poll_seconds_invalid_zero
   case_08c_wait_seconds_invalid_negative
   case_08d_wait_seconds_empty_counts_as_unset
+  case_08e_wait_seconds_invalid_leading_zero
+  case_08f_poll_seconds_invalid_leading_zero
   case_09_force_wins_over_wait
   case_10_production_port_targeting
   case_11_realistic_body_extracts_correct_field
