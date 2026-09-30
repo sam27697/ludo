@@ -840,6 +840,32 @@ gate_artifact() {
   return 0
 }
 
+# 7. The live-room deploy guard, proven against its own spec rather than
+# against whatever deploy.sh happens to do: deploy/ludo/test/deploy_guard_test.sh
+# builds its own throwaway sandboxes and stand-ins for git, docker and curl,
+# so this gate needs nothing beyond a shell and something to bound it with.
+gate_deploy() {
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "no timeout on PATH here, so this gate cannot bound the guard test's own run"
+    return 77
+  fi
+  if ! command -v bash >/dev/null 2>&1; then
+    echo "no bash on PATH here, so this gate cannot run the guard test"
+    return 77
+  fi
+
+  # The suite's own cases sleep and poll real wall-clock time -- case
+  # 13_default_poll_seconds_applied alone runs a full 30s poll cycle to prove
+  # the default rather than assume it. Measured on this machine on
+  # 2026-09-30, the full suite finishes in about 37s; 120s, -k 10, leaves
+  # headroom on a loaded host without letting a genuine hang run forever.
+  local out rc
+  out="$(timeout -k 10 120 bash "$ROOT/deploy/ludo/test/deploy_guard_test.sh" 2>&1)"; rc=$?
+  echo "$out"
+  [ $rc -eq 0 ] && return 0
+  return 1
+}
+
 # The specs themselves are checked from gate one, because they are the only
 # thing in the tree right now and because an order dispatched against a missing
 # spec is a wasted night.
@@ -877,7 +903,7 @@ gate_secrets() {
 # An unknown name is refused outright, before anything runs: a typo that
 # silently ran zero gates and still printed a green summary would be exactly
 # the failure this harness exists to prevent.
-GATE_NAMES="specs secrets static client_static purity rules golden dice server protocol simulator client_wire artifact"
+GATE_NAMES="specs secrets static client_static purity rules golden dice server protocol simulator client_wire artifact deploy"
 GATE_ARGS=("$@")
 
 if [ "${#GATE_ARGS[@]}" -gt 0 ]; then
@@ -919,6 +945,7 @@ want_gate protocol      && run_gate protocol      gate_protocol
 want_gate simulator     && run_gate simulator     gate_simulator
 want_gate client_wire   && run_gate client_wire   gate_client_wire
 want_gate artifact      && run_gate artifact      gate_artifact
+want_gate deploy        && run_gate deploy        gate_deploy
 
 echo
 echo "gates: $PASS passed, $FAIL failed, $TODO not implemented"

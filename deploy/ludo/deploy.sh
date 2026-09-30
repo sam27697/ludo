@@ -38,7 +38,7 @@
 
 set -euo pipefail
 
-ROOT="/srv/apps/ludo"
+ROOT="${LUDO_ROOT:-/srv/apps/ludo}"
 REPO_DIR="$ROOT/repo"
 COMPOSE_FILE="$REPO_DIR/deploy/ludo/docker-compose.yml"
 PRODUCTION_COMPOSE_FILE="$REPO_DIR/deploy/ludo/docker-compose.production.yml"
@@ -148,6 +148,74 @@ if [[ ! -f "$ENV_FILE" ]]; then
 fi
 
 [[ -d "$REPO_DIR/.git" ]] || fail "no checkout at $REPO_DIR -- clone it first, see README.md"
+
+# Rooms live only in the running server process's memory (RoomRegistry,
+# packages/ludo_server/lib/src/registry.dart), so recreating the container
+# below without looking at how many rooms that process holds would silently
+# end every game in progress. This guard reads that count off $HEALTH_URL,
+# already computed above, and refuses, waits, or proceeds depending on the
+# count -- before the first git or docker command below runs. A room's
+# longest possible life is 60 minutes (_anyRoomTimeout, registry.dart:317),
+# so waiting here is always bounded.
+
+is_positive_integer() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+if [[ -n "${LUDO_DEPLOY_WAIT_SECONDS:-}" ]] && ! is_positive_integer "$LUDO_DEPLOY_WAIT_SECONDS"; then
+  fail "LUDO_DEPLOY_WAIT_SECONDS must be a positive integer"
+fi
+if [[ -n "${LUDO_DEPLOY_POLL_SECONDS:-}" ]] && ! is_positive_integer "$LUDO_DEPLOY_POLL_SECONDS"; then
+  fail "LUDO_DEPLOY_POLL_SECONDS must be a positive integer"
+fi
+LUDO_DEPLOY_POLL_SECONDS="${LUDO_DEPLOY_POLL_SECONDS:-30}"
+
+# One curl call per read, body parsed with sed alone -- same reasoning as
+# the version check further down: no jq or python assumed on the box.
+read_live_rooms() {
+  local body rooms
+  if ! body="$(curl -s --max-time 5 "$HEALTH_URL")"; then
+    printf 'unknown\n'
+    return
+  fi
+  rooms="$(printf '%s' "$body" \
+    | sed -n 's/.*"rooms"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+  if [[ -z "$rooms" ]]; then
+    printf 'unknown\n'
+    return
+  fi
+  printf '%s\n' "$rooms"
+}
+
+live_rooms="$(read_live_rooms)"
+
+if [[ "$live_rooms" == "unknown" ]]; then
+  log "live_rooms=unknown"
+elif [[ "$live_rooms" -eq 0 ]]; then
+  log "live_rooms=0"
+elif [[ "${LUDO_DEPLOY_FORCE:-}" == "1" ]]; then
+  log "live_rooms=$live_rooms forced by LUDO_DEPLOY_FORCE=1"
+elif [[ -z "${LUDO_DEPLOY_WAIT_SECONDS:-}" ]]; then
+  fail "refusing: live_rooms=$live_rooms, nothing changed -- set LUDO_DEPLOY_WAIT_SECONDS to wait for rooms to end, or LUDO_DEPLOY_FORCE=1 to deploy anyway"
+else
+  waited=0
+  while [[ "$waited" -lt "$LUDO_DEPLOY_WAIT_SECONDS" ]]; do
+    sleep "$LUDO_DEPLOY_POLL_SECONDS"
+    waited=$((waited + LUDO_DEPLOY_POLL_SECONDS))
+    live_rooms="$(read_live_rooms)"
+    if [[ "$live_rooms" == "unknown" ]]; then
+      log "live_rooms=unknown"
+      break
+    fi
+    if [[ "$live_rooms" -eq 0 ]]; then
+      log "live_rooms=0 after waiting"
+      break
+    fi
+  done
+  if [[ "$live_rooms" != "unknown" ]] && [[ "$live_rooms" -gt 0 ]]; then
+    fail "refusing: live_rooms=$live_rooms after waiting, nothing changed -- set LUDO_DEPLOY_FORCE=1 to deploy anyway"
+  fi
+fi
 
 log "fetching origin into $REPO_DIR"
 git -C "$REPO_DIR" fetch --quiet origin
