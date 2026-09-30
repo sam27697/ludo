@@ -79,8 +79,9 @@ List<Object?>? _listAt(Map<String, Object?> data, String key) {
 
 /// True when some entry of [captured] (`moved`'s `{"seat":int,"token":int}`
 /// list) names [seat]. An entry that is not a map, or whose `seat` is
-/// missing or not an `int`, is simply not a match; it does not invalidate
-/// the rest of the list.
+/// missing, is simply not a match; it does not invalidate the rest of the
+/// list. A `seat` present but not an `int` is caught earlier, by
+/// [_capturedHasMistypedSeat], and never reaches this function.
 bool _capturedIncludesSeat(List<Object?> captured, int seat) {
   for (final Object? entry in captured) {
     if (entry is Map) {
@@ -88,6 +89,21 @@ bool _capturedIncludesSeat(List<Object?> captured, int seat) {
       if (entrySeat is int && entrySeat == seat) {
         return true;
       }
+    }
+  }
+  return false;
+}
+
+/// True when [captured] holds an entry whose `seat` field is present but
+/// not an `int`. PROTOCOL 12.2's captured entries are always
+/// `{"seat":int,"token":int}`; a `seat` of the wrong type makes the whole
+/// entry, and so the whole frame, untrustworthy (C-225's catch-all row: "a
+/// field missing or of the wrong type -> []"), rather than something
+/// [_capturedIncludesSeat] should silently skip past.
+bool _capturedHasMistypedSeat(List<Object?> captured) {
+  for (final Object? entry in captured) {
+    if (entry is Map && entry.containsKey('seat') && entry['seat'] is! int) {
+      return true;
     }
   }
   return false;
@@ -101,6 +117,13 @@ List<FeedbackCue> _cuesForMoved(Map<String, Object?> data, int mySeat) {
   if (seat == null) {
     return const <FeedbackCue>[];
   }
+  // PROTOCOL 12.2: `captured` is always sent, empty when there is none.
+  // Absent entirely, or present but not a list, is the wrong shape and
+  // means the whole frame, not just the capture cue, is untrustworthy.
+  final List<Object?>? captured = _listAt(data, 'captured');
+  if (captured == null) {
+    return const <FeedbackCue>[];
+  }
   if (seat == mySeat) {
     final int? from = _intAt(data, 'from');
     final int? to = _intAt(data, 'to');
@@ -112,8 +135,7 @@ List<FeedbackCue> _cuesForMoved(Map<String, Object?> data, int mySeat) {
       for (int travelled = 0; travelled < squares; travelled++)
         FeedbackCue.step,
     ];
-    final List<Object?>? captured = _listAt(data, 'captured');
-    if (captured != null && captured.isNotEmpty) {
+    if (captured.isNotEmpty) {
       cues.add(FeedbackCue.capturedOther);
     }
     if (to == 57) {
@@ -121,11 +143,12 @@ List<FeedbackCue> _cuesForMoved(Map<String, Object?> data, int mySeat) {
     }
     return cues;
   }
-  final List<Object?>? captured = _listAt(data, 'captured');
-  if (captured != null && _capturedIncludesSeat(captured, mySeat)) {
-    return const <FeedbackCue>[FeedbackCue.capturedMe];
+  if (_capturedHasMistypedSeat(captured)) {
+    return const <FeedbackCue>[];
   }
-  return const <FeedbackCue>[];
+  return _capturedIncludesSeat(captured, mySeat)
+      ? const <FeedbackCue>[FeedbackCue.capturedMe]
+      : const <FeedbackCue>[];
 }
 
 /// C-225: the wire, one [Frame] at a time, to the cues it means for the
@@ -278,8 +301,15 @@ class PlatformFeedbackService implements FeedbackService {
   int failedCalls = 0;
 
   bool _reportedFailure = false;
-  DateTime? _lastStepHaptic;
-  DateTime? _lastStepSound;
+
+  // A step that plays closes its channel's gate and starts a [_stepThrottle]
+  // timer that reopens it; a step arriving while the gate is closed is
+  // dropped, not queued. A `Timer`, not `DateTime.now()`, so the gate obeys
+  // whatever clock the caller runs on (including `fake_async` in tests).
+  bool _stepHapticGateOpen = true;
+  bool _stepSoundGateOpen = true;
+  Timer? _stepHapticTimer;
+  Timer? _stepSoundTimer;
 
   @override
   void play(FeedbackCue cue) {
@@ -299,17 +329,32 @@ class PlatformFeedbackService implements FeedbackService {
     if (cue != FeedbackCue.step) {
       return true;
     }
-    final DateTime now = DateTime.now();
-    final DateTime? last = isHaptic ? _lastStepHaptic : _lastStepSound;
-    if (last != null && now.difference(last) < _stepThrottle) {
-      return false;
-    }
     if (isHaptic) {
-      _lastStepHaptic = now;
+      if (!_stepHapticGateOpen) {
+        return false;
+      }
+      _stepHapticGateOpen = false;
+      _stepHapticTimer = Timer(_stepThrottle, () {
+        _stepHapticGateOpen = true;
+      });
     } else {
-      _lastStepSound = now;
+      if (!_stepSoundGateOpen) {
+        return false;
+      }
+      _stepSoundGateOpen = false;
+      _stepSoundTimer = Timer(_stepThrottle, () {
+        _stepSoundGateOpen = true;
+      });
     }
     return true;
+  }
+
+  /// Cancels the pending step-throttle timers. Call when this service is no
+  /// longer wired to a widget tree, so a dangling `Timer` never fires after
+  /// the screen it fed is gone.
+  void dispose() {
+    _stepHapticTimer?.cancel();
+    _stepSoundTimer?.cancel();
   }
 
   Future<void> _invoke(String method, FeedbackCue cue) async {
