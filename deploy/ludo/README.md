@@ -177,6 +177,31 @@ The last line the script prints is always `sha=<short-sha>
 health=ok version=<short-sha>` or `sha=<short-sha> health=fail`, whether or
 not it rolled back.
 
+## The live-room guard
+
+Rooms live only in the running server's memory. Before touching anything
+else, `deploy.sh` reads `rooms` off the target environment's own `/health`
+and refuses to go on if that count is above zero, so a deploy cannot
+silently end a game in progress. This runs before the checkout is fetched
+and before any image is built, so a refusal here leaves the running
+container completely untouched.
+
+- `LUDO_DEPLOY_FORCE=1` deploys anyway, whatever the count.
+- `LUDO_DEPLOY_WAIT_SECONDS=<n>` polls until the count reaches zero or `<n>`
+  seconds have passed, instead of refusing outright.
+- `LUDO_DEPLOY_POLL_SECONDS=<n>` sets the interval between polls while
+  waiting (default `30`).
+
+A container that cannot be reached, or that answers without a `rooms`
+field (too old, or simply down), is treated as having nothing worth
+protecting and the deploy proceeds. A room's longest possible life is 60
+minutes, so a wait long enough to cover that is always enough to see it
+through on its own:
+
+```
+LUDO_DEPLOY_WAIT_SECONDS=4200 bash repo/deploy/ludo/deploy.sh main
+```
+
 ## Rolling back by hand
 
 The script rolls back automatically on a failed health check or a version
