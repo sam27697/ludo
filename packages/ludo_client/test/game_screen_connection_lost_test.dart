@@ -16,6 +16,11 @@
 // or C7 would mean this file is not reaching the behaviour it claims to
 // test, not that the contract is unmet.
 //
+// Order 224 (work/ludo/orders/C-223-play-surface.md, run 65): C1 and C2's
+// own "the board and the roll button are absent" checks are migrated to
+// game-die (game-screen-roll-button no longer exists); no other case here
+// touches the removed controls.
+//
 // GameScreen is driven the same way test/game_screen_test.dart and
 // test/lobby_screen_test.dart drive RoomController: a real RoomController
 // sits over a FakeTransport (test/net/fake_transport.dart, read-only, not
@@ -268,7 +273,7 @@ const Key _leaveButtonKey = Key('game-screen-leave-button');
 const Key _appbarLeaveKey = Key('game-screen-appbar-leave');
 const Key _errorMessageKey = Key('game-screen-error-message');
 const Key _boardKey = Key('game-screen-board');
-const Key _rollKey = Key('game-screen-roll-button');
+const Key _dieKey = Key('game-die');
 
 void main() {
   // A mid-game seats/turn fixture shared by every case that needs a
@@ -283,150 +288,147 @@ void main() {
   // ==========================================================================
   // C1: failed, mid-game.
   // ==========================================================================
-  testWidgets(
-    'C1: a controller driven to RoomPhase.failed while holding a '
-    'RoomState.playing snapshot renders game-screen-connection-lost and '
-    'game-screen-reconnect-button; the board and the roll button are absent',
-    (tester) async {
-      final (controller, transport, _) = await _connectPlaying(
-        tester,
-        mySeat: 0,
-        seats: midGameSeats,
-        turn: midGameTurn(),
-      );
-      addTearDown(controller.dispose);
-      expect(
-        controller.room!.state,
-        RoomState.playing,
-        reason: 'fixture is broken: the room must be mid-game',
-      );
+  testWidgets('C1: a controller driven to RoomPhase.failed while holding a '
+      'RoomState.playing snapshot renders game-screen-connection-lost and '
+      'game-screen-reconnect-button; the board and the die are absent', (
+    tester,
+  ) async {
+    final (controller, transport, _) = await _connectPlaying(
+      tester,
+      mySeat: 0,
+      seats: midGameSeats,
+      turn: midGameTurn(),
+    );
+    addTearDown(controller.dispose);
+    expect(
+      controller.room!.state,
+      RoomState.playing,
+      reason: 'fixture is broken: the room must be mid-game',
+    );
 
-      // Drive phase to failed via a real, outstanding request answered with
-      // an `error` frame -- the same mechanism lobby_screen_test.dart's
-      // _resolveFailed uses -- rather than by poking a private field.
-      unawaited(controller.roll());
-      await tester.pump();
-      final String rollId = _idOf(transport.sentRaw.last);
-      transport.pushText(
-        _frame(
-          type: 'error',
-          re: rollId,
-          data: <String, Object?>{'code': 'SERVER_GONE', 'message': ''},
-        ),
-      );
-      await tester.pump();
-      await tester.pump();
+    // Drive phase to failed via a real, outstanding request answered with
+    // an `error` frame -- the same mechanism lobby_screen_test.dart's
+    // _resolveFailed uses -- rather than by poking a private field.
+    unawaited(controller.roll());
+    await tester.pump();
+    final String rollId = _idOf(transport.sentRaw.last);
+    transport.pushText(
+      _frame(
+        type: 'error',
+        re: rollId,
+        data: <String, Object?>{'code': 'SERVER_GONE', 'message': ''},
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
 
-      expect(
-        controller.phase,
-        RoomPhase.failed,
-        reason: 'fixture is broken: the error reply must have failed roll()',
-      );
-      expect(
-        controller.room!.state,
-        RoomState.playing,
-        reason:
-            'fixture is broken: the last room snapshot must still say '
-            'playing -- C1 tests that phase, not room, decides the body',
-      );
+    expect(
+      controller.phase,
+      RoomPhase.failed,
+      reason: 'fixture is broken: the error reply must have failed roll()',
+    );
+    expect(
+      controller.room!.state,
+      RoomState.playing,
+      reason:
+          'fixture is broken: the last room snapshot must still say '
+          'playing -- C1 tests that phase, not room, decides the body',
+    );
 
-      await _mount(tester, controller);
+    await _mount(tester, controller);
 
-      expect(
-        find.byKey(_connectionLostKey),
-        findsOneWidget,
-        reason:
-            'C1: RoomPhase.failed while room.state is playing must render '
-            'game-screen-connection-lost, whatever the last room snapshot '
-            'said',
-      );
-      expect(
-        find.byKey(_reconnectButtonKey),
-        findsOneWidget,
-        reason: 'C1: the connection-lost state must carry a reconnect button',
-      );
-      expect(
-        find.byKey(_boardKey),
-        findsNothing,
-        reason: 'C1: the board must be absent once the phase has failed',
-      );
-      expect(
-        find.byKey(_rollKey),
-        findsNothing,
-        reason: 'C1: the roll button must be absent once the phase has failed',
-      );
-    },
-  );
+    expect(
+      find.byKey(_connectionLostKey),
+      findsOneWidget,
+      reason:
+          'C1: RoomPhase.failed while room.state is playing must render '
+          'game-screen-connection-lost, whatever the last room snapshot '
+          'said',
+    );
+    expect(
+      find.byKey(_reconnectButtonKey),
+      findsOneWidget,
+      reason: 'C1: the connection-lost state must carry a reconnect button',
+    );
+    expect(
+      find.byKey(_boardKey),
+      findsNothing,
+      reason: 'C1: the board must be absent once the phase has failed',
+    );
+    expect(
+      find.byKey(_dieKey),
+      findsNothing,
+      reason: 'C1: the die must be absent once the phase has failed',
+    );
+  });
 
   // ==========================================================================
   // C2: closed, mid-game.
   // ==========================================================================
-  testWidgets(
-    'C2: a controller driven to RoomPhase.closed while holding a '
-    'RoomState.playing snapshot renders game-screen-connection-lost and '
-    'game-screen-reconnect-button; the board and the roll button are absent',
-    (tester) async {
-      final (controller, transport, _) = await _connectPlaying(
-        tester,
-        mySeat: 0,
-        seats: midGameSeats,
-        turn: midGameTurn(),
-      );
-      addTearDown(controller.dispose);
-      expect(
-        controller.room!.state,
-        RoomState.playing,
-        reason: 'fixture is broken: the room must be mid-game',
-      );
+  testWidgets('C2: a controller driven to RoomPhase.closed while holding a '
+      'RoomState.playing snapshot renders game-screen-connection-lost and '
+      'game-screen-reconnect-button; the board and the die are absent', (
+    tester,
+  ) async {
+    final (controller, transport, _) = await _connectPlaying(
+      tester,
+      mySeat: 0,
+      seats: midGameSeats,
+      turn: midGameTurn(),
+    );
+    addTearDown(controller.dispose);
+    expect(
+      controller.room!.state,
+      RoomState.playing,
+      reason: 'fixture is broken: the room must be mid-game',
+    );
 
-      // The far end vanishes on its own: RoomConnection.done fires and
-      // RoomController's own lifecycle (not a request failure) sets
-      // RoomPhase.closed, per room_controller.dart's _openAndAttach.
-      transport.endFromFarSide();
-      await tester.pump();
-      await tester.pump();
+    // The far end vanishes on its own: RoomConnection.done fires and
+    // RoomController's own lifecycle (not a request failure) sets
+    // RoomPhase.closed, per room_controller.dart's _openAndAttach.
+    transport.endFromFarSide();
+    await tester.pump();
+    await tester.pump();
 
-      expect(
-        controller.phase,
-        RoomPhase.closed,
-        reason:
-            'fixture is broken: the far side vanishing must close the phase',
-      );
-      expect(
-        controller.room!.state,
-        RoomState.playing,
-        reason:
-            'fixture is broken: the last room snapshot must still say '
-            'playing -- C2 tests that phase, not room, decides the body',
-      );
+    expect(
+      controller.phase,
+      RoomPhase.closed,
+      reason: 'fixture is broken: the far side vanishing must close the phase',
+    );
+    expect(
+      controller.room!.state,
+      RoomState.playing,
+      reason:
+          'fixture is broken: the last room snapshot must still say '
+          'playing -- C2 tests that phase, not room, decides the body',
+    );
 
-      await _mount(tester, controller);
+    await _mount(tester, controller);
 
-      expect(
-        find.byKey(_connectionLostKey),
-        findsOneWidget,
-        reason:
-            'C2: RoomPhase.closed while room.state is playing must render '
-            'game-screen-connection-lost, whatever the last room snapshot '
-            'said',
-      );
-      expect(
-        find.byKey(_reconnectButtonKey),
-        findsOneWidget,
-        reason: 'C2: the connection-lost state must carry a reconnect button',
-      );
-      expect(
-        find.byKey(_boardKey),
-        findsNothing,
-        reason: 'C2: the board must be absent once the phase has closed',
-      );
-      expect(
-        find.byKey(_rollKey),
-        findsNothing,
-        reason: 'C2: the roll button must be absent once the phase has closed',
-      );
-    },
-  );
+    expect(
+      find.byKey(_connectionLostKey),
+      findsOneWidget,
+      reason:
+          'C2: RoomPhase.closed while room.state is playing must render '
+          'game-screen-connection-lost, whatever the last room snapshot '
+          'said',
+    );
+    expect(
+      find.byKey(_reconnectButtonKey),
+      findsOneWidget,
+      reason: 'C2: the connection-lost state must carry a reconnect button',
+    );
+    expect(
+      find.byKey(_boardKey),
+      findsNothing,
+      reason: 'C2: the board must be absent once the phase has closed',
+    );
+    expect(
+      find.byKey(_dieKey),
+      findsNothing,
+      reason: 'C2: the die must be absent once the phase has closed',
+    );
+  });
 
   // ==========================================================================
   // C3: reconnect is wired.

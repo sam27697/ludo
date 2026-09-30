@@ -30,6 +30,12 @@
 //     and after seat 2 drops, rather than by repeating the grep as an
 //     assertion.
 //
+// Order 224 (work/ludo/orders/C-223-play-surface.md, run 65): every "enabled"
+// check this file made against the old Roll button and the four token
+// buttons is migrated to game-die and board-token-hit-0-<index> (this
+// file's own local seat is always 0); see _buttonEnabled's own doc comment.
+// No other case here touches the removed controls.
+//
 // Driven the same way test/game_screen_connection_lost_test.dart and
 // test/game_screen_test.dart drive RoomController: a real RoomController
 // over a FakeTransport (test/net/fake_transport.dart, read-only, not
@@ -75,8 +81,10 @@
 // inside these tests.
 
 import 'dart:convert';
+import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
@@ -304,11 +312,14 @@ Future<void> _mount(WidgetTester tester, RoomController controller) async {
 }
 
 const Key _boardKey = Key('game-screen-board');
-const Key _rollKey = Key('game-screen-roll-button');
+const Key _dieKey = Key('game-die');
 const Key _bannerKey = Key('game-screen-turn-banner');
 const Key _countdownKey = Key('game-screen-turn-countdown');
 
-Key _tokenButtonKey(int index) => Key('game-screen-token-$index');
+/// Order 224: my own seat is always 0 in this file's fixture (see
+/// _connectRoomDirect above), so every former `game-screen-token-$index`
+/// check becomes this seat's own hit target.
+Key _tokenButtonKey(int index) => Key('board-token-hit-0-$index');
 
 /// Every `Text.data` under the mounted `GameScreen`, in tree order. Used to
 /// diff the whole rendered screen between two moments (O2) or between two
@@ -326,8 +337,21 @@ List<String?> _gameScreenTexts(WidgetTester tester) {
       .toList();
 }
 
-bool _buttonEnabled(WidgetTester tester, Key key) =>
-    tester.widget<ElevatedButton>(find.byKey(key)).onPressed != null;
+/// Order 224: neither the die nor a token hit target is an ElevatedButton
+/// any more, so "enabled" is read the way C-223's own accessibility section
+/// states it: game-die and each `board-token-hit-seat-index` are a
+/// `Semantics(button: true)` whose enabled flag is true exactly when a tap
+/// would act. A short-lived SemanticsHandle is opened and closed around
+/// each read so callers do not have to manage one of their own.
+bool _buttonEnabled(WidgetTester tester, Key key) {
+  final SemanticsHandle handle = tester.ensureSemantics();
+  try {
+    final SemanticsNode node = tester.getSemantics(find.byKey(key));
+    return node.flagsCollection.isEnabled == Tristate.isTrue;
+  } finally {
+    handle.dispose();
+  }
+}
 
 /// Pushes the shared scenario's `presence`/`rolled`/`moved`/`turn` frames
 /// onto [transport] a step at a time, keeping `seq` contiguous, and pumps
@@ -521,7 +545,7 @@ void main() {
       boardBefore.tokens,
     );
     final List<int> seatsInPlayBefore = List<int>.from(boardBefore.seatsInPlay);
-    final bool rollEnabledBefore = _buttonEnabled(tester, _rollKey);
+    final bool rollEnabledBefore = _buttonEnabled(tester, _dieKey);
     final List<bool> tokenButtonsBefore = <bool>[
       for (int i = 0; i < 4; i++) _buttonEnabled(tester, _tokenButtonKey(i)),
     ];
@@ -567,10 +591,9 @@ void main() {
       reason: 'O2: which seats the board draws must be unaffected by presence',
     );
     expect(
-      _buttonEnabled(tester, _rollKey),
+      _buttonEnabled(tester, _dieKey),
       rollEnabledBefore,
-      reason:
-          'O2: the roll button\'s enabled state must be unaffected by presence',
+      reason: 'O2: the die\'s enabled state must be unaffected by presence',
     );
     for (int i = 0; i < 4; i++) {
       expect(
@@ -681,10 +704,10 @@ void main() {
             'in place; got "${countdown.data}"',
       );
       expect(
-        _buttonEnabled(tester, _rollKey),
+        _buttonEnabled(tester, _dieKey),
         isFalse,
         reason:
-            'O3: with the turn at seat 3, seat 0\'s roll button must stay '
+            'O3: with the turn at seat 3, seat 0\'s die must stay '
             'disabled',
       );
     },
@@ -726,7 +749,7 @@ void main() {
         final bool expected =
             turn.seat == controller.seat && turn.phase == TurnPhase.awaitRoll;
         expect(
-          _buttonEnabled(tester, _rollKey),
+          _buttonEnabled(tester, _dieKey),
           expected,
           reason:
               'O4 after $checkpoint: controller.room!.turn is seat '
@@ -738,13 +761,13 @@ void main() {
 
       final TurnState initialTurn = controller.room!.turn!;
       expect(
-        _buttonEnabled(tester, _rollKey),
+        _buttonEnabled(tester, _dieKey),
         initialTurn.seat == controller.seat &&
             initialTurn.phase == TurnPhase.awaitRoll,
         reason:
             'O4 at fixture connect (turn seat ${initialTurn.seat}, phase '
             '${initialTurn.phase}, controller.seat ${controller.seat}): '
-            'the roll button\'s initial enabled state must already match '
+            'the die\'s initial enabled state must already match '
             'whose turn it is',
       );
 
@@ -873,7 +896,7 @@ void main() {
       final List<int> scenarioSeatsInPlay = List<int>.from(
         scenarioBoard.seatsInPlay,
       );
-      final bool scenarioRollEnabled = _buttonEnabled(tester, _rollKey);
+      final bool scenarioRollEnabled = _buttonEnabled(tester, _dieKey);
       // Explicit, not left to addTearDown alone: this controller's job in
       // this test is done and a second, independent controller is about
       // to be built and mounted in its place.
@@ -921,10 +944,10 @@ void main() {
             'O5: which seats the board draws must match the converged control',
       );
       expect(
-        _buttonEnabled(tester, _rollKey),
+        _buttonEnabled(tester, _dieKey),
         scenarioRollEnabled,
         reason:
-            'O5: the roll button\'s enabled state after the drop-return '
+            'O5: the die\'s enabled state after the drop-return '
             'sequence must match the converged control\'s',
       );
     },
@@ -1001,10 +1024,10 @@ void main() {
       // idiom).
       handle.dispose();
       expect(
-        _buttonEnabled(tester, _rollKey),
+        _buttonEnabled(tester, _dieKey),
         isFalse,
         reason:
-            'O6: with the turn at seat 3, seat 0\'s roll button must stay '
+            'O6: with the turn at seat 3, seat 0\'s die must stay '
             'disabled, same as O3',
       );
     },
