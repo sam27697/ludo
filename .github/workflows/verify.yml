@@ -239,9 +239,9 @@ jobs:
           echo "$code"
 
       # LUDO_UPLOAD_VERSION_CODE_FLOOR is the highest Android version code
-      # ever built for upload -- 3, from the hand-edited version: 1.0.0+3 in
-      # pubspec.yaml, with version code 2 already sitting on the closed
-      # testing track. Raise it only when a version code higher than this
+      # ever uploaded to Play -- 427, closed testing, 22 Sep 2026. (It was
+      # 3 before that, from the hand-edited version: 1.0.0+3 in
+      # pubspec.yaml.) Raise it only when a version code higher than this
       # has genuinely been uploaded to Play; the point of the check below is
       # to stop a wrong or stale computed version code before it reaches
       # Play, not to be adjusted to make the check stop complaining.
@@ -250,14 +250,28 @@ jobs:
           VERSION_CODE: ${{ steps.versioncode.outputs.version_code }}
         run: |
           set -euo pipefail
-          LUDO_UPLOAD_VERSION_CODE_FLOOR=3
+          LUDO_UPLOAD_VERSION_CODE_FLOOR=427
           if [ "$VERSION_CODE" -le "$LUDO_UPLOAD_VERSION_CODE_FLOOR" ]; then
             echo "computed version code $VERSION_CODE is not strictly greater than the floor $LUDO_UPLOAD_VERSION_CODE_FLOOR; refusing to build" >&2
             exit 1
           fi
           echo "version code $VERSION_CODE clears the floor of $LUDO_UPLOAD_VERSION_CODE_FLOOR"
 
-      - run: flutter build appbundle --release --build-number=${{ steps.versioncode.outputs.version_code }}
+      # A pushed release tag (v1.2.3) is the version name testers see; any
+      # other build keeps the name in pubspec.yaml. The tag is what the
+      # release lane on asam-prod-01 watches for, so the name on Play and the
+      # tag on GitHub are the same string by construction.
+      - name: version name from a release tag
+        id: versionname
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "build_name_flag=--build-name=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "build_name_flag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - run: flutter build appbundle --release --build-number=${{ steps.versioncode.outputs.version_code }} ${{ steps.versionname.outputs.build_name_flag }}
 
       # The build output must contain exactly one .aab at its canonical
       # output location, and this step fails outright if it does not.
