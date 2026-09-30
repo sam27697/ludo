@@ -9,6 +9,9 @@
          verify.yml asserts this line survives into the merged release
          manifest. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- The feedback service (work/ludo/orders/C-225-feedback.md): short
+         waveforms only, a normal permission with no Data safety impact. -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
     <application
         android:label="Ludo RNG"
         android:name="${applicationName}"
