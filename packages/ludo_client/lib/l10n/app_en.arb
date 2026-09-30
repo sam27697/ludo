@@ -335,5 +335,39 @@
         "example": "4"
       }
     }
+  },
+  "gameRollNoAnswer": "The roll did not go through. Tap the die again.",
+  "@gameRollNoAnswer": {
+    "description": "Shown under the die when a roll request got no answer within a few seconds. The die stops tumbling and can be tapped again."
+  },
+  "gameNoMove": "No move with this roll",
+  "@gameNoMove": {
+    "description": "Shown next to the die, with a red X on it, when the player's own roll gives no legal move and the turn passes."
+  },
+  "feedbackHapticsToggle": "Vibration",
+  "@feedbackHapticsToggle": {
+    "description": "Settings switch that turns game vibration on or off."
+  },
+  "feedbackSoundToggle": "Sound",
+  "@feedbackSoundToggle": {
+    "description": "Settings switch that turns game sounds on or off."
+  },
+  "lobbyShareButton": "Invite friends",
+  "@lobbyShareButton": {
+    "description": "Main lobby button. Opens the phone's share sheet with the room link and a short invite line."
+  },
+  "lobbyShareText": "Let's play Ludo! Join my room with this link: {link} or type the code {code} in Ludo RNG.",
+  "@lobbyShareText": {
+    "description": "The text placed in the share sheet by the lobby Invite friends button. link is the full room link, code is the room code.",
+    "placeholders": {
+      "link": {
+        "type": "String",
+        "example": "https://ludo.provefair.app/r/PLAY42"
+      },
+      "code": {
+        "type": "String",
+        "example": "PLAY42"
+      }
+    }
   }
 }

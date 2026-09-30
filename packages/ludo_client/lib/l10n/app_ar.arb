@@ -67,5 +67,11 @@
   "gameVerifyOpenFailed": "تعذر فتح صفحة التحقق.",
   "gameRollHistoryHeading": "آخر الرميات",
   "gameRollHistoryEmpty": "لا توجد رميات للعرض بعد.",
-  "gameRollHistoryEntry": "{k}: {face}"
+  "gameRollHistoryEntry": "{k}: {face}",
+  "gameRollNoAnswer": "لم تصل الرمية. اضغط على النرد مرة أخرى.",
+  "gameNoMove": "لا حركة بهذه الرمية",
+  "feedbackHapticsToggle": "الاهتزاز",
+  "feedbackSoundToggle": "الصوت",
+  "lobbyShareButton": "ادعُ أصدقاءك",
+  "lobbyShareText": "تعال نلعب لودو! ادخل غرفتي من هذا الرابط: {link} أو اكتب الرمز {code} في Ludo RNG."
 }
