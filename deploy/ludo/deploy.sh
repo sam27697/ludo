@@ -155,11 +155,11 @@ fi
 # end every game in progress. This guard reads that count off $HEALTH_URL,
 # already computed above, and refuses, waits, or proceeds depending on the
 # count -- before the first git or docker command below runs. A room's
-# longest possible life is 60 minutes (registry.dart's reap interval), so
-# waiting here is always bounded.
+# longest possible life is 60 minutes (_anyRoomTimeout, registry.dart:317),
+# so waiting here is always bounded.
 
 is_positive_integer() {
-  [[ "$1" =~ ^[0-9]+$ ]] && [[ "$1" != "0" ]]
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }
 
 if [[ -n "${LUDO_DEPLOY_WAIT_SECONDS:-}" ]] && ! is_positive_integer "$LUDO_DEPLOY_WAIT_SECONDS"; then
