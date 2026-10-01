@@ -72,6 +72,18 @@ players (host plus two others to drop); with fewer it fails cleanly naming
 the shortfall rather than dropping the same seat twice. Otherwise identical
 in what it proves to `reconnect`.
 
+### `rematch`
+
+Not part of `all`, and not selectable alongside another scenario on the same
+invocation: `--scenario rematch` runs it alone. Plays a full game to a
+natural winner, sends `rematch` from every seat in ascending order so
+`docs/PROTOCOL.md` section 16.4's "everyone accepted" auto-start fires with
+no further `start_game`, plays a second full game to a natural winner in the
+same room, and fails unless the two games used distinct `game_id` and
+`chain_commit` values. Behind `--fetch-record`, also fetches and checks both
+games' stored records, exactly as `full-game` does for its one game; off by
+default for the same local-server-vs-production-host reason given below.
+
 ## The fairness assertion
 
 For every `rolled` frame observed on the driving socket in every scenario,
