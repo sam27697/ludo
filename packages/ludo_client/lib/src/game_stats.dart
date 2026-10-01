@@ -126,7 +126,12 @@ GameStats computeGameStats({
     final Frame frame = frames[i];
 
     final int? frameSeq = frame.seq;
-    if (frameSeq != null) {
+    if (i == gameStartedIndex && frameSeq == null) {
+      // No seq on the game_started itself: there is nothing for the chain
+      // to anchor to, so completeness is already lost. The window still
+      // opens here and the counters below still run.
+      malformed = true;
+    } else if (frameSeq != null) {
       if (seqStarted && frameSeq != previousSeq! + 1) {
         malformed = true;
       }
