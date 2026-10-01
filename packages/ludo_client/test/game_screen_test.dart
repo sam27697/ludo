@@ -40,6 +40,17 @@
 //
 // No ambiguity in declaration H itself was found that required leaving a
 // case unwritten.
+//
+// Order 224 (work/ludo/orders/C-223-play-surface.md, run 65): the Roll
+// button and the four token buttons this file's own H3 and H4 groups proved
+// are gone from the product. Every behavioural assertion those two groups
+// made now lives in test/play_surface_die_test.dart (H3, the roll intent,
+// the pulse, disabled-when-not-my-turn and disabled-in-awaitMove) and
+// test/play_surface_tokens_test.dart (H4, the per-token legal/illegal wire
+// behaviour); neither group is duplicated here. What is left below --
+// H1, H2, H5, H6, H7, H8, H10 -- is unaffected by the control change except
+// where a case checked the old controls' presence or absence, which is
+// migrated in place to game-die and board-token-hit-<seat>-<index>.
 
 import 'dart:convert';
 
@@ -73,8 +84,6 @@ Map<String, Object?> _decode(String text) =>
 
 String _idOf(String sentText) => _decode(sentText)['id']! as String;
 String _typeOf(String sentText) => _decode(sentText)['t']! as String;
-Map<String, Object?> _dataOf(String sentText) =>
-    _decode(sentText)['d']! as Map<String, Object?>;
 
 /// A server push or reply, encoded exactly as Frame.decode expects.
 String _frame({
@@ -270,11 +279,11 @@ Future<void> _mount(
 AppLocalizations _locOf(WidgetTester tester) =>
     AppLocalizations.of(tester.element(find.byType(GameScreen)));
 
-Key _tokenKey(int i) => Key('game-screen-token-$i');
+Key _dieHitKey(int seat, int index) => Key('board-token-hit-$seat-$index');
 
 const Key _boardKey = Key('game-screen-board');
 const Key _bannerKey = Key('game-screen-turn-banner');
-const Key _rollKey = Key('game-screen-roll-button');
+const Key _tappableDieKey = Key('game-die');
 const Key _dieKey = Key('game-screen-dice-value');
 const Key _loadingKey = Key('game-screen-loading');
 const Key _waitingKey = Key('game-screen-waiting');
@@ -535,499 +544,6 @@ void main() {
   });
 
   // ==========================================================================
-  // H3: the Roll button.
-  // ==========================================================================
-  group('H3: the Roll button', () {
-    final seats = <Map<String, Object?>>[
-      _seatJson(0, name: 'Sam'),
-      _seatJson(1, name: 'Bob'),
-    ];
-
-    testWidgets(
-      'H3.5: enabled (onPressed non-null) exactly when all four conditions '
-      'hold: playing, turn present, my seat on turn, phase awaitRoll',
-      (tester) async {
-        final (controller, _) = await _connectPlaying(
-          tester,
-          mySeat: 0,
-          players: 2,
-          seats: seats,
-          turn: _turnJson(seat: 0, phase: 'await_roll', deadlineMs: 1000, k: 0),
-        );
-        addTearDown(controller.dispose);
-
-        await _mount(tester, controller);
-
-        expect(find.byKey(_rollKey), findsOneWidget);
-        final button = tester.widget<ElevatedButton>(find.byKey(_rollKey));
-        expect(
-          button.onPressed,
-          isNotNull,
-          reason:
-              'H3: with state playing, turn present, my seat on turn and '
-              'phase awaitRoll, the roll button must be enabled',
-        );
-      },
-    );
-
-    testWidgets(
-      'H3.6a: disabled (present, onPressed null) when it is not my turn',
-      (tester) async {
-        final (controller, _) = await _connectPlaying(
-          tester,
-          mySeat: 0,
-          players: 2,
-          seats: seats,
-          turn: _turnJson(seat: 1, phase: 'await_roll', deadlineMs: 1000, k: 0),
-        );
-        addTearDown(controller.dispose);
-
-        await _mount(tester, controller);
-
-        expect(
-          find.byKey(_rollKey),
-          findsOneWidget,
-          reason: 'H3: the roll button must be present, not hidden, disabled',
-        );
-        final button = tester.widget<ElevatedButton>(find.byKey(_rollKey));
-        expect(button.onPressed, isNull);
-      },
-    );
-
-    testWidgets(
-      'H3.6b: disabled (present, onPressed null) when my turn is awaiting '
-      'a move, not a roll',
-      (tester) async {
-        final (controller, _) = await _connectPlaying(
-          tester,
-          mySeat: 0,
-          players: 2,
-          seats: seats,
-          turn: _turnJson(
-            seat: 0,
-            phase: 'await_move',
-            deadlineMs: 1000,
-            k: 1,
-            value: 4,
-            legal: const <int>[0],
-          ),
-        );
-        addTearDown(controller.dispose);
-
-        await _mount(tester, controller);
-
-        expect(find.byKey(_rollKey), findsOneWidget);
-        final button = tester.widget<ElevatedButton>(find.byKey(_rollKey));
-        expect(button.onPressed, isNull);
-      },
-    );
-
-    testWidgets(
-      'H3.6c: disabled (present, onPressed null) when room.turn is null',
-      (tester) async {
-        final (controller, _) = await _connectPlaying(
-          tester,
-          mySeat: 0,
-          players: 2,
-          seats: seats,
-          turn: null,
-        );
-        addTearDown(controller.dispose);
-
-        await _mount(tester, controller);
-
-        expect(find.byKey(_rollKey), findsOneWidget);
-        final button = tester.widget<ElevatedButton>(find.byKey(_rollKey));
-        expect(button.onPressed, isNull);
-      },
-    );
-
-    testWidgets(
-      'H3.7: pressing the enabled roll button puts exactly one roll request '
-      'on the wire with an empty body, and changes nothing locally until a '
-      'frame comes back',
-      (tester) async {
-        final (controller, transport) = await _connectPlaying(
-          tester,
-          mySeat: 0,
-          players: 2,
-          seats: seats,
-          turn: _turnJson(seat: 0, phase: 'await_roll', deadlineMs: 1000, k: 0),
-        );
-        addTearDown(controller.dispose);
-
-        await _mount(tester, controller);
-
-        final int sentBefore = transport.sentRaw.length;
-        await tester.tap(find.byKey(_rollKey));
-        await tester.pump();
-
-        final List<String> newMessages = transport.sentRaw
-            .skip(sentBefore)
-            .toList();
-        expect(
-          newMessages,
-          hasLength(1),
-          reason:
-              'H3.7: pressing the enabled roll button must put exactly one '
-              'new message on the wire; got ${newMessages.length}',
-        );
-        expect(_typeOf(newMessages.single), 'roll');
-        expect(
-          _dataOf(newMessages.single),
-          <String, Object?>{},
-          reason: 'docs/PROTOCOL.md 4: roll\'s body is {}',
-        );
-        expect(
-          controller.room!.turn!.phase,
-          TurnPhase.awaitRoll,
-          reason:
-              'H3.7: the screen must change nothing locally; the phase '
-              'must still be awaitRoll until the rolled frame comes back',
-        );
-
-        // Resolve the outstanding request so no pending timer survives past
-        // the test body (standing lesson 9).
-        final String rollId = _idOf(newMessages.single);
-        transport.pushText(
-          _frame(
-            type: 'rolled',
-            re: rollId,
-            data: <String, Object?>{
-              'seat': 0,
-              'value': 4,
-              'legal': <int>[0, 1],
-              'deadline_ms': 1000,
-              'k': 1,
-              'reveal': 'b' * 64,
-              'seq': 2,
-            },
-          ),
-        );
-        await tester.pump();
-        await tester.pump();
-      },
-    );
-
-    testWidgets(
-      'H3.8: pressing the disabled roll button sends nothing at all',
-      (tester) async {
-        final (controller, transport) = await _connectPlaying(
-          tester,
-          mySeat: 0,
-          players: 2,
-          seats: seats,
-          turn: null,
-        );
-        addTearDown(controller.dispose);
-
-        await _mount(tester, controller);
-
-        final button = tester.widget<ElevatedButton>(find.byKey(_rollKey));
-        expect(
-          button.onPressed,
-          isNull,
-          reason: 'fixture is broken: the button must be disabled here',
-        );
-
-        final int sentBefore = transport.sentRaw.length;
-        await tester.tap(find.byKey(_rollKey));
-        await tester.pump();
-
-        expect(
-          transport.sentRaw.length,
-          sentBefore,
-          reason:
-              'H3.8: pressing a disabled roll button must send nothing; '
-              'the wire grew by '
-              '${transport.sentRaw.length - sentBefore} message(s)',
-        );
-      },
-    );
-  });
-
-  // ==========================================================================
-  // H4: the token buttons.
-  // ==========================================================================
-  group('H4: the token buttons', () {
-    final seats = <Map<String, Object?>>[
-      _seatJson(0, name: 'Sam'),
-      _seatJson(1, name: 'Bob'),
-    ];
-
-    testWidgets('H4.9: all four token buttons are present while playing', (
-      tester,
-    ) async {
-      final (controller, _) = await _connectPlaying(
-        tester,
-        mySeat: 0,
-        players: 2,
-        seats: seats,
-        turn: null,
-      );
-      addTearDown(controller.dispose);
-
-      await _mount(tester, controller);
-
-      for (int i = 0; i < 4; i++) {
-        expect(
-          find.byKey(_tokenKey(i)),
-          findsOneWidget,
-          reason:
-              'H4: token button $i must be present while the game is '
-              'playing, regardless of whether it is enabled',
-        );
-      }
-    });
-
-    testWidgets(
-      'H4.10: with legal [1, 3] on my turn awaiting a move, buttons 1 and 3 '
-      'are enabled (send a move) and buttons 0 and 2 are disabled (send '
-      'nothing), proved behaviourally for each button on its own room',
-      (tester) async {
-        Future<void> checkButton(int index, {required bool shouldBeLegal}) {
-          return () async {
-            final (controller, transport) = await _connectPlaying(
-              tester,
-              mySeat: 0,
-              players: 2,
-              seats: seats,
-              turn: _turnJson(
-                seat: 0,
-                phase: 'await_move',
-                deadlineMs: 1000,
-                k: 1,
-                value: 4,
-                legal: const <int>[1, 3],
-              ),
-            );
-            addTearDown(controller.dispose);
-
-            await _mount(tester, controller);
-
-            final int sentBefore = transport.sentRaw.length;
-            await tester.tap(find.byKey(_tokenKey(index)));
-            await tester.pump();
-
-            final List<String> newMessages = transport.sentRaw
-                .skip(sentBefore)
-                .toList();
-            if (shouldBeLegal) {
-              expect(
-                newMessages,
-                hasLength(1),
-                reason:
-                    'H4.10: token button $index is in legal [1, 3] and must '
-                    'be enabled, sending exactly one move; got '
-                    '${newMessages.length} new message(s)',
-              );
-              expect(_typeOf(newMessages.single), 'move');
-              expect(_dataOf(newMessages.single), <String, Object?>{
-                'token': index,
-              });
-              final String moveId = _idOf(newMessages.single);
-              transport.pushText(
-                _frame(
-                  type: 'moved',
-                  re: moveId,
-                  data: <String, Object?>{
-                    'seat': 0,
-                    'token': index,
-                    'from': 3,
-                    'to': 3 + 4,
-                    'captured': <Object?>[],
-                    'extra_roll': false,
-                    'seq': 2,
-                  },
-                ),
-              );
-              await tester.pump();
-              await tester.pump();
-            } else {
-              expect(
-                newMessages,
-                isEmpty,
-                reason:
-                    'H4.10: token button $index is not in legal [1, 3] and '
-                    'must be disabled, sending nothing; got '
-                    '${newMessages.length} new message(s)',
-              );
-            }
-          }();
-        }
-
-        await checkButton(0, shouldBeLegal: false);
-        await checkButton(1, shouldBeLegal: true);
-        await checkButton(2, shouldBeLegal: false);
-        await checkButton(3, shouldBeLegal: true);
-      },
-    );
-
-    testWidgets(
-      'H4.11: pressing enabled button 3 puts exactly one move request on '
-      'the wire with {"token": 3} -- a non-zero token so a hardcoded zero '
-      'cannot pass',
-      (tester) async {
-        final (controller, transport) = await _connectPlaying(
-          tester,
-          mySeat: 0,
-          players: 2,
-          seats: seats,
-          turn: _turnJson(
-            seat: 0,
-            phase: 'await_move',
-            deadlineMs: 1000,
-            k: 1,
-            value: 4,
-            legal: const <int>[3],
-          ),
-        );
-        addTearDown(controller.dispose);
-
-        await _mount(tester, controller);
-
-        final int sentBefore = transport.sentRaw.length;
-        await tester.tap(find.byKey(_tokenKey(3)));
-        await tester.pump();
-
-        final List<String> newMessages = transport.sentRaw
-            .skip(sentBefore)
-            .toList();
-        expect(newMessages, hasLength(1));
-        expect(_typeOf(newMessages.single), 'move');
-        expect(_dataOf(newMessages.single), <String, Object?>{'token': 3});
-
-        final String moveId = _idOf(newMessages.single);
-        transport.pushText(
-          _frame(
-            type: 'moved',
-            re: moveId,
-            data: <String, Object?>{
-              'seat': 0,
-              'token': 3,
-              'from': 10,
-              'to': 14,
-              'captured': <Object?>[],
-              'extra_roll': false,
-              'seq': 2,
-            },
-          ),
-        );
-        await tester.pump();
-        await tester.pump();
-      },
-    );
-
-    testWidgets('H4.12: an empty legal list disables all four token buttons', (
-      tester,
-    ) async {
-      final (controller, transport) = await _connectPlaying(
-        tester,
-        mySeat: 0,
-        players: 2,
-        seats: seats,
-        turn: _turnJson(
-          seat: 0,
-          phase: 'await_move',
-          deadlineMs: 1000,
-          k: 1,
-          value: 5,
-          legal: const <int>[],
-        ),
-      );
-      addTearDown(controller.dispose);
-
-      await _mount(tester, controller);
-
-      for (int i = 0; i < 4; i++) {
-        final int sentBefore = transport.sentRaw.length;
-        await tester.tap(find.byKey(_tokenKey(i)));
-        await tester.pump();
-        expect(
-          transport.sentRaw.length,
-          sentBefore,
-          reason:
-              'H4.12: with an empty legal list, token button $i must be '
-              'disabled and send nothing',
-        );
-      }
-    });
-
-    testWidgets(
-      'H4.13: the screen does no legality reasoning of its own -- a token '
-      'whose board position the rules could not really move (already home, '
-      'progress 57) but listed as legal anyway is enabled regardless, '
-      'because the server is authoritative',
-      (tester) async {
-        final contradictorySeats = <Map<String, Object?>>[
-          _seatJson(0, name: 'Sam', tokens: const <int>[57, -1, -1, -1]),
-          _seatJson(1, name: 'Bob'),
-        ];
-        final (controller, transport) = await _connectPlaying(
-          tester,
-          mySeat: 0,
-          players: 2,
-          seats: contradictorySeats,
-          turn: _turnJson(
-            seat: 0,
-            phase: 'await_move',
-            deadlineMs: 1000,
-            k: 1,
-            value: 3,
-            legal: const <int>[0],
-          ),
-        );
-        addTearDown(controller.dispose);
-        expect(
-          controller.room!.seats.first.tokens[0],
-          57,
-          reason: 'fixture is broken: token 0 must already be home',
-        );
-
-        await _mount(tester, controller);
-
-        final int sentBefore = transport.sentRaw.length;
-        await tester.tap(find.byKey(_tokenKey(0)));
-        await tester.pump();
-
-        final List<String> newMessages = transport.sentRaw
-            .skip(sentBefore)
-            .toList();
-        expect(
-          newMessages,
-          hasLength(1),
-          reason:
-              'H4.13: the screen must trust turn.legal and enable button 0 '
-              'even though the rules could not really move a token that is '
-              'already home; a screen that reimplements legality would '
-              'disable this button and send nothing',
-        );
-        expect(_typeOf(newMessages.single), 'move');
-        expect(_dataOf(newMessages.single), <String, Object?>{'token': 0});
-
-        final String moveId = _idOf(newMessages.single);
-        transport.pushText(
-          _frame(
-            type: 'moved',
-            re: moveId,
-            data: <String, Object?>{
-              'seat': 0,
-              'token': 0,
-              'from': 57,
-              'to': 57,
-              'captured': <Object?>[],
-              'extra_roll': false,
-              'seq': 2,
-            },
-          ),
-        );
-        await tester.pump();
-        await tester.pump();
-      },
-    );
-  });
-
-  // ==========================================================================
   // H5: the die.
   // ==========================================================================
   group('H5: the die', () {
@@ -1128,7 +644,7 @@ void main() {
         );
         expect(find.byKey(_waitingKey), findsNothing);
         expect(find.byKey(_bannerKey), findsNothing);
-        expect(find.byKey(_rollKey), findsNothing);
+        expect(find.byKey(_tappableDieKey), findsNothing);
         expect(find.byKey(_winnerKey), findsNothing);
       },
     );
@@ -1239,9 +755,9 @@ void main() {
         expect(find.byKey(_boardKey), findsOneWidget);
         final winnerText = tester.widget<Text>(find.byKey(_winnerKey));
         expect(winnerText.data, loc.gameOverYouWin);
-        expect(find.byKey(_rollKey), findsNothing);
+        expect(find.byKey(_tappableDieKey), findsNothing);
         for (int i = 0; i < 4; i++) {
-          expect(find.byKey(_tokenKey(i)), findsNothing);
+          expect(find.byKey(_dieHitKey(0, i)), findsNothing);
         }
       },
     );
@@ -1266,9 +782,9 @@ void main() {
       final loc = _locOf(tester);
       final winnerText = tester.widget<Text>(find.byKey(_winnerKey));
       expect(winnerText.data, loc.gameOverPlayerWins('Bob'));
-      expect(find.byKey(_rollKey), findsNothing);
+      expect(find.byKey(_tappableDieKey), findsNothing);
       for (int i = 0; i < 4; i++) {
-        expect(find.byKey(_tokenKey(i)), findsNothing);
+        expect(find.byKey(_dieHitKey(0, i)), findsNothing);
       }
     });
 
@@ -1297,9 +813,9 @@ void main() {
       final loc = _locOf(tester);
       final winnerText = tester.widget<Text>(find.byKey(_winnerKey));
       expect(winnerText.data, loc.gameOverEnded);
-      expect(find.byKey(_rollKey), findsNothing);
+      expect(find.byKey(_tappableDieKey), findsNothing);
       for (int i = 0; i < 4; i++) {
-        expect(find.byKey(_tokenKey(i)), findsNothing);
+        expect(find.byKey(_dieHitKey(0, i)), findsNothing);
       }
     });
 
@@ -1430,18 +946,32 @@ void main() {
             'showing underneath it',
       );
       expect(
-        find.byKey(_rollKey),
+        find.byKey(_tappableDieKey),
         findsOneWidget,
-        reason: 'H8: the roll button must still be showing under the banner',
+        reason: 'H8: the die must still be showing under the banner',
       );
-      for (int i = 0; i < 4; i++) {
-        expect(
-          find.byKey(_tokenKey(i)),
-          findsOneWidget,
-          reason:
-              'H8: token button $i must still be showing under the '
-              'banner',
-        );
+      // No seat_assigned was ever sent, so controller.seat is null: per
+      // C-223's LudoBoard API, mySeat: null is a spectator view, nothing
+      // tappable. No board-token-hit-S-I exists for a seatless view; what
+      // must still be there is the board itself, drawn with the four
+      // tokens of each seat in play (the unchanged token-S-I keys).
+      for (final int seat in <int>[0, 1]) {
+        for (int i = 0; i < 4; i++) {
+          expect(
+            find.byKey(Key('token-$seat-$i')),
+            findsOneWidget,
+            reason:
+                'H8: token-$seat-$i must still be drawn on the board under '
+                'the banner, even though mySeat is null here',
+          );
+          expect(
+            find.byKey(_dieHitKey(seat, i)),
+            findsNothing,
+            reason:
+                'H8: with controller.seat null, no board-token-hit-$seat-$i '
+                'must exist; nothing is tappable in a seatless view',
+          );
+        }
       }
     });
   });
@@ -1503,9 +1033,9 @@ void main() {
               'Locale(ar), not the English one',
         );
 
-        expect(find.byKey(_rollKey), findsOneWidget);
+        expect(find.byKey(_tappableDieKey), findsOneWidget);
         for (int i = 0; i < 4; i++) {
-          expect(find.byKey(_tokenKey(i)), findsOneWidget);
+          expect(find.byKey(_dieHitKey(0, i)), findsOneWidget);
         }
       },
     );

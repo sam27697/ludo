@@ -23,6 +23,11 @@ abstract final class LudoColors {
   /// Status / feedback. Material error red, named once for the paintbox.
   static const Color error = Color(0xFFB3261E);
 
+  /// A legal-move ring on the board (the green pulse a tappable token
+  /// carries). Distinct from any seat colour so it reads as a status, not a
+  /// fifth player.
+  static const Color success = Color(0xFF00C853);
+
   /// Soft mint washes behind the home felt composition (not flat paper).
   static const Color paperWashTop = Color(0xFFD8EEE8);
   static const Color paperWashBottom = Color(0xFFD2E8E2);

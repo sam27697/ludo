@@ -1,21 +1,52 @@
-// Widget tests for GameScreen roll juice: a Roll tap must fire haptic
-// feedback without waiting for the rolled frame, pulse the Roll control
-// for at most 200ms when animations are on (and skip that motion when
-// they are off), and never paint a die face that did not come from
-// turn.value after rolled.
+// Widget test for GameScreen's die value text: game-screen-dice-value must
+// update only from turn.value after a rolled frame lands, never showing an
+// interim face while a roll is in flight.
+//
+// Order 224 (work/ludo/orders/C-223-play-surface.md, run 65) removed the
+// Roll button (`game-screen-roll-button`) and its own opacity/scale "juice"
+// (`game-screen-roll-pulse`) this file used to prove, replacing that control
+// with the die (`game-die`) and its tumble (`game-die-tumbling`). Two of
+// this file's four original cases had no successor and are dropped, not
+// migrated, with the reason each was dropped:
+//
+//   - "Roll control pulses opacity or scale within 200ms when animations
+//     are on" (original line 561): this proved the old ElevatedButton's own
+//     FadeTransition/ScaleTransition juice, a widget that no longer exists.
+//     Its structural successor -- that a tap starts a cosmetic tumble at
+//     once -- is covered by test/play_surface_die_test.dart's "the tumble"
+//     group (`game-die-tumbling` present right after the tap); the specific
+//     opacity/scale mechanics and the 200ms budget are motion timing beyond
+//     what C-223 states, which the work order also places out of scope.
+//   - "reduced-motion Roll tap skips the opacity/scale pulse" (original line
+//     645): same reasoning as the previous case. Its successor --
+//     `game-die-pulse` absent, and no tumble rotation, under
+//     `MediaQuery.disableAnimations` -- is covered by
+//     test/play_surface_die_test.dart's "game-die-pulse" group.
+//
+// "Roll tap fires HapticFeedback.lightImpact before rolled" (original line
+// 488) is migrated below, driven by a tap on `game-die` instead of the
+// retired button: order 223 kept HapticFeedback.lightImpact() on the
+// rolling tap on purpose (master, run 66 verdict, defect 4), so the claim
+// still has a live control to prove it against even though C-223's own text
+// never names haptics.
+//
+// The fourth original case, also kept and migrated below, is not about the
+// removed control's own look: it is about game-screen-dice-value, a key
+// C-223 keeps unchanged ("the dice value text ... stay exactly as they
+// are"), and the claim it proves (no interim face while waiting on the
+// server) is exactly as meaningful against the die as it was against the
+// old button.
 //
 // GameScreen is driven the same way test/game_screen_test.dart drives
 // RoomController: a real controller sits over FakeTransport. Claims about
-// the wire use sentRaw. Claims about haptics use the platform channel.
-// Claims about the pulse use the keyed Roll juice widget and its
-// computed opacity/scale. The outstanding roll request is always
-// completed so no reply timer survives the test body.
+// the wire use sentRaw. Claims about haptics use the platform channel. The
+// outstanding roll request is always completed so no reply timer survives
+// the test body.
 
 import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,14 +57,13 @@ import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
 import 'package:ludo_client/src/net/transport.dart';
-import 'package:ludo_client/src/theme.dart';
 
 import 'net/fake_transport.dart';
 
 const String _testUrl = 'wss://game-juice-test.invalid/ws';
-const Key _rollKey = Key('game-screen-roll-button');
-const Key _pulseKey = Key('game-screen-roll-pulse');
-const Key _dieKey = Key('game-screen-dice-value');
+const Key _dieKey = Key('game-die');
+const Key _tumblingKey = Key('game-die-tumbling');
+const Key _dieValueKey = Key('game-screen-dice-value');
 const int _wireFace = 5;
 
 int _serverIdSeq = 0;
@@ -269,7 +299,7 @@ Future<void> _completeRoll(
 }
 
 String? _dieText(WidgetTester tester) {
-  final Finder die = find.byKey(_dieKey);
+  final Finder die = find.byKey(_dieValueKey);
   if (die.evaluate().isEmpty) {
     return null;
   }
@@ -288,206 +318,9 @@ List<String> _dieFaceLabelsOnScreen(WidgetTester tester, AppLocalizations loc) {
   return hits;
 }
 
-bool _rollPointerIgnored(WidgetTester tester) {
-  final Finder ignored = find.ancestor(
-    of: find.byKey(_rollKey),
-    matching: find.byWidgetPredicate((Widget w) {
-      if (w is IgnorePointer && w.ignoring) {
-        return true;
-      }
-      if (w is AbsorbPointer && w.absorbing) {
-        return true;
-      }
-      return false;
-    }),
-  );
-  return ignored.evaluate().isNotEmpty;
-}
-
-double _opacityTowardRoot(RenderObject node) {
-  double opacity = 1.0;
-  RenderObject? current = node;
-  while (current != null) {
-    if (current is RenderOpacity) {
-      opacity *= current.opacity;
-    } else if (current is RenderAnimatedOpacity) {
-      opacity *= current.opacity.value;
-    }
-    current = current.parent;
-  }
-  return opacity;
-}
-
-double _uniformScaleOnGame(WidgetTester tester, RenderObject node) {
-  final RenderObject game = tester.renderObject(find.byType(GameScreen));
-  final Matrix4 matrix = node.getTransformTo(game);
-  final double sx = matrix.storage[0].abs();
-  final double sy = matrix.storage[5].abs();
-  return (sx + sy) / 2.0;
-}
-
-double? _widgetJuiceOpacity(WidgetTester tester) {
-  final Finder pulse = find.byKey(_pulseKey);
-  if (pulse.evaluate().isEmpty) {
-    return null;
-  }
-  final Widget host = tester.widget(pulse);
-  if (host is FadeTransition) {
-    return host.opacity.value;
-  }
-  if (host is Opacity) {
-    return host.opacity;
-  }
-  if (host is AnimatedOpacity) {
-    return tester.renderObject<RenderAnimatedOpacity>(pulse).opacity.value;
-  }
-  final Finder fades = find.descendant(
-    of: pulse,
-    matching: find.byType(FadeTransition),
-  );
-  if (fades.evaluate().isNotEmpty) {
-    return tester.widget<FadeTransition>(fades.first).opacity.value;
-  }
-  return null;
-}
-
-double? _widgetJuiceScale(WidgetTester tester) {
-  final Finder pulse = find.byKey(_pulseKey);
-  if (pulse.evaluate().isEmpty) {
-    return null;
-  }
-  final Widget host = tester.widget(pulse);
-  if (host is ScaleTransition) {
-    return host.scale.value;
-  }
-  if (host is Transform) {
-    return host.transform.storage[0].abs();
-  }
-  final Finder scales = find.descendant(
-    of: pulse,
-    matching: find.byType(ScaleTransition),
-  );
-  if (scales.evaluate().isNotEmpty) {
-    return tester.widget<ScaleTransition>(scales.first).scale.value;
-  }
-  return null;
-}
-
-({double opacity, double scale}) _rollJuiceMetrics(WidgetTester tester) {
-  final Finder host = find.byKey(_pulseKey).evaluate().isNotEmpty
-      ? find.byKey(_pulseKey)
-      : find.byKey(_rollKey);
-  final RenderObject render = tester.renderObject(host);
-  final double? widgetOpacity = _widgetJuiceOpacity(tester);
-  final double? widgetScale = _widgetJuiceScale(tester);
-  return (
-    opacity: widgetOpacity ?? _opacityTowardRoot(render),
-    scale: widgetScale ?? _uniformScaleOnGame(tester, render),
-  );
-}
-
-bool _rollIsPulsing(WidgetTester tester) {
-  if (find.byKey(_pulseKey).evaluate().isEmpty) {
-    return false;
-  }
-  final metrics = _rollJuiceMetrics(tester);
-  return (metrics.opacity - 1.0).abs() > 0.01 ||
-      (metrics.scale - 1.0).abs() > 0.01;
-}
-
-Duration? _pulseDeclaredDuration(WidgetTester tester) {
-  final Finder pulse = find.byKey(_pulseKey);
-  if (pulse.evaluate().isEmpty) {
-    return null;
-  }
-
-  Duration? fromAnimation(Animation<double> animation) {
-    Animation<double>? current = animation;
-    while (current != null && current is! AnimationController) {
-      if (current is CurvedAnimation) {
-        current = current.parent;
-        continue;
-      }
-      if (current is ProxyAnimation) {
-        current = current.parent;
-        continue;
-      }
-      if (current is ReverseAnimation) {
-        current = current.parent;
-        continue;
-      }
-      break;
-    }
-    if (current is AnimationController) {
-      return current.duration;
-    }
-    return null;
-  }
-
-  Duration? inspect(Widget widget) {
-    if (widget is FadeTransition) {
-      return fromAnimation(widget.opacity);
-    }
-    if (widget is ScaleTransition) {
-      return fromAnimation(widget.scale);
-    }
-    if (widget is AnimatedOpacity) {
-      return widget.duration;
-    }
-    if (widget is AnimatedScale) {
-      return widget.duration;
-    }
-    return null;
-  }
-
-  final Duration? direct = inspect(tester.widget(pulse));
-  if (direct != null) {
-    return direct;
-  }
-
-  for (final Element element
-      in find
-          .descendant(of: pulse, matching: find.byType(FadeTransition))
-          .evaluate()) {
-    final Duration? duration = inspect(element.widget);
-    if (duration != null) {
-      return duration;
-    }
-  }
-  for (final Element element
-      in find
-          .descendant(of: pulse, matching: find.byType(ScaleTransition))
-          .evaluate()) {
-    final Duration? duration = inspect(element.widget);
-    if (duration != null) {
-      return duration;
-    }
-  }
-  for (final Element element
-      in find
-          .descendant(of: pulse, matching: find.byType(AnimatedOpacity))
-          .evaluate()) {
-    final Duration? duration = inspect(element.widget);
-    if (duration != null) {
-      return duration;
-    }
-  }
-  for (final Element element
-      in find
-          .descendant(of: pulse, matching: find.byType(AnimatedScale))
-          .evaluate()) {
-    final Duration? duration = inspect(element.widget);
-    if (duration != null) {
-      return duration;
-    }
-  }
-  return null;
-}
-
 void main() {
-  testWidgets('Roll tap fires HapticFeedback.lightImpact before rolled', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('a tap on game-die fires HapticFeedback.lightImpact before '
+      'rolled', (WidgetTester tester) async {
     final List<MethodCall> platformCalls = _listenPlatform(tester);
     final (controller, transport) = await _connectAwaitingRoll(tester);
     await _mount(tester, controller);
@@ -497,10 +330,10 @@ void main() {
       isNull,
       reason: 'fixture is broken: await_roll must start with a null face',
     );
-    expect(find.byKey(_rollKey), findsOneWidget);
+    expect(find.byKey(_dieKey), findsOneWidget);
 
     final int sentBefore = transport.sentRaw.length;
-    await tester.tap(find.byKey(_rollKey));
+    await tester.tap(find.byKey(_dieKey));
     await tester.pump();
 
     final List<String> newMessages = transport.sentRaw
@@ -510,8 +343,8 @@ void main() {
       newMessages.where((String s) => _typeOf(s) == 'roll'),
       hasLength(1),
       reason:
-          'Roll must still put exactly one roll on the wire; juice '
-          'must not block or delay that send',
+          'tapping game-die must still put exactly one roll on the wire; '
+          'juice must not block or delay that send',
     );
 
     final List<MethodCall> haptic = _hapticCalls(platformCalls);
@@ -519,17 +352,17 @@ void main() {
       haptic,
       isNotEmpty,
       reason:
-          'tapping the enabled Roll control must invoke '
-          'HapticFeedback before any rolled frame arrives; got '
-          '${haptic.length} haptic call(s) and platform methods '
+          'tapping game-die in my awaitRoll must invoke HapticFeedback '
+          'before any rolled frame arrives; got ${haptic.length} haptic '
+          'call(s) and platform methods '
           '${platformCalls.map((MethodCall c) => c.method).toList()}',
     );
     expect(
       haptic.first.arguments,
       'HapticFeedbackType.lightImpact',
       reason:
-          'the haptic must be HapticFeedback.lightImpact, not a '
-          'looped vibrate while waiting on rolled',
+          'the haptic must be HapticFeedback.lightImpact, not a looped '
+          'vibrate while waiting on rolled',
     );
 
     expect(
@@ -550,141 +383,9 @@ void main() {
       _hapticCalls(platformCalls),
       hasLength(1),
       reason:
-          'waiting on rolled must not fire further haptic calls; '
-          'got ${_hapticCalls(platformCalls).length}',
+          'waiting on rolled must not fire further haptic calls; got '
+          '${_hapticCalls(platformCalls).length}',
     );
-
-    await _completeRoll(tester, transport);
-  });
-
-  testWidgets(
-    'Roll control pulses opacity or scale within 200ms when animations are on',
-    (WidgetTester tester) async {
-      final (controller, transport) = await _connectAwaitingRoll(tester);
-      await _mount(tester, controller);
-
-      final Size rollSizeBefore = tester.getSize(find.byKey(_rollKey));
-      expect(rollSizeBefore.width, greaterThanOrEqualTo(48));
-      expect(rollSizeBefore.height, greaterThanOrEqualTo(48));
-
-      await tester.tap(find.byKey(_rollKey));
-      await tester.pump();
-
-      expect(
-        find.byKey(_pulseKey),
-        findsOneWidget,
-        reason:
-            'a Roll tap with animations enabled must put juice on a '
-            'widget keyed game-screen-roll-pulse',
-      );
-      expect(
-        _rollPointerIgnored(tester),
-        isFalse,
-        reason: 'the roll pulse must not swallow pointer hits',
-      );
-
-      final Duration? declared = _pulseDeclaredDuration(tester);
-      if (declared != null) {
-        expect(
-          declared.inMilliseconds,
-          lessThanOrEqualTo(200),
-          reason:
-              'declared roll pulse duration must be <= 200ms; got '
-              '${declared.inMilliseconds}ms',
-        );
-        final BuildContext context = tester.element(find.byType(GameScreen));
-        final LudoBrand? brand = Theme.of(context).extension<LudoBrand>();
-        expect(brand, isNotNull);
-        expect(
-          declared.inMilliseconds,
-          lessThanOrEqualTo(brand!.motionShort.inMilliseconds),
-          reason:
-              'roll pulse duration must not exceed LudoBrand.motionShort '
-              '(${brand.motionShort.inMilliseconds}ms)',
-        );
-      }
-
-      bool sawMotion = _rollIsPulsing(tester);
-      int elapsedMs = 0;
-      while (elapsedMs < 200) {
-        final int step = math.min(16, 200 - elapsedMs);
-        await tester.pump(Duration(milliseconds: step));
-        elapsedMs += step;
-        if (_rollIsPulsing(tester)) {
-          sawMotion = true;
-        }
-        expect(
-          _rollPointerIgnored(tester),
-          isFalse,
-          reason: 'pulse must not block input at ${elapsedMs}ms',
-        );
-        final Size rollSize = tester.getSize(find.byKey(_rollKey));
-        expect(rollSize.width, greaterThanOrEqualTo(48));
-        expect(rollSize.height, greaterThanOrEqualTo(48));
-      }
-
-      expect(
-        sawMotion,
-        isTrue,
-        reason:
-            'with animations enabled, Roll juice must change opacity or '
-            'uniform scale within 200ms',
-      );
-      expect(
-        _rollIsPulsing(tester),
-        isFalse,
-        reason:
-            'the opacity/scale pulse must have finished by 200ms; still '
-            'pulsing after the budget is too long',
-      );
-
-      await _completeRoll(tester, transport);
-    },
-  );
-
-  testWidgets('reduced-motion Roll tap skips the opacity/scale pulse', (
-    WidgetTester tester,
-  ) async {
-    final (controller, transport) = await _connectAwaitingRoll(tester);
-    await _mount(tester, controller, disableAnimations: true);
-
-    await tester.tap(find.byKey(_rollKey));
-    await tester.pump();
-
-    expect(
-      find.byKey(_pulseKey),
-      findsOneWidget,
-      reason:
-          'reduced-motion still needs game-screen-roll-pulse in the tree '
-          'so the skip is observable, not a missing control',
-    );
-
-    expect(
-      _rollIsPulsing(tester),
-      isFalse,
-      reason:
-          'when MediaQuery.disableAnimations is true, Roll must not '
-          'run an opacity/scale pulse',
-    );
-
-    await tester.pump(const Duration(milliseconds: 50));
-    expect(
-      _rollIsPulsing(tester),
-      isFalse,
-      reason:
-          'reduced-motion Roll juice must stay at rest through 50ms, '
-          'matching the home-enter skip',
-    );
-    await tester.pump(const Duration(milliseconds: 150));
-    expect(
-      _rollIsPulsing(tester),
-      isFalse,
-      reason: 'reduced-motion must not start a pulse later in the 200ms budget',
-    );
-
-    final metrics = _rollJuiceMetrics(tester);
-    expect(metrics.opacity, closeTo(1.0, 0.01));
-    expect(metrics.scale, closeTo(1.0, 0.01));
 
     await _completeRoll(tester, transport);
   });
@@ -696,10 +397,10 @@ void main() {
       await _mount(tester, controller);
       final AppLocalizations loc = _locOf(tester);
 
-      expect(find.byKey(_dieKey), findsNothing);
+      expect(find.byKey(_dieValueKey), findsNothing);
       expect(_dieFaceLabelsOnScreen(tester, loc), isEmpty);
 
-      await tester.tap(find.byKey(_rollKey));
+      await tester.tap(find.byKey(_dieKey));
       await tester.pump();
 
       final List<String?> facesBeforeRolled = <String?>[_dieText(tester)];
@@ -718,7 +419,7 @@ void main() {
           controller.room!.turn!.value,
           isNull,
           reason:
-              'tapping Roll must not write a local face onto turn.value '
+              'tapping the die must not write a local face onto turn.value '
               'before rolled; got ${controller.room!.turn!.value}',
         );
       }
@@ -735,18 +436,19 @@ void main() {
         labelsBeforeRolled.expand((List<String> e) => e),
         isEmpty,
         reason:
-            'no loc.gameDieValue(1..6) text may appear after Roll and '
-            'before rolled; a tumble on any widget would show those '
-            'labels. samples: $labelsBeforeRolled',
+            'no loc.gameDieValue(1..6) text may appear after the tap and '
+            'before rolled; a tumble that painted a real face on any '
+            'widget would show those labels. samples: $labelsBeforeRolled',
       );
 
       expect(
-        find.byKey(_pulseKey),
+        find.byKey(_tumblingKey),
         findsOneWidget,
         reason:
-            'hiding the die until turn.value arrives is not an '
-            'interim-face guard by itself; the waiting cue must be '
-            'game-screen-roll-pulse so juice cannot be a local face',
+            'hiding the die value until turn.value arrives is not an '
+            'interim-face guard by itself; the waiting cue must be the '
+            'cosmetic tumble (game-die-tumbling), which paints no real '
+            'face of its own',
       );
 
       await _completeRoll(tester, transport, value: _wireFace);
@@ -756,7 +458,7 @@ void main() {
         _wireFace,
         reason: 'fixture is broken: rolled must land turn.value=$_wireFace',
       );
-      expect(find.byKey(_dieKey), findsOneWidget);
+      expect(find.byKey(_dieValueKey), findsOneWidget);
       expect(
         _dieText(tester),
         loc.gameDieValue(_wireFace),
