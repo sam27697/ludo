@@ -950,14 +950,28 @@ void main() {
         findsOneWidget,
         reason: 'H8: the die must still be showing under the banner',
       );
-      for (int i = 0; i < 4; i++) {
-        expect(
-          find.byKey(_dieHitKey(0, i)),
-          findsOneWidget,
-          reason:
-              'H8: token hit target $i must still be showing under the '
-              'banner',
-        );
+      // No seat_assigned was ever sent, so controller.seat is null: per
+      // C-223's LudoBoard API, mySeat: null is a spectator view, nothing
+      // tappable. No board-token-hit-S-I exists for a seatless view; what
+      // must still be there is the board itself, drawn with the four
+      // tokens of each seat in play (the unchanged token-S-I keys).
+      for (final int seat in <int>[0, 1]) {
+        for (int i = 0; i < 4; i++) {
+          expect(
+            find.byKey(Key('token-$seat-$i')),
+            findsOneWidget,
+            reason:
+                'H8: token-$seat-$i must still be drawn on the board under '
+                'the banner, even though mySeat is null here',
+          );
+          expect(
+            find.byKey(_dieHitKey(seat, i)),
+            findsNothing,
+            reason:
+                'H8: with controller.seat null, no board-token-hit-$seat-$i '
+                'must exist; nothing is tappable in a seatless view',
+          );
+        }
       }
     });
   });

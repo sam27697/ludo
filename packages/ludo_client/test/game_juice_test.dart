@@ -5,14 +5,10 @@
 // Order 224 (work/ludo/orders/C-223-play-surface.md, run 65) removed the
 // Roll button (`game-screen-roll-button`) and its own opacity/scale "juice"
 // (`game-screen-roll-pulse`) this file used to prove, replacing that control
-// with the die (`game-die`) and its tumble (`game-die-tumbling`). Three of
+// with the die (`game-die`) and its tumble (`game-die-tumbling`). Two of
 // this file's four original cases had no successor and are dropped, not
 // migrated, with the reason each was dropped:
 //
-//   - "Roll tap fires HapticFeedback.lightImpact before rolled" (original
-//     line 488): the contract (C-223) never mentions haptics for the die,
-//     and the work order (224) names haptics explicitly out of scope. There
-//     is nothing in the specification this case could still be proving.
 //   - "Roll control pulses opacity or scale within 200ms when animations
 //     are on" (original line 561): this proved the old ElevatedButton's own
 //     FadeTransition/ScaleTransition juice, a widget that no longer exists.
@@ -27,21 +23,31 @@
 //     `MediaQuery.disableAnimations` -- is covered by
 //     test/play_surface_die_test.dart's "game-die-pulse" group.
 //
-// The fourth case, kept and migrated below, is not about the removed
-// control's own look: it is about game-screen-dice-value, a key C-223 keeps
-// unchanged ("the dice value text ... stay exactly as they are"), and the
-// claim it proves (no interim face while waiting on the server) is exactly
-// as meaningful against the die as it was against the old button.
+// "Roll tap fires HapticFeedback.lightImpact before rolled" (original line
+// 488) is migrated below, driven by a tap on `game-die` instead of the
+// retired button: order 223 kept HapticFeedback.lightImpact() on the
+// rolling tap on purpose (master, run 66 verdict, defect 4), so the claim
+// still has a live control to prove it against even though C-223's own text
+// never names haptics.
+//
+// The fourth original case, also kept and migrated below, is not about the
+// removed control's own look: it is about game-screen-dice-value, a key
+// C-223 keeps unchanged ("the dice value text ... stay exactly as they
+// are"), and the claim it proves (no interim face while waiting on the
+// server) is exactly as meaningful against the die as it was against the
+// old button.
 //
 // GameScreen is driven the same way test/game_screen_test.dart drives
 // RoomController: a real controller sits over FakeTransport. Claims about
-// the wire use sentRaw. The outstanding roll request is always completed so
-// no reply timer survives the test body.
+// the wire use sentRaw. Claims about haptics use the platform channel. The
+// outstanding roll request is always completed so no reply timer survives
+// the test body.
 
 import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
@@ -49,6 +55,7 @@ import 'package:ludo_client/src/app.dart'
     show appSupportedLocales, buildAppTheme;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
+import 'package:ludo_client/src/net/snapshot.dart';
 import 'package:ludo_client/src/net/transport.dart';
 
 import 'net/fake_transport.dart';
@@ -236,6 +243,30 @@ Future<void> _mount(
 AppLocalizations _locOf(WidgetTester tester) =>
     AppLocalizations.of(tester.element(find.byType(GameScreen)));
 
+List<MethodCall> _listenPlatform(WidgetTester tester) {
+  final List<MethodCall> calls = <MethodCall>[];
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    SystemChannels.platform,
+    (MethodCall call) async {
+      calls.add(call);
+      return null;
+    },
+  );
+  addTearDown(
+    () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      null,
+    ),
+  );
+  return calls;
+}
+
+List<MethodCall> _hapticCalls(List<MethodCall> platformCalls) {
+  return platformCalls
+      .where((MethodCall call) => call.method == 'HapticFeedback.vibrate')
+      .toList();
+}
+
 Future<void> _completeRoll(
   WidgetTester tester,
   FakeTransport transport, {
@@ -288,6 +319,77 @@ List<String> _dieFaceLabelsOnScreen(WidgetTester tester, AppLocalizations loc) {
 }
 
 void main() {
+  testWidgets('a tap on game-die fires HapticFeedback.lightImpact before '
+      'rolled', (WidgetTester tester) async {
+    final List<MethodCall> platformCalls = _listenPlatform(tester);
+    final (controller, transport) = await _connectAwaitingRoll(tester);
+    await _mount(tester, controller);
+
+    expect(
+      controller.room!.turn!.value,
+      isNull,
+      reason: 'fixture is broken: await_roll must start with a null face',
+    );
+    expect(find.byKey(_dieKey), findsOneWidget);
+
+    final int sentBefore = transport.sentRaw.length;
+    await tester.tap(find.byKey(_dieKey));
+    await tester.pump();
+
+    final List<String> newMessages = transport.sentRaw
+        .skip(sentBefore)
+        .toList();
+    expect(
+      newMessages.where((String s) => _typeOf(s) == 'roll'),
+      hasLength(1),
+      reason:
+          'tapping game-die must still put exactly one roll on the wire; '
+          'juice must not block or delay that send',
+    );
+
+    final List<MethodCall> haptic = _hapticCalls(platformCalls);
+    expect(
+      haptic,
+      isNotEmpty,
+      reason:
+          'tapping game-die in my awaitRoll must invoke HapticFeedback '
+          'before any rolled frame arrives; got ${haptic.length} haptic '
+          'call(s) and platform methods '
+          '${platformCalls.map((MethodCall c) => c.method).toList()}',
+    );
+    expect(
+      haptic.first.arguments,
+      'HapticFeedbackType.lightImpact',
+      reason:
+          'the haptic must be HapticFeedback.lightImpact, not a looped '
+          'vibrate while waiting on rolled',
+    );
+
+    expect(
+      controller.room!.turn!.phase,
+      TurnPhase.awaitRoll,
+      reason:
+          'haptic must fire locally; the turn must still be awaitRoll '
+          'until rolled arrives',
+    );
+    expect(
+      controller.room!.turn!.value,
+      isNull,
+      reason: 'haptic must not invent a die face on the controller',
+    );
+
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
+      _hapticCalls(platformCalls),
+      hasLength(1),
+      reason:
+          'waiting on rolled must not fire further haptic calls; got '
+          '${_hapticCalls(platformCalls).length}',
+    );
+
+    await _completeRoll(tester, transport);
+  });
+
   testWidgets(
     'game-screen-dice-value updates only from turn.value after rolled',
     (WidgetTester tester) async {

@@ -188,7 +188,6 @@ Future<(RoomController, FakeTransport)> _connectTo(
     ),
   );
   await future;
-  addTearDown(controller.dispose);
   return (controller, transport);
 }
 
@@ -235,6 +234,40 @@ Future<void> _mount(
 
 AppLocalizations _locOf(WidgetTester tester) =>
     AppLocalizations.of(tester.element(find.byType(GameScreen)));
+
+/// Answers a pending `move` request with the `moved` reply the server
+/// would send, so `RoomConnection.request`'s 10s timer
+/// (lib/src/net/connection.dart:290) is cancelled before the test body
+/// returns. As in play_surface_die_test.dart's `_settleRoll`: a controller
+/// disposed only through `addTearDown` runs after
+/// `TestWidgetsFlutterBinding._runTestBody` has already checked for
+/// pending timers, so every request a test opens must be settled inside
+/// the test body itself (standing lesson 9).
+void _settleMove(
+  FakeTransport transport,
+  String moveId, {
+  required int token,
+  int seat = 0,
+  int from = 0,
+  int to = 1,
+  int seq = 2,
+}) {
+  transport.pushText(
+    _frame(
+      type: 'moved',
+      re: moveId,
+      data: <String, Object?>{
+        'seat': seat,
+        'token': token,
+        'from': from,
+        'to': to,
+        'captured': <Object?>[],
+        'extra_roll': false,
+        'seq': seq,
+      },
+    ),
+  );
+}
 
 Map<String, Object?> _awaitMoveTurn({
   required List<int> legal,
@@ -591,6 +624,9 @@ void main() {
               'cell (0), regardless of which of the two hit targets '
               '(0 or 2) was tapped; got ${_dataOf(newMessages.single)}',
         );
+
+        _settleMove(transport, _idOf(newMessages.single), token: 0);
+        await tester.pump();
       },
     );
 
@@ -615,6 +651,9 @@ void main() {
             .toList();
         expect(newMessages, hasLength(1));
         expect(_dataOf(newMessages.single), <String, Object?>{'token': 0});
+
+        _settleMove(transport, _idOf(newMessages.single), token: 0);
+        await tester.pump();
       },
     );
   });
@@ -659,6 +698,9 @@ void main() {
             'send token $index, not a mirrored other token; got '
             '${_dataOf(newMessages.single)}',
       );
+
+      _settleMove(transport, _idOf(newMessages.single), token: index);
+      await tester.pump();
     }
 
     testWidgets('a tap aimed at token 0 lands on token 0', (tester) async {
@@ -756,6 +798,9 @@ void main() {
         expect(newMessages, hasLength(1));
         expect(_typeOf(newMessages.single), 'move');
         expect(_dataOf(newMessages.single), <String, Object?>{'token': 2});
+
+        _settleMove(transport, _idOf(newMessages.single), token: 2);
+        await tester.pump();
       },
     );
   });

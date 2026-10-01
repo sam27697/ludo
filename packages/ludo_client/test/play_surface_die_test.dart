@@ -217,7 +217,6 @@ Future<(RoomController, FakeTransport)> _connectTo(
     ),
   );
   await future;
-  addTearDown(controller.dispose);
   return (controller, transport);
 }
 
@@ -268,6 +267,42 @@ AppLocalizations _locOf(WidgetTester tester) =>
 List<String> _sentTypesSince(FakeTransport transport, int sentBefore) =>
     transport.sentRaw.skip(sentBefore).map(_typeOf).toList();
 
+/// Answers a pending `roll` request with the `rolled` reply the server
+/// would send, so `RoomConnection.request`'s 10s timer
+/// (lib/src/net/connection.dart:290) is cancelled before the test body
+/// returns. A controller disposed only through `addTearDown` runs too late
+/// to save a test from "A Timer is still pending even after the widget
+/// tree was disposed": `TestWidgetsFlutterBinding._runTestBody` checks for
+/// pending timers (`_verifyInvariants`) before package:test's own
+/// `addTearDown` callbacks run, so every request a test opens must be
+/// settled, or timed out, inside the test body itself (standing lesson 9).
+void _settleRoll(
+  FakeTransport transport,
+  String rollId, {
+  int seat = 0,
+  int value = 5,
+  int k = 1,
+  List<int> legal = const <int>[0, 1],
+  int deadlineMs = 45000,
+  int seq = 2,
+}) {
+  transport.pushText(
+    _frame(
+      type: 'rolled',
+      re: rollId,
+      data: <String, Object?>{
+        'seat': seat,
+        'value': value,
+        'legal': legal,
+        'deadline_ms': deadlineMs,
+        'k': k,
+        'reveal': 'f' * 64,
+        'seq': seq,
+      },
+    ),
+  );
+}
+
 void main() {
   // ==========================================================================
   // Roll intent: exactly one roll per tap, nothing out of turn.
@@ -309,6 +344,9 @@ void main() {
           <String, Object?>{},
           reason: "docs/PROTOCOL.md 4: roll's body is {}",
         );
+
+        _settleRoll(transport, _idOf(newMessages.single));
+        await tester.pump();
       },
     );
 
@@ -331,6 +369,9 @@ void main() {
         await tester.tap(find.byKey(_dieKey));
         await tester.pump();
         final int sentAfterFirstTap = transport.sentRaw.length;
+        final String firstRollId = _idOf(
+          transport.sentRaw.singleWhere((s) => _typeOf(s) == 'roll'),
+        );
         expect(
           transport.sentRaw.where((s) => _typeOf(s) == 'roll'),
           hasLength(1),
@@ -349,6 +390,9 @@ void main() {
               'grew by '
               '${transport.sentRaw.length - sentAfterFirstTap} message(s)',
         );
+
+        _settleRoll(transport, firstRollId);
+        await tester.pump();
       },
     );
 
@@ -535,7 +579,7 @@ void main() {
       'starts right after the tap and is still there while no result has '
       'arrived',
       (tester) async {
-        final (controller, _) = await _connectTo(
+        final (controller, transport) = await _connectTo(
           tester,
           turn: _turnJson(
             seat: 0,
@@ -566,6 +610,12 @@ void main() {
               'with no rolled reply yet and under 4s elapsed, the tumble '
               'must still be running',
         );
+
+        _settleRoll(
+          transport,
+          _idOf(transport.sentRaw.singleWhere((s) => _typeOf(s) == 'roll')),
+        );
+        await tester.pump();
       },
     );
 
@@ -632,7 +682,7 @@ void main() {
       'no face is shown before a result arrives -- game-die-blank or no '
       'face key at all, never an invented face',
       (tester) async {
-        final (controller, _) = await _connectTo(
+        final (controller, transport) = await _connectTo(
           tester,
           turn: _turnJson(
             seat: 0,
@@ -657,6 +707,12 @@ void main() {
                 'purely cosmetic and no result has landed',
           );
         }
+
+        _settleRoll(
+          transport,
+          _idOf(transport.sentRaw.singleWhere((s) => _typeOf(s) == 'roll')),
+        );
+        await tester.pump();
       },
     );
   });
@@ -717,6 +773,12 @@ void main() {
               'game-die-no-answer must show loc.gameRollNoAnswer '
               '("${loc.gameRollNoAnswer}"); got "${noAnswerText.data}"',
         );
+
+        _settleRoll(
+          transport,
+          _idOf(transport.sentRaw.singleWhere((s) => _typeOf(s) == 'roll')),
+        );
+        await tester.pump();
       },
     );
 
@@ -746,6 +808,12 @@ void main() {
             'game-die-no-answer under Arabic must show loc.gameRollNoAnswer '
             '("${loc.gameRollNoAnswer}"); got "${noAnswerText.data}"',
       );
+
+      _settleRoll(
+        transport,
+        _idOf(transport.sentRaw.singleWhere((s) => _typeOf(s) == 'roll')),
+      );
+      await tester.pump();
     });
 
     testWidgets(
@@ -766,6 +834,9 @@ void main() {
 
         await tester.tap(find.byKey(_dieKey));
         await tester.pump();
+        final String firstRollId = _idOf(
+          transport.sentRaw.singleWhere((s) => _typeOf(s) == 'roll'),
+        );
         await tester.pump(const Duration(seconds: 4));
         expect(find.byKey(_noAnswerKey), findsOneWidget);
 
@@ -790,6 +861,13 @@ void main() {
           findsNothing,
           reason: 'game-die-no-answer must clear once the die is tapped again',
         );
+
+        // Both the first roll (still open: it never got an answer, that is
+        // the scenario) and the second roll opened their own 10s request
+        // timer; both must be settled before this test ends.
+        _settleRoll(transport, firstRollId, k: 1, seq: 2);
+        _settleRoll(transport, _idOf(newMessages.single), k: 2, seq: 3);
+        await tester.pump();
       },
     );
 
@@ -820,8 +898,15 @@ void main() {
             re: rollId,
             data: <String, Object?>{
               'seat': 0,
+              // Two legal tokens on purpose, not one: this test is about
+              // the 4s no-answer timer, not the unique-legal auto-move
+              // hold (play_surface_automove_test.dart). A single legal
+              // token would arm that hold, which would itself send an
+              // unawaited `move` partway through the 4s pump below and
+              // leave a second, unrelated request timer pending at
+              // teardown.
               'value': 2,
-              'legal': <int>[0],
+              'legal': <int>[0, 1],
               'deadline_ms': 45000,
               'k': 1,
               'reveal': 'c' * 64,
