@@ -57,7 +57,9 @@ class GameDie extends StatefulWidget {
     required this.enabled,
     required this.tumbling,
     required this.noAnswer,
+    required this.noMove,
     this.onTap,
+    this.onInvalidTap,
   });
 
   /// The last known roll, straight from `turn.value`. Null when none is
@@ -80,9 +82,22 @@ class GameDie extends StatefulWidget {
   /// tap. Shows `loc.gameRollNoAnswer` under the die.
   final bool noAnswer;
 
+  /// C-236 rule 4: true for the 1500ms the no-move beat holds, from a
+  /// `rolled` for my seat with an empty `legal`. Draws the red X
+  /// (`game-die-no-move-mark`, an X shape and not only a colour, doctrine
+  /// P9) over whatever the die is otherwise showing, independent of
+  /// [face], [enabled] or [tumbling] -- the mark is not delayed or hidden
+  /// by the next seat's turn landing underneath it.
+  final bool noMove;
+
   /// Fires on a tap while [enabled]. The widget itself still guards this:
   /// a tap while disabled never calls it, even if a caller passes one.
   final VoidCallback? onTap;
+
+  /// C-236 rule 3: fires once on a tap that lands while [enabled] is
+  /// false, instead of [onTap]. The widget never swallows a tap silently:
+  /// every tap on the die either rolls or reports itself as invalid.
+  final VoidCallback? onInvalidTap;
 
   @override
   State<GameDie> createState() => _GameDieState();
@@ -151,8 +166,16 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     }
   }
 
+  /// C-236 rule 3: a tap that lands while the die would not roll never goes
+  /// silent (doctrine P3's "illegal taps get a small shake, never
+  /// silence"). The gesture is always wired to this one method; the branch
+  /// on [GameDie.enabled] happens here rather than in whether the handler
+  /// is attached at all, which is what used to let a disabled tap vanish
+  /// with nothing to show for it.
   void _handleTap() {
     if (!widget.enabled) {
+      widget.onInvalidTap?.call();
+      _shake.forward(from: 0);
       return;
     }
     widget.onTap?.call();
@@ -218,16 +241,40 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
       child: die,
     );
 
+    // C-236 rule 4: the no-move mark sits in its own stack layer, above
+    // whatever `die` is doing (resting face, tumble, shake), so it is never
+    // delayed or hidden by the die's own animation state.
+    final Widget dieFace = widget.noMove
+        ? Stack(
+            alignment: Alignment.center,
+            children: [
+              die,
+              IgnorePointer(
+                key: const Key('game-die-no-move-mark'),
+                child: const CustomPaint(
+                  size: Size.square(_kDieSize),
+                  painter: _NoMoveMarkPainter(),
+                ),
+              ),
+            ],
+          )
+        : die;
+
     // The key sits on the Semantics widget itself, not on the SizedBox
     // beneath it: getSemantics(find.byKey('game-die')) must return this
     // node's own button, label and enabled flag, and a key further down
     // the tree does not reliably walk back up to it.
+    //
+    // onTap is always wired, on both nodes, whether or not the die would
+    // roll: C-236 rule 3 needs every tap to reach `_handleTap`, which is the
+    // one place that decides between rolling and reporting an invalid tap.
+    // `enabled` still carries the advertised Semantics state.
     final Widget tappable = Semantics(
       key: const Key('game-die'),
       button: true,
       label: loc.gameRollButton,
       enabled: widget.enabled,
-      onTap: widget.enabled ? _handleTap : null,
+      onTap: _handleTap,
       child: GestureDetector(
         // The Semantics wrapper above already states button, label, enabled
         // and the tap action on its own node; a GestureDetector's default
@@ -235,8 +282,8 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
         // the same node for no reason this widget needs.
         excludeFromSemantics: true,
         behavior: HitTestBehavior.opaque,
-        onTap: widget.enabled ? _handleTap : null,
-        child: SizedBox(width: _kDieSize, height: _kDieSize, child: die),
+        onTap: _handleTap,
+        child: SizedBox(width: _kDieSize, height: _kDieSize, child: dieFace),
       ),
     );
 
@@ -292,6 +339,36 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
       ),
     );
   }
+}
+
+/// C-236 rule 4, doctrine P9: the no-move result is never colour alone. Two
+/// crossing strokes over the die's full face, static -- nothing here needs a
+/// reduced-motion branch because nothing here moves; the mark's 1500ms
+/// lifetime is `game_screen.dart`'s clock, not this painter's.
+class _NoMoveMarkPainter extends CustomPainter {
+  const _NoMoveMarkPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double inset = size.shortestSide * 0.22;
+    final Paint paint = Paint()
+      ..color = LudoColors.error
+      ..strokeWidth = math.max(3, size.shortestSide * 0.09)
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(inset, inset),
+      Offset(size.width - inset, size.height - inset),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width - inset, inset),
+      Offset(inset, size.height - inset),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _NoMoveMarkPainter oldDelegate) => false;
 }
 
 class _GameDiePainter extends CustomPainter {
