@@ -208,6 +208,7 @@ Future<int> _rollWithLegal(
   FakeTransport transport, {
   required List<int> legal,
   required int k,
+  int? seq,
 }) async {
   final int sentBeforeRoll = transport.sentRaw.length;
   await tester.tap(find.byKey(_dieKey));
@@ -232,7 +233,7 @@ Future<int> _rollWithLegal(
         'deadline_ms': 45000,
         'k': k,
         'reveal': 'b' * 64,
-        'seq': k + 1,
+        'seq': seq ?? k + 1,
       },
     ),
   );
@@ -501,6 +502,9 @@ void main() {
         transport,
         legal: const <int>[secondUniqueToken],
         k: 3,
+        // The turn frame above took seq 4; a rolled reusing it would be
+        // dropped as stale before the screen ever saw the new k.
+        seq: 5,
       );
 
       expect(
@@ -531,7 +535,7 @@ void main() {
         transport,
         secondMoves.single,
         token: secondUniqueToken,
-        seq: 5,
+        seq: 6,
       );
     });
   });
