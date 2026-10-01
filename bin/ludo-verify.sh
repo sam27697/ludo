@@ -771,13 +771,23 @@ gate_client_wire() {
   # under two minutes, and 420 leaves room for a loaded 2-vCPU host without
   # ever letting a genuine hang run forever. -k gives it 10s past the TERM
   # before a KILL.
-  local wire_out wire_rc
+  local wire_out wire_rc wire_err_file wire_err
+  wire_err_file="$(mktemp "${TMPDIR:-/tmp}/ludo-verify-wire-stderr.XXXXXX")"
   wire_out="$(cd "$client_pkg" && timeout -k 10 420 "$client_dart" run tool/wire_smoke.dart \
-    --target "ws://127.0.0.1:$port" --scenario "$cw_scenario" 2>&1)"
+    --target "ws://127.0.0.1:$port" --scenario "$cw_scenario" 2>"$wire_err_file")"
   wire_rc=$?
+  wire_err="$(cat "$wire_err_file")"
+  rm -f "$wire_err_file"
 
   echo "$wire_out"
+  [ -n "$wire_err" ] && echo "$wire_err"
 
+  # dart run prints its own "Running build hooks..." preamble (no trailing
+  # newline) on stderr, not stdout, whenever a dependency ships Dart build
+  # hooks -- share_plus 13 is one such dependency. Merging the two streams
+  # glues that preamble onto wire_smoke's own first line and can hide a
+  # PASS/FAIL result from this grep, so the two streams are kept apart above
+  # and only stdout is counted here; stderr is still echoed for a human.
   local wire_passed wire_failed wire_total
   wire_passed="$(printf '%s\n' "$wire_out" | grep -c '^PASS ' || true)"
   wire_failed="$(printf '%s\n' "$wire_out" | grep -c '^FAIL ' || true)"
