@@ -303,10 +303,10 @@ class _LudoBoardState extends State<LudoBoard> {
           // child below it (as this used to be) finds a node with no
           // button flag, because getSemantics walks up from the keyed
           // element to whichever ancestor owns the node, and that search
-          // does not reliably land back on this one. A transparent
-          // ColoredBox, not a bare SizedBox, inside it: it needs to
-          // actually paint (even invisibly) to register its own hit
-          // test, so a real tap still lands through the board's outer
+          // does not reliably land back on this one. An opaque MetaData,
+          // not a bare SizedBox, inside it: it needs to register its own
+          // hit test without painting a colour, so a real tap still
+          // lands through the board's outer
           // opaque GestureDetector underneath it exactly as before --
           // this node adds the accessible route, it does not replace the
           // pixel one.
@@ -316,7 +316,10 @@ class _LudoBoardState extends State<LudoBoard> {
             label: loc.gameTokenButton(tokenIndex + 1),
             enabled: legalHere,
             onTap: () => _resolveTap(_groupIndicesFor(seat, tokenIndex)),
-            child: const ColoredBox(color: Color(0x00000000)),
+            child: const MetaData(
+              behavior: HitTestBehavior.opaque,
+              child: SizedBox.expand(),
+            ),
           ),
         ),
       );
