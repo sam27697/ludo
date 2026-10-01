@@ -46,10 +46,17 @@
 //      literal integers below (42000ms / k: 2 pre-drop, and so on) are this
 //      file's own fixture choices, picked so R6's arithmetic is exact and
 //      auditable, not values pinned by the order itself.
+//
+// Order 224 (work/ludo/orders/C-223-play-surface.md, run 65): R3 and R7's
+// own roll-button-enabled checks are migrated to game-die, read through
+// Semantics (game-screen-roll-button is gone, and neither remaining control
+// is an ElevatedButton). No other case here touches the removed controls.
 
 import 'dart:convert';
+import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
@@ -252,7 +259,7 @@ Future<void> _mount(WidgetTester tester, RoomController controller) async {
 const Key _connectionLostKey = Key('game-screen-connection-lost');
 const Key _reconnectButtonKey = Key('game-screen-reconnect-button');
 const Key _boardKey = Key('game-screen-board');
-const Key _rollKey = Key('game-screen-roll-button');
+const Key _dieKey = Key('game-die');
 const Key _countdownKey = Key('game-screen-turn-countdown');
 
 /// Reads whatever whole-second number the widget at [key] is showing,
@@ -562,25 +569,24 @@ void main() {
     );
 
     expect(
-      find.byKey(_rollKey),
+      find.byKey(_dieKey),
       findsOneWidget,
       reason:
-          'R3: game-screen-roll-button must be present (this screen '
-          'always builds it, disabled rather than hidden, per '
-          'lib/src/game_screen.dart\'s _playingBody), not absent',
+          'R3: game-die must be present (this screen always builds it '
+          'while the playing body is shown, disabled rather than hidden, '
+          'per C-223), not absent',
     );
-    final ElevatedButton button = tester.widget<ElevatedButton>(
-      find.byKey(_rollKey),
-    );
+    final SemanticsHandle handle = tester.ensureSemantics();
+    final SemanticsNode node = tester.getSemantics(find.byKey(_dieKey));
     expect(
-      button.onPressed,
-      isNull,
+      node.flagsCollection.isEnabled,
+      Tristate.isFalse,
       reason:
           'R3: with the resumed turn on seat 1, not the local player\'s '
-          'own seat 0, game-screen-roll-button must be disabled '
-          '(onPressed null); a non-null onPressed here would let the '
-          'returning player send a roll out of turn',
+          'own seat 0, game-die must be disabled; an enabled die here '
+          'would let the returning player send a roll out of turn',
     );
+    handle.dispose();
   });
 
   // ==========================================================================
@@ -972,24 +978,24 @@ void main() {
       );
 
       expect(
-        find.byKey(_rollKey),
+        find.byKey(_dieKey),
         findsOneWidget,
         reason:
-            'R7 control: game-screen-roll-button must be present; a red '
-            'result here is a rig failure, not a product finding',
+            'R7 control: game-die must be present; a red result here is a '
+            'rig failure, not a product finding',
       );
-      final ElevatedButton button = tester.widget<ElevatedButton>(
-        find.byKey(_rollKey),
-      );
+      final SemanticsHandle handle = tester.ensureSemantics();
+      final SemanticsNode node = tester.getSemantics(find.byKey(_dieKey));
       expect(
-        button.onPressed,
-        isNotNull,
+        node.flagsCollection.isEnabled,
+        Tristate.isTrue,
         reason:
             'R7 control: with the resumed turn on the local player\'s own '
-            'seat 0 in await_roll, game-screen-roll-button must be '
-            'enabled; a red result here means this rig is not reaching '
-            'the scenario R6 depends on, not that the product is broken',
+            'seat 0 in await_roll, game-die must be enabled; a red result '
+            'here means this rig is not reaching the scenario R6 depends '
+            'on, not that the product is broken',
       );
+      handle.dispose();
 
       final int shown = _wholeSecondsShown(tester, _countdownKey);
       expect(
