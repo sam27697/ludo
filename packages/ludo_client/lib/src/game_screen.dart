@@ -1,15 +1,17 @@
 // The screen a player looks at while a game is being played: the board with
-// everyone's tokens where the server says they are, whose turn it is, a Roll
-// button, a way to choose which token to move, and an honest end-of-game
-// state. Nothing here decides a rule, rolls a die, or advances a turn on its
-// own; every frame this screen draws comes straight from RoomController, and
-// pressing Roll or a token button sends the intention and waits for the
-// server's own reply to change anything.
+// everyone's tokens where the server says they are, whose turn it is, a die
+// under the board that rolls when tapped, tokens on the board that move when
+// tapped, and an honest end-of-game state. Nothing here decides a rule,
+// rolls a die, or advances a turn on its own; every frame this screen draws
+// comes straight from RoomController, and tapping the die or a token sends
+// the intention and waits for the server's own reply to change anything.
 //
 // Unique-legal exception, still not a rule: when the server names exactly
-// one legal token, this screen holds for three seconds with an Undo control
-// and then sends that one move if the player does not cancel. Undo clears
-// the local hold only. It never asks the protocol to reverse a move.
+// one legal token, that token glows for 1.5 seconds and then this screen
+// sends that one move if the player does not tap it first. There is no
+// Undo: with one legal token, waiting out the hold and letting the turn
+// timer expire both lead to that same move, so an Undo cancelled nothing a
+// player could actually avoid.
 //
 // Not wired into navigation by this order. Nothing routes to this screen
 // yet; it is built and proved standing alone, constructed directly with a
@@ -25,6 +27,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
 import 'die_mark.dart';
+import 'game_die.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'theme.dart';
@@ -44,8 +47,7 @@ class GameScreen extends StatefulWidget {
   State<GameScreen> createState() => _GameScreenState();
 }
 
-class _GameScreenState extends State<GameScreen>
-    with SingleTickerProviderStateMixin {
+class _GameScreenState extends State<GameScreen> {
   // The turn countdown's own local clock. docs/PROTOCOL.md section 6:
   // TurnState.deadlineMs is milliseconds remaining as measured on the
   // server at the moment the frame carrying it was sent, never an
@@ -67,28 +69,34 @@ class _GameScreenState extends State<GameScreen>
   int _countdownRemainingSeconds = 0;
 
   // Client-side unique-legal hold. Armed once per turn.k when legal has
-  // exactly one token; cancelled by Undo, a manual token press, or the
-  // turn leaving that unique-legal awaitMove. controller.move is not
-  // called until the hold elapses without cancel.
-  static const Duration _autoMoveHold = Duration(seconds: 3);
+  // exactly one token; cancelled by a manual token press, or the turn
+  // leaving that unique-legal awaitMove. controller.move is not called
+  // until the hold elapses without cancel.
+  static const Duration _autoMoveHold = Duration(milliseconds: 1500);
   Timer? _autoMoveTimer;
   int? _pendingAutoMoveToken;
   int? _autoMoveHandledK;
 
-  // Local Roll juice. HapticFeedback.lightImpact and this opacity pulse
-  // fire on tap without waiting for `rolled`. They never invent a die
-  // face: `game-screen-dice-value` still paints only `turn.value`. The
-  // controller rests at 1 so the control stays fully visible; a tap dips
-  // and returns within LudoBrand.motionShort. Reduced-motion skips the
-  // dip and stays at rest.
-  static const double _rollPulseDim = 0.72;
-  late final AnimationController _rollPulse;
-  int _rollPulseGen = 0;
+  // The one guard both move paths (the hold's own timer and a token tap)
+  // share: once a move has gone out for a turn.k, nothing sends a second
+  // one for that same k, however it is reached. A tap landing just after
+  // the hold already committed is exactly the race this exists for.
+  int? _moveSentForK;
+
+  // The die's "waiting for my roll result" state. Set together with the
+  // turn.k a rolling tap was sent under; cleared when the snapshot shows my
+  // seat with a later k and a non-null value (the roll landed), when the
+  // turn stops being mine, or by the 4s no-answer timer below. While this
+  // is set the die tumbles; once it clears (by any of those three routes)
+  // the die shows whatever `turn.value` it is given, tumble or not.
+  int? _rollWaitK;
+  Timer? _rollNoAnswerTimer;
+  bool _rollNoAnswer = false;
+  static const Duration _rollNoAnswerDelay = Duration(seconds: 4);
 
   @override
   void initState() {
     super.initState();
-    _rollPulse = AnimationController(vsync: this, value: 1.0);
     widget.controller.addListener(_onControllerChanged);
     _syncCountdown();
   }
@@ -96,8 +104,6 @@ class _GameScreenState extends State<GameScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final LudoBrand? brand = Theme.of(context).extension<LudoBrand>();
-    _rollPulse.duration = brand?.motionShort ?? kMotionShort;
     _syncAutoMove();
   }
 
@@ -105,7 +111,7 @@ class _GameScreenState extends State<GameScreen>
   void dispose() {
     _countdownTimer?.cancel();
     _autoMoveTimer?.cancel();
-    _rollPulse.dispose();
+    _rollNoAnswerTimer?.cancel();
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
   }
@@ -114,6 +120,60 @@ class _GameScreenState extends State<GameScreen>
     setState(() {
       _syncCountdown();
       _syncAutoMove();
+      _syncRollWait();
+    });
+  }
+
+  /// Tapping the die while it would roll: haptic now (the feedback service
+  /// replaces this call later), start the tumble, send the intention.
+  void _onDieTap() {
+    final TurnState? turn = widget.controller.room?.turn;
+    if (turn == null) {
+      return;
+    }
+    HapticFeedback.lightImpact();
+    _rollNoAnswerTimer?.cancel();
+    setState(() {
+      _rollWaitK = turn.k;
+      _rollNoAnswer = false;
+    });
+    _rollNoAnswerTimer = Timer(_rollNoAnswerDelay, _onRollNoAnswer);
+    widget.controller.roll();
+  }
+
+  /// Clears the tumble the moment any of the three things that end it (a
+  /// fresh roll for my seat, the turn no longer being mine) shows up in a
+  /// new snapshot. The 4s no-answer route clears it itself, in
+  /// [_onRollNoAnswer], since nothing about the snapshot changes there.
+  void _syncRollWait() {
+    final int? waitK = _rollWaitK;
+    if (waitK == null) {
+      return;
+    }
+    final RoomController controller = widget.controller;
+    final TurnState? turn = controller.room?.turn;
+    final bool stillMine = turn != null && turn.seat == controller.seat;
+    final bool resultArrived =
+        stillMine && turn.k > waitK && turn.value != null;
+    if (!stillMine || resultArrived) {
+      _rollNoAnswerTimer?.cancel();
+      _rollNoAnswerTimer = null;
+      _rollWaitK = null;
+    }
+  }
+
+  /// 4 seconds after a rolling tap with no new roll result: stop the
+  /// tumble, show the last known face, and show the no-answer line until
+  /// the next tap. A dropped connection is handled by rule 1 in [build]
+  /// instead, so this only needs to guard against firing into a screen
+  /// that has already moved past the playing body.
+  void _onRollNoAnswer() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _rollWaitK = null;
+      _rollNoAnswer = true;
     });
   }
 
@@ -133,8 +193,10 @@ class _GameScreenState extends State<GameScreen>
         turn.legal!.length == 1;
   }
 
-  /// Arms the 3s unique-legal hold once per `turn.k`, or drops a pending
-  /// hold when the turn is no longer that unique-legal awaitMove.
+  /// Arms the 1.5s unique-legal hold once per `turn.k`, or drops a pending
+  /// hold when the turn is no longer that unique-legal awaitMove. The
+  /// board draws the held token's glow itself from `autoMoveToken`; there
+  /// is no Undo to announce alongside it any more.
   void _syncAutoMove() {
     if (!_isUniqueLegalAwaitMove()) {
       _clearPendingHold();
@@ -149,10 +211,7 @@ class _GameScreenState extends State<GameScreen>
     _autoMoveTimer?.cancel();
     _autoMoveTimer = Timer(_autoMoveHold, _commitPendingAutoMove);
     final AppLocalizations loc = AppLocalizations.of(context);
-    _announceAutoMove(
-      '${loc.gameTokenButton(_pendingAutoMoveToken! + 1)} · '
-      '${loc.gameUndoButton}',
-    );
+    _announceAutoMove(loc.gameTokenButton(_pendingAutoMoveToken! + 1));
   }
 
   void _clearPendingHold() {
@@ -166,7 +225,8 @@ class _GameScreenState extends State<GameScreen>
       return;
     }
     final int? token = _pendingAutoMoveToken;
-    if (token == null) {
+    final int? k = _autoMoveHandledK;
+    if (token == null || k == null) {
       return;
     }
     _autoMoveTimer = null;
@@ -174,20 +234,22 @@ class _GameScreenState extends State<GameScreen>
     final AppLocalizations loc = AppLocalizations.of(context);
     _announceAutoMove(loc.gameTokenButton(token + 1));
     setState(() {});
+    _sendMove(token, k);
+  }
+
+  /// The one path that actually calls `controller.move`: a tap on the board
+  /// and the hold's own timer both end up here, and whichever reaches a
+  /// given `turn.k` first is the only one that sends anything for it.
+  void _sendMove(int token, int k) {
+    if (_moveSentForK == k) {
+      return;
+    }
+    _moveSentForK = k;
     widget.controller.move(token);
   }
 
-  void _undoPendingAutoMove() {
-    if (_pendingAutoMoveToken == null) {
-      return;
-    }
-    _clearPendingHold();
-    _announceAutoMove(AppLocalizations.of(context).gameYourTurnMove);
-    setState(() {});
-  }
-
-  /// A token tap is an explicit move: drop the hold without announcing
-  /// undo, then let the press send the same move the hold would have.
+  /// A token tap is an explicit move: drop the hold silently, then let the
+  /// tap send the same move the hold would have.
   void _cancelPendingHoldForManualMove() {
     if (_pendingAutoMoveToken == null) {
       return;
@@ -319,33 +381,6 @@ class _GameScreenState extends State<GameScreen>
   /// after that same leave()/dispose() sequence.
   void _leave() {
     Navigator.of(context).pop();
-  }
-
-  /// Local juice on an enabled Roll tap: light haptic and a short opacity
-  /// pulse, then the same `controller.roll()` the button already sent.
-  /// Neither the haptic nor the pulse waits on `rolled`.
-  void _onRollPressed() {
-    HapticFeedback.lightImpact();
-    _playRollPulse();
-    widget.controller.roll();
-  }
-
-  void _playRollPulse() {
-    if (MediaQuery.disableAnimationsOf(context)) {
-      _rollPulse.value = 1.0;
-      return;
-    }
-    final int gen = ++_rollPulseGen;
-    _rollPulse.animateTo(_rollPulseDim).whenComplete(() {
-      if (!mounted || gen != _rollPulseGen) {
-        return;
-      }
-      if (MediaQuery.disableAnimationsOf(context)) {
-        _rollPulse.value = 1.0;
-        return;
-      }
-      _rollPulse.animateTo(1.0);
-    });
   }
 
   void _requestNewTable() {
@@ -516,8 +551,8 @@ class _GameScreenState extends State<GameScreen>
   }
 
   /// H6.3: the room is playing and has at least two seated players. Board,
-  /// turn banner, die (when there is a value to show), Roll button and the
-  /// four token buttons.
+  /// turn banner, and the die under it. Play itself happens on the board
+  /// objects: the die is tapped to roll, a token is tapped to move it.
   Widget _playingBody(
     AppLocalizations loc,
     RoomController controller,
@@ -531,7 +566,19 @@ class _GameScreenState extends State<GameScreen>
         room.state == RoomState.playing &&
         turn != null &&
         turn.seat == seat &&
-        turn.phase == TurnPhase.awaitRoll;
+        turn.phase == TurnPhase.awaitRoll &&
+        _rollWaitK == null;
+
+    final Set<int> legalTokens =
+        (turn != null &&
+            turn.seat == seat &&
+            turn.phase == TurnPhase.awaitMove &&
+            turn.legal != null)
+        ? turn.legal!.toSet()
+        : const <int>{};
+
+    final Color dieSeatColor =
+        LudoColors.seats[(turn?.seat ?? seat ?? 0).clamp(0, 3)];
 
     return Padding(
       padding: const EdgeInsets.all(kSpace4),
@@ -573,91 +620,32 @@ class _GameScreenState extends State<GameScreen>
               key: const Key('game-screen-board'),
               tokens: _tokensOf(room),
               seatsInPlay: _seatsInPlayOf(room),
+              mySeat: seat,
+              legal: legalTokens,
+              autoMoveToken: _pendingAutoMoveToken,
+              onTokenTap: (int index) {
+                _cancelPendingHoldForManualMove();
+                final int? k = turn?.k;
+                if (k == null) {
+                  return;
+                }
+                _sendMove(index, k);
+              },
             ),
           ),
           const SizedBox(height: kSpace4),
-          FadeTransition(
-            key: const Key('game-screen-roll-pulse'),
-            opacity: _rollPulse,
-            child: ElevatedButton(
-              key: const Key('game-screen-roll-button'),
-              style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
-              onPressed: rollEnabled ? _onRollPressed : null,
-              child: Text(loc.gameRollButton),
+          Center(
+            child: GameDie(
+              face: turn?.value,
+              seatColor: dieSeatColor,
+              enabled: rollEnabled,
+              tumbling: _rollWaitK != null,
+              noAnswer: _rollNoAnswer,
+              onTap: rollEnabled ? _onDieTap : null,
             ),
           ),
-          if (_pendingAutoMoveToken != null) ...[
-            const SizedBox(height: kSpace2),
-            Center(child: _autoMoveUndoChip(loc)),
-          ],
-          const SizedBox(height: kSpace2),
-          // Four buttons in a single row leave too little width for either
-          // locale's label at a phone's width -- "Token 1" and "قطعة 4" both
-          // wrap mid-word once each button is down to a few dozen logical
-          // pixels. Two rows of two buttons roughly doubles what each label
-          // gets. FittedBox is the backstop under that, not the fix itself:
-          // at the widths this row actually renders at, both locales fit
-          // without any scaling, and it only engages at a narrower width or
-          // a larger system font than this app has been measured at, where
-          // the alternative is the same mid-word wrap this row exists to
-          // remove.
-          Row(
-            children: [
-              _tokenButton(loc, controller, room, seat, 0),
-              _tokenButton(loc, controller, room, seat, 1),
-            ],
-          ),
-          const SizedBox(height: kSpace2),
-          Row(
-            children: [
-              _tokenButton(loc, controller, room, seat, 2),
-              _tokenButton(loc, controller, room, seat, 3),
-            ],
-          ),
+          const SizedBox(height: kSpace4),
         ],
-      ),
-    );
-  }
-
-  /// Undo for a pending unique-legal auto-move. Outlined so it stays
-  /// quieter than Roll and the token buttons; 48dp target, logical padding
-  /// via the shared button theme. Cancels the local hold only.
-  Widget _autoMoveUndoChip(AppLocalizations loc) {
-    return OutlinedButton(
-      key: const Key('game-automove-undo'),
-      style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
-      onPressed: _undoPendingAutoMove,
-      child: Text(loc.gameUndoButton),
-    );
-  }
-
-  /// One of the four token buttons, [index] 0..3. Kept as its own widget so
-  /// the two-row layout in [_playingBody] does not repeat the button itself
-  /// four times; the key, the enabled test and the move intention are
-  /// unchanged from before the row was split in two.
-  Widget _tokenButton(
-    AppLocalizations loc,
-    RoomController controller,
-    RoomSnapshot room,
-    int? seat,
-    int index,
-  ) {
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: kSpace1),
-        child: ElevatedButton(
-          key: Key('game-screen-token-$index'),
-          onPressed: _tokenEnabled(room, seat, index)
-              ? () {
-                  _cancelPendingHoldForManualMove();
-                  controller.move(index);
-                }
-              : null,
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(loc.gameTokenButton(index + 1)),
-          ),
-        ),
       ),
     );
   }
@@ -853,17 +841,6 @@ SeatState? _offlineTurnSeat(RoomSnapshot room) {
     }
   }
   return null;
-}
-
-/// H4: button `index` is enabled only when every one of these holds.
-bool _tokenEnabled(RoomSnapshot room, int? seat, int index) {
-  final TurnState? turn = room.turn;
-  return room.state == RoomState.playing &&
-      turn != null &&
-      turn.seat == seat &&
-      turn.phase == TurnPhase.awaitMove &&
-      turn.legal != null &&
-      turn.legal!.contains(index);
 }
 
 /// H7, decided in the order given there, first match wins.

@@ -14,6 +14,11 @@
 // board), so a red P5 or P6 would mean this file is not reaching the
 // behaviour it claims to test, not that the contract is unmet.
 //
+// Order 224 (work/ludo/orders/C-223-play-surface.md, run 65): P5's own "the
+// board and the roll button are present" control is migrated to game-die
+// (game-screen-roll-button no longer exists); no other case here touches the
+// removed controls.
+//
 // GameScreen is driven the same way test/game_screen_test.dart and
 // test/game_screen_connection_lost_test.dart drive RoomController: a real
 // RoomController sits over a FakeTransport (test/net/fake_transport.dart,
@@ -321,7 +326,7 @@ const Key _countdownKey = Key('game-screen-turn-countdown');
 const Key _waitingForSeatKey = Key('game-screen-waiting-for-seat');
 const Key _turnBannerKey = Key('game-screen-turn-banner');
 const Key _boardKey = Key('game-screen-board');
-const Key _rollKey = Key('game-screen-roll-button');
+const Key _dieKey = Key('game-die');
 
 /// Reads whatever whole-second number the widget at [key] is showing,
 /// without assuming its exact template. If the keyed widget is itself a
@@ -653,7 +658,7 @@ void main() {
   testWidgets(
     'P5 (control): in a playing room where the turn belongs to this player, '
     'the waiting sentence is nowhere in the tree and game-screen-waiting-'
-    'for-seat is absent; the board and the roll button are present',
+    'for-seat is absent; the board and the die are present',
     (tester) async {
       // Arm A: capture the waiting sentence game-screen-turn-banner renders
       // while the turn belongs to another seat, so the control arm below has
@@ -732,9 +737,9 @@ void main() {
         reason: 'P5: the board must be present on my own turn',
       );
       expect(
-        find.byKey(_rollKey),
+        find.byKey(_dieKey),
         findsOneWidget,
-        reason: 'P5: the roll button must be present on my own turn',
+        reason: 'P5: the die must be present on my own turn',
       );
     },
   );

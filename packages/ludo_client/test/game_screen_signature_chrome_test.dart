@@ -2,6 +2,10 @@
 // the shared scaffold chrome so waiting, playing, and game-over all carry the
 // brand. Compact geometry must keep Roll and Leave at least 48dp, and the
 // brand theme must still meet textContrast with that chrome mounted.
+//
+// Order 224 (work/ludo/orders/C-223-play-surface.md, run 65): "Roll" below
+// is game-die (game-screen-roll-button is gone); the >=48dp claim still
+// holds, and is in fact weaker than C-223's own >=72dp floor for the die.
 
 import 'dart:convert';
 
@@ -22,7 +26,7 @@ const String _testUrl = 'wss://example.test/ws';
 
 const Key _seatPipStripKey = Key('game-seat-pip-strip');
 const Key _feltEdgeKey = Key('game-felt-edge');
-const Key _rollKey = Key('game-screen-roll-button');
+const Key _dieKey = Key('game-die');
 const Key _leaveKey = Key('game-screen-appbar-leave');
 const Key _waitingKey = Key('game-screen-waiting');
 const Key _boardKey = Key('game-screen-board');
@@ -403,7 +407,7 @@ void main() {
       _expectFeltEdge(tester);
 
       final Finder leave = find.byKey(_leaveKey);
-      final Finder roll = find.byKey(_rollKey);
+      final Finder roll = find.byKey(_dieKey);
       expect(leave, findsOneWidget, reason: 'Leave must be visible at 360x600');
       expect(roll, findsOneWidget, reason: 'Roll must be visible at 360x600');
 

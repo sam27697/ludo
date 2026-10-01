@@ -29,6 +29,14 @@
 // RoomSnapshot by hand. Every claim about what a screen sent is checked by
 // decoding FakeTransport.sentRaw, never by trusting that a tap must have
 // produced something.
+//
+// Order 224 (work/ludo/orders/C-223-play-surface.md, run 65): the Roll
+// button and the four token buttons this file drove are gone. This is a
+// seam test, not a re-proof of the die or the tokens' own rules (those move
+// to test/play_surface_die_test.dart and test/play_surface_tokens_test.dart);
+// every tap that used to land on game-screen-roll-button now lands on
+// game-die, and every tap that used to land on game-screen-token-0 now lands
+// on board-token-hit-0-0, with no other change to what each case proves.
 
 import 'dart:convert';
 
@@ -443,7 +451,7 @@ void main() {
         // message on this same fake transport. A route that lost the
         // controller cannot send on it.
         final int sentBeforeRoll1 = transport.sentRaw.length;
-        await tester.tap(find.byKey(const Key('game-screen-roll-button')));
+        await tester.tap(find.byKey(const Key('game-die')));
         await tester.pump();
         final List<String> rollMessages1 = transport.sentRaw
             .skip(sentBeforeRoll1)
@@ -480,7 +488,7 @@ void main() {
         await tester.pump();
 
         final int sentBeforeMove1 = transport.sentRaw.length;
-        await tester.tap(find.byKey(const Key('game-screen-token-0')));
+        await tester.tap(find.byKey(const Key('board-token-hit-0-0')));
         await tester.pump();
         final List<String> moveMessages1 = transport.sentRaw
             .skip(sentBeforeMove1)
@@ -512,7 +520,7 @@ void main() {
         // two rounds is enough to call this an honest game rather than a
         // single lucky roll.
         final int sentBeforeRoll2 = transport.sentRaw.length;
-        await tester.tap(find.byKey(const Key('game-screen-roll-button')));
+        await tester.tap(find.byKey(const Key('game-die')));
         await tester.pump();
         final List<String> rollMessages2 = transport.sentRaw
             .skip(sentBeforeRoll2)
@@ -540,7 +548,7 @@ void main() {
         await tester.pump();
 
         final int sentBeforeMove2 = transport.sentRaw.length;
-        await tester.tap(find.byKey(const Key('game-screen-token-0')));
+        await tester.tap(find.byKey(const Key('board-token-hit-0-0')));
         await tester.pump();
         final List<String> moveMessages2 = transport.sentRaw
             .skip(sentBeforeMove2)
@@ -604,15 +612,15 @@ void main() {
               'else or claiming a draw; got "${winnerText.data}"',
         );
         expect(
-          find.byKey(const Key('game-screen-roll-button')),
+          find.byKey(const Key('game-die')),
           findsNothing,
-          reason: 'a finished game must show no roll button, per H7',
+          reason: 'a finished game must show no die, per H7',
         );
         for (int i = 0; i < 4; i++) {
           expect(
-            find.byKey(Key('game-screen-token-$i')),
+            find.byKey(Key('board-token-hit-0-$i')),
             findsNothing,
-            reason: 'a finished game must show no token button $i, per H7',
+            reason: 'a finished game must show no token hit target $i, per H7',
           );
         }
       },
@@ -729,7 +737,7 @@ void main() {
         // Prove the controller survived the route switch, the same way C1
         // does: a real roll message on this same transport.
         final int sentBeforeRoll = transport.sentRaw.length;
-        await tester.tap(find.byKey(const Key('game-screen-roll-button')));
+        await tester.tap(find.byKey(const Key('game-die')));
         await tester.pump();
         final List<String> rollMessages = transport.sentRaw
             .skip(sentBeforeRoll)
