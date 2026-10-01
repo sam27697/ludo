@@ -964,7 +964,6 @@ void main() {
       'enabled exactly when a tap would roll',
       (tester) async {
         final SemanticsHandle handle = tester.ensureSemantics();
-        addTearDown(handle.dispose);
 
         final (controllerRoll, _) = await _connectTo(
           tester,
@@ -997,12 +996,12 @@ void main() {
           Tristate.isTrue,
           reason: 'in my own awaitRoll, game-die must be enabled',
         );
+        handle.dispose();
       },
     );
 
     testWidgets('disabled in my own awaitMove', (tester) async {
       final SemanticsHandle handle = tester.ensureSemantics();
-      addTearDown(handle.dispose);
 
       final (controller, _) = await _connectTo(
         tester,
@@ -1024,11 +1023,11 @@ void main() {
         Tristate.isFalse,
         reason: 'during my own awaitMove, game-die must be disabled',
       );
+      handle.dispose();
     });
 
     testWidgets('disabled when it is not my turn', (tester) async {
       final SemanticsHandle handle = tester.ensureSemantics();
-      addTearDown(handle.dispose);
 
       final (controller, _) = await _connectTo(
         tester,
@@ -1039,13 +1038,13 @@ void main() {
 
       final SemanticsNode node = tester.getSemantics(find.byKey(_dieKey));
       expect(node.flagsCollection.isEnabled, Tristate.isFalse);
+      handle.dispose();
     });
 
     testWidgets('the Semantics tap action rolls exactly like a real tap', (
       tester,
     ) async {
       final SemanticsHandle handle = tester.ensureSemantics();
-      addTearDown(handle.dispose);
 
       final (controller, transport) = await _connectTo(
         tester,
@@ -1055,10 +1054,8 @@ void main() {
       await _mount(tester, controller);
 
       final int sentBefore = transport.sentRaw.length;
-      final SemanticsOwner owner =
-          tester.binding.rootPipelineOwner.semanticsOwner!;
       final SemanticsNode node = tester.getSemantics(find.byKey(_dieKey));
-      owner.performAction(node.id, SemanticsAction.tap);
+      node.owner!.performAction(node.id, SemanticsAction.tap);
       await tester.pump();
 
       final List<String> newMessages = transport.sentRaw
@@ -1072,6 +1069,10 @@ void main() {
             'send exactly one roll, the same as a real tap',
       );
       expect(_typeOf(newMessages.single), 'roll');
+
+      _settleRoll(transport, _idOf(newMessages.single));
+      await tester.pump();
+      handle.dispose();
     });
   });
 }

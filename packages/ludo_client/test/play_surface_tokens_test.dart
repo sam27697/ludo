@@ -721,7 +721,6 @@ void main() {
       tester,
     ) async {
       final SemanticsHandle handle = tester.ensureSemantics();
-      addTearDown(handle.dispose);
 
       final List<Map<String, Object?>> seats = <Map<String, Object?>>[
         _seatJson(0, name: 'Sam', tokens: const <int>[3, 10, 20, 30]),
@@ -762,6 +761,7 @@ void main() {
               '(legal = [1, 3])',
         );
       }
+      handle.dispose();
     });
 
     testWidgets(
@@ -769,7 +769,6 @@ void main() {
       'tap',
       (tester) async {
         final SemanticsHandle handle = tester.ensureSemantics();
-        addTearDown(handle.dispose);
 
         final List<Map<String, Object?>> seats = <Map<String, Object?>>[
           _seatJson(0, name: 'Sam', tokens: const <int>[3, 10, 20, 30]),
@@ -784,12 +783,10 @@ void main() {
         await _mount(tester, controller);
 
         final int sentBefore = transport.sentRaw.length;
-        final SemanticsOwner owner =
-            tester.binding.rootPipelineOwner.semanticsOwner!;
         final SemanticsNode node = tester.getSemantics(
           find.byKey(_hitKey(0, 2)),
         );
-        owner.performAction(node.id, SemanticsAction.tap);
+        node.owner!.performAction(node.id, SemanticsAction.tap);
         await tester.pump();
 
         final List<String> newMessages = transport.sentRaw
@@ -801,6 +798,7 @@ void main() {
 
         _settleMove(transport, _idOf(newMessages.single), token: 2);
         await tester.pump();
+        handle.dispose();
       },
     );
   });
