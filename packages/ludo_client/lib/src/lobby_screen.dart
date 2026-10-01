@@ -5,6 +5,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'die_mark.dart';
@@ -62,6 +63,7 @@ class LobbyScreen extends StatefulWidget {
     this.players = 4,
     this.toggles = const RoomToggles(),
     this.resume,
+    this.shareText,
   });
 
   final RoomController controller;
@@ -81,6 +83,13 @@ class LobbyScreen extends StatefulWidget {
   /// Required in practice when [action] is [LobbyAction.resume]; ignored
   /// otherwise. The seat the resume request is sent for.
   final SeatRecord? resume;
+
+  /// The tap handler for `lobby-share-button`, in place of the real system
+  /// share sheet. Null in production, where the screen calls
+  /// `SharePlus.instance.share` itself; set by tests to capture the text
+  /// the screen would have shared without opening a sheet no test harness
+  /// can drive.
+  final Future<void> Function(String text)? shareText;
 
   @override
   State<LobbyScreen> createState() => _LobbyScreenState();
@@ -163,6 +172,34 @@ class _LobbyScreenState extends State<LobbyScreen> {
     setState(() {
       _startWithPresentInFlight = false;
     });
+  }
+
+  /// The tap handler for `lobby-share-button`: opens the system share sheet
+  /// (or, under test, calls [LobbyScreen.shareText]) with one localised
+  /// line carrying the room link and the code. Offered to host and guest
+  /// alike, in every connected state where the code is shown. A share that
+  /// throws still leaves the player holding the link, through the same
+  /// clipboard fallback `lobby-copy-link-button` uses, and the error is
+  /// never swallowed silently.
+  Future<void> _shareInvite(RoomSnapshot room, AppLocalizations loc) async {
+    final String link = kRoomLinkBase + room.code;
+    final String text = loc.lobbyShareText(link, room.code);
+    try {
+      final Future<void> Function(String text)? shareText = widget.shareText;
+      if (shareText != null) {
+        await shareText(text);
+      } else {
+        await SharePlus.instance.share(ShareParams(text: text));
+      }
+    } catch (error, stackTrace) {
+      debugPrint(
+        'lobby share failed, copying the link instead: $error\n$stackTrace',
+      );
+      if (!mounted) {
+        return;
+      }
+      await _copyToClipboard(link, loc);
+    }
   }
 
   Future<void> _copyToClipboard(String text, AppLocalizations loc) async {
@@ -364,10 +401,20 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           ),
           SizedBox(height: compact ? kSpace3 : kSpace4),
+          ElevatedButton.icon(
+            key: const Key('lobby-share-button'),
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
+            ),
+            onPressed: () => _shareInvite(room, loc),
+            icon: const Icon(Icons.share),
+            label: Text(loc.lobbyShareButton),
+          ),
+          SizedBox(height: compact ? kSpace2 : kSpace3),
           Row(
             children: [
               Expanded(
-                child: OutlinedButton(
+                child: TextButton(
                   key: const Key('lobby-copy-link-button'),
                   onPressed: () =>
                       _copyToClipboard(kRoomLinkBase + room.code, loc),
@@ -376,7 +423,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
               const SizedBox(width: kSpace3),
               Expanded(
-                child: OutlinedButton(
+                child: TextButton(
                   key: const Key('lobby-copy-code-button'),
                   onPressed: () => _copyToClipboard(room.code, loc),
                   child: Text(loc.lobbyCopyCodeButton),

@@ -59,6 +59,14 @@ dependencies:
   # Open game_over verify_url in an external browser (D-D1-04).
   url_launcher: ^6.3.2
 
+  # Lobby "Invite friends" (lobby-share-button): the Android ACTION_SEND
+  # chooser, so WhatsApp, Telegram and Messenger all sit in one sheet.
+  # Collects nothing itself; minSdk 21, below this app's floor of 24, so it
+  # raises nothing. No Android permission and no manifest edit of our own:
+  # its FileProvider and pending-intent receiver are declared, unexported,
+  # in the plugin's own manifest and merge in automatically.
+  share_plus: ^13.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
