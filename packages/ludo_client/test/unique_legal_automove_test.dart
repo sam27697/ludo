@@ -1,20 +1,38 @@
 // Widget tests for GameScreen unique-legal auto-move: after a roll whose
-// legal list has exactly one token, the screen must hold for 3 seconds
-// before calling controller.move, expose an Undo chip that cancels that
-// pending call locally, and announce the pending / committed / undone
-// states through the accessibility channel. Nothing here edits the
-// protocol; Undo must never put a move on the wire.
+// legal list has exactly one token, the screen must hold for 1500ms before
+// calling controller.move, and never send that move before the hold
+// elapses. Nothing here edits the protocol.
+//
+// Order 224 (work/ludo/orders/C-223-play-surface.md, run 65) rewrote this
+// feature: the hold shortened from 3s to 1500ms, the trigger moved from the
+// Roll button to the die (`game-die`), and the Undo chip
+// (`game-automove-undo`) is gone outright -- the contract's own words are
+// "There is no Undo: with one legal token, waiting and the turn timer lead
+// to that same move, so Undo cancelled nothing real." This file's original
+// three Undo-specific cases ("game-automove-undo cancels a pending
+// unique-legal move...", "Semantics announce fires ... when ... undone")
+// and its two Semantics-announce cases have no successor and are dropped,
+// not migrated, for that reason: there is no control left to cancel, and
+// C-223's own accessibility section asks only for the token's Semantics
+// button state (covered by test/play_surface_tokens_test.dart), never a
+// live-region announcement on the hold's start or commit, so asserting one
+// here would be testing an implementation detail the contract does not
+// require. What survives below -- no early send, exactly one send once the
+// hold elapses, and no send at all with two legal tokens -- is retested
+// against the new mechanics. The manual-tap-cancels-and-sends-once case, the
+// glow's own presence, the no-automove-undo-anywhere case and the new-k
+// re-arm case now live in test/play_surface_automove_test.dart, so they are
+// not repeated here.
 //
 // GameScreen is driven the same way test/game_screen_test.dart drives
 // RoomController: a real controller sits over FakeTransport, and every
 // claim about what the screen sent is checked by decoding sentRaw. The
-// 3-second hold is advanced on flutter_test's FakeAsync clock via
-// tester.pump, not wall time.
+// 1500ms hold is advanced on flutter_test's fake clock via tester.pump, not
+// wall time.
 
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
@@ -27,8 +45,7 @@ import 'package:ludo_client/src/net/transport.dart';
 import 'net/fake_transport.dart';
 
 const String _testUrl = 'wss://unique-legal-automove-test.invalid/ws';
-const Key _rollKey = Key('game-screen-roll-button');
-const Key _undoKey = Key('game-automove-undo');
+const Key _dieKey = Key('game-die');
 const int _uniqueToken = 2;
 
 int _serverIdSeq = 0;
@@ -191,7 +208,7 @@ Future<void> _mount(WidgetTester tester, RoomController controller) async {
   await tester.pump();
 }
 
-/// Taps Roll, answers with a `rolled` frame whose legal list is [legal],
+/// Taps the die, answers with a `rolled` frame whose legal list is [legal],
 /// and returns the sentRaw length after the screen has processed that
 /// frame. Further `move` frames are counted from that index.
 Future<int> _rollWithLegal(
@@ -200,7 +217,7 @@ Future<int> _rollWithLegal(
   required List<int> legal,
 }) async {
   final int sentBeforeRoll = transport.sentRaw.length;
-  await tester.tap(find.byKey(_rollKey));
+  await tester.tap(find.byKey(_dieKey));
   await tester.pump();
   final List<String> rollMessages = transport.sentRaw
       .skip(sentBeforeRoll)
@@ -209,7 +226,7 @@ Future<int> _rollWithLegal(
   expect(
     rollMessages,
     hasLength(1),
-    reason: 'fixture is broken: tapping Roll must send exactly one roll',
+    reason: 'fixture is broken: tapping the die must send exactly one roll',
   );
   transport.pushText(
     _frame(
@@ -238,9 +255,8 @@ List<String> _movesSince(FakeTransport transport, int sentBefore) {
       .toList();
 }
 
-/// Completes the outstanding `move` request so RoomConnection's 10s
-/// reply timer is not still pending when flutter_test verifies invariants.
-/// Same handshake every other GameScreen move test uses.
+/// Completes the outstanding `move` request so RoomConnection's own reply
+/// timer is not still pending when flutter_test verifies invariants.
 Future<void> _completeMove(
   WidgetTester tester,
   FakeTransport transport,
@@ -267,57 +283,10 @@ Future<void> _completeMove(
   await tester.pump();
 }
 
-List<Map<Object?, Object?>> _listenAccessibility(WidgetTester tester) {
-  final List<Map<Object?, Object?>> events = <Map<Object?, Object?>>[];
-  tester.binding.defaultBinaryMessenger.setMockMessageHandler(
-    SystemChannels.accessibility.name,
-    (ByteData? data) async {
-      if (data == null) {
-        return null;
-      }
-      final Object? decoded = const StandardMessageCodec().decodeMessage(data);
-      if (decoded is Map) {
-        events.add(Map<Object?, Object?>.from(decoded));
-      }
-      return null;
-    },
-  );
-  addTearDown(
-    () => tester.binding.defaultBinaryMessenger.setMockMessageHandler(
-      SystemChannels.accessibility.name,
-      null,
-    ),
-  );
-  return events;
-}
-
-List<String> _announceMessages(List<Map<Object?, Object?>> events) {
-  final List<String> messages = <String>[];
-  for (final Map<Object?, Object?> event in events) {
-    if (event['type'] != 'announce') {
-      continue;
-    }
-    final Object? data = event['data'];
-    if (data is Map && data['message'] is String) {
-      final String message = data['message'] as String;
-      if (message.isNotEmpty) {
-        messages.add(message);
-      }
-    }
-  }
-  return messages;
-}
-
-void _enableAnnounce(WidgetTester tester) {
-  tester.platformDispatcher.accessibilityFeaturesTestValue =
-      const FakeAccessibilityFeatures(supportsAnnounce: true);
-  addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
-}
-
 void main() {
   testWidgets(
-    'after a unique-legal roll, no move is sent before 3s then exactly one '
-    'move is sent',
+    'after a unique-legal roll, no move is sent before 1500ms then exactly '
+    'one move is sent',
     (tester) async {
       final (controller, transport) = await _connectAwaitingRoll(tester);
       await _mount(tester, controller);
@@ -340,17 +309,17 @@ void main() {
         isEmpty,
         reason:
             'a unique-legal roll must enter a pending hold: no move '
-            'frame on the transport before the 3s window elapses',
+            'frame on the transport before the 1500ms window elapses',
       );
 
-      await tester.pump(const Duration(milliseconds: 2999));
+      await tester.pump(const Duration(milliseconds: 1499));
       expect(
         _movesSince(transport, sentAfterRolled),
         isEmpty,
         reason:
-            'controller.move must not run before the 3s hold elapses; '
+            'controller.move must not run before the 1500ms hold elapses; '
             'got ${_movesSince(transport, sentAfterRolled).length} move '
-            'frame(s) at 2999ms',
+            'frame(s) at 1499ms',
       );
 
       await tester.pump(const Duration(milliseconds: 1));
@@ -359,8 +328,8 @@ void main() {
         moves,
         hasLength(1),
         reason:
-            'waiting out the 3s hold without Undo must put exactly one '
-            'move on the transport; got ${moves.length}',
+            'waiting out the 1500ms hold must put exactly one move on the '
+            'transport; got ${moves.length}',
       );
       expect(_typeOf(moves.single), 'move');
       expect(
@@ -380,162 +349,7 @@ void main() {
     },
   );
 
-  testWidgets(
-    'game-automove-undo cancels a pending unique-legal move and sends '
-    'nothing on the transport',
-    (tester) async {
-      final (controller, transport) = await _connectAwaitingRoll(tester);
-      await _mount(tester, controller);
-
-      final int sentAfterRolled = await _rollWithLegal(
-        tester,
-        transport,
-        legal: const <int>[_uniqueToken],
-      );
-
-      expect(
-        find.byKey(_undoKey),
-        findsOneWidget,
-        reason:
-            'a unique-legal roll must show the Undo chip keyed '
-            'game-automove-undo during the 3s hold',
-      );
-
-      await tester.tap(find.byKey(_undoKey));
-      await tester.pump();
-
-      expect(
-        _movesSince(transport, sentAfterRolled),
-        isEmpty,
-        reason:
-            'tapping game-automove-undo must cancel the pending move; no '
-            'move frame may reach the transport',
-      );
-      expect(
-        controller.room!.turn!.phase,
-        TurnPhase.awaitMove,
-        reason:
-            'Undo cancels only the client-side hold and must leave the '
-            'turn in awaitMove',
-      );
-      expect(
-        find.byKey(_undoKey),
-        findsNothing,
-        reason: 'after Undo, game-automove-undo must leave the tree',
-      );
-
-      await tester.pump(const Duration(seconds: 3));
-      expect(
-        _movesSince(transport, sentAfterRolled),
-        isEmpty,
-        reason:
-            'the cancelled auto-move must not fire after the original '
-            '3s window; the transport still has no move frame',
-      );
-
-      await tester.tap(
-        find.byKey(const Key('game-screen-token-$_uniqueToken')),
-      );
-      await tester.pump();
-      final List<String> moves = _movesSince(transport, sentAfterRolled);
-      expect(
-        moves,
-        hasLength(1),
-        reason:
-            'after Undo, the player must still be able to move the '
-            'unique legal token from awaitMove',
-      );
-      expect(_dataOf(moves.single), <String, Object?>{'token': _uniqueToken});
-      await _completeMove(
-        tester,
-        transport,
-        moves.single,
-        token: _uniqueToken,
-        seq: 3,
-      );
-    },
-  );
-
-  testWidgets(
-    'Semantics announce fires when a pending unique-legal auto-move starts '
-    'and when it commits',
-    (tester) async {
-      _enableAnnounce(tester);
-      final List<Map<Object?, Object?>> events = _listenAccessibility(tester);
-      final (controller, transport) = await _connectAwaitingRoll(tester);
-      await _mount(tester, controller);
-
-      await _rollWithLegal(tester, transport, legal: const <int>[_uniqueToken]);
-
-      final List<String> started = _announceMessages(events);
-      expect(
-        started,
-        isNotEmpty,
-        reason:
-            'a unique-legal pending auto-move must fire a Semantics '
-            'announce when the hold starts; got $started',
-      );
-
-      await tester.pump(const Duration(seconds: 3));
-      final List<String> afterCommit = _announceMessages(events);
-      expect(
-        afterCommit.length,
-        greaterThan(started.length),
-        reason:
-            'committing the unique-legal auto-move after 3s must fire a '
-            'further Semantics announce; started with $started, after '
-            'commit $afterCommit',
-      );
-      final List<String> commitMoves = transport.sentRaw
-          .where((s) => _typeOf(s) == 'move')
-          .toList();
-      expect(commitMoves, isNotEmpty);
-      await _completeMove(
-        tester,
-        transport,
-        commitMoves.last,
-        token: _uniqueToken,
-        seq: 3,
-      );
-    },
-  );
-
-  testWidgets(
-    'Semantics announce fires when a pending unique-legal auto-move is '
-    'undone',
-    (tester) async {
-      _enableAnnounce(tester);
-      final List<Map<Object?, Object?>> events = _listenAccessibility(tester);
-      final (controller, transport) = await _connectAwaitingRoll(tester);
-      await _mount(tester, controller);
-
-      await _rollWithLegal(tester, transport, legal: const <int>[_uniqueToken]);
-
-      final List<String> started = _announceMessages(events);
-      expect(
-        started,
-        isNotEmpty,
-        reason:
-            'a unique-legal pending auto-move must fire a Semantics '
-            'announce when the hold starts; got $started',
-      );
-
-      expect(find.byKey(_undoKey), findsOneWidget);
-      await tester.tap(find.byKey(_undoKey));
-      await tester.pump();
-
-      final List<String> afterUndo = _announceMessages(events);
-      expect(
-        afterUndo.length,
-        greaterThan(started.length),
-        reason:
-            'tapping game-automove-undo must fire a Semantics announce; '
-            'started with $started, after Undo $afterUndo',
-      );
-    },
-  );
-
-  testWidgets('a roll with two legal tokens sends no move after 3s', (
+  testWidgets('a roll with two legal tokens sends no move after 1500ms', (
     tester,
   ) async {
     final (controller, transport) = await _connectAwaitingRoll(tester);
@@ -547,20 +361,13 @@ void main() {
       legal: const <int>[0, _uniqueToken],
     );
 
-    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(const Duration(milliseconds: 1500));
     expect(
       _movesSince(transport, sentAfterRolled),
       isEmpty,
       reason:
           'auto-move is only for a unique legal token; two legal '
-          'tokens must not put a move on the transport after 3s',
-    );
-    expect(
-      find.byKey(_undoKey),
-      findsNothing,
-      reason:
-          'game-automove-undo must not appear when more than one token '
-          'is legal',
+          'tokens must not put a move on the transport after 1500ms',
     );
   });
 }

@@ -3,6 +3,12 @@
 // Failures of a guideline are printed as measurements; the test still
 // passes if the widgets are present, so a first-run baseline can exist
 // before those numbers move.
+//
+// Order 224 (work/ludo/orders/C-223-play-surface.md, run 65): the
+// game-screen-roll-button probe is now game-die (the old key is gone).
+// This is a diagnostic print, not a hard assertion, so the case still
+// "passes" either way; the swap keeps the printed measurement meaningful
+// instead of a permanent "SIZE die MISSING".
 
 import 'dart:convert';
 import 'dart:io';
@@ -300,7 +306,7 @@ void main() {
     await tester.pump();
 
     expect(find.byType(GameScreen), findsOneWidget);
-    _printSize(tester, const Key('game-screen-roll-button'), 'roll');
+    _printSize(tester, const Key('game-die'), 'die');
     _printSize(tester, const Key('game-screen-appbar-leave'), 'leave');
     await _saveShot(tester, '04-game-en');
 
