@@ -77,6 +77,12 @@ class _GameScreenState extends State<GameScreen> {
   int? _pendingAutoMoveToken;
   int? _autoMoveHandledK;
 
+  // The one guard both move paths (the hold's own timer and a token tap)
+  // share: once a move has gone out for a turn.k, nothing sends a second
+  // one for that same k, however it is reached. A tap landing just after
+  // the hold already committed is exactly the race this exists for.
+  int? _moveSentForK;
+
   // The die's "waiting for my roll result" state. Set together with the
   // turn.k a rolling tap was sent under; cleared when the snapshot shows my
   // seat with a later k and a non-null value (the roll landed), when the
@@ -219,7 +225,8 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
     final int? token = _pendingAutoMoveToken;
-    if (token == null) {
+    final int? k = _autoMoveHandledK;
+    if (token == null || k == null) {
       return;
     }
     _autoMoveTimer = null;
@@ -227,6 +234,17 @@ class _GameScreenState extends State<GameScreen> {
     final AppLocalizations loc = AppLocalizations.of(context);
     _announceAutoMove(loc.gameTokenButton(token + 1));
     setState(() {});
+    _sendMove(token, k);
+  }
+
+  /// The one path that actually calls `controller.move`: a tap on the board
+  /// and the hold's own timer both end up here, and whichever reaches a
+  /// given `turn.k` first is the only one that sends anything for it.
+  void _sendMove(int token, int k) {
+    if (_moveSentForK == k) {
+      return;
+    }
+    _moveSentForK = k;
     widget.controller.move(token);
   }
 
@@ -607,7 +625,11 @@ class _GameScreenState extends State<GameScreen> {
               autoMoveToken: _pendingAutoMoveToken,
               onTokenTap: (int index) {
                 _cancelPendingHoldForManualMove();
-                controller.move(index);
+                final int? k = turn?.k;
+                if (k == null) {
+                  return;
+                }
+                _sendMove(index, k);
               },
             ),
           ),

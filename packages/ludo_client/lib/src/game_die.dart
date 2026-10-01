@@ -142,9 +142,10 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
   }
 
   void _syncTumble() {
-    if (widget.tumbling && !_tumble.isAnimating) {
+    final bool shouldRun = widget.tumbling && !_reducedMotion;
+    if (shouldRun && !_tumble.isAnimating) {
       _tumble.repeat();
-    } else if (!widget.tumbling && _tumble.isAnimating) {
+    } else if (!shouldRun && _tumble.isAnimating) {
       _tumble.stop();
       _tumble.value = 0;
     }
@@ -217,20 +218,25 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
       child: die,
     );
 
+    // The key sits on the Semantics widget itself, not on the SizedBox
+    // beneath it: getSemantics(find.byKey('game-die')) must return this
+    // node's own button, label and enabled flag, and a key further down
+    // the tree does not reliably walk back up to it.
     final Widget tappable = Semantics(
+      key: const Key('game-die'),
       button: true,
       label: loc.gameRollButton,
       enabled: widget.enabled,
       onTap: widget.enabled ? _handleTap : null,
       child: GestureDetector(
+        // The Semantics wrapper above already states button, label, enabled
+        // and the tap action on its own node; a GestureDetector's default
+        // semantics would otherwise merge its own copy of that action into
+        // the same node for no reason this widget needs.
+        excludeFromSemantics: true,
         behavior: HitTestBehavior.opaque,
         onTap: widget.enabled ? _handleTap : null,
-        child: SizedBox(
-          key: const Key('game-die'),
-          width: _kDieSize,
-          height: _kDieSize,
-          child: die,
-        ),
+        child: SizedBox(width: _kDieSize, height: _kDieSize, child: die),
       ),
     );
 
@@ -252,8 +258,29 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     );
   }
 
+  /// C-223 clarification 1: `game-die-face-N` names only a face the die
+  /// rests on, never a cosmetic one cycled mid-tumble. While tumbling under
+  /// reduced motion the die shows `game-die-blank` and does not cycle at
+  /// all; while tumbling with motion allowed it still cycles the pips (the
+  /// contract's "rotation plus pips cycling through random faces"), but
+  /// that cosmetic face carries neither a `game-die-face-N` nor a
+  /// `game-die-blank` key, since it is not the blank state either -- it is
+  /// not resting on anything.
   Widget _face({required bool reduced}) {
-    final int? shown = widget.tumbling ? _tumbleFace() : widget.face;
+    if (widget.tumbling) {
+      // Cosmetic only: never settles, never carries a resting-face key.
+      // Reduced motion does not merely hold rotation off, it also stops the
+      // pip cycling and shows the blank face until the result lands.
+      final int? shown = reduced ? null : _tumbleFace();
+      final Widget paint = CustomPaint(
+        size: const Size.square(_kDieSize),
+        painter: _GameDiePainter(edgeColor: widget.seatColor, face: shown),
+      );
+      return reduced
+          ? KeyedSubtree(key: const Key('game-die-blank'), child: paint)
+          : paint;
+    }
+    final int? shown = widget.face;
     final Key key = shown == null
         ? const Key('game-die-blank')
         : Key('game-die-face-$shown');

@@ -19,6 +19,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import '../l10n/gen/app_localizations.dart';
 import 'board_geometry.dart';
 import 'theme.dart';
 
@@ -174,17 +175,46 @@ class _LudoBoardState extends State<LudoBoard> {
       return;
     }
 
+    _resolveTap(best.indices);
+  }
+
+  /// The one place a tap -- real or Semantics -- turns into either
+  /// `onTokenTap` or `onIllegalTokenTap` plus a shake. [indices] is every
+  /// index of mine sharing the tapped cell, sorted ascending: the stack rule
+  /// is "the lowest legal index on that cell", so a legal hit here always
+  /// resolves the same way regardless of which stacked token the tap or the
+  /// Semantics action actually named.
+  void _resolveTap(List<int> indices) {
     final List<int> legalHere =
-        best.indices.where((int index) => widget.legal.contains(index)).toList()
+        indices.where((int index) => widget.legal.contains(index)).toList()
           ..sort();
     if (legalHere.isNotEmpty) {
       widget.onTokenTap?.call(legalHere.first);
       return;
     }
 
-    final int shakeIndex = best.indices.first;
+    final int shakeIndex = indices.first;
     widget.onIllegalTokenTap?.call(shakeIndex);
     _triggerShake(shakeIndex);
+  }
+
+  /// Every index of [mySeat] sharing the same cell as [tokenIndex], sorted
+  /// ascending -- the Semantics path's way of asking the same "what shares
+  /// this cell" question [_cellGroups] answers for a pixel tap, without
+  /// needing a cell size to do it.
+  List<int> _groupIndicesFor(int mySeat, int tokenIndex) {
+    final List<int> progresses = widget.tokens[mySeat]!;
+    final BoardCell cell = cellFor(
+      seat: mySeat,
+      progress: progresses[tokenIndex],
+      tokenIndex: tokenIndex,
+    );
+    return <int>[
+      for (var i = 0; i < 4; i++)
+        if (cellFor(seat: mySeat, progress: progresses[i], tokenIndex: i) ==
+            cell)
+          i,
+    ]..sort();
   }
 
   @override
@@ -262,37 +292,53 @@ class _LudoBoardState extends State<LudoBoard> {
 
     if (isMine) {
       final double hitSize = math.max(48.0, tokenSize);
+      final AppLocalizations loc = AppLocalizations.of(context);
       layer.add(
         Positioned(
-          key: Key('board-token-hit-$seat-$tokenIndex'),
           left: left + tokenSize / 2 - hitSize / 2,
           top: top + tokenSize / 2 - hitSize / 2,
           width: hitSize,
           height: hitSize,
-          // A transparent ColoredBox, not a bare SizedBox: it needs to
-          // actually paint (even invisibly) to register its own hit test,
-          // so a test driving a tap by this key lands on it directly
-          // rather than only working by way of the board's outer opaque
-          // GestureDetector underneath it.
-          child: const ColoredBox(color: Color(0x00000000)),
+          // The Semantics node itself carries the key: a key on a plain
+          // child below it (as this used to be) finds a node with no
+          // button flag, because getSemantics walks up from the keyed
+          // element to whichever ancestor owns the node, and that search
+          // does not reliably land back on this one. A transparent
+          // ColoredBox, not a bare SizedBox, inside it: it needs to
+          // actually paint (even invisibly) to register its own hit
+          // test, so a real tap still lands through the board's outer
+          // opaque GestureDetector underneath it exactly as before --
+          // this node adds the accessible route, it does not replace the
+          // pixel one.
+          child: Semantics(
+            key: Key('board-token-hit-$seat-$tokenIndex'),
+            button: true,
+            label: loc.gameTokenButton(tokenIndex + 1),
+            enabled: legalHere,
+            onTap: () => _resolveTap(_groupIndicesFor(seat, tokenIndex)),
+            child: const ColoredBox(color: Color(0x00000000)),
+          ),
         ),
       );
     }
 
-    if (autoMoveHere) {
+    if (legalHere) {
       final double ringSize = tokenSize * 1.7;
-      layer.add(
-        Positioned(
-          key: Key('board-automove-glow-$seat-$tokenIndex'),
-          left: left + tokenSize / 2 - ringSize / 2,
-          top: top + tokenSize / 2 - ringSize / 2,
-          width: ringSize,
-          height: ringSize,
-          child: const _PulsingRing(period: Duration(milliseconds: 450)),
-        ),
+      // C-223 clarification 2: the legal ring key is present for every
+      // legal token, the unique-legal token included; the faster glow key
+      // nests around that same ring rather than drawing a second one on
+      // top of it.
+      Widget ring = _PulsingRing(
+        period: autoMoveHere
+            ? const Duration(milliseconds: 450)
+            : const Duration(milliseconds: 900),
       );
-    } else if (legalHere) {
-      final double ringSize = tokenSize * 1.7;
+      if (autoMoveHere) {
+        ring = KeyedSubtree(
+          key: Key('board-automove-glow-$seat-$tokenIndex'),
+          child: ring,
+        );
+      }
       layer.add(
         Positioned(
           key: Key('board-legal-ring-$seat-$tokenIndex'),
@@ -300,7 +346,7 @@ class _LudoBoardState extends State<LudoBoard> {
           top: top + tokenSize / 2 - ringSize / 2,
           width: ringSize,
           height: ringSize,
-          child: const _PulsingRing(period: Duration(milliseconds: 900)),
+          child: ring,
         ),
       );
     }
