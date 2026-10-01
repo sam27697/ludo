@@ -928,8 +928,9 @@ answers stays seated and not ready.
 
 ### 16.4 Starting the rematch
 
-- **Everyone accepted.** When every seat occupied at the moment of the first
-  `rematch` is in `rematch.ready`, and every one of them is connected, the
+- **Everyone accepted.** When every seat occupied at the moment of an
+  accepted `rematch` is in `rematch.ready`, at least two seats are occupied,
+  and every one of them is connected, the
   server starts the game itself, exactly as an accepted `start_game` from
   the host would (sections 11.2 and 13.1, the same frame order and the same
   `seq` steps), immediately after broadcasting the `room` that recorded the
@@ -983,3 +984,32 @@ twice within it; every row of 16.1; the 60-minute clock restarted.
 Simulator: full-game, rematch, full-game, both records fetched and verified,
 different `game_id` and `chain_commit`.
 
+### 16.9 Rulings after the first implementation, 2026-10-01
+
+Four cases the text above left open, found by the first server
+implementation. Each is a test before it is code.
+
+1. **A seat removed by a host-forced start is gone, exactly as after
+   `leave_room`.** If its socket is connected it receives the `player_left`
+   that names its own seat, like every other connected seat, and nothing
+   further from the room. Its `seat_token` no longer names a seat: any
+   later frame on that socket that needs a seat, and any `resume` with that
+   token, is `BAD_SEAT_TOKEN`.
+2. **The host's `start_game` in a rematch LOBBY counts as the host's
+   acceptance.** If the host is not in `rematch.ready`, it is added first,
+   without a broadcast or a `seq` step of its own, and the count of ready
+   seats is checked after that. The host is never removed by its own
+   `start_game`.
+3. **The re-seat step is sent only when it changes something.** If no seat
+   was removed, there is no `player_left`, no `seat_assigned` and no extra
+   `room`: the start order runs directly. If at least one seat was removed,
+   the `room` that carries the new `players` and seating is sent with its
+   own `seq` step even when no seat number changed (then no `seat_assigned`
+   goes out).
+4. **A rematch LOBBY takes `join_room` like any LOBBY.** A seat freed by
+   `leave_room` can be taken by a new joiner by code (lowest free seat of the
+   canonical set for `players`, section 3). The joiner is not ready; it
+   accepts with `rematch` like anyone else. The auto-start set is the seats
+   occupied when an accept arrives (16.4), so a seat that left never blocks
+   it and a seat that joined is waited for. Auto-start is evaluated only on
+   an accepted `rematch`, never on `leave_room`, `join_room` or `resume`.
