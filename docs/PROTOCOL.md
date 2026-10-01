@@ -67,7 +67,8 @@ seat is not reassignable by anything a third party can observe.
   canonical seat set for the new count.
 - **PLAYING.** No new seats. A disconnected seat stays in the game and its turns
   are played by the timer under rule 15 of `docs/RULES.md`.
-- **FINISHED.** Terminal. The final state is served to anyone reconnecting, for
+- **FINISHED.** Terminal for that game. A `rematch` (section 16) takes the room
+  back to LOBBY with a new chain; without one, the final state is served to anyone reconnecting, for
   10 minutes, then the room is reaped.
 - A room in any state is reaped 60 minutes after creation regardless. A LOBBY
   with no connected clients is reaped after 10 minutes.
@@ -87,6 +88,7 @@ seat is not reassignable by anything a third party can observe.
 | `move` | `{ "token": 0..3 }` | Only the seat whose turn it is, only when a roll is pending a selection. |
 | `leave_room` | `{ }` | Voluntary. In LOBBY it frees the seat. In PLAYING it does not: the seat remains and is played by the timer. Answered on the leaving socket by the same `player_left` (LOBBY) or `presence` (PLAYING) frame the rest of the room receives, with `re` set. The leaver is told what everyone else was told, not a snapshot of a room it is no longer in. |
 | `ping` | `{ }` | Answered by `pong`. |
+| `rematch` | `{ }` | Any seated player. FINISHED (asks for a rematch) or a rematch LOBBY (accepts it). Answered by `room`. Section 16. |
 
 `name` is a display name: 1 to 24 characters after trimming, no control
 characters. It is held in memory for the life of the room and never persisted.
@@ -249,7 +251,7 @@ Every error is one of these codes. A code is never invented at a call site.
 | `ILLEGAL_MOVE` | the token is not in the `legal` list for the current roll. |
 | `BAD_SEAT_TOKEN` | `resume` with a token that matches no seat in that room. |
 | `SEED_ALREADY_SET` | a second `set_seed` from a seat that already has one. Section 11. |
-| `GAME_OVER` | any action against a FINISHED room. |
+| `GAME_OVER` | any action against a FINISHED room, except `rematch`, `resume`, `leave_room` and `ping`. |
 | `INTERNAL` | a bug. Logged with the room code and the sequence number. |
 
 Every inbound message is validated in this order and rejected at the first
@@ -863,3 +865,121 @@ Implemented in PR #75 (`2e26b91`): rules 1 and 2 in the server's
 `RoomConnection` and `RoomController`. The tests that hold them are
 `packages/ludo_server/test/reseat_seat_assigned_test.dart` and
 `packages/ludo_client/test/net/room_controller_reseat_test.dart`.
+
+## 16. Rematch, 2026-10-01
+
+The product owner's note of 2026-09-30: after a game, the same friends play
+again with one tap (`bin/game-doctrine.md` P5, P6). Until now FINISHED was
+terminal and a rematch meant a new room, a new code and a new invite. This
+section reopens the same room for a new game. It reuses LOBBY, `set_seed`
+and `start_game` as they are, so the fairness ordering of section 11.1 holds
+for the second game exactly as for the first.
+
+### 16.1 The message
+
+`rematch` `{ }`, client to server, from any seated player. No payload field is
+read; any key in `d` is `BAD_FIELD` like every other message.
+
+Validation ladder, identity first as for the five messages in section 7:
+
+| Situation | Code |
+|---|---|
+| socket holds no seat | `BAD_SEAT_TOKEN` |
+| the room no longer exists (reaped) | `NO_SUCH_ROOM` |
+| room in PLAYING | `WRONG_PHASE` |
+| room in a LOBBY that is not a rematch lobby (`rematch` is null) | `WRONG_PHASE` |
+| `d` carries any key | `BAD_FIELD` |
+
+### 16.2 The first `rematch`: FINISHED to LOBBY
+
+Accepted in FINISHED from any seat, connected or just resumed. In one step,
+before anything is sent:
+
+1. `state` becomes LOBBY. `game_id`, `client_seeds`, `turn` and `winner`
+   become null. Every seat's `tokens` become `[-1, -1, -1, -1]` and its
+   `client_seed` and `seed_origin` become null.
+2. **A new chain.** `chain_index` increases by one and `chain_commit` is the
+   commitment of a chain generated fresh from the CSPRNG for this game, never
+   derived from any earlier chain of the room (section 11, "never reuse a
+   chain across games"). The previous game's record stays at its own
+   `/v/<game_id>` and is not touched.
+3. `rematch` in the snapshot becomes `{ "by": <seat>, "ready": [<seat>] }`:
+   the requester is ready.
+4. The room's 60-minute total lifetime (section 3) restarts from this
+   moment, so a second game is not reaped half way through. The LOBBY rules
+   of section 3 apply from here (reaped after 10 minutes with no connected
+   client).
+5. `seq` advances by one and the `room` snapshot is broadcast to every
+   connected seat; the requester's copy carries `re`.
+
+`players`, `rules`, `host_seat`, every seat's number, name and
+`seat_token` are unchanged.
+
+### 16.3 Accepting: `rematch` in a rematch LOBBY
+
+From a seat not yet in `rematch.ready`: the seat is added, `seq` advances,
+`room` is broadcast (the sender's copy with `re`). From a seat already
+ready: nothing changes, `seq` does not advance, and only the sender gets the
+current `room` with `re`. A double tap is not an error.
+
+A seat that does not want to play again sends `leave_room`, which in LOBBY
+frees the seat as it always has (`player_left` broadcast). A seat that never
+answers stays seated and not ready.
+
+### 16.4 Starting the rematch
+
+- **Everyone accepted.** When every seat occupied at the moment of the first
+  `rematch` is in `rematch.ready`, and every one of them is connected, the
+  server starts the game itself, exactly as an accepted `start_game` from
+  the host would (sections 11.2 and 13.1, the same frame order and the same
+  `seq` steps), immediately after broadcasting the `room` that recorded the
+  last acceptance. Two friends: one tap each, no third tap.
+- **Not everyone.** The host may send `start_game` once at least two seats
+  are ready. On that `start_game`, before the normal start order: every
+  occupied seat that is not ready is removed as if it had sent `leave_room`
+  (one `player_left` each, ascending seat order, `seq` +1 each); `players`
+  becomes the number of ready seats; the remaining seats are re-seated onto
+  the canonical set for that count with section 15 rule 1 (`seat_assigned`
+  to each seat whose number changed, then the `room`); then the start order
+  runs. Fewer than two ready: `NOT_ENOUGH_PLAYERS`, nothing changes.
+- `set_players` in a rematch LOBBY is `WRONG_PHASE`: the ready list decides
+  the count.
+- `rematch` becomes null again in the `room` and frames the start sends;
+  from `game_started` on the room is an ordinary PLAYING room.
+
+### 16.5 Seeds in a rematch LOBBY
+
+`set_seed` is accepted once per seat **per `chain_index`**. A seat that set
+a seed in the first game may set one again for the new chain;
+`SEED_ALREADY_SET` applies only to a second seed within the same
+`chain_index`. A client MUST check that the `chain_commit` it is shown for
+the new `chain_index` arrived before it sent its seed, as in section 11.2.
+
+### 16.6 The snapshot field
+
+`rematch`: null, or `{ "by": 0..3, "ready": [int] }` with `ready` in
+ascending seat order and always containing `by` unless `by` has since left.
+Present in every state; non-null only in a rematch LOBBY. A client that
+resumes into a rematch LOBBY sees it like any other field.
+
+### 16.7 What the client does with it (informative)
+
+The end card's Rematch button sends `rematch`. A `room` with state LOBBY and
+a non-null `rematch` that does not list my seat is shown on the end card as
+"<name of `by`> wants a rematch" with one tap that sends `rematch`; once my
+seat is in `ready` the client shows the lobby. A FINISHED room with no
+rematch after 10 minutes is reaped as before; the end card says so when the
+`rematch` answer is `NO_SUCH_ROOM`.
+
+### 16.8 Tests this section requires before it is implemented
+
+Server: FINISHED to LOBBY field by field (16.2 items 1 to 5); `chain_commit`
+differs and `chain_index` is +1; the old `/v/<game_id>` record unchanged;
+accept, double accept (no `seq` change); auto-start when all ready and
+connected, and no auto-start when one ready seat is disconnected; host start
+with a non-ready seat (player_left, re-seat, `seat_assigned`); fewer than two
+ready; `set_players` refused; `set_seed` again for the new chain and refused
+twice within it; every row of 16.1; the 60-minute clock restarted.
+Simulator: full-game, rematch, full-game, both records fetched and verified,
+different `game_id` and `chain_commit`.
+
