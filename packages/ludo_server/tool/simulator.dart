@@ -18,11 +18,14 @@
 // under a 210s bound sized for the three scenarios of order 014, and
 // stretching that bound to fit a second full game is a later harness
 // order's job, not this one's. The whole scenario lives in this file: the
-// work order's own file list permits creating or editing only
-// `rematch_test.dart`, one new file under `test/support/`, this file, and
-// `docs/SIMULATOR.md`, so the choreography below does not get its own
+// run 66 file list permitted creating or editing only `rematch_test.dart`,
+// one new file under `test/support/`, this file, and `docs/SIMULATOR.md`,
+// so the choreography below does not get its own
 // `tool/sim/scenario_rematch.dart` the way the other three scenarios each
-// do -- see the comment on `runRematch` for what that costs.
+// do -- see the comment on `runRematch` for what that costs. Run 67's
+// RESPEC widened that list by one file, `tool/sim/args.dart`, so `rematch`
+// is now a first-class `--scenario` value there too (see the comment on
+// `main` below) instead of being stripped out of the argument list by hand.
 
 import 'dart:async';
 import 'dart:io';
@@ -48,37 +51,16 @@ const Map<String, _ScenarioRunner> _runners = <String, _ScenarioRunner>{
 };
 
 Future<void> main(List<String> arguments) async {
-  // `tool/sim/args.dart`'s `parseArgs` validates `--scenario` against
-  // `knownScenarios` (full-game, reconnect, double-drop) plus the literal
-  // string `all`, and this order's file list permits editing only this
-  // file, not `args.dart`. Adding `rematch` to `knownScenarios` there would
-  // also put it in `all`, which the order explicitly forbids. So a literal
-  // `--scenario rematch` pair is stripped out of the raw arguments before
-  // the rest reach `parseArgs` -- which then has no `--scenario` flag at
-  // all and defaults `scenario` to `all` internally, a value this function
-  // never reads in the branch below -- and `runRematch` is dispatched
-  // directly, under the same `--target`/`--timeout-seconds`/`--players`/
-  // `--fetch-record` values every other scenario uses. This is reported as
-  // a gap in the order's own final report, not invented around silently:
-  // the clean fix is a later order widening the file list so `rematch` can
-  // become a real, first-class entry in `args.dart` the way the other three
-  // are.
-  int? scenarioRematchAt;
-  for (int i = 0; i < arguments.length - 1; i++) {
-    if (arguments[i] == '--scenario' && arguments[i + 1] == 'rematch') {
-      scenarioRematchAt = i;
-      break;
-    }
-  }
-  final bool rematchRequested = scenarioRematchAt != null;
-  final List<String> effectiveArguments = scenarioRematchAt == null
-      ? arguments
-      : (List<String>.of(arguments)
-        ..removeRange(scenarioRematchAt, scenarioRematchAt + 2));
-
+  // Run 67: `tool/sim/args.dart`'s `knownScenarios` now carries `rematch`
+  // alongside the original three, so `parseArgs` accepts `--scenario
+  // rematch` directly like any other name -- no pre-stripping of the raw
+  // argument list needed any more. `rematch` is deliberately excluded from
+  // `scenariosInAll`, so `args.selectedScenarios` never contains it: the
+  // branch below is reached only when `--scenario rematch` was given
+  // explicitly, never as part of `--scenario all`.
   final SimulatorArgs args;
   try {
-    args = parseArgs(effectiveArguments);
+    args = parseArgs(arguments);
   } on ArgsError catch (error) {
     stderr.writeln('simulator: $error');
     stderr.write(usage);
@@ -86,7 +68,7 @@ Future<void> main(List<String> arguments) async {
     return;
   }
 
-  if (rematchRequested) {
+  if (args.scenario == 'rematch') {
     final Stopwatch stopwatch = Stopwatch()..start();
     final Duration budget = Duration(seconds: args.timeoutSeconds);
     ScenarioResult result;

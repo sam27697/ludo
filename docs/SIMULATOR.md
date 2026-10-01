@@ -26,7 +26,7 @@ Flags:
 | Flag | Default | Meaning |
 |---|---|---|
 | `--target` | required | Base WebSocket URL of a running server, `ws://` or `wss://`. Nothing is appended to it. |
-| `--scenario` | `all` | `all`, `full-game`, `reconnect`, or `double-drop`. |
+| `--scenario` | `all` | `all`, `full-game`, `reconnect`, `double-drop`, or `rematch`. `rematch` is valid but never runs as part of `all`; select it on its own. |
 | `--timeout-seconds` | 180 | Bounds the whole run, not one frame. |
 | `--players` | 4 | Seats to play with, 2 to 4. |
 | `--fetch-record` | off | After each scenario's game ends, also fetch and check the stored verification record. See "The verify_url and record checks" below. |

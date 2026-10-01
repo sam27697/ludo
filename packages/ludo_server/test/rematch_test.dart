@@ -64,6 +64,34 @@ void _forceFinished(
   room.state = RoomState.finished;
 }
 
+/// Drains the ordinary start cascade off [client]: any number of
+/// server-assigned `seat_seed` broadcasts, one per seat that never called
+/// `set_seed` (section 11.2), then `game_started`, then the standalone
+/// `turn` (section 13.1). A fixture that seeds every seat by hand before
+/// starting sees zero `seat_seed` frames here and this reads exactly
+/// `game_started` then `turn`; a fixture that seeds nobody sees one
+/// `seat_seed` per occupied seat first. Draining however many actually
+/// arrive, rather than a count baked in by whichever fixture happens to call
+/// this, is the whole point: a fixture that seeds nobody and a reader that
+/// assumed nobody would ever need seeding would otherwise leave
+/// `seat_seed` frames sitting unread in the queue, silently shifting every
+/// later `next()` call on that socket onto the wrong frame.
+Future<void> _drainStartCascade(WireTestClient client) async {
+  Map<String, Object?> frame = await client.next();
+  while (frame['t'] == 'seat_seed') {
+    frame = await client.next();
+  }
+  if (frame['t'] != 'game_started') {
+    fail('fixture setup: expected game_started after any seat_seed frames, '
+        'got "${frame['t']}": ${frame['d']}');
+  }
+  final Map<String, Object?> turn = await client.next();
+  if (turn['t'] != 'turn') {
+    fail('fixture setup: expected the standalone turn frame (section 13.1) '
+        'right after game_started, got "${turn['t']}": ${turn['d']}');
+  }
+}
+
 /// Builds a [players]-seat room, has every seat set its own client seed (so
 /// `_forceFinished`'s fixture never depends on a server-drawn one), starts
 /// it, and forces it FINISHED with [winner] on turn. Drains every handshake
@@ -93,6 +121,88 @@ Future<WireTestLobby> _finishedTwoSeatRoom(
 
   _forceFinished(harness, lobby.code, winner: winner);
   return lobby;
+}
+
+/// Three seats reachable over the wire in one room, host/mid/far by join
+/// order, every handshake frame already drained -- the section 16.9 fixture.
+/// Several of 16.9's rulings only show up with a third seat in play (the one
+/// that is neither the host forcing a start nor the single other seat a
+/// two-seat room would leave it with), which is why this exists alongside
+/// [_finishedTwoSeatRoom] rather than generalising that one to take a seat
+/// count: the two-seat helper is read via positional `host`/`guest` all over
+/// this file already, and widening its shape here would touch every call
+/// site above this line for no reason.
+class _ThreeSeatLobby {
+  _ThreeSeatLobby({
+    required this.code,
+    required this.host,
+    required this.mid,
+    required this.far,
+  });
+
+  final String code;
+  final WireTestSeat host;
+  final WireTestSeat mid;
+  final WireTestSeat far;
+}
+
+/// Builds a 3-seat room, starts it, and forces it FINISHED with [winner] on
+/// turn, the same technique [_finishedTwoSeatRoom] uses above. Every
+/// handshake frame is drained off every socket first, so a caller is left
+/// with three sockets positioned right after the (faked) end of game 1.
+Future<_ThreeSeatLobby> _finishedThreeSeatRoom(
+  ServerHarness harness,
+  List<WireTestClient> clients, {
+  int winner = 0,
+}) async {
+  final WireTestClient hostClient = await WireTestClient.connect(harness.wsUri);
+  clients.add(hostClient);
+  hostClient
+      .send('create_room', <String, Object?>{'name': 'Host', 'players': 3});
+  final Map<String, Object?> hostSeatAssigned = await hostClient.next();
+  final Map<String, Object?> hostRoomFrame = await hostClient.next();
+  final String code =
+      (hostRoomFrame['d']! as Map<String, Object?>)['code']! as String;
+  final int hostSeat =
+      (hostSeatAssigned['d']! as Map<String, Object?>)['seat']! as int;
+  final String hostToken =
+      (hostSeatAssigned['d']! as Map<String, Object?>)['seat_token']! as String;
+
+  final WireTestClient midClient = await WireTestClient.connect(harness.wsUri);
+  clients.add(midClient);
+  midClient.send('join_room', <String, Object?>{'code': code, 'name': 'Mid'});
+  final Map<String, Object?> midSeatAssigned = await midClient.next();
+  await midClient.next(); // room
+  await hostClient.next(); // player_joined
+  final int midSeat =
+      (midSeatAssigned['d']! as Map<String, Object?>)['seat']! as int;
+  final String midToken =
+      (midSeatAssigned['d']! as Map<String, Object?>)['seat_token']! as String;
+
+  final WireTestClient farClient = await WireTestClient.connect(harness.wsUri);
+  clients.add(farClient);
+  farClient.send('join_room', <String, Object?>{'code': code, 'name': 'Far'});
+  final Map<String, Object?> farSeatAssigned = await farClient.next();
+  await farClient.next(); // room
+  await hostClient.next(); // player_joined
+  await midClient.next(); // player_joined
+  final int farSeat =
+      (farSeatAssigned['d']! as Map<String, Object?>)['seat']! as int;
+  final String farToken =
+      (farSeatAssigned['d']! as Map<String, Object?>)['seat_token']! as String;
+
+  hostClient.send('start_game', <String, Object?>{});
+  await _drainStartCascade(hostClient);
+  await _drainStartCascade(midClient);
+  await _drainStartCascade(farClient);
+  _forceFinished(harness, code, winner: winner);
+
+  return _ThreeSeatLobby(
+    code: code,
+    host: WireTestSeat(client: hostClient, seat: hostSeat, token: hostToken),
+    mid: WireTestSeat(client: midClient, seat: midSeat, token: midToken),
+    far: WireTestSeat(client: farClient, seat: farSeat, token: farToken),
+  );
 }
 
 void main() {
@@ -159,10 +269,8 @@ void main() {
       final WireTestLobby lobby =
           await buildWireTestLobby(uri, clients, players: 2);
       lobby.host.client.send('start_game', <String, Object?>{});
-      await lobby.host.client.next(); // game_started
-      await lobby.host.client.next(); // opening turn
-      await lobby.guest.client.next();
-      await lobby.guest.client.next();
+      await _drainStartCascade(lobby.host.client);
+      await _drainStartCascade(lobby.guest.client);
 
       lobby.host.client.send('rematch', <String, Object?>{});
       final Map<String, Object?> reply = await lobby.host.client.next();
@@ -193,10 +301,8 @@ void main() {
       final WireTestLobby lobby =
           await buildWireTestLobby(uri, clients, players: 2);
       lobby.host.client.send('start_game', <String, Object?>{});
-      await lobby.host.client.next();
-      await lobby.host.client.next();
-      await lobby.guest.client.next();
-      await lobby.guest.client.next();
+      await _drainStartCascade(lobby.host.client);
+      await _drainStartCascade(lobby.guest.client);
       _forceFinished(harness, lobby.code, winner: 0);
 
       lobby.host.client.send('rematch', <String, Object?>{'seat': 0});
@@ -377,7 +483,15 @@ void main() {
         'every other seat gets a plain broadcast', () async {
       final Uri uri = await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
-      final int seqBefore = lobby.hostRoom['seq']! as int;
+      // lobby.hostRoom is the room frame from create_room, long before the
+      // join, the two set_seed calls and start_game's own seq steps; none
+      // of those are reflected in it, so it is not "the seq right before
+      // this rematch" and comparing against it would demand the wrong
+      // number from a fully correct server. The registry's own room.seq is
+      // read directly instead, since _forceFinished (fixture setup, no
+      // frame sent) never touches it -- it already holds the exact value
+      // the next frame's seq must be one more than.
+      final int seqBefore = harness.registry.lookup(lobby.code)!.seq;
 
       final String rematchId =
           await lobby.host.client.send('rematch', <String, Object?>{});
@@ -428,10 +542,21 @@ void main() {
       final Map<String, Object?> reply = await lobby.host.client.next();
       final Map<String, Object?> data = reply['d']! as Map<String, Object?>;
 
-      expect(data['players'], lobby.hostRoom['players']);
-      expect(data['rules'], lobby.hostRoom['rules']);
-      expect(data['host_seat'], lobby.hostRoom['host_seat']);
-      final List<Object?> before = lobby.hostRoom['seats']! as List<Object?>;
+      // lobby.hostRoom is the room frame from create_room, before the guest
+      // had even joined: its own seats list holds the host alone, one
+      // entry, where the room this rematch answers holds two. Comparing
+      // against that would fail "after.length == before.length" against
+      // any correct server, for a reason that has nothing to do with the
+      // rematch -- it is simply the wrong room. lobby.guestRoom, the frame
+      // the guest's own join_room produced, already carries both seats and
+      // is otherwise identical to hostRoom in every field this test reads
+      // (players, rules and host_seat are all fixed at create_room and
+      // nothing between then and now changes any of them), so it is used
+      // throughout here instead.
+      expect(data['players'], lobby.guestRoom['players']);
+      expect(data['rules'], lobby.guestRoom['rules']);
+      expect(data['host_seat'], lobby.guestRoom['host_seat']);
+      final List<Object?> before = lobby.guestRoom['seats']! as List<Object?>;
       final List<Object?> after = data['seats']! as List<Object?>;
       expect(after.length, before.length);
       for (int i = 0; i < before.length; i++) {
@@ -696,12 +821,9 @@ void main() {
           (farSeatAssigned['d']! as Map<String, Object?>)['seat']! as int;
 
       hostClient.send('start_game', <String, Object?>{});
-      await hostClient.next(); // game_started
-      await hostClient.next(); // opening turn
-      await midClient.next();
-      await midClient.next();
-      await farClient.next();
-      await farClient.next();
+      await _drainStartCascade(hostClient);
+      await _drainStartCascade(midClient);
+      await _drainStartCascade(farClient);
       _forceFinished(harness, code, winner: 0);
 
       // Only host and mid accept; far never does.
@@ -866,11 +988,8 @@ void main() {
       expect(lobby.hostRoom['rematch'], isNull);
 
       lobby.host.client.send('start_game', <String, Object?>{});
-      final Map<String, Object?> started = await lobby.host.client.next();
-      await lobby.host.client.next();
-      await lobby.guest.client.next();
-      await lobby.guest.client.next();
-      expect(started['t'], 'game_started');
+      await _drainStartCascade(lobby.host.client);
+      await _drainStartCascade(lobby.guest.client);
 
       _forceFinished(harness, lobby.code, winner: 0);
       lobby.host.client.send('ping', <String, Object?>{});
@@ -891,5 +1010,365 @@ void main() {
           reason: 'a FINISHED room with no rematch requested yet must show '
               'rematch: null, per section 16.6 and 16.7');
     });
+  });
+
+  group('16.9 rulings after the first implementation, 2026-10-01', () {
+    // Catches: a forced removal that stops at the broadcast player_left and
+    // leaves the socket still holding a seat underneath -- section 16.9
+    // rule 1 requires the same outcome leave_room itself would produce: the
+    // removed seat's connection no longer holds any seat, so a later
+    // seat-scoped frame on that socket and a later resume with its old
+    // token must both be BAD_SEAT_TOKEN, and nothing else from the room
+    // reaches that socket after its own player_left.
+    test(
+        'rule 1: a seat removed by a host-forced start is BAD_SEAT_TOKEN on '
+        'any later seat-scoped frame, including resume with its old token',
+        () async {
+      final Uri uri = await start();
+      final _ThreeSeatLobby lobby =
+          await _finishedThreeSeatRoom(harness, clients);
+
+      lobby.host.client.send('rematch', <String, Object?>{});
+      await lobby.host.client.next();
+      await lobby.mid.client.next();
+      await lobby.far.client.next();
+      lobby.mid.client.send('rematch', <String, Object?>{});
+      await lobby.mid.client.next();
+      await lobby.host.client.next();
+      await lobby.far.client.next();
+
+      lobby.host.client.send('start_game', <String, Object?>{});
+
+      final Map<String, Object?> farLeft = await lobby.far.client.next();
+      expect(farLeft['t'], 'player_left');
+      expect((farLeft['d']! as Map<String, Object?>)['seat'], lobby.far.seat);
+
+      // Nothing further from the room reaches far's socket: prove the
+      // absence by sending a message that does produce a frame and
+      // confirming that reply, not a leftover room push, arrives next.
+      lobby.far.client.send('ping', <String, Object?>{});
+      final Map<String, Object?> nextOnFar = await lobby.far.client.next();
+      expect(nextOnFar['t'], 'pong',
+          reason: 'section 16.9 rule 1: once the removed seat has received '
+              'its own player_left, nothing further from the room may reach '
+              'its socket; got "${nextOnFar['t']}" instead of the pong this '
+              'ping must produce next');
+
+      // The same socket's own stored identity no longer names a seat.
+      lobby.far.client.send('leave_room', <String, Object?>{});
+      final Map<String, Object?> leaveReply = await lobby.far.client.next();
+      expectErrorFrame(leaveReply, 'BAD_SEAT_TOKEN',
+          because: 'far\'s seat was removed by the host-forced start; its '
+              'connection no longer holds a seat in any room');
+
+      // And a fresh socket resuming with far's old token sees the same.
+      final WireTestClient prober = await WireTestClient.connect(uri);
+      clients.add(prober);
+      prober.send('resume', <String, Object?>{
+        'code': lobby.code,
+        'seat_token': lobby.far.token,
+      });
+      final Map<String, Object?> resumeReply = await prober.next();
+      expectErrorFrame(resumeReply, 'BAD_SEAT_TOKEN',
+          because: 'far\'s seat_token no longer names a seat in '
+              '${lobby.code} after the host-forced start removed it');
+    }, timeout: const Timeout(Duration(seconds: 20)));
+
+    // Catches: a start_game that only counts the host as ready if it had
+    // separately sent its own rematch first -- a host that opens a rematch
+    // lobby, lets a guest accept, and taps Start directly must see its own
+    // tap count as acceptance, with no broadcast or seq step of its own for
+    // that silent addition, and must never itself be among the seats that
+    // same start_game removes.
+    test(
+        'rule 2: host start_game in a rematch lobby counts as the host\'s '
+        'own acceptance, silently, and never removes the host', () async {
+      final Uri uri = await start();
+      final _ThreeSeatLobby lobby =
+          await _finishedThreeSeatRoom(harness, clients);
+
+      // mid requests the first rematch; host never sends rematch itself;
+      // far never answers at all.
+      lobby.mid.client.send('rematch', <String, Object?>{});
+      await lobby.mid.client.next();
+      await lobby.host.client.next();
+      await lobby.far.client.next();
+
+      lobby.host.client.send('start_game', <String, Object?>{});
+
+      // If the host's own start_game had not counted as its acceptance,
+      // ready would still be [mid] alone when far is evaluated, and the
+      // sequence below (far removed, mid re-seated, the game actually
+      // starting) could not happen at all -- the host's start_game would
+      // instead come back NOT_ENOUGH_PLAYERS. Reaching player_left for far
+      // here, with no broadcast interposed for host's own silent addition,
+      // is itself the proof.
+      final Map<String, Object?> farLeftOnHost = await lobby.host.client.next();
+      expect(farLeftOnHost['t'], 'player_left',
+          reason: 'section 16.9 rule 2: the host\'s own start_game must '
+              'count as its acceptance with no broadcast of its own; the '
+              'very next frame after start_game must already be the '
+              'removal of unready far, got "${farLeftOnHost['t']}": '
+              '${farLeftOnHost['d']}');
+      expect((farLeftOnHost['d']! as Map<String, Object?>)['seat'],
+          lobby.far.seat);
+      await lobby.mid.client.next(); // same player_left, broadcast
+      await lobby.far.client.next(); // far is told too, like leave_room
+
+      // mid moves from its old seat onto the canonical 2-player set; host,
+      // never removed by its own start_game, keeps its seat and gets no
+      // seat_assigned at all.
+      final Map<String, Object?> midNext = await lobby.mid.client.next();
+      expect(midNext['t'], 'seat_assigned',
+          reason: 'mid must be re-seated onto the canonical 2-player set '
+              'once far is removed');
+      final Map<String, Object?> midSeatData =
+          midNext['d']! as Map<String, Object?>;
+      expect(midSeatData['seat_token'], lobby.mid.token);
+      final int midNewSeat = midSeatData['seat']! as int;
+      final Map<String, Object?> midRoom = await lobby.mid.client.next();
+      expect(midRoom['t'], 'room');
+
+      final Map<String, Object?> hostRoomAfterReseat =
+          await lobby.host.client.next();
+      expect(hostRoomAfterReseat['t'], 'room',
+          reason: 'host must receive the reseat room directly, with no '
+              'seat_assigned of its own in between');
+      final Map<String, Object?> reseated =
+          hostRoomAfterReseat['d']! as Map<String, Object?>;
+      expect(reseated['players'], 2);
+      expect(reseated['rematch'], isNull);
+      final List<Object?> seatsAfter = reseated['seats']! as List<Object?>;
+      final List<int> seatNumbers = seatsAfter
+          .map((Object? s) => (s! as Map<String, Object?>)['seat']! as int)
+          .toList()
+        ..sort();
+      expect(seatNumbers, (<int>[lobby.host.seat, midNewSeat]..sort()),
+          reason: 'section 16.9 rule 2: host must still be seated at '
+              '${lobby.host.seat}, never removed by its own start_game; '
+              'a host that removed itself here would be the exact bug '
+              'this rule forbids');
+
+      // The ordinary start order follows for the two survivors.
+      Map<String, Object?> frame = await lobby.host.client.next();
+      while (frame['t'] == 'seat_seed') {
+        frame = await lobby.host.client.next();
+      }
+      expect(frame['t'], 'game_started');
+    }, timeout: const Timeout(Duration(seconds: 20)));
+
+    // Catches: skipping the re-seat room broadcast whenever no seat number
+    // happened to change -- section 16.9 rule 3 requires that room, with
+    // its own seq step, whenever a seat was removed at all, even when the
+    // survivors already sat on the canonical set for the new player count
+    // and nobody's seat number moves.
+    test(
+        'rule 3: the re-seat room is sent with its own seq step even when '
+        'no seat number changes', () async {
+      final Uri uri = await start();
+      final _ThreeSeatLobby lobby =
+          await _finishedThreeSeatRoom(harness, clients);
+      // This scenario only proves what it claims if removing mid leaves
+      // host and far already sitting on the canonical 2-player seat set.
+      final List<int> survivors = <int>[lobby.host.seat, lobby.far.seat]
+        ..sort();
+      expect(survivors, <int>[0, 2],
+          reason: 'setup requires host and far to already occupy the '
+              'canonical 2-player seat set once mid is removed, so the '
+              'room this test is about carries no seat_assigned at all; '
+              'got host=${lobby.host.seat} far=${lobby.far.seat}');
+
+      // host and far accept; mid never does.
+      lobby.host.client.send('rematch', <String, Object?>{});
+      await lobby.host.client.next();
+      await lobby.mid.client.next();
+      await lobby.far.client.next();
+      lobby.far.client.send('rematch', <String, Object?>{});
+      final Map<String, Object?> farAccept = await lobby.far.client.next();
+      await lobby.host.client.next();
+      await lobby.mid.client.next();
+      final int seqBeforeStart =
+          (farAccept['d']! as Map<String, Object?>)['seq']! as int;
+
+      lobby.host.client.send('start_game', <String, Object?>{});
+
+      final Map<String, Object?> midLeftOnHost = await lobby.host.client.next();
+      expect(midLeftOnHost['t'], 'player_left');
+      final Map<String, Object?> midLeftData =
+          midLeftOnHost['d']! as Map<String, Object?>;
+      expect(midLeftData['seat'], lobby.mid.seat);
+      expect(midLeftData['seq'], seqBeforeStart + 1);
+      await lobby.far.client.next(); // same player_left, broadcast
+      await lobby.mid.client.next(); // mid is told too
+
+      final Map<String, Object?> roomAfterRemoval =
+          await lobby.host.client.next();
+      expect(roomAfterRemoval['t'], 'room',
+          reason: 'section 16.9 rule 3: a seat was removed, so the room '
+              'carrying the new players count is sent with its own seq '
+              'step even though no seat number changed; got '
+              '"${roomAfterRemoval['t']}" instead');
+      final Map<String, Object?> roomData =
+          roomAfterRemoval['d']! as Map<String, Object?>;
+      expect(roomData['seq'], seqBeforeStart + 2,
+          reason: 'the re-seat room must take its own seq step, one more '
+              'than the player_left that preceded it');
+      expect(roomData['players'], 2);
+      expect(roomData['rematch'], isNull);
+      final List<Object?> seatsAfter = roomData['seats']! as List<Object?>;
+      final List<int> seatNumbers = seatsAfter
+          .map((Object? s) => (s! as Map<String, Object?>)['seat']! as int)
+          .toList()
+        ..sort();
+      expect(seatNumbers, <int>[0, 2]);
+      await lobby.far.client.next(); // same room, broadcast to far
+
+      // No seat_assigned was ever sent to either survivor: the frame right
+      // after the removal broadcast on host's socket was room directly, and
+      // the next frames from here are the ordinary start order.
+      Map<String, Object?> frame = await lobby.host.client.next();
+      while (frame['t'] == 'seat_seed') {
+        frame = await lobby.host.client.next();
+      }
+      expect(frame['t'], 'game_started');
+    }, timeout: const Timeout(Duration(seconds: 20)));
+
+    // Catches: a rematch lobby that refuses join_room outright because
+    // rematch is non-null, or that computes the auto-start eligible set
+    // from whoever was ever in the room instead of who occupies a seat
+    // right now -- a seat freed by leave_room and refilled by a new joiner
+    // must have the joiner's own acceptance counted before auto-start, not
+    // be silently satisfied by the departed seat's old readiness or by the
+    // joiner's mere presence before it has accepted anything.
+    test(
+        'rule 4: a seat freed by leave_room can be rejoined by code, and '
+        'the joiner is waited for before the rematch auto-starts', () async {
+      final Uri uri = await start();
+      final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
+
+      lobby.host.client.send('rematch', <String, Object?>{});
+      await lobby.host.client.next();
+      await lobby.guest.client.next();
+
+      lobby.guest.client.send('leave_room', <String, Object?>{});
+      final Map<String, Object?> guestLeaveReply =
+          await lobby.guest.client.next();
+      expect(guestLeaveReply['t'], 'player_left');
+      await lobby.host.client.next(); // broadcast
+
+      final WireTestClient newcomer = await WireTestClient.connect(uri);
+      clients.add(newcomer);
+      newcomer.send('join_room',
+          <String, Object?>{'code': lobby.code, 'name': 'Newcomer'});
+      final Map<String, Object?> newcomerSeatAssigned = await newcomer.next();
+      final Map<String, Object?> newcomerRoom = await newcomer.next();
+      await lobby.host.client.next(); // player_joined
+
+      final int newcomerSeat =
+          (newcomerSeatAssigned['d']! as Map<String, Object?>)['seat']! as int;
+      expect(newcomerSeat, lobby.guest.seat,
+          reason: 'section 16.9 rule 4: the only free seat is the one '
+              'leave_room just freed, the lowest free seat of the '
+              'canonical set for this player count by construction');
+      final Map<String, Object?> newcomerRematch = (newcomerRoom['d']!
+          as Map<String, Object?>)['rematch']! as Map<String, Object?>;
+      expect(newcomerRematch['ready'], <int>[lobby.host.seat],
+          reason: 'the joiner is not ready on arrival; only the original '
+              'host, from before the leave, is');
+
+      // The join alone does not start anything: host is ready, but the
+      // newcomer, now occupying the other seat, is not.
+      lobby.host.client.send('ping', <String, Object?>{});
+      final Map<String, Object?> pingReply = await lobby.host.client.next();
+      expect(pingReply['t'], 'pong',
+          reason: 'join_room must never itself evaluate auto-start, and '
+              'the newcomer has not accepted yet; got '
+              '"${pingReply['t']}" instead of this ping\'s own pong');
+
+      final String acceptId =
+          await newcomer.send('rematch', <String, Object?>{});
+      final Map<String, Object?> newcomerAccept = await newcomer.next();
+      expect(newcomerAccept['re'], acceptId);
+      await lobby.host.client.next(); // broadcast of the newcomer's accept
+
+      final Map<String, Object?> hostSeed1 = await lobby.host.client.next();
+      expect(hostSeed1['t'], 'seat_seed',
+          reason: 'section 16.9 rule 4: once the joiner itself accepts, the '
+              'auto-start set -- host plus the joiner now occupying the '
+              'freed seat -- is satisfied; got "${hostSeed1['t']}" instead '
+              'of the start cascade\'s first frame');
+      final Map<String, Object?> hostSeed2 = await lobby.host.client.next();
+      expect(hostSeed2['t'], 'seat_seed');
+      final Map<String, Object?> hostStarted = await lobby.host.client.next();
+      expect(hostStarted['t'], 'game_started');
+    }, timeout: const Timeout(Duration(seconds: 20)));
+  });
+
+  group('amended 16.4: auto-start evaluated fresh at each accepted rematch',
+      () {
+    // Catches: computing the auto-start eligible-seat set once, from
+    // whoever was occupied at the very first rematch, instead of
+    // recomputing it fresh at each accepted rematch as the amended text now
+    // requires ("every seat occupied at the moment of an accepted rematch",
+    // not "the first rematch") -- a departed seat would then block
+    // auto-start forever even after every seat still at the table is
+    // ready, leaving the room stuck needing a host-forced start_game the
+    // spec says should not be necessary here. Also proves leave_room on its
+    // own never evaluates auto-start, however the remaining seats'
+    // readiness happens to line up at that moment.
+    test(
+        'a non-ready seat leaves, then the last remaining seat\'s accept '
+        'auto-starts', () async {
+      final Uri uri = await start();
+      final _ThreeSeatLobby lobby =
+          await _finishedThreeSeatRoom(harness, clients);
+
+      lobby.host.client.send('rematch', <String, Object?>{});
+      await lobby.host.client.next();
+      await lobby.mid.client.next();
+      await lobby.far.client.next();
+
+      // far, not yet ready, leaves outright.
+      lobby.far.client.send('leave_room', <String, Object?>{});
+      final Map<String, Object?> farLeaveReply = await lobby.far.client.next();
+      expect(farLeaveReply['t'], 'player_left');
+      await lobby.host.client.next(); // broadcast
+      await lobby.mid.client.next(); // broadcast
+
+      // Nothing has auto-started: of the two remaining occupied seats, only
+      // host is ready, so this is not yet the condition under test, but it
+      // also proves leave_room alone never starts the game, whatever an
+      // implementation evaluates on it.
+      lobby.host.client.send('ping', <String, Object?>{});
+      final Map<String, Object?> pingReply = await lobby.host.client.next();
+      expect(pingReply['t'], 'pong',
+          reason: 'leave_room must never itself evaluate auto-start; got '
+              '"${pingReply['t']}" instead of this ping\'s own pong');
+
+      // mid, the only remaining unready seat, now accepts. The auto-start
+      // set is whoever is occupied right now -- host and mid -- not the
+      // frozen set from the very first rematch, which still included far.
+      lobby.mid.client.send('rematch', <String, Object?>{});
+      final Map<String, Object?> midAccept = await lobby.mid.client.next();
+      final Map<String, Object?> hostBroadcastOfAccept =
+          await lobby.host.client.next();
+      final int seqAfterAccept =
+          (midAccept['d']! as Map<String, Object?>)['seq']! as int;
+      expect((hostBroadcastOfAccept['d']! as Map<String, Object?>)['seq'],
+          seqAfterAccept);
+
+      final Map<String, Object?> hostSeed1 = await lobby.host.client.next();
+      expect(hostSeed1['t'], 'seat_seed',
+          reason: 'section 16.9/amended 16.4: with far gone and both '
+              'remaining seats now ready and connected, mid\'s accept must '
+              'auto-start the game immediately; got "${hostSeed1['t']}" '
+              'instead of the start cascade\'s first frame');
+      final Map<String, Object?> hostSeed2 = await lobby.host.client.next();
+      expect(hostSeed2['t'], 'seat_seed');
+      final Map<String, Object?> hostStarted = await lobby.host.client.next();
+      expect(hostStarted['t'], 'game_started');
+      final Map<String, Object?> hostTurn = await lobby.host.client.next();
+      expect(hostTurn['t'], 'turn');
+    }, timeout: const Timeout(Duration(seconds: 20)));
   });
 }
