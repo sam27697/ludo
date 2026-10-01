@@ -46,6 +46,10 @@ export 'src/registry.dart'
         MoveOk,
         MoveFailure,
         ExpiredTurn,
+        RematchResult,
+        RematchOk,
+        RematchFailure,
+        RemovedSeat,
         RoomRegistry;
 export 'src/rate_limit.dart' show RateLimiter, MessageRateOutcome;
 export 'src/envelope.dart'

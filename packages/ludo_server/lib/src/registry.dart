@@ -121,10 +121,11 @@ class StartOk extends StartResult {
 
   /// The `seq` of the `room` snapshot that announces the section 16.4
   /// re-seat, taken the instant that specific state change landed -- before
-  /// `gameStartedSeq`, which always follows it. Null exactly when
-  /// [removedSeats] and [movedSeats] are both the result of no removal
-  /// having happened at all, i.e. for every start that is not the section
-  /// 16.4 "Not everyone" path.
+  /// `gameStartedSeq`, which always follows it. Null when this call removed
+  /// no seat at all: either because it is not the section 16.4 "Not
+  /// everyone" path, or because it is that path but nobody needed removing
+  /// (`docs/PROTOCOL.md` section 16.9 rule 3 -- a host `start_game` with
+  /// every occupied seat already ready sends no re-seat `room` of its own).
   final int? reseatSeq;
 
   /// Seats that had no `client_seed` when this call ran and were given a
@@ -360,7 +361,11 @@ sealed class RematchResult {}
 /// the ready set and starts the game itself (section 16.4, "Everyone
 /// accepted").
 class RematchOk extends RematchResult {
-  RematchOk({required this.room, required this.changed, this.start});
+  RematchOk({
+    required this.room,
+    required this.changed,
+    this.autoStart = false,
+  });
 
   final Room room;
 
@@ -369,13 +374,17 @@ class RematchOk extends RematchResult {
   /// anything for it.
   final bool changed;
 
-  /// Set only when this call completed the ready set, with every one of
-  /// those seats connected, and the server therefore started the game
-  /// itself -- section 16.4 "Everyone accepted". Built by the exact same
-  /// internal mechanics `startGame` itself calls, so the wire layer builds
-  /// the same frames from it it already knows how to build for an ordinary
-  /// `start_game`.
-  final StartOk? start;
+  /// True exactly when this call completed the ready set, with every one of
+  /// those seats connected -- section 16.4 "Everyone accepted". [room] is
+  /// still LOBBY at this point, carrying the now-complete `rematch.ready`:
+  /// starting the game itself is deliberately left for the caller to trigger
+  /// separately, through [RoomRegistry.startRematchAuto], once it has
+  /// already built and sent the `room` snapshot that records this
+  /// acceptance. Doing the start here instead, before returning, would mean
+  /// [room] was already PLAYING with `rematch` cleared back to null by the
+  /// time any caller read it, so the frame meant to announce the acceptance
+  /// would describe the game that followed it instead.
+  final bool autoStart;
 }
 
 class RematchFailure extends RematchResult {
@@ -588,13 +597,28 @@ class RoomRegistry {
 
   /// `docs/PROTOCOL.md` section 16.4, "Not everyone": the host's own
   /// `start_game` in a rematch LOBBY that has not auto-started. Removes
-  /// every occupied seat that is not in [current]'s ready list, re-seats
-  /// what is left onto the canonical set for that count, and then runs the
-  /// same mechanics an ordinary `start_game` would. `startGame` has already
-  /// checked that the caller is the host and the room is in LOBBY; this
-  /// method does not re-check either.
+  /// every occupied seat that is not ready, re-seats what is left onto the
+  /// canonical set for that count, and then runs the same mechanics an
+  /// ordinary `start_game` would. `startGame` has already checked that the
+  /// caller is the host and the room is in LOBBY; this method does not
+  /// re-check either.
   StartResult _startRematchFromHost(Room room, Rematch current) {
-    if (current.ready.length < 2) {
+    // docs/PROTOCOL.md section 16.9 rule 2: the host's own `start_game`
+    // counts as its acceptance if it had not already sent one. Folded in
+    // here, before the ready count is checked and before the removal loop
+    // below ever runs, with no broadcast and no `seq` step of its own --
+    // `room.rematch` itself is not touched, since nothing downstream reads
+    // it again before `_beginGame` sets it back to null a few lines from
+    // here. The host is therefore never a candidate for removal below, and
+    // the host-handover fallback the first version of this method needed
+    // for a non-ready host removing itself no longer applies.
+    final List<int> effectiveReady = current.ready.contains(room.hostSeat)
+        ? current.ready
+        : (List<int>.of(current.ready)
+          ..add(room.hostSeat)
+          ..sort());
+
+    if (effectiveReady.length < 2) {
       return StartFailure(ProtocolError.notEnoughPlayers);
     }
 
@@ -607,7 +631,7 @@ class RoomRegistry {
     final List<Seat> keep = <Seat>[];
     final List<RemovedSeat> removedSeats = <RemovedSeat>[];
     for (final Seat s in room.seats) {
-      if (current.ready.contains(s.seat)) {
+      if (effectiveReady.contains(s.seat)) {
         keep.add(s);
       } else {
         room.seq++;
@@ -615,17 +639,12 @@ class RoomRegistry {
       }
     }
 
-    // The host keeps being the host across this if its own seat survived
-    // the removal above (the common case: the host is the one driving this
-    // call). If the host itself was not ready and was just removed, the
-    // room still needs a host, so the fallback here is the same one
-    // `leaveRoom`'s LOBBY branch already uses: the lowest remaining seat
-    // index, read before the re-seat below renumbers everyone.
-    final String newHostSeatToken = keep.any(
-      (Seat s) => s.seatToken == hostSeatBefore.seatToken,
-    )
-        ? hostSeatBefore.seatToken
-        : keep.first.seatToken;
+    if (removedSeats.isEmpty) {
+      // docs/PROTOCOL.md section 16.9 rule 3: no seat removed means no
+      // re-seat `room` and no `seq` step for it -- the start order runs
+      // directly on the roster exactly as it already stood.
+      return _beginGame(room);
+    }
 
     final int newPlayers = keep.length;
     final List<int> newIndices = _seatIndicesFor(newPlayers);
@@ -648,8 +667,15 @@ class RoomRegistry {
 
     room.players = newPlayers;
     room.seats = reseated;
-    room.hostSeat =
-        reseated.firstWhere((Seat s) => s.seatToken == newHostSeatToken).seat;
+    // docs/PROTOCOL.md section 16.9 rule 2: the host was folded into
+    // effectiveReady above before the removal loop ran, so hostSeatBefore is
+    // always still present in `keep` here.
+    room.hostSeat = reseated
+        .firstWhere((Seat s) => s.seatToken == hostSeatBefore.seatToken)
+        .seat;
+    // docs/PROTOCOL.md section 16.9 rule 3: at least one seat removed means
+    // the re-seat `room` gets its own `seq` step even when no seat number
+    // actually changed.
     room.seq++;
     final int reseatSeq = room.seq;
 
@@ -778,25 +804,36 @@ class RoomRegistry {
     final List<int> ready = List<int>.of(current.ready)
       ..add(seat.seat)
       ..sort();
-    room.rematch = Rematch(
-      by: current.by,
-      ready: ready,
-      openSeats: current.openSeats,
-    );
+    room.rematch = Rematch(by: current.by, ready: ready);
     room.seq++;
 
-    final bool everyoneReady = current.openSeats.every(ready.contains);
-    final bool everyoneConnected = room.seats
-        .where((Seat s) => current.openSeats.contains(s.seat))
-        .every((Seat s) => s.connected);
-    if (everyoneReady && everyoneConnected) {
-      // docs/PROTOCOL.md section 16.4, "Everyone accepted": the server
-      // starts the game itself, through the exact mechanics an accepted
-      // start_game would use.
-      return RematchOk(room: room, changed: true, start: _beginGame(room));
-    }
-    return RematchOk(room: room, changed: true);
+    // docs/PROTOCOL.md section 16.4, as amended, and section 16.9 rule 4:
+    // the auto-start set is the seats occupied right now, read fresh off
+    // `room.seats` at the instant this accept landed, not a set fixed back
+    // when the rematch LOBBY first opened -- a seat that has since left can
+    // never go on blocking a start, and a seat that joined since is waited
+    // for like any other.
+    final List<int> occupied = room.seats.map((Seat s) => s.seat).toList();
+    final bool everyoneReady = occupied.every(ready.contains);
+    final bool atLeastTwo = occupied.length >= 2;
+    final bool everyoneConnected = room.seats.every((Seat s) => s.connected);
+    final bool autoStart = everyoneReady && atLeastTwo && everyoneConnected;
+    // docs/PROTOCOL.md section 16.4, "Everyone accepted": [room] is handed
+    // back here exactly as this accept left it, still LOBBY -- starting the
+    // game is the caller's job, through [startRematchAuto], once it has
+    // already published this `room` as the frame that records the
+    // acceptance. See the long comment on [RematchOk.autoStart].
+    return RematchOk(room: room, changed: true, autoStart: autoStart);
   }
+
+  /// `docs/PROTOCOL.md` section 16.4, "Everyone accepted": the exact
+  /// mechanics an accepted `start_game` runs, called once the wire layer has
+  /// already broadcast the `room` that `rematch` returned with
+  /// `RematchOk.autoStart` true. [room] must be that same `Room`, with
+  /// nothing else called against this registry in between -- this file is
+  /// synchronous throughout, so a caller that does not `await` anything
+  /// between the two calls gets exactly that for free.
+  StartOk startRematchAuto(Room room) => _beginGame(room);
 
   /// `docs/PROTOCOL.md` section 16.2: the first `rematch` of a cycle, taking
   /// a FINISHED room back to LOBBY with a fresh chain. Mutates [room] in
@@ -819,13 +856,7 @@ class RoomRegistry {
     // it replaces.
     room.chainIndex += 1;
     room.chain = DiceChain.build(_drawBytes(_serverSecretBytes));
-    final List<int> openSeats = room.seats.map((Seat s) => s.seat).toList()
-      ..sort();
-    room.rematch = Rematch(
-      by: requester.seat,
-      ready: <int>[requester.seat],
-      openSeats: openSeats,
-    );
+    room.rematch = Rematch(by: requester.seat, ready: <int>[requester.seat]);
     // docs/PROTOCOL.md section 16.2 item 4: the room's 60-minute total
     // lifetime restarts from this moment.
     room.lifetimeStartedAt = _clock.now;
@@ -1192,7 +1223,6 @@ class RoomRegistry {
         room.rematch = Rematch(
           by: current.by,
           ready: current.ready.where((int s) => s != seat.seat).toList(),
-          openSeats: current.openSeats,
         );
       }
       _refreshIdleTracking(room);

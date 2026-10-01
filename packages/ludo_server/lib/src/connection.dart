@@ -127,6 +127,20 @@ abstract class RoomHub {
     required String type,
     required Map<String, Object?> data,
   });
+
+  /// `docs/PROTOCOL.md` section 16.9 rule 1: detaches whichever socket, if
+  /// any, is currently attached to [code] holding [seatToken], and returns
+  /// that connection -- null when no attached socket holds that token. Used
+  /// when a seat is removed out from under a connection that is not the
+  /// caller's own, the host-forced rematch start of section 16.4 "Not
+  /// everyone": that seat's socket, if connected, has already been sent its
+  /// own `player_left` by the time this is called, and this is what stops
+  /// it from being delivered anything further for this room, exactly as
+  /// `leave_room` already does for the connection that sends it, except
+  /// that connection here is someone else's, so the caller clears its
+  /// identity itself once this returns it.
+  Connection? detachSeatToken(
+      {required String code, required String seatToken});
 }
 
 /// One WebSocket connection and the seat it may or may not currently hold.
@@ -522,6 +536,17 @@ class Connection {
         data: buildPlayerLeft(removed.seat.seat, removed.seq),
         re: envelope.id,
       );
+      // docs/PROTOCOL.md section 16.9 rule 1: that was the last thing this
+      // removed seat's own socket, if it was connected, is owed from this
+      // room -- detach it here, the same way `_handleLeaveRoom` detaches a
+      // seat that leaves by its own hand, except this one is not the
+      // connection currently running this call.
+      final Connection? removedConn = hub.detachSeatToken(
+        code: ok.room.code,
+        seatToken: removed.seat.seatToken,
+      );
+      removedConn?.roomCode = null;
+      removedConn?.seatToken = null;
     }
 
     // docs/PROTOCOL.md section 15 rule 1, reused by section 16.4's re-seat:
@@ -881,11 +906,17 @@ class Connection {
     _sendAndBroadcast(
         room: ok.room.code, type: 'room', data: data, re: envelope.id);
 
-    final StartOk? start = ok.start;
-    if (start != null) {
-      // docs/PROTOCOL.md section 16.4, "Everyone accepted": the server
-      // starts the game itself, immediately after the room broadcast above.
-      _publishStart(envelope, start);
+    if (ok.autoStart) {
+      // docs/PROTOCOL.md section 16.4, "Everyone accepted": the room above
+      // is the one that recorded the completing acceptance, already on the
+      // wire to every socket -- only now does the server start the game
+      // itself, through the exact mechanics an accepted start_game would
+      // use. `startRematchAuto` is called here, not inside `registry.rematch`
+      // itself, precisely so that `data` above is built from the room as the
+      // accept left it (still LOBBY, `rematch.ready` complete) and never
+      // from whatever state starting the game would have already moved it
+      // to by the time this method got a result back.
+      _publishStart(envelope, registry.startRematchAuto(ok.room));
       return;
     }
     _log(

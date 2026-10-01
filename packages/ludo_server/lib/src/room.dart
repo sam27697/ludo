@@ -51,9 +51,7 @@ class Rematch {
   Rematch({
     required this.by,
     required List<int> ready,
-    required List<int> openSeats,
-  })  : ready = List<int>.unmodifiable(ready),
-        openSeats = List<int>.unmodifiable(openSeats);
+  }) : ready = List<int>.unmodifiable(ready);
 
   /// The seat that sent the `rematch` which reopened this LOBBY from
   /// FINISHED. Sticky: section 16.6 says `ready` always contains `by`
@@ -67,18 +65,16 @@ class Rematch {
   /// seat that is not currently in [Room.seats] -- `RoomRegistry.leaveRoom`
   /// removes a departing seat from here in the same step that frees its
   /// seat index.
+  ///
+  /// `docs/PROTOCOL.md` section 16.4, as amended: the auto-start set is "the
+  /// seats occupied when the accept arrives", read fresh off `Room.seats` at
+  /// that instant, not fixed at the first `rematch` of the cycle -- a seat
+  /// that left must never go on blocking a start it can no longer complete,
+  /// and a seat that joined after the cycle opened must be waited for like
+  /// any other. There used to be a second field here, `openSeats`, frozen at
+  /// the moment the LOBBY opened; it is gone, because a set fixed at that
+  /// moment is exactly the thing section 16.9 rule 4 rules out.
   final List<int> ready;
-
-  /// The seat indices occupied at the instant this rematch LOBBY opened,
-  /// `docs/PROTOCOL.md` section 16.4: "every seat occupied at the moment of
-  /// the first `rematch`". Fixed once, from `Room.seats` at that instant --
-  /// a room cannot reach FINISHED with an unfilled seat, and nothing frees a
-  /// seat in PLAYING or FINISHED before this runs, so this is always every
-  /// configured seat. Never recomputed from the live roster afterwards,
-  /// which can only shrink from here as seats leave; that asymmetry is what
-  /// makes the auto-start check in `RoomRegistry.rematch` correct without
-  /// needing a seat that already left to somehow still accept.
-  final List<int> openSeats;
 }
 
 /// One occupied seat. `seatToken` is issued once, when the seat is taken,
