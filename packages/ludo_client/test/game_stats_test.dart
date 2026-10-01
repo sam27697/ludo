@@ -255,13 +255,17 @@ void main() {
         final GameStats stats = computeGameStats(
           frames: golden,
           seat: 0,
-          finalTokens: <int>[57, 57, 10, 0],
+          // 56 and 52 sit in the home column (52 to 56, docs/RULES.md) right
+          // next to a 57: a mutant that widens the home check to `token >=
+          // 52` would count three here instead of one.
+          finalTokens: <int>[57, 56, 52, 10],
         );
         // rolls: seq 102 (3), 111 (6), 114 (4), 121 (5) -> 4.
         // sixes: of those, only seq 111 -> 1.
         // capturesMade: moved frames with seat 0: seq 103 (0), 112 (1), 115 (0), 122 (0) -> 1.
         // timesCaptured: captured entries with seat 0 across every moved frame: seq 109 has one -> 1.
-        // tokensHome: finalTokens has two 57s.
+        // tokensHome: finalTokens has exactly one 57; 56 and 52 are in the
+        // home column but are not home.
         expect(
           stats,
           const GameStats(
@@ -269,7 +273,7 @@ void main() {
             sixes: 1,
             capturesMade: 1,
             timesCaptured: 1,
-            tokensHome: 2,
+            tokensHome: 1,
             complete: true,
           ),
         );
@@ -678,6 +682,32 @@ void main() {
         expect(stats.complete, false);
       },
     );
+
+    test('a game_started without an int seq makes complete false (C-232 ruling): the chain has no anchor', () {
+      final List<Frame> frames = <Frame>[
+        _frame('game_started', <String, Object?>{
+          // no 'seq' key at all: nothing for the contiguity chain to
+          // start from.
+          'turn': 0,
+          'game_id': 'game-1',
+          'client_seeds': 'seed-a,seed-b',
+        }),
+        _turn(1, seat: 0),
+        _rolled(2, seat: 0, value: 3, k: 1),
+        _moved(3, seat: 0, token: 0, from: -1, to: 3),
+        _gameOver(4, winner: 0),
+      ];
+      final GameStats stats = computeGameStats(
+        frames: frames,
+        seat: 0,
+        finalTokens: <int>[0, 0, 0, 0],
+      );
+      // the window still opens at this game_started and its roll still
+      // counts; only completeness is lost, because there is no seq to
+      // anchor the chain.
+      expect(stats.rolls, 1);
+      expect(stats.complete, false);
+    });
   });
 
   group('definition 8: malformed input never throws', () {
