@@ -133,6 +133,25 @@ final List<List<BoardCell>> _finished = _rotations(const <BoardCell>[
   BoardCell(7, 7),
 ]);
 
+/// The eight safe squares of the main track, absolute indices. RULES.md
+/// section 1.3: the four entry squares plus the square eight ahead of each.
+/// A token standing on one of these cannot be captured.
+const List<int> safeTrackSquares = <int>[0, 8, 13, 21, 26, 34, 39, 47];
+
+/// The cell of an absolute main-track index, the same square however it is
+/// reached: `cellFor(seat: 0, progress: absolute)`. Use this instead of
+/// picking a seat to look up [safeTrackSquares] since those indices are
+/// absolute, not any one seat's progress.
+///
+/// Throws [ArgumentError] if [absolute] is outside 0..51. Reject, never
+/// repair, same as [cellFor].
+BoardCell safeSquareCell(int absolute) {
+  if (absolute < 0 || absolute > 51) {
+    throw ArgumentError.value(absolute, 'absolute', 'must be 0..51');
+  }
+  return cellFor(seat: 0, progress: absolute);
+}
+
 /// The grid cell a token of [seat] sits in at [progress].
 ///
 /// [progress] is the entire position: -1 is the yard, 0..51 the shared main
