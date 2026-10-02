@@ -27,8 +27,10 @@ import 'package:url_launcher/url_launcher.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
 import 'die_mark.dart';
+import 'end_card.dart';
 import 'feedback.dart';
 import 'game_die.dart';
+import 'game_stats.dart';
 import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
@@ -109,6 +111,13 @@ class _GameScreenState extends State<GameScreen> {
   Timer? _noMoveTimer;
   bool _noMoveVisible = false;
 
+  // C-243: every frame this screen's own subscription has seen since it
+  // mounted, in arrival order. The end card's GameStats is computed from
+  // exactly this list (see _gameOverBody), never from anywhere else, so a
+  // post-game number never traces back further than frames this device
+  // already held.
+  final List<Frame> _frames = <Frame>[];
+
   @override
   void initState() {
     super.initState();
@@ -144,6 +153,7 @@ class _GameScreenState extends State<GameScreen> {
   /// hold when that cue is `noMove`, and drops it otherwise -- the "newer
   /// rolled for my seat" that ends an earlier hold early.
   void _onFrame(Frame frame) {
+    _frames.add(frame);
     final List<FeedbackCue> cues = cuesForFrame(
       frame,
       mySeat: widget.controller.seat,
@@ -735,33 +745,82 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// H6.2 and H7: the game has finished. The board (when there are still at
-  /// least two seats to draw it from) and the winner text; the Roll button
-  /// and the four token buttons are absent, not merely disabled, because
-  /// there is nothing left to press. The next-table button is the honest
-  /// action on this ending: it is not the AppBar leave control. Verify
-  /// opens `verify_url` externally; roll history is the last three faces.
+  /// H6.2 and H7: the game has finished. C-243's `EndCard` carries the
+  /// title, the winner's celebration or the loser's warmth, the honest
+  /// numbers and the fairness line; this method's own job is only to
+  /// resolve the plain values `EndCard` needs and hand them across --
+  /// `EndCard` never reads `room` or `controller` itself. The board (when
+  /// there are still at least two seats to draw it from) stays visible
+  /// underneath, per contract rule 8; roll history is unchanged, the last
+  /// three faces. The Roll button and the four token buttons are absent,
+  /// not merely disabled, because there is nothing left to press.
   Widget _gameOverBody(
     AppLocalizations loc,
     RoomController controller,
     RoomSnapshot room,
   ) {
     final bool hasBoard = room.seats.length >= 2;
-    final String? verifyUrl = room.verifyUrl;
-    final bool canVerify = verifyUrl != null && verifyUrl.isNotEmpty;
-    return Padding(
+
+    // Rule 4: a winner naming a seat absent from room.seats reads the same
+    // as no winner at all (H7.21's own fallback, carried forward).
+    String? winnerName;
+    if (room.winner != null) {
+      for (final SeatState seatState in room.seats) {
+        if (seatState.seat == room.winner) {
+          winnerName = seatState.name;
+          break;
+        }
+      }
+    }
+    final int? winnerSeat = winnerName == null ? null : room.winner;
+
+    // C-232: this seat's own numbers, computed from exactly the frames
+    // this screen has already received. No entry in room.seats for my own
+    // seat (a spectator view, or a seat the server never confirmed) leaves
+    // nothing honest to show, not a guess.
+    GameStats? stats;
+    final int? mySeat = controller.seat;
+    if (mySeat != null) {
+      for (final SeatState seatState in room.seats) {
+        if (seatState.seat == mySeat) {
+          stats = computeGameStats(
+            frames: _frames,
+            seat: mySeat,
+            finalTokens: seatState.tokens,
+          );
+          break;
+        }
+      }
+    }
+
+    // The card alone, win or lose, already carries more content than the
+    // pre-C-243 single line of text did (a celebration or nudge, up to
+    // four stat tiles, the fairness line and two buttons), so this body is
+    // scrollable rather than forced into one unscrollable screen the way
+    // the playing body is: nothing here is time-pressured the way a turn
+    // is, and a RenderFlex overflow would hide content rather than merely
+    // look cramped. The board keeps its own square shape via AspectRatio
+    // instead of Expanded, which needs a bounded height a scroll view does
+    // not give its children.
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(kSpace4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            _winnerText(loc, controller, room),
-            key: const Key('game-screen-winner'),
-            textAlign: TextAlign.center,
+          EndCard(
+            mySeat: mySeat,
+            winnerSeat: winnerSeat,
+            winnerName: winnerName,
+            seatColors: LudoColors.seats,
+            stats: stats,
+            verifyUrl: room.verifyUrl,
+            onVerify: _openVerifyUrl,
+            onNewTable: _requestNewTable,
           ),
           if (hasBoard) ...[
             const SizedBox(height: kSpace4),
-            Expanded(
+            AspectRatio(
+              aspectRatio: 1,
               child: LudoBoard(
                 key: const Key('game-screen-board'),
                 tokens: _tokensOf(room),
@@ -771,20 +830,6 @@ class _GameScreenState extends State<GameScreen> {
           ],
           const SizedBox(height: kSpace4),
           _rollHistory(loc, room),
-          const SizedBox(height: kSpace4),
-          OutlinedButton(
-            key: const Key('game-screen-verify-button'),
-            style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
-            onPressed: canVerify ? _openVerifyUrl : null,
-            child: Text(loc.gameVerifyButton),
-          ),
-          const SizedBox(height: kSpace2),
-          ElevatedButton(
-            key: const Key('game-screen-new-room-button'),
-            style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
-            onPressed: _requestNewTable,
-            child: Text(loc.gameNewRoomButton),
-          ),
         ],
       ),
     );
@@ -926,24 +971,4 @@ SeatState? _offlineTurnSeat(RoomSnapshot room) {
     }
   }
   return null;
-}
-
-/// H7, decided in the order given there, first match wins.
-String _winnerText(
-  AppLocalizations loc,
-  RoomController controller,
-  RoomSnapshot room,
-) {
-  final int? winner = room.winner;
-  if (winner != null && winner == controller.seat) {
-    return loc.gameOverYouWin;
-  }
-  if (winner != null) {
-    for (final SeatState seatState in room.seats) {
-      if (seatState.seat == winner) {
-        return loc.gameOverPlayerWins(seatState.name);
-      }
-    }
-  }
-  return loc.gameOverEnded;
 }

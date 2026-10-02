@@ -344,6 +344,52 @@
   "@gameNoMove": {
     "description": "Shown next to the die, with a red X on it, when the player's own roll gives no legal move and the turn passes."
   },
+  "endWinTitle": "You won!",
+  "@endWinTitle": {
+    "description": "End-card title when this player's own seat won the game, shown in gold with a celebration behind it."
+  },
+  "endLoseTitle": "{name} took this one",
+  "@endLoseTitle": {
+    "description": "End-card title when another seat won the game, naming that seat's player. The name is shown in that seat's own colour; the rest of the line carries no blame or verdict wording.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
+  "endLoseNudge": "So close. One more?",
+  "@endLoseNudge": {
+    "description": "Warm line under the loser's end-card title, inviting another game rather than stating a result."
+  },
+  "endStatRolls": "rolls",
+  "@endStatRolls": {
+    "description": "Label under the rolls count on the end card's stat row."
+  },
+  "endStatSixes": "sixes",
+  "@endStatSixes": {
+    "description": "Label under the sixes count on the end card's stat row."
+  },
+  "endStatCaptures": "captures",
+  "@endStatCaptures": {
+    "description": "Label under the captures-made count on the end card's stat row."
+  },
+  "endStatHome": "home",
+  "@endStatHome": {
+    "description": "Label under the tokens-home count on the end card's stat row. Shown alone, without the other three tiles, when the game's numbers are incomplete."
+  },
+  "endFairLine": "Every roll of this game is verifiable.",
+  "@endFairLine": {
+    "description": "One-line fairness statement shown on every end card, win, lose or ended. Plain verifiable wording; casino-style phrasing is forbidden here."
+  },
+  "endFairCheck": "Check the rolls",
+  "@endFairCheck": {
+    "description": "Text button on the end card that opens the match's verification page in an external browser. Same destination and behaviour as the page's Verify button; the key game-screen-verify-button is kept on this control."
+  },
+  "endFairHint": "Each roll came from a sequence sealed before the game started. Anyone can open this page and recheck every roll.",
+  "@endFairHint": {
+    "description": "Longer explanation shown from the end card's info-hint button next to the fairness line, for a player who has never thought about how the dice are fair."
+  },
   "feedbackHapticsToggle": "Vibration",
   "@feedbackHapticsToggle": {
     "description": "Settings switch that turns game vibration on or off."
