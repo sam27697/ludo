@@ -127,6 +127,20 @@ abstract class RoomHub {
     required String type,
     required Map<String, Object?> data,
   });
+
+  /// `docs/PROTOCOL.md` section 16.9 rule 1: detaches whichever socket, if
+  /// any, is currently attached to [code] holding [seatToken], and returns
+  /// that connection -- null when no attached socket holds that token. Used
+  /// when a seat is removed out from under a connection that is not the
+  /// caller's own, the host-forced rematch start of section 16.4 "Not
+  /// everyone": that seat's socket, if connected, has already been sent its
+  /// own `player_left` by the time this is called, and this is what stops
+  /// it from being delivered anything further for this room, exactly as
+  /// `leave_room` already does for the connection that sends it, except
+  /// that connection here is someone else's, so the caller clears its
+  /// identity itself once this returns it.
+  Connection? detachSeatToken(
+      {required String code, required String seatToken});
 }
 
 /// One WebSocket connection and the seat it may or may not currently hold.
@@ -249,6 +263,8 @@ class Connection {
         _handleRoll(envelope);
       case 'move':
         _handleMove(envelope);
+      case 'rematch':
+        _handleRematch(envelope);
       default:
         // Unreachable: parseEnvelope already rejected anything outside
         // knownMessageTypes as BAD_TYPE.
@@ -496,7 +512,77 @@ class Connection {
       _reject(envelope, result.error);
       return;
     }
-    final StartOk ok = result as StartOk;
+    _publishStart(envelope, result as StartOk);
+  }
+
+  /// Every frame a successful start decided on, in order: `docs/PROTOCOL.md`
+  /// section 16.4's host-forced removal and re-seat, if this start came from
+  /// that path, then section 11.2's server-drawn `seat_seed`s, then
+  /// `game_started`, then section 13.1's standalone `turn`. Shared by
+  /// [_handleStartGame] and the section 16.4 "Everyone accepted" auto-start
+  /// inside [_handleRematch], so the one client message that triggered this
+  /// -- a `start_game` or a `rematch` -- is the `id` every frame in the burst
+  /// answers with `re` on this socket's own copy.
+  void _publishStart(ParsedEnvelope envelope, StartOk ok) {
+    // docs/PROTOCOL.md section 16.4, "Not everyone": every occupied seat
+    // this start removed for not being ready, ascending seat order, one
+    // `player_left` each at its own seq, before anything else this start
+    // does. Empty, and therefore a no-op, for every start that did not come
+    // through that path.
+    for (final RemovedSeat removed in ok.removedSeats) {
+      _sendAndBroadcast(
+        room: ok.room.code,
+        type: 'player_left',
+        data: buildPlayerLeft(removed.seat.seat, removed.seq),
+        re: envelope.id,
+      );
+      // docs/PROTOCOL.md section 16.9 rule 1: that was the last thing this
+      // removed seat's own socket, if it was connected, is owed from this
+      // room -- detach it here, the same way `_handleLeaveRoom` detaches a
+      // seat that leaves by its own hand, except this one is not the
+      // connection currently running this call.
+      final Connection? removedConn = hub.detachSeatToken(
+        code: ok.room.code,
+        seatToken: removed.seat.seatToken,
+      );
+      removedConn?.roomCode = null;
+      removedConn?.seatToken = null;
+    }
+
+    // docs/PROTOCOL.md section 15 rule 1, reused by section 16.4's re-seat:
+    // seat_assigned to every connected seat whose number this start just
+    // changed, then the room that carries the new seating -- the caller's
+    // own copy before its own room reply, everyone else's connected moved
+    // seat before the room broadcast. Null `reseatSeq` means this start did
+    // not remove or re-seat anyone, so there is nothing to announce here.
+    if (ok.reseatSeq != null) {
+      final Map<String, Object?> reseatRoom =
+          buildRoomSnapshot(ok.room, now: clock.now);
+      for (final Seat moved in ok.movedSeats) {
+        if (moved.seatToken == seatToken) {
+          _send(
+              type: 'seat_assigned', data: buildSeatAssigned(moved), re: null);
+        }
+      }
+      _send(type: 'room', data: reseatRoom, re: envelope.id);
+      for (final Seat moved in ok.movedSeats) {
+        if (moved.seatToken == seatToken || !moved.connected) {
+          continue;
+        }
+        hub.sendToSeatToken(
+          code: ok.room.code,
+          seatToken: moved.seatToken,
+          type: 'seat_assigned',
+          data: buildSeatAssigned(moved),
+        );
+      }
+      hub.broadcast(
+        code: ok.room.code,
+        type: 'room',
+        data: reseatRoom,
+        exceptConn: this,
+      );
+    }
 
     // docs/PROTOCOL.md section 11.2: each server-drawn seed handed out here
     // is its own fixed-seed broadcast, at the `seq` that fix itself
@@ -563,9 +649,17 @@ class Connection {
     // see the matching comment in _handleStartGame for why a lookup here is
     // safe to run ahead of the payload check.
     final Room? liveRoom = registry.lookup(roomCode!);
-    if (liveRoom != null && liveRoom.state != RoomState.lobby) {
-      _reject(envelope, ProtocolError.roomStarted);
-      return;
+    if (liveRoom != null) {
+      if (liveRoom.state != RoomState.lobby) {
+        _reject(envelope, ProtocolError.roomStarted);
+        return;
+      }
+      // docs/PROTOCOL.md section 16.4: "set_players in a rematch LOBBY is
+      // WRONG_PHASE: the ready list decides the count."
+      if (liveRoom.rematch != null) {
+        _reject(envelope, ProtocolError.wrongPhase);
+        return;
+      }
     }
     const Set<String> allowedKeys = <String>{'players'};
     if (!envelope.data.keys.every(allowedKeys.contains)) {
@@ -749,6 +843,87 @@ class Connection {
       outcome: 'ok',
       room: code,
       seat: seatIndex,
+      seq: ok.room.seq,
+    );
+  }
+
+  /// `rematch`, `docs/PROTOCOL.md` section 16.1. Identity-first, like the
+  /// five socket-identified messages: a socket in no room gets
+  /// `BAD_SEAT_TOKEN` whatever else is true. The phase checks that follow
+  /// are section 16.1's own table, run here ahead of the payload check
+  /// (`d` must be empty) the same way every other phase-gated message in
+  /// this file runs its own phase check ahead of its payload check.
+  /// `registry.rematch` re-runs the room-exists and seat-authorised steps
+  /// itself as defence in depth, the same as every other call in this file.
+  void _handleRematch(ParsedEnvelope envelope) {
+    if (!_hasIdentity) {
+      _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    final Room? liveRoom = registry.lookup(roomCode!);
+    if (liveRoom == null) {
+      _reject(envelope, ProtocolError.noSuchRoom);
+      return;
+    }
+    if (liveRoom.state == RoomState.playing) {
+      _reject(envelope, ProtocolError.wrongPhase);
+      return;
+    }
+    if (liveRoom.state == RoomState.lobby && liveRoom.rematch == null) {
+      _reject(envelope, ProtocolError.wrongPhase);
+      return;
+    }
+    if (envelope.data.isNotEmpty) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+
+    final RematchResult result =
+        registry.rematch(code: roomCode!, seatToken: seatToken!);
+    if (result is RematchFailure) {
+      _reject(envelope, result.error);
+      return;
+    }
+    final RematchOk ok = result as RematchOk;
+    final Map<String, Object?> data =
+        buildRoomSnapshot(ok.room, now: clock.now);
+
+    if (!ok.changed) {
+      // docs/PROTOCOL.md section 16.3: a double tap from a seat already
+      // ready changes nothing -- seq does not advance, and only the sender
+      // gets the current room, with re.
+      _send(type: 'room', data: data, re: envelope.id);
+      _log(
+        type: envelope.type,
+        id: envelope.id,
+        outcome: 'ok',
+        room: ok.room.code,
+        seq: ok.room.seq,
+      );
+      return;
+    }
+
+    _sendAndBroadcast(
+        room: ok.room.code, type: 'room', data: data, re: envelope.id);
+
+    if (ok.autoStart) {
+      // docs/PROTOCOL.md section 16.4, "Everyone accepted": the room above
+      // is the one that recorded the completing acceptance, already on the
+      // wire to every socket -- only now does the server start the game
+      // itself, through the exact mechanics an accepted start_game would
+      // use. `startRematchAuto` is called here, not inside `registry.rematch`
+      // itself, precisely so that `data` above is built from the room as the
+      // accept left it (still LOBBY, `rematch.ready` complete) and never
+      // from whatever state starting the game would have already moved it
+      // to by the time this method got a result back.
+      _publishStart(envelope, registry.startRematchAuto(ok.room));
+      return;
+    }
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: 'ok',
+      room: ok.room.code,
       seq: ok.room.seq,
     );
   }
