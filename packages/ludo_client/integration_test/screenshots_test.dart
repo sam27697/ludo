@@ -3015,6 +3015,23 @@ void main() {
     );
     await tester.pump();
 
+    // Proof the scene-setting push above actually left the yard: without
+    // this, a captured token reading -1 later would be indistinguishable
+    // from one that was never moved out of _seatJson's own -1 default in
+    // the first place, and the capture assertion below would pass for the
+    // wrong reason.
+    expect(
+      controller.room!.seats[1].tokens[0],
+      10,
+      reason:
+          'capture 17 fixture is broken: expected Karim\'s token (seat 1, '
+          'token 0) to read 10 in controller.room!.seats after the '
+          'scene-setting moved landed, got '
+          '${controller.room!.seats[1].tokens[0]} -- if this reads -1 the '
+          'capture assertion below would prove nothing, since -1 is also '
+          'that token\'s starting value',
+    );
+
     // My own roll (seat 0) names token 0 legal.
     transport.pushText(
       _frame(
@@ -3228,6 +3245,23 @@ void main() {
       ),
     );
     await tester.pump();
+
+    // Proof the scene-setting push above actually left the yard: without
+    // this, a captured token reading -1 later would be indistinguishable
+    // from one that was never moved out of _seatJson's own -1 default in
+    // the first place, and the capture assertion below would pass for the
+    // wrong reason.
+    expect(
+      controller.room!.seats[1].tokens[0],
+      10,
+      reason:
+          'capture 18 fixture is broken: expected Karim\'s token (seat 1, '
+          'token 0) to read 10 in controller.room!.seats after the '
+          'scene-setting moved landed, got '
+          '${controller.room!.seats[1].tokens[0]} -- if this reads -1 the '
+          'capture assertion below would prove nothing, since -1 is also '
+          'that token\'s starting value',
+    );
 
     transport.pushText(
       _frame(
