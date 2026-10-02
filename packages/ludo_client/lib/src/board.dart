@@ -25,6 +25,12 @@ import 'theme.dart';
 
 export 'board_geometry.dart';
 
+/// The four entry squares among [safeTrackSquares], absolute indices, each
+/// one seat's own starting square (RULES.md 1.2, contract C-241 rule 2):
+/// seat 0 enters at 0, seat 1 at 13, seat 2 at 26, seat 3 at 39. These are
+/// the four stars painted in paper rather than ink.
+const Set<int> _entrySquares = <int>{0, 13, 26, 39};
+
 /// A Ludo board: the static grid plus every token of every seat in
 /// [seatsInPlay], each placed by [cellFor].
 ///
@@ -238,6 +244,7 @@ class _LudoBoardState extends State<LudoBoard> {
                   Positioned.fill(
                     child: CustomPaint(painter: const _BoardPainter()),
                   ),
+                  ..._safeSquareMarks(cellSize),
                   for (final seat in widget.seatsInPlay)
                     for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++)
                       ..._tokenLayer(
@@ -422,6 +429,41 @@ class _LudoBoardState extends State<LudoBoard> {
   }
 }
 
+/// The star mark on each of the eight safe squares (RULES.md 1.3, contract
+/// C-241), one per entry of [safeTrackSquares]. Painted above the board
+/// painter and below every token layer so a token standing on a safe
+/// square is never hidden under its own star, and wrapped in
+/// [IgnorePointer] so the mark never answers a tap meant for the token on
+/// it: a legal tap on a token that happens to sit on a safe square must
+/// still resolve to exactly one move.
+List<Widget> _safeSquareMarks(double cellSize) {
+  return <Widget>[
+    for (final int absolute in safeTrackSquares)
+      Positioned(
+        key: Key('board-safe-$absolute'),
+        left: safeSquareCell(absolute).col * cellSize,
+        top: safeSquareCell(absolute).row * cellSize,
+        width: cellSize,
+        height: cellSize,
+        child: IgnorePointer(
+          child: Center(
+            child: FractionallySizedBox(
+              widthFactor: 0.7,
+              heightFactor: 0.7,
+              child: CustomPaint(
+                painter: _StarPainter(
+                  color: _entrySquares.contains(absolute)
+                      ? LudoColors.paperElevated
+                      : LudoColors.inkMuted,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+  ];
+}
+
 /// One (seat, tokenIndex) group of [mySeat]'s tokens sharing a board cell,
 /// used only to resolve a tap: `center` is that cell's pixel centre, and
 /// `indices` is every token index of mine sitting on it, sorted ascending.
@@ -558,6 +600,45 @@ class _RingPainter extends CustomPainter {
       oldDelegate.strokeWidth != strokeWidth || oldDelegate.opacity != opacity;
 }
 
+/// A plain five-point star, point up, filling a disc of radius
+/// `min(size.width, size.height) / 2` -- the safe-square mark itself. Shape
+/// carries the meaning (doctrine P9): the star alone says "safe", the
+/// entry square's paper-coloured fill under four of them is only the extra
+/// signal. Ten vertices at 36 degree steps starting straight up, alternating
+/// the outer radius with an inner radius at the classic 0.382 ratio of a
+/// regular pentagram -- the same arithmetic a pencil-and-compass star uses,
+/// not ten hand-placed points.
+class _StarPainter extends CustomPainter {
+  const _StarPainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Offset center = Offset(size.width / 2, size.height / 2);
+    final double outerRadius = math.min(size.width, size.height) / 2;
+    final double innerRadius = outerRadius * 0.382;
+    final Path path = Path();
+    for (var point = 0; point < 10; point++) {
+      final double radius = point.isEven ? outerRadius : innerRadius;
+      final double angle = -math.pi / 2 + point * math.pi / 5;
+      final double x = center.dx + radius * math.cos(angle);
+      final double y = center.dy + radius * math.sin(angle);
+      if (point == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    path.close();
+    canvas.drawPath(path, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(covariant _StarPainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
 /// Paints the static board: the grid, the four yards, the shared track, the
 /// four home columns and the centre. None of this determines where a token
 /// goes; it is drawn from the same [cellFor] a token uses, so the background
@@ -611,6 +692,19 @@ class _BoardPainter extends CustomPainter {
         cellSize,
         cell,
         LudoColors.paperElevated.withValues(alpha: 0.65),
+      );
+    }
+
+    // Each seat's own entry square, filled in that seat's colour after the
+    // plain track fill above so it is not painted over. Contract C-241 rule
+    // 2; the four absolute squares are 0, 13, 26, 39, one per seat.
+    for (var seat = 0; seat < 4; seat++) {
+      final cell = cellFor(seat: seat, progress: 0);
+      _fillCell(
+        canvas,
+        cellSize,
+        cell,
+        LudoColors.seats[seat].withValues(alpha: 0.85),
       );
     }
 
