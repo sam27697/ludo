@@ -190,6 +190,21 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     return 1 + (step % 6);
   }
 
+  /// C-238: wraps a painted face with `game-die-idle-art` exactly when that
+  /// paint shows the cube rather than a resting or cycling value -- which,
+  /// per [_GameDiePainter], is exactly when [shown] is null. Doctrine P4: a
+  /// cube with three faces at once can never be read as an invented result,
+  /// so it is always safe to show while no value is known.
+  Widget _dieArt({required Color edgeColor, required int? shown}) {
+    final Widget paint = CustomPaint(
+      size: const Size.square(_kDieSize),
+      painter: _GameDiePainter(edgeColor: edgeColor, face: shown),
+    );
+    return shown == null
+        ? KeyedSubtree(key: const Key('game-die-idle-art'), child: paint)
+        : paint;
+  }
+
   @override
   void dispose() {
     _pulse.dispose();
@@ -317,15 +332,13 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     if (widget.tumbling) {
       // Cosmetic only: never settles, never carries a resting-face key.
       // Reduced motion does not merely hold rotation off, it also stops the
-      // pip cycling and shows the blank face until the result lands.
+      // pip cycling and shows the idle cube (C-238 rule 4) until the result
+      // lands, same as the blank face it stands in for.
       final int? shown = reduced ? null : _tumbleFace();
-      final Widget paint = CustomPaint(
-        size: const Size.square(_kDieSize),
-        painter: _GameDiePainter(edgeColor: widget.seatColor, face: shown),
-      );
+      final Widget art = _dieArt(edgeColor: widget.seatColor, shown: shown);
       return reduced
-          ? KeyedSubtree(key: const Key('game-die-blank'), child: paint)
-          : paint;
+          ? KeyedSubtree(key: const Key('game-die-blank'), child: art)
+          : art;
     }
     final int? shown = widget.face;
     final Key key = shown == null
@@ -333,10 +346,7 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
         : Key('game-die-face-$shown');
     return KeyedSubtree(
       key: key,
-      child: CustomPaint(
-        size: const Size.square(_kDieSize),
-        painter: _GameDiePainter(edgeColor: widget.seatColor, face: shown),
-      ),
+      child: _dieArt(edgeColor: widget.seatColor, shown: shown),
     );
   }
 }
@@ -377,9 +387,54 @@ class _GameDiePainter extends CustomPainter {
   final Color edgeColor;
   final int? face;
 
+  // C-238: the idle cube's seven corner points, as fractions of the box's
+  // shortest side, origin at its top-left. `_cubeCenterF` is the near
+  // corner shared by all three visible faces; `_cubeTopF` is the far top
+  // corner and `_cubeBottomF` the near bottom one. The three quads below
+  // (top/left/right) each use four of these seven points and are true
+  // parallelograms, which is what reads as a cube rather than a flat
+  // hexagon.
+  static const Offset _cubeTopF = Offset(0.50, 0.04);
+  static const Offset _cubeULF = Offset(0.04, 0.28);
+  static const Offset _cubeURF = Offset(0.96, 0.28);
+  static const Offset _cubeCenterF = Offset(0.50, 0.52);
+  static const Offset _cubeLLF = Offset(0.04, 0.72);
+  static const Offset _cubeLRF = Offset(0.96, 0.72);
+  static const Offset _cubeBottomF = Offset(0.50, 0.96);
+
+  // Pip centres, same fraction convention, kept inside the face they mark
+  // so a roll's three-at-once idle cube never reads as fewer or more than
+  // one/two/three pips per face.
+  static const Offset _cubeTopPipF = Offset(0.50, 0.28);
+  static const Offset _cubeLeftPip1F = Offset(0.178, 0.484);
+  static const Offset _cubeLeftPip2F = Offset(0.362, 0.756);
+  static const Offset _cubeRightPip1F = Offset(0.592, 0.56);
+  static const Offset _cubeRightPip2F = Offset(0.730, 0.62);
+  static const Offset _cubeRightPip3F = Offset(0.868, 0.68);
+
+  // The two side faces, darkened from the same `dieFace` token rather than
+  // a new colour literal (C-238 rule 7): an opaque blend toward `ink`, the
+  // right face darker than the left so the cube reads as lit from the
+  // upper-left, the way the flat face's own border already reads as an
+  // edge rather than a flat tint.
+  static final Color _cubeLeftShade = Color.alphaBlend(
+    LudoColors.ink.withValues(alpha: 0.14),
+    LudoColors.dieFace,
+  );
+  static final Color _cubeRightShade = Color.alphaBlend(
+    LudoColors.ink.withValues(alpha: 0.30),
+    LudoColors.dieFace,
+  );
+
   @override
   void paint(Canvas canvas, Size size) {
     final double s = size.shortestSide;
+    final int? f = face;
+    if (f == null) {
+      _paintIdleCube(canvas, s);
+      return;
+    }
+
     final RRect faceRect = RRect.fromRectAndRadius(
       Rect.fromLTWH(s * 0.04, s * 0.04, s * 0.92, s * 0.92),
       Radius.circular(s * 0.16),
@@ -394,10 +449,6 @@ class _GameDiePainter extends CustomPainter {
         ..strokeWidth = math.max(2.5, s * 0.05),
     );
 
-    final int? f = face;
-    if (f == null) {
-      return;
-    }
     final List<Offset>? units = _pipUnits[f];
     if (units == null) {
       return;
@@ -413,6 +464,80 @@ class _GameDiePainter extends CustomPainter {
         pipPaint,
       );
     }
+  }
+
+  /// C-238: the die waiting to be tapped, drawn as an object (an isometric
+  /// cube showing its top, left and right faces at once) rather than as a
+  /// result. Doctrine P4: three faces together can never be misread as a
+  /// rolled value, which is exactly why a single flat face is wrong here.
+  void _paintIdleCube(Canvas canvas, double s) {
+    Offset at(Offset fraction) => Offset(fraction.dx * s, fraction.dy * s);
+
+    final Offset top = at(_cubeTopF);
+    final Offset ul = at(_cubeULF);
+    final Offset ur = at(_cubeURF);
+    final Offset center = at(_cubeCenterF);
+    final Offset ll = at(_cubeLLF);
+    final Offset lr = at(_cubeLRF);
+    final Offset bottom = at(_cubeBottomF);
+
+    final Path topFace = Path()
+      ..moveTo(ul.dx, ul.dy)
+      ..lineTo(top.dx, top.dy)
+      ..lineTo(ur.dx, ur.dy)
+      ..lineTo(center.dx, center.dy)
+      ..close();
+    final Path leftFace = Path()
+      ..moveTo(ul.dx, ul.dy)
+      ..lineTo(center.dx, center.dy)
+      ..lineTo(bottom.dx, bottom.dy)
+      ..lineTo(ll.dx, ll.dy)
+      ..close();
+    final Path rightFace = Path()
+      ..moveTo(center.dx, center.dy)
+      ..lineTo(ur.dx, ur.dy)
+      ..lineTo(lr.dx, lr.dy)
+      ..lineTo(bottom.dx, bottom.dy)
+      ..close();
+
+    canvas.drawPath(topFace, Paint()..color = LudoColors.dieFace);
+    canvas.drawPath(leftFace, Paint()..color = _cubeLeftShade);
+    canvas.drawPath(rightFace, Paint()..color = _cubeRightShade);
+
+    final Path outline = Path()
+      ..moveTo(top.dx, top.dy)
+      ..lineTo(ur.dx, ur.dy)
+      ..lineTo(lr.dx, lr.dy)
+      ..lineTo(bottom.dx, bottom.dy)
+      ..lineTo(ll.dx, ll.dy)
+      ..lineTo(ul.dx, ul.dy)
+      ..close();
+    canvas.drawPath(
+      outline,
+      Paint()
+        ..color = edgeColor
+        ..style = PaintingStyle.stroke
+        ..strokeJoin = StrokeJoin.round
+        ..strokeWidth = math.max(2.5, s * 0.05),
+    );
+
+    final Paint seamPaint = Paint()
+      ..color = edgeColor
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = math.max(2, s * 0.035);
+    canvas.drawLine(center, ur, seamPaint);
+    canvas.drawLine(center, ul, seamPaint);
+    canvas.drawLine(center, bottom, seamPaint);
+
+    final double pipR = s * 0.065;
+    final Paint pipPaint = Paint()..color = LudoColors.ink;
+    canvas.drawCircle(at(_cubeTopPipF), pipR, pipPaint);
+    canvas.drawCircle(at(_cubeLeftPip1F), pipR, pipPaint);
+    canvas.drawCircle(at(_cubeLeftPip2F), pipR, pipPaint);
+    canvas.drawCircle(at(_cubeRightPip1F), pipR, pipPaint);
+    canvas.drawCircle(at(_cubeRightPip2F), pipR, pipPaint);
+    canvas.drawCircle(at(_cubeRightPip3F), pipR, pipPaint);
   }
 
   @override
