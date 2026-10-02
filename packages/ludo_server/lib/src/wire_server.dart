@@ -712,6 +712,24 @@ class _ConnectionHub implements RoomHub {
     }
   }
 
+  @override
+  Connection? detachSeatToken({
+    required String code,
+    required String seatToken,
+  }) {
+    final Set<Connection>? sockets = _byRoom[code];
+    if (sockets == null) {
+      return null;
+    }
+    for (final Connection conn in sockets) {
+      if (conn.seatToken == seatToken) {
+        _removeFromRoom(code, conn);
+        return conn;
+      }
+    }
+    return null;
+  }
+
   void _removeFromRoom(String code, Connection conn) {
     final Set<Connection>? sockets = _byRoom[code];
     if (sockets == null) {

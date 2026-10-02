@@ -46,7 +46,21 @@ Map<String, Object?> buildRoomSnapshot(Room room, {required DateTime now}) {
     ],
     'turn': _turnSnapshot(room, now),
     'winner': room.game?.winner,
+    // docs/PROTOCOL.md section 16.6: null, or { "by": seat, "ready": [seat,
+    // ...] } with `ready` in ascending seat order. Present in every state;
+    // non-null only in a rematch LOBBY.
+    'rematch': _rematchSnapshot(room.rematch),
     'seq': room.seq,
+  };
+}
+
+Map<String, Object?>? _rematchSnapshot(Rematch? rematch) {
+  if (rematch == null) {
+    return null;
+  }
+  return <String, Object?>{
+    'by': rematch.by,
+    'ready': List<int>.of(rematch.ready)..sort(),
   };
 }
 

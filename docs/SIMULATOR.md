@@ -26,7 +26,7 @@ Flags:
 | Flag | Default | Meaning |
 |---|---|---|
 | `--target` | required | Base WebSocket URL of a running server, `ws://` or `wss://`. Nothing is appended to it. |
-| `--scenario` | `all` | `all`, `full-game`, `reconnect`, or `double-drop`. |
+| `--scenario` | `all` | `all`, `full-game`, `reconnect`, `double-drop`, or `rematch`. `rematch` is valid but never runs as part of `all`; select it on its own. |
 | `--timeout-seconds` | 180 | Bounds the whole run, not one frame. |
 | `--players` | 4 | Seats to play with, 2 to 4. |
 | `--fetch-record` | off | After each scenario's game ends, also fetch and check the stored verification record. See "The verify_url and record checks" below. |
@@ -71,6 +71,18 @@ raced concurrently, not run one after the other. Requires at least three
 players (host plus two others to drop); with fewer it fails cleanly naming
 the shortfall rather than dropping the same seat twice. Otherwise identical
 in what it proves to `reconnect`.
+
+### `rematch`
+
+Not part of `all`, and not selectable alongside another scenario on the same
+invocation: `--scenario rematch` runs it alone. Plays a full game to a
+natural winner, sends `rematch` from every seat in ascending order so
+`docs/PROTOCOL.md` section 16.4's "everyone accepted" auto-start fires with
+no further `start_game`, plays a second full game to a natural winner in the
+same room, and fails unless the two games used distinct `game_id` and
+`chain_commit` values. Behind `--fetch-record`, also fetches and checks both
+games' stored records, exactly as `full-game` does for its one game; off by
+default for the same local-server-vs-production-host reason given below.
 
 ## The fairness assertion
 
