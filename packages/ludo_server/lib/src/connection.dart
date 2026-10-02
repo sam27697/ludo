@@ -556,8 +556,7 @@ class Connection {
     // seat before the room broadcast. Null `reseatSeq` means this start did
     // not remove or re-seat anyone, so there is nothing to announce here.
     if (ok.reseatSeq != null) {
-      final Map<String, Object?> reseatRoom =
-          buildRoomSnapshot(ok.room, now: clock.now);
+      final Map<String, Object?> reseatRoom = ok.reseatRoom!;
       for (final Seat moved in ok.movedSeats) {
         if (moved.seatToken == seatToken) {
           _send(

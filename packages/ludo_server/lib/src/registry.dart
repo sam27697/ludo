@@ -16,6 +16,7 @@ import 'clock.dart';
 import 'room.dart';
 import 'room_code.dart';
 import 'seat_token.dart';
+import 'snapshot.dart' show buildRoomSnapshot;
 import 'verify_record.dart';
 import 'verify_store.dart';
 
@@ -99,6 +100,7 @@ class StartOk extends StartResult {
     this.removedSeats = const <RemovedSeat>[],
     this.movedSeats = const <Seat>[],
     this.reseatSeq,
+    this.reseatRoom,
   });
   final Room room;
 
@@ -127,6 +129,15 @@ class StartOk extends StartResult {
   /// (`docs/PROTOCOL.md` section 16.9 rule 3 -- a host `start_game` with
   /// every occupied seat already ready sends no re-seat `room` of its own).
   final int? reseatSeq;
+
+  /// The `room` snapshot that announces the section 16.4 re-seat, built the
+  /// instant the re-seat landed, at [reseatSeq]: LOBBY, the new seating and
+  /// `rematch` null. Built here rather than by the caller because by the
+  /// time the caller sends it, the start below has already moved `room` on
+  /// (server seeds, `game_started`, `turn`), and a snapshot taken then
+  /// carries the wrong `seq` and the wrong state. Null exactly when
+  /// [reseatSeq] is.
+  final Map<String, Object?>? reseatRoom;
 
   /// Seats that had no `client_seed` when this call ran and were given a
   /// server-drawn one, in ascending seat order, each paired with `room.seq`
@@ -676,14 +687,21 @@ class RoomRegistry {
     // docs/PROTOCOL.md section 16.9 rule 3: at least one seat removed means
     // the re-seat `room` gets its own `seq` step even when no seat number
     // actually changed.
+    // docs/PROTOCOL.md section 16.4: "rematch becomes null again in the
+    // room and frames the start sends", and the re-seat room is the first
+    // of those frames.
+    room.rematch = null;
     room.seq++;
     final int reseatSeq = room.seq;
+    final Map<String, Object?> reseatRoom =
+        buildRoomSnapshot(room, now: _clock.now);
 
     return _beginGame(
       room,
       removedSeats: removedSeats,
       movedSeats: movedSeats,
       reseatSeq: reseatSeq,
+      reseatRoom: reseatRoom,
     );
   }
 
@@ -699,6 +717,7 @@ class RoomRegistry {
     List<RemovedSeat> removedSeats = const <RemovedSeat>[],
     List<Seat> movedSeats = const <Seat>[],
     int? reseatSeq,
+    Map<String, Object?>? reseatRoom,
   }) {
     // docs/PROTOCOL.md section 11.2: every seat that sent no `set_seed`
     // gets a server-drawn seed here, before `client_seeds` is frozen. Each
@@ -763,6 +782,7 @@ class RoomRegistry {
       removedSeats: removedSeats,
       movedSeats: movedSeats,
       reseatSeq: reseatSeq,
+      reseatRoom: reseatRoom,
     );
   }
 

@@ -322,7 +322,7 @@ void main() {
     test(
         'state, game_id, client_seeds, turn, winner and every seat\'s '
         'tokens/client_seed/seed_origin reset in one step', () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby =
           await _finishedTwoSeatRoom(harness, clients, winner: 0);
 
@@ -362,7 +362,7 @@ void main() {
     // games"), the single most security-relevant mutation this whole file
     // exists to catch.
     test('a new chain: chain_commit differs, chain_index is +1', () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
       final String oldChainCommit = lobby.hostRoom['chain_commit']! as String;
       final int oldChainIndex = lobby.hostRoom['chain_index']! as int;
@@ -481,7 +481,7 @@ void main() {
     test(
         'seq advances by exactly one; the requester\'s copy carries re, '
         'every other seat gets a plain broadcast', () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
       // lobby.hostRoom is the room frame from create_room, long before the
       // join, the two set_seed calls and start_game's own seq steps; none
@@ -516,7 +516,7 @@ void main() {
     // Catches: rematch.by or rematch.ready missing the requester, or ready
     // carrying anyone else before anyone else has accepted.
     test('rematch becomes { by: requester, ready: [requester] }', () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
 
       lobby.guest.client.send('rematch', <String, Object?>{});
@@ -535,7 +535,7 @@ void main() {
     test(
         'players, rules, host_seat, seat numbers, names and seat_token are '
         'unchanged', () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
 
       lobby.host.client.send('rematch', <String, Object?>{});
@@ -573,7 +573,7 @@ void main() {
     // clock. Section 3/16.2 item 4, FakeClock seam per registry_reap_test.
     test('the 60-minute total lifetime restarts at the first rematch',
         () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
 
       // 55 minutes since the room (and therefore the first game) was
@@ -608,7 +608,7 @@ void main() {
     test(
         'a seat not yet ready: added, seq advances, room broadcast with re '
         'on the sender', () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
       lobby.host.client.send('rematch', <String, Object?>{});
       await lobby.host.client.next();
@@ -636,7 +636,7 @@ void main() {
     test(
         'a seat already ready: a double accept changes nothing, no seq '
         'bump, no broadcast, only the sender gets the current room', () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
       lobby.host.client.send('rematch', <String, Object?>{});
       await lobby.host.client.next();
@@ -680,7 +680,7 @@ void main() {
     test(
         'everyone accepted and connected: the server auto-starts, same '
         'frame order and seq steps as start_game', () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
       lobby.host.client.send('rematch', <String, Object?>{});
       final Map<String, Object?> hostFirst = await lobby.host.client.next();
@@ -779,6 +779,43 @@ void main() {
               'ready guest was disconnected; got "${next['t']}" instead');
     });
 
+    // Catches: the auto-start check dropping its "every seat connected"
+    // term. The case above never reaches that term, because its guest drops
+    // before accepting and so "everyone ready" is never true. Here the guest
+    // accepts first and then drops, and the host's accept is the one that
+    // makes every occupied seat ready while one of them is offline.
+    test(
+        'no auto-start when the last accept lands while a ready seat is '
+        'disconnected', () async {
+      await start();
+      final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
+      lobby.guest.client.send('rematch', <String, Object?>{});
+      await lobby.guest.client.next(); // room, guest's own accept
+      await lobby.host.client.next(); // room, broadcast
+
+      await lobby.guest.client.close();
+      final Map<String, Object?> presence = await lobby.host.client.next();
+      expect(presence['t'], 'presence');
+      expect((presence['d']! as Map<String, Object?>)['connected'], isFalse);
+
+      lobby.host.client.send('rematch', <String, Object?>{});
+      final Map<String, Object?> hostAccept = await lobby.host.client.next();
+      expect(hostAccept['t'], 'room');
+      final Map<String, Object?> hostAcceptData =
+          hostAccept['d']! as Map<String, Object?>;
+      expect(hostAcceptData['state'], 'LOBBY');
+      expect((hostAcceptData['rematch']! as Map<String, Object?>)['ready'],
+          <int>[lobby.host.seat, lobby.guest.seat]..sort(),
+          reason: 'setup: both seats must be ready after the host accepts, '
+              'or this case does not reach the connected check at all');
+
+      lobby.host.client.send('ping', <String, Object?>{});
+      final Map<String, Object?> next = await lobby.host.client.next();
+      expect(next['t'], 'pong',
+          reason: 'every occupied seat was ready but the guest was offline, '
+              'so section 16.4 forbids the auto-start; got "${next['t']}"');
+    });
+
     // Catches: a host start_game in a rematch lobby that fails to remove
     // the non-ready seat, or that fails to re-seat the survivor onto the
     // canonical set and tell it via seat_assigned (section 15 rule 1).
@@ -813,8 +850,6 @@ void main() {
       await hostClient.next(); // player_joined
       await midClient.next(); // player_joined
 
-      final int midSeat =
-          (midSeatAssigned['d']! as Map<String, Object?>)['seat']! as int;
       final String midToken = (midSeatAssigned['d']!
           as Map<String, Object?>)['seat_token']! as String;
       final int farSeat =
@@ -884,7 +919,7 @@ void main() {
     // Catches: a start_game accepted with fewer than two ready seats, which
     // would let a single lonely acceptance start a one-player game.
     test('fewer than two ready: NOT_ENOUGH_PLAYERS, nothing changes', () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
       lobby.host.client.send('rematch', <String, Object?>{});
       await lobby.host.client.next();
@@ -909,7 +944,7 @@ void main() {
     // letting a seat change the table size out from under the ready list
     // the spec says decides the count instead.
     test('set_players in a rematch LOBBY is WRONG_PHASE', () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
       lobby.host.client.send('rematch', <String, Object?>{});
       await lobby.host.client.next();
@@ -931,7 +966,7 @@ void main() {
     test(
         'a seat that already set a seed in game 1 may set one again for '
         'the new chain', () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
       lobby.host.client.send('rematch', <String, Object?>{});
       await lobby.host.client.next();
@@ -953,7 +988,7 @@ void main() {
     test(
         'a second set_seed within the same new chain_index is '
         'SEED_ALREADY_SET', () async {
-      final Uri uri = await start();
+      await start();
       final WireTestLobby lobby = await _finishedTwoSeatRoom(harness, clients);
       lobby.host.client.send('rematch', <String, Object?>{});
       await lobby.host.client.next();
@@ -1083,7 +1118,7 @@ void main() {
     test(
         'rule 2: host start_game in a rematch lobby counts as the host\'s '
         'own acceptance, silently, and never removes the host', () async {
-      final Uri uri = await start();
+      await start();
       final _ThreeSeatLobby lobby =
           await _finishedThreeSeatRoom(harness, clients);
 
@@ -1165,7 +1200,7 @@ void main() {
     test(
         'rule 3: the re-seat room is sent with its own seq step even when '
         'no seat number changes', () async {
-      final Uri uri = await start();
+      await start();
       final _ThreeSeatLobby lobby =
           await _finishedThreeSeatRoom(harness, clients);
       // This scenario only proves what it claims if removing mid leaves
@@ -1319,7 +1354,7 @@ void main() {
     test(
         'a non-ready seat leaves, then the last remaining seat\'s accept '
         'auto-starts', () async {
-      final Uri uri = await start();
+      await start();
       final _ThreeSeatLobby lobby =
           await _finishedThreeSeatRoom(harness, clients);
 
