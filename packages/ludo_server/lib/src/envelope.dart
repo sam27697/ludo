@@ -131,6 +131,7 @@ const Set<String> knownMessageTypes = <String>{
   'ping',
   'roll',
   'move',
+  'rematch',
 };
 
 /// Steps 2 through 6 of the section 7 ladder: JSON parse, `v`, `t`, `id`

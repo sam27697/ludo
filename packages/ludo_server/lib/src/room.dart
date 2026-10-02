@@ -43,6 +43,40 @@ class RulesConfig {
 /// Where a room sits in `docs/PROTOCOL.md` section 3's lifecycle.
 enum RoomState { lobby, playing, finished }
 
+/// `docs/PROTOCOL.md` section 16.6, the room snapshot's `rematch` field.
+/// Non-null only while the room is a rematch LOBBY (reached from FINISHED by
+/// an accepted `rematch`, section 16.2) and null again the moment the game
+/// it is waiting on actually starts (section 16.4).
+class Rematch {
+  Rematch({
+    required this.by,
+    required List<int> ready,
+  }) : ready = List<int>.unmodifiable(ready);
+
+  /// The seat that sent the `rematch` which reopened this LOBBY from
+  /// FINISHED. Sticky: section 16.6 says `ready` always contains `by`
+  /// "unless `by` has since left", which only makes sense if `by` itself can
+  /// outlive that seat leaving the room -- so this is never cleared or
+  /// reassigned for the life of one rematch LOBBY, even once the seat it
+  /// names is gone.
+  final int by;
+
+  /// Ascending seat order, `docs/PROTOCOL.md` section 16.6. Never contains a
+  /// seat that is not currently in [Room.seats] -- `RoomRegistry.leaveRoom`
+  /// removes a departing seat from here in the same step that frees its
+  /// seat index.
+  ///
+  /// `docs/PROTOCOL.md` section 16.4, as amended: the auto-start set is "the
+  /// seats occupied when the accept arrives", read fresh off `Room.seats` at
+  /// that instant, not fixed at the first `rematch` of the cycle -- a seat
+  /// that left must never go on blocking a start it can no longer complete,
+  /// and a seat that joined after the cycle opened must be waited for like
+  /// any other. There used to be a second field here, `openSeats`, frozen at
+  /// the moment the LOBBY opened; it is gone, because a set fixed at that
+  /// moment is exactly the thing section 16.9 rule 4 rules out.
+  final List<int> ready;
+}
+
 /// One occupied seat. `seatToken` is issued once, when the seat is taken,
 /// and is the only thing that ever reclaims it.
 class Seat {
@@ -100,10 +134,23 @@ class Room {
     this.gameId,
     this.clientSeeds,
     this.seq = 0,
-  });
+    this.rematch,
+    DateTime? lifetimeStartedAt,
+  }) : lifetimeStartedAt = lifetimeStartedAt ?? createdAt;
 
   final String code;
   final DateTime createdAt;
+
+  /// The moment this room's current 60-minute lifetime budget began.
+  /// `docs/PROTOCOL.md` section 3: "A room in any state is reaped 60 minutes
+  /// after creation regardless." Starts at [createdAt] and is moved forward
+  /// to "this moment" by the first `rematch` of a cycle (section 16.2 item
+  /// 4: "The room's 60-minute total lifetime restarts from this moment, so a
+  /// second game is not reaped half way through"). [createdAt] itself never
+  /// changes -- it is still the room's true creation instant for anything
+  /// that wants that -- so `RoomRegistry.reap` reads this field instead for
+  /// the 60-minute ceiling.
+  DateTime lifetimeStartedAt;
 
   /// Monotonic, starts at 0 on creation, incremented by exactly one by the
   /// registry on every successful state-changing call
@@ -200,6 +247,14 @@ class Room {
   /// now.difference(this).inMilliseconds)` on the registry's injected
   /// `Clock` -- never `DateTime.now()` directly.
   DateTime? turnSegmentStartedAt;
+
+  /// `docs/PROTOCOL.md` section 16.6. Null except while this room is a
+  /// rematch LOBBY: set by `RoomRegistry.rematch`'s first call in a FINISHED
+  /// room (section 16.2 item 3) and cleared back to null the moment a game
+  /// actually starts from it, whether that start was the server's own
+  /// auto-start (section 16.4 "Everyone accepted") or the host's forced
+  /// `start_game` (section 16.4 "Not everyone").
+  Rematch? rematch;
 
   @override
   String toString() => 'Room(code: $code, state: $state, '

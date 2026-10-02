@@ -1,17 +1,33 @@
 // Argument parsing for the frozen invocation of order 014, plus the
-// order 217 addition of --fetch-record:
+// order 217 addition of --fetch-record, and the order 235 (run 67) addition
+// of `rematch` to the set of names `--scenario` accepts:
 //
 //   dart run tool/simulator.dart --target <url>
-//       [--scenario all|full-game|reconnect|double-drop]
+//       [--scenario all|full-game|reconnect|double-drop|rematch]
 //       [--timeout-seconds N] [--players N] [--fetch-record]
 //
 // No third-party argument-parsing package: the whole surface is a handful
 // of flags, most taking exactly one value, and a hand-rolled loop is easier
 // to audit against that frozen list than a dependency would be.
 
-/// The `--scenario` values this simulator understands, in the order they
-/// run under `all`.
+/// The `--scenario` values this simulator understands. `rematch` is in this
+/// list (run 67) so `--scenario rematch` is validated here like any other
+/// name instead of being stripped out of the argument list before it
+/// reaches this file, but it is deliberately excluded from [scenariosInAll]
+/// below: the gate runs `all` under a 210s bound sized for the three
+/// scenarios order 014 shipped, and widening that bound to also fit a
+/// second full game is a later harness order's job, not this one's.
 const List<String> knownScenarios = <String>[
+  'full-game',
+  'reconnect',
+  'double-drop',
+  'rematch',
+];
+
+/// The `--scenario` values `all` expands to, in the order they run. Every
+/// entry here is also in [knownScenarios]; the reverse is not required, and
+/// `rematch` is the one name in [knownScenarios] that is not here.
+const List<String> scenariosInAll = <String>[
   'full-game',
   'reconnect',
   'double-drop',
@@ -57,8 +73,10 @@ class SimulatorArgs {
 
   /// The scenario names this run should execute, in a fixed order,
   /// regardless of whether `--scenario` named one of them or `all`.
+  /// `all` expands to [scenariosInAll], not [knownScenarios]: `rematch` is a
+  /// valid `--scenario` value but never runs as part of `all`.
   List<String> get selectedScenarios =>
-      scenario == 'all' ? knownScenarios : <String>[scenario];
+      scenario == 'all' ? scenariosInAll : <String>[scenario];
 }
 
 SimulatorArgs parseArgs(List<String> arguments) {
@@ -158,10 +176,10 @@ String _valueAfter(List<String> arguments, int i, String flag) {
 
 /// Printed to stderr alongside any [ArgsError].
 const String usage = '''
-usage: dart run tool/simulator.dart --target <url> [--scenario all|full-game|reconnect|double-drop] [--timeout-seconds N] [--players N] [--fetch-record]
+usage: dart run tool/simulator.dart --target <url> [--scenario all|full-game|reconnect|double-drop|rematch] [--timeout-seconds N] [--players N] [--fetch-record]
 
   --target           required. Base WebSocket URL of a running server, ws:// or wss://.
-  --scenario         default: all
+  --scenario         default: all. rematch is valid but never runs as part of all; select it on its own.
   --timeout-seconds  default: 180. Bounds the whole run, not one frame.
   --players          default: 4. Seats to play with, 2 to 4.
   --fetch-record     default: off. After each game ends, fetch <verify_url>.json
