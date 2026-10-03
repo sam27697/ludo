@@ -27,7 +27,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
 import 'die_mark.dart';
+import 'feedback.dart';
 import 'game_die.dart';
+import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'theme.dart';
@@ -94,10 +96,24 @@ class _GameScreenState extends State<GameScreen> {
   bool _rollNoAnswer = false;
   static const Duration _rollNoAnswerDelay = Duration(seconds: 4);
 
+  // C-236 rule 2: one subscription to controller.frames for the life of
+  // this screen, feeding every frame's cues to the one FeedbackService
+  // above this tree. C-236 rule 4: the no-move beat it also drives. Armed
+  // by a `rolled` for my seat with an empty `legal`; holds
+  // `game-die-no-move-mark` and `game-no-move-notice` up for exactly
+  // `_noMoveHold` from that `rolled`, whatever the turn banner does
+  // underneath it in the meantime, and ends early only when a newer
+  // `rolled` for my seat -- can-move or no-move alike -- lands.
+  StreamSubscription<Frame>? _frameSub;
+  static const Duration _noMoveHold = Duration(milliseconds: 1500);
+  Timer? _noMoveTimer;
+  bool _noMoveVisible = false;
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onControllerChanged);
+    _frameSub = widget.controller.frames.listen(_onFrame);
     _syncCountdown();
   }
 
@@ -112,8 +128,58 @@ class _GameScreenState extends State<GameScreen> {
     _countdownTimer?.cancel();
     _autoMoveTimer?.cancel();
     _rollNoAnswerTimer?.cancel();
+    _noMoveTimer?.cancel();
+    _frameSub?.cancel();
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
+  }
+
+  /// C-236 rule 2: every cue `cuesForFrame` derives for this frame, played
+  /// in list order, synchronously, through the one `FeedbackService`
+  /// `FeedbackScope.of` finds. This is the only place a cue is played for a
+  /// frame; the derivation is `cuesForFrame`'s and only its.
+  ///
+  /// Also arms or drops the no-move hold (rule 4): a `rolled` this screen
+  /// derived a cue for (so a well-formed `rolled` naming my seat) arms the
+  /// hold when that cue is `noMove`, and drops it otherwise -- the "newer
+  /// rolled for my seat" that ends an earlier hold early.
+  void _onFrame(Frame frame) {
+    final List<FeedbackCue> cues = cuesForFrame(
+      frame,
+      mySeat: widget.controller.seat,
+    );
+    final FeedbackService feedback = FeedbackScope.of(context);
+    for (final FeedbackCue cue in cues) {
+      feedback.play(cue);
+    }
+    if (frame.type == 'rolled' && cues.isNotEmpty) {
+      if (cues.contains(FeedbackCue.noMove)) {
+        _armNoMoveHold();
+      } else {
+        _dropNoMoveHold();
+      }
+    }
+  }
+
+  void _armNoMoveHold() {
+    _noMoveTimer?.cancel();
+    _noMoveTimer = Timer(_noMoveHold, _dropNoMoveHold);
+    if (!_noMoveVisible) {
+      setState(() {
+        _noMoveVisible = true;
+      });
+    }
+  }
+
+  void _dropNoMoveHold() {
+    _noMoveTimer?.cancel();
+    _noMoveTimer = null;
+    if (!mounted || !_noMoveVisible) {
+      return;
+    }
+    setState(() {
+      _noMoveVisible = false;
+    });
   }
 
   void _onControllerChanged() {
@@ -124,8 +190,12 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
-  /// Tapping the die while it would roll: haptic now (the feedback service
-  /// replaces this call later), start the tumble, send the intention.
+  /// Tapping the die while it would roll: haptic now, start the tumble,
+  /// send the intention. C-236 rule 5: this `HapticFeedback.lightImpact()`
+  /// is a tap acknowledgement, not a game event, and stays alongside the
+  /// feedback service rather than being folded into it; `yourTurn` and
+  /// `canMove`/`noMove` for the roll that follows are played separately,
+  /// from `_onFrame`, once the server's own `rolled` frame lands.
   void _onDieTap() {
     final TurnState? turn = widget.controller.room?.turn;
     if (turn == null) {
@@ -631,6 +701,9 @@ class _GameScreenState extends State<GameScreen> {
                 }
                 _sendMove(index, k);
               },
+              onIllegalTokenTap: (int index) {
+                FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+              },
             ),
           ),
           const SizedBox(height: kSpace4),
@@ -641,9 +714,21 @@ class _GameScreenState extends State<GameScreen> {
               enabled: rollEnabled,
               tumbling: _rollWaitK != null,
               noAnswer: _rollNoAnswer,
+              noMove: _noMoveVisible,
               onTap: rollEnabled ? _onDieTap : null,
+              onInvalidTap: () {
+                FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+              },
             ),
           ),
+          if (_noMoveVisible) ...[
+            const SizedBox(height: kSpace2),
+            Text(
+              loc.gameNoMove,
+              key: const Key('game-no-move-notice'),
+              textAlign: TextAlign.center,
+            ),
+          ],
           const SizedBox(height: kSpace4),
         ],
       ),
