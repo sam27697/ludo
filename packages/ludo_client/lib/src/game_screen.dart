@@ -100,7 +100,7 @@ class _GameScreenState extends State<GameScreen> {
 
   // C-236 rule 2: one subscription to controller.frames for the life of
   // this screen, feeding every frame's cues to the one FeedbackService
-  // above this tree. C-236 rule 4, amended by run 69's rules 4a and 4b: the
+  // above this tree. C-236 rules 4, 4a and 4b: the
   // no-move beat it also drives. Armed by a `rolled` for my seat with an
   // empty `legal`; holds `game-die-no-move-mark` and `game-no-move-notice`
   // up for exactly `_noMoveHold` from that `rolled`, whatever the turn
@@ -739,7 +739,7 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// RETURN 2, defect 1: the header above the board must have one height
+  /// The header above the board must have one height
   /// in every playing state, the same technique [_noMoveNoticeSlot] already
   /// uses for the notice itself. A roll landing changes which of these
   /// strings is on screen -- "roll" becomes "move", a seat goes offline, a

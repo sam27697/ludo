@@ -251,8 +251,8 @@ class _EndCardState extends State<EndCard> {
     // Four tiles (or one, on the gap case) share the card's own width evenly
     // -- `Expanded` rather than the bare spaceEvenly this replaced, so each
     // tile's own text wraps onto a second line under a wide locale or a big
-    // text scale instead of pushing the row past the card's edge (run 68's
-    // 40px/34px RenderFlex overflow at an ordinary phone width).
+    // text scale instead of pushing the row past the card's edge at an
+    // ordinary phone width.
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
