@@ -681,27 +681,11 @@ class _GameScreenState extends State<GameScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            _turnBannerText(loc, room, seat),
-            key: const Key('game-screen-turn-banner'),
-            textAlign: TextAlign.center,
-          ),
-          if (offlineTurnSeat != null) ...[
-            const SizedBox(height: kSpace2),
-            Text(
-              loc.gameSeatOffline(offlineTurnSeat.name),
-              key: const Key('game-screen-turn-seat-offline'),
-              textAlign: TextAlign.center,
-            ),
-          ],
-          if (turn != null && turn.value != null) ...[
-            const SizedBox(height: kSpace2),
-            Text(
-              loc.gameDieValue(turn.value!),
-              key: const Key('game-screen-dice-value'),
-              textAlign: TextAlign.center,
-            ),
-          ],
+          _turnBannerSlot(_turnBannerText(loc, room, seat)),
+          const SizedBox(height: kSpace2),
+          _seatOfflineSlot(loc, offlineTurnSeat),
+          const SizedBox(height: kSpace2),
+          _diceValueSlot(loc, turn),
           if (turn != null) ...[
             const SizedBox(height: kSpace2),
             Text(
@@ -752,6 +736,94 @@ class _GameScreenState extends State<GameScreen> {
           const SizedBox(height: kSpace4),
         ],
       ),
+    );
+  }
+
+  /// RETURN 2, defect 1: the header above the board must have one height
+  /// in every playing state, the same technique [_noMoveNoticeSlot] already
+  /// uses for the notice itself. A roll landing changes which of these
+  /// strings is on screen -- "roll" becomes "move", a seat goes offline, a
+  /// value appears -- and none of that may grow or shrink the space left
+  /// for `Expanded(LudoBoard)` underneath. The banner's own two lines are
+  /// reserved by an invisible placeholder forced onto two lines by an
+  /// explicit break, sized the same as the real text since both inherit
+  /// the same ambient style; the real banner sits on top of it with
+  /// `maxLines: 2` and an ellipsis rather than ever reaching a third line
+  /// that would grow the slot again.
+  Widget _turnBannerSlot(String bannerText) {
+    return Stack(
+      alignment: Alignment.topCenter,
+      children: [
+        const ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text('x\nx', textAlign: TextAlign.center),
+          ),
+        ),
+        Positioned.fill(
+          child: Text(
+            bannerText,
+            key: const Key('game-screen-turn-banner'),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Same technique: the seat-offline line's slot is sized whether or not
+  /// a seat is actually offline, from an invisible copy of the same string
+  /// the real line would show; `game-screen-turn-seat-offline` itself still
+  /// only appears while `offlineTurnSeat` is not null, exactly as before.
+  Widget _seatOfflineSlot(AppLocalizations loc, SeatState? offlineTurnSeat) {
+    return Stack(
+      alignment: Alignment.topCenter,
+      children: [
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(loc.gameSeatOffline(''), textAlign: TextAlign.center),
+          ),
+        ),
+        if (offlineTurnSeat != null)
+          Positioned.fill(
+            child: Text(
+              loc.gameSeatOffline(offlineTurnSeat.name),
+              key: const Key('game-screen-turn-seat-offline'),
+              textAlign: TextAlign.center,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Same technique again: the rolled value's own slot is sized whether a
+  /// roll has actually landed for the current turn or not, so the very
+  /// roll that arms the no-move hold does not also grow the header a
+  /// line's worth underneath the board the same instant. `game-screen-
+  /// dice-value` itself still only appears while `turn.value` is not null,
+  /// exactly as before.
+  Widget _diceValueSlot(AppLocalizations loc, TurnState? turn) {
+    return Stack(
+      alignment: Alignment.topCenter,
+      children: [
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(loc.gameDieValue(0), textAlign: TextAlign.center),
+          ),
+        ),
+        if (turn != null && turn.value != null)
+          Positioned.fill(
+            child: Text(
+              loc.gameDieValue(turn.value!),
+              key: const Key('game-screen-dice-value'),
+              textAlign: TextAlign.center,
+            ),
+          ),
+      ],
     );
   }
 
