@@ -754,7 +754,7 @@ void main() {
         final loc = _locOf(tester);
         expect(find.byKey(_boardKey), findsOneWidget);
         final winnerText = tester.widget<Text>(find.byKey(_winnerKey));
-        expect(winnerText.data, loc.gameOverYouWin);
+        expect(winnerText.data, loc.endWinTitle);
         expect(find.byKey(_tappableDieKey), findsNothing);
         for (int i = 0; i < 4; i++) {
           expect(find.byKey(_dieHitKey(0, i)), findsNothing);
@@ -780,8 +780,14 @@ void main() {
       await _mount(tester, controller);
 
       final loc = _locOf(tester);
+      // game-screen-winner is a Text.rich on a loss (the winner's name in
+      // the winner's seat colour, contract C-243 rule 3), so Text.data
+      // alone is null here; read through the span's own plain text too.
       final winnerText = tester.widget<Text>(find.byKey(_winnerKey));
-      expect(winnerText.data, loc.gameOverPlayerWins('Bob'));
+      expect(
+        winnerText.data ?? winnerText.textSpan?.toPlainText(),
+        loc.endLoseTitle('Bob'),
+      );
       expect(find.byKey(_tappableDieKey), findsNothing);
       for (int i = 0; i < 4; i++) {
         expect(find.byKey(_dieHitKey(0, i)), findsNothing);
@@ -871,7 +877,7 @@ void main() {
         final winnerText = tester.widget<Text>(find.byKey(_winnerKey));
         expect(
           winnerText.data,
-          loc.gameOverYouWin,
+          loc.endWinTitle,
           reason: 'the winner text itself must still render without a board',
         );
       },

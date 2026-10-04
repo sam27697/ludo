@@ -275,6 +275,7 @@ Widget _harness(
   Widget child, {
   Locale locale = const Locale('en'),
   bool disableAnimations = false,
+  double textScale = 1.0,
 }) {
   return MaterialApp(
     locale: locale,
@@ -288,7 +289,10 @@ Widget _harness(
     builder: (BuildContext context, Widget? child) {
       final MediaQueryData data = MediaQuery.of(context);
       return MediaQuery(
-        data: data.copyWith(disableAnimations: disableAnimations),
+        data: data.copyWith(
+          disableAnimations: disableAnimations,
+          textScaler: TextScaler.linear(textScale),
+        ),
         child: child!,
       );
     },
@@ -306,14 +310,17 @@ Future<void> _mount(
   RoomController controller, {
   Locale locale = const Locale('en'),
   bool disableAnimations = false,
+  Size size = const Size(390, 844),
+  double textScale = 1.0,
 }) async {
-  await tester.binding.setSurfaceSize(const Size(390, 844));
+  await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(
     _harness(
       GameScreen(controller: controller),
       locale: locale,
       disableAnimations: disableAnimations,
+      textScale: textScale,
     ),
   );
   await tester.pump();
@@ -426,6 +433,8 @@ Future<(RoomController, FakeTransport)> _minimalWinGame(
   WidgetTester tester, {
   Locale locale = const Locale('en'),
   bool disableAnimations = false,
+  Size size = const Size(390, 844),
+  double textScale = 1.0,
 }) async {
   final (RoomController controller, FakeTransport transport) = await _connectTo(
     tester,
@@ -436,6 +445,8 @@ Future<(RoomController, FakeTransport)> _minimalWinGame(
     controller,
     locale: locale,
     disableAnimations: disableAnimations,
+    size: size,
+    textScale: textScale,
   );
   final _GameScript script = _GameScript(tester, transport);
   await script.gameStarted(turnSeat: 0);
@@ -450,12 +461,20 @@ Future<(RoomController, FakeTransport)> _minimalWinGame(
 Future<(RoomController, FakeTransport)> _minimalLoseGame(
   WidgetTester tester, {
   Locale locale = const Locale('en'),
+  Size size = const Size(390, 844),
+  double textScale = 1.0,
 }) async {
   final (RoomController controller, FakeTransport transport) = await _connectTo(
     tester,
     turn: null,
   );
-  await _mount(tester, controller, locale: locale);
+  await _mount(
+    tester,
+    controller,
+    locale: locale,
+    size: size,
+    textScale: textScale,
+  );
   final _GameScript script = _GameScript(tester, transport);
   await script.gameStarted(turnSeat: 1);
   await script.turn(seat: 1);
@@ -616,6 +635,8 @@ Future<(RoomController, FakeTransport)> _gapWinGame(WidgetTester tester) async {
 Future<(RoomController, FakeTransport)> _endedNoWinnerGame(
   WidgetTester tester, {
   Locale locale = const Locale('en'),
+  Size size = const Size(390, 844),
+  double textScale = 1.0,
 }) async {
   final (RoomController controller, FakeTransport transport) = await _connectTo(
     tester,
@@ -623,7 +644,13 @@ Future<(RoomController, FakeTransport)> _endedNoWinnerGame(
     winner: null,
     turn: _turnJson(seat: 0, phase: 'finished', deadlineMs: 0, k: 1),
   );
-  await _mount(tester, controller, locale: locale);
+  await _mount(
+    tester,
+    controller,
+    locale: locale,
+    size: size,
+    textScale: textScale,
+  );
   return (controller, transport);
 }
 
@@ -685,6 +712,16 @@ String _blobUnder(WidgetTester tester, Finder root) {
     // counted above still stand.
   }
   return out.toString();
+}
+
+/// The title key (`game-screen-winner`) is a plain `Text` on a win or the
+/// ended card but `Text.rich` on a loss (the winner's name in the winner's
+/// seat colour, contract rule 3), so `Text.data` alone is null on that
+/// branch. Reads whichever form is actually mounted, falling back to the
+/// span's own plain text.
+String _titleText(WidgetTester tester, Key key) {
+  final Text title = tester.widget<Text>(find.byKey(key));
+  return title.data ?? title.textSpan?.toPlainText() ?? '';
 }
 
 /// Scans the *entire* mounted tree, not scoped to GameScreen's own subtree:
@@ -873,6 +910,16 @@ final List<RegExp> _forbiddenWordPatterns = <RegExp>[
   RegExp(r'\bwager\w*\b', caseSensitive: false),
 ];
 
+/// Mirrors test/lobby_screen_die_code_start_label_test.dart's own
+/// `_isOverflowError`, not imported, per this order's rule against
+/// importing across test files: checks both the raised exception's own
+/// message and the full details dump, since a RenderFlex overflow surfaces
+/// its "overflowed" wording on the exception itself.
+bool _isOverflowError(FlutterErrorDetails details) {
+  final String text = '${details.exception}\n$details';
+  return text.contains('overflowed');
+}
+
 void _assertNoForbiddenLanguage(String text, {required String where}) {
   final String lower = text.toLowerCase();
   for (final String phrase in _forbiddenPhraseSubstrings) {
@@ -925,13 +972,13 @@ void main() {
             'celebration is exactly the mutation this case exists to '
             'catch',
       );
-      final Text title = tester.widget<Text>(find.byKey(_winnerTitleKey));
+      final String titleText = _titleText(tester, _winnerTitleKey);
       expect(
-        title.data,
+        titleText,
         loc.endWinTitle,
         reason:
             'game-screen-winner must show loc.endWinTitle '
-            '("${loc.endWinTitle}") on a win; got "${title.data}"',
+            '("${loc.endWinTitle}") on a win; got "$titleText"',
       );
       expect(
         find.byKey(_loseKey),
@@ -963,16 +1010,16 @@ void main() {
           findsOneWidget,
           reason: 'end-card-lose must be shown when another seat won',
         );
-        final Text title = tester.widget<Text>(find.byKey(_winnerTitleKey));
+        final String titleText = _titleText(tester, _winnerTitleKey);
         expect(
-          title.data,
+          titleText,
           loc.endLoseTitle('Bob'),
           reason:
               'game-screen-winner must show loc.endLoseTitle(\'Bob\') '
-              '("${loc.endLoseTitle('Bob')}") on a loss; got "${title.data}"',
+              '("${loc.endLoseTitle('Bob')}") on a loss; got "$titleText"',
         );
         expect(
-          title.data,
+          titleText,
           isNot(loc.endWinTitle),
           reason:
               'the lose card reusing the win title is exactly the mutation '
@@ -1430,8 +1477,7 @@ void main() {
       );
       expect(loc.endLoseNudge, 'كانت قريبة. جولة أخرى؟');
 
-      final Text title = tester.widget<Text>(find.byKey(_winnerTitleKey));
-      expect(title.data, loc.endLoseTitle('Bob'));
+      expect(_titleText(tester, _winnerTitleKey), loc.endLoseTitle('Bob'));
       final String blob = _blobUnder(tester, find.byType(GameScreen));
       expect(blob.contains(loc.endLoseNudge), isTrue);
     });
@@ -1511,5 +1557,104 @@ void main() {
         );
       },
     );
+  });
+
+  // ===========================================================================
+  // Width coverage (order 244r1, item 3): the card must not overflow at an
+  // ordinary phone width in either locale, on any of the three endings, at
+  // either the default text scale or a large one. Kills the mutation 243r1
+  // exists to fix and the master's own run 68 verdict measured by hand: the
+  // stat row and the fairness row failing to wrap or scale down at 360-390
+  // logical pixels wide, which 243's own default 800x600 test surface never
+  // meets. On the pre-243r1 base this group is expected to fail with
+  // "overflowed" at 390x844 (and, being narrower still, at 360x800 too) --
+  // that failure is the product defect 243r1 fixes in parallel, not a defect
+  // in this file.
+  // ===========================================================================
+  group('width coverage (order 244r1 item 3, the overflow 243r1 fixes)', () {
+    const List<Size> phoneSizes = <Size>[Size(360, 800), Size(390, 844)];
+    const List<Locale> phoneLocales = <Locale>[Locale('en'), Locale('ar')];
+    const List<double> phoneTextScales = <double>[1.0, 1.3];
+    const List<String> phoneScenarios = <String>['win', 'lose', 'ended'];
+
+    Future<void> mountScenario(
+      WidgetTester tester, {
+      required String scenario,
+      required Locale locale,
+      required Size size,
+      required double textScale,
+    }) async {
+      switch (scenario) {
+        case 'win':
+          await _minimalWinGame(
+            tester,
+            locale: locale,
+            size: size,
+            textScale: textScale,
+          );
+          return;
+        case 'lose':
+          await _minimalLoseGame(
+            tester,
+            locale: locale,
+            size: size,
+            textScale: textScale,
+          );
+          return;
+        case 'ended':
+          await _endedNoWinnerGame(
+            tester,
+            locale: locale,
+            size: size,
+            textScale: textScale,
+          );
+          return;
+        default:
+          fail('width coverage: unknown scenario "$scenario"');
+      }
+    }
+
+    for (final Size size in phoneSizes) {
+      for (final Locale locale in phoneLocales) {
+        for (final String scenario in phoneScenarios) {
+          for (final double textScale in phoneTextScales) {
+            testWidgets('no RenderFlex overflow at ${size.width.toInt()}x'
+                '${size.height.toInt()}, ${locale.languageCode}, $scenario, '
+                'text scale ${textScale}x', (tester) async {
+              final List<FlutterErrorDetails> captured =
+                  <FlutterErrorDetails>[];
+              final void Function(FlutterErrorDetails)? previous =
+                  FlutterError.onError;
+              FlutterError.onError = captured.add;
+              try {
+                await mountScenario(
+                  tester,
+                  scenario: scenario,
+                  locale: locale,
+                  size: size,
+                  textScale: textScale,
+                );
+                await tester.pump();
+              } finally {
+                FlutterError.onError = previous;
+              }
+
+              final List<FlutterErrorDetails> overflows = captured
+                  .where(_isOverflowError)
+                  .toList();
+              expect(
+                overflows,
+                isEmpty,
+                reason:
+                    'end card at ${size.width.toInt()}x'
+                    '${size.height.toInt()}, ${locale.languageCode}, '
+                    '$scenario, text scale ${textScale}x must not report '
+                    'a RenderFlex overflow; got $overflows',
+              );
+            });
+          }
+        }
+      }
+    }
   });
 }

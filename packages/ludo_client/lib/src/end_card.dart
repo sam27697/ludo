@@ -248,9 +248,16 @@ class _EndCardState extends State<EndCard> {
             homeTile,
           ]
         : <Widget>[homeTile];
+    // Four tiles (or one, on the gap case) share the card's own width evenly
+    // -- `Expanded` rather than the bare spaceEvenly this replaced, so each
+    // tile's own text wraps onto a second line under a wide locale or a big
+    // text scale instead of pushing the row past the card's edge (run 68's
+    // 40px/34px RenderFlex overflow at an ordinary phone width).
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: tiles,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        for (final Widget tile in tiles) Expanded(child: tile),
+      ],
     );
   }
 
@@ -268,10 +275,13 @@ class _EndCardState extends State<EndCard> {
         const SizedBox(height: kSpace1),
         Text(
           value.toString(),
+          textAlign: TextAlign.center,
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         Text(
           label,
+          textAlign: TextAlign.center,
+          softWrap: true,
           style: const TextStyle(
             fontSize: kTypeLabel,
             color: LudoColors.inkMuted,
