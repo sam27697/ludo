@@ -745,19 +745,25 @@ class _GameScreenState extends State<GameScreen> {
   /// strings is on screen -- "roll" becomes "move", a seat goes offline, a
   /// value appears -- and none of that may grow or shrink the space left
   /// for `Expanded(LudoBoard)` underneath. The banner's own two lines are
-  /// reserved by an invisible placeholder forced onto two lines by an
-  /// explicit break, sized the same as the real text since both inherit
-  /// the same ambient style; the real banner sits on top of it with
+  /// reserved by an invisible placeholder: the banner's own text twice
+  /// over, joined by a break and capped at two lines, so it is two lines
+  /// tall whether the banner itself needs one or two, and sized the same
+  /// as the real text since both inherit the same ambient style; the real
+  /// banner sits on top of it with
   /// `maxLines: 2` and an ellipsis rather than ever reaching a third line
   /// that would grow the slot again.
   Widget _turnBannerSlot(String bannerText) {
     return Stack(
       alignment: Alignment.topCenter,
       children: [
-        const ExcludeSemantics(
+        ExcludeSemantics(
           child: Opacity(
             opacity: 0,
-            child: Text('x\nx', textAlign: TextAlign.center),
+            child: Text(
+              <String>[bannerText, bannerText].join('\n'),
+              maxLines: 2,
+              textAlign: TextAlign.center,
+            ),
           ),
         ),
         Positioned.fill(

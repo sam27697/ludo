@@ -3470,7 +3470,7 @@ void main() {
       tester,
       controller: controller,
       expectedWinner: 0,
-      expectedText: loc19.gameOverYouWin,
+      expectedText: loc19.endWinTitle,
       momentDescription:
           'immediately after the game_over push landed, before the '
           'post-game-over settle',
@@ -3482,7 +3482,7 @@ void main() {
       tester,
       controller: controller,
       expectedWinner: 0,
-      expectedText: loc19.gameOverYouWin,
+      expectedText: loc19.endWinTitle,
       momentDescription:
           'after the post-game-over settle, immediately before capture 19',
     );
@@ -3628,7 +3628,7 @@ void main() {
       tester,
       controller: controller,
       expectedWinner: 0,
-      expectedText: loc20.gameOverYouWin,
+      expectedText: loc20.endWinTitle,
       momentDescription:
           'immediately after the game_over push landed, before the '
           'post-game-over settle',
@@ -3640,7 +3640,7 @@ void main() {
       tester,
       controller: controller,
       expectedWinner: 0,
-      expectedText: loc20.gameOverYouWin,
+      expectedText: loc20.endWinTitle,
       momentDescription:
           'after the post-game-over settle, immediately before capture 20',
     );
@@ -3652,7 +3652,7 @@ void main() {
   // 21, 22: order 240's (X14) loser's end view -- `game_over` naming the
   // other seat (1, Karim) as `winner`, so `_winnerText`'s second branch
   // (game_screen.dart) is what this capture is evidence for:
-  // `loc.gameOverPlayerWins(seatState.name)`, looked up from this tree's own
+  // `loc.endLoseTitle(seatState.name)`, looked up from this tree's own
   // AppLocalizations and the opponent's own name off controller.room, not
   // hardcoded here.
   // ==========================================================================
@@ -3783,7 +3783,7 @@ void main() {
       tester,
       controller: controller,
       expectedWinner: 1,
-      expectedText: loc21.gameOverPlayerWins('Karim'),
+      expectedText: loc21.endLoseTitle('Karim'),
       momentDescription:
           'immediately after the game_over push landed, before the '
           'post-game-over settle',
@@ -3795,7 +3795,7 @@ void main() {
       tester,
       controller: controller,
       expectedWinner: 1,
-      expectedText: loc21.gameOverPlayerWins('Karim'),
+      expectedText: loc21.endLoseTitle('Karim'),
       momentDescription:
           'after the post-game-over settle, immediately before capture 21',
     );
@@ -3941,7 +3941,7 @@ void main() {
       tester,
       controller: controller,
       expectedWinner: 1,
-      expectedText: loc22.gameOverPlayerWins('Karim'),
+      expectedText: loc22.endLoseTitle('Karim'),
       momentDescription:
           'immediately after the game_over push landed, before the '
           'post-game-over settle',
@@ -3953,7 +3953,7 @@ void main() {
       tester,
       controller: controller,
       expectedWinner: 1,
-      expectedText: loc22.gameOverPlayerWins('Karim'),
+      expectedText: loc22.endLoseTitle('Karim'),
       momentDescription:
           'after the post-game-over settle, immediately before capture 22',
     );
@@ -4316,8 +4316,8 @@ void _expectCapturedTokenHome(
 /// Order 240, captures 19 through 22: asserts [controller].room reports
 /// `RoomState.finished` with `winner == expectedWinner`, and that
 /// `game-screen-winner`'s own `Text` reads [expectedText] -- the caller's
-/// own `AppLocalizations.gameOverYouWin` or
-/// `AppLocalizations.gameOverPlayerWins(name)` lookup, never hardcoded
+/// own `AppLocalizations.endWinTitle` or
+/// `AppLocalizations.endLoseTitle(name)` lookup, never hardcoded
 /// here. [momentDescription] names which of the two calls (before or after
 /// the post-game-over settle) failed.
 void _expectGameOverWinnerText(
@@ -4351,13 +4351,16 @@ void _expectGameOverWinnerText(
         'capture 19/20/21/22 ($momentDescription): expected '
         'game-screen-winner on screen',
   );
+  // The lose title is a Text.rich (the winner's name in the winner's seat
+  // colour), so Text.data is null there; read the span's plain text too.
   final Text winnerText = tester.widget<Text>(winnerFinder);
+  final String? shown = winnerText.data ?? winnerText.textSpan?.toPlainText();
   expect(
-    winnerText.data,
+    shown,
     expectedText,
     reason:
         'capture 19/20/21/22 ($momentDescription): expected '
         'game-screen-winner\'s Text to read "$expectedText", got '
-        '"${winnerText.data}"',
+        '"$shown"',
   );
 }
