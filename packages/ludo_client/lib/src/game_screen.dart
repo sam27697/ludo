@@ -100,16 +100,21 @@ class _GameScreenState extends State<GameScreen> {
 
   // C-236 rule 2: one subscription to controller.frames for the life of
   // this screen, feeding every frame's cues to the one FeedbackService
-  // above this tree. C-236 rule 4: the no-move beat it also drives. Armed
-  // by a `rolled` for my seat with an empty `legal`; holds
-  // `game-die-no-move-mark` and `game-no-move-notice` up for exactly
-  // `_noMoveHold` from that `rolled`, whatever the turn banner does
-  // underneath it in the meantime, and ends early only when a newer
-  // `rolled` for my seat -- can-move or no-move alike -- lands.
+  // above this tree. C-236 rule 4, amended by run 69's rules 4a and 4b: the
+  // no-move beat it also drives. Armed by a `rolled` for my seat with an
+  // empty `legal`; holds `game-die-no-move-mark` and `game-no-move-notice`
+  // up for exactly `_noMoveHold` from that `rolled`, whatever the turn
+  // banner does underneath it in the meantime, and ends early when a
+  // newer `rolled` carrying a value -- for any seat now, since the die is
+  // shared and a fresh roll anywhere must take it back, not only mine --
+  // lands. `_noMoveFace` is the face that armed `rolled` carried; it is
+  // what the die shows for the whole hold, in my own seat colour, even
+  // once the next seat's turn has cleared `turn.value` underneath it.
   StreamSubscription<Frame>? _frameSub;
   static const Duration _noMoveHold = Duration(milliseconds: 1500);
   Timer? _noMoveTimer;
   bool _noMoveVisible = false;
+  int? _noMoveFace;
 
   // C-243: every frame this screen's own subscription has seen since it
   // mounted, in arrival order. The end card's GameStats is computed from
@@ -148,10 +153,12 @@ class _GameScreenState extends State<GameScreen> {
   /// `FeedbackScope.of` finds. This is the only place a cue is played for a
   /// frame; the derivation is `cuesForFrame`'s and only its.
   ///
-  /// Also arms or drops the no-move hold (rule 4): a `rolled` this screen
-  /// derived a cue for (so a well-formed `rolled` naming my seat) arms the
-  /// hold when that cue is `noMove`, and drops it otherwise -- the "newer
-  /// rolled for my seat" that ends an earlier hold early.
+  /// Also arms or drops the no-move hold (rule 4, amended 4a/4b): a
+  /// `rolled` naming my seat with an empty `legal` arms it with the face
+  /// that `rolled` carried. Any other `rolled` that carries a value --
+  /// another seat's roll included, since the die is shared -- drops an
+  /// earlier hold; a `rolled` with no readable `value` changes nothing,
+  /// there being no new face to take the die's place.
   void _onFrame(Frame frame) {
     _frames.add(frame);
     final List<FeedbackCue> cues = cuesForFrame(
@@ -162,23 +169,25 @@ class _GameScreenState extends State<GameScreen> {
     for (final FeedbackCue cue in cues) {
       feedback.play(cue);
     }
-    if (frame.type == 'rolled' && cues.isNotEmpty) {
+    if (frame.type == 'rolled') {
       if (cues.contains(FeedbackCue.noMove)) {
-        _armNoMoveHold();
-      } else {
+        _armNoMoveHold(_intAt(frame.data, 'value'));
+      } else if (_intAt(frame.data, 'value') != null) {
         _dropNoMoveHold();
       }
     }
   }
 
-  void _armNoMoveHold() {
+  void _armNoMoveHold(int? face) {
     _noMoveTimer?.cancel();
     _noMoveTimer = Timer(_noMoveHold, _dropNoMoveHold);
-    if (!_noMoveVisible) {
-      setState(() {
-        _noMoveVisible = true;
-      });
+    if (_noMoveVisible && _noMoveFace == face) {
+      return;
     }
+    setState(() {
+      _noMoveVisible = true;
+      _noMoveFace = face;
+    });
   }
 
   void _dropNoMoveHold() {
@@ -189,6 +198,7 @@ class _GameScreenState extends State<GameScreen> {
     }
     setState(() {
       _noMoveVisible = false;
+      _noMoveFace = null;
     });
   }
 
@@ -657,35 +667,25 @@ class _GameScreenState extends State<GameScreen> {
         ? turn.legal!.toSet()
         : const <int>{};
 
-    final Color dieSeatColor =
-        LudoColors.seats[(turn?.seat ?? seat ?? 0).clamp(0, 3)];
+    // Rule 4a: for the whole hold the die keeps showing the face and the
+    // seat colour of the `rolled` that armed it -- my own -- rather than
+    // whatever the next seat's turn has already put in `turn.seat` and
+    // `turn.value` underneath it.
+    final Color dieSeatColor = _noMoveVisible
+        ? LudoColors.seats[(seat ?? 0).clamp(0, 3)]
+        : LudoColors.seats[(turn?.seat ?? seat ?? 0).clamp(0, 3)];
+    final int? dieFace = _noMoveVisible ? _noMoveFace : turn?.value;
 
     return Padding(
       padding: const EdgeInsets.all(kSpace4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            _turnBannerText(loc, room, seat),
-            key: const Key('game-screen-turn-banner'),
-            textAlign: TextAlign.center,
-          ),
-          if (offlineTurnSeat != null) ...[
-            const SizedBox(height: kSpace2),
-            Text(
-              loc.gameSeatOffline(offlineTurnSeat.name),
-              key: const Key('game-screen-turn-seat-offline'),
-              textAlign: TextAlign.center,
-            ),
-          ],
-          if (turn != null && turn.value != null) ...[
-            const SizedBox(height: kSpace2),
-            Text(
-              loc.gameDieValue(turn.value!),
-              key: const Key('game-screen-dice-value'),
-              textAlign: TextAlign.center,
-            ),
-          ],
+          _turnBannerSlot(_turnBannerText(loc, room, seat)),
+          const SizedBox(height: kSpace2),
+          _seatOfflineSlot(loc, offlineTurnSeat),
+          const SizedBox(height: kSpace2),
+          _diceValueSlot(loc, turn),
           if (turn != null) ...[
             const SizedBox(height: kSpace2),
             Text(
@@ -719,7 +719,7 @@ class _GameScreenState extends State<GameScreen> {
           const SizedBox(height: kSpace4),
           Center(
             child: GameDie(
-              face: turn?.value,
+              face: dieFace,
               seatColor: dieSeatColor,
               enabled: rollEnabled,
               tumbling: _rollWaitK != null,
@@ -731,17 +731,129 @@ class _GameScreenState extends State<GameScreen> {
               },
             ),
           ),
-          if (_noMoveVisible) ...[
-            const SizedBox(height: kSpace2),
-            Text(
+          const SizedBox(height: kSpace2),
+          _noMoveNoticeSlot(loc),
+          const SizedBox(height: kSpace4),
+        ],
+      ),
+    );
+  }
+
+  /// RETURN 2, defect 1: the header above the board must have one height
+  /// in every playing state, the same technique [_noMoveNoticeSlot] already
+  /// uses for the notice itself. A roll landing changes which of these
+  /// strings is on screen -- "roll" becomes "move", a seat goes offline, a
+  /// value appears -- and none of that may grow or shrink the space left
+  /// for `Expanded(LudoBoard)` underneath. The banner's own two lines are
+  /// reserved by an invisible placeholder forced onto two lines by an
+  /// explicit break, sized the same as the real text since both inherit
+  /// the same ambient style; the real banner sits on top of it with
+  /// `maxLines: 2` and an ellipsis rather than ever reaching a third line
+  /// that would grow the slot again.
+  Widget _turnBannerSlot(String bannerText) {
+    return Stack(
+      alignment: Alignment.topCenter,
+      children: [
+        const ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text('x\nx', textAlign: TextAlign.center),
+          ),
+        ),
+        Positioned.fill(
+          child: Text(
+            bannerText,
+            key: const Key('game-screen-turn-banner'),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Same technique: the seat-offline line's slot is sized whether or not
+  /// a seat is actually offline, from an invisible copy of the same string
+  /// the real line would show; `game-screen-turn-seat-offline` itself still
+  /// only appears while `offlineTurnSeat` is not null, exactly as before.
+  Widget _seatOfflineSlot(AppLocalizations loc, SeatState? offlineTurnSeat) {
+    return Stack(
+      alignment: Alignment.topCenter,
+      children: [
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(loc.gameSeatOffline(''), textAlign: TextAlign.center),
+          ),
+        ),
+        if (offlineTurnSeat != null)
+          Positioned.fill(
+            child: Text(
+              loc.gameSeatOffline(offlineTurnSeat.name),
+              key: const Key('game-screen-turn-seat-offline'),
+              textAlign: TextAlign.center,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Same technique again: the rolled value's own slot is sized whether a
+  /// roll has actually landed for the current turn or not, so the very
+  /// roll that arms the no-move hold does not also grow the header a
+  /// line's worth underneath the board the same instant. `game-screen-
+  /// dice-value` itself still only appears while `turn.value` is not null,
+  /// exactly as before.
+  Widget _diceValueSlot(AppLocalizations loc, TurnState? turn) {
+    return Stack(
+      alignment: Alignment.topCenter,
+      children: [
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(loc.gameDieValue(0), textAlign: TextAlign.center),
+          ),
+        ),
+        if (turn != null && turn.value != null)
+          Positioned.fill(
+            child: Text(
+              loc.gameDieValue(turn.value!),
+              key: const Key('game-screen-dice-value'),
+              textAlign: TextAlign.center,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Rule 4b: `game-screen-board`'s rect must be identical, to the pixel,
+  /// whether or not the notice is showing. The slot this returns is always
+  /// the same size: an invisible copy of `loc.gameNoMove`, excluded from
+  /// semantics so it is never announced twice, sizes it on every build,
+  /// visible or not; the real line -- carrying `game-no-move-notice` and
+  /// read by the tree exactly while the hold is up -- sits on top of that
+  /// slot rather than inside the Column's own flow, so the Expanded board
+  /// above never gains or loses height for it.
+  Widget _noMoveNoticeSlot(AppLocalizations loc) {
+    return Stack(
+      alignment: Alignment.topCenter,
+      children: [
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(loc.gameNoMove, textAlign: TextAlign.center),
+          ),
+        ),
+        if (_noMoveVisible)
+          Positioned.fill(
+            child: Text(
               loc.gameNoMove,
               key: const Key('game-no-move-notice'),
               textAlign: TextAlign.center,
             ),
-          ],
-          const SizedBox(height: kSpace4),
-        ],
-      ),
+          ),
+      ],
     );
   }
 
@@ -971,4 +1083,14 @@ SeatState? _offlineTurnSeat(RoomSnapshot room) {
     }
   }
   return null;
+}
+
+/// `data[key]` from a frame's `d`, when present and an `int`; null
+/// otherwise. Mirrors feedback.dart's own private `_intAt` -- duplicated
+/// here rather than exported, since this screen's one use of it (reading
+/// the face a `rolled` carried, to arm or drop the no-move hold) has
+/// nothing to do with cue derivation.
+int? _intAt(Map<String, Object?> data, String key) {
+  final Object? value = data[key];
+  return value is int ? value : null;
 }
