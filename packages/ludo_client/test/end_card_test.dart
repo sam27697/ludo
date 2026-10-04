@@ -1477,8 +1477,7 @@ void main() {
       );
       expect(loc.endLoseNudge, 'كانت قريبة. جولة أخرى؟');
 
-      final Text title = tester.widget<Text>(find.byKey(_winnerTitleKey));
-      expect(title.data, loc.endLoseTitle('Bob'));
+      expect(_titleText(tester, _winnerTitleKey), loc.endLoseTitle('Bob'));
       final String blob = _blobUnder(tester, find.byType(GameScreen));
       expect(blob.contains(loc.endLoseNudge), isTrue);
     });
