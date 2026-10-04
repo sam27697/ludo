@@ -42,6 +42,14 @@
 // the wire use sentRaw. Claims about haptics use the platform channel. The
 // outstanding roll request is always completed so no reply timer survives
 // the test body.
+//
+// Order 251 (work/ludo/orders/C-250-play-header.md, run 70): rule 5 moves
+// game-screen-dice-value from a visible Text onto a Semantics wrapping the
+// die, carrying loc.gameDieValue(v) as its label rather than as Text.data.
+// `_dieText`, the one helper here that read the key as a Text, is amended in
+// place, old and new recorded at its own definition; every call site is
+// unchanged since the helper's own return type and meaning (the rendered
+// die-value string, or null when the key is absent) did not change.
 
 import 'dart:convert';
 import 'dart:math' as math;
@@ -298,13 +306,19 @@ Future<void> _completeRoll(
   await tester.pump();
 }
 
+// Amended for C-250 rule 5: game-screen-dice-value moved from a visible
+// Text onto a Semantics wrapping the die, carrying loc.gameDieValue(v) as
+// its label rather than as Text.data. Old:
+//   final Text text = tester.widget<Text>(die);
+//   return text.data;
+// New:
 String? _dieText(WidgetTester tester) {
   final Finder die = find.byKey(_dieValueKey);
   if (die.evaluate().isEmpty) {
     return null;
   }
-  final Text text = tester.widget<Text>(die);
-  return text.data;
+  final Semantics semantics = tester.widget<Semantics>(die);
+  return semantics.properties.label;
 }
 
 List<String> _dieFaceLabelsOnScreen(WidgetTester tester, AppLocalizations loc) {
