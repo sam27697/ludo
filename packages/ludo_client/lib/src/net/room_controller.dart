@@ -605,6 +605,35 @@ class RoomController extends ChangeNotifier {
     }
   }
 
+  /// C-246 rule 1: forwards `rematch` to the connection when [phase] is
+  /// [RoomPhase.connected] and is a silent no-op otherwise, from any seat --
+  /// opening a fresh LOBBY from FINISHED, or accepting one already open. The
+  /// reply is a plain frame, not a snapshot; it is not parsed as one and
+  /// changes nothing here directly. The `room` push that actually carries
+  /// the new `rematch` state (section 16.2, 16.3) reaches [frames] like
+  /// every other push and is what moves a screen forward.
+  ///
+  /// Unlike [roll], [move], [startGame] and [setPlayers], there is no
+  /// race-code carve-out here: every failure, whatever the code, routes
+  /// straight through [_failFromInRoomRequest], the same in-room request
+  /// failure path those methods fall through to once their own races are
+  /// ruled out. C-246's own rule 8 is the screen's to read, not this
+  /// method's: a `NO_SUCH_ROOM` answer and every other code both land here
+  /// in [RoomPhase.failed] with [errorCode] set, and it is GameScreen that
+  /// decides a `NO_SUCH_ROOM` failure still shows the end card while every
+  /// other code falls through to the ordinary connection-lost body.
+  Future<void> rematch() async {
+    final RoomConnection? connection = _connection;
+    if (_disposed || _phase != RoomPhase.connected || connection == null) {
+      return;
+    }
+    try {
+      await connection.rematch();
+    } catch (error) {
+      _failFromInRoomRequest(error);
+    }
+  }
+
   /// Forwards to the connection when [phase] is [RoomPhase.connected] and is
   /// a silent no-op otherwise. The reply is a plain frame, not a snapshot; it
   /// is not parsed as one and changes nothing here. The `rolled` frame that

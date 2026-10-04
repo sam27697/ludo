@@ -101,6 +101,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// settle. While true a second tap sends nothing.
   bool _startWithPresentInFlight = false;
 
+  /// C-246 rule 7: true while this device's own `rematch` accept is open,
+  /// so a second tap on [lobby-rematch-accept] sends nothing.
+  bool _rematchInFlight = false;
+
   @override
   void initState() {
     super.initState();
@@ -171,6 +175,26 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
     setState(() {
       _startWithPresentInFlight = false;
+    });
+  }
+
+  /// C-246 rule 7: the tap handler for `lobby-rematch-accept`, sending
+  /// `rematch` for a joiner who landed on this screen because a rematch
+  /// LOBBY's route never saw a game. `RoomController.rematch` never
+  /// throws, so this always reaches the end and clears the guard.
+  Future<void> _onRematchAccept() async {
+    if (_rematchInFlight) {
+      return;
+    }
+    setState(() {
+      _rematchInFlight = true;
+    });
+    await widget.controller.rematch();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _rematchInFlight = false;
     });
   }
 
@@ -360,6 +384,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Widget _connectedBody(AppLocalizations loc, RoomController controller) {
     final RoomSnapshot room = controller.room!;
     final bool roomFull = room.seats.length == room.players;
+    // C-246 rule 7: a joiner of a rematch LOBBY lands here, because this
+    // route never saw a game. Not the host and not any seat that already
+    // played game one -- both stay on GameScreen, whose own latch never
+    // sends them back to this screen (rule 2) -- so the ordinary host and
+    // waiting blocks below are replaced by the one-tap accept whenever
+    // this seat has not answered yet.
+    final RematchState? rematch = room.rematch;
+    final bool inRematchLobby =
+        room.state == RoomState.lobby && rematch != null;
+    final bool amReadyForRematch =
+        inRematchLobby &&
+        controller.seat != null &&
+        rematch.ready.contains(controller.seat);
     final TextTheme textTheme = Theme.of(context).textTheme;
     final double viewHeight = MediaQuery.sizeOf(context).height;
     // Same compact rule as home: widget-test surfaces are 800x600; real
@@ -451,7 +488,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
             key: const Key('lobby-rule-capture-bonus'),
             textAlign: TextAlign.center,
           ),
-          if (!controller.isHost) ...[
+          if (inRematchLobby && !amReadyForRematch) ...[
+            const SizedBox(height: kSpace4),
+            ElevatedButton(
+              key: const Key('lobby-rematch-accept'),
+              onPressed: _rematchInFlight ? null : () => _onRematchAccept(),
+              child: Text(loc.endRematch),
+            ),
+          ] else if (inRematchLobby && amReadyForRematch) ...[
+            const SizedBox(height: kSpace4),
+            Text(
+              loc.endRematchWaiting,
+              key: const Key('lobby-rematch-waiting'),
+              textAlign: TextAlign.center,
+            ),
+          ],
+          if (!inRematchLobby && !controller.isHost) ...[
             const SizedBox(height: kSpace4),
             Text(
               roomFull
@@ -461,7 +513,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               textAlign: TextAlign.center,
             ),
           ],
-          if (controller.isHost) ...[
+          if (!inRematchLobby && controller.isHost) ...[
             SizedBox(height: compact ? kSpace4 : kSpace6),
             ElevatedButton(
               key: const Key('lobby-start-button'),

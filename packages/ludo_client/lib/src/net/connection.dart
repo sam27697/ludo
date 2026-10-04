@@ -359,6 +359,16 @@ class RoomConnection {
     return request('start_game', const <String, Object?>{});
   }
 
+  /// docs/PROTOCOL.md section 16.1: `rematch` carries no payload field,
+  /// from any seated player, in FINISHED to open a fresh LOBBY or in a
+  /// rematch LOBBY to accept. The reply is a plain frame, not a snapshot;
+  /// the `room` push that actually carries the new `rematch` state reaches
+  /// [frames] like every other push and is what moves a caller's room
+  /// forward.
+  Future<Frame> rematch() {
+    return request('rematch', const <String, Object?>{});
+  }
+
   Future<Frame> roll() {
     return request('roll', const <String, Object?>{});
   }
