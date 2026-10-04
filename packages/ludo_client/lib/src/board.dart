@@ -31,6 +31,79 @@ export 'board_geometry.dart';
 /// the four stars painted in paper rather than ink.
 const Set<int> _entrySquares = <int>{0, 13, 26, 39};
 
+/// The 48dp minimum touch target a token's hit box uses, whichever of that
+/// or the token's own drawn size is larger. One place for the 48, so the
+/// tap handler, the Semantics hit box and the C-248 chip-placement check
+/// below can never disagree about where a token is actually tappable.
+double _tokenHitSize(double tokenSize) => math.max(48.0, tokenSize);
+
+/// The pixel rect [tokenIndex] of [seat] at [progress] actually gets as its
+/// tap target: the same cell, fan offset (see the comment on the fan in
+/// `_tokenLayer`) and [_tokenHitSize] math that widget uses to place that
+/// Positioned, factored out so nothing else that needs to know where a hit
+/// box really sits -- the C-248 name-chip placement check below is the
+/// first -- can drift from it by recomputing the fan separately.
+Rect _tokenHitRect({
+  required int seat,
+  required int tokenIndex,
+  required int progress,
+  required double cellSize,
+}) {
+  final BoardCell cell = cellFor(
+    seat: seat,
+    progress: progress,
+    tokenIndex: tokenIndex,
+  );
+  final double fan = cellSize * 0.12;
+  final double fanDx = tokenIndex.isEven ? -fan : fan;
+  final double fanDy = tokenIndex < 2 ? -fan : fan;
+  final double tokenSize = cellSize * 0.7;
+  final double hitSize = _tokenHitSize(tokenSize);
+  final double centerX = cell.col * cellSize + cellSize / 2 + fanDx;
+  final double centerY = cell.row * cellSize + cellSize / 2 + fanDy;
+  return Rect.fromCenter(
+    center: Offset(centerX, centerY),
+    width: hitSize,
+    height: hitSize,
+  );
+}
+
+/// WCAG contrast ratio of two colours, the larger luminance over the
+/// smaller, both offset by 0.05 per the standard formula.
+double _contrastRatio(Color a, Color b) {
+  final double la = a.computeLuminance();
+  final double lb = b.computeLuminance();
+  final double lighter = math.max(la, lb);
+  final double darker = math.min(la, lb);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/// Whichever of [LudoColors.actionOn] (this paintbox's existing near-white,
+/// the ink every action-coloured surface already sits on) or [LudoColors.ink]
+/// contrasts more against [background] -- C-248 rule 1's "contrasting ink",
+/// with no new literal white: the order's "use an existing colour" applies
+/// here even though actionOn needs no opacity change to read.
+Color _contrastingInk(Color background) {
+  final double lightContrast = _contrastRatio(background, LudoColors.actionOn);
+  final double darkContrast = _contrastRatio(background, LudoColors.ink);
+  return lightContrast >= darkContrast ? LudoColors.actionOn : LudoColors.ink;
+}
+
+/// Same seats, same order -- [_BoardPainter.shouldRepaint]'s way of asking
+/// whether [LudoBoard.seatsInPlay] actually changed without pulling in a
+/// collection-equality package for one list.
+bool _sameSeats(List<int> a, List<int> b) {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /// A Ludo board: the static grid plus every token of every seat in
 /// [seatsInPlay], each placed by [cellFor].
 ///
@@ -49,6 +122,9 @@ class LudoBoard extends StatefulWidget {
     this.autoMoveToken,
     this.onTokenTap,
     this.onIllegalTokenTap,
+    this.seatNames,
+    this.youLabel,
+    this.turnSeat,
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -98,6 +174,23 @@ class LudoBoard extends StatefulWidget {
   /// shakes that token itself; this is only the notification hook for
   /// whatever else wants to know (a later order's feedback service).
   final void Function(int token)? onIllegalTokenTap;
+
+  /// Display name of every seat that has one, keyed by seat. Null (the
+  /// default) draws exactly what the board drew before this: no name chip
+  /// at all. A seat in [seatsInPlay] with no entry here stays bare too; the
+  /// screen decides who gets named, this widget only draws what it is told.
+  /// C-248 rule 1.
+  final Map<int, String>? seatNames;
+
+  /// The word that tags [mySeat]'s own name chip ("You" / "أنت"), shown
+  /// only when this is non-null and [seatNames] has an entry for [mySeat].
+  /// Null draws no tag at all, the default. C-248 rule 2.
+  final String? youLabel;
+
+  /// The seat whose yard carries the soft turn glow right now, or null for
+  /// none -- the default, which draws no glow, same as today. Ignored for a
+  /// seat outside [seatsInPlay]. C-248 rule 3.
+  final int? turnSeat;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -160,7 +253,7 @@ class _LudoBoardState extends State<LudoBoard> {
     if (mySeat == null) {
       return;
     }
-    final double hitSize = math.max(48.0, tokenSize);
+    final double hitSize = _tokenHitSize(tokenSize);
     final List<_CellGroup> groups = _cellGroups(mySeat, cellSize);
 
     _CellGroup? best;
@@ -223,6 +316,181 @@ class _LudoBoardState extends State<LudoBoard> {
     ]..sort();
   }
 
+  /// Every widget one seat's identity contributes to the stack: the turn
+  /// glow behind its whole yard, the "this one is mine" ring around it, and
+  /// its name chip, in that order so the tokens drawn afterward always sit
+  /// on top of all three. Contract C-248; an empty list for a seat with
+  /// nothing to show (no [LudoBoard.seatNames] entry, not [LudoBoard.turnSeat],
+  /// not [LudoBoard.mySeat]).
+  List<Widget> _seatIdentityLayer({
+    required int seat,
+    required double cellSize,
+  }) {
+    final BoardCell origin = yardQuadrantOrigin(seat);
+    final double left = origin.col * cellSize;
+    final double top = origin.row * cellSize;
+    final double side = yardQuadrantSide * cellSize;
+
+    final List<Widget> layer = <Widget>[];
+
+    if (widget.turnSeat == seat) {
+      layer.add(
+        Positioned(
+          left: left,
+          top: top,
+          width: side,
+          height: side,
+          child: IgnorePointer(
+            child: KeyedSubtree(
+              key: Key('board-turn-yard-$seat'),
+              child: _TurnGlow(color: LudoColors.seats[seat]),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // C-248 rule 2, read literally: the ring follows mySeat and seatNames
+    // being given at all, not whether seatNames happens to name mySeat
+    // itself -- the ring is the colour signal P9 asks to stand beside the
+    // name, not a part of the name chip.
+    if (widget.mySeat == seat && widget.seatNames != null) {
+      layer.add(
+        Positioned(
+          key: const Key('board-my-yard'),
+          left: left,
+          top: top,
+          width: side,
+          height: side,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border.all(color: LudoColors.seats[seat], width: 3),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final String? name = widget.seatNames?[seat];
+    if (name != null) {
+      layer.add(
+        _nameChip(seat: seat, name: name, cellSize: cellSize, origin: origin),
+      );
+    }
+
+    return layer;
+  }
+
+  /// [seat]'s name chip: a pill in [LudoColors.seats][seat], sat in the row
+  /// of its yard that touches the real edge of the board (the top row for
+  /// the two top yards, the bottom row for the two bottom ones), centred
+  /// across the yard's own width. Shrunk away from the yard's interior by
+  /// however much any of this seat's own yard tokens' 48dp hit boxes reach
+  /// into that row -- at this board's actual viewport sizes a hit box is
+  /// bigger than one cell, so it is checked rather than assumed clear.
+  Widget _nameChip({
+    required int seat,
+    required String name,
+    required double cellSize,
+    required BoardCell origin,
+  }) {
+    final bool edgeIsTop = origin.row == 0;
+    final double rowTop = edgeIsTop
+        ? origin.row * cellSize
+        : (origin.row + yardQuadrantSide - 1) * cellSize;
+    final double rowBottom = rowTop + cellSize;
+
+    double innerBound = edgeIsTop ? rowBottom : rowTop;
+    for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++) {
+      final Rect hitRect = _tokenHitRect(
+        seat: seat,
+        tokenIndex: tokenIndex,
+        progress: -1,
+        cellSize: cellSize,
+      );
+      if (hitRect.bottom <= rowTop || hitRect.top >= rowBottom) {
+        continue;
+      }
+      if (edgeIsTop) {
+        innerBound = math.min(innerBound, hitRect.top);
+      } else {
+        innerBound = math.max(innerBound, hitRect.bottom);
+      }
+    }
+
+    final double chipTop = edgeIsTop ? rowTop : innerBound;
+    final double chipBottom = edgeIsTop ? innerBound : rowBottom;
+    final double chipHeight = math.max(0.0, chipBottom - chipTop);
+    final double chipWidth = yardQuadrantSide * cellSize;
+    final double chipLeft = origin.col * cellSize;
+
+    final Color seatColor = LudoColors.seats[seat];
+    final Color ink = _contrastingInk(seatColor);
+    final bool isMine = widget.mySeat == seat;
+    final String? you = isMine ? widget.youLabel : null;
+
+    return Positioned(
+      left: chipLeft,
+      top: chipTop,
+      width: chipWidth,
+      height: chipHeight,
+      child: IgnorePointer(
+        child: Center(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: cellSize * 0.2),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: seatColor,
+                borderRadius: BorderRadius.circular(chipHeight),
+              ),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: cellSize * 0.3,
+                  vertical: chipHeight * 0.08,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Flexible(
+                      child: Text(
+                        name,
+                        key: Key('board-seat-name-$seat'),
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: ink,
+                          fontSize: math.max(7.0, chipHeight * 0.6),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (you != null) ...<Widget>[
+                      SizedBox(width: cellSize * 0.15),
+                      Text(
+                        you,
+                        key: const Key('board-seat-you'),
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: ink,
+                          fontSize: math.max(7.0, chipHeight * 0.55),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -242,9 +510,13 @@ class _LudoBoardState extends State<LudoBoard> {
                 alignment: Alignment.topLeft,
                 children: [
                   Positioned.fill(
-                    child: CustomPaint(painter: const _BoardPainter()),
+                    child: CustomPaint(
+                      painter: _BoardPainter(seatsInPlay: widget.seatsInPlay),
+                    ),
                   ),
                   ..._safeSquareMarks(cellSize),
+                  for (final seat in widget.seatsInPlay)
+                    ..._seatIdentityLayer(seat: seat, cellSize: cellSize),
                   for (final seat in widget.seatsInPlay)
                     for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++)
                       ..._tokenLayer(
@@ -298,14 +570,19 @@ class _LudoBoardState extends State<LudoBoard> {
     final List<Widget> layer = <Widget>[];
 
     if (isMine) {
-      final double hitSize = math.max(48.0, tokenSize);
+      final Rect hitRect = _tokenHitRect(
+        seat: seat,
+        tokenIndex: tokenIndex,
+        progress: progress,
+        cellSize: cellSize,
+      );
       final AppLocalizations loc = AppLocalizations.of(context);
       layer.add(
         Positioned(
-          left: left + tokenSize / 2 - hitSize / 2,
-          top: top + tokenSize / 2 - hitSize / 2,
-          width: hitSize,
-          height: hitSize,
+          left: hitRect.left,
+          top: hitRect.top,
+          width: hitRect.width,
+          height: hitRect.height,
           // The Semantics node itself carries the key: a key on a plain
           // child below it (as this used to be) finds a node with no
           // button flag, because getSemantics walks up from the keyed
@@ -572,6 +849,110 @@ class _PulsingRingState extends State<_PulsingRing>
   }
 }
 
+/// The soft glow a seat's whole yard carries while it holds the turn
+/// (`board-turn-yard-S`, C-248 rule 3): a blurred stroke around the yard,
+/// breathing over a fixed 1200ms period. Reduced motion holds it at its
+/// brightest rather than animating -- the same rule [_PulsingRing] and the
+/// shake follow: the meaning ("this is the seat to watch") stays, only the
+/// motion that says so goes. This widget exists in the tree for exactly as
+/// long as its seat is [LudoBoard.turnSeat]; its own [dispose] is the
+/// ticker's stop, so there is nothing separate to wire for "turnSeat
+/// changed" or "the board itself was removed".
+class _TurnGlow extends StatefulWidget {
+  const _TurnGlow({required this.color});
+
+  final Color color;
+
+  @override
+  State<_TurnGlow> createState() => _TurnGlowState();
+}
+
+class _TurnGlowState extends State<_TurnGlow>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  bool? _reduced;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    if (reduced != _reduced) {
+      _reduced = reduced;
+      if (reduced) {
+        _controller.stop();
+        _controller.value = 1;
+      } else {
+        _controller.repeat(reverse: true);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool reduced = _reduced ?? false;
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final double t = _controller.value;
+        final double opacity = reduced ? 0.55 : 0.2 + 0.35 * t;
+        final double blurSigma = reduced ? 10.0 : 6.0 + 8.0 * t;
+        return CustomPaint(
+          painter: _GlowPainter(
+            color: widget.color,
+            opacity: opacity,
+            blurSigma: blurSigma,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _GlowPainter extends CustomPainter {
+  const _GlowPainter({
+    required this.color,
+    required this.opacity,
+    required this.blurSigma,
+  });
+
+  final Color color;
+  final double opacity;
+  final double blurSigma;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double stroke = size.shortestSide * 0.06;
+    final Rect rect = (Offset.zero & size).deflate(stroke);
+    final Paint glow = Paint()
+      ..color = color.withValues(alpha: opacity)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, blurSigma);
+    canvas.drawRect(rect, glow);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GlowPainter oldDelegate) =>
+      oldDelegate.color != color ||
+      oldDelegate.opacity != opacity ||
+      oldDelegate.blurSigma != blurSigma;
+}
+
 class _RingPainter extends CustomPainter {
   const _RingPainter({
     required this.color,
@@ -646,7 +1027,13 @@ class _StarPainter extends CustomPainter {
 ///
 /// Seat fills and board inks come from [LudoColors]: one paintbox with theme.
 class _BoardPainter extends CustomPainter {
-  const _BoardPainter();
+  const _BoardPainter({required this.seatsInPlay});
+
+  /// Which seats are playing, same list [LudoBoard] was given. A seat not
+  /// in it gets its yard fill muted -- C-248 rule 4, the one default change
+  /// this contract makes: today's drawing painted every yard the same
+  /// whether or not anyone sat there.
+  final List<int> seatsInPlay;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -654,22 +1041,18 @@ class _BoardPainter extends CustomPainter {
 
     canvas.drawRect(Offset.zero & size, Paint()..color = LudoColors.dieFace);
 
-    const yardCorners = [
-      (0, 0), // seat 0, top-left
-      (9, 0), // seat 1, top-right
-      (9, 9), // seat 2, bottom-right
-      (0, 9), // seat 3, bottom-left
-    ];
     for (var seat = 0; seat < 4; seat++) {
-      final (col, row) = yardCorners[seat];
+      final BoardCell origin = yardQuadrantOrigin(seat);
+      final bool inPlay = seatsInPlay.contains(seat);
+      final double yardAlpha = inPlay ? 0.16 : 0.16 * 0.35;
       _fillCells(
         canvas,
         cellSize,
-        col,
-        row,
-        6,
-        6,
-        LudoColors.seats[seat].withValues(alpha: 0.16),
+        origin.col,
+        origin.row,
+        yardQuadrantSide,
+        yardQuadrantSide,
+        LudoColors.seats[seat].withValues(alpha: yardAlpha),
       );
     }
 
@@ -765,5 +1148,6 @@ class _BoardPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _BoardPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _BoardPainter oldDelegate) =>
+      !_sameSeats(oldDelegate.seatsInPlay, seatsInPlay);
 }
