@@ -3960,6 +3960,463 @@ void main() {
 
     await binding.takeScreenshot('22-end-loser-ar');
   });
+
+  // ==========================================================================
+  // 23: order 247's (C-246) rematch ask -- a `room` LOBBY with `rematch`
+  // naming the other seat arrives while my own end card is up. Karim joins
+  // Priya's room at seat 1, not the host; Priya wins the first game; then
+  // Priya's own `rematch` request lands as an unprompted push naming seat
+  // 0 in `by` with only seat 0 in `ready` (docs/PROTOCOL.md section
+  // 16.6/16.7, C-246 rule 4's "rematch LOBBY, my seat NOT in ready" case).
+  // ==========================================================================
+  testWidgets('capture 23-rematch-ask-en', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    await (await SharedPreferences.getInstance()).clear();
+
+    final factory = _ScreenshotControllerFactory();
+    await tester.pumpWidget(
+      _ScreenshotHarness(controllerFactory: factory.call),
+    );
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: 'en');
+
+    const String hostName = 'Priya';
+    const String joinerName = 'Karim';
+    const String roomCode = 'SHOT23';
+
+    await tester.enterText(
+      find.byKey(const Key('home-name-field')),
+      joinerName,
+    );
+    await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
+
+    expect(factory.controllers, hasLength(1));
+    final RoomController controller = factory.controllers.single;
+    final FakeTransport transport = factory.transports.single;
+    addTearDown(controller.dispose);
+
+    final List<String> joinMessages23 = transport.sentRaw
+        .where((s) => _typeOf(s) == 'join_room')
+        .toList();
+    expect(
+      joinMessages23,
+      hasLength(1),
+      reason:
+          'expected LobbyScreen.initState, reached through RoomRoute, to '
+          'have sent exactly one join_room request; sent '
+          '${transport.sentRaw.map(_typeOf).toList()}',
+    );
+    final String joinId23 = _idOf(joinMessages23.single);
+
+    // Seat 1: a guest, not the host at seat 0 -- Priya is already seated.
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 1, 'seat_token': 'tok-shot-23'},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: joinId23,
+        data: _roomJson(
+          code: roomCode,
+          players: 2,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: hostName),
+            _seatJson(1, name: joinerName),
+          ],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      'LobbyScreen after the join_room reply carrying code "$roomCode"',
+    );
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: 'en',
+      code: roomCode,
+      expectedSeatCount: 2,
+    );
+
+    // Priya (seat 0, the host) starts the first game; this client, never
+    // having sent start_game itself, only ever sees the broadcast.
+    transport.pushText(
+      _frame(
+        type: 'game_started',
+        data: <String, Object?>{
+          'turn': 0,
+          'game_id': 'i' * 16,
+          'client_seeds': '0:seed',
+          'seq': 2,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(GameScreen),
+      'GameScreen after the game_started push',
+    );
+    expect(find.byType(LobbyScreen), findsNothing);
+
+    // Priya (seat 0) wins the first game; I (seat 1, Karim) lose.
+    transport.pushText(
+      _frame(
+        type: 'game_over',
+        data: <String, Object?>{
+          'winner': 0,
+          'verify_url': 'https://verify.example.invalid/shot23',
+          'seq': 3,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final AppLocalizations loc23 = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    _expectGameOverWinnerText(
+      tester,
+      controller: controller,
+      expectedWinner: 0,
+      expectedText: loc23.gameOverPlayerWins(hostName),
+      momentDescription:
+          'immediately after the game_over push landed, before Priya\'s '
+          'own rematch ask arrives',
+    );
+    expect(
+      find.byKey(const Key('end-card-lose')),
+      findsOneWidget,
+      reason:
+          'capture 23 fixture is broken: seat 1 (Karim) must see the '
+          'loser card before the rematch ask can be shown on top of it',
+    );
+
+    // Priya's own `rematch` lands as an unprompted push: a room LOBBY
+    // naming seat 0 in `by`, with only seat 0 in `ready` -- I have not
+    // answered yet.
+    transport.pushText(
+      _frame(
+        type: 'room',
+        data: <String, Object?>{
+          ..._roomJson(
+            code: roomCode,
+            state: 'LOBBY',
+            hostSeat: 0,
+            players: 2,
+            seats: <Map<String, Object?>>[
+              _seatJson(0, name: hostName),
+              _seatJson(1, name: joinerName),
+            ],
+            seq: 4,
+          ),
+          'rematch': <String, Object?>{
+            'by': 0,
+            'ready': <int>[0],
+          },
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      find.byType(GameScreen),
+      findsOneWidget,
+      reason:
+          'C-246 rule 2: the rematch LOBBY stays on GameScreen, the route '
+          'never goes back to the lobby screen',
+    );
+    final Finder askFinder23 = find.byKey(const Key('end-card-rematch-ask'));
+    expect(
+      askFinder23,
+      findsOneWidget,
+      reason:
+          'expected end-card-rematch-ask on screen: seat 1 (Karim) is not '
+          'yet in rematch.ready {0}',
+    );
+    expect(
+      find.byKey(const Key('end-card-rematch-waiting')),
+      findsNothing,
+      reason:
+          'end-card-rematch-waiting must not show before seat 1 has '
+          'accepted',
+    );
+
+    await _pumpRealDurationFrames(tester);
+
+    expect(
+      find.byKey(const Key('end-card-rematch-ask')),
+      findsOneWidget,
+      reason:
+          'capture 23: after the post-rematch-push settle, expected '
+          'end-card-rematch-ask still on screen immediately before the '
+          'capture',
+    );
+
+    await binding.takeScreenshot('23-rematch-ask-en');
+  });
+
+  // ==========================================================================
+  // 24: order 247's (C-246) rematch waiting line -- Priya (seat 0, the
+  // host) taps her own end card's Rematch button and the server's reply
+  // puts her alone in `rematch.ready`; Karim (seat 1) has not answered yet
+  // (C-246 rule 4's "rematch LOBBY, my seat in ready" case), in Arabic.
+  // ==========================================================================
+  testWidgets('capture 24-rematch-waiting-ar', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    await (await SharedPreferences.getInstance()).clear();
+
+    final factory = _ScreenshotControllerFactory();
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+        locale: const Locale('ar'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: 'ar');
+
+    const String hostName = 'Priya';
+    const String roomCode = 'SHOT24';
+
+    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
+    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+
+    expect(factory.controllers, hasLength(1));
+    final RoomController controller = factory.controllers.single;
+    final FakeTransport transport = factory.transports.single;
+    addTearDown(controller.dispose);
+
+    final List<String> createMessages24 = transport.sentRaw
+        .where((s) => _typeOf(s) == 'create_room')
+        .toList();
+    expect(createMessages24, hasLength(1));
+    final String createId24 = _idOf(createMessages24.single);
+
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-24'},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: createId24,
+        data: _roomJson(
+          code: roomCode,
+          players: 2,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      'LobbyScreen after the create_room reply carrying code "$roomCode"',
+    );
+
+    transport.pushText(
+      _frame(
+        type: 'player_joined',
+        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+      ),
+    );
+    await tester.pump();
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: 'ar',
+      code: roomCode,
+      expectedSeatCount: 2,
+    );
+
+    final Finder startButton24 = find.byKey(const Key('lobby-start-button'));
+    expect(startButton24, findsOneWidget);
+    await tester.tap(startButton24);
+    await tester.pump();
+    final List<String> startMessages24 = transport.sentRaw
+        .where((s) => _typeOf(s) == 'start_game')
+        .toList();
+    expect(startMessages24, hasLength(1));
+    final String startId24 = _idOf(startMessages24.single);
+
+    transport.pushText(
+      _frame(
+        type: 'game_started',
+        re: startId24,
+        data: <String, Object?>{
+          'turn': 0,
+          'game_id': 'j' * 16,
+          'client_seeds': '0:seed',
+          'seq': 3,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(GameScreen),
+      'GameScreen after the game_started push answering start_game',
+    );
+    expect(find.byType(LobbyScreen), findsNothing);
+
+    // My own seat (0, Priya) is named winner.
+    transport.pushText(
+      _frame(
+        type: 'game_over',
+        data: <String, Object?>{
+          'winner': 0,
+          'verify_url': 'https://verify.example.invalid/shot24',
+          'seq': 4,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final AppLocalizations loc24 = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc24.localeName,
+      'ar',
+      reason: 'capture 24 fixture is broken: this case must be in Arabic',
+    );
+    _expectGameOverWinnerText(
+      tester,
+      controller: controller,
+      expectedWinner: 0,
+      expectedText: loc24.gameOverYouWin,
+      momentDescription:
+          'immediately after the game_over push landed, before Priya taps '
+          'her own end-card-rematch',
+    );
+
+    final Finder rematchFinder24 = find.byKey(const Key('end-card-rematch'));
+    expect(
+      rematchFinder24,
+      findsOneWidget,
+      reason:
+          'capture 24 fixture is broken: end-card-rematch must be on a '
+          'finished end card before it can be tapped',
+    );
+    await tester.tap(rematchFinder24);
+    await tester.pump();
+
+    final List<String> rematchMessages24 = transport.sentRaw
+        .where((s) => _typeOf(s) == 'rematch')
+        .toList();
+    expect(
+      rematchMessages24,
+      hasLength(1),
+      reason:
+          'tapping end-card-rematch must send exactly one rematch frame; '
+          'sent ${transport.sentRaw.map(_typeOf).toList()}',
+    );
+    final String rematchReqId24 = _idOf(rematchMessages24.single);
+
+    // The server's reply: Priya's own seat (0) is now in ready; Karim (1)
+    // has not answered.
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: rematchReqId24,
+        data: <String, Object?>{
+          ..._roomJson(
+            code: roomCode,
+            state: 'LOBBY',
+            hostSeat: 0,
+            players: 2,
+            seats: <Map<String, Object?>>[
+              _seatJson(0, name: hostName),
+              _seatJson(1, name: 'Karim'),
+            ],
+            seq: 5,
+          ),
+          'rematch': <String, Object?>{
+            'by': 0,
+            'ready': <int>[0],
+          },
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      find.byType(GameScreen),
+      findsOneWidget,
+      reason:
+          'C-246 rule 2: the rematch LOBBY stays on GameScreen, the route '
+          'never goes back to the lobby screen',
+    );
+    final Finder waitingFinder24 = find.byKey(
+      const Key('end-card-rematch-waiting'),
+    );
+    expect(
+      waitingFinder24,
+      findsOneWidget,
+      reason:
+          'expected end-card-rematch-waiting on screen: Priya\'s own seat '
+          '(0) is in rematch.ready',
+    );
+    expect(
+      find.byKey(const Key('end-card-rematch')),
+      findsNothing,
+      reason: 'end-card-rematch must not render once Priya is ready',
+    );
+    expect(
+      find.byKey(const Key('end-card-ready-0')),
+      findsOneWidget,
+      reason: 'end-card-ready-0 must exist for occupied seat 0',
+    );
+    expect(
+      find.byKey(const Key('end-card-ready-1')),
+      findsOneWidget,
+      reason: 'end-card-ready-1 must exist for occupied seat 1',
+    );
+
+    await _pumpRealDurationFrames(tester);
+
+    expect(
+      find.byKey(const Key('end-card-rematch-waiting')),
+      findsOneWidget,
+      reason:
+          'capture 24: after the post-rematch-reply settle, expected '
+          'end-card-rematch-waiting still on screen immediately before '
+          'the capture',
+    );
+
+    await binding.takeScreenshot('24-rematch-waiting-ar');
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
