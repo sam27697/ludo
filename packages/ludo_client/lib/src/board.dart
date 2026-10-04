@@ -441,6 +441,7 @@ class _LudoBoardState extends State<LudoBoard> {
           child: Padding(
             padding: EdgeInsets.symmetric(horizontal: cellSize * 0.2),
             child: DecoratedBox(
+              key: Key('board-seat-name-$seat'),
               decoration: BoxDecoration(
                 color: seatColor,
                 borderRadius: BorderRadius.circular(chipHeight),
@@ -456,7 +457,6 @@ class _LudoBoardState extends State<LudoBoard> {
                     Flexible(
                       child: Text(
                         name,
-                        key: Key('board-seat-name-$seat'),
                         maxLines: 1,
                         softWrap: false,
                         overflow: TextOverflow.ellipsis,
