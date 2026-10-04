@@ -678,7 +678,7 @@ void main() {
       await tester.pumpWidget(
         _screenHarness(
           tokens: _allInYard(),
-          seatsInPlay: const <int>[0],
+          seatsInPlay: const <int>[0, 2],
           seatNames: const <int, String>{0: _fortyCharName},
         ),
       );
@@ -1007,7 +1007,7 @@ void main() {
         await tester.pumpWidget(
           _fixedHarness(
             tokens: _allInYard(),
-            seatsInPlay: const <int>[0],
+            seatsInPlay: const <int>[0, 2],
             seatNames: const <int, String>{0: arabicName},
             mySeat: 0,
             youLabel: arabicYou,
