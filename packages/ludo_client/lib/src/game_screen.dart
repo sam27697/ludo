@@ -966,7 +966,7 @@ class _GameScreenState extends State<GameScreen> {
             ),
             ExcludeSemantics(
               child: Text(
-                '$_countdownRemainingSeconds',
+                loc.gameTurnCountdownDigits(_countdownRemainingSeconds),
                 key: const Key('game-screen-turn-countdown'),
                 textAlign: TextAlign.center,
                 maxLines: 1,
