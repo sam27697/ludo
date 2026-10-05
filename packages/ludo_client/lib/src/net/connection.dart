@@ -361,10 +361,13 @@ class RoomConnection {
 
   /// docs/PROTOCOL.md section 16.1: `rematch` carries no payload field,
   /// from any seated player, in FINISHED to open a fresh LOBBY or in a
-  /// rematch LOBBY to accept. The reply is a plain frame, not a snapshot;
-  /// the `room` push that actually carries the new `rematch` state reaches
-  /// [frames] like every other push and is what moves a caller's room
-  /// forward.
+  /// rematch LOBBY to accept. The answer (section 16.2, 16.3) is the `room`
+  /// broadcast itself, the requester's own copy carrying `re` set to this
+  /// request's id; that frame also reaches [frames], unparsed, like every
+  /// other inbound frame, but a `re` set to one of this connection's own
+  /// request ids is not a push a caller's reducer should act on twice, so
+  /// the frame this method's own future completes with is the one copy of
+  /// it a caller is meant to apply.
   Future<Frame> rematch() {
     return request('rematch', const <String, Object?>{});
   }

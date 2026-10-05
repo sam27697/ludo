@@ -607,11 +607,14 @@ class RoomController extends ChangeNotifier {
 
   /// C-246 rule 1: forwards `rematch` to the connection when [phase] is
   /// [RoomPhase.connected] and is a silent no-op otherwise, from any seat --
-  /// opening a fresh LOBBY from FINISHED, or accepting one already open. The
-  /// reply is a plain frame, not a snapshot; it is not parsed as one and
-  /// changes nothing here directly. The `room` push that actually carries
-  /// the new `rematch` state (section 16.2, 16.3) reaches [frames] like
-  /// every other push and is what moves a screen forward.
+  /// opening a fresh LOBBY from FINISHED, or accepting one already open.
+  /// PROTOCOL 16.2/16.3: the answer to `rematch` is the `room` broadcast,
+  /// and the requester's own copy of it carries `re` set to this request's
+  /// id. That is exactly the shape [_reduceRoom] ignores (the request path
+  /// already owns every `room` that answers one of this controller's own
+  /// requests), so nobody else applies it; this method does, through
+  /// [_applyRoomFrame], the same seq-check-decode-apply body [_reduceRoom]
+  /// itself uses for an unsolicited push.
   ///
   /// Unlike [roll], [move], [startGame] and [setPlayers], there is no
   /// race-code carve-out here: every failure, whatever the code, routes
@@ -628,7 +631,14 @@ class RoomController extends ChangeNotifier {
       return;
     }
     try {
-      await connection.rematch();
+      final Frame frame = await connection.rematch();
+      if (_disposed) {
+        return;
+      }
+      final RoomSnapshot? room = _room;
+      if (room != null) {
+        _applyRoomFrame(frame, room);
+      }
     } catch (error) {
       _failFromInRoomRequest(error);
     }
@@ -856,15 +866,27 @@ class RoomController extends ChangeNotifier {
   /// A server-initiated `room` push, `re` null: the request path already
   /// owns every `room` that answers `createRoom`, `joinRoom`, `resume` or
   /// `setPlayers`, including this controller's own resync, so a `room` here
-  /// with `re` set is not this reducer's business. A decode failure is
-  /// treated the same as any other malformed frame: caught, no state
-  /// change, no rethrow.
+  /// with `re` set is not this reducer's business -- `rematch`'s own reply
+  /// is also `re` set, and [rematch] applies that one itself, directly,
+  /// through the same [_applyRoomFrame] body this reducer falls through to
+  /// below.
   void _reduceRoom(Frame frame, RoomSnapshot room) {
-    final int? seqValue = frame.seq;
-    if (seqValue == null) {
+    if (frame.re != null) {
       return;
     }
-    if (frame.re != null) {
+    _applyRoomFrame(frame, room);
+  }
+
+  /// The seq-check-decode-apply body shared by [_reduceRoom] (an
+  /// unsolicited `room` push) and [rematch] (the `room` that answers this
+  /// controller's own `rematch` request): a seq gap resynchronises exactly
+  /// as any other state-changing push does, a decode failure is treated the
+  /// same as any other malformed frame -- caught, no state change, no
+  /// rethrow -- and a frame that decodes cleanly replaces [room] and
+  /// notifies once.
+  void _applyRoomFrame(Frame frame, RoomSnapshot room) {
+    final int? seqValue = frame.seq;
+    if (seqValue == null) {
       return;
     }
     if (seqValue != room.seq + 1) {
