@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'game_stats.dart';
+import 'net/snapshot.dart' show RematchState;
 import 'theme.dart';
 
 /// Built by `GameScreen._gameOverBody`; never constructed from a
@@ -29,18 +30,6 @@ import 'theme.dart';
 /// `winnerSeat: null`, the same ended variant as a `room.winner` that was
 /// null to begin with (contract rule 4).
 class EndCard extends StatefulWidget {
-  const EndCard({
-    super.key,
-    required this.mySeat,
-    required this.winnerSeat,
-    required this.winnerName,
-    required this.seatColors,
-    required this.stats,
-    required this.verifyUrl,
-    required this.onVerify,
-    required this.onNewTable,
-  });
-
   /// The seat this device is sitting in, or null for a spectator view.
   final int? mySeat;
 
@@ -69,8 +58,68 @@ class EndCard extends StatefulWidget {
   final VoidCallback onVerify;
 
   /// Leaves this room and opens a fresh table. Unchanged from the pre-card
-  /// New table button's own callback. Sits where Rematch (X6) will go.
+  /// New table button's own callback. C-246: secondary now that Rematch has
+  /// taken the primary spot, except in the [rematchGone] state, where this
+  /// is the only action left and becomes primary again.
   final VoidCallback onNewTable;
+
+  /// C-246. `room.rematch`, handed in as-is: null outside a rematch LOBBY,
+  /// otherwise the requester and the seats that have accepted so far.
+  final RematchState? rematch;
+
+  /// C-246 rule 4's ask line names [rematch]'s own `by` seat; resolved by
+  /// the caller against `room.seats` the same way [winnerName] is, rather
+  /// than this widget looking seats up itself. Null whenever [rematch] is
+  /// null, or when `by` has since left the room.
+  final String? rematchByName;
+
+  /// Every occupied seat, in seat order -- `room.seats.map((s) => s.seat)`.
+  /// Backs the one ready dot per occupied seat C-246 rule 4 asks for.
+  /// Empty when the caller has nothing to show (every other EndCard
+  /// constructor site that predates C-246).
+  final List<int> occupiedSeats;
+
+  /// `controller.isHost`. Gates [onStartReady]: C-246 rule 4's start
+  /// button is never shown to a non-host.
+  final bool isHost;
+
+  /// C-246 rule 8: the last `rematch` this device sent answered
+  /// `NO_SUCH_ROOM`, the room having been reaped. Overrides every other
+  /// rematch state: the action area shows only the "table has closed" line
+  /// and New table becomes primary again.
+  final bool rematchGone;
+
+  /// Sends `rematch`: the one tap that opens a fresh LOBBY from FINISHED,
+  /// or accepts one already open. Null disables the control -- while the
+  /// caller's own request is already open (C-246 rule 3's no-double-send),
+  /// or when the caller has nothing to send to (every call site that
+  /// predates C-246).
+  final VoidCallback? onRematch;
+
+  /// Host-only: forces the start of a partially-ready rematch LOBBY
+  /// (`start_game`, C-246 rule 4). Null hides the control entirely, not
+  /// merely disables it: a non-host, or a caller that predates C-246,
+  /// never sees this button at all.
+  final VoidCallback? onStartReady;
+
+  const EndCard({
+    super.key,
+    required this.mySeat,
+    required this.winnerSeat,
+    required this.winnerName,
+    required this.seatColors,
+    required this.stats,
+    required this.verifyUrl,
+    required this.onVerify,
+    required this.onNewTable,
+    this.rematch,
+    this.rematchByName,
+    this.occupiedSeats = const <int>[],
+    this.isHost = false,
+    this.rematchGone = false,
+    this.onRematch,
+    this.onStartReady,
+  });
 
   @override
   State<EndCard> createState() => _EndCardState();
@@ -157,7 +206,7 @@ class _EndCardState extends State<EndCard> {
         const SizedBox(height: kSpace4),
         _fairness(context, loc),
         const SizedBox(height: kSpace3),
-        _newTableButton(loc),
+        _actionArea(context, loc),
       ],
     );
   }
@@ -191,7 +240,7 @@ class _EndCardState extends State<EndCard> {
         const SizedBox(height: kSpace4),
         _fairness(context, loc),
         const SizedBox(height: kSpace3),
-        _newTableButton(loc),
+        _actionArea(context, loc),
       ],
     );
   }
@@ -210,7 +259,7 @@ class _EndCardState extends State<EndCard> {
         const SizedBox(height: kSpace4),
         _fairness(context, loc),
         const SizedBox(height: kSpace3),
-        _newTableButton(loc),
+        _actionArea(context, loc),
       ],
     );
   }
@@ -342,10 +391,189 @@ class _EndCardState extends State<EndCard> {
     );
   }
 
-  Widget _newTableButton(AppLocalizations loc) {
-    return ElevatedButton(
+  /// C-246's own action area, replacing the single New table button every
+  /// variant used to end on. Decided from the room snapshot alone (rule 4),
+  /// read here off plain fields the caller already resolved against it:
+  ///
+  ///  - [rematchGone] (rule 8) overrides everything else: the table has
+  ///    closed, there is nothing left to rematch, and New table is the one
+  ///    primary action left.
+  ///  - Otherwise, with [rematch] non-null and my own seat already in
+  ///    `ready`: the waiting line and the ready dots, plus -- host only,
+  ///    at least two ready and not every occupied seat -- the secondary
+  ///    Start-with-N button (rule 4's third bullet).
+  ///  - With [rematch] non-null and my own seat not in `ready`: the ask
+  ///    line naming `by`, and the Rematch key doubling as the one-tap
+  ///    accept (rule 4's second bullet).
+  ///  - With [rematch] null: the ordinary FINISHED resting state, Rematch
+  ///    offered fresh (rule 4's first bullet).
+  ///
+  /// New table (rule 3) stays present, secondary, in every branch except
+  /// the first.
+  Widget _actionArea(BuildContext context, AppLocalizations loc) {
+    if (widget.rematchGone) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            loc.endRematchGone,
+            key: const Key('end-card-rematch-gone'),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: kSpace3),
+          _newTableButton(loc, primary: true),
+        ],
+      );
+    }
+
+    final RematchState? rematch = widget.rematch;
+    final int? mySeat = widget.mySeat;
+    final bool amReady =
+        rematch != null && mySeat != null && rematch.ready.contains(mySeat);
+
+    if (rematch != null && amReady) {
+      final bool offerStart =
+          widget.isHost &&
+          rematch.ready.length >= 2 &&
+          rematch.ready.length < widget.occupiedSeats.length;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            loc.endRematchWaiting,
+            key: const Key('end-card-rematch-waiting'),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: kSpace2),
+          _readyDotsRow(rematch),
+          if (offerStart) ...<Widget>[
+            const SizedBox(height: kSpace3),
+            _startReadyButton(loc, rematch.ready.length),
+          ],
+          const SizedBox(height: kSpace3),
+          _newTableButton(loc, primary: false),
+        ],
+      );
+    }
+
+    if (rematch != null && !amReady) {
+      final String byName = widget.rematchByName ?? '';
+      final TextStyle? bodyStyle = Theme.of(context).textTheme.bodyLarge;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text.rich(
+            TextSpan(
+              children: _nameHighlightSpans(
+                loc.endRematchAsk(byName),
+                byName,
+                _seatColor(rematch.by),
+                bodyStyle,
+              ),
+            ),
+            key: const Key('end-card-rematch-ask'),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: kSpace3),
+          _rematchButton(loc),
+          const SizedBox(height: kSpace2),
+          _newTableButton(loc, primary: false),
+        ],
+      );
+    }
+
+    // Rule 4's first bullet: FINISHED, no rematch LOBBY open yet.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _rematchButton(loc),
+        const SizedBox(height: kSpace2),
+        _newTableButton(loc, primary: false),
+      ],
+    );
+  }
+
+  /// One ready dot per occupied seat (rule 4's second bullet), seat-coloured
+  /// and filled when that seat is in `rematch.ready`, an outline of the
+  /// same colour when it is not -- doctrine P9, colour is never the only
+  /// signal, so the two states differ in fill, not only in hue. Wrapped
+  /// rather than a bare Row so a four-seat room never overflows a narrow
+  /// card.
+  Widget _readyDotsRow(RematchState rematch) {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: kSpace2,
+      runSpacing: kSpace2,
+      children: <Widget>[
+        for (final int seat in widget.occupiedSeats)
+          _readyDot(seat, rematch.ready.contains(seat)),
+      ],
+    );
+  }
+
+  Widget _readyDot(int seat, bool ready) {
+    final Color seatColor = _seatColor(seat);
+    return Container(
+      key: Key('end-card-ready-$seat'),
+      width: 16,
+      height: 16,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: ready ? seatColor : null,
+        border: Border.all(color: seatColor, width: 2),
+      ),
+    );
+  }
+
+  /// Rule 3: large, primary, my own seat colour -- a small coloured dot on
+  /// the label stands in for a filled background, since the colour has to
+  /// land on the painted tree under this key for doctrine P9's
+  /// colour-blind-safe check to see it, not only in the button's own
+  /// `ButtonStyle`. Doubles as the one-tap rematch accept (rule 4's second
+  /// bullet): the key and the callback are the same whichever text is
+  /// showing above it.
+  Widget _rematchButton(AppLocalizations loc) {
+    final Color seatColor = _seatColor(widget.mySeat ?? 0);
+    return ElevatedButton.icon(
+      key: const Key('end-card-rematch'),
+      style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+      onPressed: widget.onRematch,
+      icon: Container(
+        width: 14,
+        height: 14,
+        decoration: BoxDecoration(color: seatColor, shape: BoxShape.circle),
+      ),
+      label: Text(loc.endRematch),
+    );
+  }
+
+  /// Rule 4's third bullet: host-only, under the waiting line, secondary to
+  /// the Rematch/waiting state above it.
+  Widget _startReadyButton(AppLocalizations loc, int readyCount) {
+    return OutlinedButton(
+      key: const Key('end-card-rematch-start'),
+      style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+      onPressed: widget.onStartReady,
+      child: Text(loc.endRematchStartReady(readyCount)),
+    );
+  }
+
+  /// Rule 3 and rule 8: primary (filled) only in the [EndCard.rematchGone]
+  /// state, where New table is the one action left; secondary (outlined)
+  /// in every other branch, since Rematch now sits where New table's own
+  /// primary spot used to be.
+  Widget _newTableButton(AppLocalizations loc, {required bool primary}) {
+    if (primary) {
+      return ElevatedButton(
+        key: const Key('game-screen-new-room-button'),
+        style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+        onPressed: widget.onNewTable,
+        child: Text(loc.gameNewRoomButton),
+      );
+    }
+    return OutlinedButton(
       key: const Key('game-screen-new-room-button'),
-      style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
+      style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
       onPressed: widget.onNewTable,
       child: Text(loc.gameNewRoomButton),
     );

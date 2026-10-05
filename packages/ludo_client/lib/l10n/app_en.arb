@@ -390,6 +390,38 @@
   "@endFairHint": {
     "description": "Longer explanation shown from the end card's info-hint button next to the fairness line, for a player who has never thought about how the dice are fair."
   },
+  "endRematch": "Play again",
+  "@endRematch": {
+    "description": "Primary action on the end card, and on the lobby screen for a joiner who has not yet accepted a rematch, that sends the rematch request. Also the label of the one-tap accept control a player sees when another seat has already asked for a rematch."
+  },
+  "endRematchWaiting": "Waiting for the others",
+  "@endRematchWaiting": {
+    "description": "Shown on the end card in place of the rematch button once this player's own seat has accepted a rematch, while at least one other occupied seat has not yet answered."
+  },
+  "endRematchAsk": "{name} wants to play again",
+  "@endRematchAsk": {
+    "description": "Shown on the end card when another seat has asked for a rematch and this player's own seat has not yet answered, naming the seat that asked. Gender-neutral on purpose.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
+  "endRematchStartReady": "Start with {count}",
+  "@endRematchStartReady": {
+    "description": "Secondary button shown only to the host, under the waiting line, once at least two seats have accepted a rematch but not every occupied seat has. Sends start_game with the ready seats.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "endRematchGone": "This table has closed",
+  "@endRematchGone": {
+    "description": "Shown on the end card in place of the rematch action when the rematch request answers NO_SUCH_ROOM: the room was reaped before the rematch could be sent. New table becomes the primary action in this state."
+  },
   "feedbackHapticsToggle": "Vibration",
   "@feedbackHapticsToggle": {
     "description": "Settings switch that turns game vibration on or off."

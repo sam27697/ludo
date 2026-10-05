@@ -123,9 +123,25 @@ class _GameScreenState extends State<GameScreen> {
   // already held.
   final List<Frame> _frames = <Frame>[];
 
+  // C-246 rule 5: the `game_id` every per-game thing below is currently
+  // reckoned against. Set from whatever the controller already held at
+  // mount (a resume straight into a playing or finished room carries one),
+  // then from every `game_started` this screen's own subscription sees. A
+  // `game_started` naming a different `game_id` is a rematch's second game
+  // starting: every per-game thing this screen holds is dropped before the
+  // new id is recorded, in `_resetForNewGame`.
+  String? _currentGameId;
+
+  // C-246 rule 3: true while this device's own `rematch` request is open,
+  // so a second tap sends nothing. Reset once the request settles, success
+  // or failure alike -- `RoomController.rematch` never throws, so the
+  // `await` below always resumes.
+  bool _rematchInFlight = false;
+
   @override
   void initState() {
     super.initState();
+    _currentGameId = widget.controller.room?.gameId;
     widget.controller.addListener(_onControllerChanged);
     _frameSub = widget.controller.frames.listen(_onFrame);
     _syncCountdown();
@@ -160,6 +176,20 @@ class _GameScreenState extends State<GameScreen> {
   /// earlier hold; a `rolled` with no readable `value` changes nothing,
   /// there being no new face to take the die's place.
   void _onFrame(Frame frame) {
+    // C-246 rule 5: a `game_started` naming a game this screen has not
+    // already recorded is the next game after a rematch (or the very
+    // first game, handled the same way since `_currentGameId` starts
+    // null). Every per-game thing this screen holds is dropped before
+    // this frame itself becomes the new list's first entry, so game two's
+    // stats never carry a single frame of game one's.
+    if (frame.type == 'game_started') {
+      final String? gameId = _stringAt(frame.data, 'game_id');
+      if (gameId != null && gameId != _currentGameId) {
+        _resetForNewGame();
+        _currentGameId = gameId;
+      }
+    }
+
     _frames.add(frame);
     final List<FeedbackCue> cues = cuesForFrame(
       frame,
@@ -176,6 +206,43 @@ class _GameScreenState extends State<GameScreen> {
         _dropNoMoveHold();
       }
     }
+
+    // C-246 rule 6: a seat removed by a host-forced start receives a
+    // `player_left` naming its own seat and nothing further from the room
+    // (docs/PROTOCOL.md section 16.9 rule 1). No existing "removed from a
+    // lobby" path exists under lib/ to reuse, so this is treated exactly
+    // as the AppBar Leave control treats leaving: pop with no result.
+    if (frame.type == 'player_left') {
+      final int? seatValue = _intAt(frame.data, 'seat');
+      if (seatValue != null && seatValue == widget.controller.seat) {
+        _leave();
+      }
+    }
+  }
+
+  /// C-246 rule 5: drops every per-game thing this screen holds -- the
+  /// frame list feeding `computeGameStats`, the no-move hold and its held
+  /// face, the pending auto-move and the k it was armed for, the move-sent
+  /// guard, and the roll-wait tumble and its no-answer line. The countdown
+  /// memo is untouched on purpose (rule 5's own text, "not simplified"):
+  /// `_syncCountdown` already restarts it on its own the moment the room
+  /// stops showing a playing board (FINISHED, then the rematch LOBBY in
+  /// between), which a new game always passes through first.
+  void _resetForNewGame() {
+    _frames.clear();
+    _noMoveTimer?.cancel();
+    _noMoveTimer = null;
+    _noMoveVisible = false;
+    _noMoveFace = null;
+    _autoMoveTimer?.cancel();
+    _autoMoveTimer = null;
+    _pendingAutoMoveToken = null;
+    _autoMoveHandledK = null;
+    _moveSentForK = null;
+    _rollNoAnswerTimer?.cancel();
+    _rollNoAnswerTimer = null;
+    _rollWaitK = null;
+    _rollNoAnswer = false;
   }
 
   void _armNoMoveHold(int? face) {
@@ -477,6 +544,26 @@ class _GameScreenState extends State<GameScreen> {
     Navigator.of(context).pop(GameScreenResult.newTable);
   }
 
+  /// C-246 rule 1 and rule 3: the end card's Rematch/accept tap. Guarded by
+  /// [_rematchInFlight] so a second tap while the request is open sends
+  /// nothing; `RoomController.rematch` never throws, so this always
+  /// reaches the end and clears the guard, whatever the server answered.
+  Future<void> _onRematchTap() async {
+    if (_rematchInFlight) {
+      return;
+    }
+    setState(() {
+      _rematchInFlight = true;
+    });
+    await widget.controller.rematch();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _rematchInFlight = false;
+    });
+  }
+
   /// Opens the match `verify_url` in an external browser. The app does not
   /// prove the rolls itself; a failure to open is shown honestly.
   Future<void> _openVerifyUrl() async {
@@ -519,8 +606,24 @@ class _GameScreenState extends State<GameScreen> {
     final RoomController controller = widget.controller;
     final RoomSnapshot? room = controller.room;
 
+    // C-246 rule 8, and this file's own ambiguity note: every rematch
+    // failure alike lands the controller in RoomPhase.failed (room 1's
+    // unconditional "routes through the same in-room request failure
+    // path"); this is what tells a NO_SUCH_ROOM failure apart from every
+    // other one, so the end card can stay up in its gone state instead of
+    // falling into the ordinary connection-lost body below. `room` is
+    // whatever this controller held before the failed request -- `_fail`
+    // never touches it -- so it is still the finished (or rematch-LOBBY)
+    // snapshot the end card was already showing.
+    final bool rematchGone =
+        controller.phase == RoomPhase.failed &&
+        controller.errorCode == 'NO_SUCH_ROOM' &&
+        room != null;
+
     final Widget body;
-    if (controller.phase == RoomPhase.failed ||
+    if (rematchGone) {
+      body = _gameOverBody(loc, controller, room, rematchGone: true);
+    } else if (controller.phase == RoomPhase.failed ||
         controller.phase == RoomPhase.closed) {
       // Rule 1: consulted before room, and decisive regardless of what the
       // last room snapshot said. The board a dead socket last drew is not
@@ -529,6 +632,11 @@ class _GameScreenState extends State<GameScreen> {
     } else if (room == null) {
       body = _loadingBody();
     } else if (room.state == RoomState.finished) {
+      body = _gameOverBody(loc, controller, room);
+    } else if (room.state == RoomState.lobby && room.rematch != null) {
+      // C-246 rule 2: a rematch LOBBY (state LOBBY, non-null `rematch`) is
+      // drawn by the same end card as FINISHED, so the player sees one
+      // continuous next step rather than a reset screen in between.
       body = _gameOverBody(loc, controller, room);
     } else if (room.state == RoomState.playing && room.seats.length >= 2) {
       body = _playingBody(loc, controller, room);
@@ -875,8 +983,9 @@ class _GameScreenState extends State<GameScreen> {
   Widget _gameOverBody(
     AppLocalizations loc,
     RoomController controller,
-    RoomSnapshot room,
-  ) {
+    RoomSnapshot room, {
+    bool rematchGone = false,
+  }) {
     final bool hasBoard = room.seats.length >= 2;
 
     // Rule 4: a winner naming a seat absent from room.seats reads the same
@@ -891,6 +1000,20 @@ class _GameScreenState extends State<GameScreen> {
       }
     }
     final int? winnerSeat = winnerName == null ? null : room.winner;
+
+    // C-246 rule 4: the ask line names `rematch.by`, resolved against
+    // room.seats the same way winnerName is above -- null when there is no
+    // rematch open, or when `by` has since left.
+    final RematchState? rematch = room.rematch;
+    String? rematchByName;
+    if (rematch != null) {
+      for (final SeatState seatState in room.seats) {
+        if (seatState.seat == rematch.by) {
+          rematchByName = seatState.name;
+          break;
+        }
+      }
+    }
 
     // C-232: this seat's own numbers, computed from exactly the frames
     // this screen has already received. No entry in room.seats for my own
@@ -934,6 +1057,13 @@ class _GameScreenState extends State<GameScreen> {
             verifyUrl: room.verifyUrl,
             onVerify: _openVerifyUrl,
             onNewTable: _requestNewTable,
+            rematch: rematch,
+            rematchByName: rematchByName,
+            occupiedSeats: _seatsInPlayOf(room),
+            isHost: controller.isHost,
+            rematchGone: rematchGone,
+            onRematch: _rematchInFlight ? null : () => _onRematchTap(),
+            onStartReady: controller.isHost ? controller.startGame : null,
           ),
           if (hasBoard) ...[
             const SizedBox(height: kSpace4),
@@ -1099,4 +1229,12 @@ SeatState? _offlineTurnSeat(RoomSnapshot room) {
 int? _intAt(Map<String, Object?> data, String key) {
   final Object? value = data[key];
   return value is int ? value : null;
+}
+
+/// `data[key]` from a frame's `d`, when present and a `String`; null
+/// otherwise. C-246: reads `game_started`'s own `game_id` to decide
+/// whether a new game has begun.
+String? _stringAt(Map<String, Object?> data, String key) {
+  final Object? value = data[key];
+  return value is String ? value : null;
 }
