@@ -88,15 +88,19 @@ class SeatCard extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: kSpace2,
-                  vertical: 2,
+                  vertical: kSpaceTight,
                 ),
                 child: Text(
                   youLabel,
-                  style: const TextStyle(
-                    color: LudoColors.actionOn,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 11,
-                  ),
+                  style:
+                      Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: LudoColors.actionOn,
+                        fontWeight: FontWeight.w700,
+                      ) ??
+                      const TextStyle(
+                        color: LudoColors.actionOn,
+                        fontWeight: FontWeight.w700,
+                      ),
                 ),
               ),
             ),

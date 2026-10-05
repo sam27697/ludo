@@ -485,6 +485,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             runSpacing: kSpace2,
             children: [
               _ruleChip(
+                chipKey: const Key('lobby-rule-blocks-chip'),
                 icon: Icons.shield_outlined,
                 on: room.rules.blocks,
                 textKey: const Key('lobby-rule-blocks'),
@@ -493,6 +494,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     : loc.lobbyRuleBlocksOff,
               ),
               _ruleChip(
+                chipKey: const Key('lobby-rule-capture-bonus-chip'),
                 icon: Icons.replay_rounded,
                 on: room.rules.captureBonus,
                 textKey: const Key('lobby-rule-capture-bonus'),
@@ -618,7 +620,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// C-254 rule 4: an icon plus the existing label `Text`, key and string
   /// unchanged. Off state keeps the same icon, mutes its colour, and adds
   /// a diagonal strike -- a second signal besides colour (doctrine P9).
+  /// Amendment rule 8: the chip itself (this `DecoratedBox`) carries its
+  /// own key, so a test can find the icon and the strike inside the chip
+  /// without reading them off the label `Text`. Amendment rule 9: the
+  /// label sits in a `Flexible` rather than a bare `Text` in a
+  /// `Row(mainAxisSize: min)`, so at 360dp, en/ar, scale 1.0/1.3, it wraps
+  /// instead of pushing the row past its given width.
   Widget _ruleChip({
+    required Key chipKey,
     required IconData icon,
     required bool on,
     required Key textKey,
@@ -626,6 +635,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }) {
     final Color color = on ? LudoColors.action : LudoColors.inkMuted;
     return DecoratedBox(
+      key: chipKey,
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(kRadiusControl),
@@ -655,7 +665,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     ),
             ),
             const SizedBox(width: kSpace2),
-            Text(text, key: textKey),
+            Flexible(child: Text(text, key: textKey, maxLines: 2)),
           ],
         ),
       ),

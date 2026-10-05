@@ -82,6 +82,11 @@ const double kSpace5 = 20;
 const double kSpace6 = 24;
 const double kSpace7 = 32;
 
+/// Tighter than [kSpace1]: the vertical padding inside a compact in-card
+/// badge (the lobby seat card's "You" chip), where the card's own padding
+/// already carries the larger spacing around the badge itself.
+const double kSpaceTight = 2;
+
 /// Brand colours and motion readable from [Theme.of] via ThemeExtension.
 @immutable
 class LudoBrand extends ThemeExtension<LudoBrand> {
