@@ -33,6 +33,19 @@
 // "بانتظار صديق" and "You" / "أنت") so this file keeps proving the right
 // thing (the getter exists and reads the frame's own locale) once C-254
 // lands, rather than freezing today's wording.
+//
+// RETURN 1 (run 72, defect 1): rule 4's four cases are re-pointed at
+// amendment run 72 rule 8. The Icon and the strike are now looked up inside
+// the chip's own key (`lobby-rule-blocks-chip` /
+// `lobby-rule-capture-bonus-chip`), not inside the label Text's unchanged
+// key (`lobby-rule-blocks` / `lobby-rule-capture-bonus`), and "differs when
+// off" accepts either a different `IconData` or a strike (`CustomPaint`)
+// present only when off (`_expectDiffersWhenOff` below). On this order's
+// base (edebd40, run 72's integrate branch, which already carries C-254's
+// run 72 implementation) `lib/src/lobby_screen.dart`'s `_ruleChip` paints no
+// key at all on its outer `DecoratedBox`, so all four cases are red for the
+// missing `-chip` key specifically, not for the icon/strike logic: see the
+// report pasted with this round's red tail.
 
 import 'dart:convert';
 
@@ -353,7 +366,9 @@ Finder _openSeatCards() => find.byWidgetPredicate((Widget widget) {
 /// Reads the single `Icon` inside the chip keyed [chipKey], failing with a
 /// reason naming the chip and what was expected rather than letting
 /// `tester.widget` throw a bare `Bad state: No element` when C-254's icon
-/// is not there yet.
+/// is not there yet. Per amendment run 72 rule 8, [chipKey] is the chip's
+/// own `-chip` key (`lobby-rule-blocks-chip`, `lobby-rule-capture-bonus-chip`),
+/// not the label `Text`'s unchanged key.
 IconData _iconInChip(WidgetTester tester, String chipKey) {
   final Finder iconFinder = find.descendant(
     of: find.byKey(Key(chipKey)),
@@ -371,6 +386,46 @@ IconData _iconInChip(WidgetTester tester, String chipKey) {
     reason: 'rule 4: $chipKey\'s Icon must carry a non-null IconData',
   );
   return icon!;
+}
+
+/// True if a `CustomPaint` sits anywhere inside the chip keyed [chipKey]:
+/// amendment run 72 rule 8's diagonal strike, which C-254's `_ruleChip`
+/// (`lib/src/lobby_screen.dart`) only paints in the `off` branch (a `Stack`
+/// of the same `Icon` plus a `CustomPaint(painter: _RuleOffStrikePainter)`),
+/// never in the `on` branch (a bare `Icon`, no `Stack`, no `CustomPaint`).
+bool _hasStrikeInChip(WidgetTester tester, String chipKey) {
+  return find
+      .descendant(
+        of: find.byKey(Key(chipKey)),
+        matching: find.byType(CustomPaint),
+      )
+      .evaluate()
+      .isNotEmpty;
+}
+
+/// Amendment run 72 rule 8: on vs off must differ by icon, not only colour,
+/// met by either a different `IconData` or a strike present only when off.
+/// Fails naming the chip, both icons and both strike readings so a defect
+/// (same icon, strike on both states, or strike on while on) is legible
+/// without re-running the test.
+void _expectDiffersWhenOff(
+  String chipKey, {
+  required IconData onIcon,
+  required bool onHasStrike,
+  required IconData offIcon,
+  required bool offHasStrike,
+}) {
+  final bool differentIcon = onIcon != offIcon;
+  final bool strikeOnlyWhenOff = !onHasStrike && offHasStrike;
+  expect(
+    differentIcon || strikeOnlyWhenOff,
+    isTrue,
+    reason:
+        'amendment run 72 rule 8: $chipKey on vs off must differ by icon, '
+        'not only colour: either a different IconData (on=$onIcon, '
+        'off=$offIcon) or a strike present only when off (on has strike: '
+        '$onHasStrike, off has strike: $offHasStrike)',
+  );
 }
 
 bool _isOverflowError(FlutterErrorDetails details) {
@@ -706,7 +761,7 @@ void main() {
     ];
 
     testWidgets(
-      'lobby-rule-blocks contains an Icon and the unchanged on-label',
+      'lobby-rule-blocks-chip contains an Icon and the unchanged on-label',
       (tester) async {
         final RoomController controller = await _mountConnectedLobby(
           tester,
@@ -718,11 +773,18 @@ void main() {
         );
         expect(controller.room!.rules.blocks, isTrue);
 
-        final Finder chip = find.byKey(const Key('lobby-rule-blocks'));
+        final Finder chip = find.byKey(const Key('lobby-rule-blocks-chip'));
+        expect(
+          chip,
+          findsOneWidget,
+          reason:
+              'amendment run 72 rule 8: lobby-rule-blocks-chip must exist '
+              'as the rule chip\'s own outer DecoratedBox key',
+        );
         expect(
           find.descendant(of: chip, matching: find.byType(Icon)),
           findsOneWidget,
-          reason: 'rule 4: lobby-rule-blocks must contain an Icon',
+          reason: 'rule 4: lobby-rule-blocks-chip must contain an Icon',
         );
 
         final AppLocalizations loc = AppLocalizations.of(
@@ -732,14 +794,16 @@ void main() {
           find.descendant(of: chip, matching: find.text(loc.lobbyRuleBlocksOn)),
           findsOneWidget,
           reason:
-              'rule 4: lobby-rule-blocks must still contain the unchanged '
-              'loc.lobbyRuleBlocksOn string ("${loc.lobbyRuleBlocksOn}")',
+              'rule 4: lobby-rule-blocks-chip must still contain the '
+              'unchanged loc.lobbyRuleBlocksOn string '
+              '("${loc.lobbyRuleBlocksOn}") on the unchanged '
+              'lobby-rule-blocks label key',
         );
       },
     );
 
-    testWidgets('lobby-rule-capture-bonus contains an Icon and the unchanged '
-        'off-label', (tester) async {
+    testWidgets('lobby-rule-capture-bonus-chip contains an Icon and the '
+        'unchanged off-label', (tester) async {
       final RoomController controller = await _mountConnectedLobby(
         tester,
         mySeat: 0,
@@ -750,11 +814,20 @@ void main() {
       );
       expect(controller.room!.rules.captureBonus, isFalse);
 
-      final Finder chip = find.byKey(const Key('lobby-rule-capture-bonus'));
+      final Finder chip = find.byKey(
+        const Key('lobby-rule-capture-bonus-chip'),
+      );
+      expect(
+        chip,
+        findsOneWidget,
+        reason:
+            'amendment run 72 rule 8: lobby-rule-capture-bonus-chip must '
+            'exist as the rule chip\'s own outer DecoratedBox key',
+      );
       expect(
         find.descendant(of: chip, matching: find.byType(Icon)),
         findsOneWidget,
-        reason: 'rule 4: lobby-rule-capture-bonus must contain an Icon',
+        reason: 'rule 4: lobby-rule-capture-bonus-chip must contain an Icon',
       );
 
       final AppLocalizations loc = AppLocalizations.of(
@@ -767,46 +840,58 @@ void main() {
         ),
         findsOneWidget,
         reason:
-            'rule 4: lobby-rule-capture-bonus must still contain the '
+            'rule 4: lobby-rule-capture-bonus-chip must still contain the '
             'unchanged loc.lobbyRuleCaptureBonusOff string '
-            '("${loc.lobbyRuleCaptureBonusOff}")',
-      );
-    });
-
-    testWidgets('blocks on vs off use different icons, not only colour', (
-      tester,
-    ) async {
-      await _mountConnectedLobby(
-        tester,
-        mySeat: 0,
-        hostSeat: 0,
-        players: 4,
-        seats: oneSeat(),
-        blocks: true,
-      );
-      final IconData onIcon = _iconInChip(tester, 'lobby-rule-blocks');
-
-      await _mountConnectedLobby(
-        tester,
-        mySeat: 0,
-        hostSeat: 0,
-        players: 4,
-        seats: oneSeat(),
-        blocks: false,
-      );
-      final IconData offIcon = _iconInChip(tester, 'lobby-rule-blocks');
-
-      expect(
-        onIcon,
-        isNot(equals(offIcon)),
-        reason:
-            'rule 4: lobby-rule-blocks on ($onIcon) and off ($offIcon) '
-            'must use different icons, not only a colour change',
+            '("${loc.lobbyRuleCaptureBonusOff}") on the unchanged '
+            'lobby-rule-capture-bonus label key',
       );
     });
 
     testWidgets(
-      'capture bonus on vs off use different icons, not only colour',
+      'blocks on vs off differ by icon or by a strike present only when '
+      'off, not only colour',
+      (tester) async {
+        await _mountConnectedLobby(
+          tester,
+          mySeat: 0,
+          hostSeat: 0,
+          players: 4,
+          seats: oneSeat(),
+          blocks: true,
+        );
+        final IconData onIcon = _iconInChip(tester, 'lobby-rule-blocks-chip');
+        final bool onHasStrike = _hasStrikeInChip(
+          tester,
+          'lobby-rule-blocks-chip',
+        );
+
+        await _mountConnectedLobby(
+          tester,
+          mySeat: 0,
+          hostSeat: 0,
+          players: 4,
+          seats: oneSeat(),
+          blocks: false,
+        );
+        final IconData offIcon = _iconInChip(tester, 'lobby-rule-blocks-chip');
+        final bool offHasStrike = _hasStrikeInChip(
+          tester,
+          'lobby-rule-blocks-chip',
+        );
+
+        _expectDiffersWhenOff(
+          'lobby-rule-blocks-chip',
+          onIcon: onIcon,
+          onHasStrike: onHasStrike,
+          offIcon: offIcon,
+          offHasStrike: offHasStrike,
+        );
+      },
+    );
+
+    testWidgets(
+      'capture bonus on vs off differ by icon or by a strike present only '
+      'when off, not only colour',
       (tester) async {
         await _mountConnectedLobby(
           tester,
@@ -816,7 +901,14 @@ void main() {
           seats: oneSeat(),
           captureBonus: true,
         );
-        final IconData onIcon = _iconInChip(tester, 'lobby-rule-capture-bonus');
+        final IconData onIcon = _iconInChip(
+          tester,
+          'lobby-rule-capture-bonus-chip',
+        );
+        final bool onHasStrike = _hasStrikeInChip(
+          tester,
+          'lobby-rule-capture-bonus-chip',
+        );
 
         await _mountConnectedLobby(
           tester,
@@ -828,16 +920,19 @@ void main() {
         );
         final IconData offIcon = _iconInChip(
           tester,
-          'lobby-rule-capture-bonus',
+          'lobby-rule-capture-bonus-chip',
+        );
+        final bool offHasStrike = _hasStrikeInChip(
+          tester,
+          'lobby-rule-capture-bonus-chip',
         );
 
-        expect(
-          onIcon,
-          isNot(equals(offIcon)),
-          reason:
-              'rule 4: lobby-rule-capture-bonus on ($onIcon) and off '
-              '($offIcon) must use different icons, not only a colour '
-              'change',
+        _expectDiffersWhenOff(
+          'lobby-rule-capture-bonus-chip',
+          onIcon: onIcon,
+          onHasStrike: onHasStrike,
+          offIcon: offIcon,
+          offHasStrike: offHasStrike,
         );
       },
     );
@@ -895,6 +990,36 @@ void main() {
   // ===========================================================================
   // Rule 7: 360x800, en/ar, text scale 1.0/1.3, four seats plus the
   // rematch-waiting line, no "overflowed" FlutterError.
+  //
+  // RETURN 1 (run 72, defect 2): amendment run 72 rule 9 asks for the same
+  // dimension matrix (360dp, en/ar, scale 1.0/1.3) with no chip overflow or
+  // clip. Not duplicated as a separate case here: the four cases below
+  // mount the full connected lobby at that exact matrix with all four
+  // seats occupied, which puts both rule chips (`lobby-rule-blocks-chip`,
+  // `lobby-rule-capture-bonus-chip`) on screen in the same widget tree
+  // during the same pump, under the same `FlutterError.onError` capture,
+  // which is not scoped to a widget -- any "RenderFlex overflowed" raised
+  // from inside a chip's `Row` (`lib/src/lobby_screen.dart`'s `_ruleChip`,
+  // `mainAxisSize: MainAxisSize.min`, no `Expanded`/`Flexible` around its
+  // `Text`, no `clipBehavior` anywhere in the chip, so an over-wide label
+  // overflows loudly, it does not clip silently) is caught here exactly as
+  // it already was in run 72 (the verdict names these same cases as having
+  // "caught a real product defect (254 RETURN 1)" -- the chip overflow
+  // amendment rule 9 was written to fix). Measured on this order's base
+  // (edebd40): 3 of these 4 cases are red for exactly this reason --
+  // en/1.0x passes (no overflow), en/1.3x overflows by 53px, ar/1.0x by
+  // 6px, ar/1.3x by 86px, every one pointing at the same
+  // `Row:lib/src/lobby_screen.dart:638` inside `_ruleChip`. The one gap: these four
+  // cases mount with the default blocks: true, captureBonus: true, so only
+  // the "on" label strings are on screen, never "off". The "off" strings
+  // are not longer: en "Blocks: on" (11 chars) vs "Blocks: off" (12,
+  // +1), "Capture bonus: on" (18) vs "Capture bonus: off" (19, +1); ar
+  // "الحواجز: مفعّلة" vs "الحواجز: معطّلة" and "مكافأة الأكل: مفعّلة" vs
+  // "مكافأة الأكل: معطّلة" are the same length letter-for-letter in both
+  // states (lib/l10n/app_ar.arb). The "off" strike itself
+  // (`_RuleOffStrikePainter`) paints over the existing icon box and adds no
+  // width. So the "on" cases already measure at or above the "off" width
+  // in both locales; no separate off-state case is added.
   // ===========================================================================
   group('C-254 rule 7: no overflow at 360x800', () {
     for (final Locale locale in <Locale>[
