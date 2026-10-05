@@ -4095,7 +4095,7 @@ void main() {
       tester,
       controller: controller,
       expectedWinner: 0,
-      expectedText: loc23.gameOverPlayerWins(hostName),
+      expectedText: loc23.endLoseTitle(hostName),
       momentDescription:
           'immediately after the game_over push landed, before Priya\'s '
           'own rematch ask arrives',
@@ -4314,7 +4314,7 @@ void main() {
       tester,
       controller: controller,
       expectedWinner: 0,
-      expectedText: loc24.gameOverYouWin,
+      expectedText: loc24.endWinTitle,
       momentDescription:
           'immediately after the game_over push landed, before Priya taps '
           'her own end-card-rematch',
