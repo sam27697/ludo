@@ -29,32 +29,35 @@
 // and the harness are copied by hand from those two files' own copies, per
 // this order's instruction never to import across test files.
 //
-// Ambiguity found while writing this file, reported rather than invented
-// around: C-250 rule 2 (the chip, the dot) and rule 3 (the ring) describe
-// visual properties -- a tinted rounded chip, a filled dot, a ring that
-// depletes and changes colour -- but name no test key for any of the three,
-// unlike rule 4's `game-screen-turn-seat-offline` and rule 5's
-// `game-screen-dice-value`, which are both pinned by name. The implementing
-// worker is free to build the chip, the dot and the ring out of any widget
-// shape (Container, DecoratedBox, Material, a custom CustomPainter ring, an
-// Icon-drawn dot, and so on), and this file has not read what they in fact
-// chose. What is used below instead is colour presence scoped by exclusion:
-// every colour-bearing widget (Text, RichText, Icon, DecoratedBox, Container,
-// Material, ColoredBox -- the same vocabulary test/end_card_test.dart's own
-// `_colorsUnder` already reads colours from, copied by hand and extended
-// here) anywhere under GameScreen that is NOT also a descendant of
-// game-screen-board, game-seat-pip-strip or game-die is treated as "the
-// header's own colour", since those three are the only other seat-coloured
-// regions C-250 rule 7 leaves untouched. This proves the turn seat's colour
-// (or the vocabulary red) appears somewhere in the header; it cannot prove
-// which of the chip, the dot or the ring carries it, or distinguish a chip
-// from a dot structurally beyond counting matching nodes. If the real
-// implementation paints the ring purely on a Canvas with no colour-bearing
-// widget property and no key of its own, this scoped scan cannot see it, and
-// rule 3's colour assertions would need a key or an exposed `color` field
-// added to prove against. This was not invented around; it is the
-// exclusion-scan technique used throughout, with its limits stated here
-// once rather than repeated at each call site.
+// Run 70 reported an ambiguity here: C-250 rule 2 (the chip, the dot) and
+// rule 3 (the ring) describe visual properties but named no test key for any
+// of the three, unlike rule 4's `game-screen-turn-seat-offline` and rule 5's
+// `game-screen-dice-value`. In the absence of a key, that run's cases scoped
+// a colour presence scan by exclusion: every colour-bearing widget anywhere
+// under GameScreen that was NOT also a descendant of game-screen-board,
+// game-seat-pip-strip or game-die counted as "the header's own colour".
+//
+// C-250's "Amendment run 71" answers that ambiguity directly: `rule 8` gives
+// the chip the key `game-header-chip` (a `DecoratedBox`, `BoxDecoration
+// .color` the turn seat's colour, compared by RGB since any alpha is
+// allowed), the dot the key `game-header-chip-dot` (the turn seat's colour
+// at full alpha), the ring the key `game-header-countdown-ring` (a widget
+// exposing its own colour as a public `final Color color` field), and pins
+// the my-turn second signal to `FontWeight.w700` on `game-screen-turn
+// -banner` rather than leaving it a choice between bold text and an
+// outline. Every colour and my-turn case below now reads these keys
+// directly instead of scanning. The exclusion scan proved only "this colour
+// appears somewhere in the header, outside the board, the pip strip and the
+// die"; once a key exists for every node the contract actually asks a
+// colour of, a direct read of that key proves strictly more (which node, and
+// now, for the dot, at what alpha) with nothing the scan could show that the
+// keyed read cannot, so the scan and the helpers it needed are removed
+// rather than kept dead. Order 250 has not landed on this file's own base
+// (`7a27548` carries none of `game-header-chip`, `game-header-chip-dot` or
+// `game-header-countdown-ring` in lib/), so every case below is red here for
+// a key-not-found reason rather than a wrong-colour one; the ring's own
+// `color` field is read through `dynamic` for the same reason, so this file
+// compiles whether or not that widget's type exists yet.
 
 import 'dart:convert';
 import 'dart:math' as math;
@@ -303,12 +306,16 @@ AppLocalizations _locOf(WidgetTester tester) =>
 
 const Key _pipStripKey = Key('game-seat-pip-strip');
 const Key _boardKey = Key('game-screen-board');
-const Key _dieKey = Key('game-die');
 const Key _bannerKey = Key('game-screen-turn-banner');
 const Key _countdownKey = Key('game-screen-turn-countdown');
 const Key _offlineKey = Key('game-screen-turn-seat-offline');
 const Key _noMoveNoticeKey = Key('game-no-move-notice');
 const Key _diceValueKey = Key('game-screen-dice-value');
+
+/// Amendment run 71, rule 8's own three keys.
+const Key _chipKey = Key('game-header-chip');
+const Key _chipDotKey = Key('game-header-chip-dot');
+const Key _ringKey = Key('game-header-countdown-ring');
 
 /// H2's own mapping, named by C-250 rule 2 itself ("the strings it shows
 /// today (`_turnBannerText`)") -- not read off the implementation, but
@@ -340,139 +347,43 @@ String _expectedBannerText(
   return loc.gameWaitingForTurn;
 }
 
-// --- colour scanning, scoped by exclusion (see header comment) -------------
+// --- rule 8's own keyed colour reads (see header comment) ------------------
 
-void _collectSpanColors(InlineSpan span, Set<Color> out) {
-  if (span is TextSpan) {
-    final Color? color = span.style?.color;
-    if (color != null) {
-      out.add(color);
-    }
-    span.children?.forEach(
-      (InlineSpan child) => _collectSpanColors(child, out),
+/// Whether [a] and [b] are the same colour by RGB, ignoring alpha -- the
+/// comparison rule 8 itself names for `game-header-chip` ("any alpha; the
+/// test compares RGB"), reused below for the ring's own `color` field since
+/// the amendment states no alpha constraint for it either.
+bool _sameRgb(Color a, Color b) => a.r == b.r && a.g == b.g && a.b == b.b;
+
+/// The `BoxDecoration.color` of the `DecoratedBox` keyed [key]. Rule 8 pins
+/// both `game-header-chip` and `game-header-chip-dot` to exactly this
+/// shape.
+Color _decoratedBoxColor(WidgetTester tester, Key key) {
+  final DecoratedBox box = tester.widget<DecoratedBox>(find.byKey(key));
+  final Decoration decoration = box.decoration;
+  if (decoration is! BoxDecoration) {
+    fail(
+      'rule 8: the DecoratedBox keyed $key must carry a BoxDecoration; got '
+      'a ${decoration.runtimeType}',
     );
   }
+  final Color? color = decoration.color;
+  if (color == null) {
+    fail('rule 8: the BoxDecoration keyed $key must set a color; got null');
+  }
+  return color;
 }
 
-/// Every colour a single widget carries directly (its own fill, its text
-/// colour, its border), not its descendants'. Mirrors and extends
-/// test/end_card_test.dart's own `_colorsUnder` vocabulary (Text, RichText,
-/// Icon, DecoratedBox), copied by hand, plus Container, Material and
-/// ColoredBox -- the other ordinary ways Flutter code tints a chip or a
-/// dot.
-Set<Color> _ownColors(Widget widget) {
-  final Set<Color> colors = <Color>{};
-  if (widget is Text) {
-    final Color? color = widget.style?.color;
-    if (color != null) {
-      colors.add(color);
-    }
-    final InlineSpan? span = widget.textSpan;
-    if (span != null) {
-      _collectSpanColors(span, colors);
-    }
-  } else if (widget is RichText) {
-    _collectSpanColors(widget.text, colors);
-  } else if (widget is Icon) {
-    final Color? color = widget.color;
-    if (color != null) {
-      colors.add(color);
-    }
-  } else if (widget is DecoratedBox) {
-    final Decoration decoration = widget.decoration;
-    if (decoration is BoxDecoration) {
-      if (decoration.color != null) {
-        colors.add(decoration.color!);
-      }
-      final Border? border = decoration.border as Border?;
-      if (border != null) {
-        colors.add(border.top.color);
-      }
-    }
-  } else if (widget is Container) {
-    if (widget.color != null) {
-      colors.add(widget.color!);
-    }
-    final Decoration? decoration = widget.decoration;
-    if (decoration is BoxDecoration) {
-      if (decoration.color != null) {
-        colors.add(decoration.color!);
-      }
-      final Border? border = decoration.border as Border?;
-      if (border != null) {
-        colors.add(border.top.color);
-      }
-    }
-  } else if (widget is Material) {
-    if (widget.color != null) {
-      colors.add(widget.color!);
-    }
-  } else if (widget is ColoredBox) {
-    colors.add(widget.color);
-  }
-  return colors;
+/// The countdown ring's own colour, read through `dynamic` per the
+/// amendment's own instruction: order 250's ring widget (a small
+/// `StatelessWidget` or `CustomPaint`-holding widget of its own) has not
+/// landed on this file's base, so its static type is unknown here; this
+/// reads the public `color` field the amendment requires without naming
+/// one, so the file compiles both before and after 250 lands.
+Color _ringColor(WidgetTester tester) {
+  final dynamic ring = tester.widget(find.byKey(_ringKey));
+  return ring.color as Color;
 }
-
-/// Every [Element] under [root] (inclusive) that is also a descendant of (or
-/// equal to) one of the roots found at [excludeKeys].
-Set<Element> _excludedElements(
-  WidgetTester tester,
-  Finder root,
-  List<Key> excludeKeys,
-) {
-  final Set<Element> excluded = <Element>{};
-  for (final Key key in excludeKeys) {
-    final Finder finder = find.byKey(key);
-    if (finder.evaluate().isEmpty) {
-      continue;
-    }
-    excluded.add(tester.element(finder));
-    excluded.addAll(
-      find
-          .descendant(of: finder, matching: find.byWidgetPredicate((_) => true))
-          .evaluate(),
-    );
-  }
-  return excluded;
-}
-
-/// How many colour-bearing nodes under the mounted `GameScreen`, excluding
-/// `game-screen-board`, `game-seat-pip-strip` and `game-die` (the header's
-/// only siblings that are already, legitimately, seat-coloured), carry
-/// [color] directly. Zero means "not found anywhere in the header"; one or
-/// more is a count of distinct matching nodes, used below to tell "the
-/// colour appears once" (a chip alone, say) from "it appears on at least two
-/// separate nodes" (consistent with a chip and a separate dot both carrying
-/// it, though this count alone cannot prove which node is which).
-int _headerColorNodeCount(WidgetTester tester, Color color) {
-  final Finder screen = find.byType(GameScreen);
-  if (screen.evaluate().isEmpty) {
-    return 0;
-  }
-  final Set<Element> excluded = _excludedElements(tester, screen, <Key>[
-    _boardKey,
-    _pipStripKey,
-    _dieKey,
-  ]);
-  int count = 0;
-  for (final Element element in <Element>[
-    tester.element(screen),
-    ...find
-        .descendant(of: screen, matching: find.byWidgetPredicate((_) => true))
-        .evaluate(),
-  ]) {
-    if (excluded.contains(element)) {
-      continue;
-    }
-    if (_ownColors(element.widget).contains(color)) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
-bool _headerHasColor(WidgetTester tester, Color color) =>
-    _headerColorNodeCount(tester, color) > 0;
 
 /// Reads whatever whole-second number [key]'s own widget (or its first Text
 /// descendant, if it is not itself a Text) renders. Copied from
@@ -782,16 +693,18 @@ void main() {
   // state) and the chip's colour, measured on the same five-state mounts
   // rule 1 and rule 6 already need, so no case above pays for a second round
   // of connects. Expected RED on the base: `_turnBannerSlot` sets
-  // `maxLines: 2`, and there is no seat-tinted node outside the board, the
-  // pip strip and the die at all.
+  // `maxLines: 2`, and this file's own base carries neither
+  // `game-header-chip` nor `game-header-chip-dot` in lib/ at all, so both
+  // key lookups fail to find anything (amendment run 71, rule 8).
   // ==========================================================================
   testWidgets(
-    'rule 2: game-screen-turn-banner has maxLines 1, renders exactly the '
-    'string H2 specifies for each of the five playing states, and the turn '
-    'seat\'s own colour appears somewhere in the header outside the board, '
-    'the pip strip and the die. Kills: a banner still capped at two lines, '
-    'and a chip left untinted or tinted in a colour that does not track '
-    'whichever seat is actually on turn',
+    'rule 2 / rule 8: game-screen-turn-banner has maxLines 1, renders '
+    'exactly the string H2 specifies for each of the five playing states, '
+    'game-header-chip\'s BoxDecoration.color is the turn seat\'s colour, and '
+    'game-header-chip-dot carries that same colour at full alpha. Kills: a '
+    'banner still capped at two lines, a chip left untinted or tinted in a '
+    'colour that does not track whichever seat is actually on turn, and a '
+    'dot painted at partial alpha',
     (tester) async {
       const Size surface = Size(390, 844);
       for (final _PlayState state in _PlayState.values) {
@@ -837,15 +750,49 @@ void main() {
 
         final int turnSeat = room.turn!.seat;
         final Color seatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
+
         expect(
-          _headerHasColor(tester, seatColor),
+          find.byKey(_chipKey),
+          findsOneWidget,
+          reason:
+              'fixture is broken (${_stateLabel(state)}): '
+              'game-header-chip must be present',
+        );
+        final Color chipColor = _decoratedBoxColor(tester, _chipKey);
+        expect(
+          _sameRgb(chipColor, seatColor),
           isTrue,
           reason:
-              'rule 2: the turn seat\'s own colour '
-              '(LudoColors.seats[$turnSeat]) must appear on the chip '
-              'somewhere in the header, outside game-screen-board, '
-              'game-seat-pip-strip and game-die; state '
-              '${_stateLabel(state)} found none',
+              'rule 8: game-header-chip\'s BoxDecoration.color must be the '
+              'turn seat\'s colour (LudoColors.seats[$turnSeat]=$seatColor, '
+              'compared by RGB); state ${_stateLabel(state)} measured '
+              '$chipColor',
+        );
+
+        expect(
+          find.byKey(_chipDotKey),
+          findsOneWidget,
+          reason:
+              'fixture is broken (${_stateLabel(state)}): '
+              'game-header-chip-dot must be present',
+        );
+        final Color dotColor = _decoratedBoxColor(tester, _chipDotKey);
+        expect(
+          _sameRgb(dotColor, seatColor),
+          isTrue,
+          reason:
+              'rule 8: game-header-chip-dot\'s colour must be the turn '
+              'seat\'s colour (LudoColors.seats[$turnSeat]=$seatColor, '
+              'compared by RGB); state ${_stateLabel(state)} measured '
+              '$dotColor',
+        );
+        expect(
+          dotColor.a,
+          1.0,
+          reason:
+              'rule 8: game-header-chip-dot must carry the turn seat\'s '
+              'colour at full alpha; state ${_stateLabel(state)} measured '
+              'alpha ${dotColor.a}',
         );
 
         await _unmountAndDispose(tester, controller);
@@ -854,16 +801,18 @@ void main() {
   );
 
   // ==========================================================================
-  // Rule 2's second half: on my own turn, a non-colour signal (bold text or
-  // an outline in my colour) is present that is not present when the turn
-  // belongs to another seat. Expected RED on the base: the banner carries no
-  // FontWeight.bold and no bordered chip at all, on either turn.
+  // Rule 2's second half, re-pointed by amendment run 71 (rule 8): the
+  // non-colour signal on my own turn is pinned to exactly FontWeight.w700 on
+  // game-screen-turn-banner, not left a choice between bold text and an
+  // outline. Expected RED on the base: the banner carries no explicit
+  // fontWeight at all, on either turn, so neither read equals w700.
   // ==========================================================================
   testWidgets(
-    'rule 2: on my own turn, game-screen-turn-banner is bold or the header '
-    'carries a border in my own colour that is absent when the turn belongs '
-    'to another seat. Kills: a chip whose only signal for "it is my turn" '
-    'is the colour itself, which P9 (never colour alone) forbids',
+    'rule 8: on my own turn, game-screen-turn-banner carries FontWeight.w700, '
+    'and it does not on another seat\'s turn. Kills: a chip whose only '
+    'signal for "it is my turn" is the colour itself, which P9 (never '
+    'colour alone) forbids, and a banner left at its ordinary weight on my '
+    'own turn',
     (tester) async {
       const Size surface = Size(390, 844);
 
@@ -874,15 +823,7 @@ void main() {
         locale: const Locale('en'),
       );
       final Text myBanner = tester.widget<Text>(find.byKey(_bannerKey));
-      final bool myBold = myBanner.style?.fontWeight == FontWeight.bold;
-      final bool myOutline = _headerHasColor(
-        tester,
-        LudoColors.seats[0],
-      ); // colour already proved above; re-read for the border-aware count
-      final int myOutlineCount = _headerColorNodeCount(
-        tester,
-        LudoColors.seats[0],
-      );
+      final FontWeight? myWeight = myBanner.style?.fontWeight;
       await _unmountAndDispose(tester, myTurn);
 
       final RoomController otherTurn = await _mountPlayState(
@@ -892,51 +833,41 @@ void main() {
         locale: const Locale('en'),
       );
       final Text otherBanner = tester.widget<Text>(find.byKey(_bannerKey));
-      final bool otherBold = otherBanner.style?.fontWeight == FontWeight.bold;
-      final int otherSeatColorOnMyTurnCount = _headerColorNodeCount(
-        tester,
-        LudoColors.seats[0],
-      );
+      final FontWeight? otherWeight = otherBanner.style?.fontWeight;
       await _unmountAndDispose(tester, otherTurn);
 
       expect(
-        myOutline,
-        isTrue,
+        myWeight,
+        FontWeight.w700,
         reason:
-            'fixture is broken: my own seat\'s colour must appear in the '
-            'header while the turn is mine',
+            'rule 8: on my own turn, game-screen-turn-banner must carry '
+            'FontWeight.w700; measured $myWeight',
       );
-
-      final bool nonColourSignalPresent =
-          (myBold && !otherBold) ||
-          (myOutlineCount > otherSeatColorOnMyTurnCount);
       expect(
-        nonColourSignalPresent,
-        isTrue,
+        otherWeight,
+        isNot(FontWeight.w700),
         reason:
-            'rule 2: my own turn must carry a non-colour difference -- bold '
-            'banner text, or an extra outline-coloured node in my own '
-            'colour -- that another seat\'s turn does not; measured bold='
-            '$myBold (mine) vs $otherBold (other), and my-colour node count='
-            '$myOutlineCount (mine) vs $otherSeatColorOnMyTurnCount (other, '
-            'where my colour should carry no special meaning at all)',
+            'rule 8: on another seat\'s turn, game-screen-turn-banner must '
+            'not carry FontWeight.w700, or it signals nothing; measured '
+            '$otherWeight',
       );
     },
   );
 
   // ==========================================================================
-  // Rule 3: the countdown's text still updates per second (same contract as
-  // the pre-existing countdown proof), and its colour is the turn seat's at
-  // 30s left and the vocabulary red at 9s left. Expected RED on the base:
-  // the countdown Text carries no explicit colour, so neither LudoColors
-  // .seats[1] nor LudoColors.error is ever found.
+  // Rule 3, re-pointed by amendment run 71 (rule 8): the countdown's text
+  // still updates per second (same contract as the pre-existing countdown
+  // proof), and game-header-countdown-ring's own `color` field is the turn
+  // seat's at 30s left and the vocabulary red at 9s left. Expected RED on
+  // the base: this file's own base carries no game-header-countdown-ring in
+  // lib/ at all, so the key lookup fails to find anything.
   // ==========================================================================
   testWidgets(
-    'rule 3: game-screen-turn-countdown\'s seconds text decreases every '
-    'pumped second; the header carries the turn seat\'s colour at 30s left '
-    'and switches to the vocabulary red (LudoColors.error) at 9s left. '
-    'Kills: a countdown with no colour at all, and a ring that never '
-    'switches to red in the last 10 seconds',
+    'rule 8: game-screen-turn-countdown\'s seconds text decreases every '
+    'pumped second; game-header-countdown-ring\'s color field is the turn '
+    'seat\'s colour at 30s left and switches to the vocabulary red '
+    '(LudoColors.error) at 9s left. Kills: a ring painted with no colour at '
+    'all, and a ring that never switches to red in the last 10 seconds',
     (tester) async {
       const Size surface = Size(390, 844);
       final (RoomController controller, _) = await _connectDirect(
@@ -972,12 +903,19 @@ void main() {
             'rule 3: 15 pumped seconds past a 45000ms deadline must read 30',
       );
       expect(
-        _headerHasColor(tester, LudoColors.seats[1]),
+        find.byKey(_ringKey),
+        findsOneWidget,
+        reason: 'fixture is broken: game-header-countdown-ring must be present',
+      );
+      final Color ringColorAt30s = _ringColor(tester);
+      expect(
+        _sameRgb(ringColorAt30s, LudoColors.seats[1]),
         isTrue,
         reason:
-            'rule 3: with 30 seconds left, the turn seat\'s own colour '
-            '(LudoColors.seats[1]) must appear in the header outside '
-            'game-screen-board, game-seat-pip-strip and game-die',
+            'rule 8: with 30 seconds left, game-header-countdown-ring\'s '
+            'color field must be the turn seat\'s colour '
+            '(LudoColors.seats[1]=${LudoColors.seats[1]}); measured '
+            '$ringColorAt30s',
       );
 
       // 30s -> 9s: inside the last 10s, the vocabulary red expected instead.
@@ -987,13 +925,15 @@ void main() {
         9,
         reason: 'rule 3: 21 further pumped seconds must read 9',
       );
+      final Color ringColorAt9s = _ringColor(tester);
       expect(
-        _headerHasColor(tester, LudoColors.error),
+        _sameRgb(ringColorAt9s, LudoColors.error),
         isTrue,
         reason:
-            'rule 3: with 9 seconds left, the vocabulary red '
-            '(LudoColors.error) must appear in the header outside '
-            'game-screen-board, game-seat-pip-strip and game-die',
+            'rule 8: with 9 seconds left, game-header-countdown-ring\'s '
+            'color field must be the vocabulary red '
+            '(LudoColors.error=${LudoColors.error}); measured '
+            '$ringColorAt9s',
       );
     },
   );
