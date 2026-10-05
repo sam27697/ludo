@@ -716,20 +716,32 @@ void main() {
           progress: 4,
           because:
               'one frame after token 1 is queued, token 0 has not yet '
-              'taken its next (now half-duration) step',
+              'taken its next step',
         );
 
         final Duration halfStep = kTokenStepDuration ~/ 2;
 
+        // C-252 rule 6 as amended in run 71: the step already under way
+        // when token 1 is queued keeps its full duration; every step after
+        // it runs at half.
         await tester.pump(halfStep);
         _expectDrawnAt(
           tester,
           seat: 0,
           tokenIndex: 0,
-          progress: 5,
+          progress: 4,
           because:
-              "token 0's next step runs at half duration while token 1 "
-              'waits behind it',
+              'the step under way when token 1 was queued keeps its full '
+              'duration',
+        );
+
+        await tester.pump(kTokenStepDuration - halfStep);
+        _expectDrawnAt(
+          tester,
+          seat: 0,
+          tokenIndex: 0,
+          progress: 5,
+          because: 'the step under way when token 1 was queued has ended',
         );
         _expectDrawnAt(
           tester,
