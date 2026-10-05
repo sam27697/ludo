@@ -18,6 +18,7 @@
 // controller.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -785,24 +786,15 @@ class _GameScreenState extends State<GameScreen> {
     final int? dieFace = _noMoveVisible ? _noMoveFace : turn?.value;
 
     return Padding(
-      padding: const EdgeInsets.all(kSpace4),
+      padding: const EdgeInsets.symmetric(
+        horizontal: kSpace2,
+        vertical: kSpace2,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _turnBannerSlot(_turnBannerText(loc, room, seat)),
+          _playHeaderRow(loc, room, seat, turn, offlineTurnSeat),
           const SizedBox(height: kSpace2),
-          _seatOfflineSlot(loc, offlineTurnSeat),
-          const SizedBox(height: kSpace2),
-          _diceValueSlot(loc, turn),
-          if (turn != null) ...[
-            const SizedBox(height: kSpace2),
-            Text(
-              loc.gameTurnCountdown(_countdownRemainingSeconds),
-              key: const Key('game-screen-turn-countdown'),
-              textAlign: TextAlign.center,
-            ),
-          ],
-          const SizedBox(height: kSpace4),
           Expanded(
             child: LudoBoard(
               key: const Key('game-screen-board'),
@@ -826,82 +818,190 @@ class _GameScreenState extends State<GameScreen> {
           ),
           const SizedBox(height: kSpace4),
           Center(
-            child: GameDie(
-              face: dieFace,
-              seatColor: dieSeatColor,
-              enabled: rollEnabled,
-              tumbling: _rollWaitK != null,
-              noAnswer: _rollNoAnswer,
-              noMove: _noMoveVisible,
-              onTap: rollEnabled ? _onDieTap : null,
-              onInvalidTap: () {
-                FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-              },
+            child: _diceValueWrap(
+              loc,
+              turn,
+              GameDie(
+                face: dieFace,
+                seatColor: dieSeatColor,
+                enabled: rollEnabled,
+                tumbling: _rollWaitK != null,
+                noAnswer: _rollNoAnswer,
+                noMove: _noMoveVisible,
+                onTap: rollEnabled ? _onDieTap : null,
+                onInvalidTap: () {
+                  FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+                },
+              ),
             ),
           ),
           const SizedBox(height: kSpace2),
-          _noMoveNoticeSlot(loc),
-          const SizedBox(height: kSpace4),
+          _belowDieNoticeSlot(loc, offlineTurnSeat),
+          const SizedBox(height: kSpace2),
         ],
       ),
     );
   }
 
-  /// The header above the board must have one height
-  /// in every playing state, the same technique [_noMoveNoticeSlot] already
-  /// uses for the notice itself. A roll landing changes which of these
-  /// strings is on screen -- "roll" becomes "move", a seat goes offline, a
-  /// value appears -- and none of that may grow or shrink the space left
-  /// for `Expanded(LudoBoard)` underneath. The banner's own two lines are
-  /// reserved by an invisible placeholder: the banner's own text twice
-  /// over, joined by a break and capped at two lines, so it is two lines
-  /// tall whether the banner itself needs one or two, and sized the same
-  /// as the real text since both inherit the same ambient style; the real
-  /// banner sits on top of it with
-  /// `maxLines: 2` and an ellipsis rather than ever reaching a third line
-  /// that would grow the slot again.
-  Widget _turnBannerSlot(String bannerText) {
+  /// C-250 rule 1: one row of fixed height between the pip strip and the
+  /// board, the same height in every playing state and both locales --
+  /// rule 2's chip and rule 3's countdown ring are what the row holds, and
+  /// both read straight off `room.turn`, so none of the die's own overlays
+  /// (the tumble, the no-move mark) have to be threaded through here. The
+  /// chip sits at the row's logical start and the ring at its end; a `Row`
+  /// under the ambient `Directionality` mirrors that for Arabic on its
+  /// own, nothing here flips anything by hand.
+  static const double _headerRowHeight = 44;
+
+  Widget _playHeaderRow(
+    AppLocalizations loc,
+    RoomSnapshot room,
+    int? seat,
+    TurnState? turn,
+    SeatState? offlineTurnSeat,
+  ) {
+    final String bannerText = _turnBannerText(loc, room, seat);
+    final int turnSeat = turn?.seat ?? seat ?? 0;
+    final Color seatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
+    final bool myTurn = turn != null && turn.seat == seat;
+    final bool offline = offlineTurnSeat != null;
+
+    return SizedBox(
+      height: _headerRowHeight,
+      child: Row(
+        children: [
+          Expanded(
+            child: DecoratedBox(
+              key: const Key('game-header-chip'),
+              decoration: BoxDecoration(
+                color: seatColor.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(kRadiusControl),
+                // Rule 2's second signal on my own turn: an outline in my
+                // own colour, on top of the chip's own tint, not only the
+                // colour itself (doctrine P9).
+                border: myTurn ? Border.all(color: seatColor, width: 2) : null,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: kSpace3,
+                  vertical: kSpace1,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DecoratedBox(
+                      key: const Key('game-header-chip-dot'),
+                      decoration: BoxDecoration(
+                        color: seatColor,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const SizedBox(width: kSpace2, height: kSpace2),
+                    ),
+                    const SizedBox(width: kSpace2),
+                    // Rule 4's last line: the chip also carries an offline
+                    // icon while the turn seat is offline.
+                    if (offline) ...[
+                      Icon(Icons.wifi_off, size: kSpace4, color: seatColor),
+                      const SizedBox(width: kSpace1),
+                    ],
+                    Expanded(
+                      child: Text(
+                        bannerText,
+                        key: const Key('game-screen-turn-banner'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: myTurn
+                              ? FontWeight.w700
+                              : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (turn != null) ...[
+            const SizedBox(width: kSpace2),
+            _countdownBlock(loc, room, turn, seatColor),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// C-250 rule 3: the seconds Text keeps its own key and string exactly as
+  /// before; the ring behind it (rule 8's `game-header-countdown-ring`)
+  /// depletes with the turn and turns `LudoColors.error` for the last 10s,
+  /// the same threshold both carry.
+  Widget _countdownBlock(
+    AppLocalizations loc,
+    RoomSnapshot room,
+    TurnState turn,
+    Color seatColor,
+  ) {
+    final bool lastTenSeconds = _countdownRemainingSeconds <= 10;
+    final Color ringColor = lastTenSeconds ? LudoColors.error : seatColor;
+    final int turnSeconds = room.rules.turnSeconds;
+    final double remainingFraction = turnSeconds > 0
+        ? (_countdownRemainingSeconds / turnSeconds).clamp(0.0, 1.0)
+        : 0.0;
+
+    return SizedBox(
+      width: _headerRowHeight,
+      height: _headerRowHeight,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          _CountdownRing(
+            key: const Key('game-header-countdown-ring'),
+            color: ringColor,
+            remainingFraction: remainingFraction,
+          ),
+          Text(
+            loc.gameTurnCountdown(_countdownRemainingSeconds),
+            key: const Key('game-screen-turn-countdown'),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: ringColor, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// C-250 rule 4: the fixed notice slot below the die, shared by the
+  /// no-move notice and the seat-offline line rather than giving each its
+  /// own reserved space above the board the way the pre-C-250 shape did.
+  /// The slot is sized for the taller of the two placeholder strings so
+  /// switching between them never resizes anything underneath; when both
+  /// would otherwise show, the no-move notice wins and the offline line
+  /// waits for the hold to end, exactly as the rule's own wording asks.
+  Widget _belowDieNoticeSlot(AppLocalizations loc, SeatState? offlineTurnSeat) {
     return Stack(
       alignment: Alignment.topCenter,
       children: [
         ExcludeSemantics(
           child: Opacity(
             opacity: 0,
-            child: Text(
-              <String>[bannerText, bannerText].join('\n'),
-              maxLines: 2,
-              textAlign: TextAlign.center,
-            ),
+            child: Text(loc.gameNoMove, textAlign: TextAlign.center),
           ),
         ),
-        Positioned.fill(
-          child: Text(
-            bannerText,
-            key: const Key('game-screen-turn-banner'),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// Same technique: the seat-offline line's slot is sized whether or not
-  /// a seat is actually offline, from an invisible copy of the same string
-  /// the real line would show; `game-screen-turn-seat-offline` itself still
-  /// only appears while `offlineTurnSeat` is not null, exactly as before.
-  Widget _seatOfflineSlot(AppLocalizations loc, SeatState? offlineTurnSeat) {
-    return Stack(
-      alignment: Alignment.topCenter,
-      children: [
         ExcludeSemantics(
           child: Opacity(
             opacity: 0,
             child: Text(loc.gameSeatOffline(''), textAlign: TextAlign.center),
           ),
         ),
-        if (offlineTurnSeat != null)
+        if (_noMoveVisible)
+          Positioned.fill(
+            child: Text(
+              loc.gameNoMove,
+              key: const Key('game-no-move-notice'),
+              textAlign: TextAlign.center,
+            ),
+          )
+        else if (offlineTurnSeat != null)
           Positioned.fill(
             child: Text(
               loc.gameSeatOffline(offlineTurnSeat.name),
@@ -913,61 +1013,19 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// Same technique again: the rolled value's own slot is sized whether a
-  /// roll has actually landed for the current turn or not, so the very
-  /// roll that arms the no-move hold does not also grow the header a
-  /// line's worth underneath the board the same instant. `game-screen-
-  /// dice-value` itself still only appears while `turn.value` is not null,
-  /// exactly as before.
-  Widget _diceValueSlot(AppLocalizations loc, TurnState? turn) {
-    return Stack(
-      alignment: Alignment.topCenter,
-      children: [
-        ExcludeSemantics(
-          child: Opacity(
-            opacity: 0,
-            child: Text(loc.gameDieValue(0), textAlign: TextAlign.center),
-          ),
-        ),
-        if (turn != null && turn.value != null)
-          Positioned.fill(
-            child: Text(
-              loc.gameDieValue(turn.value!),
-              key: const Key('game-screen-dice-value'),
-              textAlign: TextAlign.center,
-            ),
-          ),
-      ],
-    );
-  }
-
-  /// Rule 4b: `game-screen-board`'s rect must be identical, to the pixel,
-  /// whether or not the notice is showing. The slot this returns is always
-  /// the same size: an invisible copy of `loc.gameNoMove`, excluded from
-  /// semantics so it is never announced twice, sizes it on every build,
-  /// visible or not; the real line -- carrying `game-no-move-notice` and
-  /// read by the tree exactly while the hold is up -- sits on top of that
-  /// slot rather than inside the Column's own flow, so the Expanded board
-  /// above never gains or loses height for it.
-  Widget _noMoveNoticeSlot(AppLocalizations loc) {
-    return Stack(
-      alignment: Alignment.topCenter,
-      children: [
-        ExcludeSemantics(
-          child: Opacity(
-            opacity: 0,
-            child: Text(loc.gameNoMove, textAlign: TextAlign.center),
-          ),
-        ),
-        if (_noMoveVisible)
-          Positioned.fill(
-            child: Text(
-              loc.gameNoMove,
-              key: const Key('game-no-move-notice'),
-              textAlign: TextAlign.center,
-            ),
-          ),
-      ],
+  /// C-250 rule 5: `game-screen-dice-value` moves off a visible line and
+  /// onto a `Semantics` wrapping the die, present under exactly the
+  /// condition the old visible line was (`turn.value` non-null) -- the
+  /// die's own face already says it to a sighted player, so nothing
+  /// visible repeats it.
+  Widget _diceValueWrap(AppLocalizations loc, TurnState? turn, Widget die) {
+    if (turn == null || turn.value == null) {
+      return die;
+    }
+    return Semantics(
+      key: const Key('game-screen-dice-value'),
+      label: loc.gameDieValue(turn.value!),
+      child: die,
     );
   }
 
@@ -1151,6 +1209,86 @@ class _GameScreenState extends State<GameScreen> {
       ),
     );
   }
+}
+
+/// C-250 rule 8: the countdown's own ring, key `game-header-countdown-ring`,
+/// exposing the colour it is currently painted with as a plain public
+/// field rather than making a caller re-derive it from the seconds left.
+/// The depleting sweep itself is Canvas work (`_CountdownRingPainter`);
+/// nothing about "is it red yet" lives there, only "what colour was I
+/// given".
+class _CountdownRing extends StatelessWidget {
+  const _CountdownRing({
+    super.key,
+    required this.color,
+    required this.remainingFraction,
+  });
+
+  /// The turn seat's own colour above 10s left, `LudoColors.error` at 10s
+  /// and below (C-250 rule 8).
+  final Color color;
+
+  /// 0.0 (deadline reached) to 1.0 (a fresh turn): how much of the turn is
+  /// still left, the fraction of the ring the sweep still covers.
+  final double remainingFraction;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _CountdownRingPainter(
+        color: color,
+        remainingFraction: remainingFraction,
+      ),
+    );
+  }
+}
+
+class _CountdownRingPainter extends CustomPainter {
+  const _CountdownRingPainter({
+    required this.color,
+    required this.remainingFraction,
+  });
+
+  final Color color;
+  final double remainingFraction;
+
+  static const double _strokeWidth = 3.5;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Rect bounds = Rect.fromLTWH(
+      _strokeWidth / 2,
+      _strokeWidth / 2,
+      size.width - _strokeWidth,
+      size.height - _strokeWidth,
+    );
+    final Paint track = Paint()
+      ..color = LudoColors.inkMuted.withValues(alpha: 0.25)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _strokeWidth;
+    canvas.drawOval(bounds, track);
+
+    if (remainingFraction <= 0) {
+      return;
+    }
+    final Paint sweep = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _strokeWidth
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(
+      bounds,
+      -math.pi / 2,
+      2 * math.pi * remainingFraction,
+      false,
+      sweep,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CountdownRingPainter oldDelegate) =>
+      oldDelegate.color != color ||
+      oldDelegate.remainingFraction != remainingFraction;
 }
 
 /// H1: a map from each seat's `seat` to that seat's `tokens` list, taken
