@@ -3985,7 +3985,7 @@ void main() {
 
     const String hostName = 'Priya';
     const String joinerName = 'Karim';
-    const String roomCode = 'SHOT23';
+    const String roomCode = 'SH7T23';
 
     await tester.enterText(
       find.byKey(const Key('home-name-field')),

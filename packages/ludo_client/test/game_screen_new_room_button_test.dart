@@ -396,6 +396,11 @@ void main() {
       ).length;
       expect(createBefore, 1, reason: 'fixture is broken');
 
+      // Since C-246 the end card puts Rematch above New table, and in the
+      // 800x600 test window New table sits below the fold of the end
+      // card's scroll view: scroll to it as a player would.
+      await tester.ensureVisible(find.byKey(_newRoomKey));
+      await tester.pump();
       await tester.tap(find.byKey(_newRoomKey));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
