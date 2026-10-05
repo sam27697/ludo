@@ -704,7 +704,7 @@ void main() {
         await tester.pump();
         _expectDrawnAt(
           tester,
-          seat: 1,
+          seat: 0,
           tokenIndex: 1,
           progress: 10,
           because: 'one frame after being queued, token 1 has not moved',
@@ -733,7 +733,7 @@ void main() {
         );
         _expectDrawnAt(
           tester,
-          seat: 1,
+          seat: 0,
           tokenIndex: 1,
           progress: 10,
           because: "token 1 must not leave its square before token 0 arrives",
@@ -749,7 +749,7 @@ void main() {
         );
         _expectDrawnAt(
           tester,
-          seat: 1,
+          seat: 0,
           tokenIndex: 1,
           progress: 10,
           because: "token 1 must not leave its square before token 0 arrives",
@@ -765,7 +765,7 @@ void main() {
         );
         _expectDrawnAt(
           tester,
-          seat: 1,
+          seat: 0,
           tokenIndex: 1,
           progress: 10,
           because:
@@ -779,7 +779,7 @@ void main() {
         await tester.pump(kTokenStepDuration);
         _expectDrawnAt(
           tester,
-          seat: 1,
+          seat: 0,
           tokenIndex: 1,
           progress: 11,
           because:
@@ -790,7 +790,7 @@ void main() {
         await tester.pump(kTokenStepDuration);
         _expectDrawnAt(
           tester,
-          seat: 1,
+          seat: 0,
           tokenIndex: 1,
           progress: 12,
           because: "token 1's last step",
