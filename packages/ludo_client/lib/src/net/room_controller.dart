@@ -625,6 +625,16 @@ class RoomController extends ChangeNotifier {
   /// in [RoomPhase.failed] with [errorCode] set, and it is GameScreen that
   /// decides a `NO_SUCH_ROOM` failure still shows the end card while every
   /// other code falls through to the ordinary connection-lost body.
+  ///
+  /// PROTOCOL 16.3: from a seat already ready, `rematch` changes nothing on
+  /// the server and the reply it gets back carries the room's current
+  /// `seq`, not a newer one. [_applyRoomFrame]'s gap check reads anything
+  /// other than `room.seq + 1` as a resync, which that reply is not -- it is
+  /// the same room this controller already holds. A reply whose `seq` is
+  /// not newer than [_room]'s own is this method's to drop before
+  /// [_applyRoomFrame] ever sees it: no resync, no notify. A genuinely newer
+  /// `seq`, applied in sequence or with a real gap behind it, still goes
+  /// through [_applyRoomFrame] exactly as before.
   Future<void> rematch() async {
     final RoomConnection? connection = _connection;
     if (_disposed || _phase != RoomPhase.connected || connection == null) {
@@ -637,6 +647,10 @@ class RoomController extends ChangeNotifier {
       }
       final RoomSnapshot? room = _room;
       if (room != null) {
+        final int? seqValue = frame.seq;
+        if (seqValue != null && seqValue <= room.seq) {
+          return;
+        }
         _applyRoomFrame(frame, room);
       }
     } catch (error) {
