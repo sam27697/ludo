@@ -931,10 +931,12 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// C-250 rule 3: the seconds Text keeps its own key and string exactly as
-  /// before; the ring behind it (rule 8's `game-header-countdown-ring`)
-  /// depletes with the turn and turns `LudoColors.error` for the last 10s,
-  /// the same threshold both carry.
+  /// C-250 rule 3 / amendment run 72 (rule 9): the ring depletes with the
+  /// turn and turns `LudoColors.error` for the last 10s; the Text keyed
+  /// `game-screen-turn-countdown` shows only the bare seconds so it fits on
+  /// one line inside the ring, and the sentence that used to sit there
+  /// moves to the `game-header-countdown-semantics` label, with the
+  /// visible digits excluded so TalkBack does not read it twice.
   Widget _countdownBlock(
     AppLocalizations loc,
     RoomSnapshot room,
@@ -948,24 +950,37 @@ class _GameScreenState extends State<GameScreen> {
         ? (_countdownRemainingSeconds / turnSeconds).clamp(0.0, 1.0)
         : 0.0;
 
-    return SizedBox(
-      width: _headerRowHeight,
-      height: _headerRowHeight,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          _CountdownRing(
-            key: const Key('game-header-countdown-ring'),
-            color: ringColor,
-            remainingFraction: remainingFraction,
-          ),
-          Text(
-            loc.gameTurnCountdown(_countdownRemainingSeconds),
-            key: const Key('game-screen-turn-countdown'),
-            textAlign: TextAlign.center,
-            style: TextStyle(color: ringColor, fontWeight: FontWeight.w600),
-          ),
-        ],
+    return Semantics(
+      key: const Key('game-header-countdown-semantics'),
+      label: loc.gameTurnCountdown(_countdownRemainingSeconds),
+      child: SizedBox(
+        width: _headerRowHeight,
+        height: _headerRowHeight,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            _CountdownRing(
+              key: const Key('game-header-countdown-ring'),
+              color: ringColor,
+              remainingFraction: remainingFraction,
+            ),
+            ExcludeSemantics(
+              child: Text(
+                '$_countdownRemainingSeconds',
+                key: const Key('game-screen-turn-countdown'),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                  color: ringColor,
+                  fontWeight: FontWeight.w600,
+                  fontSize: kTypeLabel,
+                  height: 1,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1214,9 +1229,11 @@ class _GameScreenState extends State<GameScreen> {
 /// C-250 rule 8: the countdown's own ring, key `game-header-countdown-ring`,
 /// exposing the colour it is currently painted with as a plain public
 /// field rather than making a caller re-derive it from the seconds left.
-/// The depleting sweep itself is Canvas work (`_CountdownRingPainter`);
-/// nothing about "is it red yet" lives there, only "what colour was I
-/// given".
+/// Amendment run 72 (rule 9a): it expands to fill whatever box the
+/// countdown block gives it, rather than staying a childless `CustomPaint`
+/// that would otherwise paint at `Size.zero`. The depleting sweep itself is
+/// Canvas work (`_CountdownRingPainter`); nothing about "is it red yet"
+/// lives there, only "what colour was I given".
 class _CountdownRing extends StatelessWidget {
   const _CountdownRing({
     super.key,
@@ -1234,10 +1251,12 @@ class _CountdownRing extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: _CountdownRingPainter(
-        color: color,
-        remainingFraction: remainingFraction,
+    return SizedBox.expand(
+      child: CustomPaint(
+        painter: _CountdownRingPainter(
+          color: color,
+          remainingFraction: remainingFraction,
+        ),
       ),
     );
   }
