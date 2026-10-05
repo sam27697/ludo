@@ -35,8 +35,9 @@
 // chip to seat 0's corner is caught the moment seat 2's chip is checked
 // against seat 2's own, independently-derived quadrant.
 //
-// The "contrasting ink" rule (ruling 1: white or LudoColors.ink, whichever
-// has the higher contrast against the seat colour) is graded here by the
+// The "contrasting ink" rule (ruling 1: LudoColors.actionOn or
+// LudoColors.ink, whichever has the higher contrast against the seat
+// colour) is graded here by the
 // standard WCAG relative-luminance contrast-ratio formula, computed at test
 // time from LudoColors.seats itself, never from a hardcoded pick per seat --
 // so a seat palette edit cannot silently make this test vacuous.
@@ -318,13 +319,15 @@ double _contrastRatio(Color a, Color b) {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-/// Ruling 1's rule, computed rather than hand-picked per seat: white if it
-/// contrasts more strongly against [seatColor] than [LudoColors.ink] does,
-/// otherwise ink.
+/// Ruling 1's rule, computed rather than hand-picked per seat: the light
+/// ink if it contrasts more strongly against [seatColor] than
+/// [LudoColors.ink] does, otherwise ink. The light ink is the paintbox's
+/// near-white [LudoColors.actionOn], not a new literal white (C-248 rule 1
+/// as amended in run 71).
 Color _expectedChipInk(Color seatColor) {
-  final double white = _contrastRatio(Colors.white, seatColor);
+  final double light = _contrastRatio(LudoColors.actionOn, seatColor);
   final double ink = _contrastRatio(LudoColors.ink, seatColor);
-  return white >= ink ? Colors.white : LudoColors.ink;
+  return light >= ink ? LudoColors.actionOn : LudoColors.ink;
 }
 
 /// The effective text colour of the [Text] widget carrying [data]: its own
