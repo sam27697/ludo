@@ -889,6 +889,80 @@ void main() {
   // ===========================================================================
   group('bullet 2: my own rematch accepted, waiting for the other seat', () {
     testWidgets(
+      'PROTOCOL 16.3: a repeat rematch from a seat already ready gets the '
+      'current room back at the same seq, and nothing resyncs',
+      (tester) async {
+        final (RoomController controller, FakeTransport transport, _) =
+            await _connectTo(tester, mySeat: 0, state: 'FINISHED', winner: 0);
+        await _mount(tester, controller);
+
+        await tester.tap(find.byKey(_rematchKey));
+        await tester.pump();
+        final String firstId = _idOf(
+          transport.sentRaw
+              .where((String raw) => _typeOf(raw) == 'rematch')
+              .last,
+        );
+        await _pushRoom(
+          tester,
+          transport,
+          re: firstId,
+          seq: 2,
+          state: 'LOBBY',
+          seats: _twoSeats,
+          rematch: _rematchJson(by: 0, ready: const <int>[0]),
+        );
+        expect(
+          controller.room!.seq,
+          2,
+          reason: 'fixture is broken: the first reply must be applied',
+        );
+
+        // The end card hides the button once I am ready; a seat that
+        // reconnects into this LOBBY can still send rematch again, which is
+        // the path this case drives, straight through the controller.
+        final Future<void> again = controller.rematch();
+        await tester.pump();
+        final String secondId = _idOf(
+          transport.sentRaw
+              .where((String raw) => _typeOf(raw) == 'rematch')
+              .last,
+        );
+        expect(secondId, isNot(firstId));
+        final int sentBefore = transport.sentRaw.length;
+        await _pushRoom(
+          tester,
+          transport,
+          re: secondId,
+          seq: 2,
+          state: 'LOBBY',
+          seats: _twoSeats,
+          rematch: _rematchJson(by: 0, ready: const <int>[0]),
+        );
+        await again;
+        await tester.pump();
+
+        expect(
+          controller.hasDesynced,
+          isFalse,
+          reason:
+              'a reply at the seq the controller already holds is the same '
+              'room, not a gap',
+        );
+        expect(
+          transport.sentRaw
+              .skip(sentBefore)
+              .where((String raw) => _typeOf(raw) == 'resume'),
+          isEmpty,
+          reason: 'no resume may be sent for a same-seq rematch reply',
+        );
+        expect(controller.room!.seq, 2);
+        expect(controller.room!.state, RoomState.lobby);
+        expect(find.byKey(_rematchWaitingKey), findsOneWidget);
+      },
+    );
+
+    testWidgets(
       'end-card-rematch-waiting is shown, ready-0 reads filled and ready-1 '
       'does not, and end-card-rematch is gone',
       (tester) async {
