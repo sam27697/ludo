@@ -73,6 +73,12 @@ Offset _expectedCenter({
   );
 }
 
+/// The board's top-left corner in the test window. [_expectedCenter] is in
+/// board coordinates; the board sits centred in the window, so every
+/// measured position is taken relative to this before comparing.
+Offset _boardOrigin(WidgetTester tester) =>
+    tester.getTopLeft(find.byType(LudoBoard));
+
 /// Asserts the drawn token-[seat]-[tokenIndex] widget is centred on
 /// [progress]'s cell (fan included), within 0.5px. [because] names the
 /// moment being checked in the sequence, folded into the failure reason so
@@ -84,9 +90,9 @@ void _expectDrawnAt(
   required int progress,
   required String because,
 }) {
-  final Offset actual = tester.getCenter(
-    find.byKey(Key('token-$seat-$tokenIndex')),
-  );
+  final Offset actual =
+      tester.getCenter(find.byKey(Key('token-$seat-$tokenIndex'))) -
+      _boardOrigin(tester);
   final Offset expected = _expectedCenter(
     seat: seat,
     tokenIndex: tokenIndex,
@@ -350,7 +356,8 @@ void main() {
           progress: 7,
         );
         final double hitDistance =
-            (hitRect.center - expectedHitCenter).distance;
+            (hitRect.center - _boardOrigin(tester) - expectedHitCenter)
+                .distance;
         expect(
           hitDistance <= 0.5,
           isTrue,
