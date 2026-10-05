@@ -847,24 +847,43 @@ void main() {
       );
     });
 
-    testWidgets(
-      'blocks on vs off differ by icon or by a strike present only when '
-      'off, not only colour',
-      (tester) async {
-        await _mountConnectedLobby(
-          tester,
-          mySeat: 0,
-          hostSeat: 0,
-          players: 4,
-          seats: oneSeat(),
-          blocks: true,
-        );
-        final IconData onIcon = _iconInChip(tester, 'lobby-rule-blocks-chip');
-        final bool onHasStrike = _hasStrikeInChip(
-          tester,
-          'lobby-rule-blocks-chip',
-        );
+    // RETURN 2 (run 72, defect 1): the single-test, two-mount versions of
+    // these two cases failed their own fixture check on the second
+    // _mountConnectedLobby ("sentRaw is empty",
+    // lobby_seat_cards_test.dart:238) -- a rig error (lessons 33 and 35:
+    // one mount per case), not a product defect. Split into one mount per
+    // case: an "on" case asserting the chip shows no strike, and an "off"
+    // case asserting either a strike or an IconData different from the on
+    // icon C-254 rule 4 names (Icons.shield_outlined / Icons.replay_rounded),
+    // read as a literal here rather than from a second mount.
+    testWidgets('blocks on: lobby-rule-blocks-chip shows no strike', (
+      tester,
+    ) async {
+      await _mountConnectedLobby(
+        tester,
+        mySeat: 0,
+        hostSeat: 0,
+        players: 4,
+        seats: oneSeat(),
+        blocks: true,
+      );
+      final IconData onIcon = _iconInChip(tester, 'lobby-rule-blocks-chip');
+      final bool onHasStrike = _hasStrikeInChip(
+        tester,
+        'lobby-rule-blocks-chip',
+      );
+      expect(
+        onHasStrike,
+        isFalse,
+        reason:
+            'amendment run 72 rule 8: lobby-rule-blocks-chip must show no '
+            'strike while blocks is on; icon read was $onIcon',
+      );
+    });
 
+    testWidgets(
+      'blocks off: lobby-rule-blocks-chip differs from on by icon or strike',
+      (tester) async {
         await _mountConnectedLobby(
           tester,
           mySeat: 0,
@@ -881,8 +900,8 @@ void main() {
 
         _expectDiffersWhenOff(
           'lobby-rule-blocks-chip',
-          onIcon: onIcon,
-          onHasStrike: onHasStrike,
+          onIcon: Icons.shield_outlined,
+          onHasStrike: false,
           offIcon: offIcon,
           offHasStrike: offHasStrike,
         );
@@ -890,8 +909,7 @@ void main() {
     );
 
     testWidgets(
-      'capture bonus on vs off differ by icon or by a strike present only '
-      'when off, not only colour',
+      'capture bonus on: lobby-rule-capture-bonus-chip shows no strike',
       (tester) async {
         await _mountConnectedLobby(
           tester,
@@ -909,7 +927,21 @@ void main() {
           tester,
           'lobby-rule-capture-bonus-chip',
         );
+        expect(
+          onHasStrike,
+          isFalse,
+          reason:
+              'amendment run 72 rule 8: lobby-rule-capture-bonus-chip must '
+              'show no strike while capture bonus is on; icon read was '
+              '$onIcon',
+        );
+      },
+    );
 
+    testWidgets(
+      'capture bonus off: lobby-rule-capture-bonus-chip differs from on by '
+      'icon or strike',
+      (tester) async {
         await _mountConnectedLobby(
           tester,
           mySeat: 0,
@@ -929,8 +961,8 @@ void main() {
 
         _expectDiffersWhenOff(
           'lobby-rule-capture-bonus-chip',
-          onIcon: onIcon,
-          onHasStrike: onHasStrike,
+          onIcon: Icons.replay_rounded,
+          onHasStrike: false,
           offIcon: offIcon,
           offHasStrike: offHasStrike,
         );
