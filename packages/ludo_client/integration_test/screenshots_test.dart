@@ -530,10 +530,16 @@ Future<void> _expectLobbyScreen(
         'showed "${codeText.data}"',
   );
 
+  // Amended for C-254 (order 255, item 3): a seat card's own sub-keys
+  // (`lobby-seat-<n>-token`, `lobby-seat-<n>-you`, `lobby-seat-<n>-host`)
+  // and the open-seat placeholder keys (`lobby-seat-open-<i>`) also start
+  // with "lobby-seat-", so a bare `startsWith` would overcount once C-254
+  // lands; match only the card's own key, `lobby-seat-<digits>`.
+  final RegExp seatCardKeyPattern = RegExp(r'^lobby-seat-\d+$');
   final seatFinders = find.byWidgetPredicate(
     (widget) =>
         widget.key is ValueKey<String> &&
-        (widget.key! as ValueKey<String>).value.startsWith('lobby-seat-'),
+        seatCardKeyPattern.hasMatch((widget.key! as ValueKey<String>).value),
   );
   expect(
     seatFinders,
@@ -3388,7 +3394,13 @@ void main() {
           code: roomCode,
           players: 2,
           hostSeat: 0,
-          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
+          // X19, the winner rig (order 255, item 3): a real game ends with
+          // all four of the winner's tokens at 57, home. My own seat (0)
+          // is the winner named by game_over below; without this, the
+          // winner's end card reads "0 home" instead of "4 home".
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: hostName, tokens: const <int>[57, 57, 57, 57]),
+          ],
           seq: 1,
         ),
       ),
@@ -3542,7 +3554,11 @@ void main() {
           code: roomCode,
           players: 2,
           hostSeat: 0,
-          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
+          // X19's own Arabic twin (order 255, item 3): same winner-tokens
+          // fix as capture 19, see its comment.
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: hostName, tokens: const <int>[57, 57, 57, 57]),
+          ],
           seq: 1,
         ),
       ),
@@ -3723,6 +3739,34 @@ void main() {
     );
     await tester.pump();
 
+    // X19's winner-tokens fix (order 255, item 3), carried over to the
+    // loser's own view: `game_over` below names seat 1 (Karim) the
+    // winner, and a real game ends with all four of the winner's tokens
+    // at 57, home. `player_joined` itself cannot carry that (the server
+    // always seeds a freshly joined seat's tokens at four -1s,
+    // room_controller.dart's own `_reducePlayerJoined`), so an ordinary
+    // unsolicited `room` resync carries it instead -- every other field
+    // unchanged from the create_room reply above, only seat 1's tokens
+    // set. Bumps the running seq to 3, so game_started below moves to 4
+    // and game_over to 5.
+    transport.pushText(
+      _frame(
+        type: 'room',
+        data: _roomJson(
+          code: roomCode,
+          players: 2,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: hostName),
+            _seatJson(1, name: 'Karim', tokens: const <int>[57, 57, 57, 57]),
+          ],
+          seq: 3,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
     await _expectLobbyScreen(
       tester,
       localeName: 'en',
@@ -3748,7 +3792,7 @@ void main() {
           'turn': 0,
           'game_id': 'g' * 16,
           'client_seeds': '0:seed',
-          'seq': 3,
+          'seq': 4,
         },
       ),
     );
@@ -3769,7 +3813,7 @@ void main() {
         data: <String, Object?>{
           'winner': 1,
           'verify_url': 'https://verify.example.invalid/shot21',
-          'seq': 4,
+          'seq': 5,
         },
       ),
     );
@@ -3877,6 +3921,27 @@ void main() {
     );
     await tester.pump();
 
+    // X19's winner-tokens fix (order 255, item 3), carried over to the
+    // loser's own view: see capture 21's own comment on the identical
+    // push just above it.
+    transport.pushText(
+      _frame(
+        type: 'room',
+        data: _roomJson(
+          code: roomCode,
+          players: 2,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: hostName),
+            _seatJson(1, name: 'Karim', tokens: const <int>[57, 57, 57, 57]),
+          ],
+          seq: 3,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
     await _expectLobbyScreen(
       tester,
       localeName: 'ar',
@@ -3902,7 +3967,7 @@ void main() {
           'turn': 0,
           'game_id': 'h' * 16,
           'client_seeds': '0:seed',
-          'seq': 3,
+          'seq': 4,
         },
       ),
     );
@@ -3922,7 +3987,7 @@ void main() {
         data: <String, Object?>{
           'winner': 1,
           'verify_url': 'https://verify.example.invalid/shot22',
-          'seq': 4,
+          'seq': 5,
         },
       ),
     );
