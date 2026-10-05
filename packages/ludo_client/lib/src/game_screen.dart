@@ -665,7 +665,13 @@ class _GameScreenState extends State<GameScreen> {
             // body below (waiting, playing, game-over, and the rest) inherits
             // the same table cue without each state painting its own copy.
             const FeltEdge(key: Key('game-felt-edge')),
-            const SeatPipStrip(key: Key('game-seat-pip-strip')),
+            SeatPipStrip(
+              key: const Key('game-seat-pip-strip'),
+              seats: room == null ? null : _seatsInPlayOf(room),
+              turnSeat: (room != null && room.state == RoomState.playing)
+                  ? room.turn?.seat
+                  : null,
+            ),
             if (controller.hasDesynced) _desyncBanner(context, loc),
             if (controller.phase == RoomPhase.connecting &&
                 controller.room != null)
@@ -800,6 +806,9 @@ class _GameScreenState extends State<GameScreen> {
               key: const Key('game-screen-board'),
               tokens: _tokensOf(room),
               seatsInPlay: _seatsInPlayOf(room),
+              seatNames: _seatNamesOf(room),
+              youLabel: loc.seatYou,
+              turnSeat: turn?.seat,
               mySeat: seat,
               legal: legalTokens,
               autoMoveToken: _pendingAutoMoveToken,
@@ -1146,6 +1155,9 @@ class _GameScreenState extends State<GameScreen> {
                 key: const Key('game-screen-board'),
                 tokens: _tokensOf(room),
                 seatsInPlay: _seatsInPlayOf(room),
+                seatNames: _seatNamesOf(room),
+                youLabel: loc.seatYou,
+                turnSeat: null,
               ),
             ),
           ],
@@ -1322,6 +1334,16 @@ Map<int, List<int>> _tokensOf(RoomSnapshot room) {
 /// H1: the `seat` of every entry in `room.seats`, in the order they appear.
 List<int> _seatsInPlayOf(RoomSnapshot room) {
   return <int>[for (final SeatState seatState in room.seats) seatState.seat];
+}
+
+/// C-257 rule 1/3: each occupied seat's own `name` from `room.seats`,
+/// keyed by seat. `LudoBoard` decides who gets a chip from this and
+/// `seatsInPlay` together; this function only reports what the room said.
+Map<int, String> _seatNamesOf(RoomSnapshot room) {
+  return <int, String>{
+    for (final SeatState seatState in room.seats)
+      seatState.seat: seatState.name,
+  };
 }
 
 /// H2, decided in the order given there, first match wins.
