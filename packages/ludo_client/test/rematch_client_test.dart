@@ -266,6 +266,7 @@ Future<(RoomController, FakeTransport, _Connector)> _connectTo(
   List<Map<String, Object?>>? seats,
   int players = 2,
   int hostSeat = 0,
+  bool autoDispose = true,
 }) async {
   final _Connector connector = _Connector();
   final FakeTransport transport = FakeTransport();
@@ -309,7 +310,14 @@ Future<(RoomController, FakeTransport, _Connector)> _connectTo(
     ),
   );
   await future;
-  addTearDown(controller.dispose);
+  // STATE lesson 9: a case that disposes explicitly, in body, to satisfy
+  // flutter_test's own pending-timer invariant before that invariant is
+  // checked (addTearDown's callbacks run after it, too late) passes
+  // autoDispose: false so this helper's own teardown does not dispose a
+  // second time and trip ChangeNotifier's already-disposed assert.
+  if (autoDispose) {
+    addTearDown(controller.dispose);
+  }
   return (controller, transport, connector);
 }
 
@@ -782,6 +790,18 @@ void main() {
             'docs/PROTOCOL.md section 16.1: rematch carries d == {}; '
             'got ${_dataOf(rematchFrames.single)}',
       );
+
+      // Answer the still-open rematch request (PROTOCOL 16.2.5) so its
+      // 10 s timer is not pending at teardown, matching the suite's own
+      // idiom (test/lobby_start_with_present_test.dart:718-721).
+      await _pushRoom(
+        tester,
+        transport,
+        re: _idOf(rematchFrames.single),
+        seq: 2,
+        seats: _twoSeats,
+        rematch: _rematchJson(by: 0, ready: const <int>[0]),
+      );
     });
 
     // Catches a rematch button with no in-flight guard: the order's own
@@ -817,6 +837,23 @@ void main() {
               'must send nothing; the wire grew by '
               '${transport.sentRaw.length - sentAfterFirstTap} message(s), '
               'exactly the double-send this rule exists to forbid',
+        );
+
+        // Answer the one open rematch request (PROTOCOL 16.2.5) so its
+        // 10 s timer is not pending at teardown, matching the suite's own
+        // idiom (test/lobby_start_with_present_test.dart:718-721).
+        final String reqId = _idOf(
+          transport.sentRaw
+              .where((String raw) => _typeOf(raw) == 'rematch')
+              .single,
+        );
+        await _pushRoom(
+          tester,
+          transport,
+          re: reqId,
+          seq: 2,
+          seats: _twoSeats,
+          rematch: _rematchJson(by: 0, ready: const <int>[0]),
         );
       },
     );
@@ -1401,6 +1438,7 @@ void main() {
     Future<(RoomController, FakeTransport)> reachThreeSeatPartialReady(
       WidgetTester tester, {
       required int mySeat,
+      bool autoDispose = true,
     }) async {
       final (
         RoomController controller,
@@ -1413,6 +1451,7 @@ void main() {
         winner: 0,
         seats: _threeSeats,
         players: 3,
+        autoDispose: autoDispose,
       );
       await _mount(tester, controller);
       await _pushRoom(
@@ -1487,8 +1526,21 @@ void main() {
       "tapping end-card-rematch-start as the host sends start_game with d "
       '== {}',
       (tester) async {
-        final (RoomController controller, FakeTransport transport) =
-            await reachThreeSeatPartialReady(tester, mySeat: 0);
+        // This case leaves the start_game request it sends open (no reply
+        // is pushed, since the case is about the tap/frame alone), so it
+        // disposes explicitly, in body, rather than relying on
+        // _connectTo's own addTearDown (STATE lesson 9: that teardown
+        // runs after flutter_test's own pending-timer invariant check, too
+        // late to clear this request's pending timer). autoDispose: false
+        // keeps that teardown from disposing a second time underneath it.
+        final (
+          RoomController controller,
+          FakeTransport transport,
+        ) = await reachThreeSeatPartialReady(
+          tester,
+          mySeat: 0,
+          autoDispose: false,
+        );
 
         final int startsBefore = transport.sentRaw
             .where((String raw) => _typeOf(raw) == 'start_game')
@@ -1786,6 +1838,19 @@ void main() {
               'reconnecting, not left stuck disabled from the failed '
               'request; tapping it here must send a fresh rematch frame',
         );
+
+        // Answer the fresh, still-open rematch request (PROTOCOL 16.2.5)
+        // so its 10 s timer is not pending at teardown, matching the
+        // suite's own idiom (test/lobby_start_with_present_test.dart:
+        // 718-721).
+        await _pushRoom(
+          tester,
+          resumeTransport,
+          re: _idOf(resumeTransport.sentRaw.last),
+          seq: 2,
+          seats: _twoSeats,
+          rematch: _rematchJson(by: 0, ready: const <int>[0]),
+        );
       },
     );
   });
@@ -1883,6 +1948,21 @@ void main() {
             .toList();
         expect(rematchFrames, hasLength(1));
         expect(_dataOf(rematchFrames.single), <String, Object?>{});
+
+        // Answer the still-open rematch request (PROTOCOL 16.2.5) so its
+        // 10 s timer is not pending at teardown, matching the suite's own
+        // idiom (test/lobby_start_with_present_test.dart:718-721).
+        await _pushRoom(
+          tester,
+          transport,
+          re: _idOf(rematchFrames.single),
+          seq: 2,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Sam'),
+            _seatJson(1, name: 'Lina'),
+          ],
+          rematch: _rematchJson(by: 0, ready: const <int>[0, 1]),
+        );
       },
     );
   });
