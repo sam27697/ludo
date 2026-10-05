@@ -317,6 +317,9 @@ const Key _chipKey = Key('game-header-chip');
 const Key _chipDotKey = Key('game-header-chip-dot');
 const Key _ringKey = Key('game-header-countdown-ring');
 
+/// Amendment run 72, rule 9c's own key for the sentence-bearing wrapper.
+const Key _countdownSemanticsKey = Key('game-header-countdown-semantics');
+
 /// H2's own mapping, named by C-250 rule 2 itself ("the strings it shows
 /// today (`_turnBannerText`)") -- not read off the implementation, but
 /// specified by the contract text, and already the mapping
@@ -384,6 +387,15 @@ Color _ringColor(WidgetTester tester) {
   final dynamic ring = tester.widget(find.byKey(_ringKey));
   return ring.color as Color;
 }
+
+/// Whether [inner] lies inside [outer], each edge compared with half a
+/// logical pixel of slack for the same subpixel-rendering reason rule 6's
+/// own rect comparisons above already allow it (`closeTo(..., 0.5)`).
+bool _rectInside(Rect inner, Rect outer, {double tolerance = 0.5}) =>
+    inner.left >= outer.left - tolerance &&
+    inner.top >= outer.top - tolerance &&
+    inner.right <= outer.right + tolerance &&
+    inner.bottom <= outer.bottom + tolerance;
 
 /// Reads whatever whole-second number [key]'s own widget (or its first Text
 /// descendant, if it is not itself a Text) renders. Copied from
@@ -937,6 +949,218 @@ void main() {
       );
     },
   );
+
+  // ==========================================================================
+  // Amendment run 72, rule 9 (a/b/c/d): the ring actually paints at the
+  // countdown block's own size, the seconds Text inside it is the bare
+  // whole number rather than the sentence, the sentence itself moves onto
+  // game-header-countdown-semantics with the bare digits excluded from the
+  // semantics tree, and the colour rule of rule 8 applies to the digits as
+  // well as the ring. Measured at the three sizes of rule 6, en and ar, per
+  // this order's own instruction, since rule 9b itself is pinned there too.
+  // Expected RED on the base (frames of screenshots run 37268881483,
+  // ac19bb3) for 9a, 9b and 9c: _CountdownRing is a childless CustomPaint
+  // placed as a non-positioned Stack child, so it paints at Size.zero (9a
+  // fails outright, and a non-zero Text rect can never lie inside a
+  // zero-size rect, so 9b's containment half fails too); the Text keyed
+  // game-screen-turn-countdown still renders loc.gameTurnCountdown(n), the
+  // whole sentence, not the bare digits (9b's content half fails too); and
+  // game-header-countdown-semantics does not exist anywhere in lib/ on this
+  // base, so its key lookup fails to find anything (9c fails on a
+  // key-not-found reason). 9d is not claimed red by the work order: the
+  // Text's colour already reads the same ringColor local the ring itself
+  // is given on this base, so that half of rule 9 may already hold before
+  // the ring and the Text are otherwise fixed; this file measures it
+  // regardless, since rule 9d is still part of the contract this run owes
+  // a test for.
+  // ==========================================================================
+  for (final Size surface in const <Size>[
+    Size(360, 800),
+    Size(390, 844),
+    Size(411, 704),
+  ]) {
+    for (final Locale locale in const <Locale>[Locale('en'), Locale('ar')]) {
+      testWidgets('rule 9a/9b/9c/9d (${locale.languageCode}, '
+          '${surface.width.toInt()}x${surface.height.toInt()}): '
+          'game-header-countdown-ring renders at least 36x36dp; '
+          'game-screen-turn-countdown shows only the bare whole seconds left '
+          'on one line (maxLines 1, softWrap false), decreasing as seconds '
+          'are pumped, with its rect inside the ring\'s; '
+          'game-header-countdown-semantics is a Semantics whose label is '
+          'loc.gameTurnCountdown(n) for that same n, with the bare digits '
+          'excluded from the semantics tree; and the ring and the digits '
+          'alike carry the turn seat\'s colour above 10s left and '
+          'LudoColors.error at 10s and below. Kills: a ring laid out at zero '
+          'size, a Text still carrying the whole sentence (which cannot fit '
+          'inside a 36dp ring and wraps or clips instead), a sentence read '
+          'twice by TalkBack (once off the wrapper, once off the bare '
+          'digits), and digits left at the wrong colour once the ring\'s own '
+          'colour switches to red', (tester) async {
+        _setSurface(tester, surface);
+        final (RoomController controller, _) = await _connectDirect(
+          tester,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Sam'),
+            _seatJson(1, name: 'Bob'),
+          ],
+          turn: _turnJson(
+            seat: 1,
+            phase: 'await_roll',
+            deadlineMs: 45000,
+            k: 0,
+          ),
+        );
+        addTearDown(controller.dispose);
+        await _mount(tester, controller, locale: locale);
+        final AppLocalizations loc = _locOf(tester);
+        final SemanticsHandle semanticsHandle = tester.ensureSemantics();
+
+        void checkAt(int expectedSeconds, Color expectedColor) {
+          final String at =
+              '${locale.languageCode} ${surface.width.toInt()}x'
+              '${surface.height.toInt()}, ${expectedSeconds}s left';
+
+          expect(
+            find.byKey(_ringKey),
+            findsOneWidget,
+            reason:
+                'fixture is broken ($at): game-header-countdown-ring '
+                'must be present',
+          );
+          final Rect ringRect = tester.getRect(find.byKey(_ringKey));
+          expect(
+            ringRect.width,
+            greaterThanOrEqualTo(36.0 - 0.5),
+            reason:
+                'rule 9a: game-header-countdown-ring must render at '
+                'least 36dp wide; measured ${ringRect.width} at $at',
+          );
+          expect(
+            ringRect.height,
+            greaterThanOrEqualTo(36.0 - 0.5),
+            reason:
+                'rule 9a: game-header-countdown-ring must render at '
+                'least 36dp tall; measured ${ringRect.height} at $at',
+          );
+
+          expect(
+            find.byKey(_countdownKey),
+            findsOneWidget,
+            reason:
+                'fixture is broken ($at): game-screen-turn-countdown '
+                'must be present',
+          );
+          final Text secondsText = tester.widget<Text>(
+            find.byKey(_countdownKey),
+          );
+          expect(
+            secondsText.data,
+            '$expectedSeconds',
+            reason:
+                'rule 9b: game-screen-turn-countdown must show only the '
+                'bare whole seconds left ("$expectedSeconds"), not the '
+                'full sentence; got "${secondsText.data}" at $at',
+          );
+          expect(
+            secondsText.maxLines,
+            1,
+            reason:
+                'rule 9b: game-screen-turn-countdown must cap at '
+                'maxLines 1; measured ${secondsText.maxLines} at $at',
+          );
+          expect(
+            secondsText.softWrap,
+            isFalse,
+            reason:
+                'rule 9b: game-screen-turn-countdown must set softWrap '
+                'false; measured ${secondsText.softWrap} at $at',
+          );
+
+          final Rect textRect = tester.getRect(find.byKey(_countdownKey));
+          expect(
+            _rectInside(textRect, ringRect),
+            isTrue,
+            reason:
+                'rule 9b: game-screen-turn-countdown\'s rendered rect '
+                '($textRect) must lie inside '
+                'game-header-countdown-ring\'s rect ($ringRect) at $at',
+          );
+
+          expect(
+            find.byKey(_countdownSemanticsKey),
+            findsOneWidget,
+            reason:
+                'fixture is broken ($at): '
+                'game-header-countdown-semantics must be present',
+          );
+          final Widget semanticsWidget = tester.widget(
+            find.byKey(_countdownSemanticsKey),
+          );
+          expect(
+            semanticsWidget,
+            isA<Semantics>(),
+            reason:
+                'rule 9c: game-header-countdown-semantics must be a '
+                'Semantics widget; got a '
+                '${semanticsWidget.runtimeType} at $at',
+          );
+          final String expectedSentence = loc.gameTurnCountdown(
+            expectedSeconds,
+          );
+          final Semantics semantics = semanticsWidget as Semantics;
+          expect(
+            semantics.properties.label,
+            expectedSentence,
+            reason:
+                'rule 9c: game-header-countdown-semantics\'s label must '
+                'be loc.gameTurnCountdown($expectedSeconds) '
+                '("$expectedSentence"); got '
+                '"${semantics.properties.label}" at $at',
+          );
+          expect(
+            find.bySemanticsLabel('$expectedSeconds'),
+            findsNothing,
+            reason:
+                'rule 9c: the bare digits "$expectedSeconds" must not '
+                'carry their own semantics label once the sentence lives '
+                'on game-header-countdown-semantics, or TalkBack reads '
+                'the turn twice; at $at',
+          );
+
+          final Color ringColor = _ringColor(tester);
+          expect(
+            _sameRgb(ringColor, expectedColor),
+            isTrue,
+            reason:
+                'rule 9d: game-header-countdown-ring\'s color field must '
+                'be $expectedColor; measured $ringColor at $at',
+          );
+          final Color? digitColor = secondsText.style?.color;
+          expect(
+            digitColor != null && _sameRgb(digitColor, expectedColor),
+            isTrue,
+            reason:
+                'rule 9d: game-screen-turn-countdown\'s own colour must '
+                'match the ring\'s ($expectedColor); measured '
+                '$digitColor at $at',
+          );
+        }
+
+        final Color seatColor = LudoColors.seats[1];
+        checkAt(45, seatColor);
+
+        // 45s -> 30s: still above the last-10s threshold.
+        await tester.pump(const Duration(seconds: 15));
+        checkAt(30, seatColor);
+
+        // 30s -> 9s: inside the last 10s, the vocabulary red expected.
+        await tester.pump(const Duration(seconds: 21));
+        checkAt(9, LudoColors.error);
+
+        semanticsHandle.dispose();
+      });
+    }
+  }
 
   // ==========================================================================
   // Rule 4: the offline line's new position (below the board), and its
