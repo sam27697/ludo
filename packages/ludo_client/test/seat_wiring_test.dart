@@ -16,12 +16,11 @@
 //
 // On base ac19bb3: LudoBoard.seatNames, .youLabel and .turnSeat are never
 // given a value by game_screen.dart's first (playing) LudoBoard, SeatPipStrip
-// is built with no seats: or turnSeat:, the end-view LudoBoard (the
-// game_over body) carries none of seatNames/youLabel/turnSeat either, and
-// LudoBoard.onTokenStep is never given a value. Every case below is
-// expected red on that base for exactly one of those reasons -- a key not
-// found where the rule says one must be, a key found where the rule says
-// none must be, or a wired parameter reading null.
+// is built with no seats: or turnSeat:, and the end-view LudoBoard (the
+// game_over body) carries none of seatNames/youLabel/turnSeat either. Every
+// case below is expected red on that base for exactly one of those reasons
+// -- a key not found where the rule says one must be, a key found where the
+// rule says none must be, or a wired parameter reading null.
 //
 // loc.seatYou does not exist on this base (no AppLocalizations member of
 // that name was generated here) even though C-257 rule 1 names it as the
@@ -30,25 +29,11 @@
 // as this order's own text asks, rather than against a getter that would
 // fail to compile.
 //
-// Ambiguity found and not invented around (reported in this run's own
-// delivery note, repeated here for whoever reads this file next): C-257
-// rule 4's "What proves it" text describes proving the step tick by pushing
-// a real `moved` frame and reading the fake feedback service's recorded
-// list afterward. On this base, lib/src/feedback.dart's own _cuesForMoved
-// already appends one FeedbackCue.step per square travelled for a `moved`
-// frame naming my own seat, played synchronously by GameScreen._onFrame
-// the instant the frame lands -- entirely independent of LudoBoard
-// .onTokenStep, which game_screen.dart never gives a value on this base.
-// A case that only reads the final recorded list after pushing such a
-// frame would therefore already be green on ac19bb3, for a reason that has
-// nothing to do with this contract's own wiring. To keep this case red for
-// the reason it names, it instead reads LudoBoard.onTokenStep itself off
-// the mounted widget (asserting it is non-null, which it is not on this
-// base) and then, in the one GameScreen the contract's rule 4 names, calls
-// that exact function the same way lib/src/board.dart's own
-// _onStepElapsed does -- `widget.onTokenStep?.call(move.seat, move.token)`
-// -- to prove what it does for my own seat's token and for another seat's,
-// without needing the ambiguous _cuesForMoved path to run at all.
+// Rule 4 (the step tick) is withdrawn from this contract -- see
+// work/ludo/orders/C-257-seat-wiring.md's own "RESPEC run 72" note -- and
+// its proof moved, unchanged, to test/step_tick_wiring_test.dart, held for
+// the follow-up contract (C-259, not written yet) that replaces it. Rules
+// 1-3 and 5 stand; this file proves 1-3 (5 is "kept", nothing new to prove).
 
 import 'dart:convert';
 
@@ -57,7 +42,6 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
-import 'package:ludo_client/src/board.dart';
 import 'package:ludo_client/src/die_mark.dart';
 import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/game_screen.dart';
@@ -68,7 +52,6 @@ import 'net/fake_transport.dart';
 
 const String _testUrl = 'wss://seat-wiring-test.invalid/ws';
 
-const Key _boardKey = Key('game-screen-board');
 const Key _pipStripKey = Key('game-seat-pip-strip');
 
 Key _seatNameKey(int seat) => Key('board-seat-name-$seat');
@@ -672,72 +655,6 @@ void main() {
           find.byKey(_turnYardKey(2)),
           findsNothing,
           reason: 'board-turn-yard-2 must not exist on the end view either',
-        );
-      },
-    );
-  });
-
-  // ==========================================================================
-  // Rule 4: the step tick.
-  // ==========================================================================
-  group('Rule 4: the step tick', () {
-    final List<Map<String, Object?>> seats = <Map<String, Object?>>[
-      _seatJson(0, name: 'Sam', tokens: const <int>[3, -1, -1, -1]),
-      _seatJson(1, name: 'Bob', tokens: const <int>[10, -1, -1, -1]),
-    ];
-
-    // Kills: LudoBoard.onTokenStep never given a value at all (ac19bb3's own
-    // state -- see this file's header for why a case that only reads the
-    // fake service's recorded list after a real `moved` frame would not be
-    // red on this base for the reason this rule names); a step of my own
-    // token playing no cue, or any cue other than exactly one
-    // FeedbackCue.step; and a step of another seat's token playing anything
-    // at all.
-    testWidgets(
-      'LudoBoard.onTokenStep plays exactly one FeedbackCue.step for a step '
-      'of my own token, and nothing for a step of another seat\'s',
-      (tester) async {
-        final (_, _, _FakeFeedbackService fake) = await _connectAndMount(
-          tester,
-          seats: seats,
-          turn: _turnJson(
-            seat: 0,
-            phase: 'await_roll',
-            deadlineMs: 45000,
-            k: 0,
-          ),
-        );
-
-        final LudoBoard board = tester.widget<LudoBoard>(find.byKey(_boardKey));
-        expect(
-          board.onTokenStep,
-          isNotNull,
-          reason:
-              'C-257 rule 4: the playing LudoBoard\'s onTokenStep must be '
-              'wired so a step of my own token plays FeedbackCue.step; '
-              'game_screen.dart currently passes none on this base '
-              '(board.onTokenStep is null)',
-        );
-
-        fake.recorded.clear();
-        board.onTokenStep!(0, 0);
-        expect(
-          fake.recorded,
-          equals(<FeedbackCue>[FeedbackCue.step]),
-          reason:
-              'a step of my own seat\'s (0) token must play exactly one '
-              'FeedbackCue.step through FeedbackScope.of(context); recorded '
-              '${fake.recorded}',
-        );
-
-        fake.recorded.clear();
-        board.onTokenStep!(1, 0);
-        expect(
-          fake.recorded,
-          isEmpty,
-          reason:
-              'a step of another seat\'s (1) token must play nothing; '
-              'recorded ${fake.recorded}',
         );
       },
     );
