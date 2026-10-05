@@ -40,6 +40,8 @@
   "lobbyRuleBlocksOff": "الحواجز: معطّلة",
   "lobbyRuleCaptureBonusOn": "مكافأة الأكل: مفعّلة",
   "lobbyRuleCaptureBonusOff": "مكافأة الأكل: معطّلة",
+  "lobbyOpenSeat": "بانتظار صديق",
+  "seatYou": "أنت",
   "lobbyErrorNoSuchRoom": "هذه الغرفة غير موجودة. تحقق من الرمز وحاول مرة أخرى.",
   "lobbyErrorRoomFull": "هذه الغرفة ممتلئة بالفعل.",
   "lobbyErrorRoomStarted": "بدأت هذه الغرفة لعبتها بالفعل.",

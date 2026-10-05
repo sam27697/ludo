@@ -12,6 +12,7 @@ import 'die_mark.dart';
 import 'net/connection.dart' show RoomToggles;
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
+import 'seat_card.dart';
 import 'session_memory.dart' show SeatRecord;
 import 'theme.dart';
 
@@ -284,7 +285,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
               // connecting / error / closed states.
               if (connected) ...[
                 const FeltEdge(key: Key('game-felt-edge')),
-                const SeatPipStrip(key: Key('game-seat-pip-strip')),
+                // C-254 rule 5: only the occupied seats get a pip here,
+                // not the fixed four the strip draws by default.
+                SeatPipStrip(
+                  key: const Key('game-seat-pip-strip'),
+                  seats: controller.room!.seats
+                      .map((SeatState s) => s.seat)
+                      .toList(),
+                ),
               ],
               if (controller.hasDesynced) _desyncBanner(loc, controller),
               Expanded(child: phaseBody),
@@ -469,24 +477,30 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ],
           ),
           SizedBox(height: compact ? kSpace4 : kSpace6),
-          for (final SeatState seat in room.seats)
-            Padding(
-              key: Key('lobby-seat-${seat.seat}'),
-              padding: const EdgeInsets.symmetric(vertical: kSpace1),
-              child: Text(seat.name, textAlign: TextAlign.center),
-            ),
+          _seatGrid(loc, room, controller),
           SizedBox(height: compact ? kSpace2 : kSpace3),
-          Text(
-            room.rules.blocks ? loc.lobbyRuleBlocksOn : loc.lobbyRuleBlocksOff,
-            key: const Key('lobby-rule-blocks'),
-            textAlign: TextAlign.center,
-          ),
-          Text(
-            room.rules.captureBonus
-                ? loc.lobbyRuleCaptureBonusOn
-                : loc.lobbyRuleCaptureBonusOff,
-            key: const Key('lobby-rule-capture-bonus'),
-            textAlign: TextAlign.center,
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: kSpace2,
+            runSpacing: kSpace2,
+            children: [
+              _ruleChip(
+                icon: Icons.shield_outlined,
+                on: room.rules.blocks,
+                textKey: const Key('lobby-rule-blocks'),
+                text: room.rules.blocks
+                    ? loc.lobbyRuleBlocksOn
+                    : loc.lobbyRuleBlocksOff,
+              ),
+              _ruleChip(
+                icon: Icons.replay_rounded,
+                on: room.rules.captureBonus,
+                textKey: const Key('lobby-rule-capture-bonus'),
+                text: room.rules.captureBonus
+                    ? loc.lobbyRuleCaptureBonusOn
+                    : loc.lobbyRuleCaptureBonusOff,
+              ),
+            ],
           ),
           if (inRematchLobby && !amReadyForRematch) ...[
             const SizedBox(height: kSpace4),
@@ -555,6 +569,99 @@ class _LobbyScreenState extends State<LobbyScreen> {
     );
   }
 
+  /// C-254 rules 1-3: the occupied seats (in `room.seats` order, never
+  /// re-sorted by seat number) followed by one open-seat placeholder per
+  /// seat nobody has taken yet, laid out two to a row. A plain `Row` of
+  /// each pair sits under the ambient `Directionality`, so Arabic mirrors
+  /// seat order to start at the right on its own; nothing here flips
+  /// anything by hand.
+  Widget _seatGrid(
+    AppLocalizations loc,
+    RoomSnapshot room,
+    RoomController controller,
+  ) {
+    final int openCount = room.players - room.seats.length;
+    final List<Widget> cards = [
+      for (final SeatState seat in room.seats)
+        SeatCard(
+          seat: seat,
+          isMine: controller.seat == seat.seat,
+          isHost: seat.seat == room.hostSeat,
+          youLabel: loc.seatYou,
+        ),
+      for (int i = 0; i < openCount; i++)
+        OpenSeatCard(index: i, label: loc.lobbyOpenSeat),
+    ];
+
+    final List<Widget> rows = [];
+    for (int i = 0; i < cards.length; i += 2) {
+      final bool hasSecond = i + 1 < cards.length;
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: kSpace2),
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: cards[i]),
+                const SizedBox(width: kSpace2),
+                Expanded(child: hasSecond ? cards[i + 1] : const SizedBox()),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return Column(children: rows);
+  }
+
+  /// C-254 rule 4: an icon plus the existing label `Text`, key and string
+  /// unchanged. Off state keeps the same icon, mutes its colour, and adds
+  /// a diagonal strike -- a second signal besides colour (doctrine P9).
+  Widget _ruleChip({
+    required IconData icon,
+    required bool on,
+    required Key textKey,
+    required String text,
+  }) {
+    final Color color = on ? LudoColors.action : LudoColors.inkMuted;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(kRadiusControl),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: kSpace3,
+          vertical: kSpace2,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: kSpace5,
+              height: kSpace5,
+              child: on
+                  ? Icon(icon, size: kSpace5, color: color)
+                  : Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Icon(icon, size: kSpace5, color: color),
+                        CustomPaint(
+                          size: Size(kSpace5, kSpace5),
+                          painter: _RuleOffStrikePainter(color: color),
+                        ),
+                      ],
+                    ),
+            ),
+            const SizedBox(width: kSpace2),
+            Text(text, key: textKey),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _desyncBanner(AppLocalizations loc, RoomController controller) {
     return Material(
       key: const Key('lobby-desync-banner'),
@@ -584,4 +691,29 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ),
     );
   }
+}
+
+/// C-254 rule 4: the diagonal strike an "off" rule chip draws over its own
+/// icon, on top of the muted colour, so off is never colour alone.
+class _RuleOffStrikePainter extends CustomPainter {
+  const _RuleOffStrikePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint line = Paint()
+      ..color = color
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(size.width * 0.12, size.height * 0.12),
+      Offset(size.width * 0.88, size.height * 0.88),
+      line,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RuleOffStrikePainter oldDelegate) =>
+      oldDelegate.color != color;
 }

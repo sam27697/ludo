@@ -178,6 +178,14 @@
   "@lobbyRuleCaptureBonusOff": {
     "description": "Line under the seat list on the lobby screen naming the state of the capture bonus rule for this room, shown to host and guests alike."
   },
+  "lobbyOpenSeat": "Waiting for a friend",
+  "@lobbyOpenSeat": {
+    "description": "Placeholder card on the lobby screen for a seat nobody has taken yet."
+  },
+  "seatYou": "You",
+  "@seatYou": {
+    "description": "Short chip marking the player's own seat card on the lobby screen. Also reused by the game screen's yard label for the same seat."
+  },
   "lobbyErrorNoSuchRoom": "That room does not exist. Check the code and try again.",
   "@lobbyErrorNoSuchRoom": {
     "description": "Error shown on the lobby screen when the server reports NO_SUCH_ROOM."
