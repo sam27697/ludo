@@ -67,6 +67,41 @@
 //      the two keys the bullet names -- without assuming whether it nests
 //      around the existing per-seat pip or replaces it, since ruling 7
 //      ("every existing key ... is kept") is not explicit either way.
+//
+// Order 267, contract C-264 part A amendment (run 73, base a9b3350):
+//
+//   A1 amends the Geometry group's own hit-rect non-overlap assertion (the
+//   loop over board-token-hit-0-<index> inside runGeometryCase, "seat 0's
+//   name chip ... must not overlap its own yard token hit target"). C-264's
+//   own words are "the chip may overlap a yard token's hit rect; it must
+//   not overlap a yard token's drawn disc" -- a strictly weaker claim than
+//   the old one (a hit rect is never smaller than its disc at these
+//   viewports: board.dart's own _tokenHitRect and the token's drawn
+//   Positioned share one centre, and _tokenHitSize's 48dp floor is never
+//   under the drawn tokenSize = cellSize * 0.7 for any board this file
+//   mounts). So amending this assertion alone cannot newly fail by itself
+//   on a9b3350; see the A1 case's own comment for the measured verdict.
+//   The drawn disc's rect is read from the existing `token-<seat>-<index>`
+//   key -- not recomputed from a second copy of board.dart's hit-rect
+//   formula, and not board_geometry.dart's cellFor plus a hand-rebuilt fan
+//   offset either. That key already exists on this base (bullet 6 above
+//   already finds it, to check a muted seat draws no token at all) and is
+//   the Semantics node board.dart wraps directly around the painted
+//   circle's DecoratedBox, positioned by the same Positioned(left:
+//   drawnLeft, top: drawnTop, width: tokenSize, height: tokenSize) that is
+//   the drawn disc -- reading it this way means a defect in the chip's own
+//   placement math can never be hidden by this check happening to reuse
+//   the same (possibly also wrong) formula.
+//
+//   A2 is new: two cases (en, ar) at a 340 logical px wide board, seat 0
+//   (top edge row) and seat 2 (bottom edge row) -- A2's own text names both
+//   rows ("the top row for the top yards, the bottom row for the bottom
+//   ones") -- asserting the rendered board-seat-name-<s> chip (not the
+//   wider Positioned box that merely bounds where it may sit) is at least
+//   85% of a cell tall, and that its name Text's resolved font size is at
+//   least 10 logical px. `_fixedHarness` grew an optional `boardSide`
+//   parameter (default 400, so every existing call is unaffected) rather
+//   than a second, near-duplicate harness function.
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -106,6 +141,7 @@ Widget _fixedHarness({
   int? turnSeat,
   bool disableAnimations = false,
   Locale locale = const Locale('en'),
+  double boardSide = 400,
 }) {
   final Widget board = LudoBoard(
     tokens: tokens,
@@ -127,8 +163,8 @@ Widget _fixedHarness({
     home: Scaffold(
       body: Center(
         child: SizedBox(
-          width: 400,
-          height: 400,
+          width: boardSide,
+          height: boardSide,
           child: disableAnimations
               ? Builder(
                   builder: (context) => MediaQuery(
@@ -633,22 +669,49 @@ void main() {
         );
       }
 
+      // Amended for contract C-264 rule A1 (order 267): this used to read
+      //   final Rect seat0Chip = tester.getRect(
+      //     find.byKey(const Key('board-seat-name-0')),
+      //   );
+      //   for (var index = 0; index < 4; index++) {
+      //     final Finder hit = find.byKey(Key('board-token-hit-0-$index'));
+      //     if (hit.evaluate().isEmpty) {
+      //       continue;
+      //     }
+      //     final Rect hitRect = tester.getRect(hit);
+      //     expect(
+      //       seat0Chip.overlaps(hitRect),
+      //       isFalse,
+      //       reason:
+      //           'at viewport $viewport: seat 0\'s name chip $seat0Chip must '
+      //           'not overlap its own yard token hit target '
+      //           'board-token-hit-0-$index at $hitRect (seed: index=$index, '
+      //           'viewport=$viewport)',
+      //     );
+      //   }
+      // C-264 rule A1 permits that overlap now ("the chip may overlap a
+      // yard token's hit rect") and forbids a narrower thing instead ("it
+      // must not overlap a yard token's drawn disc"), so the check below
+      // reads token-0-<index> (the drawn disc, board.dart's own Semantics
+      // node wrapping the painted circle, positioned by the same left/top/
+      // tokenSize math the circle is drawn with) rather than
+      // board-token-hit-0-<index> (the hit rect).
       final Rect seat0Chip = tester.getRect(
         find.byKey(const Key('board-seat-name-0')),
       );
       for (var index = 0; index < 4; index++) {
-        final Finder hit = find.byKey(Key('board-token-hit-0-$index'));
-        if (hit.evaluate().isEmpty) {
+        final Finder disc = find.byKey(Key('token-0-$index'));
+        if (disc.evaluate().isEmpty) {
           continue;
         }
-        final Rect hitRect = tester.getRect(hit);
+        final Rect discRect = tester.getRect(disc);
         expect(
-          seat0Chip.overlaps(hitRect),
+          seat0Chip.overlaps(discRect),
           isFalse,
           reason:
               'at viewport $viewport: seat 0\'s name chip $seat0Chip must '
-              'not overlap its own yard token hit target '
-              'board-token-hit-0-$index at $hitRect (seed: index=$index, '
+              'not overlap its own yard token\'s drawn disc token-0-$index '
+              'at $discRect (contract C-264 rule A1) (seed: index=$index, '
               'viewport=$viewport)',
         );
       }
@@ -660,6 +723,97 @@ void main() {
 
     testWidgets('at 390 x 844', (tester) async {
       await runGeometryCase(tester, const Size(390, 844));
+    });
+  });
+
+  // ===========================================================================
+  // C-264 rule A2 (order 267) -- the chip is tall enough and its text never
+  // drops below the 10px floor, at a 340 logical px wide board.
+  // ===========================================================================
+  group('Chip height and text floor at a 340px board (A2)', () {
+    // Checks both of A2's own rows (seat 0, the top edge row; seat 2, the
+    // bottom edge row) in the same case, same fixture (seatsInPlay [0, 2],
+    // seatNames {0: Sam, 2: Lina}) the Geometry group above already uses, in
+    // each of the two named locales.
+    //
+    // Kills: a chip clamped down to whatever room is left once a yard
+    // token's hit box is avoided (today's bug, the sliver chips the
+    // contract's "Seen" section names), and a font-size floor left at the
+    // old 7px rather than raised to A2's 10px.
+    Future<void> runA2Case(WidgetTester tester, Locale locale) async {
+      await tester.pumpWidget(
+        _fixedHarness(
+          tokens: _allInYard(),
+          seatsInPlay: const <int>[0, 2],
+          seatNames: const <int, String>{0: 'Sam', 2: 'Lina'},
+          boardSide: 340,
+          locale: locale,
+        ),
+      );
+      await tester.pump();
+
+      final double cellSize = _boardRect(tester).width / 15;
+      const Map<int, String> namesBySeat = <int, String>{0: 'Sam', 2: 'Lina'};
+
+      for (final MapEntry<int, String> entry in namesBySeat.entries) {
+        final int seat = entry.key;
+        final String name = entry.value;
+
+        final Finder chip = find.byKey(Key('board-seat-name-$seat'));
+        expect(
+          chip,
+          findsOneWidget,
+          reason:
+              'fixture: seat $seat must have a name chip (locale '
+              '${locale.languageCode}, seed: seat=$seat)',
+        );
+        final double chipHeight = tester.getRect(chip).height;
+        expect(
+          chipHeight,
+          greaterThanOrEqualTo(cellSize * 0.85),
+          reason:
+              'A2: seat $seat\'s chip height ($chipHeight) must be at '
+              'least 85% of a cell ($cellSize) at a 340px board, locale '
+              '${locale.languageCode} (seed: seat=$seat, cellSize=$cellSize)',
+        );
+
+        final Finder nameText = find.descendant(
+          of: chip,
+          matching: find.text(name),
+        );
+        expect(
+          nameText,
+          findsOneWidget,
+          reason:
+              'fixture: seat $seat\'s chip must show the literal text '
+              '"$name" (locale ${locale.languageCode}, seed: seat=$seat)',
+        );
+        final double? fontSize = tester.widget<Text>(nameText).style?.fontSize;
+        expect(
+          fontSize,
+          isNotNull,
+          reason:
+              'A2: seat $seat\'s name Text must set an explicit font size '
+              'to check against the 10px floor (locale '
+              '${locale.languageCode}, seed: seat=$seat)',
+        );
+        expect(
+          fontSize!,
+          greaterThanOrEqualTo(10.0),
+          reason:
+              'A2: seat $seat\'s name Text font size ($fontSize) must not '
+              'drop below 10 logical px at a 340px board, locale '
+              '${locale.languageCode} (seed: seat=$seat)',
+        );
+      }
+    }
+
+    testWidgets('en', (tester) async {
+      await runA2Case(tester, const Locale('en'));
+    });
+
+    testWidgets('ar', (tester) async {
+      await runA2Case(tester, const Locale('ar'));
     });
   });
 
