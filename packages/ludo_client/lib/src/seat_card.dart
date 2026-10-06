@@ -60,6 +60,16 @@ class SeatCard extends StatelessWidget {
           // in the token's own SizedBox footprint (Clip.none so it can
           // perch over the corner) and never changes the token's size or
           // the 24dp the row reserves for it.
+          //
+          // RETURN 1 (run 73): the crown used to paint the Icon directly on
+          // the disc's own colour, which left it half swallowed by the
+          // disc. Painted later in the Stack (it already was, but with
+          // nothing behind it to read against red) it now sits on a small
+          // paper-coloured backing disc of its own, offset off the token's
+          // top-end corner with PositionedDirectional (so it mirrors in ar
+          // rather than staying pinned to the physical right), far enough
+          // out that most of the badge clears the token and none of it
+          // reaches the name's own box.
           SizedBox(
             width: kSpace6,
             height: kSpace6,
@@ -75,14 +85,23 @@ class SeatCard extends StatelessWidget {
                   child: const SizedBox(width: kSpace6, height: kSpace6),
                 ),
                 if (isHost)
-                  Positioned(
-                    top: -kSpace1,
-                    right: -kSpace1,
-                    child: Icon(
-                      Icons.emoji_events_outlined,
+                  PositionedDirectional(
+                    top: -6,
+                    end: -3,
+                    child: Container(
                       key: Key('lobby-seat-${seat.seat}-host'),
-                      size: kSpace4,
-                      color: seatColor,
+                      width: kSpace3,
+                      height: kSpace3,
+                      alignment: Alignment.center,
+                      decoration: const BoxDecoration(
+                        color: LudoColors.paperElevated,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.emoji_events_outlined,
+                        size: kSpace2,
+                        color: seatColor,
+                      ),
                     ),
                   ),
               ],
