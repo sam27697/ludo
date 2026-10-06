@@ -42,7 +42,7 @@ class SeatCard extends StatelessWidget {
       key: Key('lobby-seat-${seat.seat}'),
       constraints: const BoxConstraints(minHeight: kSeatCardMinHeight),
       padding: const EdgeInsets.symmetric(
-        horizontal: kSpace3,
+        horizontal: kSpace2,
         vertical: kSpace2,
       ),
       decoration: BoxDecoration(
@@ -54,57 +54,87 @@ class SeatCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          DecoratedBox(
-            key: Key('lobby-seat-${seat.seat}-token'),
-            decoration: BoxDecoration(color: seatColor, shape: BoxShape.circle),
-            child: const SizedBox(width: kSpace6, height: kSpace6),
+          // C-264 part B: the crown rides the disc itself rather than
+          // claiming its own slot in the row, so a host's own card never
+          // has to pay the name's width for it (rule B3). The badge sits
+          // in the token's own SizedBox footprint (Clip.none so it can
+          // perch over the corner) and never changes the token's size or
+          // the 24dp the row reserves for it.
+          SizedBox(
+            width: kSpace6,
+            height: kSpace6,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                DecoratedBox(
+                  key: Key('lobby-seat-${seat.seat}-token'),
+                  decoration: BoxDecoration(
+                    color: seatColor,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const SizedBox(width: kSpace6, height: kSpace6),
+                ),
+                if (isHost)
+                  Positioned(
+                    top: -kSpace1,
+                    right: -kSpace1,
+                    child: Icon(
+                      Icons.emoji_events_outlined,
+                      key: Key('lobby-seat-${seat.seat}-host'),
+                      size: kSpace4,
+                      color: seatColor,
+                    ),
+                  ),
+              ],
+            ),
           ),
-          const SizedBox(width: kSpace2),
+          const SizedBox(width: kSpace1),
+          // The name gets the row's own line to itself; the "You" tag
+          // drops to a second, smaller line beneath it instead of
+          // sharing the name's line with the crown and the offline icon
+          // (rule B1: up to 8 characters shown in full, never squeezed).
           Expanded(
-            child: Text(
-              seat.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: nameColor),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  seat.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: nameColor),
+                ),
+                if (isMine) ...[
+                  const SizedBox(height: kSpaceTight),
+                  DecoratedBox(
+                    key: Key('lobby-seat-${seat.seat}-you'),
+                    decoration: BoxDecoration(
+                      color: seatColor,
+                      borderRadius: BorderRadius.circular(kRadiusControl),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: kSpace2,
+                        vertical: kSpaceTight,
+                      ),
+                      child: Text(
+                        youLabel,
+                        style:
+                            Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: LudoColors.actionOn,
+                              fontWeight: FontWeight.w700,
+                            ) ??
+                            const TextStyle(
+                              color: LudoColors.actionOn,
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
-          if (isHost) ...[
-            const SizedBox(width: kSpace1),
-            Icon(
-              Icons.emoji_events_outlined,
-              key: Key('lobby-seat-${seat.seat}-host'),
-              size: kSpace5,
-              color: seatColor,
-            ),
-          ],
-          if (isMine) ...[
-            const SizedBox(width: kSpace1),
-            DecoratedBox(
-              key: Key('lobby-seat-${seat.seat}-you'),
-              decoration: BoxDecoration(
-                color: seatColor,
-                borderRadius: BorderRadius.circular(kRadiusControl),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: kSpace2,
-                  vertical: kSpaceTight,
-                ),
-                child: Text(
-                  youLabel,
-                  style:
-                      Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: LudoColors.actionOn,
-                        fontWeight: FontWeight.w700,
-                      ) ??
-                      const TextStyle(
-                        color: LudoColors.actionOn,
-                        fontWeight: FontWeight.w700,
-                      ),
-                ),
-              ),
-            ),
-          ],
           // Rule 1's last line: a disconnected seat carries its own icon,
           // not only the muted tile and text (doctrine P9).
           if (offline) ...[
