@@ -79,6 +79,36 @@ Rect _tokenHitRect({
   );
 }
 
+/// The pixel rect [tokenIndex] of [seat] at [progress] actually paints as
+/// its circle -- not the enlarged 48dp [_tokenHitRect] above, the token's
+/// own drawn size. Same cell and fan math as [_tokenHitRect], since the
+/// disc and its hit box share one centre; only the size differs. Contract
+/// C-264 rule A1's name-chip placement check below reads this one, not the
+/// hit rect, for what a chip must stay clear of.
+Rect _tokenDrawnRect({
+  required int seat,
+  required int tokenIndex,
+  required int progress,
+  required double cellSize,
+}) {
+  final BoardCell cell = cellFor(
+    seat: seat,
+    progress: progress,
+    tokenIndex: tokenIndex,
+  );
+  final double fan = cellSize * 0.12;
+  final double fanDx = tokenIndex.isEven ? -fan : fan;
+  final double fanDy = tokenIndex < 2 ? -fan : fan;
+  final double tokenSize = cellSize * 0.7;
+  final double centerX = cell.col * cellSize + cellSize / 2 + fanDx;
+  final double centerY = cell.row * cellSize + cellSize / 2 + fanDy;
+  return Rect.fromCenter(
+    center: Offset(centerX, centerY),
+    width: tokenSize,
+    height: tokenSize,
+  );
+}
+
 /// WCAG contrast ratio of two colours, the larger luminance over the
 /// smaller, both offset by 0.05 per the standard formula.
 double _contrastRatio(Color a, Color b) {
@@ -657,10 +687,14 @@ class _LudoBoardState extends State<LudoBoard> {
   /// [seat]'s name chip: a pill in [LudoColors.seats][seat], sat in the row
   /// of its yard that touches the real edge of the board (the top row for
   /// the two top yards, the bottom row for the two bottom ones), centred
-  /// across the yard's own width. Shrunk away from the yard's interior by
-  /// however much any of this seat's own yard tokens' 48dp hit boxes reach
-  /// into that row -- at this board's actual viewport sizes a hit box is
-  /// bigger than one cell, so it is checked rather than assumed clear.
+  /// across the yard's own width. Contract C-264 rule A1 drops the old
+  /// "never touch a yard token's 48dp hit box" test -- that hit box is
+  /// bigger than the row itself at phone widths, which is exactly what left
+  /// the chip a sliver -- for the narrower one the rule actually asks for:
+  /// never paint over a yard token's own drawn disc. Rule A2 then sizes the
+  /// chip from the row, not from whatever the tokens leave over: the row's
+  /// full height less a small cosmetic inset, pulled back further only if a
+  /// disc genuinely reaches into the row.
   Widget _nameChip({
     required int seat,
     required String name,
@@ -673,21 +707,34 @@ class _LudoBoardState extends State<LudoBoard> {
         : (origin.row + yardQuadrantSide - 1) * cellSize;
     final double rowBottom = rowTop + cellSize;
 
-    double innerBound = edgeIsTop ? rowBottom : rowTop;
+    // A2's "small inset", comfortably inside its "at most 15% of the cell"
+    // ceiling, kept on the row's inner side so the chip still sits flush
+    // against the board's real outer edge.
+    final double cosmeticInset = cellSize * 0.10;
+    double innerBound = edgeIsTop
+        ? rowBottom - cosmeticInset
+        : rowTop + cosmeticInset;
+
+    // A1: pull back further only if a yard token's actual painted disc (not
+    // its enlarged hit box) reaches into the row. At this board's own
+    // proportions a yard slot's disc never does -- its own fan offset keeps
+    // it inside the row next to the edge one -- but the rule reads "never
+    // overlaps the disc", not "never overlaps it given today's numbers", so
+    // the clamp stays rather than being assumed away.
     for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++) {
-      final Rect hitRect = _tokenHitRect(
+      final Rect discRect = _tokenDrawnRect(
         seat: seat,
         tokenIndex: tokenIndex,
         progress: -1,
         cellSize: cellSize,
       );
-      if (hitRect.bottom <= rowTop || hitRect.top >= rowBottom) {
+      if (discRect.bottom <= rowTop || discRect.top >= rowBottom) {
         continue;
       }
       if (edgeIsTop) {
-        innerBound = math.min(innerBound, hitRect.top);
+        innerBound = math.min(innerBound, discRect.top);
       } else {
-        innerBound = math.max(innerBound, hitRect.bottom);
+        innerBound = math.max(innerBound, discRect.bottom);
       }
     }
 
@@ -701,6 +748,10 @@ class _LudoBoardState extends State<LudoBoard> {
     final Color ink = _contrastingInk(seatColor);
     final bool isMine = widget.mySeat == seat;
     final String? you = isMine ? widget.youLabel : null;
+    // A2: about 60% of the chip height, never below 10 logical px -- the
+    // old 7px floor is exactly what let the name itself go unreadable even
+    // once the chip stopped being a sliver.
+    final double nameFontSize = math.max(10.0, chipHeight * 0.6);
 
     return Positioned(
       left: chipLeft,
@@ -733,7 +784,7 @@ class _LudoBoardState extends State<LudoBoard> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: ink,
-                          fontSize: math.max(7.0, chipHeight * 0.6),
+                          fontSize: nameFontSize,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
