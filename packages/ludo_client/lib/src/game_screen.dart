@@ -221,6 +221,18 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
+  /// C-259 rule 2: the board's own `onTokenStep`, fired once as the drawn
+  /// token actually arrives on each square. Plays exactly one
+  /// `FeedbackCue.step` when [stepSeat] is `controller.seat` -- the same
+  /// seat this screen passes to `cuesForFrame` as `mySeat` -- and nothing
+  /// for any other seat's token, including when `controller.seat` is null.
+  void _onBoardTokenStep(RoomController controller, int stepSeat) {
+    if (stepSeat != controller.seat) {
+      return;
+    }
+    FeedbackScope.of(context).play(FeedbackCue.step);
+  }
+
   /// C-246 rule 5: drops every per-game thing this screen holds -- the
   /// frame list feeding `computeGameStats`, the no-move hold and its held
   /// face, the pending auto-move and the k it was armed for, the move-sent
@@ -812,6 +824,8 @@ class _GameScreenState extends State<GameScreen> {
               mySeat: seat,
               legal: legalTokens,
               autoMoveToken: _pendingAutoMoveToken,
+              onTokenStep: (int stepSeat, int token) =>
+                  _onBoardTokenStep(controller, stepSeat),
               onTokenTap: (int index) {
                 _cancelPendingHoldForManualMove();
                 final int? k = turn?.k;
@@ -1158,6 +1172,8 @@ class _GameScreenState extends State<GameScreen> {
                 seatNames: _seatNamesOf(room),
                 youLabel: loc.seatYou,
                 turnSeat: null,
+                onTokenStep: (int stepSeat, int token) =>
+                    _onBoardTokenStep(controller, stepSeat),
               ),
             ),
           ],
