@@ -410,111 +410,107 @@ void main() {
   // 152px two-column cell, must keep the crown inside the card, clear of the
   // name, and mostly clear of the disc it rides on.
   // ===========================================================================
-  group(
-    'C-264 rule B3 (order 267r1): the host crown at the 152px cell stays '
-    'off the name and mostly off the disc',
-    () {
-      Future<void> runCrownPlacementCase(
-        WidgetTester tester,
-        Locale locale,
-      ) async {
-        _pinPhoneViewport(tester);
+  group('C-264 rule B3 (order 267r1): the host crown at the 152px cell stays '
+      'off the name and mostly off the disc', () {
+    Future<void> runCrownPlacementCase(
+      WidgetTester tester,
+      Locale locale,
+    ) async {
+      _pinPhoneViewport(tester);
 
-        await tester.pumpWidget(
-          _twoColumnHarness(
-            left: const SeatCard(
-              seat: _hussein,
-              isMine: true,
-              isHost: true,
-              youLabel: 'You',
-            ),
-            right: const SeatCard(
-              seat: _karim,
-              isMine: false,
-              isHost: false,
-              youLabel: 'You',
-            ),
-            locale: locale,
+      await tester.pumpWidget(
+        _twoColumnHarness(
+          left: const SeatCard(
+            seat: _hussein,
+            isMine: true,
+            isHost: true,
+            youLabel: 'You',
           ),
-        );
-        await tester.pump();
+          right: const SeatCard(
+            seat: _karim,
+            isMine: false,
+            isHost: false,
+            youLabel: 'You',
+          ),
+          locale: locale,
+        ),
+      );
+      await tester.pump();
 
-        final Rect cardRect = tester.getRect(
-          find.byKey(const Key('lobby-seat-0')),
-        );
-        final Rect crownRect = tester.getRect(
-          find.byKey(const Key('lobby-seat-0-host')),
-        );
-        final Rect tokenRect = tester.getRect(
-          find.byKey(const Key('lobby-seat-0-token')),
-        );
-        final Finder husseinName = find.descendant(
-          of: find.byKey(const Key('lobby-seat-0')),
-          matching: find.text('Hussein'),
-        );
-        expect(
-          husseinName,
-          findsOneWidget,
-          reason:
-              'fixture (locale ${locale.languageCode}): lobby-seat-0 must '
-              'show the literal text "Hussein"',
-        );
-        final Rect nameRect = tester.getRect(husseinName);
+      final Rect cardRect = tester.getRect(
+        find.byKey(const Key('lobby-seat-0')),
+      );
+      final Rect crownRect = tester.getRect(
+        find.byKey(const Key('lobby-seat-0-host')),
+      );
+      final Rect tokenRect = tester.getRect(
+        find.byKey(const Key('lobby-seat-0-token')),
+      );
+      final Finder husseinName = find.descendant(
+        of: find.byKey(const Key('lobby-seat-0')),
+        matching: find.text('Hussein'),
+      );
+      expect(
+        husseinName,
+        findsOneWidget,
+        reason:
+            'fixture (locale ${locale.languageCode}): lobby-seat-0 must '
+            'show the literal text "Hussein"',
+      );
+      final Rect nameRect = tester.getRect(husseinName);
 
-        expect(
-          _rectInside(cardRect, crownRect),
-          isTrue,
-          reason:
-              'C-264 B3: lobby-seat-0-host (the crown), rect $crownRect, '
-              'must lie inside lobby-seat-0\'s own rect $cardRect -- a '
-              'crown that spills past its own card\'s edge is not a '
-              'visible badge, locale ${locale.languageCode}',
-        );
-
-        expect(
-          crownRect.overlaps(nameRect),
-          isFalse,
-          reason:
-              'C-264 B3: lobby-seat-0-host (the crown), rect $crownRect, '
-              'must not overlap the name Text\'s rect $nameRect -- frames '
-              '03/14 of screenshots 37421165858 show the crown touching '
-              'the name, locale ${locale.languageCode}',
-        );
-
-        final double crownArea = crownRect.width * crownRect.height;
-        final double overlapWithToken = _overlapArea(crownRect, tokenRect);
-        final double fractionOutsideToken =
-            1 - (overlapWithToken / crownArea);
-        expect(
-          fractionOutsideToken,
-          greaterThanOrEqualTo(0.6),
-          reason:
-              'C-264 B3: lobby-seat-0-host (the crown), rect $crownRect, '
-              'area $crownArea, overlaps lobby-seat-0-token\'s disc rect '
-              '$tokenRect by $overlapWithToken -- only '
-              '${(fractionOutsideToken * 100).toStringAsFixed(1)}% of the '
-              'crown\'s area lies outside the disc, short of the 60% '
-              'floor; frames 03/14 of screenshots 37421165858 show the '
-              'crown mostly hidden under the disc, locale '
-              '${locale.languageCode}',
-        );
-      }
-
-      testWidgets(
-        'en: the host crown on Hussein\'s own card stays inside the card, '
-        'off the name, and mostly off the disc',
-        (tester) async {
-          await runCrownPlacementCase(tester, const Locale('en'));
-        },
+      expect(
+        _rectInside(cardRect, crownRect),
+        isTrue,
+        reason:
+            'C-264 B3: lobby-seat-0-host (the crown), rect $crownRect, '
+            'must lie inside lobby-seat-0\'s own rect $cardRect -- a '
+            'crown that spills past its own card\'s edge is not a '
+            'visible badge, locale ${locale.languageCode}',
       );
 
-      testWidgets(
-        'ar: the host crown on Hussein\'s own card stays inside the card, '
-        'off the name, and mostly off the disc',
-        (tester) async {
-          await runCrownPlacementCase(tester, const Locale('ar'));
-        },
+      expect(
+        crownRect.overlaps(nameRect),
+        isFalse,
+        reason:
+            'C-264 B3: lobby-seat-0-host (the crown), rect $crownRect, '
+            'must not overlap the name Text\'s rect $nameRect -- frames '
+            '03/14 of screenshots 37421165858 show the crown touching '
+            'the name, locale ${locale.languageCode}',
       );
-    },
-  );
+
+      final double crownArea = crownRect.width * crownRect.height;
+      final double overlapWithToken = _overlapArea(crownRect, tokenRect);
+      final double fractionOutsideToken = 1 - (overlapWithToken / crownArea);
+      expect(
+        fractionOutsideToken,
+        greaterThanOrEqualTo(0.6),
+        reason:
+            'C-264 B3: lobby-seat-0-host (the crown), rect $crownRect, '
+            'area $crownArea, overlaps lobby-seat-0-token\'s disc rect '
+            '$tokenRect by $overlapWithToken -- only '
+            '${(fractionOutsideToken * 100).toStringAsFixed(1)}% of the '
+            'crown\'s area lies outside the disc, short of the 60% '
+            'floor; frames 03/14 of screenshots 37421165858 show the '
+            'crown mostly hidden under the disc, locale '
+            '${locale.languageCode}',
+      );
+    }
+
+    testWidgets(
+      'en: the host crown on Hussein\'s own card stays inside the card, '
+      'off the name, and mostly off the disc',
+      (tester) async {
+        await runCrownPlacementCase(tester, const Locale('en'));
+      },
+    );
+
+    testWidgets(
+      'ar: the host crown on Hussein\'s own card stays inside the card, '
+      'off the name, and mostly off the disc',
+      (tester) async {
+        await runCrownPlacementCase(tester, const Locale('ar'));
+      },
+    );
+  });
 }
