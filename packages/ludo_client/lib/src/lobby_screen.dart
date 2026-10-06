@@ -285,13 +285,42 @@ class _LobbyScreenState extends State<LobbyScreen> {
               // connecting / error / closed states.
               if (connected) ...[
                 const FeltEdge(key: Key('game-felt-edge')),
-                // C-254 rule 5: only the occupied seats get a pip here,
-                // not the fixed four the strip draws by default.
-                SeatPipStrip(
-                  key: const Key('game-seat-pip-strip'),
-                  seats: controller.room!.seats
-                      .map((SeatState s) => s.seat)
-                      .toList(),
+                // C-262 rules 1-2: lobby-leave-button lives in this chrome
+                // row, at the top start corner, beside the pip strip --
+                // never a new full-width row above the content. The fixed
+                // 48dp height keeps the Stack from sizing to the shorter pip
+                // strip alone, which would let the icon's tap target bleed
+                // above the row; the Stack itself keeps the strip centred on
+                // its own width, and PositionedDirectional gives Arabic the
+                // mirror (top right) for free, no hand-picked side.
+                SizedBox(
+                  height: 48,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // C-254 rule 5: only the occupied seats get a pip
+                      // here, not the fixed four the strip draws by
+                      // default.
+                      SeatPipStrip(
+                        key: const Key('game-seat-pip-strip'),
+                        seats: controller.room!.seats
+                            .map((SeatState s) => s.seat)
+                            .toList(),
+                      ),
+                      PositionedDirectional(
+                        start: kSpace2,
+                        child: IconButton(
+                          key: const Key('lobby-leave-button'),
+                          style: IconButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                          ),
+                          tooltip: loc.gameLeaveButton,
+                          onPressed: _leaveLobby,
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
               if (controller.hasDesynced) _desyncBanner(loc, controller),
@@ -414,7 +443,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         kSpace6,
-        compact ? kSpace2 : kSpace6,
+        // C-262 rule 5: the 48dp lobby-leave-button row above this scroll
+        // area already claims the height the old, shorter pip-strip row
+        // did not, so every optional compact gap below is trimmed to the
+        // smallest spacing unit to keep host, start and start-with-present
+        // inside 360x616 and 800x600 in both locales.
+        compact ? kSpace1 : kSpace6,
         kSpace6,
         compact ? kSpace4 : kSpace6,
       ),
@@ -426,7 +460,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             textAlign: TextAlign.center,
             style: textTheme.labelLarge?.copyWith(color: LudoColors.inkMuted),
           ),
-          SizedBox(height: compact ? kSpace2 : kSpace3),
+          SizedBox(height: compact ? kSpace1 : kSpace3),
           Center(
             child: DieMark(
               size: dieSize,
@@ -445,7 +479,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ),
           ),
-          SizedBox(height: compact ? kSpace3 : kSpace4),
+          SizedBox(height: compact ? kSpace1 : kSpace4),
           ElevatedButton.icon(
             key: const Key('lobby-share-button'),
             style: ElevatedButton.styleFrom(
@@ -455,7 +489,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             icon: const Icon(Icons.share),
             label: Text(loc.lobbyShareButton),
           ),
-          SizedBox(height: compact ? kSpace2 : kSpace3),
+          SizedBox(height: compact ? kSpace1 : kSpace3),
           Row(
             children: [
               Expanded(
@@ -476,9 +510,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ],
           ),
-          SizedBox(height: compact ? kSpace4 : kSpace6),
+          SizedBox(height: compact ? kSpace1 : kSpace6),
           _seatGrid(loc, room, controller),
-          SizedBox(height: compact ? kSpace2 : kSpace3),
+          SizedBox(height: compact ? kSpace1 : kSpace3),
           Wrap(
             alignment: WrapAlignment.center,
             spacing: kSpace2,
@@ -530,7 +564,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           ],
           if (!inRematchLobby && controller.isHost) ...[
-            SizedBox(height: compact ? kSpace4 : kSpace6),
+            SizedBox(height: compact ? kSpace1 : kSpace6),
             ElevatedButton(
               key: const Key('lobby-start-button'),
               onPressed: roomFull ? controller.startGame : null,
@@ -547,7 +581,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             if (room.state == RoomState.lobby &&
                 !roomFull &&
                 room.seats.length >= 2) ...[
-              const SizedBox(height: kSpace2),
+              SizedBox(height: compact ? kSpace1 : kSpace2),
               ElevatedButton(
                 key: const Key('lobby-start-with-present-button'),
                 onPressed: _startWithPresentInFlight
@@ -560,12 +594,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ],
           ],
-          SizedBox(height: compact ? kSpace2 : kSpace3),
-          OutlinedButton(
-            key: const Key('lobby-leave-button'),
-            onPressed: _leaveLobby,
-            child: Text(loc.gameLeaveButton),
-          ),
         ],
       ),
     );
