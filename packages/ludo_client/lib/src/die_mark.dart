@@ -18,12 +18,27 @@ const double kFeltEdgeThickness = 4;
 /// seat order. Shared by game chrome so waiting, playing, and game-over all
 /// carry the same brand cue without duplicating layout.
 class SeatPipStrip extends StatelessWidget {
-  const SeatPipStrip({super.key, this.pipSize = kSeatPipSize});
+  const SeatPipStrip({
+    super.key,
+    this.pipSize = kSeatPipSize,
+    this.seats,
+    this.turnSeat,
+  });
 
   final double pipSize;
 
+  /// Which seats get a pip, in ascending order regardless of the order
+  /// given. Null (the default) draws all four, same as today. C-248 rule 5.
+  final List<int>? seats;
+
+  /// The seat whose pip is drawn 1.5x the size with a thin ink ring, key
+  /// `game-seat-pip-turn`. Null (the default) draws every pip the same
+  /// size, same as today. C-248 rule 5.
+  final int? turnSeat;
+
   @override
   Widget build(BuildContext context) {
+    final List<int> shown = (seats ?? const <int>[0, 1, 2, 3]).toList()..sort();
     return Padding(
       padding: const EdgeInsetsDirectional.symmetric(
         horizontal: kSpace4,
@@ -32,21 +47,32 @@ class SeatPipStrip extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
-          for (int i = 0; i < LudoColors.seats.length; i++) ...<Widget>[
+          for (int i = 0; i < shown.length; i++) ...<Widget>[
             if (i > 0) const SizedBox(width: kSpace2),
-            Container(
-              key: Key('game-seat-pip-$i'),
-              width: pipSize,
-              height: pipSize,
-              decoration: BoxDecoration(
-                color: LudoColors.seats[i],
-                shape: BoxShape.circle,
-              ),
-            ),
+            _pip(shown[i]),
           ],
         ],
       ),
     );
+  }
+
+  Widget _pip(int seat) {
+    final bool isTurn = seat == turnSeat;
+    final double size = isTurn ? pipSize * 1.5 : pipSize;
+    final Widget dot = Container(
+      key: Key('game-seat-pip-$seat'),
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: LudoColors.seats[seat],
+        shape: BoxShape.circle,
+        border: isTurn ? Border.all(color: LudoColors.ink, width: 1) : null,
+      ),
+    );
+    if (!isTurn) {
+      return dot;
+    }
+    return KeyedSubtree(key: const Key('game-seat-pip-turn'), child: dot);
   }
 }
 

@@ -6,6 +6,10 @@
 // Order 224 (work/ludo/orders/C-223-play-surface.md, run 65): "Roll" below
 // is game-die (game-screen-roll-button is gone); the >=48dp claim still
 // holds, and is in fact weaker than C-223's own >=72dp floor for the die.
+//
+// Run 73 (work/ludo/orders/C-257-seat-wiring.md rule 2): the strip draws a
+// pip for each occupied seat only, so these cases name the seats they expect
+// and also check that the empty seats have no pip.
 
 import 'dart:convert';
 
@@ -246,7 +250,7 @@ Color _requireColor(WidgetTester tester, Finder finder, String label) {
   return childColor!;
 }
 
-void _expectSeatPipStrip(WidgetTester tester) {
+void _expectSeatPipStrip(WidgetTester tester, {required List<int> seats}) {
   final Finder strip = find.byKey(_seatPipStripKey);
   expect(
     strip,
@@ -259,12 +263,22 @@ void _expectSeatPipStrip(WidgetTester tester) {
       of: strip,
       matching: find.byKey(Key('game-seat-pip-$i')),
     );
+    if (!seats.contains(i)) {
+      expect(
+        pip,
+        findsNothing,
+        reason:
+            'seat $i is empty, so game-seat-pip-strip must not draw '
+            'game-seat-pip-$i (occupied: $seats)',
+      );
+      continue;
+    }
     expect(
       pip,
       findsOneWidget,
       reason:
-          'game-seat-pip-strip must contain game-seat-pip-$i in '
-          'LudoColors.seats order',
+          'seat $i is occupied, so game-seat-pip-strip must contain '
+          'game-seat-pip-$i',
     );
     final Color color = _requireColor(tester, pip, 'game-seat-pip-$i');
     expect(
@@ -301,7 +315,7 @@ void _expectFeltEdge(WidgetTester tester) {
 
 void main() {
   testWidgets(
-    'seat-pip strip with four LudoColors.seats pips is present while waiting',
+    'seat-pip strip with one LudoColors.seats pip per occupied seat is present while waiting',
     (WidgetTester tester) async {
       final RoomController controller = await _connectRoom(
         tester,
@@ -319,12 +333,12 @@ void main() {
         findsOneWidget,
         reason: 'fixture must reach the waiting body',
       );
-      _expectSeatPipStrip(tester);
+      _expectSeatPipStrip(tester, seats: const <int>[0]);
     },
   );
 
   testWidgets(
-    'seat-pip strip with four LudoColors.seats pips is present while playing',
+    'seat-pip strip with one LudoColors.seats pip per occupied seat is present while playing',
     (WidgetTester tester) async {
       final RoomController controller = await _connectRoom(
         tester,
@@ -341,12 +355,12 @@ void main() {
         findsOneWidget,
         reason: 'fixture must reach the playing board',
       );
-      _expectSeatPipStrip(tester);
+      _expectSeatPipStrip(tester, seats: const <int>[0, 1]);
     },
   );
 
   testWidgets(
-    'seat-pip strip with four LudoColors.seats pips is present at game-over',
+    'seat-pip strip with one LudoColors.seats pip per occupied seat is present at game-over',
     (WidgetTester tester) async {
       final RoomController controller = await _connectRoom(
         tester,
@@ -364,7 +378,7 @@ void main() {
         findsOneWidget,
         reason: 'fixture must reach the game-over body',
       );
-      _expectSeatPipStrip(tester);
+      _expectSeatPipStrip(tester, seats: const <int>[0, 1]);
     },
   );
 
@@ -403,7 +417,7 @@ void main() {
 
       await _mount(tester, controller);
 
-      _expectSeatPipStrip(tester);
+      _expectSeatPipStrip(tester, seats: const <int>[0, 1]);
       _expectFeltEdge(tester);
 
       final Finder leave = find.byKey(_leaveKey);
@@ -454,7 +468,7 @@ void main() {
         findsOneWidget,
         reason: 'fixture must reach the playing board before contrast check',
       );
-      _expectSeatPipStrip(tester);
+      _expectSeatPipStrip(tester, seats: const <int>[0, 1]);
       _expectFeltEdge(tester);
 
       await expectLater(tester, meetsGuideline(textContrastGuideline));

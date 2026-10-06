@@ -83,8 +83,8 @@ void main() {
         );
       });
 
-      test('moved: d.seat == mySeat, no capture, not home gives one step per '
-          'square travelled', () {
+      test('moved: d.seat == mySeat, no capture, not home gives [] '
+          '(C-259 rule 1: the frame plays no step)', () {
         // from 3 to 9: 6 squares.
         final frame = _frame('moved', <String, Object?>{
           'seat': mySeat,
@@ -96,11 +96,12 @@ void main() {
         });
         expect(
           cuesForFrame(frame, mySeat: mySeat),
-          equals(List<FeedbackCue>.filled(6, FeedbackCue.step)),
+          equals(const <FeedbackCue>[]),
           reason:
-              'a moved frame for mySeat ($mySeat) travelling from 3 to 9 '
-              '(6 squares), with no capture and not landing on 57, must '
-              'give exactly six step cues; frame.data=${frame.data}',
+              'C-259 rule 1: a moved frame for mySeat ($mySeat) travelling '
+              'from 3 to 9, with no capture and not landing on 57, must '
+              'give [], since the frame itself plays no step cue any more '
+              '(the board plays it, rule 2); frame.data=${frame.data}',
         );
       });
 
@@ -177,8 +178,8 @@ void main() {
 
   // --- moved: step-count boundary cases, docs/RULES.md progress values -----
   group('moved: step count', () {
-    test('from -1 to 0 (leaving the yard) gives exactly one step, never zero '
-        'and never the raw difference of 1 - (-1) = 2', () {
+    test('from -1 to 0 (leaving the yard) gives [] under C-259 rule 1, not '
+        'the one step C-225 used to give it', () {
       final frame = _frame('moved', <String, Object?>{
         'seat': 0,
         'token': 0,
@@ -189,16 +190,17 @@ void main() {
       });
       expect(
         cuesForFrame(frame, mySeat: 0),
-        equals(<FeedbackCue>[FeedbackCue.step]),
+        equals(const <FeedbackCue>[]),
         reason:
-            'leaving the yard (from -1 to 0) must give exactly one step '
-            'cue, per C-225\'s "1 when from == -1" rule, not to - from '
-            '(which would be 1 here by coincidence, but the rule is '
-            'explicit that -1 is special-cased); frame.data=${frame.data}',
+            'C-259 rule 1: leaving the yard (from -1 to 0), with no '
+            'capture and not landing on 57, must give [] -- the frame '
+            'itself plays no step cue any more, yard exit included; '
+            'frame.data=${frame.data}',
       );
     });
 
-    test('from 10 to 16 gives exactly six steps', () {
+    test('from 10 to 16 gives [] under C-259 rule 1, not the six steps '
+        'C-225 used to give it', () {
       final frame = _frame('moved', <String, Object?>{
         'seat': 0,
         'token': 2,
@@ -209,15 +211,37 @@ void main() {
       });
       expect(
         cuesForFrame(frame, mySeat: 0),
-        equals(List<FeedbackCue>.filled(6, FeedbackCue.step)),
+        equals(const <FeedbackCue>[]),
         reason:
-            'from 10 to 16 is 6 squares and must give exactly six step '
-            'cues; frame.data=${frame.data}',
+            'C-259 rule 1: from 10 to 16, with no capture and not landing '
+            'on 57, must give [], regardless of the six squares '
+            'travelled; frame.data=${frame.data}',
       );
     });
 
-    test('a capture by me that also lands home gives steps, then '
-        'capturedOther, then home, in that order', () {
+    test('a plain 6-square move of mine (no capture, not home) gives [], '
+        'the new case C-259 asks for', () {
+      // from 20 to 26: 6 squares, distinct from the other cases in this
+      // file so this case proves the rule on its own evidence.
+      final frame = _frame('moved', <String, Object?>{
+        'seat': 0,
+        'token': 1,
+        'from': 20,
+        'to': 26,
+        'captured': <Object?>[],
+        'extra_roll': false,
+      });
+      expect(
+        cuesForFrame(frame, mySeat: 0),
+        equals(const <FeedbackCue>[]),
+        reason:
+            'C-259 rule 1: a plain 6-square move of mine, with no capture '
+            'and not landing on 57, must give []; frame.data=${frame.data}',
+      );
+    });
+
+    test('a capture by me that also lands home gives capturedOther then '
+        'home, no step, under C-259 rule 1', () {
       // from 50 to 57: 7 squares, home square, and a capture on the way.
       final frame = _frame('moved', <String, Object?>{
         'seat': 0,
@@ -231,21 +255,13 @@ void main() {
       });
       expect(
         cuesForFrame(frame, mySeat: 0),
-        equals(<FeedbackCue>[
-          FeedbackCue.step,
-          FeedbackCue.step,
-          FeedbackCue.step,
-          FeedbackCue.step,
-          FeedbackCue.step,
-          FeedbackCue.step,
-          FeedbackCue.step,
-          FeedbackCue.capturedOther,
-          FeedbackCue.home,
-        ]),
+        equals(<FeedbackCue>[FeedbackCue.capturedOther, FeedbackCue.home]),
         reason:
-            'from 50 to 57 (7 squares) with a non-empty captured and '
-            'to == 57 must give seven steps, then capturedOther, then '
-            'home, in that exact order; frame.data=${frame.data}',
+            'C-259 rule 1: from 50 to 57 with a non-empty captured and '
+            'to == 57 must give capturedOther then home, in that order, '
+            'with no step cues at all -- rule 1 drops only the step cues, '
+            'what else the frame returns (capturedOther, then home) is '
+            'unchanged; frame.data=${frame.data}',
       );
     });
   });

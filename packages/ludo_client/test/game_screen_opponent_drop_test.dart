@@ -695,7 +695,7 @@ void main() {
       final Text countdown = tester.widget<Text>(find.byKey(_countdownKey));
       expect(
         countdown.data,
-        loc.gameTurnCountdown(45),
+        '45',
         reason:
             'O3: seat 3\'s turn frame carries a fresh deadline_ms of '
             '45000; because the seat half of the (seat, deadlineMs) pair '

@@ -25,11 +25,125 @@ import 'theme.dart';
 
 export 'board_geometry.dart';
 
+/// How long the drawn token dwells on each square of a travel step, contract
+/// C-252 rule 5. [kTokenStepDurationReduced] is the same dwell under
+/// `MediaQuery.disableAnimationsOf`: shorter, never skipped, same order.
+const Duration kTokenStepDuration = Duration(milliseconds: 140);
+const Duration kTokenStepDurationReduced = Duration(milliseconds: 40);
+
+/// How long a captured token's straight flight home takes, contract C-252
+/// rule 5, and its reduced-motion counterpart.
+const Duration kCaptureFlightDuration = Duration(milliseconds: 360);
+const Duration kCaptureFlightDurationReduced = Duration(milliseconds: 120);
+
 /// The four entry squares among [safeTrackSquares], absolute indices, each
 /// one seat's own starting square (RULES.md 1.2, contract C-241 rule 2):
 /// seat 0 enters at 0, seat 1 at 13, seat 2 at 26, seat 3 at 39. These are
 /// the four stars painted in paper rather than ink.
 const Set<int> _entrySquares = <int>{0, 13, 26, 39};
+
+/// The 48dp minimum touch target a token's hit box uses, whichever of that
+/// or the token's own drawn size is larger. One place for the 48, so the
+/// tap handler, the Semantics hit box and the C-248 chip-placement check
+/// below can never disagree about where a token is actually tappable.
+double _tokenHitSize(double tokenSize) => math.max(48.0, tokenSize);
+
+/// The pixel rect [tokenIndex] of [seat] at [progress] actually gets as its
+/// tap target: the same cell, fan offset (see the comment on the fan in
+/// `_tokenLayer`) and [_tokenHitSize] math that widget uses to place that
+/// Positioned, factored out so nothing else that needs to know where a hit
+/// box really sits -- the C-248 name-chip placement check below is the
+/// first -- can drift from it by recomputing the fan separately.
+Rect _tokenHitRect({
+  required int seat,
+  required int tokenIndex,
+  required int progress,
+  required double cellSize,
+}) {
+  final BoardCell cell = cellFor(
+    seat: seat,
+    progress: progress,
+    tokenIndex: tokenIndex,
+  );
+  final double fan = cellSize * 0.12;
+  final double fanDx = tokenIndex.isEven ? -fan : fan;
+  final double fanDy = tokenIndex < 2 ? -fan : fan;
+  final double tokenSize = cellSize * 0.7;
+  final double hitSize = _tokenHitSize(tokenSize);
+  final double centerX = cell.col * cellSize + cellSize / 2 + fanDx;
+  final double centerY = cell.row * cellSize + cellSize / 2 + fanDy;
+  return Rect.fromCenter(
+    center: Offset(centerX, centerY),
+    width: hitSize,
+    height: hitSize,
+  );
+}
+
+/// The pixel rect [tokenIndex] of [seat] at [progress] actually paints as
+/// its circle -- not the enlarged 48dp [_tokenHitRect] above, the token's
+/// own drawn size. Same cell and fan math as [_tokenHitRect], since the
+/// disc and its hit box share one centre; only the size differs. Contract
+/// C-264 rule A1's name-chip placement check below reads this one, not the
+/// hit rect, for what a chip must stay clear of.
+Rect _tokenDrawnRect({
+  required int seat,
+  required int tokenIndex,
+  required int progress,
+  required double cellSize,
+}) {
+  final BoardCell cell = cellFor(
+    seat: seat,
+    progress: progress,
+    tokenIndex: tokenIndex,
+  );
+  final double fan = cellSize * 0.12;
+  final double fanDx = tokenIndex.isEven ? -fan : fan;
+  final double fanDy = tokenIndex < 2 ? -fan : fan;
+  final double tokenSize = cellSize * 0.7;
+  final double centerX = cell.col * cellSize + cellSize / 2 + fanDx;
+  final double centerY = cell.row * cellSize + cellSize / 2 + fanDy;
+  return Rect.fromCenter(
+    center: Offset(centerX, centerY),
+    width: tokenSize,
+    height: tokenSize,
+  );
+}
+
+/// WCAG contrast ratio of two colours, the larger luminance over the
+/// smaller, both offset by 0.05 per the standard formula.
+double _contrastRatio(Color a, Color b) {
+  final double la = a.computeLuminance();
+  final double lb = b.computeLuminance();
+  final double lighter = math.max(la, lb);
+  final double darker = math.min(la, lb);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/// Whichever of [LudoColors.actionOn] (this paintbox's existing near-white,
+/// the ink every action-coloured surface already sits on) or [LudoColors.ink]
+/// contrasts more against [background] -- C-248 rule 1's "contrasting ink",
+/// with no new literal white: the order's "use an existing colour" applies
+/// here even though actionOn needs no opacity change to read.
+Color _contrastingInk(Color background) {
+  final double lightContrast = _contrastRatio(background, LudoColors.actionOn);
+  final double darkContrast = _contrastRatio(background, LudoColors.ink);
+  return lightContrast >= darkContrast ? LudoColors.actionOn : LudoColors.ink;
+}
+
+/// Same seats, same order -- [_BoardPainter.shouldRepaint]'s way of asking
+/// whether [LudoBoard.seatsInPlay] actually changed without pulling in a
+/// collection-equality package for one list.
+bool _sameSeats(List<int> a, List<int> b) {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
 
 /// A Ludo board: the static grid plus every token of every seat in
 /// [seatsInPlay], each placed by [cellFor].
@@ -49,6 +163,10 @@ class LudoBoard extends StatefulWidget {
     this.autoMoveToken,
     this.onTokenTap,
     this.onIllegalTokenTap,
+    this.seatNames,
+    this.youLabel,
+    this.turnSeat,
+    this.onTokenStep,
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -99,6 +217,31 @@ class LudoBoard extends StatefulWidget {
   /// whatever else wants to know (a later order's feedback service).
   final void Function(int token)? onIllegalTokenTap;
 
+  /// Display name of every seat that has one, keyed by seat. Null (the
+  /// default) draws exactly what the board drew before this: no name chip
+  /// at all. A seat in [seatsInPlay] with no entry here stays bare too; the
+  /// screen decides who gets named, this widget only draws what it is told.
+  /// C-248 rule 1.
+  final Map<int, String>? seatNames;
+
+  /// The word that tags [mySeat]'s own name chip ("You" / "أنت"), shown
+  /// only when this is non-null and [seatNames] has an entry for [mySeat].
+  /// Null draws no tag at all, the default. C-248 rule 2.
+  final String? youLabel;
+
+  /// The seat whose yard carries the soft turn glow right now, or null for
+  /// none -- the default, which draws no glow, same as today. Ignored for a
+  /// seat outside [seatsInPlay]. C-248 rule 3.
+  final int? turnSeat;
+
+  /// Called once each time a travelling token's drawn position arrives on a
+  /// square, contract C-252 rule 7: `(seat, token)`, never for the captured
+  /// token's flight home. Null by default, which plays every travel exactly
+  /// as it plays today, with nothing to call. A later order wires this to
+  /// the feedback service; this widget only ever calls it, never decides
+  /// what it means.
+  final void Function(int seat, int token)? onTokenStep;
+
   @override
   State<LudoBoard> createState() => _LudoBoardState();
 }
@@ -107,11 +250,262 @@ class _LudoBoardState extends State<LudoBoard> {
   int? _shakingToken;
   Timer? _shakeTimer;
 
+  // Travel (contract C-252). `_override` holds, keyed by "seat-token", the
+  // progress the drawn token is actually showing right now whenever that
+  // differs from truth (`widget.tokens`): the mover mid-step, or a captured
+  // token held on its old square before it flies. A pair with no entry here
+  // draws straight from truth, same as before this contract -- that is also
+  // the whole of what a board built once and never updated does, since
+  // nothing ever populates this map without a tokens change to react to.
+  final Map<String, int> _override = <String, int>{};
+
+  // The move currently stepping, the steps still to play after it (FIFO,
+  // nothing ever dropped from it except by a snap), which step of the
+  // current move comes next, and the captured token (if any) currently
+  // flying home. At most one of each at a time; rule 6's queue is exactly
+  // this list.
+  _Move? _playingMove;
+  int _playingStepIndex = 0;
+  final List<_Move> _queue = <_Move>[];
+  _FlyingCapture? _flying;
+  Timer? _stepTimer;
+
   @override
   void dispose() {
     _shakeTimer?.cancel();
+    _stepTimer?.cancel();
     super.dispose();
   }
+
+  @override
+  void didUpdateWidget(covariant LudoBoard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _reactToTokensChange(oldWidget);
+  }
+
+  /// Contract C-252 rule 2: classify what changed between the previous
+  /// build's `tokens` and this one's, then either start (or queue) the one
+  /// move it describes, or -- for anything else, including a changed
+  /// [LudoBoard.seatsInPlay] -- drop every pending step and let truth draw
+  /// itself with no animation. Mutates state directly rather than calling
+  /// `setState`: the framework always builds this element again right after
+  /// `didUpdateWidget` returns, so there is nothing to schedule.
+  void _reactToTokensChange(LudoBoard oldWidget) {
+    if (!_sameSeats(oldWidget.seatsInPlay, widget.seatsInPlay)) {
+      _snapToTruth();
+      return;
+    }
+
+    final List<_TokenDiff> diffs = <_TokenDiff>[];
+    for (final int seat in widget.seatsInPlay) {
+      final List<int> oldProgresses = oldWidget.tokens[seat]!;
+      final List<int> newProgresses = widget.tokens[seat]!;
+      for (var token = 0; token < 4; token++) {
+        final int oldP = oldProgresses[token];
+        final int newP = newProgresses[token];
+        if (oldP != newP) {
+          diffs.add(
+            _TokenDiff(seat: seat, token: token, oldP: oldP, newP: newP),
+          );
+        }
+      }
+    }
+    if (diffs.isEmpty) {
+      return;
+    }
+
+    final List<_TokenDiff> moverDiffs = diffs
+        .where(
+          (d) =>
+              (d.oldP == -1 && d.newP == 0) ||
+              (d.oldP >= 0 && d.newP - d.oldP >= 1 && d.newP - d.oldP <= 6),
+        )
+        .toList();
+    if (moverDiffs.length != 1) {
+      _snapToTruth();
+      return;
+    }
+    final _TokenDiff mover = moverDiffs.single;
+
+    final List<_TokenDiff> rest = diffs.where((d) => d != mover).toList();
+    _TokenDiff? capture;
+    if (rest.length == 1) {
+      final _TokenDiff candidate = rest.single;
+      if (candidate.seat != mover.seat &&
+          candidate.oldP >= 0 &&
+          candidate.newP == -1) {
+        capture = candidate;
+      }
+    }
+    final bool restIsOnlyTheCapture =
+        rest.isEmpty || (rest.length == 1 && capture != null);
+    if (!restIsOnlyTheCapture) {
+      _snapToTruth();
+      return;
+    }
+
+    _enqueueOrStart(
+      _Move(
+        seat: mover.seat,
+        token: mover.token,
+        oldProgress: mover.oldP,
+        newProgress: mover.newP,
+        capturedSeat: capture?.seat,
+        capturedToken: capture?.token,
+        capturedOldProgress: capture?.oldP,
+      ),
+    );
+  }
+
+  /// Drops every step still waiting and every timer that would have played
+  /// them, and clears the override so the very next build draws straight
+  /// from truth -- contract C-252 rule 2's "the board snaps to the truth".
+  void _snapToTruth() {
+    _stepTimer?.cancel();
+    _stepTimer = null;
+    _playingMove = null;
+    _playingStepIndex = 0;
+    _queue.clear();
+    _override.clear();
+    _flying = null;
+  }
+
+  /// Holds [move]'s mover (and its captured token, if any) on their old
+  /// square by overriding the drawn progress to it -- true the instant this
+  /// runs, whether or not stepping starts immediately -- then either starts
+  /// stepping now (nothing else is playing) or joins the queue behind
+  /// whatever is, contract C-252 rule 6.
+  void _enqueueOrStart(_Move move) {
+    _override[_key(move.seat, move.token)] = move.oldProgress;
+    if (move.capturedSeat != null) {
+      _override[_key(move.capturedSeat!, move.capturedToken!)] =
+          move.capturedOldProgress!;
+    }
+    if (_playingMove == null) {
+      _playingMove = move;
+      _playingStepIndex = 0;
+      _scheduleNextStep();
+    } else {
+      _queue.add(move);
+    }
+  }
+
+  /// Contract C-252 rule 3: every progress from `old + 1` to `new`, in
+  /// order, or -- leaving the yard -- the single square of progress 0.
+  static List<int> _pathFor(_Move move) {
+    if (move.oldProgress == -1) {
+      return const <int>[0];
+    }
+    return <int>[
+      for (var p = move.oldProgress + 1; p <= move.newProgress; p++) p,
+    ];
+  }
+
+  /// Schedules the next step of [_playingMove]. The duration is read fresh
+  /// at this call rather than fixed for the whole move, which is what makes
+  /// rule 6's half-duration apply only to steps that have not started yet:
+  /// a step already ticking keeps whatever duration it was given when it
+  /// was scheduled, and only the ones scheduled after another move joined
+  /// the queue see [_queue] non-empty here.
+  void _scheduleNextStep() {
+    final _Move? move = _playingMove;
+    if (move == null) {
+      return;
+    }
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    final Duration base = reduced
+        ? kTokenStepDurationReduced
+        : kTokenStepDuration;
+    final Duration stepDuration = _queue.isNotEmpty
+        ? Duration(microseconds: base.inMicroseconds ~/ 2)
+        : base;
+    _stepTimer = Timer(stepDuration, () => _onStepElapsed(move));
+  }
+
+  void _onStepElapsed(_Move move) {
+    if (!mounted || _playingMove != move) {
+      return;
+    }
+    final List<int> path = _pathFor(move);
+    final int step = path[_playingStepIndex];
+    setState(() {
+      _override[_key(move.seat, move.token)] = step;
+    });
+    widget.onTokenStep?.call(move.seat, move.token);
+    _playingStepIndex++;
+    if (_playingStepIndex < path.length) {
+      _scheduleNextStep();
+    } else {
+      _stepTimer = null;
+      _onMoveArrived(move);
+    }
+  }
+
+  /// The mover's last step has landed. Its override already equals truth
+  /// (the final step set it to [_Move.newProgress], which is exactly what
+  /// `widget.tokens` already holds), so nothing there needs to change. A
+  /// captured token starts its flight home now, contract C-252 rule 4; a
+  /// move with no capture is simply done, and the queue (if anything is
+  /// waiting) moves on.
+  void _onMoveArrived(_Move move) {
+    _override.remove(_key(move.seat, move.token));
+    final int? capturedSeat = move.capturedSeat;
+    if (capturedSeat != null) {
+      final int capturedToken = move.capturedToken!;
+      final int fromProgress =
+          _override.remove(_key(capturedSeat, capturedToken)) ??
+          move.capturedOldProgress!;
+      setState(() {
+        _flying = _FlyingCapture(
+          seat: capturedSeat,
+          token: capturedToken,
+          fromProgress: fromProgress,
+        );
+      });
+    } else {
+      _finishPlaying();
+    }
+  }
+
+  /// The captured token's flight landed: drop it, and move the queue on.
+  /// Called by the [_CaptureFlight] widget itself, never by a timer this
+  /// state owns -- the flight's own ticker lives and dies with that widget.
+  void _handleCaptureArrived(int seat, int token) {
+    if (!mounted) {
+      return;
+    }
+    final _FlyingCapture? flying = _flying;
+    if (flying != null && flying.seat == seat && flying.token == token) {
+      setState(() {
+        _flying = null;
+      });
+    }
+    _finishPlaying();
+  }
+
+  /// [_playingMove] is fully done (its steps, and its capture's flight if it
+  /// had one). Starts the next queued move, if any; its mover and captured
+  /// token were already held on their old squares the moment it was
+  /// queued, so starting it here changes no drawn position by itself.
+  void _finishPlaying() {
+    _playingMove = null;
+    _playingStepIndex = 0;
+    if (_queue.isNotEmpty) {
+      _playingMove = _queue.removeAt(0);
+      _playingStepIndex = 0;
+      _scheduleNextStep();
+    }
+  }
+
+  static String _key(int seat, int token) => '$seat-$token';
+
+  /// What the drawn token for (seat, token) actually shows right now: the
+  /// override if travel or a pending capture put one there, truth
+  /// otherwise. Contract C-252 rule 1 -- only this, and the pixel position
+  /// built from it, ever differs from truth; the hit target, the ring and
+  /// the Semantics identifier never read this.
+  int _drawnProgress(int seat, int token) =>
+      _override[_key(seat, token)] ?? widget.tokens[seat]![token];
 
   void _triggerShake(int tokenIndex) {
     _shakeTimer?.cancel();
@@ -160,7 +554,7 @@ class _LudoBoardState extends State<LudoBoard> {
     if (mySeat == null) {
       return;
     }
-    final double hitSize = math.max(48.0, tokenSize);
+    final double hitSize = _tokenHitSize(tokenSize);
     final List<_CellGroup> groups = _cellGroups(mySeat, cellSize);
 
     _CellGroup? best;
@@ -223,6 +617,202 @@ class _LudoBoardState extends State<LudoBoard> {
     ]..sort();
   }
 
+  /// Every widget one seat's identity contributes to the stack: the turn
+  /// glow behind its whole yard, the "this one is mine" ring around it, and
+  /// its name chip, in that order so the tokens drawn afterward always sit
+  /// on top of all three. Contract C-248; an empty list for a seat with
+  /// nothing to show (no [LudoBoard.seatNames] entry, not [LudoBoard.turnSeat],
+  /// not [LudoBoard.mySeat]).
+  List<Widget> _seatIdentityLayer({
+    required int seat,
+    required double cellSize,
+  }) {
+    final BoardCell origin = yardQuadrantOrigin(seat);
+    final double left = origin.col * cellSize;
+    final double top = origin.row * cellSize;
+    final double side = yardQuadrantSide * cellSize;
+
+    final List<Widget> layer = <Widget>[];
+
+    if (widget.turnSeat == seat) {
+      layer.add(
+        Positioned(
+          left: left,
+          top: top,
+          width: side,
+          height: side,
+          child: IgnorePointer(
+            child: KeyedSubtree(
+              key: Key('board-turn-yard-$seat'),
+              child: _TurnGlow(color: LudoColors.seats[seat]),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // C-248 rule 2, read literally: the ring follows mySeat and seatNames
+    // being given at all, not whether seatNames happens to name mySeat
+    // itself -- the ring is the colour signal P9 asks to stand beside the
+    // name, not a part of the name chip.
+    if (widget.mySeat == seat && widget.seatNames != null) {
+      layer.add(
+        Positioned(
+          key: const Key('board-my-yard'),
+          left: left,
+          top: top,
+          width: side,
+          height: side,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border.all(color: LudoColors.seats[seat], width: 3),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final String? name = widget.seatNames?[seat];
+    if (name != null) {
+      layer.add(
+        _nameChip(seat: seat, name: name, cellSize: cellSize, origin: origin),
+      );
+    }
+
+    return layer;
+  }
+
+  /// [seat]'s name chip: a pill in [LudoColors.seats][seat], sat in the row
+  /// of its yard that touches the real edge of the board (the top row for
+  /// the two top yards, the bottom row for the two bottom ones), centred
+  /// across the yard's own width. Contract C-264 rule A1 drops the old
+  /// "never touch a yard token's 48dp hit box" test -- that hit box is
+  /// bigger than the row itself at phone widths, which is exactly what left
+  /// the chip a sliver -- for the narrower one the rule actually asks for:
+  /// never paint over a yard token's own drawn disc. Rule A2 then sizes the
+  /// chip from the row, not from whatever the tokens leave over: the row's
+  /// full height less a small cosmetic inset, pulled back further only if a
+  /// disc genuinely reaches into the row.
+  Widget _nameChip({
+    required int seat,
+    required String name,
+    required double cellSize,
+    required BoardCell origin,
+  }) {
+    final bool edgeIsTop = origin.row == 0;
+    final double rowTop = edgeIsTop
+        ? origin.row * cellSize
+        : (origin.row + yardQuadrantSide - 1) * cellSize;
+    final double rowBottom = rowTop + cellSize;
+
+    // A2's "small inset", comfortably inside its "at most 15% of the cell"
+    // ceiling, kept on the row's inner side so the chip still sits flush
+    // against the board's real outer edge.
+    final double cosmeticInset = cellSize * 0.10;
+    double innerBound = edgeIsTop
+        ? rowBottom - cosmeticInset
+        : rowTop + cosmeticInset;
+
+    // A1: pull back further only if a yard token's actual painted disc (not
+    // its enlarged hit box) reaches into the row. At this board's own
+    // proportions a yard slot's disc never does -- its own fan offset keeps
+    // it inside the row next to the edge one -- but the rule reads "never
+    // overlaps the disc", not "never overlaps it given today's numbers", so
+    // the clamp stays rather than being assumed away.
+    for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++) {
+      final Rect discRect = _tokenDrawnRect(
+        seat: seat,
+        tokenIndex: tokenIndex,
+        progress: -1,
+        cellSize: cellSize,
+      );
+      if (discRect.bottom <= rowTop || discRect.top >= rowBottom) {
+        continue;
+      }
+      if (edgeIsTop) {
+        innerBound = math.min(innerBound, discRect.top);
+      } else {
+        innerBound = math.max(innerBound, discRect.bottom);
+      }
+    }
+
+    final double chipTop = edgeIsTop ? rowTop : innerBound;
+    final double chipBottom = edgeIsTop ? innerBound : rowBottom;
+    final double chipHeight = math.max(0.0, chipBottom - chipTop);
+    final double chipWidth = yardQuadrantSide * cellSize;
+    final double chipLeft = origin.col * cellSize;
+
+    final Color seatColor = LudoColors.seats[seat];
+    final Color ink = _contrastingInk(seatColor);
+    final bool isMine = widget.mySeat == seat;
+    final String? you = isMine ? widget.youLabel : null;
+    // A2: about 60% of the chip height, never below 10 logical px -- the
+    // old 7px floor is exactly what let the name itself go unreadable even
+    // once the chip stopped being a sliver.
+    final double nameFontSize = math.max(10.0, chipHeight * 0.6);
+
+    return Positioned(
+      left: chipLeft,
+      top: chipTop,
+      width: chipWidth,
+      height: chipHeight,
+      child: IgnorePointer(
+        child: Center(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: cellSize * 0.2),
+            child: DecoratedBox(
+              key: Key('board-seat-name-$seat'),
+              decoration: BoxDecoration(
+                color: seatColor,
+                borderRadius: BorderRadius.circular(chipHeight),
+              ),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: cellSize * 0.3,
+                  vertical: chipHeight * 0.08,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Flexible(
+                      child: Text(
+                        name,
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: ink,
+                          fontSize: nameFontSize,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (you != null) ...<Widget>[
+                      SizedBox(width: cellSize * 0.15),
+                      Text(
+                        you,
+                        key: const Key('board-seat-you'),
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: ink,
+                          fontSize: math.max(7.0, chipHeight * 0.55),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -242,9 +832,13 @@ class _LudoBoardState extends State<LudoBoard> {
                 alignment: Alignment.topLeft,
                 children: [
                   Positioned.fill(
-                    child: CustomPaint(painter: const _BoardPainter()),
+                    child: CustomPaint(
+                      painter: _BoardPainter(seatsInPlay: widget.seatsInPlay),
+                    ),
                   ),
                   ..._safeSquareMarks(cellSize),
+                  for (final seat in widget.seatsInPlay)
+                    ..._seatIdentityLayer(seat: seat, cellSize: cellSize),
                   for (final seat in widget.seatsInPlay)
                     for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++)
                       ..._tokenLayer(
@@ -298,14 +892,19 @@ class _LudoBoardState extends State<LudoBoard> {
     final List<Widget> layer = <Widget>[];
 
     if (isMine) {
-      final double hitSize = math.max(48.0, tokenSize);
+      final Rect hitRect = _tokenHitRect(
+        seat: seat,
+        tokenIndex: tokenIndex,
+        progress: progress,
+        cellSize: cellSize,
+      );
       final AppLocalizations loc = AppLocalizations.of(context);
       layer.add(
         Positioned(
-          left: left + tokenSize / 2 - hitSize / 2,
-          top: top + tokenSize / 2 - hitSize / 2,
-          width: hitSize,
-          height: hitSize,
+          left: hitRect.left,
+          top: hitRect.top,
+          width: hitRect.width,
+          height: hitRect.height,
           // The Semantics node itself carries the key: a key on a plain
           // child below it (as this used to be) finds a node with no
           // button flag, because getSemantics walks up from the keyed
@@ -376,11 +975,55 @@ class _LudoBoardState extends State<LudoBoard> {
       ),
     );
 
-    if (shakingHere) {
+    // Contract C-252 rule 1: `cell`, `left` and `top` above stay truth, feeding
+    // the hit target, the ring and the Semantics identifier exactly as they
+    // always have. Only the drawn circle below reads `_drawnProgress`, which
+    // is truth too except mid-travel or mid-capture-hold.
+    final int drawnProgress = _drawnProgress(seat, tokenIndex);
+    final bool isDrawnAtTruth = drawnProgress == progress;
+    final BoardCell drawnCell = isDrawnAtTruth
+        ? cell
+        : cellFor(seat: seat, progress: drawnProgress, tokenIndex: tokenIndex);
+    final double drawnLeft = isDrawnAtTruth
+        ? left
+        : drawnCell.col * cellSize + (cellSize - tokenSize) / 2 + fanDx;
+    final double drawnTop = isDrawnAtTruth
+        ? top
+        : drawnCell.row * cellSize + (cellSize - tokenSize) / 2 + fanDy;
+
+    final _FlyingCapture? flying = _flying;
+    if (flying != null && flying.seat == seat && flying.token == tokenIndex) {
+      // Rule 4: this token stayed drawn on its own old square until the
+      // mover's last step landed; now it flies home in a straight line.
+      // `drawnLeft`/`drawnTop` here are truth's yard slot -- the capture
+      // already cleared this pair's override in `_onMoveArrived`, so
+      // `_drawnProgress` fell back to truth, which is already -1.
+      final BoardCell fromCell = cellFor(
+        seat: seat,
+        progress: flying.fromProgress,
+        tokenIndex: tokenIndex,
+      );
+      final double fromLeft =
+          fromCell.col * cellSize + (cellSize - tokenSize) / 2 + fanDx;
+      final double fromTop =
+          fromCell.row * cellSize + (cellSize - tokenSize) / 2 + fanDy;
+      layer.add(
+        _CaptureFlight(
+          key: Key('board-capture-flight-$seat-$tokenIndex'),
+          from: Offset(fromLeft, fromTop),
+          to: Offset(drawnLeft, drawnTop),
+          size: tokenSize,
+          duration: kCaptureFlightDuration,
+          reducedDuration: kCaptureFlightDurationReduced,
+          onArrived: () => _handleCaptureArrived(seat, tokenIndex),
+          child: token,
+        ),
+      );
+    } else if (shakingHere) {
       layer.add(
         Positioned(
-          left: left,
-          top: top,
+          left: drawnLeft,
+          top: drawnTop,
           width: tokenSize,
           height: tokenSize,
           child: _ShakeOnce(
@@ -393,8 +1036,8 @@ class _LudoBoardState extends State<LudoBoard> {
     } else {
       layer.add(
         Positioned(
-          left: left,
-          top: top,
+          left: drawnLeft,
+          top: drawnTop,
           width: tokenSize,
           height: tokenSize,
           child: token,
@@ -472,6 +1115,154 @@ class _CellGroup {
 
   final Offset center;
   final List<int> indices;
+}
+
+/// One truth change between two builds' `tokens`, before it has been
+/// classified -- contract C-252 rule 2's raw material. `oldP`/`newP` are
+/// that one token's progress before and after.
+class _TokenDiff {
+  const _TokenDiff({
+    required this.seat,
+    required this.token,
+    required this.oldP,
+    required this.newP,
+  });
+
+  final int seat;
+  final int token;
+  final int oldP;
+  final int newP;
+}
+
+/// One move a board plays back: a mover (`seat`, `token`) travelling from
+/// `oldProgress` to `newProgress`, plus the captured token it took, if any.
+/// Built once per [_TokenDiff] pair that rule 2 accepts and never mutated;
+/// `_LudoBoardState` tracks progress through it with its own fields.
+class _Move {
+  const _Move({
+    required this.seat,
+    required this.token,
+    required this.oldProgress,
+    required this.newProgress,
+    this.capturedSeat,
+    this.capturedToken,
+    this.capturedOldProgress,
+  });
+
+  final int seat;
+  final int token;
+  final int oldProgress;
+  final int newProgress;
+  final int? capturedSeat;
+  final int? capturedToken;
+  final int? capturedOldProgress;
+}
+
+/// A captured token currently flying home: which one, and the progress its
+/// old square was at -- the flight's visual starting point, contract C-252
+/// rule 4. `_LudoBoardState` holds at most one at a time.
+class _FlyingCapture {
+  const _FlyingCapture({
+    required this.seat,
+    required this.token,
+    required this.fromProgress,
+  });
+
+  final int seat;
+  final int token;
+  final int fromProgress;
+}
+
+/// The captured token's straight flight home, contract C-252 rule 4: a
+/// plain linear interpolation from [from] to [to] in pixels over
+/// [duration] ([reducedDuration] under reduced motion), reporting back
+/// through [onArrived] once, the moment it lands -- never for a mid-flight
+/// rebuild, only when the controller itself reaches its end. Its own ticker,
+/// owned and disposed here exactly like [_PulsingRing] and [_TurnGlow]
+/// above, which is also what satisfies rule 8 for it: this widget is only
+/// ever in the tree for the length of one flight, and the framework tears
+/// it down (ticker included) the moment `_LudoBoardState` stops drawing it.
+class _CaptureFlight extends StatefulWidget {
+  const _CaptureFlight({
+    super.key,
+    required this.from,
+    required this.to,
+    required this.size,
+    required this.duration,
+    required this.reducedDuration,
+    required this.onArrived,
+    required this.child,
+  });
+
+  final Offset from;
+  final Offset to;
+  final double size;
+  final Duration duration;
+  final Duration reducedDuration;
+  final VoidCallback onArrived;
+  final Widget child;
+
+  @override
+  State<_CaptureFlight> createState() => _CaptureFlightState();
+}
+
+class _CaptureFlightState extends State<_CaptureFlight>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  bool _started = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: widget.duration)
+      ..addStatusListener(_handleStatus);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) {
+      return;
+    }
+    _started = true;
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    _controller.duration = reduced ? widget.reducedDuration : widget.duration;
+    _controller.forward();
+  }
+
+  void _handleStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed) {
+      widget.onArrived();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.removeStatusListener(_handleStatus);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final Offset at = Offset.lerp(
+          widget.from,
+          widget.to,
+          _controller.value,
+        )!;
+        return Positioned(
+          left: at.dx,
+          top: at.dy,
+          width: widget.size,
+          height: widget.size,
+          child: widget.child,
+        );
+      },
+    );
+  }
 }
 
 /// The 300ms horizontal shake an illegal tap gets. Plays once from the
@@ -572,6 +1363,110 @@ class _PulsingRingState extends State<_PulsingRing>
   }
 }
 
+/// The soft glow a seat's whole yard carries while it holds the turn
+/// (`board-turn-yard-S`, C-248 rule 3): a blurred stroke around the yard,
+/// breathing over a fixed 1200ms period. Reduced motion holds it at its
+/// brightest rather than animating -- the same rule [_PulsingRing] and the
+/// shake follow: the meaning ("this is the seat to watch") stays, only the
+/// motion that says so goes. This widget exists in the tree for exactly as
+/// long as its seat is [LudoBoard.turnSeat]; its own [dispose] is the
+/// ticker's stop, so there is nothing separate to wire for "turnSeat
+/// changed" or "the board itself was removed".
+class _TurnGlow extends StatefulWidget {
+  const _TurnGlow({required this.color});
+
+  final Color color;
+
+  @override
+  State<_TurnGlow> createState() => _TurnGlowState();
+}
+
+class _TurnGlowState extends State<_TurnGlow>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  bool? _reduced;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    if (reduced != _reduced) {
+      _reduced = reduced;
+      if (reduced) {
+        _controller.stop();
+        _controller.value = 1;
+      } else {
+        _controller.repeat(reverse: true);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool reduced = _reduced ?? false;
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final double t = _controller.value;
+        final double opacity = reduced ? 0.55 : 0.2 + 0.35 * t;
+        final double blurSigma = reduced ? 10.0 : 6.0 + 8.0 * t;
+        return CustomPaint(
+          painter: _GlowPainter(
+            color: widget.color,
+            opacity: opacity,
+            blurSigma: blurSigma,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _GlowPainter extends CustomPainter {
+  const _GlowPainter({
+    required this.color,
+    required this.opacity,
+    required this.blurSigma,
+  });
+
+  final Color color;
+  final double opacity;
+  final double blurSigma;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double stroke = size.shortestSide * 0.06;
+    final Rect rect = (Offset.zero & size).deflate(stroke);
+    final Paint glow = Paint()
+      ..color = color.withValues(alpha: opacity)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, blurSigma);
+    canvas.drawRect(rect, glow);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GlowPainter oldDelegate) =>
+      oldDelegate.color != color ||
+      oldDelegate.opacity != opacity ||
+      oldDelegate.blurSigma != blurSigma;
+}
+
 class _RingPainter extends CustomPainter {
   const _RingPainter({
     required this.color,
@@ -646,7 +1541,13 @@ class _StarPainter extends CustomPainter {
 ///
 /// Seat fills and board inks come from [LudoColors]: one paintbox with theme.
 class _BoardPainter extends CustomPainter {
-  const _BoardPainter();
+  const _BoardPainter({required this.seatsInPlay});
+
+  /// Which seats are playing, same list [LudoBoard] was given. A seat not
+  /// in it gets its yard fill muted -- C-248 rule 4, the one default change
+  /// this contract makes: today's drawing painted every yard the same
+  /// whether or not anyone sat there.
+  final List<int> seatsInPlay;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -654,22 +1555,18 @@ class _BoardPainter extends CustomPainter {
 
     canvas.drawRect(Offset.zero & size, Paint()..color = LudoColors.dieFace);
 
-    const yardCorners = [
-      (0, 0), // seat 0, top-left
-      (9, 0), // seat 1, top-right
-      (9, 9), // seat 2, bottom-right
-      (0, 9), // seat 3, bottom-left
-    ];
     for (var seat = 0; seat < 4; seat++) {
-      final (col, row) = yardCorners[seat];
+      final BoardCell origin = yardQuadrantOrigin(seat);
+      final bool inPlay = seatsInPlay.contains(seat);
+      final double yardAlpha = inPlay ? 0.16 : 0.16 * 0.35;
       _fillCells(
         canvas,
         cellSize,
-        col,
-        row,
-        6,
-        6,
-        LudoColors.seats[seat].withValues(alpha: 0.16),
+        origin.col,
+        origin.row,
+        yardQuadrantSide,
+        yardQuadrantSide,
+        LudoColors.seats[seat].withValues(alpha: yardAlpha),
       );
     }
 
@@ -765,5 +1662,6 @@ class _BoardPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _BoardPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _BoardPainter oldDelegate) =>
+      !_sameSeats(oldDelegate.seatsInPlay, seatsInPlay);
 }

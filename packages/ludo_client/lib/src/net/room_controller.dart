@@ -605,6 +605,59 @@ class RoomController extends ChangeNotifier {
     }
   }
 
+  /// C-246 rule 1: forwards `rematch` to the connection when [phase] is
+  /// [RoomPhase.connected] and is a silent no-op otherwise, from any seat --
+  /// opening a fresh LOBBY from FINISHED, or accepting one already open.
+  /// PROTOCOL 16.2/16.3: the answer to `rematch` is the `room` broadcast,
+  /// and the requester's own copy of it carries `re` set to this request's
+  /// id. That is exactly the shape [_reduceRoom] ignores (the request path
+  /// already owns every `room` that answers one of this controller's own
+  /// requests), so nobody else applies it; this method does, through
+  /// [_applyRoomFrame], the same seq-check-decode-apply body [_reduceRoom]
+  /// itself uses for an unsolicited push.
+  ///
+  /// Unlike [roll], [move], [startGame] and [setPlayers], there is no
+  /// race-code carve-out here: every failure, whatever the code, routes
+  /// straight through [_failFromInRoomRequest], the same in-room request
+  /// failure path those methods fall through to once their own races are
+  /// ruled out. C-246's own rule 8 is the screen's to read, not this
+  /// method's: a `NO_SUCH_ROOM` answer and every other code both land here
+  /// in [RoomPhase.failed] with [errorCode] set, and it is GameScreen that
+  /// decides a `NO_SUCH_ROOM` failure still shows the end card while every
+  /// other code falls through to the ordinary connection-lost body.
+  ///
+  /// PROTOCOL 16.3: from a seat already ready, `rematch` changes nothing on
+  /// the server and the reply it gets back carries the room's current
+  /// `seq`, not a newer one. [_applyRoomFrame]'s gap check reads anything
+  /// other than `room.seq + 1` as a resync, which that reply is not -- it is
+  /// the same room this controller already holds. A reply whose `seq` is
+  /// not newer than [_room]'s own is this method's to drop before
+  /// [_applyRoomFrame] ever sees it: no resync, no notify. A genuinely newer
+  /// `seq`, applied in sequence or with a real gap behind it, still goes
+  /// through [_applyRoomFrame] exactly as before.
+  Future<void> rematch() async {
+    final RoomConnection? connection = _connection;
+    if (_disposed || _phase != RoomPhase.connected || connection == null) {
+      return;
+    }
+    try {
+      final Frame frame = await connection.rematch();
+      if (_disposed) {
+        return;
+      }
+      final RoomSnapshot? room = _room;
+      if (room != null) {
+        final int? seqValue = frame.seq;
+        if (seqValue != null && seqValue <= room.seq) {
+          return;
+        }
+        _applyRoomFrame(frame, room);
+      }
+    } catch (error) {
+      _failFromInRoomRequest(error);
+    }
+  }
+
   /// Forwards to the connection when [phase] is [RoomPhase.connected] and is
   /// a silent no-op otherwise. The reply is a plain frame, not a snapshot; it
   /// is not parsed as one and changes nothing here. The `rolled` frame that
@@ -827,15 +880,27 @@ class RoomController extends ChangeNotifier {
   /// A server-initiated `room` push, `re` null: the request path already
   /// owns every `room` that answers `createRoom`, `joinRoom`, `resume` or
   /// `setPlayers`, including this controller's own resync, so a `room` here
-  /// with `re` set is not this reducer's business. A decode failure is
-  /// treated the same as any other malformed frame: caught, no state
-  /// change, no rethrow.
+  /// with `re` set is not this reducer's business -- `rematch`'s own reply
+  /// is also `re` set, and [rematch] applies that one itself, directly,
+  /// through the same [_applyRoomFrame] body this reducer falls through to
+  /// below.
   void _reduceRoom(Frame frame, RoomSnapshot room) {
-    final int? seqValue = frame.seq;
-    if (seqValue == null) {
+    if (frame.re != null) {
       return;
     }
-    if (frame.re != null) {
+    _applyRoomFrame(frame, room);
+  }
+
+  /// The seq-check-decode-apply body shared by [_reduceRoom] (an
+  /// unsolicited `room` push) and [rematch] (the `room` that answers this
+  /// controller's own `rematch` request): a seq gap resynchronises exactly
+  /// as any other state-changing push does, a decode failure is treated the
+  /// same as any other malformed frame -- caught, no state change, no
+  /// rethrow -- and a frame that decodes cleanly replaces [room] and
+  /// notifies once.
+  void _applyRoomFrame(Frame frame, RoomSnapshot room) {
+    final int? seqValue = frame.seq;
+    if (seqValue == null) {
       return;
     }
     if (seqValue != room.seq + 1) {

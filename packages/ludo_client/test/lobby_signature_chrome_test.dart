@@ -292,7 +292,16 @@ void _expectLobbyFeltEdge(WidgetTester tester) {
   );
 }
 
-void _expectLobbySeatPipStrip(WidgetTester tester) {
+// Amended for C-254 rule 5 (order 255, item 2): the lobby's pip strip now
+// shows only the occupied seats (`room.seats.map((s) => s.seat)`), not
+// every one of LudoColors.seats unconditionally. [occupiedSeats] names
+// which seats the fixture actually seated, so this stays a real check of
+// "pips equal the occupied seats" rather than "pips equal every seat",
+// which C-254 rule 5 explicitly ends.
+void _expectLobbySeatPipStrip(
+  WidgetTester tester, {
+  required List<int> occupiedSeats,
+}) {
   final Finder strip = _seatPipStripInLobby();
   expect(
     strip,
@@ -310,12 +319,24 @@ void _expectLobbySeatPipStrip(WidgetTester tester) {
 
   for (int i = 0; i < LudoColors.seats.length; i++) {
     final Finder pip = _pipInStrip(strip, i);
+    if (!occupiedSeats.contains(i)) {
+      expect(
+        pip,
+        findsNothing,
+        reason:
+            'seat-pip-$i must not show: seat $i is not among the occupied '
+            'seats $occupiedSeats (C-254 rule 5, "pips are exactly the '
+            'occupied seats")',
+      );
+      continue;
+    }
     expect(
       pip,
       findsOneWidget,
       reason:
           'lobby seat-pip strip must contain game-seat-pip-$i or '
-          'lobby-seat-pip-$i in LudoColors.seats order',
+          'lobby-seat-pip-$i in LudoColors.seats order, for occupied seat '
+          '$i',
     );
     final Color color = _requireColor(tester, pip, 'seat-pip-$i');
     expect(
@@ -337,11 +358,11 @@ void main() {
     },
   );
 
-  testWidgets(
-    'connected lobby mounts seat-pip strip with four LudoColors.seats pips',
-    (WidgetTester tester) async {
-      await _pumpConnectedHostLobby(tester);
-      _expectLobbySeatPipStrip(tester);
-    },
-  );
+  testWidgets('connected lobby mounts seat-pip strip with pips for exactly the '
+      'occupied seats (C-254 rule 5: fixture seats only seat 0)', (
+    WidgetTester tester,
+  ) async {
+    await _pumpConnectedHostLobby(tester);
+    _expectLobbySeatPipStrip(tester, occupiedSeats: const <int>[0]);
+  });
 }

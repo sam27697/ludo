@@ -152,6 +152,37 @@ BoardCell safeSquareCell(int absolute) {
   return cellFor(seat: 0, progress: absolute);
 }
 
+/// The top-left corner of each seat's 6 by 6 yard, in board cells. Unlike
+/// [_track], [_homeColumn] and [_yard] above, a rotated rectangle's own
+/// top-left corner is not the rotation of its pre-rotation top-left corner
+/// (rotation about the centre turns a block's near corner into a far one),
+/// so these four are given directly rather than generated through
+/// [_rotateBy]; they are exactly the corners [cellFor]'s callers already
+/// agree on by construction (seat 0 top-left, then clockwise).
+const List<BoardCell> _yardQuadrantCorner = <BoardCell>[
+  BoardCell(0, 0),
+  BoardCell(9, 0),
+  BoardCell(9, 9),
+  BoardCell(0, 9),
+];
+
+/// Side length, in cells, of every seat's yard quadrant.
+const int yardQuadrantSide = 6;
+
+/// The 6 by 6 corner quadrant that is [seat]'s yard: [BoardCell.col] and
+/// [BoardCell.row] of its own top-left cell. The quadrant itself runs
+/// [yardQuadrantSide] cells right and down from there. Every yard slot
+/// [cellFor] returns for this seat (`progress: -1`) lies inside it.
+///
+/// Throws [ArgumentError] if [seat] is outside 0..3. Reject, never repair,
+/// same as [cellFor].
+BoardCell yardQuadrantOrigin(int seat) {
+  if (seat < 0 || seat > 3) {
+    throw ArgumentError.value(seat, 'seat', 'must be 0..3');
+  }
+  return _yardQuadrantCorner[seat];
+}
+
 /// The grid cell a token of [seat] sits in at [progress].
 ///
 /// [progress] is the entire position: -1 is the yard, 0..51 the shared main

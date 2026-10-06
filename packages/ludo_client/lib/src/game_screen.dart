@@ -18,6 +18,7 @@
 // controller.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -27,7 +28,11 @@ import 'package:url_launcher/url_launcher.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
 import 'die_mark.dart';
+import 'end_card.dart';
+import 'feedback.dart';
 import 'game_die.dart';
+import 'game_stats.dart';
+import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'theme.dart';
@@ -94,10 +99,52 @@ class _GameScreenState extends State<GameScreen> {
   bool _rollNoAnswer = false;
   static const Duration _rollNoAnswerDelay = Duration(seconds: 4);
 
+  // C-236 rule 2: one subscription to controller.frames for the life of
+  // this screen, feeding every frame's cues to the one FeedbackService
+  // above this tree. C-236 rules 4, 4a and 4b: the
+  // no-move beat it also drives. Armed by a `rolled` for my seat with an
+  // empty `legal`; holds `game-die-no-move-mark` and `game-no-move-notice`
+  // up for exactly `_noMoveHold` from that `rolled`, whatever the turn
+  // banner does underneath it in the meantime, and ends early when a
+  // newer `rolled` carrying a value -- for any seat now, since the die is
+  // shared and a fresh roll anywhere must take it back, not only mine --
+  // lands. `_noMoveFace` is the face that armed `rolled` carried; it is
+  // what the die shows for the whole hold, in my own seat colour, even
+  // once the next seat's turn has cleared `turn.value` underneath it.
+  StreamSubscription<Frame>? _frameSub;
+  static const Duration _noMoveHold = Duration(milliseconds: 1500);
+  Timer? _noMoveTimer;
+  bool _noMoveVisible = false;
+  int? _noMoveFace;
+
+  // C-243: every frame this screen's own subscription has seen since it
+  // mounted, in arrival order. The end card's GameStats is computed from
+  // exactly this list (see _gameOverBody), never from anywhere else, so a
+  // post-game number never traces back further than frames this device
+  // already held.
+  final List<Frame> _frames = <Frame>[];
+
+  // C-246 rule 5: the `game_id` every per-game thing below is currently
+  // reckoned against. Set from whatever the controller already held at
+  // mount (a resume straight into a playing or finished room carries one),
+  // then from every `game_started` this screen's own subscription sees. A
+  // `game_started` naming a different `game_id` is a rematch's second game
+  // starting: every per-game thing this screen holds is dropped before the
+  // new id is recorded, in `_resetForNewGame`.
+  String? _currentGameId;
+
+  // C-246 rule 3: true while this device's own `rematch` request is open,
+  // so a second tap sends nothing. Reset once the request settles, success
+  // or failure alike -- `RoomController.rematch` never throws, so the
+  // `await` below always resumes.
+  bool _rematchInFlight = false;
+
   @override
   void initState() {
     super.initState();
+    _currentGameId = widget.controller.room?.gameId;
     widget.controller.addListener(_onControllerChanged);
+    _frameSub = widget.controller.frames.listen(_onFrame);
     _syncCountdown();
   }
 
@@ -112,8 +159,127 @@ class _GameScreenState extends State<GameScreen> {
     _countdownTimer?.cancel();
     _autoMoveTimer?.cancel();
     _rollNoAnswerTimer?.cancel();
+    _noMoveTimer?.cancel();
+    _frameSub?.cancel();
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
+  }
+
+  /// C-236 rule 2: every cue `cuesForFrame` derives for this frame, played
+  /// in list order, synchronously, through the one `FeedbackService`
+  /// `FeedbackScope.of` finds. This is the only place a cue is played for a
+  /// frame; the derivation is `cuesForFrame`'s and only its.
+  ///
+  /// Also arms or drops the no-move hold (rule 4, amended 4a/4b): a
+  /// `rolled` naming my seat with an empty `legal` arms it with the face
+  /// that `rolled` carried. Any other `rolled` that carries a value --
+  /// another seat's roll included, since the die is shared -- drops an
+  /// earlier hold; a `rolled` with no readable `value` changes nothing,
+  /// there being no new face to take the die's place.
+  void _onFrame(Frame frame) {
+    // C-246 rule 5: a `game_started` naming a game this screen has not
+    // already recorded is the next game after a rematch (or the very
+    // first game, handled the same way since `_currentGameId` starts
+    // null). Every per-game thing this screen holds is dropped before
+    // this frame itself becomes the new list's first entry, so game two's
+    // stats never carry a single frame of game one's.
+    if (frame.type == 'game_started') {
+      final String? gameId = _stringAt(frame.data, 'game_id');
+      if (gameId != null && gameId != _currentGameId) {
+        _resetForNewGame();
+        _currentGameId = gameId;
+      }
+    }
+
+    _frames.add(frame);
+    final List<FeedbackCue> cues = cuesForFrame(
+      frame,
+      mySeat: widget.controller.seat,
+    );
+    final FeedbackService feedback = FeedbackScope.of(context);
+    for (final FeedbackCue cue in cues) {
+      feedback.play(cue);
+    }
+    if (frame.type == 'rolled') {
+      if (cues.contains(FeedbackCue.noMove)) {
+        _armNoMoveHold(_intAt(frame.data, 'value'));
+      } else if (_intAt(frame.data, 'value') != null) {
+        _dropNoMoveHold();
+      }
+    }
+
+    // C-246 rule 6: a seat removed by a host-forced start receives a
+    // `player_left` naming its own seat and nothing further from the room
+    // (docs/PROTOCOL.md section 16.9 rule 1). No existing "removed from a
+    // lobby" path exists under lib/ to reuse, so this is treated exactly
+    // as the AppBar Leave control treats leaving: pop with no result.
+    if (frame.type == 'player_left') {
+      final int? seatValue = _intAt(frame.data, 'seat');
+      if (seatValue != null && seatValue == widget.controller.seat) {
+        _leave();
+      }
+    }
+  }
+
+  /// C-259 rule 2: the board's own `onTokenStep`, fired once as the drawn
+  /// token actually arrives on each square. Plays exactly one
+  /// `FeedbackCue.step` when [stepSeat] is `controller.seat` -- the same
+  /// seat this screen passes to `cuesForFrame` as `mySeat` -- and nothing
+  /// for any other seat's token, including when `controller.seat` is null.
+  void _onBoardTokenStep(RoomController controller, int stepSeat) {
+    if (stepSeat != controller.seat) {
+      return;
+    }
+    FeedbackScope.of(context).play(FeedbackCue.step);
+  }
+
+  /// C-246 rule 5: drops every per-game thing this screen holds -- the
+  /// frame list feeding `computeGameStats`, the no-move hold and its held
+  /// face, the pending auto-move and the k it was armed for, the move-sent
+  /// guard, and the roll-wait tumble and its no-answer line. The countdown
+  /// memo is untouched on purpose (rule 5's own text, "not simplified"):
+  /// `_syncCountdown` already restarts it on its own the moment the room
+  /// stops showing a playing board (FINISHED, then the rematch LOBBY in
+  /// between), which a new game always passes through first.
+  void _resetForNewGame() {
+    _frames.clear();
+    _noMoveTimer?.cancel();
+    _noMoveTimer = null;
+    _noMoveVisible = false;
+    _noMoveFace = null;
+    _autoMoveTimer?.cancel();
+    _autoMoveTimer = null;
+    _pendingAutoMoveToken = null;
+    _autoMoveHandledK = null;
+    _moveSentForK = null;
+    _rollNoAnswerTimer?.cancel();
+    _rollNoAnswerTimer = null;
+    _rollWaitK = null;
+    _rollNoAnswer = false;
+  }
+
+  void _armNoMoveHold(int? face) {
+    _noMoveTimer?.cancel();
+    _noMoveTimer = Timer(_noMoveHold, _dropNoMoveHold);
+    if (_noMoveVisible && _noMoveFace == face) {
+      return;
+    }
+    setState(() {
+      _noMoveVisible = true;
+      _noMoveFace = face;
+    });
+  }
+
+  void _dropNoMoveHold() {
+    _noMoveTimer?.cancel();
+    _noMoveTimer = null;
+    if (!mounted || !_noMoveVisible) {
+      return;
+    }
+    setState(() {
+      _noMoveVisible = false;
+      _noMoveFace = null;
+    });
   }
 
   void _onControllerChanged() {
@@ -124,8 +290,12 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
-  /// Tapping the die while it would roll: haptic now (the feedback service
-  /// replaces this call later), start the tumble, send the intention.
+  /// Tapping the die while it would roll: haptic now, start the tumble,
+  /// send the intention. C-236 rule 5: this `HapticFeedback.lightImpact()`
+  /// is a tap acknowledgement, not a game event, and stays alongside the
+  /// feedback service rather than being folded into it; `yourTurn` and
+  /// `canMove`/`noMove` for the roll that follows are played separately,
+  /// from `_onFrame`, once the server's own `rolled` frame lands.
   void _onDieTap() {
     final TurnState? turn = widget.controller.room?.turn;
     if (turn == null) {
@@ -387,6 +557,26 @@ class _GameScreenState extends State<GameScreen> {
     Navigator.of(context).pop(GameScreenResult.newTable);
   }
 
+  /// C-246 rule 1 and rule 3: the end card's Rematch/accept tap. Guarded by
+  /// [_rematchInFlight] so a second tap while the request is open sends
+  /// nothing; `RoomController.rematch` never throws, so this always
+  /// reaches the end and clears the guard, whatever the server answered.
+  Future<void> _onRematchTap() async {
+    if (_rematchInFlight) {
+      return;
+    }
+    setState(() {
+      _rematchInFlight = true;
+    });
+    await widget.controller.rematch();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _rematchInFlight = false;
+    });
+  }
+
   /// Opens the match `verify_url` in an external browser. The app does not
   /// prove the rolls itself; a failure to open is shown honestly.
   Future<void> _openVerifyUrl() async {
@@ -429,8 +619,24 @@ class _GameScreenState extends State<GameScreen> {
     final RoomController controller = widget.controller;
     final RoomSnapshot? room = controller.room;
 
+    // C-246 rule 8, and this file's own ambiguity note: every rematch
+    // failure alike lands the controller in RoomPhase.failed (room 1's
+    // unconditional "routes through the same in-room request failure
+    // path"); this is what tells a NO_SUCH_ROOM failure apart from every
+    // other one, so the end card can stay up in its gone state instead of
+    // falling into the ordinary connection-lost body below. `room` is
+    // whatever this controller held before the failed request -- `_fail`
+    // never touches it -- so it is still the finished (or rematch-LOBBY)
+    // snapshot the end card was already showing.
+    final bool rematchGone =
+        controller.phase == RoomPhase.failed &&
+        controller.errorCode == 'NO_SUCH_ROOM' &&
+        room != null;
+
     final Widget body;
-    if (controller.phase == RoomPhase.failed ||
+    if (rematchGone) {
+      body = _gameOverBody(loc, controller, room, rematchGone: true);
+    } else if (controller.phase == RoomPhase.failed ||
         controller.phase == RoomPhase.closed) {
       // Rule 1: consulted before room, and decisive regardless of what the
       // last room snapshot said. The board a dead socket last drew is not
@@ -439,6 +645,11 @@ class _GameScreenState extends State<GameScreen> {
     } else if (room == null) {
       body = _loadingBody();
     } else if (room.state == RoomState.finished) {
+      body = _gameOverBody(loc, controller, room);
+    } else if (room.state == RoomState.lobby && room.rematch != null) {
+      // C-246 rule 2: a rematch LOBBY (state LOBBY, non-null `rematch`) is
+      // drawn by the same end card as FINISHED, so the player sees one
+      // continuous next step rather than a reset screen in between.
       body = _gameOverBody(loc, controller, room);
     } else if (room.state == RoomState.playing && room.seats.length >= 2) {
       body = _playingBody(loc, controller, room);
@@ -466,7 +677,13 @@ class _GameScreenState extends State<GameScreen> {
             // body below (waiting, playing, game-over, and the rest) inherits
             // the same table cue without each state painting its own copy.
             const FeltEdge(key: Key('game-felt-edge')),
-            const SeatPipStrip(key: Key('game-seat-pip-strip')),
+            SeatPipStrip(
+              key: const Key('game-seat-pip-strip'),
+              seats: room == null ? null : _seatsInPlayOf(room),
+              turnSeat: (room != null && room.state == RoomState.playing)
+                  ? room.turn?.seat
+                  : null,
+            ),
             if (controller.hasDesynced) _desyncBanner(context, loc),
             if (controller.phase == RoomPhase.connecting &&
                 controller.room != null)
@@ -577,52 +794,38 @@ class _GameScreenState extends State<GameScreen> {
         ? turn.legal!.toSet()
         : const <int>{};
 
-    final Color dieSeatColor =
-        LudoColors.seats[(turn?.seat ?? seat ?? 0).clamp(0, 3)];
+    // Rule 4a: for the whole hold the die keeps showing the face and the
+    // seat colour of the `rolled` that armed it -- my own -- rather than
+    // whatever the next seat's turn has already put in `turn.seat` and
+    // `turn.value` underneath it.
+    final Color dieSeatColor = _noMoveVisible
+        ? LudoColors.seats[(seat ?? 0).clamp(0, 3)]
+        : LudoColors.seats[(turn?.seat ?? seat ?? 0).clamp(0, 3)];
+    final int? dieFace = _noMoveVisible ? _noMoveFace : turn?.value;
 
     return Padding(
-      padding: const EdgeInsets.all(kSpace4),
+      padding: const EdgeInsets.symmetric(
+        horizontal: kSpace2,
+        vertical: kSpace2,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            _turnBannerText(loc, room, seat),
-            key: const Key('game-screen-turn-banner'),
-            textAlign: TextAlign.center,
-          ),
-          if (offlineTurnSeat != null) ...[
-            const SizedBox(height: kSpace2),
-            Text(
-              loc.gameSeatOffline(offlineTurnSeat.name),
-              key: const Key('game-screen-turn-seat-offline'),
-              textAlign: TextAlign.center,
-            ),
-          ],
-          if (turn != null && turn.value != null) ...[
-            const SizedBox(height: kSpace2),
-            Text(
-              loc.gameDieValue(turn.value!),
-              key: const Key('game-screen-dice-value'),
-              textAlign: TextAlign.center,
-            ),
-          ],
-          if (turn != null) ...[
-            const SizedBox(height: kSpace2),
-            Text(
-              loc.gameTurnCountdown(_countdownRemainingSeconds),
-              key: const Key('game-screen-turn-countdown'),
-              textAlign: TextAlign.center,
-            ),
-          ],
-          const SizedBox(height: kSpace4),
+          _playHeaderRow(loc, room, seat, turn, offlineTurnSeat),
+          const SizedBox(height: kSpace2),
           Expanded(
             child: LudoBoard(
               key: const Key('game-screen-board'),
               tokens: _tokensOf(room),
               seatsInPlay: _seatsInPlayOf(room),
+              seatNames: _seatNamesOf(room),
+              youLabel: loc.seatYou,
+              turnSeat: turn?.seat,
               mySeat: seat,
               legal: legalTokens,
               autoMoveToken: _pendingAutoMoveToken,
+              onTokenStep: (int stepSeat, int token) =>
+                  _onBoardTokenStep(controller, stepSeat),
               onTokenTap: (int index) {
                 _cancelPendingHoldForManualMove();
                 final int? k = turn?.k;
@@ -631,75 +834,351 @@ class _GameScreenState extends State<GameScreen> {
                 }
                 _sendMove(index, k);
               },
+              onIllegalTokenTap: (int index) {
+                FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+              },
             ),
           ),
           const SizedBox(height: kSpace4),
           Center(
-            child: GameDie(
-              face: turn?.value,
-              seatColor: dieSeatColor,
-              enabled: rollEnabled,
-              tumbling: _rollWaitK != null,
-              noAnswer: _rollNoAnswer,
-              onTap: rollEnabled ? _onDieTap : null,
+            child: _diceValueWrap(
+              loc,
+              turn,
+              GameDie(
+                face: dieFace,
+                seatColor: dieSeatColor,
+                enabled: rollEnabled,
+                tumbling: _rollWaitK != null,
+                noAnswer: _rollNoAnswer,
+                noMove: _noMoveVisible,
+                onTap: rollEnabled ? _onDieTap : null,
+                onInvalidTap: () {
+                  FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+                },
+              ),
             ),
           ),
-          const SizedBox(height: kSpace4),
+          const SizedBox(height: kSpace2),
+          _belowDieNoticeSlot(loc, offlineTurnSeat),
+          const SizedBox(height: kSpace2),
         ],
       ),
     );
   }
 
-  /// H6.2 and H7: the game has finished. The board (when there are still at
-  /// least two seats to draw it from) and the winner text; the Roll button
-  /// and the four token buttons are absent, not merely disabled, because
-  /// there is nothing left to press. The next-table button is the honest
-  /// action on this ending: it is not the AppBar leave control. Verify
-  /// opens `verify_url` externally; roll history is the last three faces.
+  /// C-250 rule 1: one row of fixed height between the pip strip and the
+  /// board, the same height in every playing state and both locales --
+  /// rule 2's chip and rule 3's countdown ring are what the row holds, and
+  /// both read straight off `room.turn`, so none of the die's own overlays
+  /// (the tumble, the no-move mark) have to be threaded through here. The
+  /// chip sits at the row's logical start and the ring at its end; a `Row`
+  /// under the ambient `Directionality` mirrors that for Arabic on its
+  /// own, nothing here flips anything by hand.
+  static const double _headerRowHeight = 44;
+
+  Widget _playHeaderRow(
+    AppLocalizations loc,
+    RoomSnapshot room,
+    int? seat,
+    TurnState? turn,
+    SeatState? offlineTurnSeat,
+  ) {
+    final String bannerText = _turnBannerText(loc, room, seat);
+    final int turnSeat = turn?.seat ?? seat ?? 0;
+    final Color seatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
+    final bool myTurn = turn != null && turn.seat == seat;
+    final bool offline = offlineTurnSeat != null;
+
+    return SizedBox(
+      height: _headerRowHeight,
+      child: Row(
+        children: [
+          Expanded(
+            child: DecoratedBox(
+              key: const Key('game-header-chip'),
+              decoration: BoxDecoration(
+                color: seatColor.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(kRadiusControl),
+                // Rule 2's second signal on my own turn: an outline in my
+                // own colour, on top of the chip's own tint, not only the
+                // colour itself (doctrine P9).
+                border: myTurn ? Border.all(color: seatColor, width: 2) : null,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: kSpace3,
+                  vertical: kSpace1,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DecoratedBox(
+                      key: const Key('game-header-chip-dot'),
+                      decoration: BoxDecoration(
+                        color: seatColor,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const SizedBox(width: kSpace2, height: kSpace2),
+                    ),
+                    const SizedBox(width: kSpace2),
+                    // Rule 4's last line: the chip also carries an offline
+                    // icon while the turn seat is offline.
+                    if (offline) ...[
+                      Icon(Icons.wifi_off, size: kSpace4, color: seatColor),
+                      const SizedBox(width: kSpace1),
+                    ],
+                    Expanded(
+                      child: Text(
+                        bannerText,
+                        key: const Key('game-screen-turn-banner'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: myTurn
+                              ? FontWeight.w700
+                              : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (turn != null) ...[
+            const SizedBox(width: kSpace2),
+            _countdownBlock(loc, room, turn, seatColor),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// C-250 rule 3 / amendment run 72 (rule 9): the ring depletes with the
+  /// turn and turns `LudoColors.error` for the last 10s; the Text keyed
+  /// `game-screen-turn-countdown` shows only the bare seconds so it fits on
+  /// one line inside the ring, and the sentence that used to sit there
+  /// moves to the `game-header-countdown-semantics` label, with the
+  /// visible digits excluded so TalkBack does not read it twice.
+  Widget _countdownBlock(
+    AppLocalizations loc,
+    RoomSnapshot room,
+    TurnState turn,
+    Color seatColor,
+  ) {
+    final bool lastTenSeconds = _countdownRemainingSeconds <= 10;
+    final Color ringColor = lastTenSeconds ? LudoColors.error : seatColor;
+    final int turnSeconds = room.rules.turnSeconds;
+    final double remainingFraction = turnSeconds > 0
+        ? (_countdownRemainingSeconds / turnSeconds).clamp(0.0, 1.0)
+        : 0.0;
+
+    return Semantics(
+      key: const Key('game-header-countdown-semantics'),
+      label: loc.gameTurnCountdown(_countdownRemainingSeconds),
+      child: SizedBox(
+        width: _headerRowHeight,
+        height: _headerRowHeight,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            _CountdownRing(
+              key: const Key('game-header-countdown-ring'),
+              color: ringColor,
+              remainingFraction: remainingFraction,
+            ),
+            ExcludeSemantics(
+              child: Text(
+                loc.gameTurnCountdownDigits(_countdownRemainingSeconds),
+                key: const Key('game-screen-turn-countdown'),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                  color: ringColor,
+                  fontWeight: FontWeight.w600,
+                  fontSize: kTypeLabel,
+                  height: 1,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// C-250 rule 4: the fixed notice slot below the die, shared by the
+  /// no-move notice and the seat-offline line rather than giving each its
+  /// own reserved space above the board the way the pre-C-250 shape did.
+  /// The slot is sized for the taller of the two placeholder strings so
+  /// switching between them never resizes anything underneath; when both
+  /// would otherwise show, the no-move notice wins and the offline line
+  /// waits for the hold to end, exactly as the rule's own wording asks.
+  Widget _belowDieNoticeSlot(AppLocalizations loc, SeatState? offlineTurnSeat) {
+    return Stack(
+      alignment: Alignment.topCenter,
+      children: [
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(loc.gameNoMove, textAlign: TextAlign.center),
+          ),
+        ),
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(loc.gameSeatOffline(''), textAlign: TextAlign.center),
+          ),
+        ),
+        if (_noMoveVisible)
+          Positioned.fill(
+            child: Text(
+              loc.gameNoMove,
+              key: const Key('game-no-move-notice'),
+              textAlign: TextAlign.center,
+            ),
+          )
+        else if (offlineTurnSeat != null)
+          Positioned.fill(
+            child: Text(
+              loc.gameSeatOffline(offlineTurnSeat.name),
+              key: const Key('game-screen-turn-seat-offline'),
+              textAlign: TextAlign.center,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// C-250 rule 5: `game-screen-dice-value` moves off a visible line and
+  /// onto a `Semantics` wrapping the die, present under exactly the
+  /// condition the old visible line was (`turn.value` non-null) -- the
+  /// die's own face already says it to a sighted player, so nothing
+  /// visible repeats it.
+  Widget _diceValueWrap(AppLocalizations loc, TurnState? turn, Widget die) {
+    if (turn == null || turn.value == null) {
+      return die;
+    }
+    return Semantics(
+      key: const Key('game-screen-dice-value'),
+      label: loc.gameDieValue(turn.value!),
+      child: die,
+    );
+  }
+
+  /// H6.2 and H7: the game has finished. C-243's `EndCard` carries the
+  /// title, the winner's celebration or the loser's warmth, the honest
+  /// numbers and the fairness line; this method's own job is only to
+  /// resolve the plain values `EndCard` needs and hand them across --
+  /// `EndCard` never reads `room` or `controller` itself. The board (when
+  /// there are still at least two seats to draw it from) stays visible
+  /// underneath, per contract rule 8; roll history is unchanged, the last
+  /// three faces. The Roll button and the four token buttons are absent,
+  /// not merely disabled, because there is nothing left to press.
   Widget _gameOverBody(
     AppLocalizations loc,
     RoomController controller,
-    RoomSnapshot room,
-  ) {
+    RoomSnapshot room, {
+    bool rematchGone = false,
+  }) {
     final bool hasBoard = room.seats.length >= 2;
-    final String? verifyUrl = room.verifyUrl;
-    final bool canVerify = verifyUrl != null && verifyUrl.isNotEmpty;
-    return Padding(
+
+    // Rule 4: a winner naming a seat absent from room.seats reads the same
+    // as no winner at all (H7.21's own fallback, carried forward).
+    String? winnerName;
+    if (room.winner != null) {
+      for (final SeatState seatState in room.seats) {
+        if (seatState.seat == room.winner) {
+          winnerName = seatState.name;
+          break;
+        }
+      }
+    }
+    final int? winnerSeat = winnerName == null ? null : room.winner;
+
+    // C-246 rule 4: the ask line names `rematch.by`, resolved against
+    // room.seats the same way winnerName is above -- null when there is no
+    // rematch open, or when `by` has since left.
+    final RematchState? rematch = room.rematch;
+    String? rematchByName;
+    if (rematch != null) {
+      for (final SeatState seatState in room.seats) {
+        if (seatState.seat == rematch.by) {
+          rematchByName = seatState.name;
+          break;
+        }
+      }
+    }
+
+    // C-232: this seat's own numbers, computed from exactly the frames
+    // this screen has already received. No entry in room.seats for my own
+    // seat (a spectator view, or a seat the server never confirmed) leaves
+    // nothing honest to show, not a guess.
+    GameStats? stats;
+    final int? mySeat = controller.seat;
+    if (mySeat != null) {
+      for (final SeatState seatState in room.seats) {
+        if (seatState.seat == mySeat) {
+          stats = computeGameStats(
+            frames: _frames,
+            seat: mySeat,
+            finalTokens: seatState.tokens,
+          );
+          break;
+        }
+      }
+    }
+
+    // The card alone, win or lose, already carries more content than the
+    // pre-C-243 single line of text did (a celebration or nudge, up to
+    // four stat tiles, the fairness line and two buttons), so this body is
+    // scrollable rather than forced into one unscrollable screen the way
+    // the playing body is: nothing here is time-pressured the way a turn
+    // is, and a RenderFlex overflow would hide content rather than merely
+    // look cramped. The board keeps its own square shape via AspectRatio
+    // instead of Expanded, which needs a bounded height a scroll view does
+    // not give its children.
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(kSpace4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            _winnerText(loc, controller, room),
-            key: const Key('game-screen-winner'),
-            textAlign: TextAlign.center,
+          EndCard(
+            mySeat: mySeat,
+            winnerSeat: winnerSeat,
+            winnerName: winnerName,
+            seatColors: LudoColors.seats,
+            stats: stats,
+            verifyUrl: room.verifyUrl,
+            onVerify: _openVerifyUrl,
+            onNewTable: _requestNewTable,
+            rematch: rematch,
+            rematchByName: rematchByName,
+            occupiedSeats: _seatsInPlayOf(room),
+            isHost: controller.isHost,
+            rematchGone: rematchGone,
+            onRematch: _rematchInFlight ? null : () => _onRematchTap(),
+            onStartReady: controller.isHost ? controller.startGame : null,
           ),
           if (hasBoard) ...[
             const SizedBox(height: kSpace4),
-            Expanded(
+            AspectRatio(
+              aspectRatio: 1,
               child: LudoBoard(
                 key: const Key('game-screen-board'),
                 tokens: _tokensOf(room),
                 seatsInPlay: _seatsInPlayOf(room),
+                seatNames: _seatNamesOf(room),
+                youLabel: loc.seatYou,
+                turnSeat: null,
+                onTokenStep: (int stepSeat, int token) =>
+                    _onBoardTokenStep(controller, stepSeat),
               ),
             ),
           ],
           const SizedBox(height: kSpace4),
           _rollHistory(loc, room),
-          const SizedBox(height: kSpace4),
-          OutlinedButton(
-            key: const Key('game-screen-verify-button'),
-            style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
-            onPressed: canVerify ? _openVerifyUrl : null,
-            child: Text(loc.gameVerifyButton),
-          ),
-          const SizedBox(height: kSpace2),
-          ElevatedButton(
-            key: const Key('game-screen-new-room-button'),
-            style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48)),
-            onPressed: _requestNewTable,
-            child: Text(loc.gameNewRoomButton),
-          ),
         ],
       ),
     );
@@ -775,6 +1254,90 @@ class _GameScreenState extends State<GameScreen> {
   }
 }
 
+/// C-250 rule 8: the countdown's own ring, key `game-header-countdown-ring`,
+/// exposing the colour it is currently painted with as a plain public
+/// field rather than making a caller re-derive it from the seconds left.
+/// Amendment run 72 (rule 9a): it expands to fill whatever box the
+/// countdown block gives it, rather than staying a childless `CustomPaint`
+/// that would otherwise paint at `Size.zero`. The depleting sweep itself is
+/// Canvas work (`_CountdownRingPainter`); nothing about "is it red yet"
+/// lives there, only "what colour was I given".
+class _CountdownRing extends StatelessWidget {
+  const _CountdownRing({
+    super.key,
+    required this.color,
+    required this.remainingFraction,
+  });
+
+  /// The turn seat's own colour above 10s left, `LudoColors.error` at 10s
+  /// and below (C-250 rule 8).
+  final Color color;
+
+  /// 0.0 (deadline reached) to 1.0 (a fresh turn): how much of the turn is
+  /// still left, the fraction of the ring the sweep still covers.
+  final double remainingFraction;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.expand(
+      child: CustomPaint(
+        painter: _CountdownRingPainter(
+          color: color,
+          remainingFraction: remainingFraction,
+        ),
+      ),
+    );
+  }
+}
+
+class _CountdownRingPainter extends CustomPainter {
+  const _CountdownRingPainter({
+    required this.color,
+    required this.remainingFraction,
+  });
+
+  final Color color;
+  final double remainingFraction;
+
+  static const double _strokeWidth = 3.5;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Rect bounds = Rect.fromLTWH(
+      _strokeWidth / 2,
+      _strokeWidth / 2,
+      size.width - _strokeWidth,
+      size.height - _strokeWidth,
+    );
+    final Paint track = Paint()
+      ..color = LudoColors.inkMuted.withValues(alpha: 0.25)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _strokeWidth;
+    canvas.drawOval(bounds, track);
+
+    if (remainingFraction <= 0) {
+      return;
+    }
+    final Paint sweep = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _strokeWidth
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(
+      bounds,
+      -math.pi / 2,
+      2 * math.pi * remainingFraction,
+      false,
+      sweep,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CountdownRingPainter oldDelegate) =>
+      oldDelegate.color != color ||
+      oldDelegate.remainingFraction != remainingFraction;
+}
+
 /// H1: a map from each seat's `seat` to that seat's `tokens` list, taken
 /// straight from `room.seats`.
 Map<int, List<int>> _tokensOf(RoomSnapshot room) {
@@ -787,6 +1350,16 @@ Map<int, List<int>> _tokensOf(RoomSnapshot room) {
 /// H1: the `seat` of every entry in `room.seats`, in the order they appear.
 List<int> _seatsInPlayOf(RoomSnapshot room) {
   return <int>[for (final SeatState seatState in room.seats) seatState.seat];
+}
+
+/// C-257 rule 1/3: each occupied seat's own `name` from `room.seats`,
+/// keyed by seat. `LudoBoard` decides who gets a chip from this and
+/// `seatsInPlay` together; this function only reports what the room said.
+Map<int, String> _seatNamesOf(RoomSnapshot room) {
+  return <int, String>{
+    for (final SeatState seatState in room.seats)
+      seatState.seat: seatState.name,
+  };
 }
 
 /// H2, decided in the order given there, first match wins.
@@ -843,22 +1416,20 @@ SeatState? _offlineTurnSeat(RoomSnapshot room) {
   return null;
 }
 
-/// H7, decided in the order given there, first match wins.
-String _winnerText(
-  AppLocalizations loc,
-  RoomController controller,
-  RoomSnapshot room,
-) {
-  final int? winner = room.winner;
-  if (winner != null && winner == controller.seat) {
-    return loc.gameOverYouWin;
-  }
-  if (winner != null) {
-    for (final SeatState seatState in room.seats) {
-      if (seatState.seat == winner) {
-        return loc.gameOverPlayerWins(seatState.name);
-      }
-    }
-  }
-  return loc.gameOverEnded;
+/// `data[key]` from a frame's `d`, when present and an `int`; null
+/// otherwise. Mirrors feedback.dart's own private `_intAt` -- duplicated
+/// here rather than exported, since this screen's one use of it (reading
+/// the face a `rolled` carried, to arm or drop the no-move hold) has
+/// nothing to do with cue derivation.
+int? _intAt(Map<String, Object?> data, String key) {
+  final Object? value = data[key];
+  return value is int ? value : null;
+}
+
+/// `data[key]` from a frame's `d`, when present and a `String`; null
+/// otherwise. C-246: reads `game_started`'s own `game_id` to decide
+/// whether a new game has begun.
+String? _stringAt(Map<String, Object?> data, String key) {
+  final Object? value = data[key];
+  return value is String ? value : null;
 }

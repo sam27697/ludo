@@ -109,9 +109,13 @@ bool _capturedHasMistypedSeat(List<Object?> captured) {
   return false;
 }
 
-/// C-225's `moved` row. Isolated from [cuesForFrame] because it is the one
-/// frame type with two independent branches (my move, someone else's) and
-/// an ordered list of cues rather than at most one.
+/// C-225's `moved` row, amended by C-259 rule 1: the frame itself plays no
+/// step any more -- the board plays one `FeedbackCue.step` per square as
+/// the drawn token actually arrives there (`game_screen.dart`'s
+/// `onTokenStep`), not in one burst the instant this frame lands. Isolated
+/// from [cuesForFrame] because it is the one frame type with two
+/// independent branches (my move, someone else's) and an ordered list of
+/// cues rather than at most one.
 List<FeedbackCue> _cuesForMoved(Map<String, Object?> data, int mySeat) {
   final int? seat = _intAt(data, 'seat');
   if (seat == null) {
@@ -130,11 +134,7 @@ List<FeedbackCue> _cuesForMoved(Map<String, Object?> data, int mySeat) {
     if (from == null || to == null) {
       return const <FeedbackCue>[];
     }
-    final int squares = from == -1 ? 1 : to - from;
-    final List<FeedbackCue> cues = <FeedbackCue>[
-      for (int travelled = 0; travelled < squares; travelled++)
-        FeedbackCue.step,
-    ];
+    final List<FeedbackCue> cues = <FeedbackCue>[];
     if (captured.isNotEmpty) {
       cues.add(FeedbackCue.capturedOther);
     }
