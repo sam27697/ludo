@@ -32,6 +32,10 @@ abstract final class LudoColors {
   static const Color paperWashTop = Color(0xFFD8EEE8);
   static const Color paperWashBottom = Color(0xFFD2E8E2);
 
+  /// C-243: warm gold for the winner's end-card title and celebration only.
+  /// Never a seat colour and never used for anything but "you won".
+  static const Color gold = Color(0xFFD4AF37);
+
   /// Seat colours: single source for board yards/tokens and the brand die.
   static const List<Color> seats = <Color>[
     Color(0xFFD32F2F),
@@ -77,6 +81,11 @@ const double kSpace4 = 16;
 const double kSpace5 = 20;
 const double kSpace6 = 24;
 const double kSpace7 = 32;
+
+/// Tighter than [kSpace1]: the vertical padding inside a compact in-card
+/// badge (the lobby seat card's "You" chip), where the card's own padding
+/// already carries the larger spacing around the badge itself.
+const double kSpaceTight = 2;
 
 /// Brand colours and motion readable from [Theme.of] via ThemeExtension.
 @immutable

@@ -38,6 +38,17 @@
 //   fixture respectively, rather than as one testWidgets with two mounts.
 //   This should be checked against whatever order 189's own author, or the
 //   master, concludes was intended.
+//
+// Amendment, order 263 (run 73, contract C-262 "the lobby's Leave moves to
+// the corner", rule 1): the OutlinedButton-labelled-loc.gameLeaveButton
+// idiom the paragraph above describes, and the bottom-of-body position
+// L-POS pinned, are both gone from the connected body on C-262. The cases
+// below are amended in place -- old and new listed in order 263's own
+// report -- to pin an IconButton with icon Icons.close, tooltip
+// loc.gameLeaveButton, a tap target at least 48 x 48, sitting above every
+// other control in the top start corner. Every tap assertion (L-TAP-H,
+// L-TAP-G, and L-AR's own onPressed check) is kept as it stood, since rule
+// 1 says the icon does what the old button's _leaveLobby already did.
 
 import 'dart:convert';
 
@@ -297,9 +308,13 @@ void _expectConnectedFixture(
 
 void main() {
   // --- L-H1: host, connected, room not full (2 of 4). ---------------------
+  // Amendment, order 263 (run 73, contract C-262 rule 1): the connected
+  // body's lobby-leave-button is an IconButton with icon Icons.close and
+  // tooltip loc.gameLeaveButton now, not the ButtonStyleButton-with-a-
+  // label-Text this case used to pin.
   testWidgets(
     'L-H1: host, room not full: lobby-leave-button is present exactly '
-    'once, is a ButtonStyleButton with a non-null onPressed, labelled '
+    'once, is an IconButton with a non-null onPressed, tooltip '
     'loc.gameLeaveButton, and lobby-start-button is still present',
     (WidgetTester tester) async {
       final _Connector connector = _Connector();
@@ -350,26 +365,29 @@ void main() {
             'orders/187-prove-connected-lobby-leave.md)',
       );
 
-      final ButtonStyleButton button = tester.widget<ButtonStyleButton>(
-        leaveFinder,
-      );
+      final IconButton button = tester.widget<IconButton>(leaveFinder);
       expect(
         button.onPressed,
         isNotNull,
         reason: 'L-H1: lobby-leave-button must have a non-null onPressed',
       );
+      expect(
+        (button.icon as Icon).icon,
+        Icons.close,
+        reason:
+            'L-H1: lobby-leave-button\'s icon must be Icons.close '
+            '(contract C-262 rule 1)',
+      );
 
       final BuildContext context = tester.element(find.byType(LobbyScreen));
       final AppLocalizations loc = AppLocalizations.of(context);
       expect(
-        find.descendant(
-          of: leaveFinder,
-          matching: find.text(loc.gameLeaveButton),
-        ),
-        findsOneWidget,
+        button.tooltip,
+        loc.gameLeaveButton,
         reason:
-            'L-H1: lobby-leave-button\'s label Text must equal '
-            'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}"',
+            'L-H1: lobby-leave-button\'s tooltip must equal '
+            'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}" '
+            '(contract C-262 rule 1)',
       );
       expect(
         find.byKey(_startKey),
@@ -426,26 +444,29 @@ void main() {
             'L-H2)',
       );
 
-      final ButtonStyleButton button = tester.widget<ButtonStyleButton>(
-        leaveFinder,
-      );
+      final IconButton button = tester.widget<IconButton>(leaveFinder);
       expect(
         button.onPressed,
         isNotNull,
         reason: 'L-H2: lobby-leave-button must have a non-null onPressed',
       );
+      expect(
+        (button.icon as Icon).icon,
+        Icons.close,
+        reason:
+            'L-H2: lobby-leave-button\'s icon must be Icons.close '
+            '(contract C-262 rule 1)',
+      );
 
       final BuildContext context = tester.element(find.byType(LobbyScreen));
       final AppLocalizations loc = AppLocalizations.of(context);
       expect(
-        find.descendant(
-          of: leaveFinder,
-          matching: find.text(loc.gameLeaveButton),
-        ),
-        findsOneWidget,
+        button.tooltip,
+        loc.gameLeaveButton,
         reason:
-            'L-H2: lobby-leave-button\'s label Text must equal '
-            'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}"',
+            'L-H2: lobby-leave-button\'s tooltip must equal '
+            'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}" '
+            '(contract C-262 rule 1)',
       );
 
       final Finder startFinder = find.byKey(_startKey);
@@ -521,26 +542,29 @@ void main() {
             'L-G1)',
       );
 
-      final ButtonStyleButton button = tester.widget<ButtonStyleButton>(
-        leaveFinder,
-      );
+      final IconButton button = tester.widget<IconButton>(leaveFinder);
       expect(
         button.onPressed,
         isNotNull,
         reason: 'L-G1: lobby-leave-button must have a non-null onPressed',
       );
+      expect(
+        (button.icon as Icon).icon,
+        Icons.close,
+        reason:
+            'L-G1: lobby-leave-button\'s icon must be Icons.close '
+            '(contract C-262 rule 1)',
+      );
 
       final BuildContext context = tester.element(find.byType(LobbyScreen));
       final AppLocalizations loc = AppLocalizations.of(context);
       expect(
-        find.descendant(
-          of: leaveFinder,
-          matching: find.text(loc.gameLeaveButton),
-        ),
-        findsOneWidget,
+        button.tooltip,
+        loc.gameLeaveButton,
         reason:
-            'L-G1: lobby-leave-button\'s label Text must equal '
-            'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}"',
+            'L-G1: lobby-leave-button\'s tooltip must equal '
+            'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}" '
+            '(contract C-262 rule 1)',
       );
       expect(
         find.byKey(_startKey),
@@ -559,9 +583,14 @@ void main() {
 
   // --- L-POS: geometry, one mount per tree (see the top-of-file ambiguity
   // note about why this is two testWidgets rather than one). ---------------
+  // Amendment, order 263 (C-262 rule 1): the full-width bottom OutlinedButton
+  // this case used to pin is gone; lobby-leave-button is now a corner
+  // IconButton that sits above every other control the tree shows, in the
+  // top start corner, at least 48 x 48.
   testWidgets(
-    'L-POS (host tree, the L-H1 fixture): lobby-leave-button sits below '
-    'lobby-start-button and is the last control in the body',
+    'L-POS (host tree, the L-H1 fixture): lobby-leave-button sits above '
+    'lobby-start-button, in the top start corner, and is the first control '
+    'in the body',
     (WidgetTester tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transport = FakeTransport();
@@ -605,19 +634,53 @@ void main() {
       await tester.pump();
 
       final Rect leaveRect = tester.getRect(leaveFinder);
-      final Rect startRect = tester.getRect(find.byKey(_startKey));
       expect(
-        leaveRect.top,
-        greaterThan(startRect.bottom),
+        leaveRect.width,
+        greaterThanOrEqualTo(48.0),
         reason:
-            'L-POS: in L-H1\'s tree, lobby-leave-button\'s top edge '
-            '(${leaveRect.top}) must sit below lobby-start-button\'s '
-            'bottom edge (${startRect.bottom})',
+            'L-POS: lobby-leave-button\'s tap target must be at least 48 '
+            'wide (contract C-262 rule 1); was ${leaveRect.width}',
+      );
+      expect(
+        leaveRect.height,
+        greaterThanOrEqualTo(48.0),
+        reason:
+            'L-POS: lobby-leave-button\'s tap target must be at least 48 '
+            'tall (contract C-262 rule 1); was ${leaveRect.height}',
       );
 
-      // "Last control in the body": nothing else the host tree shows sits
-      // lower than lobby-leave-button either, so lobby-start-button being
-      // above it (just proven) is not a coincidence of one comparison.
+      final Size viewSize =
+          tester.view.physicalSize / tester.view.devicePixelRatio;
+      expect(
+        leaveRect.right,
+        lessThanOrEqualTo(viewSize.width / 2),
+        reason:
+            'L-POS: in en, lobby-leave-button must sit in the left half of '
+            'the view (contract C-262 rule 1, top start corner); rect was '
+            '$leaveRect, view width ${viewSize.width}',
+      );
+      expect(
+        leaveRect.bottom,
+        lessThanOrEqualTo(viewSize.height / 4),
+        reason:
+            'L-POS: lobby-leave-button must sit in the top quarter of the '
+            'view (contract C-262 rule 1, top start corner); rect was '
+            '$leaveRect, view height ${viewSize.height}',
+      );
+
+      final Rect startRect = tester.getRect(find.byKey(_startKey));
+      expect(
+        leaveRect.bottom,
+        lessThanOrEqualTo(startRect.top),
+        reason:
+            'L-POS: in L-H1\'s tree, lobby-leave-button\'s bottom edge '
+            '(${leaveRect.bottom}) must sit above lobby-start-button\'s '
+            'top edge (${startRect.top}) (contract C-262 rule 1)',
+      );
+
+      // Nothing else the host tree shows sits higher than lobby-leave-button
+      // either, so lobby-start-button sitting below it (just proven) is not
+      // a coincidence of one comparison.
       for (final Key otherKey in <Key>[
         _copyLinkKey,
         _copyCodeKey,
@@ -627,20 +690,24 @@ void main() {
       ]) {
         final Rect otherRect = tester.getRect(find.byKey(otherKey));
         expect(
-          leaveRect.top,
-          greaterThan(otherRect.bottom),
+          leaveRect.bottom,
+          lessThanOrEqualTo(otherRect.top),
           reason:
-              'L-POS: lobby-leave-button must be the last control in the '
-              'body; its top edge (${leaveRect.top}) must sit below '
-              'Key($otherKey)\'s bottom edge (${otherRect.bottom})',
+              'L-POS: lobby-leave-button must sit above every other '
+              'control in the body; its bottom edge (${leaveRect.bottom}) '
+              'must sit above Key($otherKey)\'s top edge (${otherRect.top}) '
+              '(contract C-262 rule 1)',
         );
       }
     },
   );
 
+  // Amendment, order 263 (C-262 rule 1): same amendment as the host tree
+  // above, mirrored for the guest tree against lobby-waiting.
   testWidgets(
-    'L-POS (guest tree, the L-G1 fixture): lobby-leave-button sits below '
-    'lobby-waiting and is the last control in the body',
+    'L-POS (guest tree, the L-G1 fixture): lobby-leave-button sits above '
+    'lobby-waiting, in the top start corner, and is the first control in '
+    'the body',
     (WidgetTester tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transport = FakeTransport();
@@ -684,14 +751,48 @@ void main() {
       await tester.pump();
 
       final Rect leaveRect = tester.getRect(leaveFinder);
+      expect(
+        leaveRect.width,
+        greaterThanOrEqualTo(48.0),
+        reason:
+            'L-POS: lobby-leave-button\'s tap target must be at least 48 '
+            'wide (contract C-262 rule 1); was ${leaveRect.width}',
+      );
+      expect(
+        leaveRect.height,
+        greaterThanOrEqualTo(48.0),
+        reason:
+            'L-POS: lobby-leave-button\'s tap target must be at least 48 '
+            'tall (contract C-262 rule 1); was ${leaveRect.height}',
+      );
+
+      final Size viewSize =
+          tester.view.physicalSize / tester.view.devicePixelRatio;
+      expect(
+        leaveRect.right,
+        lessThanOrEqualTo(viewSize.width / 2),
+        reason:
+            'L-POS: in en, lobby-leave-button must sit in the left half of '
+            'the view (contract C-262 rule 1, top start corner); rect was '
+            '$leaveRect, view width ${viewSize.width}',
+      );
+      expect(
+        leaveRect.bottom,
+        lessThanOrEqualTo(viewSize.height / 4),
+        reason:
+            'L-POS: lobby-leave-button must sit in the top quarter of the '
+            'view (contract C-262 rule 1, top start corner); rect was '
+            '$leaveRect, view height ${viewSize.height}',
+      );
+
       final Rect waitingRect = tester.getRect(find.byKey(_waitingKey));
       expect(
-        leaveRect.top,
-        greaterThan(waitingRect.bottom),
+        leaveRect.bottom,
+        lessThanOrEqualTo(waitingRect.top),
         reason:
-            'L-POS: in L-G1\'s tree, lobby-leave-button\'s top edge '
-            '(${leaveRect.top}) must sit below lobby-waiting\'s bottom '
-            'edge (${waitingRect.bottom})',
+            'L-POS: in L-G1\'s tree, lobby-leave-button\'s bottom edge '
+            '(${leaveRect.bottom}) must sit above lobby-waiting\'s top '
+            'edge (${waitingRect.top}) (contract C-262 rule 1)',
       );
 
       for (final Key otherKey in <Key>[
@@ -703,12 +804,13 @@ void main() {
       ]) {
         final Rect otherRect = tester.getRect(find.byKey(otherKey));
         expect(
-          leaveRect.top,
-          greaterThan(otherRect.bottom),
+          leaveRect.bottom,
+          lessThanOrEqualTo(otherRect.top),
           reason:
-              'L-POS: lobby-leave-button must be the last control in the '
-              'body; its top edge (${leaveRect.top}) must sit below '
-              'Key($otherKey)\'s bottom edge (${otherRect.bottom})',
+              'L-POS: lobby-leave-button must sit above every other '
+              'control in the body; its bottom edge (${leaveRect.bottom}) '
+              'must sit above Key($otherKey)\'s top edge (${otherRect.top}) '
+              '(contract C-262 rule 1)',
         );
       }
     },
@@ -918,9 +1020,13 @@ void main() {
   );
 
   // --- L-AR: L-G1 in Locale('ar'). ------------------------------------------
+  // Amendment, order 263 (C-262 rule 1): same type/tooltip amendment as
+  // L-G1, and the same top-start-corner amendment as L-POS, mirrored for
+  // ar's right start side.
   testWidgets(
-    "L-AR: L-G1 in Locale('ar') -- lobby-leave-button's label equals that "
-    "tree's own loc.gameLeaveButton, and L-POS holds there too",
+    "L-AR: L-G1 in Locale('ar') -- lobby-leave-button's tooltip equals that "
+    "tree's own loc.gameLeaveButton, and L-POS holds there too, on the "
+    "right",
     (WidgetTester tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transport = FakeTransport();
@@ -963,41 +1069,79 @@ void main() {
             "lobby-leave-button in Locale('ar') too (contract L-AR)",
       );
 
-      final ButtonStyleButton button = tester.widget<ButtonStyleButton>(
-        leaveFinder,
-      );
+      final IconButton button = tester.widget<IconButton>(leaveFinder);
       expect(
         button.onPressed,
         isNotNull,
         reason: 'L-AR: lobby-leave-button must have a non-null onPressed',
       );
+      expect(
+        (button.icon as Icon).icon,
+        Icons.close,
+        reason:
+            'L-AR: lobby-leave-button\'s icon must be Icons.close '
+            '(contract C-262 rule 1)',
+      );
 
       final BuildContext context = tester.element(find.byType(LobbyScreen));
       final AppLocalizations loc = AppLocalizations.of(context);
       expect(
-        find.descendant(
-          of: leaveFinder,
-          matching: find.text(loc.gameLeaveButton),
-        ),
-        findsOneWidget,
+        button.tooltip,
+        loc.gameLeaveButton,
         reason:
-            "L-AR: lobby-leave-button's label must equal this tree's own "
-            'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}"',
+            "L-AR: lobby-leave-button's tooltip must equal this tree's own "
+            'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}" '
+            '(contract C-262 rule 1)',
       );
 
       await tester.ensureVisible(leaveFinder);
       await tester.pump();
 
       final Rect leaveRect = tester.getRect(leaveFinder);
+      expect(
+        leaveRect.width,
+        greaterThanOrEqualTo(48.0),
+        reason:
+            'L-AR: lobby-leave-button\'s tap target must be at least 48 '
+            'wide (contract C-262 rule 1); was ${leaveRect.width}',
+      );
+      expect(
+        leaveRect.height,
+        greaterThanOrEqualTo(48.0),
+        reason:
+            'L-AR: lobby-leave-button\'s tap target must be at least 48 '
+            'tall (contract C-262 rule 1); was ${leaveRect.height}',
+      );
+
+      final Size viewSize =
+          tester.view.physicalSize / tester.view.devicePixelRatio;
+      expect(
+        leaveRect.left,
+        greaterThanOrEqualTo(viewSize.width / 2),
+        reason:
+            "L-AR: in ar, lobby-leave-button must sit in the right half of "
+            'the view (contract C-262 rule 1, top start corner on the '
+            'right in RTL); rect was $leaveRect, view width '
+            '${viewSize.width}',
+      );
+      expect(
+        leaveRect.bottom,
+        lessThanOrEqualTo(viewSize.height / 4),
+        reason:
+            'L-AR: lobby-leave-button must sit in the top quarter of the '
+            'view (contract C-262 rule 1, top start corner); rect was '
+            '$leaveRect, view height ${viewSize.height}',
+      );
+
       final Rect waitingRect = tester.getRect(find.byKey(_waitingKey));
       expect(
-        leaveRect.top,
-        greaterThan(waitingRect.bottom),
+        leaveRect.bottom,
+        lessThanOrEqualTo(waitingRect.top),
         reason:
             "L-AR: L-POS holds in Locale('ar') too -- lobby-leave-button's "
-            'top edge (${leaveRect.top}) must sit below lobby-waiting\'s '
-            'bottom edge (${waitingRect.bottom}); vertical order must not '
-            'flip in RTL',
+            'bottom edge (${leaveRect.bottom}) must sit above '
+            'lobby-waiting\'s top edge (${waitingRect.top}); vertical '
+            'order must not flip in RTL',
       );
 
       for (final Key otherKey in <Key>[
@@ -1009,13 +1153,13 @@ void main() {
       ]) {
         final Rect otherRect = tester.getRect(find.byKey(otherKey));
         expect(
-          leaveRect.top,
-          greaterThan(otherRect.bottom),
+          leaveRect.bottom,
+          lessThanOrEqualTo(otherRect.top),
           reason:
-              "L-AR: lobby-leave-button must be the last control in the "
-              'body in Locale(ar) too; its top edge (${leaveRect.top}) '
-              'must sit below Key($otherKey)\'s bottom edge '
-              '(${otherRect.bottom})',
+              "L-AR: lobby-leave-button must sit above every other control "
+              'in the body in Locale(ar) too; its bottom edge '
+              '(${leaveRect.bottom}) must sit above Key($otherKey)\'s top '
+              'edge (${otherRect.top}) (contract C-262 rule 1)',
         );
       }
     },

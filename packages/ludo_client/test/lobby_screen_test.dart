@@ -1011,24 +1011,36 @@ void main() {
               'being second in the list',
         );
 
-        // The list is not re-sorted: seat 3's row (list index 0) should
-        // render above seat 0's row (list index 1) in a lobby seat list,
-        // which is the ordinary vertical layout for "who is in the room".
-        // If this fails because the layout is genuinely not vertical, that
-        // is a real finding to report, not a reason to delete the check.
-        final seat3Top = tester.getTopLeft(
+        // The list is not re-sorted: seat 3's card (list index 0) must read
+        // before seat 0's card (list index 1) in a lobby seat list.
+        // Amended for C-254 rule 3 (order 255, item 2 addendum): the seat
+        // list is now a two-column grid, so list index 0 and list index 1
+        // can land in the same grid row, side by side, instead of always
+        // stacking vertically. Accept either reading order the grid can
+        // produce: seat 3's card left of seat 0's in the same row (en), or
+        // seat 3's card strictly above seat 0's -- the same list-order rule
+        // the old plain list satisfied. Seat 0 left of seat 3 in the same
+        // row, or seat 0 above seat 3, must still fail this check.
+        final Rect seat3Rect = tester.getRect(
           find.byKey(const Key('lobby-seat-3')),
         );
-        final seat0Top = tester.getTopLeft(
+        final Rect seat0Rect = tester.getRect(
           find.byKey(const Key('lobby-seat-0')),
         );
+        const double sameRowTolerance = 1.0;
+        final bool sameRow =
+            (seat3Rect.top - seat0Rect.top).abs() <= sameRowTolerance;
+        final bool leftOfItSameRow = sameRow && seat3Rect.left < seat0Rect.left;
+        final bool aboveIt = seat3Rect.top < seat0Rect.top - sameRowTolerance;
         expect(
-          seat3Top.dy,
-          lessThan(seat0Top.dy),
+          leftOfItSameRow || aboveIt,
+          isTrue,
           reason:
-              'rule 4: seat rows must render in list order, not sorted by '
-              'seat number; the seats list here is [seat 3, seat 0], so '
-              'seat 3\'s row should sit above seat 0\'s row',
+              'rule 4 / C-254 rule 3: seat cards must render in list order, '
+              'not sorted by seat number; the seats list here is [seat 3, '
+              'seat 0], so seat 3\'s card must sit left of seat 0\'s in the '
+              'same grid row (en) or strictly above it, got '
+              'seat3Rect=$seat3Rect, seat0Rect=$seat0Rect',
         );
       },
     );

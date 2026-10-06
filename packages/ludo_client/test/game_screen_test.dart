@@ -51,6 +51,12 @@
 // H1, H2, H5, H6, H7, H8, H10 -- is unaffected by the control change except
 // where a case checked the old controls' presence or absence, which is
 // migrated in place to game-die and board-token-hit-<seat>-<index>.
+//
+// Order 251 (work/ludo/orders/C-250-play-header.md, run 70): rule 5 moves
+// game-screen-dice-value from a visible Text onto a Semantics wrapping the
+// die, carrying loc.gameDieValue(v) as its label rather than as Text.data.
+// H5.15 is the one case here that read the key as a Text; amended in place,
+// old and new recorded at the call site.
 
 import 'dart:convert';
 
@@ -605,13 +611,20 @@ void main() {
 
         final loc = _locOf(tester);
         expect(find.byKey(_dieKey), findsOneWidget);
-        final text = tester.widget<Text>(find.byKey(_dieKey));
+        // Amended for C-250 rule 5: game-screen-dice-value moved from a
+        // visible Text onto a Semantics wrapping the die, carrying
+        // loc.gameDieValue(v) as its label rather than as Text.data. Old:
+        //   final text = tester.widget<Text>(find.byKey(_dieKey));
+        //   expect(text.data, loc.gameDieValue(4), ...);
+        // New:
+        final semantics = tester.widget<Semantics>(find.byKey(_dieKey));
         expect(
-          text.data,
+          semantics.properties.label,
           loc.gameDieValue(4),
           reason:
               'H5: the die must show loc.gameDieValue(4) '
-              '("${loc.gameDieValue(4)}"); got "${text.data}"',
+              '("${loc.gameDieValue(4)}"); got '
+              '"${semantics.properties.label}"',
         );
       },
     );
@@ -754,7 +767,7 @@ void main() {
         final loc = _locOf(tester);
         expect(find.byKey(_boardKey), findsOneWidget);
         final winnerText = tester.widget<Text>(find.byKey(_winnerKey));
-        expect(winnerText.data, loc.gameOverYouWin);
+        expect(winnerText.data, loc.endWinTitle);
         expect(find.byKey(_tappableDieKey), findsNothing);
         for (int i = 0; i < 4; i++) {
           expect(find.byKey(_dieHitKey(0, i)), findsNothing);
@@ -780,8 +793,14 @@ void main() {
       await _mount(tester, controller);
 
       final loc = _locOf(tester);
+      // game-screen-winner is a Text.rich on a loss (the winner's name in
+      // the winner's seat colour, contract C-243 rule 3), so Text.data
+      // alone is null here; read through the span's own plain text too.
       final winnerText = tester.widget<Text>(find.byKey(_winnerKey));
-      expect(winnerText.data, loc.gameOverPlayerWins('Bob'));
+      expect(
+        winnerText.data ?? winnerText.textSpan?.toPlainText(),
+        loc.endLoseTitle('Bob'),
+      );
       expect(find.byKey(_tappableDieKey), findsNothing);
       for (int i = 0; i < 4; i++) {
         expect(find.byKey(_dieHitKey(0, i)), findsNothing);
@@ -871,7 +890,7 @@ void main() {
         final winnerText = tester.widget<Text>(find.byKey(_winnerKey));
         expect(
           winnerText.data,
-          loc.gameOverYouWin,
+          loc.endWinTitle,
           reason: 'the winner text itself must still render without a board',
         );
       },

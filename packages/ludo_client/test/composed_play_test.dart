@@ -604,11 +604,11 @@ void main() {
         );
         expect(
           winnerText.data,
-          gameLoc.gameOverYouWin,
+          gameLoc.endWinTitle,
           reason:
               'this client is seat 0 and game_over named seat 0 the '
-              'winner, so game-screen-winner must show loc.gameOverYouWin '
-              '("${gameLoc.gameOverYouWin}"), not a message naming someone '
+              'winner, so game-screen-winner must show loc.endWinTitle '
+              '("${gameLoc.endWinTitle}"), not a message naming someone '
               'else or claiming a draw; got "${winnerText.data}"',
         );
         expect(

@@ -193,6 +193,31 @@ class TurnState {
   }
 }
 
+/// docs/PROTOCOL.md section 16.6: null outside a rematch LOBBY, otherwise
+/// the requester (`by`) and the seats that have accepted so far (`ready`,
+/// ascending seat order, always containing `by` unless `by` has since
+/// left).
+class RematchState {
+  const RematchState({required this.by, required this.ready});
+
+  final int by;
+  final List<int> ready;
+
+  factory RematchState.fromJson(Map<String, Object?> json) {
+    final int by = _reqInt(json, 'by');
+    if (by < 0 || by > 3) {
+      throw const SnapshotFormatException('by');
+    }
+    final List<int> ready = _reqIntList(json, 'ready');
+    for (final int seat in ready) {
+      if (seat < 0 || seat > 3) {
+        throw const SnapshotFormatException('ready');
+      }
+    }
+    return RematchState(by: by, ready: ready);
+  }
+}
+
 class RoomSnapshot {
   const RoomSnapshot({
     required this.code,
@@ -209,6 +234,7 @@ class RoomSnapshot {
     required this.winner,
     this.verifyUrl,
     this.recentRolls = const <(int k, int face)>[],
+    this.rematch,
     required this.seq,
   });
 
@@ -237,6 +263,12 @@ class RoomSnapshot {
   /// Client-only ring of the last three `(k, face)` pairs from `rolled`.
   /// Not a snapshot wire field; [fromJson] always starts this empty.
   final List<(int k, int face)> recentRolls;
+
+  /// docs/PROTOCOL.md section 16.6. Present on the wire in every state, but
+  /// decoded here the way every other optional field is: a missing key and
+  /// an explicit `null` both read as null, and only a key present with the
+  /// wrong shape throws. Non-null only in a rematch LOBBY.
+  final RematchState? rematch;
 
   final int seq;
 
@@ -296,6 +328,16 @@ class RoomSnapshot {
     }
 
     final String? verifyUrl = _optString(json, 'verify_url');
+
+    RematchState? rematch;
+    final Object? rematchValue = json['rematch'];
+    if (rematchValue != null) {
+      if (rematchValue is! Map<String, Object?>) {
+        throw const SnapshotFormatException('rematch');
+      }
+      rematch = RematchState.fromJson(rematchValue);
+    }
+
     final int seq = _reqInt(json, 'seq');
 
     return RoomSnapshot(
@@ -312,14 +354,18 @@ class RoomSnapshot {
       turn: turn,
       winner: winner,
       verifyUrl: verifyUrl,
+      rematch: rematch,
       seq: seq,
     );
   }
 
   /// A copy with the given fields replaced. Every omitted parameter keeps
   /// this instance's value; there is no way to null out [gameId],
-  /// [clientSeeds], [turn], [winner] or [verifyUrl] through this method,
-  /// because nothing that constructs a [RoomSnapshot] copy today needs to.
+  /// [clientSeeds], [turn], [winner], [verifyUrl] or [rematch] through this
+  /// method, because nothing that constructs a [RoomSnapshot] copy today
+  /// needs to -- every reducer that needs `rematch` to actually change
+  /// (become non-null, change its `ready`, or go back to null) replaces the
+  /// whole snapshot with a fresh [RoomSnapshot.fromJson] instead of copying.
   RoomSnapshot copyWith({
     String? code,
     RoomState? state,
@@ -335,6 +381,7 @@ class RoomSnapshot {
     int? winner,
     String? verifyUrl,
     List<(int k, int face)>? recentRolls,
+    RematchState? rematch,
     int? seq,
   }) {
     return RoomSnapshot(
@@ -352,6 +399,7 @@ class RoomSnapshot {
       winner: winner ?? this.winner,
       verifyUrl: verifyUrl ?? this.verifyUrl,
       recentRolls: recentRolls ?? this.recentRolls,
+      rematch: rematch ?? this.rematch,
       seq: seq ?? this.seq,
     );
   }

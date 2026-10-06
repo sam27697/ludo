@@ -12,6 +12,7 @@ import 'die_mark.dart';
 import 'net/connection.dart' show RoomToggles;
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
+import 'seat_card.dart';
 import 'session_memory.dart' show SeatRecord;
 import 'theme.dart';
 
@@ -101,6 +102,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// settle. While true a second tap sends nothing.
   bool _startWithPresentInFlight = false;
 
+  /// C-246 rule 7: true while this device's own `rematch` accept is open,
+  /// so a second tap on [lobby-rematch-accept] sends nothing.
+  bool _rematchInFlight = false;
+
   @override
   void initState() {
     super.initState();
@@ -171,6 +176,26 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
     setState(() {
       _startWithPresentInFlight = false;
+    });
+  }
+
+  /// C-246 rule 7: the tap handler for `lobby-rematch-accept`, sending
+  /// `rematch` for a joiner who landed on this screen because a rematch
+  /// LOBBY's route never saw a game. `RoomController.rematch` never
+  /// throws, so this always reaches the end and clears the guard.
+  Future<void> _onRematchAccept() async {
+    if (_rematchInFlight) {
+      return;
+    }
+    setState(() {
+      _rematchInFlight = true;
+    });
+    await widget.controller.rematch();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _rematchInFlight = false;
     });
   }
 
@@ -260,7 +285,43 @@ class _LobbyScreenState extends State<LobbyScreen> {
               // connecting / error / closed states.
               if (connected) ...[
                 const FeltEdge(key: Key('game-felt-edge')),
-                const SeatPipStrip(key: Key('game-seat-pip-strip')),
+                // C-262 rules 1-2: lobby-leave-button lives in this chrome
+                // row, at the top start corner, beside the pip strip --
+                // never a new full-width row above the content. The fixed
+                // 48dp height keeps the Stack from sizing to the shorter pip
+                // strip alone, which would let the icon's tap target bleed
+                // above the row; the Stack itself keeps the strip centred on
+                // its own width, and PositionedDirectional gives Arabic the
+                // mirror (top right) for free, no hand-picked side.
+                SizedBox(
+                  height: 48,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // C-254 rule 5: only the occupied seats get a pip
+                      // here, not the fixed four the strip draws by
+                      // default.
+                      SeatPipStrip(
+                        key: const Key('game-seat-pip-strip'),
+                        seats: controller.room!.seats
+                            .map((SeatState s) => s.seat)
+                            .toList(),
+                      ),
+                      PositionedDirectional(
+                        start: kSpace2,
+                        child: IconButton(
+                          key: const Key('lobby-leave-button'),
+                          style: IconButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                          ),
+                          tooltip: loc.gameLeaveButton,
+                          onPressed: _leaveLobby,
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
               if (controller.hasDesynced) _desyncBanner(loc, controller),
               Expanded(child: phaseBody),
@@ -360,6 +421,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Widget _connectedBody(AppLocalizations loc, RoomController controller) {
     final RoomSnapshot room = controller.room!;
     final bool roomFull = room.seats.length == room.players;
+    // C-246 rule 7: a joiner of a rematch LOBBY lands here, because this
+    // route never saw a game. Not the host and not any seat that already
+    // played game one -- both stay on GameScreen, whose own latch never
+    // sends them back to this screen (rule 2) -- so the ordinary host and
+    // waiting blocks below are replaced by the one-tap accept whenever
+    // this seat has not answered yet.
+    final RematchState? rematch = room.rematch;
+    final bool inRematchLobby =
+        room.state == RoomState.lobby && rematch != null;
+    final bool amReadyForRematch =
+        inRematchLobby &&
+        controller.seat != null &&
+        rematch.ready.contains(controller.seat);
     final TextTheme textTheme = Theme.of(context).textTheme;
     final double viewHeight = MediaQuery.sizeOf(context).height;
     // Same compact rule as home: widget-test surfaces are 800x600; real
@@ -369,7 +443,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         kSpace6,
-        compact ? kSpace2 : kSpace6,
+        // C-262 rule 5: the 48dp lobby-leave-button row above this scroll
+        // area already claims the height the old, shorter pip-strip row
+        // did not, so every optional compact gap below is trimmed to the
+        // smallest spacing unit to keep host, start and start-with-present
+        // inside 360x616 and 800x600 in both locales.
+        compact ? kSpace1 : kSpace6,
         kSpace6,
         compact ? kSpace4 : kSpace6,
       ),
@@ -381,7 +460,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             textAlign: TextAlign.center,
             style: textTheme.labelLarge?.copyWith(color: LudoColors.inkMuted),
           ),
-          SizedBox(height: compact ? kSpace2 : kSpace3),
+          SizedBox(height: compact ? kSpace1 : kSpace3),
           Center(
             child: DieMark(
               size: dieSize,
@@ -400,7 +479,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ),
           ),
-          SizedBox(height: compact ? kSpace3 : kSpace4),
+          SizedBox(height: compact ? kSpace1 : kSpace4),
           ElevatedButton.icon(
             key: const Key('lobby-share-button'),
             style: ElevatedButton.styleFrom(
@@ -410,7 +489,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             icon: const Icon(Icons.share),
             label: Text(loc.lobbyShareButton),
           ),
-          SizedBox(height: compact ? kSpace2 : kSpace3),
+          SizedBox(height: compact ? kSpace1 : kSpace3),
           Row(
             children: [
               Expanded(
@@ -431,27 +510,50 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ],
           ),
-          SizedBox(height: compact ? kSpace4 : kSpace6),
-          for (final SeatState seat in room.seats)
-            Padding(
-              key: Key('lobby-seat-${seat.seat}'),
-              padding: const EdgeInsets.symmetric(vertical: kSpace1),
-              child: Text(seat.name, textAlign: TextAlign.center),
+          SizedBox(height: compact ? kSpace1 : kSpace6),
+          _seatGrid(loc, room, controller),
+          SizedBox(height: compact ? kSpace1 : kSpace3),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: kSpace2,
+            runSpacing: kSpace2,
+            children: [
+              _ruleChip(
+                chipKey: const Key('lobby-rule-blocks-chip'),
+                icon: Icons.shield_outlined,
+                on: room.rules.blocks,
+                textKey: const Key('lobby-rule-blocks'),
+                text: room.rules.blocks
+                    ? loc.lobbyRuleBlocksOn
+                    : loc.lobbyRuleBlocksOff,
+              ),
+              _ruleChip(
+                chipKey: const Key('lobby-rule-capture-bonus-chip'),
+                icon: Icons.replay_rounded,
+                on: room.rules.captureBonus,
+                textKey: const Key('lobby-rule-capture-bonus'),
+                text: room.rules.captureBonus
+                    ? loc.lobbyRuleCaptureBonusOn
+                    : loc.lobbyRuleCaptureBonusOff,
+              ),
+            ],
+          ),
+          if (inRematchLobby && !amReadyForRematch) ...[
+            const SizedBox(height: kSpace4),
+            ElevatedButton(
+              key: const Key('lobby-rematch-accept'),
+              onPressed: _rematchInFlight ? null : () => _onRematchAccept(),
+              child: Text(loc.endRematch),
             ),
-          SizedBox(height: compact ? kSpace2 : kSpace3),
-          Text(
-            room.rules.blocks ? loc.lobbyRuleBlocksOn : loc.lobbyRuleBlocksOff,
-            key: const Key('lobby-rule-blocks'),
-            textAlign: TextAlign.center,
-          ),
-          Text(
-            room.rules.captureBonus
-                ? loc.lobbyRuleCaptureBonusOn
-                : loc.lobbyRuleCaptureBonusOff,
-            key: const Key('lobby-rule-capture-bonus'),
-            textAlign: TextAlign.center,
-          ),
-          if (!controller.isHost) ...[
+          ] else if (inRematchLobby && amReadyForRematch) ...[
+            const SizedBox(height: kSpace4),
+            Text(
+              loc.endRematchWaiting,
+              key: const Key('lobby-rematch-waiting'),
+              textAlign: TextAlign.center,
+            ),
+          ],
+          if (!inRematchLobby && !controller.isHost) ...[
             const SizedBox(height: kSpace4),
             Text(
               roomFull
@@ -461,8 +563,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
               textAlign: TextAlign.center,
             ),
           ],
-          if (controller.isHost) ...[
-            SizedBox(height: compact ? kSpace4 : kSpace6),
+          if (!inRematchLobby && controller.isHost) ...[
+            SizedBox(height: compact ? kSpace1 : kSpace6),
             ElevatedButton(
               key: const Key('lobby-start-button'),
               onPressed: roomFull ? controller.startGame : null,
@@ -479,7 +581,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             if (room.state == RoomState.lobby &&
                 !roomFull &&
                 room.seats.length >= 2) ...[
-              const SizedBox(height: kSpace2),
+              SizedBox(height: compact ? kSpace1 : kSpace2),
               ElevatedButton(
                 key: const Key('lobby-start-with-present-button'),
                 onPressed: _startWithPresentInFlight
@@ -492,13 +594,108 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ],
           ],
-          SizedBox(height: compact ? kSpace2 : kSpace3),
-          OutlinedButton(
-            key: const Key('lobby-leave-button'),
-            onPressed: _leaveLobby,
-            child: Text(loc.gameLeaveButton),
-          ),
         ],
+      ),
+    );
+  }
+
+  /// C-254 rules 1-3: the occupied seats (in `room.seats` order, never
+  /// re-sorted by seat number) followed by one open-seat placeholder per
+  /// seat nobody has taken yet, laid out two to a row. A plain `Row` of
+  /// each pair sits under the ambient `Directionality`, so Arabic mirrors
+  /// seat order to start at the right on its own; nothing here flips
+  /// anything by hand.
+  Widget _seatGrid(
+    AppLocalizations loc,
+    RoomSnapshot room,
+    RoomController controller,
+  ) {
+    final int openCount = room.players - room.seats.length;
+    final List<Widget> cards = [
+      for (final SeatState seat in room.seats)
+        SeatCard(
+          seat: seat,
+          isMine: controller.seat == seat.seat,
+          isHost: seat.seat == room.hostSeat,
+          youLabel: loc.seatYou,
+        ),
+      for (int i = 0; i < openCount; i++)
+        OpenSeatCard(index: i, label: loc.lobbyOpenSeat),
+    ];
+
+    final List<Widget> rows = [];
+    for (int i = 0; i < cards.length; i += 2) {
+      final bool hasSecond = i + 1 < cards.length;
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: kSpace2),
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: cards[i]),
+                const SizedBox(width: kSpace2),
+                Expanded(child: hasSecond ? cards[i + 1] : const SizedBox()),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return Column(children: rows);
+  }
+
+  /// C-254 rule 4: an icon plus the existing label `Text`, key and string
+  /// unchanged. Off state keeps the same icon, mutes its colour, and adds
+  /// a diagonal strike -- a second signal besides colour (doctrine P9).
+  /// Amendment rule 8: the chip itself (this `DecoratedBox`) carries its
+  /// own key, so a test can find the icon and the strike inside the chip
+  /// without reading them off the label `Text`. Amendment rule 9: the
+  /// label sits in a `Flexible` rather than a bare `Text` in a
+  /// `Row(mainAxisSize: min)`, so at 360dp, en/ar, scale 1.0/1.3, it wraps
+  /// instead of pushing the row past its given width.
+  Widget _ruleChip({
+    required Key chipKey,
+    required IconData icon,
+    required bool on,
+    required Key textKey,
+    required String text,
+  }) {
+    final Color color = on ? LudoColors.action : LudoColors.inkMuted;
+    return DecoratedBox(
+      key: chipKey,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(kRadiusControl),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: kSpace3,
+          vertical: kSpace2,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: kSpace5,
+              height: kSpace5,
+              child: on
+                  ? Icon(icon, size: kSpace5, color: color)
+                  : Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Icon(icon, size: kSpace5, color: color),
+                        CustomPaint(
+                          size: Size(kSpace5, kSpace5),
+                          painter: _RuleOffStrikePainter(color: color),
+                        ),
+                      ],
+                    ),
+            ),
+            const SizedBox(width: kSpace2),
+            Flexible(child: Text(text, key: textKey, maxLines: 2)),
+          ],
+        ),
       ),
     );
   }
@@ -532,4 +729,29 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ),
     );
   }
+}
+
+/// C-254 rule 4: the diagonal strike an "off" rule chip draws over its own
+/// icon, on top of the muted colour, so off is never colour alone.
+class _RuleOffStrikePainter extends CustomPainter {
+  const _RuleOffStrikePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint line = Paint()
+      ..color = color
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(size.width * 0.12, size.height * 0.12),
+      Offset(size.width * 0.88, size.height * 0.88),
+      line,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RuleOffStrikePainter oldDelegate) =>
+      oldDelegate.color != color;
 }

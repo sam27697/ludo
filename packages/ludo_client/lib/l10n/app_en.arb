@@ -178,6 +178,14 @@
   "@lobbyRuleCaptureBonusOff": {
     "description": "Line under the seat list on the lobby screen naming the state of the capture bonus rule for this room, shown to host and guests alike."
   },
+  "lobbyOpenSeat": "Waiting for a friend",
+  "@lobbyOpenSeat": {
+    "description": "Placeholder card on the lobby screen for a seat nobody has taken yet."
+  },
+  "seatYou": "You",
+  "@seatYou": {
+    "description": "Short chip marking the player's own seat card on the lobby screen. Also reused by the game screen's yard label for the same seat."
+  },
   "lobbyErrorNoSuchRoom": "That room does not exist. Check the code and try again.",
   "@lobbyErrorNoSuchRoom": {
     "description": "Error shown on the lobby screen when the server reports NO_SUCH_ROOM."
@@ -266,6 +274,16 @@
       }
     }
   },
+  "gameTurnCountdownDigits": "{seconds}",
+  "@gameTurnCountdownDigits": {
+    "description": "The bare whole seconds drawn inside the countdown ring, Western digits in both locales by C-250 rule 9b.",
+    "placeholders": {
+      "seconds": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
   "gameSeatOffline": "{name} is offline",
   "@gameSeatOffline": {
     "description": "Shown on the game screen under the turn banner when the seat whose turn it currently is has a dropped socket, so the countdown visibly running on nobody has a reason attached to it.",
@@ -343,6 +361,84 @@
   "gameNoMove": "No move with this roll",
   "@gameNoMove": {
     "description": "Shown next to the die, with a red X on it, when the player's own roll gives no legal move and the turn passes."
+  },
+  "endWinTitle": "You won!",
+  "@endWinTitle": {
+    "description": "End-card title when this player's own seat won the game, shown in gold with a celebration behind it."
+  },
+  "endLoseTitle": "{name} took this one",
+  "@endLoseTitle": {
+    "description": "End-card title when another seat won the game, naming that seat's player. The name is shown in that seat's own colour; the rest of the line carries no blame or verdict wording.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
+  "endLoseNudge": "So close. One more?",
+  "@endLoseNudge": {
+    "description": "Warm line under the loser's end-card title, inviting another game rather than stating a result."
+  },
+  "endStatRolls": "rolls",
+  "@endStatRolls": {
+    "description": "Label under the rolls count on the end card's stat row."
+  },
+  "endStatSixes": "sixes",
+  "@endStatSixes": {
+    "description": "Label under the sixes count on the end card's stat row."
+  },
+  "endStatCaptures": "captures",
+  "@endStatCaptures": {
+    "description": "Label under the captures-made count on the end card's stat row."
+  },
+  "endStatHome": "home",
+  "@endStatHome": {
+    "description": "Label under the tokens-home count on the end card's stat row. Shown alone, without the other three tiles, when the game's numbers are incomplete."
+  },
+  "endFairLine": "Every roll of this game is verifiable.",
+  "@endFairLine": {
+    "description": "One-line fairness statement shown on every end card, win, lose or ended. Plain verifiable wording; casino-style phrasing is forbidden here."
+  },
+  "endFairCheck": "Check the rolls",
+  "@endFairCheck": {
+    "description": "Text button on the end card that opens the match's verification page in an external browser. Same destination and behaviour as the page's Verify button; the key game-screen-verify-button is kept on this control."
+  },
+  "endFairHint": "Each roll came from a sequence sealed before the game started. Anyone can open this page and recheck every roll.",
+  "@endFairHint": {
+    "description": "Longer explanation shown from the end card's info-hint button next to the fairness line, for a player who has never thought about how the dice are fair."
+  },
+  "endRematch": "Play again",
+  "@endRematch": {
+    "description": "Primary action on the end card, and on the lobby screen for a joiner who has not yet accepted a rematch, that sends the rematch request. Also the label of the one-tap accept control a player sees when another seat has already asked for a rematch."
+  },
+  "endRematchWaiting": "Waiting for the others",
+  "@endRematchWaiting": {
+    "description": "Shown on the end card in place of the rematch button once this player's own seat has accepted a rematch, while at least one other occupied seat has not yet answered."
+  },
+  "endRematchAsk": "{name} wants to play again",
+  "@endRematchAsk": {
+    "description": "Shown on the end card when another seat has asked for a rematch and this player's own seat has not yet answered, naming the seat that asked. Gender-neutral on purpose.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
+  "endRematchStartReady": "Start with {count}",
+  "@endRematchStartReady": {
+    "description": "Secondary button shown only to the host, under the waiting line, once at least two seats have accepted a rematch but not every occupied seat has. Sends start_game with the ready seats.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "endRematchGone": "This table has closed",
+  "@endRematchGone": {
+    "description": "Shown on the end card in place of the rematch action when the rematch request answers NO_SUCH_ROOM: the room was reaped before the rematch could be sent. New table becomes the primary action in this state."
   },
   "feedbackHapticsToggle": "Vibration",
   "@feedbackHapticsToggle": {
