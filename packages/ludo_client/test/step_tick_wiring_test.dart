@@ -7,9 +7,13 @@
 // burst in _cuesForMoved would double-fire, so the real fix moves the step
 // cue from that frame-level burst to onTokenStep instead, which changes
 // C-225's own event map and needs its own contract -- C-259 (the X13
-// follow-up), not written yet. This case is held here, unchanged, against
-// that contract once it exists; it does not test C-257, which now stands
-// at rules 1-3 and 5 only (see test/seat_wiring_test.dart).
+// follow-up). This case now tests C-259 rule 2, "The board plays the
+// step": both LudoBoards in game_screen.dart get onTokenStep; when its seat
+// equals controller.seat (the same seat GameScreen passes to cuesForFrame
+// as mySeat) it plays exactly one FeedbackCue.step through
+// FeedbackScope.of(context), any other seat plays nothing, and
+// controller.seat null plays nothing. It does not test C-257, which now
+// stands at rules 1-3 and 5 only (see test/seat_wiring_test.dart).
 //
 // GameScreen is mounted the way test/feedback_wiring_test.dart and
 // test/play_header_test.dart mount it: a real RoomController over a
@@ -24,29 +28,20 @@
 // this one case actually needs came along.
 //
 // Ambiguity found and not invented around (unchanged from this case's
-// original delivery note): the withdrawn rule 4's "What proves it" text
-// describes proving the step tick by pushing a real `moved` frame and
-// reading the fake feedback service's recorded list afterward. On base
-// ac19bb3 (and still true here, since nothing about feedback.dart or
-// game_screen.dart has changed), lib/src/feedback.dart's own _cuesForMoved
-// already appends one FeedbackCue.step per square travelled for a `moved`
-// frame naming my own seat, played synchronously by GameScreen._onFrame
-// the instant the frame lands -- entirely independent of LudoBoard
-// .onTokenStep, which game_screen.dart never gives a value on this base.
-// A case that only reads the final recorded list after pushing such a
-// frame would therefore already be green on ac19bb3, for a reason that has
-// nothing to do with any onTokenStep wiring. To keep this case red for the
-// reason it names, it instead reads LudoBoard.onTokenStep itself off the
-// mounted widget (asserting it is non-null, which it is not on this base)
-// and then calls that exact function the same way lib/src/board.dart's own
-// _onStepElapsed does -- `widget.onTokenStep?.call(move.seat, move.token)`
-// -- to prove what it does for my own seat's token and for another seat's,
-// without needing the ambiguous _cuesForMoved path to run at all. Whatever
-// C-259 turns out to ask, this rig (direct callback probe, not a real
-// `moved` frame) is the one way found so far to prove onTokenStep's own
-// wiring without that ambiguity; a future contract may describe the step
-// tick differently, in which case this case's assertions -- not touched by
-// this split -- will need their own, separate review against that text.
+// original delivery note, and still the shape of the proof C-259 rule 2
+// itself asks for -- "the direct onTokenStep probe"): rule 1 of C-259 takes
+// the step cue out of lib/src/feedback.dart's _cuesForMoved entirely, so a
+// case that pushed a real `moved` frame and only read the fake feedback
+// service's recorded list afterward would prove nothing about onTokenStep
+// at all -- rule 1 alone, with onTokenStep still unwired, would leave that
+// recorded list empty for a `moved` frame of my own seat regardless of
+// whether rule 2's wiring exists. This case instead reads
+// LudoBoard.onTokenStep itself off the mounted widget (asserting it is
+// non-null, which it is not on caf4142) and then calls that exact function
+// the same way lib/src/board.dart's own _onStepElapsed does --
+// `widget.onTokenStep?.call(move.seat, move.token)` -- to prove what it
+// does for my own seat's token and for another seat's, without depending
+// on rule 1's own change to _cuesForMoved at all.
 
 import 'dart:convert';
 
