@@ -319,8 +319,9 @@ class _GameScreenState extends State<GameScreen> {
     if (_pendingLandingCues.isEmpty) {
       return;
     }
-    final List<_PendingLandingCues> entries =
-        List<_PendingLandingCues>.from(_pendingLandingCues);
+    final List<_PendingLandingCues> entries = List<_PendingLandingCues>.from(
+      _pendingLandingCues,
+    );
     _pendingLandingCues.clear();
     for (final _PendingLandingCues entry in entries) {
       entry.fallbackTimer?.cancel();
@@ -1568,4 +1569,3 @@ class _PendingLandingCues {
   final List<FeedbackCue> cues;
   Timer? fallbackTimer;
 }
-
