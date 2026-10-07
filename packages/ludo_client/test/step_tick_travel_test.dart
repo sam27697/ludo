@@ -375,8 +375,9 @@ void main() {
     );
 
     testWidgets(
-      '(c) my moved frame with a capture: capturedOther recorded exactly '
-      'once, immediately, and 6 step recorded only as travel plays out',
+      '(c) my moved frame with a capture: capturedOther is not recorded in '
+      'the first pump, and is recorded exactly once after the sixth step '
+      '(C-268 rule 4a)',
       (tester) async {
         final (_, FakeTransport transport, _FakeFeedbackService fake) =
             await _connectAndMount(tester, seats: seats);
@@ -395,36 +396,35 @@ void main() {
 
         expect(
           fake.recorded,
-          equals(<FeedbackCue>[FeedbackCue.capturedOther]),
+          isEmpty,
           reason:
-              'C-259 rule 4 keeps capturedOther firing the instant the '
-              'frame lands, unchanged; rule 1 means no step cue fires '
-              'alongside it here. On caf4142, the old _cuesForMoved fires '
-              'six step cues and then capturedOther all at this same '
-              'instant, so this is where the capture case is red there too, '
-              'for the burst C-259 names, not only for a count that would '
-              'happen to match again once the whole travel is done; '
-              'recorded ${fake.recorded}',
+              'C-268 rule 3 holds capturedOther behind the mover\'s own '
+              'landing instead of playing it the instant the frame lands; '
+              'rule 1 already keeps no step cue firing here either. On '
+              'caf4142 and on 30c77ba alike, the old _cuesForMoved fires '
+              'capturedOther (and, pre-259, six step cues) all at this same '
+              'instant; recorded ${fake.recorded}',
         );
 
         await _pumpSquares(tester, 6);
         expect(
           fake.recorded,
           equals(<FeedbackCue>[
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
             FeedbackCue.capturedOther,
-            FeedbackCue.step,
-            FeedbackCue.step,
-            FeedbackCue.step,
-            FeedbackCue.step,
-            FeedbackCue.step,
-            FeedbackCue.step,
           ]),
           reason:
-              'once the whole 6-square travel has played out, capturedOther '
-              '(fired at the frame landing) and exactly 6 step cues (fired '
-              'one per square as the board\'s own onTokenStep arrives) '
-              'must both be recorded, capturedOther exactly once; got '
-              '${fake.recorded}',
+              'once the whole 6-square travel has played out, exactly 6 '
+              'step cues (fired one per square as the board\'s own '
+              'onTokenStep arrives) and capturedOther (held until the '
+              'board\'s onMoveLanded fires after the sixth step, C-268 '
+              'rule 4a) must both be recorded, capturedOther exactly once '
+              'and last; got ${fake.recorded}',
         );
       },
     );
