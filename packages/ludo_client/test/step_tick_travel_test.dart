@@ -34,13 +34,13 @@
 // text for the capture case names only the final counts ("a capture by me
 // records capturedOther exactly once" alongside "exactly 6 step"), without
 // restating case (a)'s full "no step before travel" timing check for it.
-// Rule 4 keeps capturedOther firing the instant the frame lands, unchanged
-// by this contract (moving it to the landing is X20, out of scope here), so
-// this file's capture case also checks that capturedOther arrives
-// immediately and that no step cue arrives before the board's own steps
-// start ticking -- the same timing shape case (a) uses -- so the capture
-// case is red on caf4142 for the burst C-259 names, not only for a count
-// that would happen to match again once the whole travel is finished.
+// C-268 closes X20: capturedOther is no longer played the instant the
+// frame lands but held behind the mover's own landing, so this file's
+// capture case checks rule 4a instead -- no capturedOther in the first
+// pump, and exactly one capturedOther recorded after the sixth step, once
+// the board's onMoveLanded fires -- the same no-cue-before-travel shape
+// case (a) uses for its step cues, carried over to capturedOther now that
+// C-268 has moved it to the landing.
 
 import 'dart:convert';
 

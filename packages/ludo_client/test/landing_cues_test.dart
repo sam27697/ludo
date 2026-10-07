@@ -762,6 +762,7 @@ void main() {
             FeedbackCue.step,
             FeedbackCue.step,
             FeedbackCue.step,
+            FeedbackCue.step,
             FeedbackCue.capturedOther,
           ]),
           reason:
@@ -777,6 +778,7 @@ void main() {
         expect(
           fake.recorded,
           equals(<FeedbackCue>[
+            FeedbackCue.step,
             FeedbackCue.step,
             FeedbackCue.step,
             FeedbackCue.step,
@@ -836,6 +838,7 @@ void main() {
       expect(
         fake.recorded,
         equals(<FeedbackCue>[
+          FeedbackCue.step,
           FeedbackCue.step,
           FeedbackCue.step,
           FeedbackCue.step,
