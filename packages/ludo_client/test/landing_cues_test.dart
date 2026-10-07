@@ -420,6 +420,33 @@ Future<void> _pushPlayerLeft(
   await tester.pump();
 }
 
+/// Pushes a `game_started` frame and flushes it the same way. Frame shape
+/// copied by hand from test/rematch_client_test.dart's own
+/// `_pushGameStarted`, the frame that carries a rematch's second game_id
+/// into a room that is already PLAYING.
+Future<void> _pushGameStarted(
+  WidgetTester tester,
+  FakeTransport transport, {
+  required int turnSeat,
+  required String gameId,
+  required int seq,
+  String clientSeeds = '0:seed',
+}) async {
+  transport.pushText(
+    _frame(
+      type: 'game_started',
+      data: <String, Object?>{
+        'turn': turnSeat,
+        'game_id': gameId,
+        'client_seeds': clientSeeds,
+        'seq': seq,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+}
+
 /// Pumps [squares] bounded ticks of exactly [kTokenStepDuration] each,
 /// never one long pump (lesson 36) -- one call per square the board's own
 /// step timer is expected to cross.
@@ -977,8 +1004,7 @@ void main() {
     // Rule 4e's fallback is the only thing left standing between that and
     // a lost cue.
     testWidgets('a held entry whose board is torn down mid-travel (an opponent '
-        'leaving) plays at kLandingCueFallback and not before, and no timer '
-        'fires after this screen itself is gone', (tester) async {
+        'leaving) plays at kLandingCueFallback and not before', (tester) async {
       final (_, FakeTransport transport, _FakeFeedbackService fake) =
           await _connectAndMount(tester, seats: twoSeats);
 
@@ -1044,10 +1070,19 @@ void main() {
     // screen while the entry is still pending and the fallback timer is
     // still armed, well before kLandingCueFallback would otherwise fire --
     // rule 5's own "Dropped, not played: pending entries and their timers
-    // on ... dispose. No timer may fire after dispose."
+    // on ... dispose. No timer may fire after dispose." The case stops one
+    // millisecond short of kLandingCueFallback, counted from the hold, and
+    // pumps no further: a fallback timer that dispose failed to cancel is
+    // still armed and unfired right there, so the test binding's own "A
+    // Timer is still pending" check at the end of this body is what fails
+    // a leaked timer, not an assertion written here. Pumping the full
+    // fallback window instead would let an uncancelled timer fire and
+    // consume itself harmlessly (_playCues returns on !mounted), which is
+    // exactly how this case used to survive dispose() missing its call to
+    // _dropPendingLandingCues.
     testWidgets(
       'disposing GameScreen while a held entry is still pending drops it: '
-      'no timer fires later, and the cue never plays',
+      'the cue never plays before kLandingCueFallback',
       (tester) async {
         final (_, FakeTransport transport, _FakeFeedbackService fake) =
             await _connectAndMount(tester, seats: twoSeats);
@@ -1076,28 +1111,109 @@ void main() {
         await tester.pumpWidget(const SizedBox());
         await tester.pump();
 
-        // Let real time pass well beyond the fallback window. A held
-        // timer surviving dispose would either throw (a setState, or a
-        // BuildContext lookup, against a disposed State) or, just as much
-        // a defect even without throwing, play the cue anyway -- rule 5
-        // says dropped, never played, once dispose has run.
-        await _pumpTotal(tester, kLandingCueFallback * 2);
-
-        expect(
-          tester.takeException(),
-          isNull,
-          reason:
-              'no timer held by the now-disposed GameScreen may fire; a '
-              'held timer surviving dispose would throw here instead',
+        // Stop one millisecond short of kLandingCueFallback, counted from
+        // when the entry was held, and go no further.
+        await _pumpTotal(
+          tester,
+          kLandingCueFallback - const Duration(milliseconds: 1),
         );
+
         expect(
           fake.recorded,
           isEmpty,
           reason:
               'rule 5 drops every pending entry and its timer on dispose: '
               'capturedOther must never play once this screen is gone, '
-              'even though kLandingCueFallback has since elapsed twice '
-              'over; recorded ${fake.recorded}',
+              'even one millisecond short of kLandingCueFallback; '
+              'recorded ${fake.recorded}',
+        );
+      },
+    );
+
+    // Kills: _resetForNewGame leaving an already-held entry, and its
+    // fallback timer, alive across a rematch's second game -- rule 5's own
+    // "Dropped, not played: pending entries and their timers on
+    // _resetForNewGame ... and on dispose." Reaches _resetForNewGame the
+    // way a real rematch does: a game_started naming a game_id this screen
+    // has not recorded before, arriving while the first game's own
+    // capture is still mid-travel (frame shape copied by hand from
+    // test/rematch_client_test.dart's own game-two transition).
+    testWidgets(
+      'a held entry from the first game never plays once game_started '
+      'names a new game_id in the same room, neither at the move\'s own '
+      'old landing time nor at kLandingCueFallback',
+      (tester) async {
+        final (_, FakeTransport transport, _FakeFeedbackService fake) =
+            await _connectAndMount(tester, seats: twoSeats);
+
+        await _pushMoved(
+          tester,
+          transport,
+          seat: 0,
+          token: 0,
+          from: 3,
+          to: 9,
+          captured: <Map<String, Object?>>[
+            <String, Object?>{'seat': 1, 'token': 2},
+          ],
+          seq: 2,
+        );
+        expect(
+          fake.recorded,
+          isEmpty,
+          reason: 'capturedOther must still be held, not yet played',
+        );
+
+        // Before the held move's own 6-square travel lands, the rematch's
+        // second game starts in the same room.
+        await _pushGameStarted(
+          tester,
+          transport,
+          turnSeat: 0,
+          gameId: 'landing-cues-game-two',
+          seq: 3,
+        );
+        expect(
+          fake.recorded,
+          isEmpty,
+          reason:
+              'rule 5: _resetForNewGame drops the pending entry, it does '
+              'not play it when the new game starts; recorded '
+              '${fake.recorded}',
+        );
+
+        // Let the whole 6 squares of the first game's own move elapse.
+        // The board itself is untouched by _resetForNewGame and still
+        // calls onMoveLanded for (seat 0, token 0) right here, the move's
+        // own old landing time: a _resetForNewGame that left the entry in
+        // place would have onMoveLanded find and play it at this exact
+        // point. Rule 6 keeps the C-259 step wiring regardless of the
+        // reset (it is not a landing cue, and onTokenStep does not know
+        // this screen dropped anything), so 6 step cues are expected here
+        // exactly as they are in the plain capture case above -- what
+        // must not also be in this list is capturedOther.
+        await _pumpSquares(tester, 6);
+        expect(
+          fake.recorded,
+          equals(List<FeedbackCue>.filled(6, FeedbackCue.step)),
+          reason:
+              'the dropped capturedOther must never play at the move\'s '
+              'own old landing time, only the 6 ordinary step cues rule '
+              '6 keeps; recorded ${fake.recorded}',
+        );
+
+        // kLandingCueFallback, counted from when the entry was first
+        // held, must not play it either: the dropped entry's own
+        // fallback timer must have been cancelled along with it, not
+        // merely outlived by a widget tree that happens to still be
+        // mounted.
+        await _pumpTotal(tester, kLandingCueFallback);
+        expect(
+          fake.recorded,
+          equals(List<FeedbackCue>.filled(6, FeedbackCue.step)),
+          reason:
+              'the dropped capturedOther must never play at '
+              'kLandingCueFallback either; recorded ${fake.recorded}',
         );
       },
     );
