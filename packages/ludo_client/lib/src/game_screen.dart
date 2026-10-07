@@ -43,6 +43,9 @@ import 'theme.dart';
 /// without opening another table.
 enum GameScreenResult { newTable }
 
+/// Safety-net fallback duration for held landing cues, contract C-268 rule 4e.
+const Duration kLandingCueFallback = Duration(milliseconds: 2000);
+
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key, required this.controller});
 
@@ -139,6 +142,12 @@ class _GameScreenState extends State<GameScreen> {
   // `await` below always resumes.
   bool _rematchInFlight = false;
 
+  // C-268 rules 3 to 5: landing cues (capturedOther, capturedMe, home) held
+  // until the token lands on the board, flushed on travel reset or game-over,
+  // falling back to kLandingCueFallback if no landing arrives. Dropped on
+  // dispose and _resetForNewGame.
+  final List<_PendingLandingCues> _pendingLandingCues = <_PendingLandingCues>[];
+
   @override
   void initState() {
     super.initState();
@@ -160,6 +169,7 @@ class _GameScreenState extends State<GameScreen> {
     _autoMoveTimer?.cancel();
     _rollNoAnswerTimer?.cancel();
     _noMoveTimer?.cancel();
+    _dropPendingLandingCues();
     _frameSub?.cancel();
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
@@ -192,13 +202,44 @@ class _GameScreenState extends State<GameScreen> {
     }
 
     _frames.add(frame);
+    if (frame.type == 'game_over') {
+      _flushPendingLandingCues();
+    }
     final List<FeedbackCue> cues = cuesForFrame(
       frame,
       mySeat: widget.controller.seat,
     );
     final FeedbackService feedback = FeedbackScope.of(context);
-    for (final FeedbackCue cue in cues) {
-      feedback.play(cue);
+    final int? from = _intAt(frame.data, 'from');
+    final int? to = _intAt(frame.data, 'to');
+    final int? moverSeat = _intAt(frame.data, 'seat');
+    final int? moverToken = _intAt(frame.data, 'token');
+    final bool zeroTravel =
+        frame.type == 'moved' && from != null && to != null && from == to;
+
+    if (frame.type == 'moved' &&
+        !zeroTravel &&
+        moverSeat != null &&
+        moverToken != null) {
+      final List<FeedbackCue> immediateCues = <FeedbackCue>[];
+      final List<FeedbackCue> landingCues = <FeedbackCue>[];
+      for (final FeedbackCue cue in cues) {
+        if (_isLandingCue(cue)) {
+          landingCues.add(cue);
+        } else {
+          immediateCues.add(cue);
+        }
+      }
+      for (final FeedbackCue cue in immediateCues) {
+        feedback.play(cue);
+      }
+      if (landingCues.isNotEmpty) {
+        _holdLandingCues(moverSeat, moverToken, landingCues);
+      }
+    } else {
+      for (final FeedbackCue cue in cues) {
+        feedback.play(cue);
+      }
     }
     if (frame.type == 'rolled') {
       if (cues.contains(FeedbackCue.noMove)) {
@@ -219,6 +260,81 @@ class _GameScreenState extends State<GameScreen> {
         _leave();
       }
     }
+  }
+
+  static bool _isLandingCue(FeedbackCue cue) =>
+      cue == FeedbackCue.capturedOther ||
+      cue == FeedbackCue.capturedMe ||
+      cue == FeedbackCue.home;
+
+  void _playCues(List<FeedbackCue> cues) {
+    if (!mounted || cues.isEmpty) {
+      return;
+    }
+    final FeedbackService feedback = FeedbackScope.of(context);
+    for (final FeedbackCue cue in cues) {
+      feedback.play(cue);
+    }
+  }
+
+  void _holdLandingCues(int seat, int token, List<FeedbackCue> cues) {
+    final _PendingLandingCues entry = _PendingLandingCues(
+      seat: seat,
+      token: token,
+      cues: cues,
+    );
+    entry.fallbackTimer = Timer(kLandingCueFallback, () {
+      _onLandingCueFallback(entry);
+    });
+    _pendingLandingCues.add(entry);
+  }
+
+  void _onLandingCueFallback(_PendingLandingCues entry) {
+    if (!_pendingLandingCues.remove(entry)) {
+      return;
+    }
+    entry.fallbackTimer?.cancel();
+    entry.fallbackTimer = null;
+    _playCues(entry.cues);
+  }
+
+  void _onBoardMoveLanded(int seat, int token) {
+    final int index = _pendingLandingCues.indexWhere(
+      (entry) => entry.seat == seat && entry.token == token,
+    );
+    if (index == -1) {
+      return;
+    }
+    final _PendingLandingCues entry = _pendingLandingCues.removeAt(index);
+    entry.fallbackTimer?.cancel();
+    entry.fallbackTimer = null;
+    _playCues(entry.cues);
+  }
+
+  void _onBoardTravelReset() {
+    _flushPendingLandingCues();
+  }
+
+  void _flushPendingLandingCues() {
+    if (_pendingLandingCues.isEmpty) {
+      return;
+    }
+    final List<_PendingLandingCues> entries =
+        List<_PendingLandingCues>.from(_pendingLandingCues);
+    _pendingLandingCues.clear();
+    for (final _PendingLandingCues entry in entries) {
+      entry.fallbackTimer?.cancel();
+      entry.fallbackTimer = null;
+      _playCues(entry.cues);
+    }
+  }
+
+  void _dropPendingLandingCues() {
+    for (final _PendingLandingCues entry in _pendingLandingCues) {
+      entry.fallbackTimer?.cancel();
+      entry.fallbackTimer = null;
+    }
+    _pendingLandingCues.clear();
   }
 
   /// C-259 rule 2: the board's own `onTokenStep`, fired once as the drawn
@@ -256,6 +372,7 @@ class _GameScreenState extends State<GameScreen> {
     _rollNoAnswerTimer = null;
     _rollWaitK = null;
     _rollNoAnswer = false;
+    _dropPendingLandingCues();
   }
 
   void _armNoMoveHold(int? face) {
@@ -826,6 +943,8 @@ class _GameScreenState extends State<GameScreen> {
               autoMoveToken: _pendingAutoMoveToken,
               onTokenStep: (int stepSeat, int token) =>
                   _onBoardTokenStep(controller, stepSeat),
+              onMoveLanded: _onBoardMoveLanded,
+              onTravelReset: _onBoardTravelReset,
               onTokenTap: (int index) {
                 _cancelPendingHoldForManualMove();
                 final int? k = turn?.k;
@@ -1174,6 +1293,8 @@ class _GameScreenState extends State<GameScreen> {
                 turnSeat: null,
                 onTokenStep: (int stepSeat, int token) =>
                     _onBoardTokenStep(controller, stepSeat),
+                onMoveLanded: _onBoardMoveLanded,
+                onTravelReset: _onBoardTravelReset,
               ),
             ),
           ],
@@ -1433,3 +1554,18 @@ String? _stringAt(Map<String, Object?> data, String key) {
   final Object? value = data[key];
   return value is String ? value : null;
 }
+
+/// C-268 rules 3 to 5: landing cues held for mover (seat, token).
+class _PendingLandingCues {
+  _PendingLandingCues({
+    required this.seat,
+    required this.token,
+    required this.cues,
+  });
+
+  final int seat;
+  final int token;
+  final List<FeedbackCue> cues;
+  Timer? fallbackTimer;
+}
+
