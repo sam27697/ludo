@@ -167,6 +167,8 @@ class LudoBoard extends StatefulWidget {
     this.youLabel,
     this.turnSeat,
     this.onTokenStep,
+    this.onMoveLanded,
+    this.onTravelReset,
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -241,6 +243,15 @@ class LudoBoard extends StatefulWidget {
   /// the feedback service; this widget only ever calls it, never decides
   /// what it means.
   final void Function(int seat, int token)? onTokenStep;
+
+  /// Called once as the mover's final step lands, contract C-268 rule 1:
+  /// `(seat, token)`, before any capture flight starts, never for a
+  /// captured token's flight. Null by default.
+  final void Function(int seat, int token)? onMoveLanded;
+
+  /// Called every time [_snapToTruth] runs, contract C-268 rule 2. Null by
+  /// default.
+  final VoidCallback? onTravelReset;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -368,6 +379,7 @@ class _LudoBoardState extends State<LudoBoard> {
     _queue.clear();
     _override.clear();
     _flying = null;
+    widget.onTravelReset?.call();
   }
 
   /// Holds [move]'s mover (and its captured token, if any) on their old
@@ -448,6 +460,7 @@ class _LudoBoardState extends State<LudoBoard> {
   /// move with no capture is simply done, and the queue (if anything is
   /// waiting) moves on.
   void _onMoveArrived(_Move move) {
+    widget.onMoveLanded?.call(move.seat, move.token);
     _override.remove(_key(move.seat, move.token));
     final int? capturedSeat = move.capturedSeat;
     if (capturedSeat != null) {
