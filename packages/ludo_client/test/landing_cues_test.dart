@@ -992,16 +992,26 @@ void main() {
               'the hold to release; recorded ${fake.recorded}',
         );
 
-        // 3 to 9 is six squares (4, 5, 6, 7, 8, 9): the sixth step lands
-        // the move and fires onMoveLanded, which is where capturedOther
-        // (C-268 rule 4a, unchanged by C-270) plays.
+        // 3 to 9 is six squares (4, 5, 6, 7, 8, 9): my own move plays one
+        // step per square it lands on (C-259, _onBoardTokenStep), and the
+        // sixth step lands the move and fires onMoveLanded, which is where
+        // capturedOther (C-268 rule 4a, unchanged by C-270) plays.
         await _pumpSquares(tester, 6);
         expect(
           fake.recorded,
-          equals(<FeedbackCue>[FeedbackCue.capturedOther]),
+          equals(<FeedbackCue>[
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.capturedOther,
+          ]),
           reason:
-              'capturedOther must play exactly once, at the landing, and '
-              'win must not have played yet; recorded ${fake.recorded}',
+              'six step cues, one per square, then capturedOther exactly '
+              'once at the landing, and win must not have played yet; '
+              'recorded ${fake.recorded}',
         );
 
         // The count reaching 0 by this landing starts kEndCardDwell (rule
@@ -1010,7 +1020,16 @@ void main() {
         await _pumpTotal(tester, kEndCardDwell);
         expect(
           fake.recorded,
-          equals(<FeedbackCue>[FeedbackCue.capturedOther, FeedbackCue.win]),
+          equals(<FeedbackCue>[
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.capturedOther,
+            FeedbackCue.win,
+          ]),
           reason:
               'win must play exactly once, after capturedOther, once the '
               'hold releases at kEndCardDwell since the landing; recorded '
@@ -1022,7 +1041,16 @@ void main() {
         await _pumpTotal(tester, kLandingCueFallback);
         expect(
           fake.recorded,
-          equals(<FeedbackCue>[FeedbackCue.capturedOther, FeedbackCue.win]),
+          equals(<FeedbackCue>[
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.capturedOther,
+            FeedbackCue.win,
+          ]),
           reason:
               'nothing further must be recorded once kLandingCueFallback '
               'has elapsed since the entry was held; a repeated '
