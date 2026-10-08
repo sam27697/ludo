@@ -564,34 +564,41 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           ],
           if (!inRematchLobby && controller.isHost) ...[
-            SizedBox(height: compact ? kSpace1 : kSpace6),
-            ElevatedButton(
-              key: const Key('lobby-start-button'),
-              onPressed: roomFull ? controller.startGame : null,
-              child: Text(
-                roomFull
-                    ? loc.lobbyStartButton
-                    : loc.lobbyWaitingForPlayers(
-                        room.seats.length,
-                        room.players,
-                      ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            if (room.state == RoomState.lobby &&
-                !roomFull &&
-                room.seats.length >= 2) ...[
-              SizedBox(height: compact ? kSpace1 : kSpace2),
+            // C-274 rules 1-2: a full room enables the start button; a room
+            // short of full shows the waiting line, with no disabled start
+            // button.
+            if (roomFull) ...[
+              SizedBox(height: compact ? kSpace1 : kSpace6),
               ElevatedButton(
-                key: const Key('lobby-start-with-present-button'),
-                onPressed: _startWithPresentInFlight
-                    ? null
-                    : () => _startWithPresent(room.seats.length),
+                key: const Key('lobby-start-button'),
+                onPressed: controller.startGame,
                 child: Text(
-                  loc.lobbyStartWithPresent(room.seats.length),
+                  loc.lobbyStartButton,
                   textAlign: TextAlign.center,
                 ),
               ),
+            ] else ...[
+              const SizedBox(height: kSpace4),
+              Text(
+                loc.lobbyWaitingForPlayers(room.seats.length, room.players),
+                key: const Key('lobby-waiting'),
+                textAlign: TextAlign.center,
+              ),
+              if (room.state == RoomState.lobby &&
+                  !roomFull &&
+                  room.seats.length >= 2) ...[
+                SizedBox(height: compact ? kSpace1 : kSpace2),
+                ElevatedButton(
+                  key: const Key('lobby-start-with-present-button'),
+                  onPressed: _startWithPresentInFlight
+                      ? null
+                      : () => _startWithPresent(room.seats.length),
+                  child: Text(
+                    loc.lobbyStartWithPresent(room.seats.length),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
             ],
           ],
         ],
