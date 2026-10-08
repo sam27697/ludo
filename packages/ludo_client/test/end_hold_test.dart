@@ -771,41 +771,71 @@ void main() {
       },
     );
 
-    // Rule 4b ("onTravelReset during the hold releases it at once") has no
-    // case here. Every route this file can drive onTravelReset from while
-    // held goes through _LudoBoardState.didUpdateWidget (the diff that
-    // does not match a single mover calls _snapToTruth, which calls
-    // onTravelReset) -- and didUpdateWidget only ever runs as part of
-    // GameScreen's own rebuild, because that rebuild is the only way
-    // LudoBoard's `tokens` parameter changes in the first place. With the
-    // hold already in effect, _onBoardTravelReset takes the _isEndHeld
-    // branch and calls _releaseEndHold, which calls setState -- on
-    // GameScreen, synchronously, while GameScreen's own build is still on
-    // the stack. Driving a second moved frame (progress 10 to 20, a jump
-    // outside C-252 rule 2's old+1..6 single-mover range) through this
-    // file's own _pushMoved after an earlier moved+game_over has already
-    // opened the hold reproduces this every time: flutter_test's widgets
-    // library throws "setState() or markNeedsBuild() called during
-    // build", game_screen.dart:380 inside _releaseEndHold, reached from
-    // _onBoardTravelReset at :360, from _LudoBoardState._snapToTruth at
-    // board.dart:382, from _reactToTokensChange at :336, from
-    // didUpdateWidget at :294 -- with _GameScreenState's own
-    // StatefulElement already mid-rebuild on that same stack. A second,
-    // cascading "Looking up a deactivated widget's ancestor is unsafe"
-    // follows, and the case's own fixture assertion (_endCardShown true)
-    // then reads false. This is not a pump-sequencing artifact of this
-    // file: _pushMoved's own two-pump idiom is what every other case here
-    // and in landing_cues_test.dart relies on, and no number of pumps
-    // changes that the hold's own release path re-enters GameScreen's
-    // setState from inside GameScreen's own build whenever the trigger is
-    // a tokens diff the board recognises as a reset while held, because
-    // that diff can only ever reach LudoBoard via GameScreen rebuilding
-    // itself. A resync (`room` snapshot after a seq gap) does not avoid
-    // this either: _reduceRoom notifies listeners the same way _reduceMoved
-    // does, so it rebuilds GameScreen by the same route. No route this
-    // file can drive reaches a clean assertion of rule 4b's release; per
-    // this order's own instruction this case is left out of the commit,
-    // reported instead (RETURN item 4).
+    // Kills: a hold that never checks onTravelReset, or one that keeps
+    // waiting for a landing/limit that an unrecognised diff already made
+    // moot.
+    testWidgets(
+      'onTravelReset during the hold (an unrecognised diff) releases at '
+      'once',
+      (tester) async {
+        final List<Map<String, Object?>> seats = <Map<String, Object?>>[
+          _seatJson(0, name: 'Sam', tokens: const <int>[4, -1, -1, -1]),
+          _seatJson(1, name: 'Bob'),
+        ];
+        final (_, FakeTransport transport, _FakeFeedbackService fake) =
+            await _connectAndMount(tester, seats: seats);
+
+        // A real 6-square travel, not yet landed (no real time pumped).
+        await _pushMoved(
+          tester,
+          transport,
+          seat: 0,
+          token: 0,
+          from: 4,
+          to: 10,
+          seq: 2,
+        );
+        await _pushGameOver(tester, transport, winner: 0, seq: 3);
+        expect(
+          _playingBodyShown(tester),
+          isTrue,
+          reason: 'fixture check: the hold must be in effect here',
+        );
+
+        // A further moved frame whose diff (progress 10 to 20, a jump of
+        // 10) matches neither of board.dart's own single-mover patterns
+        // (C-252 rule 2: a continuing move is old + 1..6): the board snaps
+        // (_snapToTruth), which calls onTravelReset. No capture is given,
+        // so this frame also carries no cue of its own (cuesForFrame reads
+        // only `captured` and `to == 57`, neither true here) to entangle
+        // with the release this is proving.
+        await _pushMoved(
+          tester,
+          transport,
+          seat: 0,
+          token: 0,
+          from: 10,
+          to: 20,
+          seq: 4,
+        );
+
+        expect(
+          _endCardShown(tester),
+          isTrue,
+          reason:
+              'rule 4b: onTravelReset (count set to 0) releases the hold '
+              'at once, not waiting for kEndCardDwell or kEndCardHoldLimit',
+        );
+        expect(
+          fake.recorded,
+          equals(<FeedbackCue>[FeedbackCue.win]),
+          reason:
+              'win (this game_over\'s own cue, held until release) must '
+              'play exactly once; the snapped frame above carries no cue '
+              'of its own; recorded ${fake.recorded}',
+        );
+      },
+    );
 
     // Kills: the dwell or limit timer firing after dispose (a cue played
     // into a disposed screen, or a crash).
