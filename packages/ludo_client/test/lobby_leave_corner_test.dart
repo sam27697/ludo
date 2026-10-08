@@ -18,9 +18,10 @@
 // own copy, per this order's instruction to never import across test files.
 //
 // Fixture for every case: a host lobby, 4 players, 2 of 4 seated, so
-// lobby-start-button shows disabled and lobby-start-with-present-button
-// shows enabled reading "Start with 2" -- the exact capture 14 scenario the
-// contract's background names.
+// lobby-waiting shows the count and lobby-start-with-present-button shows
+// enabled reading "Start with 2". C-274 rule 6 measures lobby-waiting where
+// C-262 rule 5 measured the disabled lobby-start-button. The rect bounds
+// are the same.
 
 import 'dart:convert';
 
@@ -38,7 +39,7 @@ import 'net/fake_transport.dart';
 const String _testUrl = 'wss://example.test/ws';
 
 const Key _leaveKey = Key('lobby-leave-button');
-const Key _startKey = Key('lobby-start-button');
+const Key _waitingKey = Key('lobby-waiting');
 const Key _startWithKey = Key('lobby-start-with-present-button');
 const Key _openLobbyKey = Key('open-lobby');
 
@@ -281,22 +282,22 @@ Future<RoomController> _mountHostNotFullAtSize(
   return controller;
 }
 
-/// Rule 5: lobby-leave-button, lobby-start-button and
-/// lobby-start-with-present-button each found once, each rect entirely
-/// inside [size], with no scrolling performed by this helper.
-void _expectThreeButtonsFitInside(
+/// C-274 rule 6, keeping C-262 rule 5's bounds: lobby-leave-button,
+/// lobby-waiting and lobby-start-with-present-button each found once, each
+/// rect entirely inside [size], with no scrolling performed by this helper.
+void _expectLeaveWaitingAndStartWithFit(
   WidgetTester tester, {
   required Size size,
   required String caseLabel,
 }) {
-  for (final Key key in <Key>[_leaveKey, _startKey, _startWithKey]) {
+  for (final Key key in <Key>[_leaveKey, _waitingKey, _startWithKey]) {
     final Finder finder = find.byKey(key);
     expect(
       finder,
       findsOneWidget,
       reason:
           '$caseLabel: expected Key($key) found exactly once (contract '
-          'C-262 rule 5)',
+          'C-262 rule 5, C-274 rule 6)',
     );
     final Rect rect = tester.getRect(finder);
     final bool insideView =
@@ -310,85 +311,82 @@ void _expectThreeButtonsFitInside(
       reason:
           '$caseLabel: expected Key($key)\'s rect $rect to lie entirely '
           'inside the $size view without scrolling (contract C-262 rule '
-          '5); this helper never scrolls, so a button outside the view '
-          'here is a real finding, not something to work around',
+          '5, C-274 rule 6); this helper never scrolls, so a widget '
+          'outside the view here is a real finding, not something to '
+          'work around',
     );
   }
 }
 
 void main() {
   // --- rule 5: fits at both sizes, both locales, no scrolling. -------------
-  testWidgets(
-    'rule 5: 360x616 en -- lobby-leave-button, lobby-start-button and '
-    'lobby-start-with-present-button each fit inside the view',
-    (WidgetTester tester) async {
-      const Size size = Size(360, 616);
-      await _mountHostNotFullAtSize(
-        tester,
-        size: size,
-        locale: const Locale('en'),
-      );
-      _expectThreeButtonsFitInside(
-        tester,
-        size: size,
-        caseLabel: 'rule 5 (360x616 en)',
-      );
-    },
-  );
+  testWidgets('rule 5: 360x616 en -- lobby-leave-button, lobby-waiting and '
+      'lobby-start-with-present-button each fit inside the view', (
+    WidgetTester tester,
+  ) async {
+    const Size size = Size(360, 616);
+    await _mountHostNotFullAtSize(
+      tester,
+      size: size,
+      locale: const Locale('en'),
+    );
+    _expectLeaveWaitingAndStartWithFit(
+      tester,
+      size: size,
+      caseLabel: 'rule 5 (360x616 en)',
+    );
+  });
 
-  testWidgets(
-    'rule 5: 360x616 ar -- lobby-leave-button, lobby-start-button and '
-    'lobby-start-with-present-button each fit inside the view',
-    (WidgetTester tester) async {
-      const Size size = Size(360, 616);
-      await _mountHostNotFullAtSize(
-        tester,
-        size: size,
-        locale: const Locale('ar'),
-      );
-      _expectThreeButtonsFitInside(
-        tester,
-        size: size,
-        caseLabel: 'rule 5 (360x616 ar)',
-      );
-    },
-  );
+  testWidgets('rule 5: 360x616 ar -- lobby-leave-button, lobby-waiting and '
+      'lobby-start-with-present-button each fit inside the view', (
+    WidgetTester tester,
+  ) async {
+    const Size size = Size(360, 616);
+    await _mountHostNotFullAtSize(
+      tester,
+      size: size,
+      locale: const Locale('ar'),
+    );
+    _expectLeaveWaitingAndStartWithFit(
+      tester,
+      size: size,
+      caseLabel: 'rule 5 (360x616 ar)',
+    );
+  });
 
-  testWidgets(
-    'rule 5: 800x600 en -- lobby-leave-button, lobby-start-button and '
-    'lobby-start-with-present-button each fit inside the view',
-    (WidgetTester tester) async {
-      const Size size = Size(800, 600);
-      await _mountHostNotFullAtSize(
-        tester,
-        size: size,
-        locale: const Locale('en'),
-      );
-      _expectThreeButtonsFitInside(
-        tester,
-        size: size,
-        caseLabel: 'rule 5 (800x600 en)',
-      );
-    },
-  );
+  testWidgets('rule 5: 800x600 en -- lobby-leave-button, lobby-waiting and '
+      'lobby-start-with-present-button each fit inside the view', (
+    WidgetTester tester,
+  ) async {
+    const Size size = Size(800, 600);
+    await _mountHostNotFullAtSize(
+      tester,
+      size: size,
+      locale: const Locale('en'),
+    );
+    _expectLeaveWaitingAndStartWithFit(
+      tester,
+      size: size,
+      caseLabel: 'rule 5 (800x600 en)',
+    );
+  });
 
-  testWidgets(
-    'rule 5: 800x600 ar -- lobby-leave-button, lobby-start-button and '
-    'lobby-start-with-present-button each fit inside the view',
-    (WidgetTester tester) async {
-      const Size size = Size(800, 600);
-      await _mountHostNotFullAtSize(
-        tester,
-        size: size,
-        locale: const Locale('ar'),
-      );
-      _expectThreeButtonsFitInside(
-        tester,
-        size: size,
-        caseLabel: 'rule 5 (800x600 ar)',
-      );
-    },
-  );
+  testWidgets('rule 5: 800x600 ar -- lobby-leave-button, lobby-waiting and '
+      'lobby-start-with-present-button each fit inside the view', (
+    WidgetTester tester,
+  ) async {
+    const Size size = Size(800, 600);
+    await _mountHostNotFullAtSize(
+      tester,
+      size: size,
+      locale: const Locale('ar'),
+    );
+    _expectLeaveWaitingAndStartWithFit(
+      tester,
+      size: size,
+      caseLabel: 'rule 5 (800x600 ar)',
+    );
+  });
 
   // --- rule 3: exactly one lobby-leave-button, no stray OutlinedButton. ----
   testWidgets(
