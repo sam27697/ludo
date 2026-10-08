@@ -357,7 +357,12 @@ class _GameScreenState extends State<GameScreen> {
   void _onBoardTravelReset() {
     _travelCount = 0;
     if (_isEndHeld) {
-      _releaseEndHold();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_isEndHeld) {
+          return;
+        }
+        _releaseEndHold();
+      });
     } else {
       _flushPendingLandingCues();
     }
