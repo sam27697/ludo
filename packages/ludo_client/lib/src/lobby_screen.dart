@@ -572,10 +572,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ElevatedButton(
                 key: const Key('lobby-start-button'),
                 onPressed: controller.startGame,
-                child: Text(
-                  loc.lobbyStartButton,
-                  textAlign: TextAlign.center,
-                ),
+                child: Text(loc.lobbyStartButton, textAlign: TextAlign.center),
               ),
             ] else ...[
               const SizedBox(height: kSpace4),
