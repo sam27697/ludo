@@ -958,8 +958,8 @@ class _GameScreenState extends State<GameScreen> {
 
     final SystemUiOverlayStyle overlayStyle =
         Theme.of(context).brightness == Brightness.light
-            ? SystemUiOverlayStyle.dark
-            : SystemUiOverlayStyle.light;
+        ? SystemUiOverlayStyle.dark
+        : SystemUiOverlayStyle.light;
 
     return PopScope(
       canPop: !_needsLeaveConfirm(),
@@ -991,8 +991,8 @@ class _GameScreenState extends State<GameScreen> {
                         seats: room == null ? null : _seatsInPlayOf(room),
                         turnSeat:
                             (room != null && room.state == RoomState.playing)
-                                ? room.turn?.seat
-                                : null,
+                            ? room.turn?.seat
+                            : null,
                       ),
                       PositionedDirectional(
                         start: kSpace2,
