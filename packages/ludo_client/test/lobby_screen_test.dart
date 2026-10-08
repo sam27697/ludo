@@ -1206,63 +1206,71 @@ void main() {
       },
     );
 
-    testWidgets(
-      'isHost true with the room one seat short of full: start button '
-      'present, onPressed is null',
-      (tester) async {
-        final connector = _Connector();
-        final transport = FakeTransport();
-        connector.enqueue(transport);
-        final controller = _newController(connector);
-        addTearDown(controller.dispose);
+    testWidgets('isHost true with the room one seat short of full: no '
+        'lobby-start-button; lobby-waiting shows the seated/total count', (
+      tester,
+    ) async {
+      final connector = _Connector();
+      final transport = FakeTransport();
+      connector.enqueue(transport);
+      final controller = _newController(connector);
+      addTearDown(controller.dispose);
 
-        final seats = List<Map<String, Object?>>.generate(
-          3,
-          (i) => _seatJson(i, name: 'p$i', connected: true),
-        );
+      final seats = List<Map<String, Object?>>.generate(
+        3,
+        (i) => _seatJson(i, name: 'p$i', connected: true),
+      );
 
-        final id = await _mountAndCaptureRequest(
-          tester,
-          LobbyScreen(
-            controller: controller,
-            action: LobbyAction.create,
-            playerName: 'p0',
-            players: 4,
-          ),
-          transport,
-        );
-        await _resolveConnected(
-          tester,
-          transport,
-          id,
-          seatForThisClient: 0,
-          hostSeat: 0,
+      final id = await _mountAndCaptureRequest(
+        tester,
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.create,
+          playerName: 'p0',
           players: 4,
-          seats: seats,
-        );
+        ),
+        transport,
+      );
+      await _resolveConnected(
+        tester,
+        transport,
+        id,
+        seatForThisClient: 0,
+        hostSeat: 0,
+        players: 4,
+        seats: seats,
+      );
 
-        expect(controller.isHost, isTrue);
-        expect(controller.room!.seats.length, 3);
-        expect(controller.room!.players, 4);
+      expect(controller.isHost, isTrue);
+      expect(controller.room!.seats.length, 3);
+      expect(controller.room!.players, 4);
 
-        final finder = find.byKey(const Key('lobby-start-button'));
-        expect(
-          finder,
-          findsOneWidget,
-          reason:
-              'rule 4: isHost is true, so lobby-start-button must be '
-              'present even though the room is not full',
-        );
-        final button = tester.widget<ElevatedButton>(finder);
-        expect(
-          button.onPressed,
-          isNull,
-          reason:
-              'rule 4: with 3 of 4 seats filled, onPressed must be null so '
-              'the button is visibly disabled until the room is full',
-        );
-      },
-    );
+      final BuildContext context = tester.element(find.byType(LobbyScreen));
+      final AppLocalizations loc = AppLocalizations.of(context);
+      final Finder waiting = find.byKey(const Key('lobby-waiting'));
+      expect(
+        waiting,
+        findsOneWidget,
+        reason:
+            'C-274: a host one seat short of full shows lobby-waiting '
+            'instead of a disabled lobby-start-button',
+      );
+      final Text waitingText = tester.widget<Text>(waiting);
+      expect(
+        waitingText.data,
+        loc.lobbyWaitingForPlayers(3, 4),
+        reason:
+            'C-274: lobby-waiting must read '
+            'loc.lobbyWaitingForPlayers(3, 4); got "${waitingText.data}"',
+      );
+      expect(
+        find.byKey(const Key('lobby-start-button')),
+        findsNothing,
+        reason:
+            'C-274: with 3 of 4 seats filled there is no '
+            'lobby-start-button, disabled or otherwise',
+      );
+    });
 
     testWidgets(
       'isHost true with a full room: start button present, tapping it '
@@ -1831,20 +1839,13 @@ void main() {
     );
   });
 
-  // --- Order 183: the seated/total count appears once. For a host it moves
-  // --- onto lobby-start-button's own label (which was already reading it
-  // --- while disabled: see test/lobby_screen_die_code_start_label_test.dart,
-  // --- "disabled Start label includes seated and total counts", pinned and
-  // --- unchanged by this order); lobby-waiting itself must be absent for a
-  // --- host. A guest has no start button, so lobby-waiting stays a guest's
-  // --- only place for the count, unchanged by this order (the two "rule 4"
-  // --- and "Arabic and RTL" cases moved above to a guest mount are exactly
-  // --- that: unaffected, just re-homed to the seat that still shows the
-  // --- line).
+  // C-274: a host short of full shows lobby-waiting with the seated/total
+  // count and has no lobby-start-button. A full room still shows the
+  // enabled Start button and no lobby-waiting (W-H2). Guests are unchanged
+  // (W-G1, W-G2, W-AR guest).
   group('order 183: waiting line', () {
-    testWidgets('W-H1: host, room short of full: lobby-waiting is absent; '
-        'lobby-start-button is present, disabled, labelled with the '
-        'seated/total count', (tester) async {
+    testWidgets('W-H1: host, room short of full: no lobby-start-button; '
+        'lobby-waiting shows the seated/total count', (tester) async {
       final connector = _Connector();
       final transport = FakeTransport();
       connector.enqueue(transport);
@@ -1892,45 +1893,32 @@ void main() {
         reason: 'test setup: W-H1 needs a room short of full, 2 of 4',
       );
 
-      expect(
-        find.byKey(const Key('lobby-waiting')),
-        findsNothing,
-        reason:
-            'order 183, W-H1: the host must not show lobby-waiting; the '
-            'seated/total count belongs on lobby-start-button alone, so '
-            'a host mount must find nothing keyed lobby-waiting; the '
-            'widget was found anyway',
-      );
-
-      final startFinder = find.byKey(const Key('lobby-start-button'));
-      expect(
-        startFinder,
-        findsOneWidget,
-        reason:
-            'order 183, W-H1: lobby-start-button must be present for a '
-            'host, even with the room short of full',
-      );
-      final button = tester.widget<ElevatedButton>(startFinder);
-      expect(
-        button.onPressed,
-        isNull,
-        reason:
-            'order 183, W-H1: with 2 of 4 seats filled, '
-            'lobby-start-button must be disabled (onPressed null)',
-      );
-
       final context = tester.element(find.byType(LobbyScreen));
       final loc = AppLocalizations.of(context);
-      final label = tester.widget<Text>(
-        find.descendant(of: startFinder, matching: find.byType(Text)),
-      );
+      final Finder waiting = find.byKey(const Key('lobby-waiting'));
       expect(
-        label.data,
+        waiting,
+        findsOneWidget,
+        reason:
+            'C-274, W-H1: a host short of full shows lobby-waiting; the '
+            'seated/total count is that line, not a disabled '
+            'lobby-start-button',
+      );
+      final Text waitingText = tester.widget<Text>(waiting);
+      expect(
+        waitingText.data,
         loc.lobbyWaitingForPlayers(2, 4),
         reason:
-            'order 183, W-H1: the disabled lobby-start-button label must '
-            'read loc.lobbyWaitingForPlayers(seated, total) == '
-            'loc.lobbyWaitingForPlayers(2, 4); got "${label.data}"',
+            'C-274, W-H1: lobby-waiting must read '
+            'loc.lobbyWaitingForPlayers(seated, total) == '
+            'loc.lobbyWaitingForPlayers(2, 4); got "${waitingText.data}"',
+      );
+      expect(
+        find.byKey(const Key('lobby-start-button')),
+        findsNothing,
+        reason:
+            'C-274, W-H1: with 2 of 4 seats filled there is no '
+            'lobby-start-button',
       );
     });
 
@@ -2183,7 +2171,7 @@ void main() {
 
     testWidgets(
       'W-AR host: pumped in Locale(ar), a host with a room short of full '
-      'shows no lobby-waiting, and lobby-start-button carries the count',
+      'shows lobby-waiting with the count and no lobby-start-button',
       (tester) async {
         final connector = _Connector();
         final transport = FakeTransport();
@@ -2228,44 +2216,31 @@ void main() {
           reason: 'test setup: W-AR host needs a room short of full, 2 of 4',
         );
 
-        expect(
-          find.byKey(const Key('lobby-waiting')),
-          findsNothing,
-          reason:
-              'order 183, W-AR host: the host must not show lobby-waiting '
-              'in Locale(ar) either; the seated/total count belongs on '
-              'lobby-start-button alone',
-        );
-
-        final startFinder = find.byKey(const Key('lobby-start-button'));
-        expect(
-          startFinder,
-          findsOneWidget,
-          reason:
-              'order 183, W-AR host: lobby-start-button must be present '
-              'for a host, even with the room short of full',
-        );
-        final button = tester.widget<ElevatedButton>(startFinder);
-        expect(
-          button.onPressed,
-          isNull,
-          reason:
-              'order 183, W-AR host: with 2 of 4 seats filled, '
-              'lobby-start-button must be disabled (onPressed null)',
-        );
-
         final context = tester.element(find.byType(LobbyScreen));
         final loc = AppLocalizations.of(context);
-        final label = tester.widget<Text>(
-          find.descendant(of: startFinder, matching: find.byType(Text)),
-        );
+        final Finder waiting = find.byKey(const Key('lobby-waiting'));
         expect(
-          label.data,
+          waiting,
+          findsOneWidget,
+          reason:
+              'C-274, W-AR host: a host short of full shows lobby-waiting '
+              'in Locale(ar) too',
+        );
+        final Text waitingText = tester.widget<Text>(waiting);
+        expect(
+          waitingText.data,
           loc.lobbyWaitingForPlayers(2, 4),
           reason:
-              'order 183, W-AR host: the disabled lobby-start-button '
-              'label must read that tree\'s own AppLocalizations.'
-              'lobbyWaitingForPlayers(2, 4); got "${label.data}"',
+              'C-274, W-AR host: lobby-waiting must read that tree\'s own '
+              'AppLocalizations.lobbyWaitingForPlayers(2, 4); got '
+              '"${waitingText.data}"',
+        );
+        expect(
+          find.byKey(const Key('lobby-start-button')),
+          findsNothing,
+          reason:
+              'C-274, W-AR host: with 2 of 4 seats filled there is no '
+              'lobby-start-button',
         );
       },
     );

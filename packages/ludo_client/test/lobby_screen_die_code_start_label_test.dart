@@ -1,6 +1,7 @@
 // Widget tests for LobbyScreen's connected gathering presentation: the
-// room code on the brand die, felt atmosphere behind the lobby, a disabled
-// host Start whose label says how many seats are filled, a cancel control
+// room code on the brand die, felt atmosphere behind the lobby, a host
+// short of full whose lobby-waiting line says how many seats are filled,
+// a cancel control
 // while connecting, compact-height layout, and room-code contrast.
 //
 // A real RoomController is driven over FakeTransport the same way
@@ -29,6 +30,7 @@ import 'net/fake_transport.dart';
 const String _testUrl = 'wss://example.test/ws';
 const Key _roomCodeKey = Key('lobby-room-code');
 const Key _startKey = Key('lobby-start-button');
+const Key _waitingKey = Key('lobby-waiting');
 const Key _cancelKey = Key('lobby-cancel-button');
 const Key _connectingKey = Key('lobby-connecting');
 const Key _openLobbyKey = Key('open-lobby');
@@ -238,27 +240,6 @@ Future<void> _pumpConnectedHostLobby(
   expect(find.byKey(_roomCodeKey), findsOneWidget);
 }
 
-String _startButtonLabel(WidgetTester tester) {
-  final Finder textFinder = find.descendant(
-    of: find.byKey(_startKey),
-    matching: find.byType(Text),
-  );
-  if (textFinder.evaluate().isNotEmpty) {
-    final Text text = tester.widget<Text>(textFinder);
-    return text.data ?? text.textSpan?.toPlainText() ?? '';
-  }
-  final Finder richFinder = find.descendant(
-    of: find.byKey(_startKey),
-    matching: find.byType(RichText),
-  );
-  expect(
-    richFinder,
-    findsOneWidget,
-    reason: 'lobby-start-button has no Text or RichText label to read',
-  );
-  return tester.widget<RichText>(richFinder).text.toPlainText();
-}
-
 // WCAG 2.1 relative luminance and contrast, same method as
 // locale_toggle_contrast_test.dart.
 double _relativeLuminance(Color color) {
@@ -350,25 +331,33 @@ void main() {
   });
 
   testWidgets(
-    'disabled Start label includes seated and total counts or waiting copy',
+    'host short of full: lobby-waiting includes seated and total counts or '
+    'waiting copy, and lobby-start-button is absent',
     (WidgetTester tester) async {
       await _pumpConnectedHostLobby(tester, seated: 3, players: 4);
 
-      final Finder start = find.byKey(_startKey);
-      expect(start, findsOneWidget);
-      final ButtonStyleButton button = tester.widget<ButtonStyleButton>(start);
       expect(
-        button.onPressed,
-        isNull,
-        reason: 'Start must be disabled with 3 of 4 seats filled',
+        find.byKey(_startKey),
+        findsNothing,
+        reason:
+            'C-274: with 3 of 4 seats filled there is no lobby-start-button',
       );
+
+      final Finder waitingFinder = find.byKey(_waitingKey);
+      expect(
+        waitingFinder,
+        findsOneWidget,
+        reason: 'C-274: a host short of full shows lobby-waiting',
+      );
+      final Text waitingWidget = tester.widget<Text>(waitingFinder);
+      final String label =
+          waitingWidget.data ?? waitingWidget.textSpan?.toPlainText() ?? '';
 
       final BuildContext context = tester.element(find.byType(LobbyScreen));
       final AppLocalizations loc = AppLocalizations.of(context);
       const int seated = 3;
       const int total = 4;
       final String waiting = loc.lobbyWaitingForPlayers(seated, total);
-      final String label = _startButtonLabel(tester);
       final bool hasCounts =
           label.contains('$seated') && label.contains('$total');
       final bool hasWaiting = label.contains(waiting);
@@ -377,9 +366,8 @@ void main() {
         hasCounts || hasWaiting,
         isTrue,
         reason:
-            'when Start is disabled, its label must include seated ($seated) '
-            'and total ($total) or loc.lobbyWaitingForPlayers values '
-            '("$waiting"); got "$label"',
+            'lobby-waiting must include seated ($seated) and total ($total) '
+            'or loc.lobbyWaitingForPlayers values ("$waiting"); got "$label"',
       );
     },
   );
