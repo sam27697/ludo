@@ -485,6 +485,21 @@ Future<void> _pushGameOver(
   await tester.pump();
 }
 
+/// C-270 amendment (order 271): pumps kEndCardHoldLimit, in bounded chunks
+/// (lesson 36), past whichever of rule 4's release paths applies -- a real
+/// landing plus kEndCardDwell, an onTravelReset, or the limit itself --
+/// bounding the end hold at its outer edge regardless of which one a given
+/// script's own last `moved` frame before `game_over` actually triggers.
+Future<void> _pumpPastEndCardHold(WidgetTester tester) async {
+  Duration remaining = kEndCardHoldLimit;
+  const Duration chunk = Duration(milliseconds: 250);
+  while (remaining > Duration.zero) {
+    final Duration step = remaining > chunk ? chunk : remaining;
+    await tester.pump(step);
+    remaining -= step;
+  }
+}
+
 Future<void> _pushPlayerLeft(
   WidgetTester tester,
   FakeTransport transport, {
@@ -1313,6 +1328,14 @@ void main() {
         reason: 'fixture is broken: game one must finish',
       );
 
+      // C-270 amendment (order 271): the moved frame just above (3 to 5)
+      // is still travelling when game_over arrives, so the end hold keeps
+      // the playing body up (and end-card-rematch off screen) until it
+      // releases; this is a bounded pump added for that, not a loosened
+      // assertion -- the tap below still needs end-card-rematch on screen
+      // exactly as it always did.
+      await _pumpPastEndCardHold(tester);
+
       await tester.tap(find.byKey(_rematchKey));
       await tester.pump();
       final String reqId = _idOf(
@@ -1476,6 +1499,15 @@ void main() {
 
       expect(controller.room!.state, RoomState.finished);
       expect(controller.room!.gameId, 'g2');
+
+      // C-270 amendment (order 271): the moved frame just above (6 to 57,
+      // a jump no single roll could make) is not a shape board.dart\'s own
+      // travel pattern recognises, so it snaps rather than animates --
+      // C-270 rule 1 still counts it as a moved frame, so the end hold
+      // still takes this game_over, and releases only at kEndCardHoldLimit
+      // (rule 4c), there being no landing of this particular move for it
+      // to release on. Bounded pump added, no assertion below changed.
+      await _pumpPastEndCardHold(tester);
 
       expect(
         _tileShowsNumber(tester, _statRollsKey, 3),

@@ -939,17 +939,30 @@ void main() {
     // (rule 4c's own ordering); the held cue never flushing at all when
     // the board that would have landed it gets replaced by the end
     // screen's own board before the travel finishes.
+    //
+    // Amended for contract C-270 (order 271), rule 6: C-268 rule 4c (flush
+    // every pending entry on game_over) now applies only when there is no
+    // end hold. The move below (3 to 9, six squares) is still travelling
+    // when game_over arrives, so C-270's hold takes it instead: nothing new
+    // plays at game_over itself, capturedOther plays at the landing (C-268
+    // rule 4a, unchanged), and win plays only after the landing plus
+    // kEndCardDwell, once the hold releases. Every assertion this case
+    // closed with before (capturedOther before win, each exactly once, the
+    // fallback timer not firing again on top of it) is unchanged; only the
+    // bounded pumps that land the move and clear the dwell are added.
     testWidgets(
-      'a capture followed at once by game_over I won flushes capturedOther '
-      'before win, each exactly once',
+      'a capture followed at once by game_over I won: capturedOther plays '
+      'at the landing and win only after the landing plus kEndCardDwell, '
+      'each exactly once',
       (tester) async {
         final (_, FakeTransport transport, _FakeFeedbackService fake) =
             await _connectAndMount(tester, seats: twoSeats);
 
-        // The moved frame lands but is never given any travel time at
-        // all: the board behind the playing body is about to be replaced
-        // by the end screen's own board before it could ever call
-        // onMoveLanded for this move.
+        // The moved frame is given no travel time at all before game_over
+        // arrives: the move (3 to 9) is still travelling when game_over is
+        // pushed, so C-270's own hold is what keeps the board up for it
+        // now, in place of the pre-C-270 board replacement this case used
+        // to pin.
         await _pushMoved(
           tester,
           transport,
@@ -969,29 +982,80 @@ void main() {
         );
 
         await _pushGameOver(tester, transport, winner: 0, seq: 3);
-
         expect(
           fake.recorded,
-          equals(<FeedbackCue>[FeedbackCue.capturedOther, FeedbackCue.win]),
+          isEmpty,
           reason:
-              'C-268 rule 4c: a game_over frame must flush every pending '
-              'entry, oldest first, before playing win or gameOver -- '
-              'capturedOther must come before win, each exactly once; '
+              'C-270 rule 6: with the hold in effect (the move has not '
+              'landed), nothing new plays at game_over itself -- '
+              'capturedOther stays held for the landing, and win waits for '
+              'the hold to release; recorded ${fake.recorded}',
+        );
+
+        // 3 to 9 is six squares (4, 5, 6, 7, 8, 9): my own move plays one
+        // step per square it lands on (C-259, _onBoardTokenStep), and the
+        // sixth step lands the move and fires onMoveLanded, which is where
+        // capturedOther (C-268 rule 4a, unchanged by C-270) plays.
+        await _pumpSquares(tester, 6);
+        expect(
+          fake.recorded,
+          equals(<FeedbackCue>[
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.capturedOther,
+          ]),
+          reason:
+              'six step cues, one per square, then capturedOther exactly '
+              'once at the landing, and win must not have played yet; '
               'recorded ${fake.recorded}',
         );
 
+        // The count reaching 0 by this landing starts kEndCardDwell (rule
+        // 4a); win (this game_over\'s own cue) plays once the hold
+        // releases.
+        await _pumpTotal(tester, kEndCardDwell);
+        expect(
+          fake.recorded,
+          equals(<FeedbackCue>[
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.capturedOther,
+            FeedbackCue.win,
+          ]),
+          reason:
+              'win must play exactly once, after capturedOther, once the '
+              'hold releases at kEndCardDwell since the landing; recorded '
+              '${fake.recorded}',
+        );
+
         // The fallback timer armed when the entry was held must have been
-        // cancelled by the rule 4c flush above, not fire again on top of
-        // it.
+        // cancelled by the landing above, not fire again on top of it.
         await _pumpTotal(tester, kLandingCueFallback);
         expect(
           fake.recorded,
-          equals(<FeedbackCue>[FeedbackCue.capturedOther, FeedbackCue.win]),
+          equals(<FeedbackCue>[
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.step,
+            FeedbackCue.capturedOther,
+            FeedbackCue.win,
+          ]),
           reason:
               'nothing further must be recorded once kLandingCueFallback '
               'has elapsed since the entry was held; a repeated '
               'capturedOther here would mean the fallback timer was not '
-              'cancelled by the rule 4c flush; recorded ${fake.recorded}',
+              'cancelled by the landing; recorded ${fake.recorded}',
         );
       },
     );

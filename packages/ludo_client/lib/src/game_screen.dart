@@ -46,6 +46,12 @@ enum GameScreenResult { newTable }
 /// Safety-net fallback duration for held landing cues, contract C-268 rule 4e.
 const Duration kLandingCueFallback = Duration(milliseconds: 2000);
 
+/// Dwell time after winning move lands before end card, contract C-270 rule 4a.
+const Duration kEndCardDwell = Duration(milliseconds: 600);
+
+/// Upper bound on end-card hold before forcing release, contract C-270 rule 4c.
+const Duration kEndCardHoldLimit = Duration(milliseconds: 2500);
+
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key, required this.controller});
 
@@ -148,6 +154,14 @@ class _GameScreenState extends State<GameScreen> {
   // dispose and _resetForNewGame.
   final List<_PendingLandingCues> _pendingLandingCues = <_PendingLandingCues>[];
 
+  // C-270: moves currently in travel, and the end-card hold entered when
+  // game_over arrives while travel is still in flight.
+  int _travelCount = 0;
+  bool _isEndHeld = false;
+  final List<FeedbackCue> _heldGameOverCues = <FeedbackCue>[];
+  Timer? _endHoldDwellTimer;
+  Timer? _endHoldLimitTimer;
+
   @override
   void initState() {
     super.initState();
@@ -170,6 +184,10 @@ class _GameScreenState extends State<GameScreen> {
     _rollNoAnswerTimer?.cancel();
     _noMoveTimer?.cancel();
     _dropPendingLandingCues();
+    _endHoldDwellTimer?.cancel();
+    _endHoldLimitTimer?.cancel();
+    _heldGameOverCues.clear();
+    _isEndHeld = false;
     _frameSub?.cancel();
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
@@ -202,9 +220,6 @@ class _GameScreenState extends State<GameScreen> {
     }
 
     _frames.add(frame);
-    if (frame.type == 'game_over') {
-      _flushPendingLandingCues();
-    }
     final List<FeedbackCue> cues = cuesForFrame(
       frame,
       mySeat: widget.controller.seat,
@@ -214,10 +229,30 @@ class _GameScreenState extends State<GameScreen> {
     final int? to = _intAt(frame.data, 'to');
     final int? moverSeat = _intAt(frame.data, 'seat');
     final int? moverToken = _intAt(frame.data, 'token');
+    final bool isTravellingMove =
+        frame.type == 'moved' &&
+        moverSeat != null &&
+        moverToken != null &&
+        from != null &&
+        to != null &&
+        from != to;
+    if (isTravellingMove) {
+      _travelCount++;
+    }
+
     final bool zeroTravel =
         frame.type == 'moved' && from != null && to != null && from == to;
 
-    if (frame.type == 'moved' &&
+    if (frame.type == 'game_over' && _travelCount > 0) {
+      _isEndHeld = true;
+      _heldGameOverCues.addAll(cues);
+      _endHoldLimitTimer?.cancel();
+      _endHoldLimitTimer = Timer(kEndCardHoldLimit, _releaseEndHold);
+      _clearPendingHold();
+      if (mounted) {
+        setState(() {});
+      }
+    } else if (frame.type == 'moved' &&
         !zeroTravel &&
         moverSeat != null &&
         moverToken != null) {
@@ -237,6 +272,9 @@ class _GameScreenState extends State<GameScreen> {
         _holdLandingCues(moverSeat, moverToken, landingCues);
       }
     } else {
+      if (frame.type == 'game_over') {
+        _flushPendingLandingCues();
+      }
       for (final FeedbackCue cue in cues) {
         feedback.play(cue);
       }
@@ -299,20 +337,53 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   void _onBoardMoveLanded(int seat, int token) {
+    if (_travelCount > 0) {
+      _travelCount--;
+    }
     final int index = _pendingLandingCues.indexWhere(
       (entry) => entry.seat == seat && entry.token == token,
     );
-    if (index == -1) {
-      return;
+    if (index != -1) {
+      final _PendingLandingCues entry = _pendingLandingCues.removeAt(index);
+      entry.fallbackTimer?.cancel();
+      entry.fallbackTimer = null;
+      _playCues(entry.cues);
     }
-    final _PendingLandingCues entry = _pendingLandingCues.removeAt(index);
-    entry.fallbackTimer?.cancel();
-    entry.fallbackTimer = null;
-    _playCues(entry.cues);
+    if (_isEndHeld && _travelCount == 0 && _endHoldDwellTimer == null) {
+      _endHoldDwellTimer = Timer(kEndCardDwell, _releaseEndHold);
+    }
   }
 
   void _onBoardTravelReset() {
+    _travelCount = 0;
+    if (_isEndHeld) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_isEndHeld) {
+          return;
+        }
+        _releaseEndHold();
+      });
+    } else {
+      _flushPendingLandingCues();
+    }
+  }
+
+  void _releaseEndHold() {
+    if (!_isEndHeld) {
+      return;
+    }
+    _isEndHeld = false;
+    _endHoldDwellTimer?.cancel();
+    _endHoldDwellTimer = null;
+    _endHoldLimitTimer?.cancel();
+    _endHoldLimitTimer = null;
     _flushPendingLandingCues();
+    final List<FeedbackCue> cues = List<FeedbackCue>.from(_heldGameOverCues);
+    _heldGameOverCues.clear();
+    _playCues(cues);
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _flushPendingLandingCues() {
@@ -374,6 +445,13 @@ class _GameScreenState extends State<GameScreen> {
     _rollWaitK = null;
     _rollNoAnswer = false;
     _dropPendingLandingCues();
+    _endHoldDwellTimer?.cancel();
+    _endHoldDwellTimer = null;
+    _endHoldLimitTimer?.cancel();
+    _endHoldLimitTimer = null;
+    _heldGameOverCues.clear();
+    _isEndHeld = false;
+    _travelCount = 0;
   }
 
   void _armNoMoveHold(int? face) {
@@ -401,6 +479,11 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   void _onControllerChanged() {
+    final RoomController controller = widget.controller;
+    if (controller.phase == RoomPhase.failed ||
+        controller.phase == RoomPhase.closed) {
+      _travelCount = 0;
+    }
     setState(() {
       _syncCountdown();
       _syncAutoMove();
@@ -415,6 +498,9 @@ class _GameScreenState extends State<GameScreen> {
   /// `canMove`/`noMove` for the roll that follows are played separately,
   /// from `_onFrame`, once the server's own `rolled` frame lands.
   void _onDieTap() {
+    if (_isEndHeld) {
+      return;
+    }
     final TurnState? turn = widget.controller.room?.turn;
     if (turn == null) {
       return;
@@ -486,7 +572,7 @@ class _GameScreenState extends State<GameScreen> {
   /// board draws the held token's glow itself from `autoMoveToken`; there
   /// is no Undo to announce alongside it any more.
   void _syncAutoMove() {
-    if (!_isUniqueLegalAwaitMove()) {
+    if (_isEndHeld || !_isUniqueLegalAwaitMove()) {
       _clearPendingHold();
       return;
     }
@@ -763,7 +849,11 @@ class _GameScreenState extends State<GameScreen> {
     } else if (room == null) {
       body = _loadingBody();
     } else if (room.state == RoomState.finished) {
-      body = _gameOverBody(loc, controller, room);
+      if (_isEndHeld && room.seats.length >= 2) {
+        body = _playingBody(loc, controller, room);
+      } else {
+        body = _gameOverBody(loc, controller, room);
+      }
     } else if (room.state == RoomState.lobby && room.rematch != null) {
       // C-246 rule 2: a rematch LOBBY (state LOBBY, non-null `rematch`) is
       // drawn by the same end card as FINISHED, so the player sees one
@@ -898,6 +988,7 @@ class _GameScreenState extends State<GameScreen> {
     final SeatState? offlineTurnSeat = _offlineTurnSeat(room);
 
     final bool rollEnabled =
+        !_isEndHeld &&
         room.state == RoomState.playing &&
         turn != null &&
         turn.seat == seat &&
@@ -905,7 +996,8 @@ class _GameScreenState extends State<GameScreen> {
         _rollWaitK == null;
 
     final Set<int> legalTokens =
-        (turn != null &&
+        (!_isEndHeld &&
+            turn != null &&
             turn.seat == seat &&
             turn.phase == TurnPhase.awaitMove &&
             turn.legal != null)
@@ -941,12 +1033,15 @@ class _GameScreenState extends State<GameScreen> {
               turnSeat: turn?.seat,
               mySeat: seat,
               legal: legalTokens,
-              autoMoveToken: _pendingAutoMoveToken,
+              autoMoveToken: _isEndHeld ? null : _pendingAutoMoveToken,
               onTokenStep: (int stepSeat, int token) =>
                   _onBoardTokenStep(controller, stepSeat),
               onMoveLanded: _onBoardMoveLanded,
               onTravelReset: _onBoardTravelReset,
               onTokenTap: (int index) {
+                if (_isEndHeld) {
+                  return;
+                }
                 _cancelPendingHoldForManualMove();
                 final int? k = turn?.k;
                 if (k == null) {
@@ -1065,7 +1160,7 @@ class _GameScreenState extends State<GameScreen> {
               ),
             ),
           ),
-          if (turn != null) ...[
+          if (turn != null && room.state == RoomState.playing) ...[
             const SizedBox(width: kSpace2),
             _countdownBlock(loc, room, turn, seatColor),
           ],
