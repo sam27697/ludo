@@ -49,6 +49,12 @@
 // other control in the top start corner. Every tap assertion (L-TAP-H,
 // L-TAP-G, and L-AR's own onPressed check) is kept as it stood, since rule
 // 1 says the icon does what the old button's _leaveLobby already did.
+//
+// Amendment, order 275 (contract C-274): L-H1 and the host L-POS no longer
+// look for lobby-start-button on a host short of full. That host shows
+// lobby-waiting with the count, and the leave button's vertical bound is
+// against lobby-waiting. The 48, half-width and top-quarter bounds are
+// unchanged. L-H2 (full room) still requires the enabled start button.
 
 import 'dart:convert';
 
@@ -315,7 +321,8 @@ void main() {
   testWidgets(
     'L-H1: host, room not full: lobby-leave-button is present exactly '
     'once, is an IconButton with a non-null onPressed, tooltip '
-    'loc.gameLeaveButton, and lobby-start-button is still present',
+    'loc.gameLeaveButton, lobby-waiting shows the count, and '
+    'lobby-start-button is absent',
     (WidgetTester tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transport = FakeTransport();
@@ -389,10 +396,28 @@ void main() {
             'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}" '
             '(contract C-262 rule 1)',
       );
+      final Finder waiting = find.byKey(_waitingKey);
+      expect(
+        waiting,
+        findsOneWidget,
+        reason:
+            'L-H1: a host short of full shows lobby-waiting with the '
+            'seated/total count',
+      );
+      final Text waitingText = tester.widget<Text>(waiting);
+      expect(
+        waitingText.data,
+        loc.lobbyWaitingForPlayers(2, 4),
+        reason:
+            'L-H1: lobby-waiting must read '
+            'loc.lobbyWaitingForPlayers(2, 4); got "${waitingText.data}"',
+      );
       expect(
         find.byKey(_startKey),
-        findsOneWidget,
-        reason: 'L-H1: lobby-start-button must still be present',
+        findsNothing,
+        reason:
+            'L-H1: a host short of full has no lobby-start-button, '
+            'disabled or otherwise',
       );
     },
   );
@@ -589,7 +614,7 @@ void main() {
   // top start corner, at least 48 x 48.
   testWidgets(
     'L-POS (host tree, the L-H1 fixture): lobby-leave-button sits above '
-    'lobby-start-button, in the top start corner, and is the first control '
+    'lobby-waiting, in the top start corner, and is the first control '
     'in the body',
     (WidgetTester tester) async {
       final _Connector connector = _Connector();
@@ -668,25 +693,40 @@ void main() {
             '$leaveRect, view height ${viewSize.height}',
       );
 
-      final Rect startRect = tester.getRect(find.byKey(_startKey));
+      expect(
+        find.byKey(_startKey),
+        findsNothing,
+        reason:
+            'L-POS: a host short of full has no lobby-start-button; the '
+            'vertical bound below is against lobby-waiting',
+      );
+      final Finder waitingFinder = find.byKey(_waitingKey);
+      expect(
+        waitingFinder,
+        findsOneWidget,
+        reason:
+            'L-POS: lobby-waiting must be present before its position can '
+            'be measured',
+      );
+      final Rect waitingRect = tester.getRect(waitingFinder);
       expect(
         leaveRect.bottom,
-        lessThanOrEqualTo(startRect.top),
+        lessThanOrEqualTo(waitingRect.top),
         reason:
             'L-POS: in L-H1\'s tree, lobby-leave-button\'s bottom edge '
-            '(${leaveRect.bottom}) must sit above lobby-start-button\'s '
-            'top edge (${startRect.top}) (contract C-262 rule 1)',
+            '(${leaveRect.bottom}) must sit above lobby-waiting\'s '
+            'top edge (${waitingRect.top}) (contract C-262 rule 1)',
       );
 
       // Nothing else the host tree shows sits higher than lobby-leave-button
-      // either, so lobby-start-button sitting below it (just proven) is not
+      // either, so lobby-waiting sitting below it (just proven) is not
       // a coincidence of one comparison.
       for (final Key otherKey in <Key>[
         _copyLinkKey,
         _copyCodeKey,
         const Key('lobby-seat-0'),
         const Key('lobby-seat-1'),
-        _startKey,
+        _waitingKey,
       ]) {
         final Rect otherRect = tester.getRect(find.byKey(otherKey));
         expect(

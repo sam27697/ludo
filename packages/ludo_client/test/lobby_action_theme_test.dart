@@ -1,8 +1,8 @@
-// Lobby action theme gates: the host Start control must stay a theme
-// ElevatedButton (including an explicit disabled foreground), copy-link and
-// copy-code must stay theme Outlined or Text buttons, and the disabled Start
-// label that carries the waiting-reason copy must meet WCAG AA contrast
-// against the lobby surface.
+// Lobby action theme gates: the full-room host Start control must stay a
+// theme ElevatedButton (including an explicit disabled foreground on the
+// theme), copy-link and copy-code must stay theme Outlined or Text buttons,
+// and the host's lobby-waiting line (the count, once the room is short of
+// full) must meet WCAG AA contrast against the lobby surface.
 
 import 'dart:convert';
 import 'dart:math' as math;
@@ -22,6 +22,7 @@ import 'net/fake_transport.dart';
 
 const String _testUrl = 'wss://example.test/ws';
 const Key _startKey = Key('lobby-start-button');
+const Key _waitingKey = Key('lobby-waiting');
 const Key _copyLinkKey = Key('lobby-copy-link-button');
 const Key _copyCodeKey = Key('lobby-copy-code-button');
 
@@ -123,6 +124,7 @@ Future<void> _pumpConnectedHostLobby(
   WidgetTester tester, {
   int seated = 1,
   int players = 4,
+  bool expectStartButton = true,
 }) async {
   final _Connector connector = _Connector();
   final FakeTransport transport = FakeTransport();
@@ -164,7 +166,9 @@ Future<void> _pumpConnectedHostLobby(
   await tester.pump();
   await tester.pump();
   expect(controller.phase, RoomPhase.connected);
-  expect(find.byKey(_startKey), findsOneWidget);
+  if (expectStartButton) {
+    expect(find.byKey(_startKey), findsOneWidget);
+  }
 }
 
 double _relativeLuminance(Color color) {
@@ -199,13 +203,16 @@ Color _compositeOver(Color foreground, Color background) {
   );
 }
 
-Color _startLabelForeground(WidgetTester tester) {
+Color _waitingLabelForeground(WidgetTester tester) {
   final RenderParagraph paragraph = tester.renderObject<RenderParagraph>(
-    find.descendant(of: find.byKey(_startKey), matching: find.byType(RichText)),
+    find.descendant(
+      of: find.byKey(_waitingKey),
+      matching: find.byType(RichText),
+    ),
   );
   final Color? color = paragraph.text.style?.color;
   if (color == null) {
-    fail('lobby-start-button paragraph resolved no text colour');
+    fail('lobby-waiting paragraph resolved no text colour');
   }
   return color;
 }
@@ -221,21 +228,41 @@ Color _lobbySurface(WidgetTester tester) {
 
 void main() {
   testWidgets(
-    'disabled Start label+reason contrast is at least 4.5:1 against surface',
+    'host short of full: lobby-waiting contrast is at least 4.5:1 against '
+    'surface, and lobby-start-button is absent',
     (WidgetTester tester) async {
-      await _pumpConnectedHostLobby(tester, seated: 3, players: 4);
-
-      final ElevatedButton start = tester.widget<ElevatedButton>(
-        find.byKey(_startKey),
+      await _pumpConnectedHostLobby(
+        tester,
+        seated: 3,
+        players: 4,
+        expectStartButton: false,
       );
+
       expect(
-        start.onPressed,
-        isNull,
-        reason: 'Start must be disabled so the waiting-reason label is shown',
+        find.byKey(_startKey),
+        findsNothing,
+        reason:
+            'C-274: with 3 of 4 seats filled there is no lobby-start-button',
+      );
+      final Finder waiting = find.byKey(_waitingKey);
+      expect(
+        waiting,
+        findsOneWidget,
+        reason: 'C-274: a host short of full shows lobby-waiting',
+      );
+      final BuildContext context = tester.element(find.byType(LobbyScreen));
+      final AppLocalizations loc = AppLocalizations.of(context);
+      final Text waitingText = tester.widget<Text>(waiting);
+      expect(
+        waitingText.data,
+        loc.lobbyWaitingForPlayers(3, 4),
+        reason:
+            'lobby-waiting must read loc.lobbyWaitingForPlayers(3, 4); got '
+            '"${waitingText.data}"',
       );
 
       final Color surface = _lobbySurface(tester);
-      final Color rawForeground = _startLabelForeground(tester);
+      final Color rawForeground = _waitingLabelForeground(tester);
       final Color foreground = _compositeOver(rawForeground, surface);
       final double ratio = _contrastRatio(foreground, surface);
 
@@ -243,60 +270,65 @@ void main() {
         ratio,
         greaterThanOrEqualTo(4.5),
         reason:
-            'disabled Start label+reason foreground $rawForeground '
+            'lobby-waiting foreground $rawForeground '
             '(composited $foreground) on surface $surface measures '
             '$ratio:1, below the WCAG AA minimum of 4.5:1',
       );
     },
   );
 
-  testWidgets('lobby Start uses theme ElevatedButton; copy actions use theme '
-      'Outlined or TextButton styles', (WidgetTester tester) async {
-    await _pumpConnectedHostLobby(tester, seated: 3, players: 4);
+  testWidgets(
+    'full-room lobby Start uses theme ElevatedButton; copy actions use '
+    'theme Outlined or TextButton styles',
+    (WidgetTester tester) async {
+      await _pumpConnectedHostLobby(tester, seated: 4, players: 4);
 
-    final Widget start = tester.widget(find.byKey(_startKey));
-    expect(
-      start,
-      isA<ElevatedButton>(),
-      reason:
-          'lobby-start-button must be an ElevatedButton; found '
-          '${start.runtimeType}',
-    );
-
-    for (final Key key in <Key>[_copyLinkKey, _copyCodeKey]) {
-      final Widget action = tester.widget(find.byKey(key));
+      final Widget start = tester.widget(find.byKey(_startKey));
       expect(
-        action is OutlinedButton || action is TextButton,
-        isTrue,
+        start,
+        isA<ElevatedButton>(),
         reason:
-            '$key must be an OutlinedButton or TextButton; found '
-            '${action.runtimeType}',
+            'lobby-start-button must be an ElevatedButton; found '
+            '${start.runtimeType}',
       );
-    }
 
-    final BuildContext context = tester.element(find.byKey(_startKey));
-    final ButtonStyle? themeStyle = Theme.of(context).elevatedButtonTheme.style;
-    final Color? disabledForeground = themeStyle?.foregroundColor?.resolve(
-      const <WidgetState>{WidgetState.disabled},
-    );
-    expect(
-      disabledForeground,
-      isNotNull,
-      reason:
-          'Theme elevatedButtonTheme must declare an explicit disabled '
-          'foreground so lobby Start stays theme-aligned instead of the '
-          'Material default faded onSurface',
-    );
+      for (final Key key in <Key>[_copyLinkKey, _copyCodeKey]) {
+        final Widget action = tester.widget(find.byKey(key));
+        expect(
+          action is OutlinedButton || action is TextButton,
+          isTrue,
+          reason:
+              '$key must be an OutlinedButton or TextButton; found '
+              '${action.runtimeType}',
+        );
+      }
 
-    final Color surface = Theme.of(context).colorScheme.surface;
-    final double ratio = _contrastRatio(disabledForeground!, surface);
-    expect(
-      ratio,
-      greaterThanOrEqualTo(4.5),
-      reason:
-          'theme elevatedButtonTheme disabled foreground '
-          '$disabledForeground on surface $surface measures $ratio:1, '
-          'below 4.5:1',
-    );
-  });
+      final BuildContext context = tester.element(find.byKey(_startKey));
+      final ButtonStyle? themeStyle = Theme.of(context)
+          .elevatedButtonTheme
+          .style;
+      final Color? disabledForeground = themeStyle?.foregroundColor?.resolve(
+        const <WidgetState>{WidgetState.disabled},
+      );
+      expect(
+        disabledForeground,
+        isNotNull,
+        reason:
+            'Theme elevatedButtonTheme must declare an explicit disabled '
+            'foreground so lobby Start stays theme-aligned instead of the '
+            'Material default faded onSurface',
+      );
+
+      final Color surface = Theme.of(context).colorScheme.surface;
+      final double ratio = _contrastRatio(disabledForeground!, surface);
+      expect(
+        ratio,
+        greaterThanOrEqualTo(4.5),
+        reason:
+            'theme elevatedButtonTheme disabled foreground '
+            '$disabledForeground on surface $surface measures $ratio:1, '
+            'below 4.5:1',
+      );
+    },
+  );
 }

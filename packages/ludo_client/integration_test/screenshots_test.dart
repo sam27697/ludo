@@ -4642,9 +4642,10 @@ void _expectRectInsideView(
   );
 }
 
-/// Order 207, capture 14: asserts the host's not-full-lobby view --
-/// [controller].isHost true, lobby-start-button present and disabled,
-/// lobby-start-with-present-button present, enabled, and reading the
+/// Order 207, capture 14, amended for C-274: asserts the host's not-full
+/// lobby view. [controller].isHost true, lobby-waiting present and reading
+/// the app_ar.arb lobbyWaitingForPlayers "=2 of 4" literal, lobby-start-button
+/// absent, lobby-start-with-present-button present, enabled, and reading the
 /// app_ar.arb lobbyStartWithPresent "=2" literal, lobby-rule-blocks and
 /// lobby-rule-capture-bonus reading their own app_ar.arb literals (quoted
 /// here, not looked up through AppLocalizations, per the order), and
@@ -4667,22 +4668,31 @@ void _expectLobbyHostStartWith(
         'host_seat 0 -- got false',
   );
 
-  final Finder startFinder = find.byKey(const Key('lobby-start-button'));
+  const String expectedWaitingText = 'بانتظار اللاعبين (2 من 4)';
+  final Finder waitingFinder = find.byKey(const Key('lobby-waiting'));
   expect(
-    startFinder,
+    waitingFinder,
     findsOneWidget,
     reason:
-        'capture 14 ($momentDescription): expected lobby-start-button on '
-        'screen for the host',
+        'capture 14 ($momentDescription): expected lobby-waiting on '
+        'screen for the host in a room that is not full (2 of 4 seats '
+        'joined)',
   );
-  final ElevatedButton startWidget = tester.widget<ElevatedButton>(startFinder);
+  final Text waitingText = tester.widget<Text>(waitingFinder);
   expect(
-    startWidget.onPressed,
-    isNull,
+    waitingText.data,
+    expectedWaitingText,
+    reason:
+        'capture 14 ($momentDescription): expected lobby-waiting\'s Text '
+        'to read the app_ar.arb lobbyWaitingForPlayers "=2 of 4" literal '
+        '"$expectedWaitingText", got "${waitingText.data}"',
+  );
+  expect(
+    find.byKey(const Key('lobby-start-button')),
+    findsNothing,
     reason:
         'capture 14 ($momentDescription): the room is not full (2 of 4 '
-        'seats joined), so expected lobby-start-button disabled '
-        '(onPressed null), got a non-null callback',
+        'seats joined), so expected no lobby-start-button',
   );
 
   final Finder startWithFinder = find.byKey(
