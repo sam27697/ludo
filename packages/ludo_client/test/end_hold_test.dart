@@ -818,6 +818,11 @@ void main() {
           to: 20,
           seq: 4,
         );
+        // The snap runs inside GameScreen's own rebuild, so the release
+        // waits for that frame to end and lands on the next one. A
+        // zero-length pump advances no clock: kEndCardDwell and
+        // kEndCardHoldLimit cannot fire here, only the reset can release.
+        await tester.pump();
 
         expect(
           _endCardShown(tester),
