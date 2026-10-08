@@ -984,7 +984,10 @@ class _GameScreenState extends State<GameScreen> {
                 SizedBox(
                   height: 48,
                   child: Stack(
-                    alignment: Alignment.center,
+                    // C-250 rule 1 lets only the play header sit between the
+                    // strip and the board, so the row's spare height goes above
+                    // the strip.
+                    alignment: Alignment.bottomCenter,
                     children: [
                       SeatPipStrip(
                         key: const Key('game-seat-pip-strip'),
