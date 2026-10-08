@@ -168,10 +168,18 @@ Future<void> _pumpConnectedHostLobby(WidgetTester tester) async {
     findsOneWidget,
     reason: 'fixture must reach the connected lobby body',
   );
+  // Host, 1 of 4. C-274: the count is lobby-waiting, and there is no
+  // lobby-start-button. The felt and pip cases below still run on this
+  // same mount.
+  expect(
+    find.byKey(const Key('lobby-waiting')),
+    findsOneWidget,
+    reason: 'host short of full shows lobby-waiting',
+  );
   expect(
     find.byKey(_startKey),
-    findsOneWidget,
-    reason: 'connected lobby must show the host Start control',
+    findsNothing,
+    reason: 'host short of full has no lobby-start-button',
   );
 }
 
