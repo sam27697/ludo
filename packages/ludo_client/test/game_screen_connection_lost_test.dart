@@ -511,10 +511,12 @@ void main() {
 
   // ==========================================================================
   // C4: an in-game exit exists.
+  // C-272: the key stays, and it is no longer an AppBar action. Present,
+  // and not inside an AppBar.
   // ==========================================================================
   testWidgets(
     'C4: with RoomPhase.connected and a healthy RoomState.playing room, '
-    'game-screen-appbar-leave is present in the AppBar actions',
+    'game-screen-appbar-leave is present and is not inside an AppBar',
     (tester) async {
       final (controller, _, _) = await _connectPlaying(
         tester,
@@ -532,25 +534,33 @@ void main() {
       await _mount(tester, controller);
 
       expect(
+        find.byKey(_appbarLeaveKey),
+        findsOneWidget,
+        reason:
+            'C4: game-screen-appbar-leave must be present for a healthy, '
+            'connected, playing game',
+      );
+      expect(
         find.descendant(
           of: find.byType(AppBar),
           matching: find.byKey(_appbarLeaveKey),
         ),
-        findsOneWidget,
-        reason:
-            'C4: game-screen-appbar-leave must be present inside the '
-            'AppBar, even for a healthy, connected, playing game',
+        findsNothing,
+        reason: 'C4: game-screen-appbar-leave must not sit inside an AppBar',
       );
     },
   );
 
   // ==========================================================================
   // C5: leaving does not hang on a dead server.
+  // C-272: this fixture is PLAYING with my seat, so the corner tap opens
+  // game-leave-confirm. The one-second pop is measured from
+  // game-leave-confirm-leave, not from the corner tap.
   // ==========================================================================
   testWidgets(
-    'C5: tapping game-screen-appbar-leave removes GameScreen from the '
-    'navigator within one second of pumped time, even when the server '
-    'never answers leave_room',
+    'C5: tapping game-screen-appbar-leave opens game-leave-confirm, and '
+    'tapping game-leave-confirm-leave removes GameScreen within one '
+    'second, even when the server never answers leave_room',
     (tester) async {
       final (controller, transport, _) = await _connectPlaying(
         tester,
@@ -613,10 +623,31 @@ void main() {
         reason: 'C5: game-screen-appbar-leave must be present to tap',
       );
       await tester.tap(find.byKey(_appbarLeaveKey));
+      // Sheet enter is 250ms. Bounded pumps, not pumpAndSettle.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump(const Duration(milliseconds: 50));
 
-      // One second of pumped time, total, to let any pop transition finish,
-      // bounded well under the 10-second requestTimeout this must not sit
-      // on.
+      expect(
+        find.byType(GameScreen),
+        findsOneWidget,
+        reason: 'C5: the screen popped; the corner tap must open the confirm',
+      );
+      expect(
+        find.byKey(const Key('game-leave-confirm')),
+        findsOneWidget,
+        reason: 'C5: no sheet shown',
+      );
+      expect(
+        find.byKey(const Key('game-leave-confirm-leave')),
+        findsOneWidget,
+        reason: 'C5: game-leave-confirm-leave must be present to tap',
+      );
+      await tester.tap(find.byKey(const Key('game-leave-confirm-leave')));
+
+      // One second of pumped time, from the confirm's Leave tap, to let any
+      // pop transition finish, bounded well under the 10-second
+      // requestTimeout this must not sit on.
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump(const Duration(milliseconds: 500));
 
@@ -625,7 +656,7 @@ void main() {
         findsNothing,
         reason:
             'C5: GameScreen must be gone from the navigator within one '
-            'second of pumped time after tapping game-screen-appbar-leave, '
+            'second of pumped time after tapping game-leave-confirm-leave, '
             'even though transport.sentRaw grew by only '
             '${transport.sentRaw.length - sentBefore} message(s) and none '
             'was ever answered',

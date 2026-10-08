@@ -1,7 +1,10 @@
-// Widget tests for GameScreen's AppBar leave control: the control must show
-// the localised leave verb as visible text, must not use a logout icon, must
-// stay at least 48x48, must still pop the route, and must keep an Arabic
-// AppBar in rtl.
+// Widget tests for GameScreen's corner leave control. The key
+// game-screen-appbar-leave is the old AppBar action's key, kept. The control
+// is an IconButton with Icons.close, tooltip gameLeaveButton, at least
+// 48x48, and it must not use Icons.logout. In a playing game with my seat a
+// tap opens game-leave-confirm, and Leave in that sheet pops the route
+// within one second. The control sits in the left half in en and the right
+// half in ar.
 //
 // GameScreen is driven the same way test/game_screen_connection_lost_test.dart
 // drives RoomController: a real RoomController over FakeTransport, no real
@@ -23,6 +26,8 @@ import 'net/fake_transport.dart';
 
 const String _testUrl = 'wss://example.test/ws';
 const Key _appbarLeaveKey = Key('game-screen-appbar-leave');
+const Key _confirmKey = Key('game-leave-confirm');
+const Key _confirmLeaveKey = Key('game-leave-confirm-leave');
 
 int _serverIdSeq = 0;
 String _nextServerId() {
@@ -194,7 +199,8 @@ Map<String, Object?> _midGameTurn() =>
 
 void main() {
   testWidgets(
-    'game-screen-appbar-leave descendant text equals gameLeaveButton',
+    'game-screen-appbar-leave tooltip equals gameLeaveButton and the icon '
+    'is Icons.close',
     (tester) async {
       final (controller, _) = await _connectPlaying(
         tester,
@@ -212,19 +218,28 @@ void main() {
         reason: 'fixture is broken: game-screen-appbar-leave must be present',
       );
 
+      final Widget widget = tester.widget(leave);
+      expect(
+        widget,
+        isA<IconButton>(),
+        reason:
+            'game-screen-appbar-leave must be an IconButton, found '
+            '${widget.runtimeType}',
+      );
       final AppLocalizations loc = AppLocalizations.of(
         tester.element(find.byType(GameScreen)),
       );
-      final Finder leaveText = find.descendant(
-        of: leave,
-        matching: find.text(loc.gameLeaveButton),
+      expect(
+        (widget as IconButton).tooltip,
+        loc.gameLeaveButton,
+        reason:
+            'game-screen-appbar-leave tooltip must equal gameLeaveButton, '
+            'which reads "${loc.gameLeaveButton}"',
       );
       expect(
-        leaveText,
+        find.descendant(of: leave, matching: find.byIcon(Icons.close)),
         findsOneWidget,
-        reason:
-            'game-screen-appbar-leave must have visible descendant text '
-            'equal to gameLeaveButton; a tooltip is not descendant text',
+        reason: 'game-screen-appbar-leave must show Icons.close',
       );
     },
   );
@@ -292,7 +307,8 @@ void main() {
   });
 
   testWidgets(
-    'tapping game-screen-appbar-leave pops GameScreen within one second',
+    'tapping game-screen-appbar-leave opens game-leave-confirm and Leave '
+    'there pops GameScreen within one second',
     (tester) async {
       final (controller, transport) = await _connectPlaying(
         tester,
@@ -349,6 +365,24 @@ void main() {
         reason: 'game-screen-appbar-leave must be present to tap',
       );
       await tester.tap(find.byKey(_appbarLeaveKey));
+      // Sheet enter is 250ms. Bounded pumps, not pumpAndSettle: the turn
+      // countdown's ticker would keep settle from returning.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(
+        find.byType(GameScreen),
+        findsOneWidget,
+        reason: 'the screen popped; the corner tap must open the confirm',
+      );
+      expect(find.byKey(_confirmKey), findsOneWidget, reason: 'no sheet shown');
+      expect(
+        find.byKey(_confirmLeaveKey),
+        findsOneWidget,
+        reason: 'game-leave-confirm-leave must be present to tap',
+      );
+      await tester.tap(find.byKey(_confirmLeaveKey));
 
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump(const Duration(milliseconds: 500));
@@ -358,7 +392,7 @@ void main() {
         findsNothing,
         reason:
             'GameScreen must be gone from the navigator within one '
-            'second of pumped time after tapping game-screen-appbar-leave, '
+            'second of pumped time after tapping game-leave-confirm-leave, '
             'even though transport.sentRaw grew by only '
             '${transport.sentRaw.length - sentBefore} message(s) and none '
             'was ever answered',
@@ -366,36 +400,78 @@ void main() {
     },
   );
 
-  testWidgets('Arabic locale GameScreen AppBar Directionality is rtl', (
-    tester,
-  ) async {
-    final (controller, _) = await _connectPlaying(
-      tester,
-      seats: <Map<String, Object?>>[
-        _seatJson(0, name: 'سام'),
-        _seatJson(1, name: 'بوب'),
-      ],
-      turn: _midGameTurn(),
-    );
-    addTearDown(controller.dispose);
+  testWidgets(
+    'English locale: game-screen-appbar-leave sits in the left half',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    await _mount(tester, controller, locale: const Locale('ar'));
+      final (controller, _) = await _connectPlaying(
+        tester,
+        seats: _midGameSeats,
+        turn: _midGameTurn(),
+      );
+      addTearDown(controller.dispose);
 
-    final Finder appBar = find.descendant(
-      of: find.byType(GameScreen),
-      matching: find.byType(AppBar),
-    );
-    expect(
-      appBar,
-      findsOneWidget,
-      reason: 'fixture is broken: GameScreen must build an AppBar',
-    );
-    expect(
-      Directionality.of(tester.element(appBar)),
-      TextDirection.rtl,
-      reason:
-          'pumping GameScreen in Locale(ar) must resolve the AppBar '
-          'Directionality to rtl',
-    );
-  });
+      await _mount(tester, controller);
+
+      final Finder leave = find.byKey(_appbarLeaveKey);
+      expect(
+        leave,
+        findsOneWidget,
+        reason: 'fixture is broken: game-screen-appbar-leave must be present',
+      );
+      final double mid =
+          tester.view.physicalSize.width / tester.view.devicePixelRatio / 2;
+      final double center = tester.getCenter(leave).dx;
+      expect(
+        center < mid,
+        isTrue,
+        reason:
+            'en: game-screen-appbar-leave must sit in the left half; '
+            'center dx was $center, view midpoint was $mid',
+      );
+    },
+  );
+
+  testWidgets(
+    'Arabic locale: game-screen-appbar-leave sits in the right half',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final (controller, _) = await _connectPlaying(
+        tester,
+        seats: <Map<String, Object?>>[
+          _seatJson(0, name: 'سام'),
+          _seatJson(1, name: 'بوب'),
+        ],
+        turn: _midGameTurn(),
+      );
+      addTearDown(controller.dispose);
+
+      await _mount(tester, controller, locale: const Locale('ar'));
+
+      final Finder leave = find.byKey(_appbarLeaveKey);
+      expect(
+        leave,
+        findsOneWidget,
+        reason: 'fixture is broken: game-screen-appbar-leave must be present',
+      );
+      final double mid =
+          tester.view.physicalSize.width / tester.view.devicePixelRatio / 2;
+      final double center = tester.getCenter(leave).dx;
+      expect(
+        center > mid,
+        isTrue,
+        reason:
+            'ar: game-screen-appbar-leave must sit in the right half; '
+            'center dx was $center, view midpoint was $mid',
+      );
+    },
+  );
 }
