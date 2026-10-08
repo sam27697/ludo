@@ -419,6 +419,30 @@ class _GameScript {
   }
 }
 
+/// C-270 amendment (order 271): every scripted game below pushes at least
+/// one `moved` frame with `from != to` immediately before its own
+/// `gameOver()` call. Contract C-270 rule 1 counts that frame whether or
+/// not lib/src/board.dart's own travel-pattern match ever actually starts
+/// an animation for it (several of the frames below jump straight to a
+/// final progress a real single roll could never reach, e.g. -1 to 57, so
+/// the board snaps rather than travels) -- either way the count is above 0
+/// when `gameOver()`'s own game_over frame lands, so C-270's end hold takes
+/// every one of these scripts, same as a real travelling move would. This
+/// helper pumps kEndCardHoldLimit, in bounded chunks (lesson 36), which
+/// bounds the hold at its outer edge regardless of which of rule 4's three
+/// release paths actually applies to a given script, so every downstream
+/// case built from these helpers keeps seeing the end card it always
+/// asserted on, with no assertion removed, loosened, or changed at its end.
+Future<void> _pumpPastEndCardHold(WidgetTester tester) async {
+  Duration remaining = kEndCardHoldLimit;
+  const Duration chunk = Duration(milliseconds: 250);
+  while (remaining > Duration.zero) {
+    final Duration step = remaining > chunk ? chunk : remaining;
+    await tester.pump(step);
+    remaining -= step;
+  }
+}
+
 // --- scripted games, one per scenario ---------------------------------------
 
 const String _winVerifyUrl = 'https://end-card-test.invalid/verify/win';
@@ -454,6 +478,7 @@ Future<(RoomController, FakeTransport)> _minimalWinGame(
   await script.rolled(seat: 0, value: 4, k: 1);
   await script.moved(seat: 0, token: 0, from: -1, to: 57);
   await script.gameOver(winner: 0, verifyUrl: _winVerifyUrl);
+  await _pumpPastEndCardHold(tester);
   return (controller, transport);
 }
 
@@ -481,6 +506,7 @@ Future<(RoomController, FakeTransport)> _minimalLoseGame(
   await script.rolled(seat: 1, value: 4, k: 1);
   await script.moved(seat: 1, token: 0, from: -1, to: 4);
   await script.gameOver(winner: 1, verifyUrl: _loseVerifyUrl);
+  await _pumpPastEndCardHold(tester);
   return (controller, transport);
 }
 
@@ -595,6 +621,7 @@ Future<(RoomController, FakeTransport)> _numbersWinGame(
   ); // tokensHome(seat0): 0 -> 1
 
   await s.gameOver(winner: 0, verifyUrl: _numbersVerifyUrl);
+  await _pumpPastEndCardHold(tester);
   return (controller, transport);
 }
 
@@ -622,6 +649,7 @@ Future<(RoomController, FakeTransport)> _gapWinGame(WidgetTester tester) async {
   await s.rolled(seat: 0, value: 6, k: 2);
   await s.moved(seat: 0, token: 0, from: 4, to: 57); // tokensHome: 0 -> 1
   await s.gameOver(winner: 0, verifyUrl: _gapVerifyUrl);
+  await _pumpPastEndCardHold(tester);
   return (controller, transport);
 }
 

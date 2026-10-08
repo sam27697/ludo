@@ -46,6 +46,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
+import 'package:ludo_client/src/board.dart' show kTokenStepDuration;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
@@ -195,6 +196,27 @@ Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
 /// Opens the seat-count selector. It stays hidden until the player taps
 /// home-players-disclosure; tests that pick a non-default count must open
 /// it first. Bounded pumps only: nothing here mounts a LobbyScreen yet.
+/// Pumps past C-270's end hold for the C1 move below (4 to 9, five
+/// squares): five bounded ticks of kTokenStepDuration (board.dart) land the
+/// move, then kEndCardDwell (game_screen.dart) more, in bounded chunks
+/// (lesson 36), lets the hold release before the end-card assertions that
+/// follow. Added only so this seam case keeps proving what it always
+/// proved -- the winner shown is honest -- rather than racing C-270's own
+/// timing, which is a different order's own proof (test/end_hold_test
+/// .dart).
+Future<void> _pumpPastEndCardHold(WidgetTester tester) async {
+  for (var i = 0; i < 5; i++) {
+    await tester.pump(kTokenStepDuration);
+  }
+  Duration remaining = kEndCardDwell;
+  const Duration chunk = Duration(milliseconds: 200);
+  while (remaining > Duration.zero) {
+    final Duration step = remaining > chunk ? chunk : remaining;
+    await tester.pump(step);
+    remaining -= step;
+  }
+}
+
 Future<void> _openPlayersDisclosure(WidgetTester tester) async {
   final Finder disclosure = find.byKey(const Key('home-players-disclosure'));
   expect(
@@ -596,6 +618,13 @@ void main() {
               'fixture is broken: game_over must land the room in '
               'RoomState.finished',
         );
+
+        // C-270 amendment (order 271): the winning moved frame above (4 to
+        // 9) travels for real, so the room reaches RoomState.finished
+        // before the token is seen home; bounded pumps past the hold, not
+        // an assertion removed or loosened, is this amendment's whole
+        // change.
+        await _pumpPastEndCardHold(tester);
 
         final gameContext = tester.element(find.byType(GameScreen));
         final gameLoc = AppLocalizations.of(gameContext);
