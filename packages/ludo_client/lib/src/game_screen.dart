@@ -38,7 +38,7 @@ import 'net/snapshot.dart';
 import 'theme.dart';
 
 /// Distinct [Navigator.pop] result from the finished-board next-table
-/// button. The AppBar leave control pops with no result, so the screen
+/// button. The corner leave control pops with no result, so the screen
 /// that pushed this route can leave() and dispose the old controller
 /// without opening another table.
 enum GameScreenResult { newTable }
@@ -161,6 +161,10 @@ class _GameScreenState extends State<GameScreen> {
   final List<FeedbackCue> _heldGameOverCues = <FeedbackCue>[];
   Timer? _endHoldDwellTimer;
   Timer? _endHoldLimitTimer;
+
+  // C-272 rule 4: true while the leave confirmation sheet is open, so a
+  // second tap on the corner leave icon does not open a second sheet.
+  bool _isLeaveConfirmOpen = false;
 
   @override
   void initState() {
@@ -291,7 +295,7 @@ class _GameScreenState extends State<GameScreen> {
     // `player_left` naming its own seat and nothing further from the room
     // (docs/PROTOCOL.md section 16.9 rule 1). No existing "removed from a
     // lobby" path exists under lib/ to reuse, so this is treated exactly
-    // as the AppBar Leave control treats leaving: pop with no result.
+    // as the corner Leave control treats leaving: pop with no result.
     if (frame.type == 'player_left') {
       final int? seatValue = _intAt(frame.data, 'seat');
       if (seatValue != null && seatValue == widget.controller.seat) {
@@ -734,7 +738,7 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   /// The one path every leave affordance on this screen goes through,
-  /// in-game AppBar action and connection-lost body alike.
+  /// corner leave icon and connection-lost body alike.
   ///
   /// This pops and nothing else. It does not call `controller.leave()`.
   /// `home_screen.dart` created this controller and already owns retiring
@@ -759,6 +763,93 @@ class _GameScreenState extends State<GameScreen> {
 
   void _requestNewTable() {
     Navigator.of(context).pop(GameScreenResult.newTable);
+  }
+
+  /// C-272 rule 3: confirm only when leaving costs something.
+  bool _needsLeaveConfirm() {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    if (room == null) {
+      return false;
+    }
+    if (room.state != RoomState.playing) {
+      return false;
+    }
+    final int? seat = controller.seat;
+    if (seat == null) {
+      return false;
+    }
+    final bool hasSeat = room.seats.any((SeatState s) => s.seat == seat);
+    if (!hasSeat) {
+      return false;
+    }
+    if (controller.phase == RoomPhase.failed ||
+        controller.phase == RoomPhase.closed) {
+      return false;
+    }
+    return true;
+  }
+
+  void _handleLeaveRequest(BuildContext context, AppLocalizations loc) {
+    if (_needsLeaveConfirm()) {
+      _showLeaveConfirm(context, loc);
+      return;
+    }
+    _leave();
+  }
+
+  /// C-272 rule 4: modal bottom sheet confirming leave when in playing state.
+  void _showLeaveConfirm(BuildContext context, AppLocalizations loc) {
+    if (!mounted || _isLeaveConfirmOpen) {
+      return;
+    }
+    _isLeaveConfirmOpen = true;
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (BuildContext sheetContext) {
+        return Padding(
+          key: const Key('game-leave-confirm'),
+          padding: const EdgeInsets.all(kSpace5),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                loc.gameLeaveConfirmTitle,
+                style: Theme.of(sheetContext).textTheme.titleMedium,
+              ),
+              const SizedBox(height: kSpace2),
+              Text(loc.gameLeaveConfirmBody),
+              const SizedBox(height: kSpace4),
+              FilledButton(
+                key: const Key('game-leave-confirm-stay'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                ),
+                onPressed: () => Navigator.of(sheetContext).pop(),
+                child: Text(loc.gameLeaveConfirmStay),
+              ),
+              const SizedBox(height: kSpace2),
+              TextButton(
+                key: const Key('game-leave-confirm-leave'),
+                style: TextButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                ),
+                onPressed: () {
+                  Navigator.of(sheetContext).pop();
+                  if (mounted) {
+                    _leave();
+                  }
+                },
+                child: Text(loc.gameLeaveButton),
+              ),
+            ],
+          ),
+        );
+      },
+    ).whenComplete(() {
+      _isLeaveConfirmOpen = false;
+    });
   }
 
   /// C-246 rule 1 and rule 3: the end card's Rematch/accept tap. Guarded by
@@ -865,39 +956,72 @@ class _GameScreenState extends State<GameScreen> {
       body = _waitingBody(loc);
     }
 
-    return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      appBar: AppBar(
-        title: Text(loc.gameScreenTitle),
-        actions: [
-          TextButton(
-            key: const Key('game-screen-appbar-leave'),
-            style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
-            onPressed: _leave,
-            child: Text(loc.gameLeaveButton),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Signature chrome: felt edge frames the seat-pip strip so every
-            // body below (waiting, playing, game-over, and the rest) inherits
-            // the same table cue without each state painting its own copy.
-            const FeltEdge(key: Key('game-felt-edge')),
-            SeatPipStrip(
-              key: const Key('game-seat-pip-strip'),
-              seats: room == null ? null : _seatsInPlayOf(room),
-              turnSeat: (room != null && room.state == RoomState.playing)
-                  ? room.turn?.seat
-                  : null,
+    final SystemUiOverlayStyle overlayStyle =
+        Theme.of(context).brightness == Brightness.light
+        ? SystemUiOverlayStyle.dark
+        : SystemUiOverlayStyle.light;
+
+    return PopScope(
+      canPop: !_needsLeaveConfirm(),
+      onPopInvokedWithResult: (bool didPop, Object? result) {
+        if (didPop) {
+          return;
+        }
+        _showLeaveConfirm(context, loc);
+      },
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: overlayStyle,
+        child: Scaffold(
+          backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+          body: SafeArea(
+            child: Column(
+              children: [
+                // Signature chrome: felt edge frames the seat-pip strip so
+                // every body below (waiting, playing, game-over, and the rest)
+                // inherits the same table cue without each state painting its
+                // own copy.
+                const FeltEdge(key: Key('game-felt-edge')),
+                SizedBox(
+                  height: 48,
+                  child: Stack(
+                    // C-250 rule 1 lets only the play header sit between the
+                    // strip and the board, so the row's spare height goes above
+                    // the strip.
+                    alignment: Alignment.bottomCenter,
+                    children: [
+                      SeatPipStrip(
+                        key: const Key('game-seat-pip-strip'),
+                        seats: room == null ? null : _seatsInPlayOf(room),
+                        turnSeat:
+                            (room != null && room.state == RoomState.playing)
+                            ? room.turn?.seat
+                            : null,
+                      ),
+                      PositionedDirectional(
+                        start: kSpace2,
+                        child: IconButton(
+                          // The key name is historical (the old app bar
+                          // action); tests pin it.
+                          key: const Key('game-screen-appbar-leave'),
+                          style: IconButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                          ),
+                          tooltip: loc.gameLeaveButton,
+                          onPressed: () => _handleLeaveRequest(context, loc),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (controller.hasDesynced) _desyncBanner(context, loc),
+                if (controller.phase == RoomPhase.connecting &&
+                    controller.room != null)
+                  _reconnectingBanner(context, loc),
+                Expanded(child: body),
+              ],
             ),
-            if (controller.hasDesynced) _desyncBanner(context, loc),
-            if (controller.phase == RoomPhase.connecting &&
-                controller.room != null)
-              _reconnectingBanner(context, loc),
-            Expanded(child: body),
-          ],
+          ),
         ),
       ),
     );

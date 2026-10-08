@@ -314,7 +314,19 @@
   },
   "gameLeaveButton": "Leave",
   "@gameLeaveButton": {
-    "description": "Label and tooltip of the button that leaves the room from the game screen, both the in-game AppBar action present in every state and the button shown in the connection-lost state."
+    "description": "The corner icon's tooltip and the confirm's leave action."
+  },
+  "gameLeaveConfirmTitle": "Leave the game?",
+  "@gameLeaveConfirmTitle": {
+    "description": "Title of the confirmation bottom sheet shown when leaving an active game."
+  },
+  "gameLeaveConfirmBody": "Your tokens stay on the board and the timer plays your turns.",
+  "@gameLeaveConfirmBody": {
+    "description": "Body of the confirmation bottom sheet shown when leaving an active game."
+  },
+  "gameLeaveConfirmStay": "Keep playing",
+  "@gameLeaveConfirmStay": {
+    "description": "Primary action on the leave confirmation sheet to keep playing."
   },
   "gameNewRoomButton": "New table",
   "@gameNewRoomButton": {
