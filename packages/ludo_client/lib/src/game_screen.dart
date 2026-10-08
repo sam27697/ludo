@@ -997,7 +997,8 @@ class _GameScreenState extends State<GameScreen> {
                       PositionedDirectional(
                         start: kSpace2,
                         child: IconButton(
-                          // Historical key name from the original app bar action; tests pin it.
+                          // The key name is historical (the old app bar
+                          // action); tests pin it.
                           key: const Key('game-screen-appbar-leave'),
                           style: IconButton.styleFrom(
                             minimumSize: const Size(48, 48),
