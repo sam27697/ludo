@@ -494,11 +494,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         color: LudoColors.inkMuted,
                       ),
                       const SizedBox(width: kSpace2),
-                      Text(
-                        loc.lobbyReconnecting,
-                        key: const Key('lobby-reconnecting'),
-                        style: Theme.of(context).textTheme.bodyMedium
-                            ?.copyWith(color: LudoColors.inkMuted),
+                      Flexible(
+                        child: Text(
+                          loc.lobbyReconnecting,
+                          key: const Key('lobby-reconnecting'),
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: LudoColors.inkMuted),
+                        ),
                       ),
                     ],
                   )
