@@ -243,9 +243,9 @@ Future<(RoomController, FakeTransport, _Connector)> _connectPlaying(
   return (controller, transport, connector);
 }
 
-Widget _harness(Widget child) {
+Widget _harness(Widget child, {Locale locale = const Locale('en')}) {
   return MaterialApp(
-    locale: const Locale('en'),
+    locale: locale,
     supportedLocales: appSupportedLocales,
     localizationsDelegates: const [
       AppLocalizations.delegate,
@@ -257,8 +257,14 @@ Widget _harness(Widget child) {
   );
 }
 
-Future<void> _mount(WidgetTester tester, RoomController controller) async {
-  await tester.pumpWidget(_harness(GameScreen(controller: controller)));
+Future<void> _mount(
+  WidgetTester tester,
+  RoomController controller, {
+  Locale locale = const Locale('en'),
+}) async {
+  await tester.pumpWidget(
+    _harness(GameScreen(controller: controller), locale: locale),
+  );
   await tester.pump();
 }
 
@@ -533,6 +539,44 @@ void main() {
       controller.dispose();
     },
   );
+
+  // C-284 RETURN 1 defect 2 (P10): the retrying line wraps instead of
+  // overflowing the card when the locale's string is long.
+  testWidgets('ar: the retrying line fits inside the card, nothing throws', (
+    tester,
+  ) async {
+    final (controller, transport, _) = await _connectPlaying(
+      tester,
+      seats: rollSeats,
+      turn: _awaitRollTurn(),
+      autoReconnectDelays: _oneDelay,
+    );
+    await _mount(tester, controller, locale: const Locale('ar'));
+
+    transport.endFromFarSide();
+    await tester.pump();
+    await tester.pump();
+
+    expect(controller.autoReconnectPending, isTrue);
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'ar: the connection-lost card must lay out without overflow',
+    );
+    final Rect card = tester.getRect(
+      find.byKey(const Key('game-screen-connection-lost')),
+    );
+    final Rect line = tester.getRect(
+      find.byKey(const Key('game-screen-reconnecting')),
+    );
+    expect(
+      line.left >= card.left && line.right <= card.right,
+      isTrue,
+      reason: 'ar: reconnecting line $line must lie inside the card $card',
+    );
+
+    controller.dispose();
+  });
 
   // ==========================================================================
   // The same moment: a tap on a legal token sends nothing.
