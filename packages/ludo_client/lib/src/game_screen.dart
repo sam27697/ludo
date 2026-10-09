@@ -1117,11 +1117,14 @@ class _GameScreenState extends State<GameScreen> {
                         color: LudoColors.inkMuted,
                       ),
                       const SizedBox(width: kSpace2),
-                      Text(
-                        loc.lobbyReconnecting,
-                        key: const Key('game-screen-reconnecting'),
-                        style: Theme.of(context).textTheme.bodyMedium
-                            ?.copyWith(color: LudoColors.inkMuted),
+                      Flexible(
+                        child: Text(
+                          loc.lobbyReconnecting,
+                          key: const Key('game-screen-reconnecting'),
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: LudoColors.inkMuted),
+                        ),
                       ),
                     ],
                   ),
