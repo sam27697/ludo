@@ -422,18 +422,34 @@ void main() {
   });
 
   group('the name field, order 080 rule 11', () {
-    testWidgets('is present, keyed home-name-field, with the localised label', (
-      tester,
-    ) async {
-      await tester.pumpWidget(_homeScreenApp());
-      await tester.pumpAndSettle();
+    testWidgets(
+      'is present, keyed home-name-field, with the localised label on '
+      'a Semantics ancestor',
+      (tester) async {
+        await tester.pumpWidget(_homeScreenApp());
+        await tester.pumpAndSettle();
 
-      final context = tester.element(find.byType(Scaffold));
-      final loc = AppLocalizations.of(context);
+        final context = tester.element(find.byType(Scaffold));
+        final loc = AppLocalizations.of(context);
 
-      expect(find.byKey(const Key('home-name-field')), findsOneWidget);
-      expect(find.text(loc.homeNameFieldLabel), findsOneWidget);
-    });
+        final Finder nameField = find.byKey(const Key('home-name-field'));
+        expect(nameField, findsOneWidget);
+        expect(
+          find.ancestor(
+            of: nameField,
+            matching: find.byWidgetPredicate(
+              (Widget widget) =>
+                  widget is Semantics &&
+                  widget.properties.label == loc.homeNameFieldLabel,
+            ),
+          ),
+          findsOneWidget,
+          reason:
+              'home-name-field must carry homeNameFieldLabel '
+              '("${loc.homeNameFieldLabel}") on a Semantics ancestor',
+        );
+      },
+    );
 
     testWidgets('a typed name reaches LobbyScreen.playerName verbatim', (
       tester,

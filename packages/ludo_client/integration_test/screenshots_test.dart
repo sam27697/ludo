@@ -1648,14 +1648,24 @@ void main() {
           'AppLocalizations.lobbyReconnecting ("${loc.lobbyReconnecting}"), '
           'got "${settledReconnectingText10.data}"',
     );
+    // C-282 rule 1: the last table stays in view, dimmed and untappable,
+    // under the connection-lost card.
     expect(
-      find.byKey(const Key('game-screen-board')),
+      find.descendant(
+        of: find.byKey(const Key('game-screen-stale-table')),
+        matching: find.byKey(const Key('game-screen-board')),
+      ),
+      findsOneWidget,
+      reason:
+          'capture 10: expected game-screen-board inside '
+          'game-screen-stale-table immediately before the capture',
+    );
+    expect(
+      find.byKey(const Key('game-screen-reconnect-button')),
       findsNothing,
       reason:
-          'capture 10: game_screen.dart\'s _connectionLostBody, the body '
-          'this phase builds, never constructs game-screen-board -- only '
-          '_playingBody and _gameOverBody do -- so expected it absent '
-          'immediately before the capture, found it present',
+          'capture 10: C-282 rule 2d, no Reconnect button while the '
+          'automatic retry is pending',
     );
 
     await binding.takeScreenshot('10-game-reconnecting-en');
@@ -1665,8 +1675,9 @@ void main() {
   // 11: order 180's R1 reconnecting line, on LobbyScreen, in Arabic. Reached
   // the same way test/reconnecting_line_test.dart's R1-AR case reaches it: a
   // real host lobby, connected, then dropped, with a non-empty auto-reconnect
-  // schedule so lobby-closed shows lobby-reconnecting the instant the drop
-  // lands. LobbyScreen is mounted first, on a fresh idle controller, and
+  // schedule so the lobby-closed card shows lobby-reconnecting the instant
+  // the drop lands, over the gathering kept inside lobby-stale-room.
+  // LobbyScreen is mounted first, on a fresh idle controller, and
   // driven to connected by its own initState request -- the same order
   // test/lobby_screen_test.dart's own suite uses throughout, and the reason
   // is the same here: handing LobbyScreen an already-connected controller
@@ -1850,25 +1861,34 @@ void main() {
           'AppLocalizations.lobbyReconnecting ("${loc.lobbyReconnecting}"), '
           'got "${settledReconnectingText11.data}"',
     );
+    // C-284 rule 1: the gathering stays, dimmed, under the card. The
+    // old column assertions expected these two keys gone.
     expect(
-      find.byKey(const Key('lobby-room-code')),
-      findsNothing,
+      find.descendant(
+        of: find.byKey(const Key('lobby-stale-room')),
+        matching: find.byKey(const Key('lobby-room-code')),
+      ),
+      findsOneWidget,
       reason:
-          'capture 11: lobby_screen.dart\'s _closedBody, the body this '
-          'phase builds, never constructs lobby-room-code -- only '
-          '_connectedBody does -- so expected it absent (the gathering '
-          'body must be gone) immediately before the capture, found it '
-          'present',
+          'capture 11: expected lobby-room-code inside lobby-stale-room '
+          'immediately before the capture',
     );
     expect(
-      find.byKey(const Key('lobby-copy-code-button')),
+      find.descendant(
+        of: find.byKey(const Key('lobby-stale-room')),
+        matching: find.byKey(const Key('lobby-copy-code-button')),
+      ),
+      findsOneWidget,
+      reason:
+          'capture 11: expected lobby-copy-code-button inside '
+          'lobby-stale-room immediately before the capture',
+    );
+    expect(
+      find.byKey(const Key('lobby-reconnect-button')),
       findsNothing,
       reason:
-          'capture 11: lobby_screen.dart\'s _closedBody, the body this '
-          'phase builds, never constructs lobby-copy-code-button -- only '
-          '_connectedBody does -- so expected it absent (the gathering '
-          'body must be gone) immediately before the capture, found it '
-          'present',
+          'capture 11: no Reconnect button while the automatic retry is '
+          'pending',
     );
 
     await binding.takeScreenshot('11-lobby-reconnecting-ar');
@@ -2237,7 +2257,7 @@ void main() {
     );
 
     // Open the players disclosure: home-players-selector and the two
-    // SwitchListTiles mount, both starting on (home_screen.dart's own
+    // HomeRuleToggle cards mount, both starting on (home_screen.dart's own
     // _rulesBlocks/_rulesCaptureBonus defaults).
     await tester.tap(find.byKey(const Key('home-players-disclosure')));
     await tester.pump();
@@ -2262,14 +2282,14 @@ void main() {
     // same reasoning 01-home-en and 08/09-home-rejoin rely on above.
     final Finder rulesSettledFinder = find.byWidgetPredicate(
       (Widget widget) =>
-          widget is SwitchListTile &&
+          widget is HomeRuleToggle &&
           widget.key == const Key('home-rule-blocks') &&
           widget.value == false,
     );
     await _settleForScreenshot(
       tester,
       rulesSettledFinder,
-      'home-rule-blocks reading off (SwitchListTile.value == false) after '
+      'home-rule-blocks reading off (HomeRuleToggle.value == false) after '
       'the tap, before capture 13',
     );
 
@@ -4506,10 +4526,10 @@ Widget _reconnectingCaptureHarness(Widget child, {required Locale locale}) {
 }
 
 /// Order 207, capture 13: asserts home-players-selector and the two
-/// SwitchListTiles it opens alongside are on screen, that
+/// HomeRuleToggle cards it opens alongside are on screen, that
 /// home-rule-blocks.value reads [blocksExpected] and
 /// home-rule-capture-bonus.value reads [captureBonusExpected], and that
-/// each tile's title reads its own literal straight out of app_ar.arb
+/// each card's title reads its own literal straight out of app_ar.arb
 /// (homeRuleBlocks, homeRuleCaptureBonus) -- quoted here, not looked up
 /// through AppLocalizations, per the order. [momentDescription] names which
 /// of the two calls (before or after the screenshot settle) failed, so a
@@ -4536,24 +4556,23 @@ void _expectHomeRulesOpen(
         'capture 13 ($momentDescription): expected home-rule-blocks on '
         'screen once the players disclosure is open',
   );
-  final SwitchListTile blocksTile = tester.widget<SwitchListTile>(blocksFinder);
+  final HomeRuleToggle blocksTile = tester.widget<HomeRuleToggle>(blocksFinder);
   expect(
     blocksTile.value,
     blocksExpected,
     reason:
         'capture 13 ($momentDescription): expected home-rule-blocks\'s '
-        'SwitchListTile.value to be $blocksExpected, got '
+        'HomeRuleToggle.value to be $blocksExpected, got '
         '${blocksTile.value}',
   );
   const String expectedBlocksTitle = 'الحواجز';
-  final Text blocksTitle = blocksTile.title! as Text;
   expect(
-    blocksTitle.data,
+    blocksTile.title,
     expectedBlocksTitle,
     reason:
         'capture 13 ($momentDescription): expected home-rule-blocks\'s '
         'title to read the app_ar.arb homeRuleBlocks literal '
-        '"$expectedBlocksTitle", got "${blocksTitle.data}"',
+        '"$expectedBlocksTitle", got "${blocksTile.title}"',
   );
 
   final Finder captureBonusFinder = find.byKey(
@@ -4567,7 +4586,7 @@ void _expectHomeRulesOpen(
         'home-rule-capture-bonus on screen once the players disclosure is '
         'open',
   );
-  final SwitchListTile captureBonusTile = tester.widget<SwitchListTile>(
+  final HomeRuleToggle captureBonusTile = tester.widget<HomeRuleToggle>(
     captureBonusFinder,
   );
   expect(
@@ -4575,19 +4594,18 @@ void _expectHomeRulesOpen(
     captureBonusExpected,
     reason:
         'capture 13 ($momentDescription): expected '
-        'home-rule-capture-bonus\'s SwitchListTile.value to be '
+        'home-rule-capture-bonus\'s HomeRuleToggle.value to be '
         '$captureBonusExpected, got ${captureBonusTile.value}',
   );
   const String expectedCaptureBonusTitle = 'مكافأة الأكل';
-  final Text captureBonusTitle = captureBonusTile.title! as Text;
   expect(
-    captureBonusTitle.data,
+    captureBonusTile.title,
     expectedCaptureBonusTitle,
     reason:
         'capture 13 ($momentDescription): expected '
         'home-rule-capture-bonus\'s title to read the app_ar.arb '
         'homeRuleCaptureBonus literal "$expectedCaptureBonusTitle", got '
-        '"${captureBonusTitle.data}"',
+        '"${captureBonusTile.title}"',
   );
 }
 

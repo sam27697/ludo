@@ -5,6 +5,7 @@
   "homeRejoinButton": "العودة إلى اللعبة {code}",
   "homeCreateRoomButton": "إنشاء غرفة",
   "homeJoinRoomButton": "الانضمام إلى غرفة",
+  "homeJoinDivider": "أو انضم برمز",
   "homeRoomCodeFieldLabel": "رمز الغرفة",
   "homeRoomCodeFieldHint": "6 رموز، حروف وأرقام",
   "homeRoomCodeInvalid": "هذا لا يبدو رمز غرفة صحيحًا. تحقق من الحروف والأرقام وحاول مرة أخرى.",

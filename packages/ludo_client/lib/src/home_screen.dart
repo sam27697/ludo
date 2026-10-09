@@ -13,6 +13,7 @@ import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'room_code.dart';
 import 'room_route.dart';
+import 'rule_off_strike.dart';
 import 'server_config.dart';
 import 'session_memory.dart';
 import 'theme.dart';
@@ -644,13 +645,25 @@ class _HomeScreenState extends State<HomeScreen>
     required Key key,
     required VoidCallback onPressed,
     required String label,
+    required IconData icon,
     required bool primary,
   }) {
-    final Widget child = Text(label);
+    final Widget iconWidget = Icon(icon);
+    final Widget labelWidget = Text(label);
     if (primary) {
-      return ElevatedButton(key: key, onPressed: onPressed, child: child);
+      return ElevatedButton.icon(
+        key: key,
+        onPressed: onPressed,
+        icon: iconWidget,
+        label: labelWidget,
+      );
     }
-    return OutlinedButton(key: key, onPressed: onPressed, child: child);
+    return OutlinedButton.icon(
+      key: key,
+      onPressed: onPressed,
+      icon: iconWidget,
+      label: labelWidget,
+    );
   }
 
   @override
@@ -668,7 +681,6 @@ class _HomeScreenState extends State<HomeScreen>
     final double dieSize = dieMarkSize(compact);
     final double afterBrand = compact ? kSpace3 : kSpace6;
     final double afterDie = compact ? kSpace4 : kSpace7;
-    final double sectionGap = compact ? kSpace3 : kSpace6;
 
     final Animation<double> brandOpacity = CurvedAnimation(
       parent: _enter,
@@ -720,299 +732,538 @@ class _HomeScreenState extends State<HomeScreen>
 
     return Scaffold(
       backgroundColor: LudoColors.paper,
-      appBar: AppBar(
-        // Brand lives in the body at hero scale; the bar only carries the
-        // locale toggle so contrast gates and the toggle key still hold.
-        backgroundColor: LudoColors.paperElevated,
-        title: const SizedBox.shrink(),
-        actions: [
-          TextButton(
-            key: const Key('locale-toggle-button'),
-            onPressed: widget.onToggleLocale,
-            child: Tooltip(
-              message: loc.homeLocaleToggleTooltip,
-              child: Text(loc.homeLocaleToggleLabel),
-            ),
-          ),
-        ],
-      ),
       body: FeltBackdrop(
-        // The backdrop itself still paints edge to edge; only the content
-        // inside is pulled off the bottom system inset (order 196), the way
-        // LobbyScreen and GameScreen already keep their own content off it.
-        // Top stays default (true): the AppBar above already consumes the
-        // top inset, so there is nothing left here for SafeArea to add.
+        // C-276 rule 1: no AppBar; the body's SafeArea keeps top: true
+        // (the status bar inset is now the body's), while FeltBackdrop still
+        // paints edge to edge.
         child: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 400),
-              child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(
-                  kSpace6,
-                  compact ? kSpace1 : kSpace2,
-                  kSpace6,
-                  compact ? kSpace5 : kSpace7,
+          top: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsetsDirectional.only(
+                  top: kSpace2,
+                  end: kSpace2,
                 ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    FadeTransition(
-                      opacity: brandOpacity,
-                      child: SlideTransition(
-                        position: brandSlide,
-                        child: FadeTransition(
-                          opacity: dieOpacity,
-                          child: ScaleTransition(
-                            scale: dieScale,
-                            child: compact
-                                ? Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.center,
-                                    children: [
-                                      DieMark(
-                                        size: dieSize,
-                                        semanticsLabel: loc.appTitle,
-                                      ),
-                                      const SizedBox(width: kSpace4),
-                                      Expanded(
-                                        child: Column(
+                child: Align(
+                  alignment: AlignmentDirectional.topEnd,
+                  child: TextButton(
+                    key: const Key('locale-toggle-button'),
+                    onPressed: widget.onToggleLocale,
+                    style: TextButton.styleFrom(
+                      backgroundColor: LudoColors.paperElevated,
+                      foregroundColor: LudoColors.ink,
+                      minimumSize: const Size(48, 48),
+                      shape: StadiumBorder(
+                        side: BorderSide(
+                          color: LudoColors.inkMuted.withValues(alpha: 0.3),
+                          width: 1,
+                        ),
+                      ),
+                      side: BorderSide(
+                        color: LudoColors.inkMuted.withValues(alpha: 0.3),
+                        width: 1,
+                      ),
+                    ),
+                    child: Tooltip(
+                      message: loc.homeLocaleToggleTooltip,
+                      child: Text(loc.homeLocaleToggleLabel),
+                    ),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 400),
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.fromLTRB(
+                        kSpace6,
+                        compact ? kSpace1 : kSpace2,
+                        kSpace6,
+                        compact ? kSpace5 : kSpace7,
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          FadeTransition(
+                            opacity: brandOpacity,
+                            child: SlideTransition(
+                              position: brandSlide,
+                              child: FadeTransition(
+                                opacity: dieOpacity,
+                                child: ScaleTransition(
+                                  scale: dieScale,
+                                  child: compact
+                                      ? Row(
                                           crossAxisAlignment:
-                                              CrossAxisAlignment.start,
+                                              CrossAxisAlignment.center,
+                                          children: [
+                                            DieMark(
+                                              size: dieSize,
+                                              semanticsLabel: loc.appTitle,
+                                            ),
+                                            const SizedBox(width: kSpace4),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    loc.appTitle,
+                                                    style: brandStyle,
+                                                  ),
+                                                  const SizedBox(
+                                                    height: kSpace1,
+                                                  ),
+                                                  Text(
+                                                    loc.homeTagline,
+                                                    style: textTheme.bodyMedium
+                                                        ?.copyWith(
+                                                          color: LudoColors
+                                                              .inkMuted,
+                                                          height: 1.3,
+                                                        ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                      : Column(
                                           children: [
                                             Text(
                                               loc.appTitle,
+                                              textAlign: TextAlign.center,
                                               style: brandStyle,
                                             ),
-                                            const SizedBox(height: kSpace1),
+                                            const SizedBox(height: kSpace2),
                                             Text(
                                               loc.homeTagline,
-                                              style: textTheme.bodyMedium
+                                              textAlign: TextAlign.center,
+                                              style: textTheme.bodyLarge
                                                   ?.copyWith(
                                                     color: LudoColors.inkMuted,
-                                                    height: 1.3,
+                                                    height: 1.35,
                                                   ),
+                                            ),
+                                            SizedBox(height: afterBrand),
+                                            Center(
+                                              child: DieMark(
+                                                size: dieSize,
+                                                semanticsLabel: loc.appTitle,
+                                              ),
                                             ),
                                           ],
                                         ),
-                                      ),
-                                    ],
-                                  )
-                                : Column(
-                                    children: [
-                                      Text(
-                                        loc.appTitle,
-                                        textAlign: TextAlign.center,
-                                        style: brandStyle,
-                                      ),
-                                      const SizedBox(height: kSpace2),
-                                      Text(
-                                        loc.homeTagline,
-                                        textAlign: TextAlign.center,
-                                        style: textTheme.bodyLarge?.copyWith(
-                                          color: LudoColors.inkMuted,
-                                          height: 1.35,
-                                        ),
-                                      ),
-                                      SizedBox(height: afterBrand),
-                                      Center(
-                                        child: DieMark(
-                                          size: dieSize,
-                                          semanticsLabel: loc.appTitle,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: afterDie),
-                    FadeTransition(
-                      opacity: formOpacity,
-                      child: SlideTransition(
-                        position: formSlide,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            if (seatRecord != null) ...[
-                              ElevatedButton(
-                                key: const Key('home-rejoin-button'),
-                                onPressed: () => _rejoinRoom(seatRecord),
-                                child: Text(
-                                  loc.homeRejoinButton(seatRecord.code),
-                                ),
-                              ),
-                              SizedBox(height: compact ? kSpace3 : kSpace5),
-                            ],
-                            TextField(
-                              key: const Key('home-name-field'),
-                              controller: _nameController,
-                              textAlign: TextAlign.center,
-                              textInputAction: TextInputAction.go,
-                              onSubmitted: (_) {
-                                _createRoom();
-                              },
-                              decoration: InputDecoration(
-                                labelText: loc.homeNameFieldLabel,
-                                isDense: compact,
-                              ),
-                            ),
-                            SizedBox(height: compact ? kSpace3 : kSpace5),
-                            if (!_playersSelectorOpen)
-                              TextButton(
-                                key: const Key('home-players-disclosure'),
-                                onPressed: () {
-                                  setState(() => _playersSelectorOpen = true);
-                                  WidgetsBinding.instance.addPostFrameCallback((
-                                    _,
-                                  ) {
-                                    if (!mounted) {
-                                      return;
-                                    }
-                                    _scrollCreateButtonIntoView();
-                                  });
-                                },
-                                style: TextButton.styleFrom(
-                                  foregroundColor: LudoColors.inkMuted,
-                                  minimumSize: const Size(48, 48),
-                                ),
-                                child: Text(
-                                  loc.homePlayersDisclosureClosed,
-                                  textAlign: TextAlign.center,
-                                ),
-                              )
-                            else ...[
-                              Text(
-                                loc.homePlayersSelectorLabel,
-                                textAlign: TextAlign.center,
-                                style: textTheme.labelLarge?.copyWith(
-                                  color: LudoColors.inkMuted,
-                                ),
-                              ),
-                              const SizedBox(height: kSpace2),
-                              _PlayersSelector(
-                                key: const Key('home-players-selector'),
-                                value: _players,
-                                onChanged: (value) =>
-                                    setState(() => _players = value),
-                              ),
-                              SizedBox(height: compact ? kSpace2 : kSpace3),
-                              SwitchListTile(
-                                key: const Key('home-rule-blocks'),
-                                contentPadding: EdgeInsets.zero,
-                                title: Text(
-                                  loc.homeRuleBlocks,
-                                  style: textTheme.labelLarge?.copyWith(
-                                    color: LudoColors.ink,
+                          SizedBox(height: afterDie),
+                          FadeTransition(
+                            opacity: formOpacity,
+                            child: SlideTransition(
+                              position: formSlide,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  if (seatRecord != null) ...[
+                                    ElevatedButton.icon(
+                                      key: const Key('home-rejoin-button'),
+                                      onPressed: () => _rejoinRoom(seatRecord),
+                                      icon: const Icon(
+                                        Icons.play_arrow_rounded,
+                                      ),
+                                      label: Text(
+                                        loc.homeRejoinButton(seatRecord.code),
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      height: compact ? kSpace3 : kSpace5,
+                                    ),
+                                  ],
+                                  Semantics(
+                                    label: loc.homeNameFieldLabel,
+                                    child:
+                                        ValueListenableBuilder<
+                                          TextEditingValue
+                                        >(
+                                          valueListenable: _nameController,
+                                          builder: (context, nameValue, _) {
+                                            final String trimmed = nameValue
+                                                .text
+                                                .trim();
+                                            return TextField(
+                                              key: const Key('home-name-field'),
+                                              controller: _nameController,
+                                              textAlign: TextAlign.center,
+                                              textInputAction:
+                                                  TextInputAction.go,
+                                              onSubmitted: (_) {
+                                                _createRoom();
+                                              },
+                                              style: textTheme.titleMedium
+                                                  ?.copyWith(
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                              decoration: InputDecoration(
+                                                hintText:
+                                                    loc.homeNameFieldLabel,
+                                                filled: true,
+                                                fillColor:
+                                                    LudoColors.paperElevated,
+                                                isDense: compact,
+                                                border: OutlineInputBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                        999,
+                                                      ),
+                                                  borderSide: BorderSide.none,
+                                                ),
+                                                enabledBorder:
+                                                    OutlineInputBorder(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            999,
+                                                          ),
+                                                      borderSide:
+                                                          BorderSide.none,
+                                                    ),
+                                                focusedBorder:
+                                                    OutlineInputBorder(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            999,
+                                                          ),
+                                                      borderSide:
+                                                          const BorderSide(
+                                                            color: LudoColors
+                                                                .action,
+                                                            width: 2,
+                                                          ),
+                                                    ),
+                                                prefixIcon: CircleAvatar(
+                                                  radius: 16,
+                                                  backgroundColor:
+                                                      LudoColors.action,
+                                                  foregroundColor:
+                                                      LudoColors.actionOn,
+                                                  child: trimmed.isEmpty
+                                                      ? const Icon(
+                                                          Icons.person,
+                                                          size: 20,
+                                                          color: LudoColors
+                                                              .actionOn,
+                                                        )
+                                                      : Text(
+                                                          trimmed
+                                                              .characters
+                                                              .first
+                                                              .toUpperCase(),
+                                                          style: const TextStyle(
+                                                            color: LudoColors
+                                                                .actionOn,
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                          ),
+                                                        ),
+                                                ),
+                                                suffixIcon: const Icon(
+                                                  Icons.edit_outlined,
+                                                  color: LudoColors.inkMuted,
+                                                  size: 20,
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                        ),
                                   ),
-                                ),
-                                subtitle: Text(
-                                  loc.homeRuleBlocksHint,
-                                  style: textTheme.bodyMedium?.copyWith(
-                                    color: LudoColors.inkMuted,
+                                  SizedBox(height: compact ? kSpace3 : kSpace5),
+                                  if (!_playersSelectorOpen)
+                                    Center(
+                                      child: TextButton.icon(
+                                        key: const Key(
+                                          'home-players-disclosure',
+                                        ),
+                                        onPressed: () {
+                                          setState(
+                                            () => _playersSelectorOpen = true,
+                                          );
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                                if (!mounted) {
+                                                  return;
+                                                }
+                                                _scrollCreateButtonIntoView();
+                                              });
+                                        },
+                                        style: TextButton.styleFrom(
+                                          foregroundColor: LudoColors.inkMuted,
+                                          minimumSize: const Size(48, 48),
+                                          shape: StadiumBorder(
+                                            side: BorderSide(
+                                              color: LudoColors.inkMuted
+                                                  .withValues(alpha: 0.4),
+                                              width: 1,
+                                            ),
+                                          ),
+                                          side: BorderSide(
+                                            color: LudoColors.inkMuted
+                                                .withValues(alpha: 0.4),
+                                            width: 1,
+                                          ),
+                                        ),
+                                        icon: const Icon(Icons.tune),
+                                        label: Text(
+                                          loc.homePlayersDisclosureClosed,
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ),
+                                    )
+                                  else ...[
+                                    Text(
+                                      loc.homePlayersSelectorLabel,
+                                      textAlign: TextAlign.center,
+                                      style: textTheme.labelLarge?.copyWith(
+                                        color: LudoColors.inkMuted,
+                                      ),
+                                    ),
+                                    const SizedBox(height: kSpace2),
+                                    _PlayersSelector(
+                                      key: const Key('home-players-selector'),
+                                      value: _players,
+                                      onChanged: (value) =>
+                                          setState(() => _players = value),
+                                    ),
+                                    SizedBox(
+                                      height: compact ? kSpace2 : kSpace3,
+                                    ),
+                                    IntrinsicHeight(
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          Expanded(
+                                            child: HomeRuleToggle(
+                                              key: const Key(
+                                                'home-rule-blocks',
+                                              ),
+                                              value: _rulesBlocks,
+                                              onChanged: (value) => setState(
+                                                () => _rulesBlocks = value,
+                                              ),
+                                              icon: Icons.shield_outlined,
+                                              title: loc.homeRuleBlocks,
+                                              hint: loc.homeRuleBlocksHint,
+                                            ),
+                                          ),
+                                          const SizedBox(width: kSpace3),
+                                          Expanded(
+                                            child: HomeRuleToggle(
+                                              key: const Key(
+                                                'home-rule-capture-bonus',
+                                              ),
+                                              value: _rulesCaptureBonus,
+                                              onChanged: (value) => setState(
+                                                () =>
+                                                    _rulesCaptureBonus = value,
+                                              ),
+                                              icon: Icons.replay_rounded,
+                                              title: loc.homeRuleCaptureBonus,
+                                              hint:
+                                                  loc.homeRuleCaptureBonusHint,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                  if (_hasLastTable &&
+                                      _lastTableName != null &&
+                                      _lastTableSeats != null) ...[
+                                    SizedBox(
+                                      height: compact ? kSpace3 : kSpace4,
+                                    ),
+                                    _LastTableChip(
+                                      name: _lastTableName!,
+                                      seats: _lastTableSeats!,
+                                    ),
+                                  ],
+                                  SizedBox(height: compact ? kSpace3 : kSpace6),
+                                  KeyedSubtree(
+                                    key: _createButtonScrollKey,
+                                    child: _weightedButton(
+                                      key: const Key('create-room-button'),
+                                      onPressed: _createRoom,
+                                      label: loc.homeCreateRoomButton,
+                                      icon: Icons.add_rounded,
+                                      primary: !joinPrimary,
+                                    ),
                                   ),
-                                ),
-                                value: _rulesBlocks,
-                                onChanged: (value) =>
-                                    setState(() => _rulesBlocks = value),
-                              ),
-                              SwitchListTile(
-                                key: const Key('home-rule-capture-bonus'),
-                                contentPadding: EdgeInsets.zero,
-                                title: Text(
-                                  loc.homeRuleCaptureBonus,
-                                  style: textTheme.labelLarge?.copyWith(
-                                    color: LudoColors.ink,
+                                  Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      vertical: compact ? kSpace1 : kSpace2,
+                                    ),
+                                    child: Row(
+                                      key: const Key('home-join-divider'),
+                                      children: [
+                                        Expanded(
+                                          child: Container(
+                                            height: 1,
+                                            color: LudoColors.inkMuted
+                                                .withValues(alpha: 0.3),
+                                          ),
+                                        ),
+                                        Flexible(
+                                          flex: 3,
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: kSpace3,
+                                            ),
+                                            child: Text(
+                                              loc.homeJoinDivider,
+                                              textAlign: TextAlign.center,
+                                              style: textTheme.labelMedium
+                                                  ?.copyWith(
+                                                    color: LudoColors.inkMuted,
+                                                  ),
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Container(
+                                            height: 1,
+                                            color: LudoColors.inkMuted
+                                                .withValues(alpha: 0.3),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                                subtitle: Text(
-                                  loc.homeRuleCaptureBonusHint,
-                                  style: textTheme.bodyMedium?.copyWith(
-                                    color: LudoColors.inkMuted,
+                                  KeyedSubtree(
+                                    key: _codeFieldScrollKey,
+                                    child: Semantics(
+                                      label: loc.homeRoomCodeFieldLabel,
+                                      child: TextField(
+                                        key: const Key('room-code-field'),
+                                        controller: _codeController,
+                                        textAlign: TextAlign.center,
+                                        textCapitalization:
+                                            TextCapitalization.characters,
+                                        textInputAction: TextInputAction.go,
+                                        onSubmitted: (_) {
+                                          if (joinPrimary) {
+                                            _joinRoom();
+                                          }
+                                        },
+                                        inputFormatters:
+                                            const <TextInputFormatter>[
+                                              _RoomCodeInputFormatter(),
+                                            ],
+                                        style: textTheme.titleLarge?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 4,
+                                        ),
+                                        decoration: InputDecoration(
+                                          hintText: loc.homeRoomCodeFieldLabel,
+                                          hintStyle: textTheme.bodyLarge
+                                              ?.copyWith(
+                                                color: LudoColors.inkMuted,
+                                              ),
+                                          helperText: loc.homeRoomCodeFieldHint,
+                                          errorText: _errorText,
+                                          // Unset, InputDecoration truncates errorText
+                                          // to one line with an ellipsis.
+                                          // homeRoomCodeInvalid needs four lines to
+                                          // clear at this field's width in either
+                                          // locale.
+                                          errorMaxLines: 4,
+                                          filled: true,
+                                          fillColor: LudoColors.paperElevated,
+                                          isDense: compact,
+                                          prefixIcon: const Icon(
+                                            Icons.tag,
+                                            color: LudoColors.inkMuted,
+                                          ),
+                                          border: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              kRadiusControl,
+                                            ),
+                                            borderSide: BorderSide.none,
+                                          ),
+                                          enabledBorder: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              kRadiusControl,
+                                            ),
+                                            borderSide: BorderSide.none,
+                                          ),
+                                          focusedBorder: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              kRadiusControl,
+                                            ),
+                                            borderSide: const BorderSide(
+                                              color: LudoColors.action,
+                                              width: 2,
+                                            ),
+                                          ),
+                                          errorBorder: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              kRadiusControl,
+                                            ),
+                                            borderSide: const BorderSide(
+                                              color: LudoColors.error,
+                                              width: 2,
+                                            ),
+                                          ),
+                                          focusedErrorBorder:
+                                              OutlineInputBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                      kRadiusControl,
+                                                    ),
+                                                borderSide: const BorderSide(
+                                                  color: LudoColors.error,
+                                                  width: 2,
+                                                ),
+                                              ),
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                                ),
-                                value: _rulesCaptureBonus,
-                                onChanged: (value) =>
-                                    setState(() => _rulesCaptureBonus = value),
-                              ),
-                            ],
-                            if (_hasLastTable &&
-                                _lastTableName != null &&
-                                _lastTableSeats != null) ...[
-                              SizedBox(height: compact ? kSpace3 : kSpace4),
-                              _LastTableChip(
-                                name: _lastTableName!,
-                                seats: _lastTableSeats!,
-                              ),
-                            ],
-                            SizedBox(height: compact ? kSpace3 : kSpace6),
-                            KeyedSubtree(
-                              key: _createButtonScrollKey,
-                              child: _weightedButton(
-                                key: const Key('create-room-button'),
-                                onPressed: _createRoom,
-                                label: loc.homeCreateRoomButton,
-                                primary: !joinPrimary,
-                              ),
-                            ),
-                            SizedBox(height: sectionGap),
-                            KeyedSubtree(
-                              key: _codeFieldScrollKey,
-                              child: TextField(
-                                key: const Key('room-code-field'),
-                                controller: _codeController,
-                                textAlign: TextAlign.center,
-                                textCapitalization:
-                                    TextCapitalization.characters,
-                                textInputAction: TextInputAction.go,
-                                onSubmitted: (_) {
-                                  if (joinPrimary) {
-                                    _joinRoom();
-                                  }
-                                },
-                                inputFormatters: const <TextInputFormatter>[
-                                  _RoomCodeInputFormatter(),
+                                  SizedBox(height: compact ? kSpace2 : kSpace3),
+                                  KeyedSubtree(
+                                    key: _joinButtonScrollKey,
+                                    child: _weightedButton(
+                                      key: const Key('join-room-button'),
+                                      onPressed: _joinRoom,
+                                      label: loc.homeJoinRoomButton,
+                                      icon: Icons.login_rounded,
+                                      primary: joinPrimary,
+                                    ),
+                                  ),
+                                  if (_recentCodes.isNotEmpty) ...[
+                                    SizedBox(
+                                      height: compact ? kSpace2 : kSpace3,
+                                    ),
+                                    _RecentCodes(
+                                      codes: _recentCodes,
+                                      onSelect: _fillCodeFromRecent,
+                                    ),
+                                  ],
                                 ],
-                                decoration: InputDecoration(
-                                  labelText: loc.homeRoomCodeFieldLabel,
-                                  hintText: loc.homeRoomCodeFieldHint,
-                                  errorText: _errorText,
-                                  // Unset, InputDecoration truncates errorText
-                                  // to one line with an ellipsis.
-                                  // homeRoomCodeInvalid needs four lines to
-                                  // clear at this field's width in either
-                                  // locale.
-                                  errorMaxLines: 4,
-                                  isDense: compact,
-                                ),
                               ),
                             ),
-                            SizedBox(height: compact ? kSpace2 : kSpace3),
-                            KeyedSubtree(
-                              key: _joinButtonScrollKey,
-                              child: _weightedButton(
-                                key: const Key('join-room-button'),
-                                onPressed: _joinRoom,
-                                label: loc.homeJoinRoomButton,
-                                primary: joinPrimary,
-                              ),
-                            ),
-                            if (_recentCodes.isNotEmpty) ...[
-                              SizedBox(height: compact ? kSpace2 : kSpace3),
-                              _RecentCodes(
-                                codes: _recentCodes,
-                                onSelect: _fillCodeFromRecent,
-                              ),
-                            ],
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ),
@@ -1228,6 +1479,140 @@ class _PlayersSelector extends StatelessWidget {
       ],
       selected: <int>{value},
       onSelectionChanged: (selection) => onChanged(selection.first),
+    );
+  }
+}
+
+/// C-276 rule 3: toggle card for a game rule (Blocks, Capture bonus) on the
+/// home screen, matching the lobby screen rule chips instead of a settings
+/// page switch. Off state displays a diagonal strike over the icon and
+/// removes the check badge (doctrine P9).
+class HomeRuleToggle extends StatelessWidget {
+  const HomeRuleToggle({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    required this.icon,
+    required this.title,
+    required this.hint,
+  });
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final IconData icon;
+  final String title;
+  final String hint;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final bool disableAnimations = MediaQuery.disableAnimationsOf(context);
+
+    return Semantics(
+      button: true,
+      toggled: value,
+      label: title,
+      hint: hint,
+      excludeSemantics: true,
+      // The InkWell's own tap action is excluded with the children, so the
+      // node carries it, or TalkBack's double tap would do nothing.
+      onTap: () => onChanged(!value),
+      child: AnimatedContainer(
+        duration: disableAnimations
+            ? Duration.zero
+            : const Duration(milliseconds: 150),
+        decoration: BoxDecoration(
+          color: value
+              ? LudoColors.action.withValues(alpha: 0.12)
+              : LudoColors.inkMuted.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(kRadiusControl),
+          border: Border.all(
+            color: value
+                ? LudoColors.action
+                : LudoColors.inkMuted.withValues(alpha: 0.4),
+            width: value ? 2 : 1,
+          ),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(kRadiusControl),
+            onTap: () => onChanged(!value),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Stack(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(kSpace3),
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: kSpace6,
+                            height: kSpace6,
+                            child: value
+                                ? Icon(
+                                    icon,
+                                    size: kSpace6,
+                                    color: LudoColors.action,
+                                  )
+                                : Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      Icon(
+                                        icon,
+                                        size: kSpace6,
+                                        color: LudoColors.inkMuted,
+                                      ),
+                                      CustomPaint(
+                                        size: const Size(kSpace6, kSpace6),
+                                        painter: const RuleOffStrikePainter(
+                                          color: LudoColors.inkMuted,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                          ),
+                          const SizedBox(height: kSpace2),
+                          Text(
+                            title,
+                            textAlign: TextAlign.center,
+                            style: textTheme.labelLarge?.copyWith(
+                              color: LudoColors.ink,
+                            ),
+                          ),
+                          const SizedBox(height: kSpace1),
+                          Text(
+                            hint,
+                            textAlign: TextAlign.center,
+                            style: textTheme.bodySmall?.copyWith(
+                              color: LudoColors.inkMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (value)
+                    PositionedDirectional(
+                      top: kSpace2,
+                      end: kSpace2,
+                      child: const IgnorePointer(
+                        child: Icon(
+                          Icons.check_circle,
+                          size: kSpace5,
+                          color: LudoColors.action,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

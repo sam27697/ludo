@@ -13,6 +13,7 @@ import 'net/connection.dart' show RoomToggles;
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'seat_card.dart';
+import 'rule_off_strike.dart';
 import 'session_memory.dart' show SeatRecord;
 import 'theme.dart';
 
@@ -263,15 +264,44 @@ class _LobbyScreenState extends State<LobbyScreen> {
         controller.room != null &&
         _retryableLobbyErrorCodes.contains(controller.errorCode);
 
-    final Widget phaseBody = switch (controller.phase) {
-      RoomPhase.idle || RoomPhase.connecting => _connectingBody(loc),
-      RoomPhase.connected => _connectedBody(loc, controller),
-      RoomPhase.failed =>
-        retryableFailure
-            ? _closedBody(loc, controller)
-            : _errorBody(loc, controller),
-      RoomPhase.closed => _closedBody(loc, controller),
-    };
+    // C-284 rule 1: stale is when a room is held and connection is lost,
+    // retrying, or in a retryable failure.
+    final bool stale =
+        controller.room != null &&
+        (controller.phase == RoomPhase.closed ||
+            controller.phase == RoomPhase.connecting ||
+            retryableFailure);
+
+    final Widget phaseBody;
+    if (stale) {
+      // C-284 rules 1 and 2: a dropped or retrying connection keeps the
+      // room in view (dimmed, untappable) under the connection-lost card.
+      phaseBody = Stack(
+        fit: StackFit.expand,
+        children: [
+          KeyedSubtree(
+            key: const Key('lobby-stale-room'),
+            child: IgnorePointer(
+              ignoring: true,
+              child: ExcludeSemantics(
+                child: Opacity(
+                  opacity: 0.35,
+                  child: _connectedBody(loc, controller),
+                ),
+              ),
+            ),
+          ),
+          _connectionLostCard(loc, controller),
+        ],
+      );
+    } else {
+      phaseBody = switch (controller.phase) {
+        RoomPhase.idle || RoomPhase.connecting => _connectingBody(loc),
+        RoomPhase.connected => _connectedBody(loc, controller),
+        RoomPhase.failed => _errorBody(loc, controller),
+        RoomPhase.closed => _closedBody(loc, controller),
+      };
+    }
 
     return Scaffold(
       backgroundColor: LudoColors.paper,
@@ -281,9 +311,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
             children: [
               // Same signature chrome as GameScreen: felt edge frames the
               // seat-pip strip so home→lobby→game stays one continuous table.
-              // Only on the connected gathering body to avoid crowding
-              // connecting / error / closed states.
-              if (connected) ...[
+              // C-284 rule 3: built when connected or stale so the chrome row
+              // and its corner close stay in place without jumping.
+              if (connected || stale) ...[
                 const FeltEdge(key: Key('game-felt-edge')),
                 // C-262 rules 1-2: lobby-leave-button lives in this chrome
                 // row, at the top start corner, beside the pip strip --
@@ -413,6 +443,77 @@ class _LobbyScreenState extends State<LobbyScreen> {
               child: Text(loc.gameLeaveButton),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// C-284 rule 2: one card centred over the stale room. Retrying shows the
+  /// sync icon and reconnecting line without a Reconnect button; given up
+  /// shows the Reconnect button. The corner close is the way out; no Leave
+  /// button in the card.
+  Widget _connectionLostCard(AppLocalizations loc, RoomController controller) {
+    final bool isRetrying =
+        controller.autoReconnectPending ||
+        controller.phase == RoomPhase.connecting;
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: Material(
+          key: const Key('lobby-closed'),
+          color: LudoColors.paperElevated,
+          borderRadius: BorderRadius.circular(2 * kRadiusControl),
+          elevation: 6,
+          child: Padding(
+            padding: const EdgeInsets.all(kSpace5),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.wifi_off_rounded,
+                  size: 32,
+                  color: LudoColors.inkMuted,
+                ),
+                const SizedBox(height: kSpace2),
+                Text(
+                  loc.lobbyConnectionLost,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(color: LudoColors.ink),
+                ),
+                const SizedBox(height: kSpace4),
+                if (isRetrying)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.sync_rounded,
+                        size: 18,
+                        color: LudoColors.inkMuted,
+                      ),
+                      const SizedBox(width: kSpace2),
+                      Flexible(
+                        child: Text(
+                          loc.lobbyReconnecting,
+                          key: const Key('lobby-reconnecting'),
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: LudoColors.inkMuted),
+                        ),
+                      ),
+                    ],
+                  )
+                else
+                  ElevatedButton(
+                    key: const Key('lobby-reconnect-button'),
+                    onPressed: controller.reconnect,
+                    child: Text(loc.lobbyReconnectButton),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -691,7 +792,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         Icon(icon, size: kSpace5, color: color),
                         CustomPaint(
                           size: Size(kSpace5, kSpace5),
-                          painter: _RuleOffStrikePainter(color: color),
+                          painter: RuleOffStrikePainter(color: color),
                         ),
                       ],
                     ),
@@ -733,29 +834,4 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ),
     );
   }
-}
-
-/// C-254 rule 4: the diagonal strike an "off" rule chip draws over its own
-/// icon, on top of the muted colour, so off is never colour alone.
-class _RuleOffStrikePainter extends CustomPainter {
-  const _RuleOffStrikePainter({required this.color});
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final Paint line = Paint()
-      ..color = color
-      ..strokeWidth = 1.6
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(
-      Offset(size.width * 0.12, size.height * 0.12),
-      Offset(size.width * 0.88, size.height * 0.88),
-      line,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _RuleOffStrikePainter oldDelegate) =>
-      oldDelegate.color != color;
 }
