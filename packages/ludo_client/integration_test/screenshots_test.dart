@@ -70,13 +70,7 @@ import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart'
     show appSupportedLocales, buildAppTheme;
 import 'package:ludo_client/src/board.dart'
-    show
-        BoardCell,
-        cellFor,
-        kCaptureFlightDuration,
-        kCaptureFlightDurationReduced,
-        kTokenStepDuration,
-        kTokenStepDurationReduced;
+    show BoardCell, cellFor, kCaptureFlightDuration, kTokenStepDuration;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
@@ -4522,22 +4516,17 @@ void main() {
   // under test is the one that travels: value 5, from 5 to 10, capturing
   // Karim's token 0.
   //
-  // Steps are `Timer`s in board.dart's `_scheduleNextStep`. The duration
-  // is `kTokenStepDurationReduced` when `MediaQuery.disableAnimationsOf`
-  // is true and `kTokenStepDuration` otherwise. The capture flight is the
-  // same split (`kCaptureFlightDurationReduced` / `kCaptureFlightDuration`),
-  // read by `_CaptureFlightState` from its own context. This capture reads
-  // the flag from the board widget's context and uses those durations.
-  // `timeDilation` scales Ticker timestamps only (scheduler/binding.dart
-  // `_adjustForEpoch`), so it stretches the flight and does not stretch a
-  // step. A fixed 4.2s wait (1.5 full steps times 20) would run long after
-  // the mover had arrived, and 0.4 of the full flight runs past a reduced
-  // flight entirely. 25a stops on the first frame whose measured centre is
+  // Steps are `Timer(kTokenStepDuration)` in board.dart's
+  // `_scheduleNextStep`. `timeDilation` scales Ticker timestamps only
+  // (scheduler/binding.dart `_adjustForEpoch`), so it stretches the
+  // capture flight's AnimationController and does not stretch a step.
+  // A fixed 4.2s wait (1.5 steps times 20) would run long after the mover
+  // had arrived. 25a stops on the first frame whose measured centre is
   // between the two cells: that dwell is where the token sits from the
   // end of step 1 until step 2, which is the window that contains the
   // 1.5-step mark, and the disc does not move during a dwell (C-252 rule
-  // 3). 25b polls 32ms frames for the first one where the struck token is
-  // more than half a cell from both square 10 and its yard slot.
+  // 3). The flight, which is a Ticker, is then sampled at 0.4 of
+  // `kCaptureFlightDuration` of dilated wall time.
   // ==========================================================================
   testWidgets('capture 25-game-travel-en', (tester) async {
     binding.testTextInput.register();
@@ -4777,31 +4766,6 @@ void main() {
     // still running at 20x.
     timeDilation = 20.0;
     try {
-      // The key sits on the LudoBoard GameScreen mounts. That element's
-      // context is the one `_scheduleNextStep` passes to
-      // `MediaQuery.disableAnimationsOf`. The flight widget is a
-      // descendant and reads the same MediaQuery.
-      final Finder boardFinder = find.byKey(const Key('game-screen-board'));
-      expect(
-        boardFinder,
-        findsOneWidget,
-        reason:
-            'capture 25: expected the game-screen-board LudoBoard, to read '
-            'MediaQuery.disableAnimationsOf from the board\'s own context',
-      );
-      final bool reducedMotion = MediaQuery.disableAnimationsOf(
-        tester.element(boardFinder),
-      );
-      final String motionMode = reducedMotion
-          ? 'reduced motion'
-          : 'full motion';
-      final Duration stepDuration = reducedMotion
-          ? kTokenStepDurationReduced
-          : kTokenStepDuration;
-      final Duration flightDuration = reducedMotion
-          ? kCaptureFlightDurationReduced
-          : kCaptureFlightDuration;
-
       transport.pushText(
         _frame(
           type: 'rolled',
@@ -4858,13 +4822,12 @@ void main() {
       );
 
       const Duration frame = Duration(milliseconds: 32);
-      // Five steps of the duration the board will schedule, dilated, plus
-      // a little. The real step clock is not dilated; the cap is long
-      // enough that a Ticker-paced step would still be found, and short of
-      // hanging the run. A snap to square 10 fails on the first frame that
-      // shows it, without using the cap.
+      // Five steps, dilated, plus a little. The real step clock is not
+      // dilated; the cap is long enough that a Ticker-paced step would
+      // still be found, and short of hanging the run. A snap to square 10
+      // fails on the first frame that shows it, without using the cap.
       final int travelCapFrames =
-          ((stepDuration.inMilliseconds * 5 * timeDilation) /
+          ((kTokenStepDuration.inMilliseconds * 5 * timeDilation) /
                   frame.inMilliseconds)
               .ceil() +
           30;
@@ -4899,10 +4862,8 @@ void main() {
         }
         if (leftStart && notYetEnd && !karimWaiting) {
           throw TestFailure(
-            'capture 25a, mid-travel ($motionMode, step '
-            '${stepDuration.inMilliseconds}ms): token-0-0 is between '
-            'progress 5 and progress 10 but token-1-0 has already left '
-            'square 10. '
+            'capture 25a, mid-travel: token-0-0 is between progress 5 and '
+            'progress 10 but token-1-0 has already left square 10. '
             'token-0-0 centre ${_px(mover)}, cell 5 ${_px(cell5)} '
             'distance ${(mover - cell5).distance.toStringAsFixed(2)}px, '
             'cell 10 ${_px(cell10ForMover)} distance '
@@ -4917,11 +4878,9 @@ void main() {
         }
         if (!notYetEnd) {
           throw TestFailure(
-            'capture 25a, mid-travel ($motionMode, step '
-            '${stepDuration.inMilliseconds}ms): token-0-0 is already on '
-            'the cell of progress 10 without a frame where it was '
-            'between progress 5 and progress 10. centre ${_px(mover)}, '
-            'cell 5 ${_px(cell5)} '
+            'capture 25a, mid-travel: token-0-0 is already on the cell of '
+            'progress 10 without a frame where it was between progress 5 '
+            'and progress 10. centre ${_px(mover)}, cell 5 ${_px(cell5)} '
             'distance ${(mover - cell5).distance.toStringAsFixed(2)}px, '
             'cell 10 ${_px(cell10ForMover)} distance '
             '${(mover - cell10ForMover).distance.toStringAsFixed(2)}px, '
@@ -4959,9 +4918,7 @@ void main() {
         from5 > half && from10 > half,
         isTrue,
         reason:
-            'capture 25a, mid-travel ($motionMode, step '
-            '${stepDuration.inMilliseconds}ms, the dwell that contains '
-            '1.5 steps): '
+            'capture 25a, mid-travel (the dwell that contains 1.5 steps): '
             'token-0-0 centre ${_px(mover)} should be farther than half a '
             'cell from both the centre of progress 5 ${_px(cell5)} '
             '(${_cellText(cellFor(seat: 0, progress: 5))}, distance '
@@ -4977,9 +4934,7 @@ void main() {
         karimFrom10 <= half,
         isTrue,
         reason:
-            'capture 25a, mid-travel ($motionMode, step '
-            '${stepDuration.inMilliseconds}ms): token-1-0 should still be '
-            'drawn on '
+            'capture 25a, mid-travel: token-1-0 should still be drawn on '
             'square 10 (the struck token waits for the mover\'s last '
             'step). centre ${_px(karim)}, cell of progress 10 '
             '${_px(cell10ForKarim)} '
@@ -4992,7 +4947,7 @@ void main() {
       await binding.takeScreenshot('25a-game-travel-en');
 
       // 25b. Keep pumping until the mover's disc is within 2px of the
-      // point the board paints on square 10, then poll the flight.
+      // point the board paints on square 10, then 0.4 of the flight.
       var reached = false;
       var reachFrames = 0;
       Offset placed10 = metrics.placedDiscCentre(
@@ -5032,9 +4987,7 @@ void main() {
         reached && placedDistance <= 2.0,
         isTrue,
         reason:
-            'capture 25b ($motionMode, step '
-            '${stepDuration.inMilliseconds}ms): token-0-0 centre '
-            '${_px(mover)} should be within '
+            'capture 25b: token-0-0 centre ${_px(mover)} should be within '
             '2px of the centre the board paints for progress 10. Painted '
             'centre ${_px(placed10)} (cellFor '
             '${_cellText(cellFor(seat: 0, progress: 10))} centre '
@@ -5049,107 +5002,71 @@ void main() {
             'centre.',
       );
 
-      // Poll 32ms frames for the first one where token-1-0 is more than
-      // half a cell from both square 10 and yard slot 0. The cap is one
-      // [flightDuration] of dilated wall time (what `_CaptureFlightState`
-      // gives its ticker) plus a few frames, so a flight that ends without
-      // that frame fails here with both distances instead of photographing
-      // the yard. Half a cell is unchanged.
-      final int flightCapFrames =
-          _dilatedFrameCount(flightDuration, frame: frame) + 8;
-      var inFlight = false;
-      var flightFrames = 0;
+      // 0.4 of kCaptureFlightDuration, in wall time at the current
+      // timeDilation. The flight's AnimationController is a Ticker, so
+      // this is the 2.9s the order names at 20x.
+      final int flightFrames = _dilatedFrameCount(
+        Duration(microseconds: kCaptureFlightDuration.inMicroseconds * 2 ~/ 5),
+        frame: frame,
+      );
+      await _pumpRealDurationFrames(
+        tester,
+        frameCount: flightFrames,
+        frame: frame,
+      );
+
       metrics = _BoardMetrics.of(tester, 'capture 25b, capture flight');
       half = metrics.cellSize / 2;
       cell10ForKarim = metrics.cellCentre(seat: 1, progress: 10);
-      Offset yard = metrics.cellCentre(seat: 1, progress: -1, tokenIndex: 0);
+      final Offset yard = metrics.cellCentre(
+        seat: 1,
+        progress: -1,
+        tokenIndex: 0,
+      );
       karim = _tokenRectCentre(
         tester,
         seat: 1,
         token: 0,
         step: 'capture 25b, capture flight',
       );
-      var flightFrom10 = (karim - cell10ForKarim).distance;
-      var flightFromYard = (karim - yard).distance;
-      while (true) {
-        final bool leftSquare = flightFrom10 > half;
-        final bool notInYard = flightFromYard > half;
-        if (leftSquare && notInYard) {
-          inFlight = true;
-          break;
-        }
-        // In the yard, or the dilated flight has already run out. The
-        // distances on this frame are the ones the failure reports.
-        if (!notInYard || flightFrames >= flightCapFrames) {
-          break;
-        }
-        await _pumpRealDurationFrames(tester, frameCount: 1, frame: frame);
-        flightFrames += 1;
-        metrics = _BoardMetrics.of(tester, 'capture 25b, capture flight');
-        half = metrics.cellSize / 2;
-        cell10ForKarim = metrics.cellCentre(seat: 1, progress: 10);
-        yard = metrics.cellCentre(seat: 1, progress: -1, tokenIndex: 0);
-        karim = _tokenRectCentre(
-          tester,
-          seat: 1,
-          token: 0,
-          step: 'capture 25b, capture flight',
-        );
-        flightFrom10 = (karim - cell10ForKarim).distance;
-        flightFromYard = (karim - yard).distance;
-      }
-      expect(
-        inFlight,
-        isTrue,
-        reason:
-            'capture 25b, capture flight ($motionMode, flight '
-            '${flightDuration.inMilliseconds}ms): token-1-0 never drew '
-            'more than half a cell from both square 10 and yard slot 0 '
-            'before the flight ended. centre ${_px(karim)}, square 10 '
-            '${_px(cell10ForKarim)} '
-            '(${_cellText(cellFor(seat: 1, progress: 10))}) distance '
-            '${flightFrom10.toStringAsFixed(2)}px, yard slot 0 ${_px(yard)} '
-            '(${_cellText(cellFor(seat: 1, progress: -1, tokenIndex: 0))}) '
-            'distance ${flightFromYard.toStringAsFixed(2)}px, half a cell '
-            '${half.toStringAsFixed(2)}px (cell '
-            '${metrics.cellSize.toStringAsFixed(2)}px). After $flightFrames '
-            'pumps of $frame at timeDilation $timeDilation '
-            '(cap $flightCapFrames).',
-      );
+      final double flightFrom10 = (karim - cell10ForKarim).distance;
+      final double flightFromYard = (karim - yard).distance;
       expect(
         flightFrom10 > half,
         isTrue,
         reason:
-            'capture 25b, capture flight ($motionMode, flight '
-            '${flightDuration.inMilliseconds}ms): token-1-0 centre '
-            '${_px(karim)} should be more than half a cell from square '
+            'capture 25b, capture flight (about 0.4 of '
+            'kCaptureFlightDuration after the mover reached progress 10, '
+            '$flightFrames pumps of $frame at timeDilation $timeDilation): '
+            'token-1-0 centre ${_px(karim)} should no longer be on square '
             '10. Cell centre ${_px(cell10ForKarim)} '
             '(${_cellText(cellFor(seat: 1, progress: 10))}), distance '
             '${flightFrom10.toStringAsFixed(2)}px, half a cell '
             '${half.toStringAsFixed(2)}px (cell '
-            '${metrics.cellSize.toStringAsFixed(2)}px). After $flightFrames '
-            'pumps of $frame at timeDilation $timeDilation.',
+            '${metrics.cellSize.toStringAsFixed(2)}px).',
       );
       expect(
         flightFromYard > half,
         isTrue,
         reason:
-            'capture 25b, capture flight ($motionMode, flight '
-            '${flightDuration.inMilliseconds}ms): token-1-0 centre '
-            '${_px(karim)} should be more than half a cell from yard '
-            'slot 0. Yard cell centre ${_px(yard)} '
+            'capture 25b, capture flight (about 0.4 of '
+            'kCaptureFlightDuration after the mover reached progress 10, '
+            '$flightFrames pumps of $frame at timeDilation $timeDilation): '
+            'token-1-0 centre ${_px(karim)} should not yet be in yard slot '
+            '0. Yard cell centre ${_px(yard)} '
             '(${_cellText(cellFor(seat: 1, progress: -1, tokenIndex: 0))}), '
             'distance ${flightFromYard.toStringAsFixed(2)}px, half a cell '
             '${half.toStringAsFixed(2)}px (cell '
-            '${metrics.cellSize.toStringAsFixed(2)}px). After $flightFrames '
-            'pumps of $frame at timeDilation $timeDilation.',
+            '${metrics.cellSize.toStringAsFixed(2)}px).',
       );
 
       await binding.takeScreenshot('25b-game-travel-en');
 
       timeDilation = 1.0;
       final int settleFrames =
-          (flightDuration.inMilliseconds / frame.inMilliseconds).ceil() + 10;
+          (kCaptureFlightDuration.inMilliseconds / frame.inMilliseconds)
+              .ceil() +
+          10;
       await _pumpRealDurationFrames(
         tester,
         frameCount: settleFrames,
