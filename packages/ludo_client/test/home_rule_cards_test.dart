@@ -475,4 +475,31 @@ void main() {
       );
     }
   }
+
+  // C-276 rule 3a: each card draws its own title and hint, in the player's
+  // language. The hint is what tells a first-time player what the rule does.
+  for (final Locale locale in const <Locale>[Locale('en'), Locale('ar')]) {
+    testWidgets('${locale.languageCode}: each card draws its own title and '
+        'hint', (tester) async {
+      _usePhone(tester);
+      await tester.pumpWidget(_homeScreenApp(locale: locale));
+      await tester.pumpAndSettle();
+      await _openPlayersDisclosure(tester);
+
+      final AppLocalizations loc = lookupAppLocalizations(locale);
+      final List<(Key, String, String)> cards = <(Key, String, String)>[
+        (_blocksKey, loc.homeRuleBlocks, loc.homeRuleBlocksHint),
+        (_captureKey, loc.homeRuleCaptureBonus, loc.homeRuleCaptureBonusHint),
+      ];
+      for (final (Key key, String title, String hint) in cards) {
+        for (final String text in <String>[title, hint]) {
+          expect(
+            find.descendant(of: find.byKey(key), matching: find.text(text)),
+            findsOneWidget,
+            reason: '${locale.languageCode}: "$text" must be drawn inside $key',
+          );
+        }
+      }
+    });
+  }
 }
