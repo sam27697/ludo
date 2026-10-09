@@ -947,10 +947,7 @@ class _GameScreenState extends State<GameScreen> {
             child: IgnorePointer(
               ignoring: true,
               child: ExcludeSemantics(
-                child: Opacity(
-                  opacity: 0.35,
-                  child: staleTable,
-                ),
+                child: Opacity(opacity: 0.35, child: staleTable),
               ),
             ),
           ),
@@ -1096,9 +1093,8 @@ class _GameScreenState extends State<GameScreen> {
                 Text(
                   loc.lobbyConnectionLost,
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: LudoColors.ink,
-                  ),
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(color: LudoColors.ink),
                 ),
                 if (errorMessage != null) ...[
                   const SizedBox(height: kSpace2),
@@ -1106,9 +1102,8 @@ class _GameScreenState extends State<GameScreen> {
                     errorMessage,
                     key: const Key('game-screen-error-message'),
                     textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: LudoColors.inkMuted,
-                    ),
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(color: LudoColors.inkMuted),
                   ),
                 ],
                 const SizedBox(height: kSpace4),
@@ -1125,9 +1120,8 @@ class _GameScreenState extends State<GameScreen> {
                       Text(
                         loc.lobbyReconnecting,
                         key: const Key('game-screen-reconnecting'),
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: LudoColors.inkMuted,
-                        ),
+                        style: Theme.of(context).textTheme.bodyMedium
+                            ?.copyWith(color: LudoColors.inkMuted),
                       ),
                     ],
                   ),
