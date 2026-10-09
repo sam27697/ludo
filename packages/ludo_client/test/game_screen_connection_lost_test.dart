@@ -21,6 +21,11 @@
 // game-die (game-screen-roll-button no longer exists); no other case here
 // touches the removed controls.
 //
+// Order 283 (C-282): C1 and C2 no longer claim the board and the die are
+// wiped. A failed or closed phase with a playing room keeps that playing
+// body inside game-screen-stale-table. The reconnect button, the leave
+// path and the error-message key are unchanged.
+//
 // GameScreen is driven the same way test/game_screen_test.dart and
 // test/lobby_screen_test.dart drive RoomController: a real RoomController
 // sits over a FakeTransport (test/net/fake_transport.dart, read-only, not
@@ -274,6 +279,28 @@ const Key _appbarLeaveKey = Key('game-screen-appbar-leave');
 const Key _errorMessageKey = Key('game-screen-error-message');
 const Key _boardKey = Key('game-screen-board');
 const Key _dieKey = Key('game-die');
+const Key _staleTableKey = Key('game-screen-stale-table');
+
+void _expectBoardAndDieInsideStaleTable(WidgetTester tester) {
+  final Finder stale = find.byKey(_staleTableKey);
+  expect(
+    stale,
+    findsOneWidget,
+    reason:
+        'a failed or closed phase with a playing room keeps the table '
+        'under game-screen-stale-table',
+  );
+  expect(
+    find.descendant(of: stale, matching: find.byKey(_boardKey)),
+    findsOneWidget,
+    reason: 'the board sits inside the stale wrapper, not off the screen',
+  );
+  expect(
+    find.descendant(of: stale, matching: find.byKey(_dieKey)),
+    findsOneWidget,
+    reason: 'the die sits inside the stale wrapper with the rest of the body',
+  );
+}
 
 void main() {
   // A mid-game seats/turn fixture shared by every case that needs a
@@ -290,9 +317,8 @@ void main() {
   // ==========================================================================
   testWidgets('C1: a controller driven to RoomPhase.failed while holding a '
       'RoomState.playing snapshot renders game-screen-connection-lost and '
-      'game-screen-reconnect-button; the board and the die are absent', (
-    tester,
-  ) async {
+      'game-screen-reconnect-button, and the board and the die sit inside '
+      'game-screen-stale-table', (tester) async {
     final (controller, transport, _) = await _connectPlaying(
       tester,
       mySeat: 0,
@@ -350,16 +376,7 @@ void main() {
       findsOneWidget,
       reason: 'C1: the connection-lost state must carry a reconnect button',
     );
-    expect(
-      find.byKey(_boardKey),
-      findsNothing,
-      reason: 'C1: the board must be absent once the phase has failed',
-    );
-    expect(
-      find.byKey(_dieKey),
-      findsNothing,
-      reason: 'C1: the die must be absent once the phase has failed',
-    );
+    _expectBoardAndDieInsideStaleTable(tester);
   });
 
   // ==========================================================================
@@ -367,9 +384,8 @@ void main() {
   // ==========================================================================
   testWidgets('C2: a controller driven to RoomPhase.closed while holding a '
       'RoomState.playing snapshot renders game-screen-connection-lost and '
-      'game-screen-reconnect-button; the board and the die are absent', (
-    tester,
-  ) async {
+      'game-screen-reconnect-button, and the board and the die sit inside '
+      'game-screen-stale-table', (tester) async {
     final (controller, transport, _) = await _connectPlaying(
       tester,
       mySeat: 0,
@@ -418,16 +434,7 @@ void main() {
       findsOneWidget,
       reason: 'C2: the connection-lost state must carry a reconnect button',
     );
-    expect(
-      find.byKey(_boardKey),
-      findsNothing,
-      reason: 'C2: the board must be absent once the phase has closed',
-    );
-    expect(
-      find.byKey(_dieKey),
-      findsNothing,
-      reason: 'C2: the die must be absent once the phase has closed',
-    );
+    _expectBoardAndDieInsideStaleTable(tester);
   });
 
   // ==========================================================================

@@ -1,7 +1,11 @@
-// Home screen hero-to-form gaps (afterBrand, afterDie, sectionGap) must
-// assign named kSpace* tokens (kSpace1=4 .. kSpace7=32) instead of bare
-// 12/14/16/28/32. Off-scale 14 maps to kSpace3 or kSpace4; off-scale 28
-// maps to kSpace6 or kSpace7.
+// Home screen hero-to-form gaps (afterBrand, afterDie) must assign named
+// kSpace* tokens (kSpace1=4 .. kSpace7=32) instead of bare 12/14/16/28/32.
+// Off-scale 14 maps to kSpace3 or kSpace4; off-scale 28 maps to kSpace6
+// or kSpace7.
+//
+// C-278 replaces the sectionGap SizedBox between Create and the code
+// field with home-join-divider. Those two cases no longer measure that
+// gap as a kSpace token. afterBrand and afterDie are unchanged.
 
 import 'dart:io';
 import 'dart:math' as math;
@@ -17,7 +21,7 @@ import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/theme.dart';
 import 'package:path/path.dart' as p;
 
-const List<String> _gapVars = <String>['afterBrand', 'afterDie', 'sectionGap'];
+const List<String> _gapVars = <String>['afterBrand', 'afterDie'];
 
 final RegExp _kSpaceToken = RegExp(r'^kSpace[1-7]$');
 
@@ -198,6 +202,38 @@ void _expectGapIn(double gap, Set<double> allowed, String label) {
   );
 }
 
+/// home-join-divider occupies the slot sectionGap used to: its rect sits
+/// between create-room-button's bottom and room-code-field's top.
+void _expectJoinDividerBetween(WidgetTester tester, String label) {
+  final Finder divider = find.byKey(const Key('home-join-divider'));
+  expect(
+    divider,
+    findsOneWidget,
+    reason:
+        '$label: home-join-divider must sit between Create and the '
+        'code field',
+  );
+  final Rect create = tester.getRect(
+    find.byKey(const Key('create-room-button')),
+  );
+  final Rect code = tester.getRect(find.byKey(const Key('room-code-field')));
+  final Rect gap = tester.getRect(divider);
+  expect(
+    gap.top,
+    greaterThanOrEqualTo(create.bottom),
+    reason:
+        '$label: home-join-divider must start at or below Create; '
+        'divider top ${gap.top}, Create bottom ${create.bottom}',
+  );
+  expect(
+    gap.bottom,
+    lessThanOrEqualTo(code.top),
+    reason:
+        '$label: home-join-divider must end at or above the code field; '
+        'divider bottom ${gap.bottom}, code top ${code.top}',
+  );
+}
+
 double _heroBottom(WidgetTester tester, AppLocalizations loc) {
   final double dieBottom = tester.getRect(find.byType(DieMark)).bottom;
   final double titleBottom = tester.getRect(find.text(loc.appTitle)).bottom;
@@ -208,7 +244,7 @@ double _heroBottom(WidgetTester tester, AppLocalizations loc) {
 }
 
 void main() {
-  test('home afterBrand/afterDie/sectionGap assignments use kSpace* with no '
+  test('home afterBrand/afterDie assignments use kSpace* with no '
       'bare 12/14/16/28/32', () {
     expect(kSpace1, 4);
     expect(kSpace2, 8);
@@ -224,20 +260,18 @@ void main() {
       assigns.map((_GapAssign a) => a.name).toSet(),
       _gapVars.toSet(),
       reason:
-          'home_screen.dart must still assign afterBrand, afterDie, and '
-          'sectionGap so those hero gaps stay named',
+          'home_screen.dart must still assign afterBrand and afterDie '
+          'so those hero gaps stay named',
     );
 
     final List<String> problems = <String>[];
     final Map<String, Set<String>> compactTokens = <String, Set<String>>{
       'afterBrand': <String>{'kSpace3'},
       'afterDie': <String>{'kSpace4'},
-      'sectionGap': <String>{'kSpace3', 'kSpace4'},
     };
     final Map<String, Set<String>> tallTokens = <String, Set<String>>{
       'afterBrand': <String>{'kSpace6', 'kSpace7'},
       'afterDie': <String>{'kSpace7'},
-      'sectionGap': <String>{'kSpace6', 'kSpace7'},
     };
 
     for (final _GapAssign assign in assigns) {
@@ -272,7 +306,7 @@ void main() {
       problems,
       isEmpty,
       reason:
-          'afterBrand/afterDie/sectionGap must use only kSpace* '
+          'afterBrand/afterDie must use only kSpace* '
           '(14→kSpace3|kSpace4, 28→kSpace6|kSpace7); '
           'found ${problems.length}: ${problems.join('; ')}',
     );
@@ -280,7 +314,7 @@ void main() {
 
   testWidgets(
     'tall home tagline-to-die gap is kSpace6 or kSpace7, die-to-name is '
-    'kSpace7, create-to-code is kSpace6 or kSpace7',
+    'kSpace7, and the join divider sits between Create and the code field',
     (WidgetTester tester) async {
       await _pumpHome(tester, size: const Size(390, 844));
 
@@ -292,12 +326,6 @@ void main() {
       final Rect name = tester.getRect(
         find.byKey(const Key('home-name-field')),
       );
-      final Rect create = tester.getRect(
-        find.byKey(const Key('create-room-button')),
-      );
-      final Rect code = tester.getRect(
-        find.byKey(const Key('room-code-field')),
-      );
 
       _expectGapIn(die.top - tagline.bottom, <double>{
         kSpace6,
@@ -306,16 +334,13 @@ void main() {
       _expectGapIn(name.top - _heroBottom(tester, loc), <double>{
         kSpace7,
       }, 'tall HomeScreen die-to-name gap (afterDie)');
-      _expectGapIn(code.top - create.bottom, <double>{
-        kSpace6,
-        kSpace7,
-      }, 'tall HomeScreen create-to-code gap (sectionGap)');
+      _expectJoinDividerBetween(tester, 'tall HomeScreen');
     },
   );
 
   testWidgets(
-    'compact home hero-to-name gap is kSpace4 and create-to-code gap is '
-    'kSpace3 or kSpace4',
+    'compact home hero-to-name gap is kSpace4 and the join divider sits '
+    'between Create and the code field',
     (WidgetTester tester) async {
       await _pumpHome(tester, size: const Size(390, 600));
 
@@ -325,20 +350,11 @@ void main() {
       final Rect name = tester.getRect(
         find.byKey(const Key('home-name-field')),
       );
-      final Rect create = tester.getRect(
-        find.byKey(const Key('create-room-button')),
-      );
-      final Rect code = tester.getRect(
-        find.byKey(const Key('room-code-field')),
-      );
 
       _expectGapIn(name.top - _heroBottom(tester, loc), <double>{
         kSpace4,
       }, 'compact HomeScreen hero-to-name gap (afterDie)');
-      _expectGapIn(code.top - create.bottom, <double>{
-        kSpace3,
-        kSpace4,
-      }, 'compact HomeScreen create-to-code gap (sectionGap)');
+      _expectJoinDividerBetween(tester, 'compact HomeScreen');
     },
   );
 }

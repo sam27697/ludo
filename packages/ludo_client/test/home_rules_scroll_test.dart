@@ -499,15 +499,15 @@ void main() {
             'scroll',
       );
 
-      final SwitchListTile switchTile = tester.widget<SwitchListTile>(
+      final HomeRuleToggle blocksRule = tester.widget<HomeRuleToggle>(
         switchFinder,
       );
       expect(
-        switchTile.value,
+        blocksRule.value,
         isFalse,
         reason:
             'RS-6 fixture check: tapping home-rule-blocks must flip its '
-            'SwitchListTile.value to false (it defaults true), or the tap '
+            'HomeRuleToggle.value to false (it defaults true), or the tap '
             'above never actually reached the switch',
       );
     },

@@ -34,13 +34,18 @@
 //      doing at this moment" (right after the far end vanishes) as part of
 //      the measurement, but does not give that observation its own R-letter
 //      the way R1 through R7 each get one. This file folds that observation
-//      into dropAndReconnect's shared setup (a light assertion that
-//      game-screen-turn-countdown is absent while the connection-lost body
-//      is showing, with a reason noting that absence from the tree does not
-//      by itself prove the countdown's own Timer has stopped) and leaves the
-//      deeper measurement of that Timer's actual behaviour to R6, which is
-//      the only case whose outcome depends on it. This was a judgement call,
-//      not a finding, and is reported as one.
+//      into dropAndReconnect's shared setup (the countdown stays inside
+//      game-screen-stale-table while the connection-lost card is up, which
+//      does not by itself prove the countdown's own Timer has stopped) and
+//      leaves the deeper measurement of that Timer's actual behaviour to
+//      R6, which is the only case whose outcome depends on it. This was a
+//      judgement call, not a finding, and is reported as one.
+//
+// Order 283 (C-282): the connection-lost card no longer replaces the
+// playing body. While the socket is down the countdown stays mounted
+// inside game-screen-stale-table. R6's 42-then-39 arithmetic is unchanged:
+// the Timer lives on GameScreen state and already kept running when the
+// digits were off the tree.
 //   2. The scenario text gives freedom to choose the exact stated deadline_ms
 //      and turn.k values ("a stated deadline_ms", "a stated turn.k"); the
 //      literal integers below (42000ms / k: 2 pre-drop, and so on) are this
@@ -261,6 +266,7 @@ const Key _reconnectButtonKey = Key('game-screen-reconnect-button');
 const Key _boardKey = Key('game-screen-board');
 const Key _dieKey = Key('game-die');
 const Key _countdownKey = Key('game-screen-turn-countdown');
+const Key _staleTableKey = Key('game-screen-stale-table');
 
 /// Reads whatever whole-second number the widget at [key] is showing,
 /// without assuming its exact template, copied from
@@ -339,11 +345,11 @@ void main() {
   /// whichever payload the case under test needs.
   ///
   /// Also records the scenario's step 2 observation, ambiguity 1 in this
-  /// file's header: game-screen-turn-countdown is absent while the
-  /// connection-lost body is showing. That absence is expected from R1's
-  /// own claim about the connection-lost body replacing the playing body
-  /// outright; it is not, by itself, proof that the countdown's Timer has
-  /// stopped ticking underneath. R6 measures that Timer's actual behaviour.
+  /// file's header: game-screen-turn-countdown stays inside
+  /// game-screen-stale-table while the connection-lost card is showing.
+  /// The playing body is no longer replaced outright. That presence is
+  /// not, by itself, proof that the countdown's Timer has stopped or kept
+  /// ticking. R6 measures that Timer's actual behaviour.
   Future<(RoomController, FakeTransport, FakeTransport)> dropAndReconnect(
     WidgetTester tester, {
     required Map<String, Object?> initialTurn,
@@ -380,14 +386,18 @@ void main() {
           'before game-screen-reconnect-button can be tapped',
     );
     expect(
-      find.byKey(_countdownKey),
-      findsNothing,
+      find.descendant(
+        of: find.byKey(_staleTableKey),
+        matching: find.byKey(_countdownKey),
+      ),
+      findsOneWidget,
       reason:
-          'scenario step 2 observation: game-screen-turn-countdown must be '
-          'absent while the connection-lost body is showing -- see this '
-          "file's header ambiguity 1 for why this is recorded here rather "
-          'than under its own R-letter, and R6 for what this absence does '
-          'and does not prove about the countdown Timer underneath',
+          'scenario step 2 observation: game-screen-turn-countdown stays '
+          'inside game-screen-stale-table while the connection-lost card '
+          'is showing. See this file\'s header ambiguity 1 for why this '
+          'is recorded here rather than under its own R-letter, and R6 '
+          'for what this presence does and does not prove about the '
+          'countdown Timer underneath',
     );
 
     if (disconnectWaitSeconds > 0) {
@@ -770,14 +780,17 @@ void main() {
         reason: 'fixture is broken: the far side vanishing must close phase',
       );
       expect(
-        find.byKey(_countdownKey),
-        findsNothing,
+        find.descendant(
+          of: find.byKey(_staleTableKey),
+          matching: find.byKey(_countdownKey),
+        ),
+        findsOneWidget,
         reason:
-            'fixture is broken: the connection-lost body must be showing, '
-            'per R1, so game-screen-turn-countdown must be absent from '
-            'the tree here -- its absence from the tree is not itself '
-            'proof its Timer has stopped, which is what the rest of this '
-            'case measures',
+            'fixture is broken: the connection-lost card is up over the '
+            'stale table, so game-screen-turn-countdown must still be '
+            'inside game-screen-stale-table. Its presence in the tree is '
+            'not itself proof its Timer has stopped, which is what the '
+            'rest of this case measures',
       );
 
       // 15 seconds of fake time pass with the socket dead. Nothing is

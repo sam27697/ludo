@@ -280,12 +280,12 @@ void main() {
       );
 
       expect(
-        tester.widget<SwitchListTile>(blocksSwitch).value,
+        tester.widget<HomeRuleToggle>(blocksSwitch).value,
         isTrue,
         reason: 'Blocks must be on when Home first builds',
       );
       expect(
-        tester.widget<SwitchListTile>(captureSwitch).value,
+        tester.widget<HomeRuleToggle>(captureSwitch).value,
         isTrue,
         reason: 'Capture bonus must be on when Home first builds',
       );
@@ -332,12 +332,12 @@ void main() {
             'without the disclosure re-closing',
       );
       expect(
-        tester.widget<SwitchListTile>(blocksSwitch).value,
+        tester.widget<HomeRuleToggle>(blocksSwitch).value,
         isTrue,
         reason: 'Blocks must still read on after a locale toggle alone',
       );
       expect(
-        tester.widget<SwitchListTile>(captureSwitch).value,
+        tester.widget<HomeRuleToggle>(captureSwitch).value,
         isTrue,
         reason: 'Capture bonus must still read on after a locale toggle alone',
       );
@@ -422,7 +422,7 @@ void main() {
       await tester.tap(find.byKey(_blocksSwitchKey));
       await tester.pump();
       expect(
-        tester.widget<SwitchListTile>(find.byKey(_blocksSwitchKey)).value,
+        tester.widget<HomeRuleToggle>(find.byKey(_blocksSwitchKey)).value,
         isFalse,
         reason:
             'fixture is broken: tapping home-rule-blocks must turn it '
@@ -451,7 +451,7 @@ void main() {
     await tester.tap(find.byKey(_captureSwitchKey));
     await tester.pump();
     expect(
-      tester.widget<SwitchListTile>(find.byKey(_captureSwitchKey)).value,
+      tester.widget<HomeRuleToggle>(find.byKey(_captureSwitchKey)).value,
       isFalse,
       reason:
           'fixture is broken: tapping home-rule-capture-bonus must '
@@ -483,14 +483,14 @@ void main() {
       await tester.tap(find.byKey(_captureSwitchKey));
       await tester.pump();
       expect(
-        tester.widget<SwitchListTile>(find.byKey(_blocksSwitchKey)).value,
+        tester.widget<HomeRuleToggle>(find.byKey(_blocksSwitchKey)).value,
         isFalse,
         reason:
             'fixture is broken: both switches must read off before '
             'Create is even tapped',
       );
       expect(
-        tester.widget<SwitchListTile>(find.byKey(_captureSwitchKey)).value,
+        tester.widget<HomeRuleToggle>(find.byKey(_captureSwitchKey)).value,
         isFalse,
         reason:
             'fixture is broken: both switches must read off before '

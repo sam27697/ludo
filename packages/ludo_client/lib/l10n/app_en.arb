@@ -25,6 +25,10 @@
   "@homeJoinRoomButton": {
     "description": "Button on the home screen that joins an existing room by code."
   },
+  "homeJoinDivider": "or join with a code",
+  "@homeJoinDivider": {
+    "description": "Divider text between the create room button and the room code field on the home screen."
+  },
   "homeRoomCodeFieldLabel": "Room code",
   "@homeRoomCodeFieldLabel": {
     "description": "Label of the text field where the player types a room code to join."

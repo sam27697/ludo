@@ -412,6 +412,25 @@ Future<void> _mountGame(
   await tester.pump();
 }
 
+/// The reconnecting line's text. The key sits on the Text in the old
+/// column, and on the row of icon plus text in C-282's card, so this
+/// reads either without dropping the string proof.
+String? _lineText(WidgetTester tester, Finder line) {
+  final Widget widget = tester.widget(line);
+  if (widget is Text) {
+    return widget.data;
+  }
+  final Finder text = find.descendant(of: line, matching: find.byType(Text));
+  expect(
+    text,
+    findsOneWidget,
+    reason:
+        'the reconnecting key must carry exactly one Text, on itself or '
+        'inside the row it keys',
+  );
+  return tester.widget<Text>(text).data;
+}
+
 void main() {
   final List<Map<String, Object?>> midGameSeats = <Map<String, Object?>>[
     _seatJson(0, name: 'Sam'),
@@ -424,11 +443,13 @@ void main() {
   // L-1
   // ==========================================================================
   testWidgets(
-    'L-1: host lobby, transport drops, the first automatic attempt fails at '
-    'the connector with errorCode transport -> lobby-closed (not lobby-error, '
-    'not lobby-retry-button); tapping lobby-reconnect-button opens a new '
-    'transport whose first frame is resume carrying the room code and seat '
-    'token, and no create_room is ever sent again on any transport',
+    'L-1: host lobby, transport drops, both automatic attempts fail at the '
+    'connector with errorCode transport; once the schedule is exhausted the '
+    'gathering stays inside lobby-stale-room under the lobby-closed card '
+    '(not lobby-error, not lobby-retry-button), and tapping '
+    'lobby-reconnect-button opens a new transport whose first frame is '
+    'resume carrying the room code and seat token, and no create_room is '
+    'ever sent again on any transport',
     (tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transportA = FakeTransport();
@@ -499,12 +520,40 @@ void main() {
             'shape a real dropped phone produces',
       );
 
+      // C-284: the Reconnect button is absent while the second attempt is
+      // still pending. Exhaust that attempt, then tap. The resume payload
+      // below is the same proof as before.
+      connector.enqueueReject();
+      await tester.pump(_delays[1]);
+      await tester.pump();
+      await tester.pump();
+      expect(controller.phase, RoomPhase.failed);
+      expect(
+        controller.autoReconnectPending,
+        isFalse,
+        reason:
+            'L1 fixture: both scheduled attempts have failed, so nothing '
+            'is left pending and lobby-reconnect-button is the way back',
+      );
+      expect(controller.room, isNotNull);
+      expect(controller.errorCode, 'transport');
+
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-stale-room')),
+          matching: find.byKey(const Key('lobby-room-code')),
+        ),
+        findsOneWidget,
+        reason:
+            'L1: failed + room set + errorCode "transport" keeps the '
+            'gathering inside lobby-stale-room',
+      );
       expect(
         find.byKey(const Key('lobby-closed')),
         findsOneWidget,
         reason:
             'L1: failed + room set + errorCode "transport" (retryable) '
-            'must render the same body as RoomPhase.closed, not lobby-error',
+            'must render the lobby-closed card, not lobby-error',
       );
       expect(
         find.byKey(const Key('lobby-error')),
@@ -690,9 +739,11 @@ void main() {
   ]) {
     testWidgets(
       'R1-${locale.languageCode == 'en' ? 'EN' : 'AR'}: lobby dropped with '
-      'autoReconnectPending true shows lobby-reconnecting with the exact '
-      'lobbyReconnecting string of locale "${locale.languageCode}", looked '
-      'up from AppLocalizations',
+      'autoReconnectPending true keeps the gathering inside '
+      'lobby-stale-room under the lobby-closed card, shows '
+      'lobby-reconnecting with the exact lobbyReconnecting string of '
+      'locale "${locale.languageCode}", looked up from AppLocalizations, '
+      'and shows no lobby-reconnect-button',
       (tester) async {
         final _Connector connector = _Connector();
         final FakeTransport transportA = FakeTransport();
@@ -760,6 +811,25 @@ void main() {
               '"), not a literal copied from the ARB file; got '
               '"${reconnectingText.data}"',
         );
+        // C-284: the line sits on the card over the gathering, and the
+        // Reconnect button is absent while the retry is still pending.
+        expect(
+          find.descendant(
+            of: find.byKey(const Key('lobby-stale-room')),
+            matching: find.byKey(const Key('lobby-room-code')),
+          ),
+          findsOneWidget,
+          reason:
+              'R1: the gathering stays inside lobby-stale-room while '
+              'autoReconnectPending is true',
+        );
+        expect(
+          find.byKey(const Key('lobby-reconnect-button')),
+          findsNothing,
+          reason:
+              'R1: lobby-reconnect-button is absent while the automatic '
+              'retry is still pending',
+        );
 
         // A reconnect timer is still armed (not yet fired): dispose
         // explicitly here rather than via addTearDown, matching
@@ -775,8 +845,9 @@ void main() {
   // R1-N
   // ==========================================================================
   testWidgets(
-    'R1-N (control): lobby dropped with autoReconnectDelays empty shows '
-    'lobby-closed with lobby-reconnecting absent',
+    'R1-N (control): lobby dropped with autoReconnectDelays empty keeps '
+    'the gathering inside lobby-stale-room under the lobby-closed card, '
+    'with lobby-reconnecting absent and lobby-reconnect-button present',
     (tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transportA = FakeTransport();
@@ -820,6 +891,24 @@ void main() {
         find.byKey(const Key('lobby-reconnecting')),
         findsNothing,
         reason: 'R1-N: lobby-reconnecting must be absent when pending is false',
+      );
+      // C-284: given up (nothing pending) still keeps the gathering, and
+      // the Reconnect button is the way back.
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-stale-room')),
+          matching: find.byKey(const Key('lobby-room-code')),
+        ),
+        findsOneWidget,
+        reason:
+            'R1-N: the gathering stays inside lobby-stale-room when the '
+            'drop has nothing scheduled',
+      );
+      expect(
+        find.byKey(const Key('lobby-reconnect-button')),
+        findsOneWidget,
+        reason:
+            'R1-N: lobby-reconnect-button is present once nothing is pending',
       );
     },
   );
@@ -888,14 +977,14 @@ void main() {
       final AppLocalizations loc = AppLocalizations.of(
         tester.element(find.byType(GameScreen)),
       );
-      final Text reconnectingText = tester.widget<Text>(reconnectingFinder);
+      final String? reconnectingText = _lineText(tester, reconnectingFinder);
       expect(
-        reconnectingText.data,
+        reconnectingText,
         loc.lobbyReconnecting,
         reason:
             'R2: game-screen-reconnecting\'s text must be exactly this '
             'tree\'s own AppLocalizations.lobbyReconnecting '
-            '("${loc.lobbyReconnecting}"); got "${reconnectingText.data}"',
+            '("${loc.lobbyReconnecting}"); got "$reconnectingText"',
       );
 
       // A reconnect timer is still armed: dispose explicitly (see R1's own
@@ -984,10 +1073,11 @@ void main() {
   // ==========================================================================
   testWidgets(
     'R3: a game in progress, dropped, the scheduled attempt held in flight '
-    'at the connector -> phase connecting, game-screen-reconnecting-banner '
-    'present, the board (game-screen-board) still rendered, '
-    'game-screen-connection-lost absent; completing the resume with a valid '
-    'room reply removes the banner',
+    'at the connector -> phase connecting, game-screen-connection-lost and '
+    'game-screen-reconnecting still present, no '
+    'game-screen-reconnecting-banner, the board still inside '
+    'game-screen-stale-table; completing the resume removes the card and '
+    'the wrapper',
     (tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transportA = FakeTransport();
@@ -1025,42 +1115,47 @@ void main() {
             'resolved yet must leave the phase at connecting',
       );
 
-      final Finder bannerFinder = find.byKey(
-        const Key('game-screen-reconnecting-banner'),
+      final Finder connectionLostFinder = find.byKey(
+        const Key('game-screen-connection-lost'),
       );
       expect(
-        bannerFinder,
+        connectionLostFinder,
         findsOneWidget,
         reason:
-            'R3: game-screen-reconnecting-banner must be present while '
-            'phase is connecting with room still set',
+            'R3: the connection-lost card stays up while phase is '
+            'connecting; the old screen dropped it for the banner',
+      );
+      final Finder reconnectingFinder = find.byKey(
+        const Key('game-screen-reconnecting'),
+      );
+      expect(
+        find.descendant(of: connectionLostFinder, matching: reconnectingFinder),
+        findsOneWidget,
+        reason:
+            'R3: game-screen-reconnecting stays inside the card during '
+            'the attempt, the same line the closed phase already showed',
       );
       final AppLocalizations loc = AppLocalizations.of(
         tester.element(find.byType(GameScreen)),
       );
-      final Text bannerText = tester.widget<Text>(bannerFinder);
-      expect(bannerText.data, loc.lobbyReconnecting);
-
-      // game-screen-board is the key _playingBody alone renders (see
-      // game_screen.dart _playingBody / LudoBoard): the connection-lost
-      // branch that game-screen-connection-lost belongs to renders no
-      // board at all (test/game_screen_connection_lost_test.dart's own C1
-      // pins that board is absent there). Its presence here is exactly
-      // what proves this is still the last known playing board, not a
-      // connection-lost placeholder, underneath the banner.
+      expect(_lineText(tester, reconnectingFinder), loc.lobbyReconnecting);
       expect(
-        find.byKey(const Key('game-screen-board')),
-        findsOneWidget,
-        reason:
-            'R3: the last known board must still be rendered while an '
-            'automatic attempt is in flight',
-      );
-      expect(
-        find.byKey(const Key('game-screen-connection-lost')),
+        find.byKey(const Key('game-screen-reconnecting-banner')),
         findsNothing,
         reason:
-            'R3: game-screen-connection-lost must be absent while phase is '
-            'connecting, not failed or closed',
+            'R3: game-screen-reconnecting-banner is not the reconnecting '
+            'signal anymore, including while phase is connecting',
+      );
+      final Finder stale = find.byKey(const Key('game-screen-stale-table'));
+      expect(
+        find.descendant(
+          of: stale,
+          matching: find.byKey(const Key('game-screen-board')),
+        ),
+        findsOneWidget,
+        reason:
+            'R3: the board stays inside game-screen-stale-table while the '
+            'attempt is in flight; the screen does not flip to a bare board',
       );
 
       // Complete the held connector call with a fresh transport, then
@@ -1099,7 +1194,22 @@ void main() {
       expect(
         find.byKey(const Key('game-screen-reconnecting-banner')),
         findsNothing,
-        reason: 'R3: the banner must be gone once the resume succeeds',
+        reason: 'R3: the banner stays absent once the resume succeeds',
+      );
+      expect(
+        find.byKey(const Key('game-screen-connection-lost')),
+        findsNothing,
+        reason: 'R3: the card is gone once the resume succeeds',
+      );
+      expect(
+        find.byKey(const Key('game-screen-stale-table')),
+        findsNothing,
+        reason: 'R3: the stale wrapper is gone once the resume succeeds',
+      );
+      expect(
+        find.byKey(const Key('game-screen-board')),
+        findsOneWidget,
+        reason: 'R3: the board is still on screen once the resume succeeds',
       );
 
       controller.dispose();

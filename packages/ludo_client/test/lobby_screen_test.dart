@@ -217,6 +217,29 @@ const List<String> _phaseKeys = <String>[
   'lobby-closed',
 ];
 
+const Key _staleRoomKey = Key('lobby-stale-room');
+
+/// C-284 rule 1: a room still in hand keeps the gathering under
+/// lobby-stale-room. Room-null bodies do not.
+void _expectStaleLobby(WidgetTester tester) {
+  final Finder stale = find.byKey(_staleRoomKey);
+  expect(
+    stale,
+    findsOneWidget,
+    reason:
+        'a dropped or retrying lobby with a room in hand keeps the '
+        'gathering under lobby-stale-room',
+  );
+  expect(
+    find.descendant(
+      of: stale,
+      matching: find.byKey(const Key('lobby-room-code')),
+    ),
+    findsOneWidget,
+    reason: 'lobby-room-code stays inside the stale wrapper',
+  );
+}
+
 /// Asserts that among the three phase-body keys other than [expected],
 /// nothing is present, and that the connected body's own top-level marker
 /// (lobby-room-code) is present only if [expected] is null (meaning: the
@@ -534,83 +557,91 @@ void main() {
       );
     });
 
-    testWidgets(
-      'closed: shows lobby-closed with loc.lobbyConnectionLost and a '
-      'reconnect button that calls controller.reconnect(), and nothing else',
-      (tester) async {
-        final connector = _Connector();
-        final transport = FakeTransport();
-        connector.enqueue(transport);
-        final controller = _newController(connector);
-        addTearDown(controller.dispose);
+    // C-284: phase closed with a room held keeps the gathering under
+    // lobby-stale-room and puts the lobby-closed card over it. The
+    // reconnect button is still the way back, and it still calls
+    // controller.reconnect().
+    testWidgets('closed with a room held: the gathering stays inside '
+        'lobby-stale-room under the lobby-closed card, and '
+        'lobby-reconnect-button still calls controller.reconnect()', (
+      tester,
+    ) async {
+      final connector = _Connector();
+      final transport = FakeTransport();
+      connector.enqueue(transport);
+      final controller = _newController(connector);
+      addTearDown(controller.dispose);
 
-        final id = await _mountAndCaptureRequest(
-          tester,
-          LobbyScreen(
-            controller: controller,
-            action: LobbyAction.create,
-            playerName: 'Sam',
-            players: 4,
-          ),
-          transport,
-        );
-        await _resolveConnected(tester, transport, id, seatForThisClient: 0);
+      final id = await _mountAndCaptureRequest(
+        tester,
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.create,
+          playerName: 'Sam',
+          players: 4,
+        ),
+        transport,
+      );
+      await _resolveConnected(tester, transport, id, seatForThisClient: 0);
 
-        transport.endFromFarSide();
-        await tester.pump();
-        await tester.pump();
+      transport.endFromFarSide();
+      await tester.pump();
+      await tester.pump();
 
-        expect(controller.phase, RoomPhase.closed);
-        _expectExclusivePhase(tester, expected: 'lobby-closed');
-        _expectDesyncBanner(tester, present: false);
+      expect(controller.phase, RoomPhase.closed);
+      expect(controller.room, isNotNull);
+      _expectStaleLobby(tester);
+      expect(find.byKey(const Key('lobby-closed')), findsOneWidget);
+      expect(find.byKey(const Key('lobby-connecting')), findsNothing);
+      expect(find.byKey(const Key('lobby-error')), findsNothing);
+      _expectDesyncBanner(tester, present: false);
 
-        final context = tester.element(find.byType(LobbyScreen));
-        final loc = AppLocalizations.of(context);
-        expect(
-          find.descendant(
-            of: find.byKey(const Key('lobby-closed')),
-            matching: find.text(loc.lobbyConnectionLost),
-          ),
-          findsOneWidget,
-          reason:
-              'rule 3: lobby-closed must contain Text(loc.'
-              'lobbyConnectionLost), which reads '
-              '"${loc.lobbyConnectionLost}"',
-        );
+      final context = tester.element(find.byType(LobbyScreen));
+      final loc = AppLocalizations.of(context);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-closed')),
+          matching: find.text(loc.lobbyConnectionLost),
+        ),
+        findsOneWidget,
+        reason:
+            'rule 3: lobby-closed must contain Text(loc.'
+            'lobbyConnectionLost), which reads '
+            '"${loc.lobbyConnectionLost}"',
+      );
 
-        // The room and seat token are cached (RoomController rule 5), so
-        // reconnect() is legal from RoomPhase.closed; queue a transport for
-        // it and tap the button.
-        final resumeTransport = FakeTransport();
-        connector.enqueue(resumeTransport);
-        await tester.tap(find.byKey(const Key('lobby-reconnect-button')));
-        await tester.pump();
+      // The room and seat token are cached (RoomController rule 5), so
+      // reconnect() is legal from RoomPhase.closed; queue a transport for
+      // it and tap the button.
+      final resumeTransport = FakeTransport();
+      connector.enqueue(resumeTransport);
+      await tester.tap(find.byKey(const Key('lobby-reconnect-button')));
+      await tester.pump();
 
-        expect(
-          connector.calls,
-          hasLength(2),
-          reason:
-              'rule 3: tapping lobby-reconnect-button must call '
-              'controller.reconnect(), which opens a second transport; '
-              'expected exactly 2 connect() calls total (initial + '
-              'reconnect), got ${connector.calls.length}',
-        );
+      expect(
+        connector.calls,
+        hasLength(2),
+        reason:
+            'rule 3: tapping lobby-reconnect-button must call '
+            'controller.reconnect(), which opens a second transport; '
+            'expected exactly 2 connect() calls total (initial + '
+            'reconnect), got ${connector.calls.length}',
+      );
 
-        // Resolve the resume request the tap armed, so addTearDown's
-        // dispose does not race flutter_test's pending-timer invariant
-        // check against a request that was never answered (round 2
-        // defect 2). The reply itself is not the point of this test; the
-        // assertion above already covers the tap's behaviour.
-        final resumeId = _idOf(resumeTransport.sentRaw.last);
-        expect(_typeOf(resumeTransport.sentRaw.last), 'resume');
-        await _resolveConnected(
-          tester,
-          resumeTransport,
-          resumeId,
-          seatForThisClient: 0,
-        );
-      },
-    );
+      // Resolve the resume request the tap armed, so addTearDown's
+      // dispose does not race flutter_test's pending-timer invariant
+      // check against a request that was never answered (round 2
+      // defect 2). The reply itself is not the point of this test; the
+      // assertion above already covers the tap's behaviour.
+      final resumeId = _idOf(resumeTransport.sentRaw.last);
+      expect(_typeOf(resumeTransport.sentRaw.last), 'resume');
+      await _resolveConnected(
+        tester,
+        resumeTransport,
+        resumeId,
+        seatForThisClient: 0,
+      );
+    });
   });
 
   // --- Rule 5: the desync banner is additive, not a fifth phase. ---------
@@ -685,7 +716,11 @@ void main() {
         await tester.pump();
         expect(controller.phase, RoomPhase.closed);
         expect(controller.hasDesynced, isTrue);
-        _expectExclusivePhase(tester, expected: 'lobby-closed');
+        expect(controller.room, isNotNull);
+        // C-284: the closed moment keeps the gathering. The desync banner
+        // stays, and lobby-resync-button is still what calls reconnect().
+        _expectStaleLobby(tester);
+        expect(find.byKey(const Key('lobby-closed')), findsOneWidget);
         _expectDesyncBanner(tester, present: true);
         expect(
           find.descendant(
@@ -716,7 +751,16 @@ void main() {
               'controller.reconnect(), which moves phase to connecting',
         );
         expect(controller.hasDesynced, isTrue);
-        _expectExclusivePhase(tester, expected: 'lobby-connecting');
+        // C-284: phase connecting with a room held is the same stale
+        // gathering, not the spinner. The resume frame below is unchanged.
+        _expectStaleLobby(tester);
+        expect(
+          find.byKey(const Key('lobby-connecting')),
+          findsNothing,
+          reason: 'an attempt with a room held does not show lobby-connecting',
+        );
+        expect(find.byKey(const Key('lobby-closed')), findsOneWidget);
+        expect(find.byKey(const Key('lobby-reconnecting')), findsOneWidget);
         _expectDesyncBanner(tester, present: true);
 
         // Fail the resume: an error reply lands the controller in failed,

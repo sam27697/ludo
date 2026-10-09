@@ -931,29 +931,40 @@ class _GameScreenState extends State<GameScreen> {
     final Widget body;
     if (rematchGone) {
       body = _gameOverBody(loc, controller, room, rematchGone: true);
-    } else if (controller.phase == RoomPhase.failed ||
-        controller.phase == RoomPhase.closed) {
-      // Rule 1: consulted before room, and decisive regardless of what the
-      // last room snapshot said. The board a dead socket last drew is not
-      // shown again underneath this.
-      body = _connectionLostBody(loc, controller);
+    } else if (room != null &&
+        (controller.phase == RoomPhase.failed ||
+            controller.phase == RoomPhase.closed ||
+            controller.phase == RoomPhase.connecting)) {
+      // C-282 rules 1 and 2: a dropped or retrying connection keeps the
+      // last snapshot's table in view (dimmed, untappable) under the
+      // connection-lost card.
+      final Widget staleTable = _connectedBody(loc, controller, room);
+      body = Stack(
+        fit: StackFit.expand,
+        children: [
+          KeyedSubtree(
+            key: const Key('game-screen-stale-table'),
+            child: IgnorePointer(
+              ignoring: true,
+              child: ExcludeSemantics(
+                child: Opacity(opacity: 0.35, child: staleTable),
+              ),
+            ),
+          ),
+          _connectionLostBody(loc, controller),
+        ],
+      );
     } else if (room == null) {
-      body = _loadingBody();
-    } else if (room.state == RoomState.finished) {
-      if (_isEndHeld && room.seats.length >= 2) {
-        body = _playingBody(loc, controller, room);
+      // C-282 rule 4: failed or closed with no room yet shows the card
+      // centred over an empty body; connecting stays loading.
+      if (controller.phase == RoomPhase.failed ||
+          controller.phase == RoomPhase.closed) {
+        body = _connectionLostBody(loc, controller);
       } else {
-        body = _gameOverBody(loc, controller, room);
+        body = _loadingBody();
       }
-    } else if (room.state == RoomState.lobby && room.rematch != null) {
-      // C-246 rule 2: a rematch LOBBY (state LOBBY, non-null `rematch`) is
-      // drawn by the same end card as FINISHED, so the player sees one
-      // continuous next step rather than a reset screen in between.
-      body = _gameOverBody(loc, controller, room);
-    } else if (room.state == RoomState.playing && room.seats.length >= 2) {
-      body = _playingBody(loc, controller, room);
     } else {
-      body = _waitingBody(loc);
+      body = _connectedBody(loc, controller, room);
     }
 
     final SystemUiOverlayStyle overlayStyle =
@@ -1015,9 +1026,6 @@ class _GameScreenState extends State<GameScreen> {
                   ),
                 ),
                 if (controller.hasDesynced) _desyncBanner(context, loc),
-                if (controller.phase == RoomPhase.connecting &&
-                    controller.room != null)
-                  _reconnectingBanner(context, loc),
                 Expanded(child: body),
               ],
             ),
@@ -1027,52 +1035,116 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// Rule 1 and rule 2: `controller.phase` is `RoomPhase.failed` or
-  /// `RoomPhase.closed`. Reuses `loc.lobbyConnectionLost` and
-  /// `loc.lobbyReconnectButton` from the identical state `lobby_screen.dart`
-  /// already shows (`_closedBody`) rather than inventing near-duplicates;
-  /// the meaning is the same connection, the same loss, the same fix.
-  /// `game-screen-error-message` shows `controller.errorMessage` itself,
-  /// exactly as rule 2 asks, whatever the server or the transport said.
+  /// C-282 rule 1: the body the room would get when connected, run on the
+  /// current or last known snapshot.
+  Widget _connectedBody(
+    AppLocalizations loc,
+    RoomController controller,
+    RoomSnapshot room,
+  ) {
+    if (room.state == RoomState.finished) {
+      if (_isEndHeld && room.seats.length >= 2) {
+        return _playingBody(loc, controller, room);
+      } else {
+        return _gameOverBody(loc, controller, room);
+      }
+    } else if (room.state == RoomState.lobby && room.rematch != null) {
+      // C-246 rule 2: a rematch LOBBY (state LOBBY, non-null `rematch`) is
+      // drawn by the same end card as FINISHED, so the player sees one
+      // continuous next step rather than a reset screen in between.
+      return _gameOverBody(loc, controller, room);
+    } else if (room.state == RoomState.playing && room.seats.length >= 2) {
+      return _playingBody(loc, controller, room);
+    } else {
+      return _waitingBody(loc);
+    }
+  }
+
+  /// C-282 rule 2: one card centred in the body area over the stale table (or
+  /// over an empty body when no room yet exists). Retrying shows the sync icon
+  /// and reconnecting line without a Reconnect button; given up shows the
+  /// Reconnect button; Leave is always last.
   Widget _connectionLostBody(AppLocalizations loc, RoomController controller) {
     final String? errorMessage = controller.errorMessage;
+    final bool isRetrying =
+        controller.autoReconnectPending ||
+        controller.phase == RoomPhase.connecting;
+
     return Center(
-      key: const Key('game-screen-connection-lost'),
-      child: Padding(
-        padding: const EdgeInsets.all(kSpace6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(loc.lobbyConnectionLost, textAlign: TextAlign.center),
-            if (errorMessage != null) ...[
-              const SizedBox(height: kSpace2),
-              Text(
-                errorMessage,
-                key: const Key('game-screen-error-message'),
-                textAlign: TextAlign.center,
-              ),
-            ],
-            if (controller.autoReconnectPending) ...[
-              const SizedBox(height: kSpace2),
-              Text(
-                loc.lobbyReconnecting,
-                key: const Key('game-screen-reconnecting'),
-                textAlign: TextAlign.center,
-              ),
-            ],
-            const SizedBox(height: kSpace4),
-            ElevatedButton(
-              key: const Key('game-screen-reconnect-button'),
-              onPressed: controller.reconnect,
-              child: Text(loc.lobbyReconnectButton),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: Material(
+          key: const Key('game-screen-connection-lost'),
+          color: LudoColors.paperElevated,
+          borderRadius: BorderRadius.circular(2 * kRadiusControl),
+          elevation: 6,
+          child: Padding(
+            padding: const EdgeInsets.all(kSpace5),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.wifi_off_rounded,
+                  size: 32,
+                  color: LudoColors.inkMuted,
+                ),
+                const SizedBox(height: kSpace2),
+                Text(
+                  loc.lobbyConnectionLost,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(color: LudoColors.ink),
+                ),
+                if (errorMessage != null) ...[
+                  const SizedBox(height: kSpace2),
+                  Text(
+                    errorMessage,
+                    key: const Key('game-screen-error-message'),
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(color: LudoColors.inkMuted),
+                  ),
+                ],
+                const SizedBox(height: kSpace4),
+                if (isRetrying) ...[
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.sync_rounded,
+                        size: 18,
+                        color: LudoColors.inkMuted,
+                      ),
+                      const SizedBox(width: kSpace2),
+                      Flexible(
+                        child: Text(
+                          loc.lobbyReconnecting,
+                          key: const Key('game-screen-reconnecting'),
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: LudoColors.inkMuted),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: kSpace4),
+                ] else ...[
+                  ElevatedButton(
+                    key: const Key('game-screen-reconnect-button'),
+                    onPressed: controller.reconnect,
+                    child: Text(loc.lobbyReconnectButton),
+                  ),
+                  const SizedBox(height: kSpace2),
+                ],
+                OutlinedButton(
+                  key: const Key('game-screen-leave-button'),
+                  onPressed: _leave,
+                  child: Text(loc.gameLeaveButton),
+                ),
+              ],
             ),
-            const SizedBox(height: kSpace2),
-            OutlinedButton(
-              key: const Key('game-screen-leave-button'),
-              onPressed: _leave,
-              child: Text(loc.gameLeaveButton),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1567,29 +1639,6 @@ class _GameScreenState extends State<GameScreen> {
         loc.lobbyDesynced,
         key: const Key('game-screen-desync-banner'),
         style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
-      ),
-    );
-  }
-
-  /// R3: shown while `phase` is `RoomPhase.connecting` with `room` still
-  /// set, i.e. an automatic or manual reconnect is in flight on top of the
-  /// last board this screen drew. Styled like [_desyncBanner] but with
-  /// `colorScheme.secondaryContainer` rather than the error colour: this is
-  /// not a fault, only a wait.
-  Widget _reconnectingBanner(BuildContext context, AppLocalizations loc) {
-    return Container(
-      color: Theme.of(context).colorScheme.secondaryContainer,
-      padding: const EdgeInsets.symmetric(
-        horizontal: kSpace4,
-        vertical: kSpace2,
-      ),
-      width: double.infinity,
-      child: Text(
-        loc.lobbyReconnecting,
-        key: const Key('game-screen-reconnecting-banner'),
-        style: TextStyle(
-          color: Theme.of(context).colorScheme.onSecondaryContainer,
-        ),
       ),
     );
   }
