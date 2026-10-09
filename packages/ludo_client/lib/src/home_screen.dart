@@ -1127,7 +1127,11 @@ class _HomeScreenState extends State<HomeScreen>
                                               textAlign: TextAlign.center,
                                               style: textTheme.labelMedium
                                                   ?.copyWith(
-                                                    color: LudoColors.inkMuted,                                                   ),                                             ),                                           ),                                         ),
+                                                    color: LudoColors.inkMuted,
+                                                  ),
+                                            ),
+                                          ),
+                                        ),
                                         Expanded(
                                           child: Container(
                                             height: 1,
