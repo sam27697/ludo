@@ -452,10 +452,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// sync icon and reconnecting line without a Reconnect button; given up
   /// shows the Reconnect button. The corner close is the way out; no Leave
   /// button in the card.
-  Widget _connectionLostCard(
-    AppLocalizations loc,
-    RoomController controller,
-  ) {
+  Widget _connectionLostCard(AppLocalizations loc, RoomController controller) {
     final bool isRetrying =
         controller.autoReconnectPending ||
         controller.phase == RoomPhase.connecting;
@@ -483,9 +480,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 Text(
                   loc.lobbyConnectionLost,
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: LudoColors.ink,
-                  ),
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(color: LudoColors.ink),
                 ),
                 const SizedBox(height: kSpace4),
                 if (isRetrying)
@@ -501,11 +497,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       Text(
                         loc.lobbyReconnecting,
                         key: const Key('lobby-reconnecting'),
-                        style: Theme.of(
-                          context,
-                        ).textTheme.bodyMedium?.copyWith(
-                          color: LudoColors.inkMuted,
-                        ),
+                        style: Theme.of(context).textTheme.bodyMedium
+                            ?.copyWith(color: LudoColors.inkMuted),
                       ),
                     ],
                   )
