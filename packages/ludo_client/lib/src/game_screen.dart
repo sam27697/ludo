@@ -938,7 +938,12 @@ class _GameScreenState extends State<GameScreen> {
       // C-282 rules 1 and 2: a dropped or retrying connection keeps the
       // last snapshot's table in view (dimmed, untappable) under the
       // connection-lost card.
-      final Widget staleTable = _connectedBody(loc, controller, room);
+      final Widget staleTable = _connectedBody(
+        loc,
+        controller,
+        room,
+        stale: true,
+      );
       body = Stack(
         fit: StackFit.expand,
         children: [
@@ -1040,11 +1045,12 @@ class _GameScreenState extends State<GameScreen> {
   Widget _connectedBody(
     AppLocalizations loc,
     RoomController controller,
-    RoomSnapshot room,
-  ) {
+    RoomSnapshot room, {
+    bool stale = false,
+  }) {
     if (room.state == RoomState.finished) {
       if (_isEndHeld && room.seats.length >= 2) {
-        return _playingBody(loc, controller, room);
+        return _playingBody(loc, controller, room, stale: stale);
       } else {
         return _gameOverBody(loc, controller, room);
       }
@@ -1054,7 +1060,7 @@ class _GameScreenState extends State<GameScreen> {
       // continuous next step rather than a reset screen in between.
       return _gameOverBody(loc, controller, room);
     } else if (room.state == RoomState.playing && room.seats.length >= 2) {
-      return _playingBody(loc, controller, room);
+      return _playingBody(loc, controller, room, stale: stale);
     } else {
       return _waitingBody(loc);
     }
@@ -1177,8 +1183,9 @@ class _GameScreenState extends State<GameScreen> {
   Widget _playingBody(
     AppLocalizations loc,
     RoomController controller,
-    RoomSnapshot room,
-  ) {
+    RoomSnapshot room, {
+    bool stale = false,
+  }) {
     final TurnState? turn = room.turn;
     final int? seat = controller.seat;
     final SeatState? offlineTurnSeat = _offlineTurnSeat(room);
@@ -1217,7 +1224,7 @@ class _GameScreenState extends State<GameScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _playHeaderRow(loc, room, seat, turn, offlineTurnSeat),
+          _playHeaderRow(loc, room, seat, turn, offlineTurnSeat, stale: stale),
           const SizedBox(height: kSpace2),
           Expanded(
             child: LudoBoard(
@@ -1292,9 +1299,10 @@ class _GameScreenState extends State<GameScreen> {
     RoomSnapshot room,
     int? seat,
     TurnState? turn,
-    SeatState? offlineTurnSeat,
-  ) {
-    final String bannerText = _turnBannerText(loc, room, seat);
+    SeatState? offlineTurnSeat, {
+    bool stale = false,
+  }) {
+    final String bannerText = _turnBannerText(loc, room, seat, stale: stale);
     final int turnSeat = turn?.seat ?? seat ?? 0;
     final Color seatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
     final bool myTurn = turn != null && turn.seat == seat;
@@ -1753,17 +1761,22 @@ Map<int, String> _seatNamesOf(RoomSnapshot room) {
 }
 
 /// H2, decided in the order given there, first match wins.
-String _turnBannerText(AppLocalizations loc, RoomSnapshot room, int? seat) {
+String _turnBannerText(
+  AppLocalizations loc,
+  RoomSnapshot room,
+  int? seat, {
+  bool stale = false,
+}) {
   final TurnState? turn = room.turn;
   if (turn == null) {
     return loc.gameWaitingForTurn;
   }
   if (turn.seat == seat) {
     if (turn.phase == TurnPhase.awaitRoll) {
-      return loc.gameYourTurnRoll;
+      return stale ? loc.gameYourTurnStale : loc.gameYourTurnRoll;
     }
     if (turn.phase == TurnPhase.awaitMove) {
-      return loc.gameYourTurnMove;
+      return stale ? loc.gameYourTurnStale : loc.gameYourTurnMove;
     }
   }
   return _waitingForSeatText(loc, room, turn.seat);
