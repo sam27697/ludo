@@ -41,6 +41,7 @@ import 'net/fake_transport.dart';
 const String _testUrl = 'wss://example.test/ws';
 
 const Key _closedKey = Key('lobby-closed');
+const Key _staleRoomKey = Key('lobby-stale-room');
 const Key _errorKey = Key('lobby-error');
 const Key _leaveKey = Key('lobby-leave-button');
 const Key _reconnectKey = Key('lobby-reconnect-button');
@@ -220,102 +221,132 @@ Future<void> _resolveFailed(
 }
 
 void main() {
+  testWidgets('X-C1: a dropped lobby with a room held keeps one corner '
+      'lobby-leave-button, an enabled IconButton whose tooltip is '
+      'loc.gameLeaveButton, outside lobby-stale-room, alongside '
+      'lobby-reconnect-button', (WidgetTester tester) async {
+    final _Connector connector = _Connector();
+    final FakeTransport transport = FakeTransport();
+    connector.enqueue(transport);
+    final RoomController controller = _newController(connector);
+    addTearDown(controller.dispose);
+
+    final String id = await _mountAndCaptureRequest(
+      tester,
+      LobbyScreen(
+        controller: controller,
+        action: LobbyAction.create,
+        playerName: 'Sam',
+        players: 4,
+      ),
+      transport,
+    );
+    await _resolveConnected(tester, transport, id, seatForThisClient: 0);
+    expect(
+      controller.phase,
+      RoomPhase.connected,
+      reason:
+          'fixture check: the rig must reach RoomPhase.connected before '
+          'the transport can be dropped into lobby-closed; got '
+          '${controller.phase}',
+    );
+
+    transport.endFromFarSide();
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      controller.phase,
+      RoomPhase.closed,
+      reason:
+          'fixture check: expected the dropped transport to land the '
+          'controller in RoomPhase.closed; got ${controller.phase}',
+    );
+    expect(
+      find.byKey(_closedKey),
+      findsOneWidget,
+      reason:
+          'fixture check: lobby-closed must be on screen before X-C1 can '
+          'be asserted; a failure here means the rig never reached '
+          'lobby-closed, which is a broken scenario, not the contract '
+          'under test',
+    );
+
+    // C-284: the closed column's OutlinedButton is gone. The corner
+    // close, same key, is the way out, and it sits outside the wrapper.
+    // Given up (no schedule), so lobby-reconnect-button is still there.
+    expect(
+      find.descendant(
+        of: find.byKey(_staleRoomKey),
+        matching: find.byKey(const Key('lobby-room-code')),
+      ),
+      findsOneWidget,
+      reason:
+          'X-C1: a dropped lobby with a room held keeps the gathering '
+          'inside lobby-stale-room',
+    );
+
+    final Finder leaveFinder = find.byKey(_leaveKey);
+    expect(
+      leaveFinder,
+      findsOneWidget,
+      reason:
+          'X-C1: exactly one lobby-leave-button, the corner close '
+          '(contract X-C1, now the IconButton outside the card)',
+    );
+    expect(
+      tester.widget(leaveFinder),
+      isA<IconButton>(),
+      reason:
+          'X-C1: lobby-leave-button is the corner IconButton, not the '
+          'closed column\'s OutlinedButton',
+    );
+    final IconButton button = tester.widget<IconButton>(leaveFinder);
+    expect(
+      button.onPressed,
+      isNotNull,
+      reason:
+          'X-C1: lobby-leave-button must have a non-null onPressed '
+          '(contract X-C1)',
+    );
+    expect(
+      (button.icon as Icon).icon,
+      Icons.close,
+      reason: 'X-C1: the corner close\'s icon is Icons.close',
+    );
+    expect(
+      find.descendant(of: find.byKey(_staleRoomKey), matching: leaveFinder),
+      findsNothing,
+      reason: 'X-C1: the corner close sits outside lobby-stale-room',
+    );
+    expect(
+      find.descendant(of: find.byKey(_closedKey), matching: leaveFinder),
+      findsNothing,
+      reason: 'X-C1: the card does not carry a second Leave button',
+    );
+
+    final BuildContext context = tester.element(find.byType(LobbyScreen));
+    final AppLocalizations loc = AppLocalizations.of(context);
+    expect(
+      button.tooltip,
+      loc.gameLeaveButton,
+      reason:
+          'X-C1: lobby-leave-button\'s tooltip must equal '
+          'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}" '
+          '(contract X-C1)',
+    );
+    expect(
+      find.byKey(_reconnectKey),
+      findsOneWidget,
+      reason:
+          'X-C1: lobby-reconnect-button must still be present alongside '
+          'lobby-leave-button once nothing is retrying (contract X-C1)',
+    );
+  });
+
   testWidgets(
-    'X-C1: lobby-closed carries an enabled lobby-leave-button labelled '
-    'loc.gameLeaveButton, alongside lobby-reconnect-button',
-    (WidgetTester tester) async {
-      final _Connector connector = _Connector();
-      final FakeTransport transport = FakeTransport();
-      connector.enqueue(transport);
-      final RoomController controller = _newController(connector);
-      addTearDown(controller.dispose);
-
-      final String id = await _mountAndCaptureRequest(
-        tester,
-        LobbyScreen(
-          controller: controller,
-          action: LobbyAction.create,
-          playerName: 'Sam',
-          players: 4,
-        ),
-        transport,
-      );
-      await _resolveConnected(tester, transport, id, seatForThisClient: 0);
-      expect(
-        controller.phase,
-        RoomPhase.connected,
-        reason:
-            'fixture check: the rig must reach RoomPhase.connected before '
-            'the transport can be dropped into lobby-closed; got '
-            '${controller.phase}',
-      );
-
-      transport.endFromFarSide();
-      await tester.pump();
-      await tester.pump();
-
-      expect(
-        controller.phase,
-        RoomPhase.closed,
-        reason:
-            'fixture check: expected the dropped transport to land the '
-            'controller in RoomPhase.closed; got ${controller.phase}',
-      );
-      expect(
-        find.byKey(_closedKey),
-        findsOneWidget,
-        reason:
-            'fixture check: lobby-closed must be on screen before X-C1 can '
-            'be asserted; a failure here means the rig never reached '
-            'lobby-closed, which is a broken scenario, not the contract '
-            'under test',
-      );
-
-      final Finder leaveFinder = find.byKey(_leaveKey);
-      expect(
-        leaveFinder,
-        findsOneWidget,
-        reason:
-            'X-C1: lobby-closed must contain a widget keyed '
-            'lobby-leave-button (work/ludo/orders/185-prove-lobby-leave-'
-            'button.md contract X-C1)',
-      );
-      final ButtonStyleButton button = tester.widget<ButtonStyleButton>(
-        leaveFinder,
-      );
-      expect(
-        button.onPressed,
-        isNotNull,
-        reason:
-            'X-C1: lobby-leave-button must have a non-null onPressed '
-            '(contract X-C1)',
-      );
-
-      final BuildContext context = tester.element(find.byType(LobbyScreen));
-      final AppLocalizations loc = AppLocalizations.of(context);
-      expect(
-        find.descendant(
-          of: leaveFinder,
-          matching: find.text(loc.gameLeaveButton),
-        ),
-        findsOneWidget,
-        reason:
-            'X-C1: lobby-leave-button\'s label Text must equal '
-            'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}" '
-            '(contract X-C1)',
-      );
-      expect(
-        find.byKey(_reconnectKey),
-        findsOneWidget,
-        reason:
-            'X-C1: lobby-reconnect-button must still be present alongside '
-            'lobby-leave-button (contract X-C1)',
-      );
-    },
-  );
-
-  testWidgets(
-    'X-C2: tapping lobby-leave-button in lobby-closed pops the lobby route',
+    'X-C2: tapping the corner lobby-leave-button while the room is stale '
+    'pops the lobby route',
     (WidgetTester tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transport = FakeTransport();
@@ -397,13 +428,37 @@ void main() {
               'contract under test',
         );
 
+        // C-284: tap the corner IconButton, outside the wrapper. The pop
+        // count below is the same proof as before.
+        expect(
+          find.descendant(
+            of: find.byKey(_staleRoomKey),
+            matching: find.byKey(const Key('lobby-room-code')),
+          ),
+          findsOneWidget,
+          reason:
+              'X-C2: a dropped lobby with a room held keeps the gathering '
+              'inside lobby-stale-room',
+        );
         final Finder leaveFinder = find.byKey(_leaveKey);
         expect(
           leaveFinder,
           findsOneWidget,
           reason:
-              'X-C2: lobby-closed must contain a widget keyed '
-              'lobby-leave-button to tap (contract X-C2)',
+              'X-C2: the corner lobby-leave-button must be on screen to '
+              'tap (contract X-C2)',
+        );
+        expect(
+          tester.widget(leaveFinder),
+          isA<IconButton>(),
+          reason:
+              'X-C2: the control tapped is the corner IconButton, not the '
+              'closed column\'s OutlinedButton',
+        );
+        expect(
+          find.descendant(of: find.byKey(_staleRoomKey), matching: leaveFinder),
+          findsNothing,
+          reason: 'X-C2: the corner close sits outside lobby-stale-room',
         );
 
         await tester.tap(leaveFinder);
@@ -617,8 +672,8 @@ void main() {
   });
 
   testWidgets(
-    "X-AR: X-C1 in Locale('ar') -- lobby-leave-button's label equals that "
-    "tree's own loc.gameLeaveButton",
+    "X-AR: X-C1 in Locale('ar') -- the corner lobby-leave-button's tooltip "
+    "equals that tree's own loc.gameLeaveButton",
     (WidgetTester tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transport = FakeTransport();
@@ -668,17 +723,33 @@ void main() {
             'under test',
       );
 
+      expect(
+        find.descendant(
+          of: find.byKey(_staleRoomKey),
+          matching: find.byKey(const Key('lobby-room-code')),
+        ),
+        findsOneWidget,
+        reason:
+            'X-AR: a dropped lobby with a room held keeps the gathering '
+            'inside lobby-stale-room in Locale(ar) too',
+      );
+
       final Finder leaveFinder = find.byKey(_leaveKey);
       expect(
         leaveFinder,
         findsOneWidget,
         reason:
-            'X-AR: lobby-closed must contain a widget keyed '
-            'lobby-leave-button in Locale(ar) too (contract X-AR)',
+            'X-AR: the corner lobby-leave-button is on screen in '
+            'Locale(ar) too (contract X-AR)',
       );
-      final ButtonStyleButton button = tester.widget<ButtonStyleButton>(
-        leaveFinder,
+      expect(
+        tester.widget(leaveFinder),
+        isA<IconButton>(),
+        reason:
+            'X-AR: lobby-leave-button is the corner IconButton in '
+            'Locale(ar) too',
       );
+      final IconButton button = tester.widget<IconButton>(leaveFinder);
       expect(
         button.onPressed,
         isNotNull,
@@ -686,17 +757,19 @@ void main() {
             'X-AR: lobby-leave-button must have a non-null onPressed '
             '(contract X-AR)',
       );
+      expect(
+        find.descendant(of: find.byKey(_staleRoomKey), matching: leaveFinder),
+        findsNothing,
+        reason: 'X-AR: the corner close sits outside lobby-stale-room',
+      );
 
       final BuildContext context = tester.element(find.byType(LobbyScreen));
       final AppLocalizations loc = AppLocalizations.of(context);
       expect(
-        find.descendant(
-          of: leaveFinder,
-          matching: find.text(loc.gameLeaveButton),
-        ),
-        findsOneWidget,
+        button.tooltip,
+        loc.gameLeaveButton,
         reason:
-            "X-AR: lobby-leave-button's label must equal this tree's own "
+            "X-AR: lobby-leave-button's tooltip must equal this tree's own "
             'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}" '
             '(contract X-AR)',
       );

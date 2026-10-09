@@ -1684,8 +1684,9 @@ void main() {
   // 11: order 180's R1 reconnecting line, on LobbyScreen, in Arabic. Reached
   // the same way test/reconnecting_line_test.dart's R1-AR case reaches it: a
   // real host lobby, connected, then dropped, with a non-empty auto-reconnect
-  // schedule so lobby-closed shows lobby-reconnecting the instant the drop
-  // lands. LobbyScreen is mounted first, on a fresh idle controller, and
+  // schedule so the lobby-closed card shows lobby-reconnecting the instant
+  // the drop lands, over the gathering kept inside lobby-stale-room.
+  // LobbyScreen is mounted first, on a fresh idle controller, and
   // driven to connected by its own initState request -- the same order
   // test/lobby_screen_test.dart's own suite uses throughout, and the reason
   // is the same here: handing LobbyScreen an already-connected controller
@@ -1869,25 +1870,34 @@ void main() {
           'AppLocalizations.lobbyReconnecting ("${loc.lobbyReconnecting}"), '
           'got "${settledReconnectingText11.data}"',
     );
+    // C-284 rule 1: the gathering stays, dimmed, under the card. The
+    // old column assertions expected these two keys gone.
     expect(
-      find.byKey(const Key('lobby-room-code')),
-      findsNothing,
+      find.descendant(
+        of: find.byKey(const Key('lobby-stale-room')),
+        matching: find.byKey(const Key('lobby-room-code')),
+      ),
+      findsOneWidget,
       reason:
-          'capture 11: lobby_screen.dart\'s _closedBody, the body this '
-          'phase builds, never constructs lobby-room-code -- only '
-          '_connectedBody does -- so expected it absent (the gathering '
-          'body must be gone) immediately before the capture, found it '
-          'present',
+          'capture 11: expected lobby-room-code inside lobby-stale-room '
+          'immediately before the capture',
     );
     expect(
-      find.byKey(const Key('lobby-copy-code-button')),
+      find.descendant(
+        of: find.byKey(const Key('lobby-stale-room')),
+        matching: find.byKey(const Key('lobby-copy-code-button')),
+      ),
+      findsOneWidget,
+      reason:
+          'capture 11: expected lobby-copy-code-button inside '
+          'lobby-stale-room immediately before the capture',
+    );
+    expect(
+      find.byKey(const Key('lobby-reconnect-button')),
       findsNothing,
       reason:
-          'capture 11: lobby_screen.dart\'s _closedBody, the body this '
-          'phase builds, never constructs lobby-copy-code-button -- only '
-          '_connectedBody does -- so expected it absent (the gathering '
-          'body must be gone) immediately before the capture, found it '
-          'present',
+          'capture 11: no Reconnect button while the automatic retry is '
+          'pending',
     );
 
     await binding.takeScreenshot('11-lobby-reconnecting-ar');
