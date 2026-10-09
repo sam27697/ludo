@@ -15,7 +15,12 @@
 # pubspec.yaml). The digest pin means this stays byte-identical even if the
 # tag were ever repointed upstream; the tag is kept alongside it so a human
 # reading this file does not have to resolve a hash to know what it is.
-FROM dart:3.13.1-sdk@sha256:d3f19cf5c18a7939d6af3f0896b2e9fec3f31f7ba3a2f88bfe6181e903084a51 AS build
+#
+# Pulled from Google's Docker Hub mirror: the Hub refuses anonymous pulls
+# from shared CI addresses with 429 (measured 2026-10-09, three runs), the
+# mirror serves the same content, and the digest pin keeps the image
+# byte-identical.
+FROM mirror.gcr.io/library/dart:3.13.1-sdk@sha256:d3f19cf5c18a7939d6af3f0896b2e9fec3f31f7ba3a2f88bfe6181e903084a51 AS build
 
 WORKDIR /workspace
 
@@ -65,7 +70,7 @@ RUN dart compile exe packages/ludo_server/bin/server.dart -o /server
 # debian:trixie-slim is the same distribution the SDK image's /runtime/
 # files are extracted from, stays small, and gives HEALTHCHECK a shell and
 # curl to work with. Also pinned by tag and digest.
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
+FROM mirror.gcr.io/library/debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
 
 RUN set -eux; \
     apt-get update; \
