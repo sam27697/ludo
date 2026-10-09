@@ -4,12 +4,11 @@
 // GameScreen mount per case. No pumpAndSettle (the countdown timer
 // reschedules) and no bare pumpEventQueue() inside a testWidgets body.
 //
-// Own-turn cases are red on this tree: the stale header is still the live
-// line ("Your turn. Roll the die." / "Your turn. Choose a token to move." /
-// "دورك. ارمِ النرد."), so the exact short line is absent and the
-// instruction is still on screen. The other-seat case and the reconnect
-// case are green here: another seat's waiting line is unchanged, and a
-// resumed awaitRoll shows the live line with the stale table gone.
+// Own-turn cases read the short stale line. The awaitMove case rejects
+// "Move a token" anywhere on screen, the live move instruction, so a stale
+// table that still shows it fails. Another seat's waiting line is
+// unchanged, and a resumed awaitRoll shows the live roll line with the
+// stale table gone.
 //
 // awaitMove is the room snapshot after a roll that left legal moves
 // (phase await_move, a value, a non-empty legal list), the same shape
@@ -277,7 +276,7 @@ void main() {
   testWidgets(
     'own turn, awaitMove after a roll with legal moves, socket dropped: '
     'the stale table reads exactly "Your turn" and the screen has nothing '
-    'containing "Choose a token"',
+    'containing "Move a token"',
     (tester) async {
       final (controller, transport, _) = await _connectPlaying(
         tester,
@@ -307,11 +306,11 @@ void main() {
               'game-screen-stale-table must be exactly "Your turn"',
         );
         expect(
-          find.textContaining('Choose a token'),
+          find.textContaining('Move a token'),
           findsNothing,
           reason:
               'own turn, awaitMove, socket dropped: nothing on the screen '
-              'may contain "Choose a token"',
+              'may contain "Move a token"',
         );
       } finally {
         controller.dispose();
