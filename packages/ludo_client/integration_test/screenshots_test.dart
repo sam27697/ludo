@@ -1651,14 +1651,24 @@ void main() {
           'AppLocalizations.lobbyReconnecting ("${loc.lobbyReconnecting}"), '
           'got "${settledReconnectingText10.data}"',
     );
+    // C-282 rule 1: the last table stays in view, dimmed and untappable,
+    // under the connection-lost card.
     expect(
-      find.byKey(const Key('game-screen-board')),
+      find.descendant(
+        of: find.byKey(const Key('game-screen-stale-table')),
+        matching: find.byKey(const Key('game-screen-board')),
+      ),
+      findsOneWidget,
+      reason:
+          'capture 10: expected game-screen-board inside '
+          'game-screen-stale-table immediately before the capture',
+    );
+    expect(
+      find.byKey(const Key('game-screen-reconnect-button')),
       findsNothing,
       reason:
-          'capture 10: game_screen.dart\'s _connectionLostBody, the body '
-          'this phase builds, never constructs game-screen-board -- only '
-          '_playingBody and _gameOverBody do -- so expected it absent '
-          'immediately before the capture, found it present',
+          'capture 10: C-282 rule 2d, no Reconnect button while the '
+          'automatic retry is pending',
     );
 
     await binding.takeScreenshot('10-game-reconnecting-en');
