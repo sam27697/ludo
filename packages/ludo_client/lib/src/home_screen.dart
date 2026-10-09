@@ -774,274 +774,294 @@ class _HomeScreenState extends State<HomeScreen>
                         compact ? kSpace5 : kSpace7,
                       ),
                       child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    FadeTransition(
-                      opacity: brandOpacity,
-                      child: SlideTransition(
-                        position: brandSlide,
-                        child: FadeTransition(
-                          opacity: dieOpacity,
-                          child: ScaleTransition(
-                            scale: dieScale,
-                            child: compact
-                                ? Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.center,
-                                    children: [
-                                      DieMark(
-                                        size: dieSize,
-                                        semanticsLabel: loc.appTitle,
-                                      ),
-                                      const SizedBox(width: kSpace4),
-                                      Expanded(
-                                        child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          FadeTransition(
+                            opacity: brandOpacity,
+                            child: SlideTransition(
+                              position: brandSlide,
+                              child: FadeTransition(
+                                opacity: dieOpacity,
+                                child: ScaleTransition(
+                                  scale: dieScale,
+                                  child: compact
+                                      ? Row(
                                           crossAxisAlignment:
-                                              CrossAxisAlignment.start,
+                                              CrossAxisAlignment.center,
+                                          children: [
+                                            DieMark(
+                                              size: dieSize,
+                                              semanticsLabel: loc.appTitle,
+                                            ),
+                                            const SizedBox(width: kSpace4),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    loc.appTitle,
+                                                    style: brandStyle,
+                                                  ),
+                                                  const SizedBox(
+                                                    height: kSpace1,
+                                                  ),
+                                                  Text(
+                                                    loc.homeTagline,
+                                                    style: textTheme.bodyMedium
+                                                        ?.copyWith(
+                                                          color: LudoColors
+                                                              .inkMuted,
+                                                          height: 1.3,
+                                                        ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                      : Column(
                                           children: [
                                             Text(
                                               loc.appTitle,
+                                              textAlign: TextAlign.center,
                                               style: brandStyle,
                                             ),
-                                            const SizedBox(height: kSpace1),
+                                            const SizedBox(height: kSpace2),
                                             Text(
                                               loc.homeTagline,
-                                              style: textTheme.bodyMedium
+                                              textAlign: TextAlign.center,
+                                              style: textTheme.bodyLarge
                                                   ?.copyWith(
                                                     color: LudoColors.inkMuted,
-                                                    height: 1.3,
+                                                    height: 1.35,
                                                   ),
+                                            ),
+                                            SizedBox(height: afterBrand),
+                                            Center(
+                                              child: DieMark(
+                                                size: dieSize,
+                                                semanticsLabel: loc.appTitle,
+                                              ),
                                             ),
                                           ],
                                         ),
-                                      ),
-                                    ],
-                                  )
-                                : Column(
-                                    children: [
-                                      Text(
-                                        loc.appTitle,
-                                        textAlign: TextAlign.center,
-                                        style: brandStyle,
-                                      ),
-                                      const SizedBox(height: kSpace2),
-                                      Text(
-                                        loc.homeTagline,
-                                        textAlign: TextAlign.center,
-                                        style: textTheme.bodyLarge?.copyWith(
-                                          color: LudoColors.inkMuted,
-                                          height: 1.35,
-                                        ),
-                                      ),
-                                      SizedBox(height: afterBrand),
-                                      Center(
-                                        child: DieMark(
-                                          size: dieSize,
-                                          semanticsLabel: loc.appTitle,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: afterDie),
-                    FadeTransition(
-                      opacity: formOpacity,
-                      child: SlideTransition(
-                        position: formSlide,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            if (seatRecord != null) ...[
-                              ElevatedButton(
-                                key: const Key('home-rejoin-button'),
-                                onPressed: () => _rejoinRoom(seatRecord),
-                                child: Text(
-                                  loc.homeRejoinButton(seatRecord.code),
                                 ),
-                              ),
-                              SizedBox(height: compact ? kSpace3 : kSpace5),
-                            ],
-                            TextField(
-                              key: const Key('home-name-field'),
-                              controller: _nameController,
-                              textAlign: TextAlign.center,
-                              textInputAction: TextInputAction.go,
-                              onSubmitted: (_) {
-                                _createRoom();
-                              },
-                              decoration: InputDecoration(
-                                labelText: loc.homeNameFieldLabel,
-                                isDense: compact,
                               ),
                             ),
-                            SizedBox(height: compact ? kSpace3 : kSpace5),
-                            if (!_playersSelectorOpen)
-                              Center(
-                                child: TextButton.icon(
-                                  key: const Key('home-players-disclosure'),
-                                  onPressed: () {
-                                    setState(() => _playersSelectorOpen = true);
-                                    WidgetsBinding.instance.addPostFrameCallback(
-                                      (_) {
-                                        if (!mounted) {
-                                          return;
-                                        }
-                                        _scrollCreateButtonIntoView();
-                                      },
-                                    );
-                                  },
-                                  style: TextButton.styleFrom(
-                                    foregroundColor: LudoColors.inkMuted,
-                                    minimumSize: const Size(48, 48),
-                                    shape: StadiumBorder(
-                                      side: BorderSide(
-                                        color: LudoColors.inkMuted
-                                            .withValues(alpha: 0.4),
-                                        width: 1,
+                          ),
+                          SizedBox(height: afterDie),
+                          FadeTransition(
+                            opacity: formOpacity,
+                            child: SlideTransition(
+                              position: formSlide,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  if (seatRecord != null) ...[
+                                    ElevatedButton(
+                                      key: const Key('home-rejoin-button'),
+                                      onPressed: () => _rejoinRoom(seatRecord),
+                                      child: Text(
+                                        loc.homeRejoinButton(seatRecord.code),
                                       ),
                                     ),
-                                    side: BorderSide(
-                                      color: LudoColors.inkMuted
-                                          .withValues(alpha: 0.4),
-                                      width: 1,
+                                    SizedBox(
+                                      height: compact ? kSpace3 : kSpace5,
                                     ),
-                                  ),
-                                  icon: const Icon(Icons.tune),
-                                  label: Text(
-                                    loc.homePlayersDisclosureClosed,
+                                  ],
+                                  TextField(
+                                    key: const Key('home-name-field'),
+                                    controller: _nameController,
                                     textAlign: TextAlign.center,
+                                    textInputAction: TextInputAction.go,
+                                    onSubmitted: (_) {
+                                      _createRoom();
+                                    },
+                                    decoration: InputDecoration(
+                                      labelText: loc.homeNameFieldLabel,
+                                      isDense: compact,
+                                    ),
                                   ),
-                                ),
-                              )
-                            else ...[
-                              Text(
-                                loc.homePlayersSelectorLabel,
-                                textAlign: TextAlign.center,
-                                style: textTheme.labelLarge?.copyWith(
-                                  color: LudoColors.inkMuted,
-                                ),
-                              ),
-                              const SizedBox(height: kSpace2),
-                              _PlayersSelector(
-                                key: const Key('home-players-selector'),
-                                value: _players,
-                                onChanged: (value) =>
-                                    setState(() => _players = value),
-                              ),
-                              SizedBox(height: compact ? kSpace2 : kSpace3),
-                              IntrinsicHeight(
-                                child: Row(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    Expanded(
-                                      child: HomeRuleToggle(
-                                        key: const Key('home-rule-blocks'),
-                                        value: _rulesBlocks,
-                                        onChanged: (value) => setState(
-                                          () => _rulesBlocks = value,
+                                  SizedBox(height: compact ? kSpace3 : kSpace5),
+                                  if (!_playersSelectorOpen)
+                                    Center(
+                                      child: TextButton.icon(
+                                        key: const Key(
+                                          'home-players-disclosure',
                                         ),
-                                        icon: Icons.shield_outlined,
-                                        title: loc.homeRuleBlocks,
-                                        hint: loc.homeRuleBlocksHint,
+                                        onPressed: () {
+                                          setState(
+                                            () => _playersSelectorOpen = true,
+                                          );
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                                if (!mounted) {
+                                                  return;
+                                                }
+                                                _scrollCreateButtonIntoView();
+                                              });
+                                        },
+                                        style: TextButton.styleFrom(
+                                          foregroundColor: LudoColors.inkMuted,
+                                          minimumSize: const Size(48, 48),
+                                          shape: StadiumBorder(
+                                            side: BorderSide(
+                                              color: LudoColors.inkMuted
+                                                  .withValues(alpha: 0.4),
+                                              width: 1,
+                                            ),
+                                          ),
+                                          side: BorderSide(
+                                            color: LudoColors.inkMuted
+                                                .withValues(alpha: 0.4),
+                                            width: 1,
+                                          ),
+                                        ),
+                                        icon: const Icon(Icons.tune),
+                                        label: Text(
+                                          loc.homePlayersDisclosureClosed,
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ),
+                                    )
+                                  else ...[
+                                    Text(
+                                      loc.homePlayersSelectorLabel,
+                                      textAlign: TextAlign.center,
+                                      style: textTheme.labelLarge?.copyWith(
+                                        color: LudoColors.inkMuted,
                                       ),
                                     ),
-                                    const SizedBox(width: kSpace3),
-                                    Expanded(
-                                      child: HomeRuleToggle(
-                                        key: const Key(
-                                          'home-rule-capture-bonus',
-                                        ),
-                                        value: _rulesCaptureBonus,
-                                        onChanged: (value) => setState(
-                                          () => _rulesCaptureBonus = value,
-                                        ),
-                                        icon: Icons.replay_rounded,
-                                        title: loc.homeRuleCaptureBonus,
-                                        hint: loc.homeRuleCaptureBonusHint,
+                                    const SizedBox(height: kSpace2),
+                                    _PlayersSelector(
+                                      key: const Key('home-players-selector'),
+                                      value: _players,
+                                      onChanged: (value) =>
+                                          setState(() => _players = value),
+                                    ),
+                                    SizedBox(
+                                      height: compact ? kSpace2 : kSpace3,
+                                    ),
+                                    IntrinsicHeight(
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          Expanded(
+                                            child: HomeRuleToggle(
+                                              key: const Key(
+                                                'home-rule-blocks',
+                                              ),
+                                              value: _rulesBlocks,
+                                              onChanged: (value) => setState(
+                                                () => _rulesBlocks = value,
+                                              ),
+                                              icon: Icons.shield_outlined,
+                                              title: loc.homeRuleBlocks,
+                                              hint: loc.homeRuleBlocksHint,
+                                            ),
+                                          ),
+                                          const SizedBox(width: kSpace3),
+                                          Expanded(
+                                            child: HomeRuleToggle(
+                                              key: const Key(
+                                                'home-rule-capture-bonus',
+                                              ),
+                                              value: _rulesCaptureBonus,
+                                              onChanged: (value) => setState(
+                                                () =>
+                                                    _rulesCaptureBonus = value,
+                                              ),
+                                              icon: Icons.replay_rounded,
+                                              title: loc.homeRuleCaptureBonus,
+                                              hint:
+                                                  loc.homeRuleCaptureBonusHint,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
-                                ),
-                              ),
-                            ],
-                            if (_hasLastTable &&
-                                _lastTableName != null &&
-                                _lastTableSeats != null) ...[
-                              SizedBox(height: compact ? kSpace3 : kSpace4),
-                              _LastTableChip(
-                                name: _lastTableName!,
-                                seats: _lastTableSeats!,
-                              ),
-                            ],
-                            SizedBox(height: compact ? kSpace3 : kSpace6),
-                            KeyedSubtree(
-                              key: _createButtonScrollKey,
-                              child: _weightedButton(
-                                key: const Key('create-room-button'),
-                                onPressed: _createRoom,
-                                label: loc.homeCreateRoomButton,
-                                primary: !joinPrimary,
-                              ),
-                            ),
-                            SizedBox(height: sectionGap),
-                            KeyedSubtree(
-                              key: _codeFieldScrollKey,
-                              child: TextField(
-                                key: const Key('room-code-field'),
-                                controller: _codeController,
-                                textAlign: TextAlign.center,
-                                textCapitalization:
-                                    TextCapitalization.characters,
-                                textInputAction: TextInputAction.go,
-                                onSubmitted: (_) {
-                                  if (joinPrimary) {
-                                    _joinRoom();
-                                  }
-                                },
-                                inputFormatters: const <TextInputFormatter>[
-                                  _RoomCodeInputFormatter(),
+                                  if (_hasLastTable &&
+                                      _lastTableName != null &&
+                                      _lastTableSeats != null) ...[
+                                    SizedBox(
+                                      height: compact ? kSpace3 : kSpace4,
+                                    ),
+                                    _LastTableChip(
+                                      name: _lastTableName!,
+                                      seats: _lastTableSeats!,
+                                    ),
+                                  ],
+                                  SizedBox(height: compact ? kSpace3 : kSpace6),
+                                  KeyedSubtree(
+                                    key: _createButtonScrollKey,
+                                    child: _weightedButton(
+                                      key: const Key('create-room-button'),
+                                      onPressed: _createRoom,
+                                      label: loc.homeCreateRoomButton,
+                                      primary: !joinPrimary,
+                                    ),
+                                  ),
+                                  SizedBox(height: sectionGap),
+                                  KeyedSubtree(
+                                    key: _codeFieldScrollKey,
+                                    child: TextField(
+                                      key: const Key('room-code-field'),
+                                      controller: _codeController,
+                                      textAlign: TextAlign.center,
+                                      textCapitalization:
+                                          TextCapitalization.characters,
+                                      textInputAction: TextInputAction.go,
+                                      onSubmitted: (_) {
+                                        if (joinPrimary) {
+                                          _joinRoom();
+                                        }
+                                      },
+                                      inputFormatters:
+                                          const <TextInputFormatter>[
+                                            _RoomCodeInputFormatter(),
+                                          ],
+                                      decoration: InputDecoration(
+                                        labelText: loc.homeRoomCodeFieldLabel,
+                                        hintText: loc.homeRoomCodeFieldHint,
+                                        errorText: _errorText,
+                                        // Unset, InputDecoration truncates errorText
+                                        // to one line with an ellipsis.
+                                        // homeRoomCodeInvalid needs four lines to
+                                        // clear at this field's width in either
+                                        // locale.
+                                        errorMaxLines: 4,
+                                        isDense: compact,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: compact ? kSpace2 : kSpace3),
+                                  KeyedSubtree(
+                                    key: _joinButtonScrollKey,
+                                    child: _weightedButton(
+                                      key: const Key('join-room-button'),
+                                      onPressed: _joinRoom,
+                                      label: loc.homeJoinRoomButton,
+                                      primary: joinPrimary,
+                                    ),
+                                  ),
+                                  if (_recentCodes.isNotEmpty) ...[
+                                    SizedBox(
+                                      height: compact ? kSpace2 : kSpace3,
+                                    ),
+                                    _RecentCodes(
+                                      codes: _recentCodes,
+                                      onSelect: _fillCodeFromRecent,
+                                    ),
+                                  ],
                                 ],
-                                decoration: InputDecoration(
-                                  labelText: loc.homeRoomCodeFieldLabel,
-                                  hintText: loc.homeRoomCodeFieldHint,
-                                  errorText: _errorText,
-                                  // Unset, InputDecoration truncates errorText
-                                  // to one line with an ellipsis.
-                                  // homeRoomCodeInvalid needs four lines to
-                                  // clear at this field's width in either
-                                  // locale.
-                                  errorMaxLines: 4,
-                                  isDense: compact,
-                                ),
                               ),
                             ),
-                            SizedBox(height: compact ? kSpace2 : kSpace3),
-                            KeyedSubtree(
-                              key: _joinButtonScrollKey,
-                              child: _weightedButton(
-                                key: const Key('join-room-button'),
-                                onPressed: _joinRoom,
-                                label: loc.homeJoinRoomButton,
-                                primary: joinPrimary,
-                              ),
-                            ),
-                            if (_recentCodes.isNotEmpty) ...[
-                              SizedBox(height: compact ? kSpace2 : kSpace3),
-                              _RecentCodes(
-                                codes: _recentCodes,
-                                onSelect: _fillCodeFromRecent,
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
+                          ),
+                        ],
                       ),
                     ),
                   ),
