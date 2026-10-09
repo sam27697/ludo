@@ -887,81 +887,99 @@ class _HomeScreenState extends State<HomeScreen>
                                   ],
                                   Semantics(
                                     label: loc.homeNameFieldLabel,
-                                    child: ValueListenableBuilder<
-                                      TextEditingValue
-                                    >(
-                                      valueListenable: _nameController,
-                                      builder: (context, nameValue, _) {
-                                        final String trimmed = nameValue.text
-                                            .trim();
-                                        return TextField(
-                                          key: const Key('home-name-field'),
-                                          controller: _nameController,
-                                          textAlign: TextAlign.center,
-                                          textInputAction: TextInputAction.go,
-                                          onSubmitted: (_) {
-                                            _createRoom();
-                                          },
-                                          style: textTheme.titleMedium
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                          decoration: InputDecoration(
-                                            hintText: loc.homeNameFieldLabel,
-                                            filled: true,
-                                            fillColor: LudoColors.paperElevated,
-                                            isDense: compact,
-                                            border: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(999),
-                                              borderSide: BorderSide.none,
-                                            ),
-                                            enabledBorder: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(999),
-                                              borderSide: BorderSide.none,
-                                            ),
-                                            focusedBorder: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(999),
-                                              borderSide: const BorderSide(
-                                                color: LudoColors.action,
-                                                width: 2,
-                                              ),
-                                            ),
-                                            prefixIcon: CircleAvatar(
-                                              radius: 16,
-                                              backgroundColor:
-                                                  LudoColors.action,
-                                              foregroundColor:
-                                                  LudoColors.actionOn,
-                                              child: trimmed.isEmpty
-                                                  ? const Icon(
-                                                      Icons.person,
-                                                      size: 20,
-                                                      color:
-                                                          LudoColors.actionOn,
-                                                    )
-                                                  : Text(
-                                                      trimmed.characters.first
-                                                          .toUpperCase(),
-                                                      style: const TextStyle(
-                                                        color:
-                                                            LudoColors.actionOn,
-                                                        fontWeight:
-                                                            FontWeight.w600,
+                                    child:
+                                        ValueListenableBuilder<
+                                          TextEditingValue
+                                        >(
+                                          valueListenable: _nameController,
+                                          builder: (context, nameValue, _) {
+                                            final String trimmed = nameValue
+                                                .text
+                                                .trim();
+                                            return TextField(
+                                              key: const Key('home-name-field'),
+                                              controller: _nameController,
+                                              textAlign: TextAlign.center,
+                                              textInputAction:
+                                                  TextInputAction.go,
+                                              onSubmitted: (_) {
+                                                _createRoom();
+                                              },
+                                              style: textTheme.titleMedium
+                                                  ?.copyWith(
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                              decoration: InputDecoration(
+                                                hintText:
+                                                    loc.homeNameFieldLabel,
+                                                filled: true,
+                                                fillColor:
+                                                    LudoColors.paperElevated,
+                                                isDense: compact,
+                                                border: OutlineInputBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                        999,
                                                       ),
+                                                  borderSide: BorderSide.none,
+                                                ),
+                                                enabledBorder:
+                                                    OutlineInputBorder(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            999,
+                                                          ),
+                                                      borderSide:
+                                                          BorderSide.none,
                                                     ),
-                                            ),
-                                            suffixIcon: const Icon(
-                                              Icons.edit_outlined,
-                                              color: LudoColors.inkMuted,
-                                              size: 20,
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    ),
+                                                focusedBorder:
+                                                    OutlineInputBorder(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            999,
+                                                          ),
+                                                      borderSide:
+                                                          const BorderSide(
+                                                            color: LudoColors
+                                                                .action,
+                                                            width: 2,
+                                                          ),
+                                                    ),
+                                                prefixIcon: CircleAvatar(
+                                                  radius: 16,
+                                                  backgroundColor:
+                                                      LudoColors.action,
+                                                  foregroundColor:
+                                                      LudoColors.actionOn,
+                                                  child: trimmed.isEmpty
+                                                      ? const Icon(
+                                                          Icons.person,
+                                                          size: 20,
+                                                          color: LudoColors
+                                                              .actionOn,
+                                                        )
+                                                      : Text(
+                                                          trimmed
+                                                              .characters
+                                                              .first
+                                                              .toUpperCase(),
+                                                          style: const TextStyle(
+                                                            color: LudoColors
+                                                                .actionOn,
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                          ),
+                                                        ),
+                                                ),
+                                                suffixIcon: const Icon(
+                                                  Icons.edit_outlined,
+                                                  color: LudoColors.inkMuted,
+                                                  size: 20,
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                        ),
                                   ),
                                   SizedBox(height: compact ? kSpace3 : kSpace5),
                                   if (!_playersSelectorOpen)
@@ -1151,8 +1169,7 @@ class _HomeScreenState extends State<HomeScreen>
                                               ?.copyWith(
                                                 color: LudoColors.inkMuted,
                                               ),
-                                          helperText:
-                                              loc.homeRoomCodeFieldHint,
+                                          helperText: loc.homeRoomCodeFieldHint,
                                           errorText: _errorText,
                                           // Unset, InputDecoration truncates errorText
                                           // to one line with an ellipsis.
@@ -1168,34 +1185,30 @@ class _HomeScreenState extends State<HomeScreen>
                                             color: LudoColors.inkMuted,
                                           ),
                                           border: OutlineInputBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(
-                                                  kRadiusControl,
-                                                ),
+                                            borderRadius: BorderRadius.circular(
+                                              kRadiusControl,
+                                            ),
                                             borderSide: BorderSide.none,
                                           ),
                                           enabledBorder: OutlineInputBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(
-                                                  kRadiusControl,
-                                                ),
+                                            borderRadius: BorderRadius.circular(
+                                              kRadiusControl,
+                                            ),
                                             borderSide: BorderSide.none,
                                           ),
                                           focusedBorder: OutlineInputBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(
-                                                  kRadiusControl,
-                                                ),
+                                            borderRadius: BorderRadius.circular(
+                                              kRadiusControl,
+                                            ),
                                             borderSide: const BorderSide(
                                               color: LudoColors.action,
                                               width: 2,
                                             ),
                                           ),
                                           errorBorder: OutlineInputBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(
-                                                  kRadiusControl,
-                                                ),
+                                            borderRadius: BorderRadius.circular(
+                                              kRadiusControl,
+                                            ),
                                             borderSide: const BorderSide(
                                               color: LudoColors.error,
                                               width: 2,
