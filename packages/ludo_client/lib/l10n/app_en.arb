@@ -240,7 +240,7 @@
   "@gameYourTurnRoll": {
     "description": "Turn banner shown on the game screen when it is this player's own turn and the server is waiting on a roll."
   },
-  "gameYourTurnMove": "Your turn. Choose a token to move.",
+  "gameYourTurnMove": "Your turn. Move a token.",
   "@gameYourTurnMove": {
     "description": "Turn banner shown on the game screen when it is this player's own turn and the server is waiting on a token choice."
   },

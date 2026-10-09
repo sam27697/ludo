@@ -54,7 +54,7 @@
   "gameWaitingForTurn": "بانتظار الدور التالي",
   "gameWaitingForPlayer": "بانتظار {name}",
   "gameYourTurnRoll": "دورك. ارمِ النرد.",
-  "gameYourTurnMove": "دورك. اختر قطعة لتحريكها.",
+  "gameYourTurnMove": "دورك. حرّك قطعة.",
   "gameYourTurnStale": "دورك",
   "gameRollButton": "رمي النرد",
   "gameTokenButton": "قطعة {number}",
