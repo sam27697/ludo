@@ -1117,18 +1117,17 @@ class _HomeScreenState extends State<HomeScreen>
                                                 .withValues(alpha: 0.3),
                                           ),
                                         ),
-                                        Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: kSpace3,
-                                          ),
-                                          child: Text(
-                                            loc.homeJoinDivider,
-                                            style: textTheme.labelMedium
-                                                ?.copyWith(
-                                                  color: LudoColors.inkMuted,
-                                                ),
-                                          ),
-                                        ),
+                                        Flexible(
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: kSpace3,
+                                            ),
+                                            child: Text(
+                                              loc.homeJoinDivider,
+                                              textAlign: TextAlign.center,
+                                              style: textTheme.labelMedium
+                                                  ?.copyWith(
+                                                    color: LudoColors.inkMuted,                                                   ),                                             ),                                           ),                                         ),
                                         Expanded(
                                           child: Container(
                                             height: 1,
