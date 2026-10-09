@@ -244,6 +244,10 @@
   "@gameYourTurnMove": {
     "description": "Turn banner shown on the game screen when it is this player's own turn and the server is waiting on a token choice."
   },
+  "gameYourTurnStale": "Your turn",
+  "@gameYourTurnStale": {
+    "description": "Turn banner shown on the game screen when it is this player's own turn while the connection is stale or reconnecting."
+  },
   "gameRollButton": "Roll",
   "@gameRollButton": {
     "description": "Label of the button on the game screen that sends the roll intention to the server."

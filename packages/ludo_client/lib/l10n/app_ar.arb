@@ -55,6 +55,7 @@
   "gameWaitingForPlayer": "بانتظار {name}",
   "gameYourTurnRoll": "دورك. ارمِ النرد.",
   "gameYourTurnMove": "دورك. اختر قطعة لتحريكها.",
+  "gameYourTurnStale": "دورك",
   "gameRollButton": "رمي النرد",
   "gameTokenButton": "قطعة {number}",
   "gameDieValue": "الرمية: {value}",
