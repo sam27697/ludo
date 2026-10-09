@@ -1761,12 +1761,17 @@ Map<int, String> _seatNamesOf(RoomSnapshot room) {
 }
 
 /// H2, decided in the order given there, first match wins.
+/// C-290 rule 2: finished beats every other case, including stale.
 String _turnBannerText(
   AppLocalizations loc,
   RoomSnapshot room,
   int? seat, {
   bool stale = false,
 }) {
+  if (room.state == RoomState.finished ||
+      room.turn?.phase == TurnPhase.finished) {
+    return loc.gameOverEnded;
+  }
   final TurnState? turn = room.turn;
   if (turn == null) {
     return loc.gameWaitingForTurn;
