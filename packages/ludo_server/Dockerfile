@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=mirror.gcr.io/docker/dockerfile:1.7
 #
 # Build context is the repository root, not this directory -- the pub
 # workspace root has to be present for `dart pub get` to resolve
@@ -19,7 +19,8 @@
 # Pulled from Google's Docker Hub mirror: the Hub refuses anonymous pulls
 # from shared CI addresses with 429 (measured 2026-10-09, three runs), the
 # mirror serves the same content, and the digest pin keeps the image
-# byte-identical.
+# byte-identical. The BuildKit frontend on line 1 uses the mirror for the
+# same reason.
 FROM mirror.gcr.io/library/dart:3.13.1-sdk@sha256:d3f19cf5c18a7939d6af3f0896b2e9fec3f31f7ba3a2f88bfe6181e903084a51 AS build
 
 WORKDIR /workspace
