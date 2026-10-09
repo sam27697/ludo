@@ -443,11 +443,13 @@ void main() {
   // L-1
   // ==========================================================================
   testWidgets(
-    'L-1: host lobby, transport drops, the first automatic attempt fails at '
-    'the connector with errorCode transport -> lobby-closed (not lobby-error, '
-    'not lobby-retry-button); tapping lobby-reconnect-button opens a new '
-    'transport whose first frame is resume carrying the room code and seat '
-    'token, and no create_room is ever sent again on any transport',
+    'L-1: host lobby, transport drops, both automatic attempts fail at the '
+    'connector with errorCode transport; once the schedule is exhausted the '
+    'gathering stays inside lobby-stale-room under the lobby-closed card '
+    '(not lobby-error, not lobby-retry-button), and tapping '
+    'lobby-reconnect-button opens a new transport whose first frame is '
+    'resume carrying the room code and seat token, and no create_room is '
+    'ever sent again on any transport',
     (tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transportA = FakeTransport();
@@ -518,12 +520,40 @@ void main() {
             'shape a real dropped phone produces',
       );
 
+      // C-284: the Reconnect button is absent while the second attempt is
+      // still pending. Exhaust that attempt, then tap. The resume payload
+      // below is the same proof as before.
+      connector.enqueueReject();
+      await tester.pump(_delays[1]);
+      await tester.pump();
+      await tester.pump();
+      expect(controller.phase, RoomPhase.failed);
+      expect(
+        controller.autoReconnectPending,
+        isFalse,
+        reason:
+            'L1 fixture: both scheduled attempts have failed, so nothing '
+            'is left pending and lobby-reconnect-button is the way back',
+      );
+      expect(controller.room, isNotNull);
+      expect(controller.errorCode, 'transport');
+
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-stale-room')),
+          matching: find.byKey(const Key('lobby-room-code')),
+        ),
+        findsOneWidget,
+        reason:
+            'L1: failed + room set + errorCode "transport" keeps the '
+            'gathering inside lobby-stale-room',
+      );
       expect(
         find.byKey(const Key('lobby-closed')),
         findsOneWidget,
         reason:
             'L1: failed + room set + errorCode "transport" (retryable) '
-            'must render the same body as RoomPhase.closed, not lobby-error',
+            'must render the lobby-closed card, not lobby-error',
       );
       expect(
         find.byKey(const Key('lobby-error')),
@@ -709,9 +739,11 @@ void main() {
   ]) {
     testWidgets(
       'R1-${locale.languageCode == 'en' ? 'EN' : 'AR'}: lobby dropped with '
-      'autoReconnectPending true shows lobby-reconnecting with the exact '
-      'lobbyReconnecting string of locale "${locale.languageCode}", looked '
-      'up from AppLocalizations',
+      'autoReconnectPending true keeps the gathering inside '
+      'lobby-stale-room under the lobby-closed card, shows '
+      'lobby-reconnecting with the exact lobbyReconnecting string of '
+      'locale "${locale.languageCode}", looked up from AppLocalizations, '
+      'and shows no lobby-reconnect-button',
       (tester) async {
         final _Connector connector = _Connector();
         final FakeTransport transportA = FakeTransport();
@@ -779,6 +811,25 @@ void main() {
               '"), not a literal copied from the ARB file; got '
               '"${reconnectingText.data}"',
         );
+        // C-284: the line sits on the card over the gathering, and the
+        // Reconnect button is absent while the retry is still pending.
+        expect(
+          find.descendant(
+            of: find.byKey(const Key('lobby-stale-room')),
+            matching: find.byKey(const Key('lobby-room-code')),
+          ),
+          findsOneWidget,
+          reason:
+              'R1: the gathering stays inside lobby-stale-room while '
+              'autoReconnectPending is true',
+        );
+        expect(
+          find.byKey(const Key('lobby-reconnect-button')),
+          findsNothing,
+          reason:
+              'R1: lobby-reconnect-button is absent while the automatic '
+              'retry is still pending',
+        );
 
         // A reconnect timer is still armed (not yet fired): dispose
         // explicitly here rather than via addTearDown, matching
@@ -794,8 +845,9 @@ void main() {
   // R1-N
   // ==========================================================================
   testWidgets(
-    'R1-N (control): lobby dropped with autoReconnectDelays empty shows '
-    'lobby-closed with lobby-reconnecting absent',
+    'R1-N (control): lobby dropped with autoReconnectDelays empty keeps '
+    'the gathering inside lobby-stale-room under the lobby-closed card, '
+    'with lobby-reconnecting absent and lobby-reconnect-button present',
     (tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transportA = FakeTransport();
@@ -839,6 +891,24 @@ void main() {
         find.byKey(const Key('lobby-reconnecting')),
         findsNothing,
         reason: 'R1-N: lobby-reconnecting must be absent when pending is false',
+      );
+      // C-284: given up (nothing pending) still keeps the gathering, and
+      // the Reconnect button is the way back.
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-stale-room')),
+          matching: find.byKey(const Key('lobby-room-code')),
+        ),
+        findsOneWidget,
+        reason:
+            'R1-N: the gathering stays inside lobby-stale-room when the '
+            'drop has nothing scheduled',
+      );
+      expect(
+        find.byKey(const Key('lobby-reconnect-button')),
+        findsOneWidget,
+        reason:
+            'R1-N: lobby-reconnect-button is present once nothing is pending',
       );
     },
   );
