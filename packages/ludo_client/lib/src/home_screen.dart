@@ -645,13 +645,25 @@ class _HomeScreenState extends State<HomeScreen>
     required Key key,
     required VoidCallback onPressed,
     required String label,
+    required IconData icon,
     required bool primary,
   }) {
-    final Widget child = Text(label);
+    final Widget iconWidget = Icon(icon);
+    final Widget labelWidget = Text(label);
     if (primary) {
-      return ElevatedButton(key: key, onPressed: onPressed, child: child);
+      return ElevatedButton.icon(
+        key: key,
+        onPressed: onPressed,
+        icon: iconWidget,
+        label: labelWidget,
+      );
     }
-    return OutlinedButton(key: key, onPressed: onPressed, child: child);
+    return OutlinedButton.icon(
+      key: key,
+      onPressed: onPressed,
+      icon: iconWidget,
+      label: labelWidget,
+    );
   }
 
   @override
@@ -669,7 +681,6 @@ class _HomeScreenState extends State<HomeScreen>
     final double dieSize = dieMarkSize(compact);
     final double afterBrand = compact ? kSpace3 : kSpace6;
     final double afterDie = compact ? kSpace4 : kSpace7;
-    final double sectionGap = compact ? kSpace3 : kSpace6;
 
     final Animation<double> brandOpacity = CurvedAnimation(
       parent: _enter,
@@ -860,10 +871,13 @@ class _HomeScreenState extends State<HomeScreen>
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   if (seatRecord != null) ...[
-                                    ElevatedButton(
+                                    ElevatedButton.icon(
                                       key: const Key('home-rejoin-button'),
                                       onPressed: () => _rejoinRoom(seatRecord),
-                                      child: Text(
+                                      icon: const Icon(
+                                        Icons.play_arrow_rounded,
+                                      ),
+                                      label: Text(
                                         loc.homeRejoinButton(seatRecord.code),
                                       ),
                                     ),
@@ -871,17 +885,82 @@ class _HomeScreenState extends State<HomeScreen>
                                       height: compact ? kSpace3 : kSpace5,
                                     ),
                                   ],
-                                  TextField(
-                                    key: const Key('home-name-field'),
-                                    controller: _nameController,
-                                    textAlign: TextAlign.center,
-                                    textInputAction: TextInputAction.go,
-                                    onSubmitted: (_) {
-                                      _createRoom();
-                                    },
-                                    decoration: InputDecoration(
-                                      labelText: loc.homeNameFieldLabel,
-                                      isDense: compact,
+                                  Semantics(
+                                    label: loc.homeNameFieldLabel,
+                                    child: ValueListenableBuilder<
+                                      TextEditingValue
+                                    >(
+                                      valueListenable: _nameController,
+                                      builder: (context, nameValue, _) {
+                                        final String trimmed = nameValue.text
+                                            .trim();
+                                        return TextField(
+                                          key: const Key('home-name-field'),
+                                          controller: _nameController,
+                                          textAlign: TextAlign.center,
+                                          textInputAction: TextInputAction.go,
+                                          onSubmitted: (_) {
+                                            _createRoom();
+                                          },
+                                          style: textTheme.titleMedium
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                          decoration: InputDecoration(
+                                            hintText: loc.homeNameFieldLabel,
+                                            filled: true,
+                                            fillColor: LudoColors.paperElevated,
+                                            isDense: compact,
+                                            border: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                            enabledBorder: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                            focusedBorder: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                              borderSide: const BorderSide(
+                                                color: LudoColors.action,
+                                                width: 2,
+                                              ),
+                                            ),
+                                            prefixIcon: CircleAvatar(
+                                              radius: 16,
+                                              backgroundColor:
+                                                  LudoColors.action,
+                                              foregroundColor:
+                                                  LudoColors.actionOn,
+                                              child: trimmed.isEmpty
+                                                  ? const Icon(
+                                                      Icons.person,
+                                                      size: 20,
+                                                      color:
+                                                          LudoColors.actionOn,
+                                                    )
+                                                  : Text(
+                                                      trimmed.characters.first
+                                                          .toUpperCase(),
+                                                      style: const TextStyle(
+                                                        color:
+                                                            LudoColors.actionOn,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                      ),
+                                                    ),
+                                            ),
+                                            suffixIcon: const Icon(
+                                              Icons.edit_outlined,
+                                              color: LudoColors.inkMuted,
+                                              size: 20,
+                                            ),
+                                          ),
+                                        );
+                                      },
                                     ),
                                   ),
                                   SizedBox(height: compact ? kSpace3 : kSpace5),
@@ -1002,39 +1081,138 @@ class _HomeScreenState extends State<HomeScreen>
                                       key: const Key('create-room-button'),
                                       onPressed: _createRoom,
                                       label: loc.homeCreateRoomButton,
+                                      icon: Icons.add_rounded,
                                       primary: !joinPrimary,
                                     ),
                                   ),
-                                  SizedBox(height: sectionGap),
+                                  Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      vertical: compact ? kSpace1 : kSpace2,
+                                    ),
+                                    child: Row(
+                                      key: const Key('home-join-divider'),
+                                      children: [
+                                        Expanded(
+                                          child: Container(
+                                            height: 1,
+                                            color: LudoColors.inkMuted
+                                                .withValues(alpha: 0.3),
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: kSpace3,
+                                          ),
+                                          child: Text(
+                                            loc.homeJoinDivider,
+                                            style: textTheme.labelMedium
+                                                ?.copyWith(
+                                                  color: LudoColors.inkMuted,
+                                                ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Container(
+                                            height: 1,
+                                            color: LudoColors.inkMuted
+                                                .withValues(alpha: 0.3),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                   KeyedSubtree(
                                     key: _codeFieldScrollKey,
-                                    child: TextField(
-                                      key: const Key('room-code-field'),
-                                      controller: _codeController,
-                                      textAlign: TextAlign.center,
-                                      textCapitalization:
-                                          TextCapitalization.characters,
-                                      textInputAction: TextInputAction.go,
-                                      onSubmitted: (_) {
-                                        if (joinPrimary) {
-                                          _joinRoom();
-                                        }
-                                      },
-                                      inputFormatters:
-                                          const <TextInputFormatter>[
-                                            _RoomCodeInputFormatter(),
-                                          ],
-                                      decoration: InputDecoration(
-                                        labelText: loc.homeRoomCodeFieldLabel,
-                                        hintText: loc.homeRoomCodeFieldHint,
-                                        errorText: _errorText,
-                                        // Unset, InputDecoration truncates errorText
-                                        // to one line with an ellipsis.
-                                        // homeRoomCodeInvalid needs four lines to
-                                        // clear at this field's width in either
-                                        // locale.
-                                        errorMaxLines: 4,
-                                        isDense: compact,
+                                    child: Semantics(
+                                      label: loc.homeRoomCodeFieldLabel,
+                                      child: TextField(
+                                        key: const Key('room-code-field'),
+                                        controller: _codeController,
+                                        textAlign: TextAlign.center,
+                                        textCapitalization:
+                                            TextCapitalization.characters,
+                                        textInputAction: TextInputAction.go,
+                                        onSubmitted: (_) {
+                                          if (joinPrimary) {
+                                            _joinRoom();
+                                          }
+                                        },
+                                        inputFormatters:
+                                            const <TextInputFormatter>[
+                                              _RoomCodeInputFormatter(),
+                                            ],
+                                        style: textTheme.titleLarge?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 4,
+                                        ),
+                                        decoration: InputDecoration(
+                                          hintText: loc.homeRoomCodeFieldLabel,
+                                          hintStyle: textTheme.bodyLarge
+                                              ?.copyWith(
+                                                color: LudoColors.inkMuted,
+                                              ),
+                                          helperText:
+                                              loc.homeRoomCodeFieldHint,
+                                          errorText: _errorText,
+                                          // Unset, InputDecoration truncates errorText
+                                          // to one line with an ellipsis.
+                                          // homeRoomCodeInvalid needs four lines to
+                                          // clear at this field's width in either
+                                          // locale.
+                                          errorMaxLines: 4,
+                                          filled: true,
+                                          fillColor: LudoColors.paperElevated,
+                                          isDense: compact,
+                                          prefixIcon: const Icon(
+                                            Icons.tag,
+                                            color: LudoColors.inkMuted,
+                                          ),
+                                          border: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(
+                                                  kRadiusControl,
+                                                ),
+                                            borderSide: BorderSide.none,
+                                          ),
+                                          enabledBorder: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(
+                                                  kRadiusControl,
+                                                ),
+                                            borderSide: BorderSide.none,
+                                          ),
+                                          focusedBorder: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(
+                                                  kRadiusControl,
+                                                ),
+                                            borderSide: const BorderSide(
+                                              color: LudoColors.action,
+                                              width: 2,
+                                            ),
+                                          ),
+                                          errorBorder: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(
+                                                  kRadiusControl,
+                                                ),
+                                            borderSide: const BorderSide(
+                                              color: LudoColors.error,
+                                              width: 2,
+                                            ),
+                                          ),
+                                          focusedErrorBorder:
+                                              OutlineInputBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                      kRadiusControl,
+                                                    ),
+                                                borderSide: const BorderSide(
+                                                  color: LudoColors.error,
+                                                  width: 2,
+                                                ),
+                                              ),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -1045,6 +1223,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       key: const Key('join-room-button'),
                                       onPressed: _joinRoom,
                                       label: loc.homeJoinRoomButton,
+                                      icon: Icons.login_rounded,
                                       primary: joinPrimary,
                                     ),
                                   ),
