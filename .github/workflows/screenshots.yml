@@ -138,3 +138,66 @@ jobs:
           name: store-screenshots
           path: packages/ludo_client/screenshots/*.png
           if-no-files-found: warn
+
+  motion:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/ludo_client
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.47.1"
+          channel: "stable"
+
+      - run: flutter pub get
+
+      # Cheap check before the expensive emulator boot. Catches a missing or
+      # misspelled driver or target script in seconds instead of after minutes
+      # of boot time.
+      - name: confirm the drive script and target exist
+        run: |
+          set -euo pipefail
+          test -f test_driver/integration_test.dart || { echo "missing packages/ludo_client/test_driver/integration_test.dart" >&2; exit 1; }
+          test -f integration_test/motion_test.dart || { echo "missing packages/ludo_client/integration_test/motion_test.dart" >&2; exit 1; }
+
+      # Standard boilerplate from reactivecircus/android-emulator-runner's
+      # own README for GitHub-hosted Linux runners: makes /dev/kvm
+      # group-writable so the emulator gets hardware acceleration instead of
+      # falling back to (very slow, likely to time out) software rendering.
+      - name: enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Boots an emulator with animations enabled so integration_test/motion_test.dart
+      # captures the actual motion curves (die tumble, token travel, capture flight)
+      # rather than the reduced-motion cuts captured by screenshots.
+      #
+      # android-emulator-runner passes each script line to its own `sh -c`, so
+      # the background recorder, drive invocation, signal handling and artifact
+      # verification all live in record_motion.sh.
+      - name: boot the emulator and record motion
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: "Nexus 5"
+          disable-animations: false
+          script: bash packages/ludo_client/tool/record_motion.sh
+
+      # `if: always()` so artifacts and drive logs collected up to any point of
+      # failure are uploaded for diagnosis rather than lost.
+      #
+      # if-no-files-found is `warn`, not `error`. record_motion.sh already
+      # fails the job if flutter drive failed or no mp4 was larger than 200 KB.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: motion-recording
+          path: packages/ludo_client/motion/*
+          if-no-files-found: warn

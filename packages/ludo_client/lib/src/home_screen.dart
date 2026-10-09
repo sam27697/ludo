@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'deep_link.dart';
 import 'die_mark.dart';
+import 'directional_icon.dart';
 import 'game_screen.dart' show GameScreenResult;
 import 'lobby_screen.dart' show LobbyAction;
 import 'net/connection.dart' show RoomToggles;
@@ -645,23 +646,22 @@ class _HomeScreenState extends State<HomeScreen>
     required Key key,
     required VoidCallback onPressed,
     required String label,
-    required IconData icon,
+    required Widget icon,
     required bool primary,
   }) {
-    final Widget iconWidget = Icon(icon);
     final Widget labelWidget = Text(label);
     if (primary) {
       return ElevatedButton.icon(
         key: key,
         onPressed: onPressed,
-        icon: iconWidget,
+        icon: icon,
         label: labelWidget,
       );
     }
     return OutlinedButton.icon(
       key: key,
       onPressed: onPressed,
-      icon: iconWidget,
+      icon: icon,
       label: labelWidget,
     );
   }
@@ -1099,7 +1099,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       key: const Key('create-room-button'),
                                       onPressed: _createRoom,
                                       label: loc.homeCreateRoomButton,
-                                      icon: Icons.add_rounded,
+                                      icon: const Icon(Icons.add_rounded),
                                       primary: !joinPrimary,
                                     ),
                                   ),
@@ -1240,7 +1240,9 @@ class _HomeScreenState extends State<HomeScreen>
                                       key: const Key('join-room-button'),
                                       onPressed: _joinRoom,
                                       label: loc.homeJoinRoomButton,
-                                      icon: Icons.login_rounded,
+                                      icon: const DirectionalIcon(
+                                        Icons.login_rounded,
+                                      ),
                                       primary: joinPrimary,
                                     ),
                                   ),
