@@ -13,6 +13,7 @@ import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'room_code.dart';
 import 'room_route.dart';
+import 'rule_off_strike.dart';
 import 'server_config.dart';
 import 'session_memory.dart';
 import 'theme.dart';
@@ -720,40 +721,59 @@ class _HomeScreenState extends State<HomeScreen>
 
     return Scaffold(
       backgroundColor: LudoColors.paper,
-      appBar: AppBar(
-        // Brand lives in the body at hero scale; the bar only carries the
-        // locale toggle so contrast gates and the toggle key still hold.
-        backgroundColor: LudoColors.paperElevated,
-        title: const SizedBox.shrink(),
-        actions: [
-          TextButton(
-            key: const Key('locale-toggle-button'),
-            onPressed: widget.onToggleLocale,
-            child: Tooltip(
-              message: loc.homeLocaleToggleTooltip,
-              child: Text(loc.homeLocaleToggleLabel),
-            ),
-          ),
-        ],
-      ),
       body: FeltBackdrop(
-        // The backdrop itself still paints edge to edge; only the content
-        // inside is pulled off the bottom system inset (order 196), the way
-        // LobbyScreen and GameScreen already keep their own content off it.
-        // Top stays default (true): the AppBar above already consumes the
-        // top inset, so there is nothing left here for SafeArea to add.
+        // C-276 rule 1: no AppBar; the body's SafeArea keeps top: true
+        // (the status bar inset is now the body's), while FeltBackdrop still
+        // paints edge to edge.
         child: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 400),
-              child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(
-                  kSpace6,
-                  compact ? kSpace1 : kSpace2,
-                  kSpace6,
-                  compact ? kSpace5 : kSpace7,
+          top: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsetsDirectional.only(
+                  top: kSpace2,
+                  end: kSpace2,
                 ),
-                child: Column(
+                child: Align(
+                  alignment: AlignmentDirectional.topEnd,
+                  child: TextButton(
+                    key: const Key('locale-toggle-button'),
+                    onPressed: widget.onToggleLocale,
+                    style: TextButton.styleFrom(
+                      backgroundColor: LudoColors.paperElevated,
+                      foregroundColor: LudoColors.ink,
+                      minimumSize: const Size(48, 48),
+                      shape: StadiumBorder(
+                        side: BorderSide(
+                          color: LudoColors.inkMuted.withValues(alpha: 0.3),
+                          width: 1,
+                        ),
+                      ),
+                      side: BorderSide(
+                        color: LudoColors.inkMuted.withValues(alpha: 0.3),
+                        width: 1,
+                      ),
+                    ),
+                    child: Tooltip(
+                      message: loc.homeLocaleToggleTooltip,
+                      child: Text(loc.homeLocaleToggleLabel),
+                    ),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 400),
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.fromLTRB(
+                        kSpace6,
+                        compact ? kSpace1 : kSpace2,
+                        kSpace6,
+                        compact ? kSpace5 : kSpace7,
+                      ),
+                      child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -860,26 +880,41 @@ class _HomeScreenState extends State<HomeScreen>
                             ),
                             SizedBox(height: compact ? kSpace3 : kSpace5),
                             if (!_playersSelectorOpen)
-                              TextButton(
-                                key: const Key('home-players-disclosure'),
-                                onPressed: () {
-                                  setState(() => _playersSelectorOpen = true);
-                                  WidgetsBinding.instance.addPostFrameCallback((
-                                    _,
-                                  ) {
-                                    if (!mounted) {
-                                      return;
-                                    }
-                                    _scrollCreateButtonIntoView();
-                                  });
-                                },
-                                style: TextButton.styleFrom(
-                                  foregroundColor: LudoColors.inkMuted,
-                                  minimumSize: const Size(48, 48),
-                                ),
-                                child: Text(
-                                  loc.homePlayersDisclosureClosed,
-                                  textAlign: TextAlign.center,
+                              Center(
+                                child: TextButton.icon(
+                                  key: const Key('home-players-disclosure'),
+                                  onPressed: () {
+                                    setState(() => _playersSelectorOpen = true);
+                                    WidgetsBinding.instance.addPostFrameCallback(
+                                      (_) {
+                                        if (!mounted) {
+                                          return;
+                                        }
+                                        _scrollCreateButtonIntoView();
+                                      },
+                                    );
+                                  },
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: LudoColors.inkMuted,
+                                    minimumSize: const Size(48, 48),
+                                    shape: StadiumBorder(
+                                      side: BorderSide(
+                                        color: LudoColors.inkMuted
+                                            .withValues(alpha: 0.4),
+                                        width: 1,
+                                      ),
+                                    ),
+                                    side: BorderSide(
+                                      color: LudoColors.inkMuted
+                                          .withValues(alpha: 0.4),
+                                      width: 1,
+                                    ),
+                                  ),
+                                  icon: const Icon(Icons.tune),
+                                  label: Text(
+                                    loc.homePlayersDisclosureClosed,
+                                    textAlign: TextAlign.center,
+                                  ),
                                 ),
                               )
                             else ...[
@@ -898,43 +933,40 @@ class _HomeScreenState extends State<HomeScreen>
                                     setState(() => _players = value),
                               ),
                               SizedBox(height: compact ? kSpace2 : kSpace3),
-                              SwitchListTile(
-                                key: const Key('home-rule-blocks'),
-                                contentPadding: EdgeInsets.zero,
-                                title: Text(
-                                  loc.homeRuleBlocks,
-                                  style: textTheme.labelLarge?.copyWith(
-                                    color: LudoColors.ink,
-                                  ),
+                              IntrinsicHeight(
+                                child: Row(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Expanded(
+                                      child: HomeRuleToggle(
+                                        key: const Key('home-rule-blocks'),
+                                        value: _rulesBlocks,
+                                        onChanged: (value) => setState(
+                                          () => _rulesBlocks = value,
+                                        ),
+                                        icon: Icons.shield_outlined,
+                                        title: loc.homeRuleBlocks,
+                                        hint: loc.homeRuleBlocksHint,
+                                      ),
+                                    ),
+                                    const SizedBox(width: kSpace3),
+                                    Expanded(
+                                      child: HomeRuleToggle(
+                                        key: const Key(
+                                          'home-rule-capture-bonus',
+                                        ),
+                                        value: _rulesCaptureBonus,
+                                        onChanged: (value) => setState(
+                                          () => _rulesCaptureBonus = value,
+                                        ),
+                                        icon: Icons.replay_rounded,
+                                        title: loc.homeRuleCaptureBonus,
+                                        hint: loc.homeRuleCaptureBonusHint,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                subtitle: Text(
-                                  loc.homeRuleBlocksHint,
-                                  style: textTheme.bodyMedium?.copyWith(
-                                    color: LudoColors.inkMuted,
-                                  ),
-                                ),
-                                value: _rulesBlocks,
-                                onChanged: (value) =>
-                                    setState(() => _rulesBlocks = value),
-                              ),
-                              SwitchListTile(
-                                key: const Key('home-rule-capture-bonus'),
-                                contentPadding: EdgeInsets.zero,
-                                title: Text(
-                                  loc.homeRuleCaptureBonus,
-                                  style: textTheme.labelLarge?.copyWith(
-                                    color: LudoColors.ink,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  loc.homeRuleCaptureBonusHint,
-                                  style: textTheme.bodyMedium?.copyWith(
-                                    color: LudoColors.inkMuted,
-                                  ),
-                                ),
-                                value: _rulesCaptureBonus,
-                                onChanged: (value) =>
-                                    setState(() => _rulesCaptureBonus = value),
                               ),
                             ],
                             if (_hasLastTable &&
@@ -1010,9 +1042,12 @@ class _HomeScreenState extends State<HomeScreen>
                       ),
                     ),
                   ],
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ),
@@ -1228,6 +1263,140 @@ class _PlayersSelector extends StatelessWidget {
       ],
       selected: <int>{value},
       onSelectionChanged: (selection) => onChanged(selection.first),
+    );
+  }
+}
+
+/// C-276 rule 3: toggle card for a game rule (Blocks, Capture bonus) on the
+/// home screen, matching the lobby screen rule chips instead of a settings
+/// page switch. Off state displays a diagonal strike over the icon and
+/// removes the check badge (doctrine P9).
+class HomeRuleToggle extends StatelessWidget {
+  const HomeRuleToggle({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    required this.icon,
+    required this.title,
+    required this.hint,
+  });
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final IconData icon;
+  final String title;
+  final String hint;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final bool disableAnimations = MediaQuery.disableAnimationsOf(context);
+
+    return Semantics(
+      button: true,
+      toggled: value,
+      label: title,
+      hint: hint,
+      excludeSemantics: true,
+      // The InkWell's own tap action is excluded with the children, so the
+      // node carries it, or TalkBack's double tap would do nothing.
+      onTap: () => onChanged(!value),
+      child: AnimatedContainer(
+        duration: disableAnimations
+            ? Duration.zero
+            : const Duration(milliseconds: 150),
+        decoration: BoxDecoration(
+          color: value
+              ? LudoColors.action.withValues(alpha: 0.12)
+              : LudoColors.inkMuted.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(kRadiusControl),
+          border: Border.all(
+            color: value
+                ? LudoColors.action
+                : LudoColors.inkMuted.withValues(alpha: 0.4),
+            width: value ? 2 : 1,
+          ),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(kRadiusControl),
+            onTap: () => onChanged(!value),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Stack(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(kSpace3),
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: kSpace6,
+                            height: kSpace6,
+                            child: value
+                                ? Icon(
+                                    icon,
+                                    size: kSpace6,
+                                    color: LudoColors.action,
+                                  )
+                                : Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      Icon(
+                                        icon,
+                                        size: kSpace6,
+                                        color: LudoColors.inkMuted,
+                                      ),
+                                      CustomPaint(
+                                        size: const Size(kSpace6, kSpace6),
+                                        painter: const RuleOffStrikePainter(
+                                          color: LudoColors.inkMuted,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                          ),
+                          const SizedBox(height: kSpace2),
+                          Text(
+                            title,
+                            textAlign: TextAlign.center,
+                            style: textTheme.labelLarge?.copyWith(
+                              color: LudoColors.ink,
+                            ),
+                          ),
+                          const SizedBox(height: kSpace1),
+                          Text(
+                            hint,
+                            textAlign: TextAlign.center,
+                            style: textTheme.bodySmall?.copyWith(
+                              color: LudoColors.inkMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (value)
+                    PositionedDirectional(
+                      top: kSpace2,
+                      end: kSpace2,
+                      child: const IgnorePointer(
+                        child: Icon(
+                          Icons.check_circle,
+                          size: kSpace5,
+                          color: LudoColors.action,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

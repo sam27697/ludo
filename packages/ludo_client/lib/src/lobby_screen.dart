@@ -13,6 +13,7 @@ import 'net/connection.dart' show RoomToggles;
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'seat_card.dart';
+import 'rule_off_strike.dart';
 import 'session_memory.dart' show SeatRecord;
 import 'theme.dart';
 
@@ -691,7 +692,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         Icon(icon, size: kSpace5, color: color),
                         CustomPaint(
                           size: Size(kSpace5, kSpace5),
-                          painter: _RuleOffStrikePainter(color: color),
+                          painter: RuleOffStrikePainter(color: color),
                         ),
                       ],
                     ),
@@ -733,29 +734,4 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ),
     );
   }
-}
-
-/// C-254 rule 4: the diagonal strike an "off" rule chip draws over its own
-/// icon, on top of the muted colour, so off is never colour alone.
-class _RuleOffStrikePainter extends CustomPainter {
-  const _RuleOffStrikePainter({required this.color});
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final Paint line = Paint()
-      ..color = color
-      ..strokeWidth = 1.6
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(
-      Offset(size.width * 0.12, size.height * 0.12),
-      Offset(size.width * 0.88, size.height * 0.88),
-      line,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _RuleOffStrikePainter oldDelegate) =>
-      oldDelegate.color != color;
 }
