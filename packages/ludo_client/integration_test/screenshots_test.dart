@@ -2237,7 +2237,7 @@ void main() {
     );
 
     // Open the players disclosure: home-players-selector and the two
-    // SwitchListTiles mount, both starting on (home_screen.dart's own
+    // HomeRuleToggle cards mount, both starting on (home_screen.dart's own
     // _rulesBlocks/_rulesCaptureBonus defaults).
     await tester.tap(find.byKey(const Key('home-players-disclosure')));
     await tester.pump();
@@ -2262,14 +2262,14 @@ void main() {
     // same reasoning 01-home-en and 08/09-home-rejoin rely on above.
     final Finder rulesSettledFinder = find.byWidgetPredicate(
       (Widget widget) =>
-          widget is SwitchListTile &&
+          widget is HomeRuleToggle &&
           widget.key == const Key('home-rule-blocks') &&
           widget.value == false,
     );
     await _settleForScreenshot(
       tester,
       rulesSettledFinder,
-      'home-rule-blocks reading off (SwitchListTile.value == false) after '
+      'home-rule-blocks reading off (HomeRuleToggle.value == false) after '
       'the tap, before capture 13',
     );
 
@@ -4506,10 +4506,10 @@ Widget _reconnectingCaptureHarness(Widget child, {required Locale locale}) {
 }
 
 /// Order 207, capture 13: asserts home-players-selector and the two
-/// SwitchListTiles it opens alongside are on screen, that
+/// HomeRuleToggle cards it opens alongside are on screen, that
 /// home-rule-blocks.value reads [blocksExpected] and
 /// home-rule-capture-bonus.value reads [captureBonusExpected], and that
-/// each tile's title reads its own literal straight out of app_ar.arb
+/// each card's title reads its own literal straight out of app_ar.arb
 /// (homeRuleBlocks, homeRuleCaptureBonus) -- quoted here, not looked up
 /// through AppLocalizations, per the order. [momentDescription] names which
 /// of the two calls (before or after the screenshot settle) failed, so a
@@ -4536,24 +4536,23 @@ void _expectHomeRulesOpen(
         'capture 13 ($momentDescription): expected home-rule-blocks on '
         'screen once the players disclosure is open',
   );
-  final SwitchListTile blocksTile = tester.widget<SwitchListTile>(blocksFinder);
+  final HomeRuleToggle blocksTile = tester.widget<HomeRuleToggle>(blocksFinder);
   expect(
     blocksTile.value,
     blocksExpected,
     reason:
         'capture 13 ($momentDescription): expected home-rule-blocks\'s '
-        'SwitchListTile.value to be $blocksExpected, got '
+        'HomeRuleToggle.value to be $blocksExpected, got '
         '${blocksTile.value}',
   );
   const String expectedBlocksTitle = 'الحواجز';
-  final Text blocksTitle = blocksTile.title! as Text;
   expect(
-    blocksTitle.data,
+    blocksTile.title,
     expectedBlocksTitle,
     reason:
         'capture 13 ($momentDescription): expected home-rule-blocks\'s '
         'title to read the app_ar.arb homeRuleBlocks literal '
-        '"$expectedBlocksTitle", got "${blocksTitle.data}"',
+        '"$expectedBlocksTitle", got "${blocksTile.title}"',
   );
 
   final Finder captureBonusFinder = find.byKey(
@@ -4567,7 +4566,7 @@ void _expectHomeRulesOpen(
         'home-rule-capture-bonus on screen once the players disclosure is '
         'open',
   );
-  final SwitchListTile captureBonusTile = tester.widget<SwitchListTile>(
+  final HomeRuleToggle captureBonusTile = tester.widget<HomeRuleToggle>(
     captureBonusFinder,
   );
   expect(
@@ -4575,19 +4574,18 @@ void _expectHomeRulesOpen(
     captureBonusExpected,
     reason:
         'capture 13 ($momentDescription): expected '
-        'home-rule-capture-bonus\'s SwitchListTile.value to be '
+        'home-rule-capture-bonus\'s HomeRuleToggle.value to be '
         '$captureBonusExpected, got ${captureBonusTile.value}',
   );
   const String expectedCaptureBonusTitle = 'مكافأة الأكل';
-  final Text captureBonusTitle = captureBonusTile.title! as Text;
   expect(
-    captureBonusTitle.data,
+    captureBonusTile.title,
     expectedCaptureBonusTitle,
     reason:
         'capture 13 ($momentDescription): expected '
         'home-rule-capture-bonus\'s title to read the app_ar.arb '
         'homeRuleCaptureBonus literal "$expectedCaptureBonusTitle", got '
-        '"${captureBonusTitle.data}"',
+        '"${captureBonusTile.title}"',
   );
 }
 
