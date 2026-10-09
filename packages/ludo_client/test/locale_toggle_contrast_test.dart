@@ -1,14 +1,18 @@
-// Order 058: the app bar's locale toggle used to render pure white text on
-// the app bar's own near-white background (measured off a real screenshot at
-// a 1.05:1 contrast ratio, against a WCAG AA minimum of 4.5:1 for normal
-// text). This file resolves the toggle's actual rendered foreground and the
-// app bar's actual rendered background at test time and computes the WCAG
-// contrast ratio from them, rather than asserting a colour constant, so the
-// gate stays meaningful if the theme underneath changes again.
+// Order 058: the locale toggle used to render pure white text on a
+// near-white background (measured off a real screenshot at a 1.05:1
+// contrast ratio, against a WCAG AA minimum of 4.5:1 for normal text).
+// This file resolves the toggle's actual rendered foreground and its own
+// painted fill at test time and computes the WCAG contrast ratio from
+// them, rather than asserting a colour constant, so the gate stays
+// meaningful if the theme underneath changes again.
 //
-// To see this test fail the way it failed for real, revert the fix (put
+// C-276 took the toggle off the app bar. The fill is now the toggle's own
+// (LudoColors.paperElevated), read off the opaque Material the button
+// paints. The ratio below is the same 4.5 this file already required.
+//
+// To see the original failure, put
 // `style: const TextStyle(color: Colors.white)` back on the toggle's `Text`
-// in home_screen.dart) and rerun it; the failure message reports the ratio
+// in home_screen.dart and rerun it; the failure message reports the ratio
 // it measured, which lands at the same ~1.05:1 the screenshot scan found.
 //
 // The last test in this file covers the smaller defect found in the same
@@ -45,14 +49,15 @@ double _contrastRatio(Color a, Color b) {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-/// The app bar's own painted background: the nearest opaque [Material]
-/// ancestor of its content is what a person actually sees behind the toggle,
-/// as opposed to [AppBar.backgroundColor] or the theme's idea of it, either
-/// of which could be null and would still leave the question of what
-/// actually got painted unanswered.
-Color _appBarBackground(WidgetTester tester) {
+/// The locale toggle's own painted fill: an opaque [Material] it builds
+/// for its background. That is what sits behind the label once the toggle
+/// is no longer drawn on an app bar. An ancestor's colour is not this fill.
+Color _toggleFill(WidgetTester tester) {
   final materials = tester.widgetList<Material>(
-    find.descendant(of: find.byType(AppBar), matching: find.byType(Material)),
+    find.descendant(
+      of: find.byKey(const Key('locale-toggle-button')),
+      matching: find.byType(Material),
+    ),
   );
   for (final material in materials) {
     final color = material.color;
@@ -60,7 +65,10 @@ Color _appBarBackground(WidgetTester tester) {
       return color;
     }
   }
-  fail('no opaque Material found under the AppBar to read a background from');
+  fail(
+    'no opaque Material found on locale-toggle-button to read its own '
+    'fill from',
+  );
 }
 
 /// The colour the locale toggle's label actually renders in: the resolved
@@ -82,12 +90,12 @@ Color _toggleForeground(WidgetTester tester) {
 
 void main() {
   testWidgets(
-    'locale toggle text meets WCAG AA contrast (4.5:1) against the app bar',
+    'locale toggle text meets WCAG AA contrast (4.5:1) against its own fill',
     (tester) async {
       await tester.pumpWidget(const LudoApp());
       await tester.pumpAndSettle();
 
-      final background = _appBarBackground(tester);
+      final background = _toggleFill(tester);
       final foreground = _toggleForeground(tester);
       final ratio = _contrastRatio(foreground, background);
 
@@ -95,7 +103,7 @@ void main() {
         ratio,
         greaterThanOrEqualTo(4.5),
         reason:
-            'locale toggle foreground $foreground on app bar background '
+            'locale toggle foreground $foreground on its own fill '
             '$background measures $ratio:1, below the WCAG AA minimum of '
             '4.5:1 for normal text',
       );
@@ -103,12 +111,13 @@ void main() {
   );
 
   testWidgets(
-    'locale toggle text meets WCAG AA contrast in the Arabic locale too',
+    'locale toggle text meets WCAG AA contrast (4.5:1) against its own '
+    'fill in the Arabic locale too',
     (tester) async {
       await tester.pumpWidget(const LudoApp(initialLocale: Locale('ar')));
       await tester.pumpAndSettle();
 
-      final background = _appBarBackground(tester);
+      final background = _toggleFill(tester);
       final foreground = _toggleForeground(tester);
       final ratio = _contrastRatio(foreground, background);
 
@@ -116,7 +125,7 @@ void main() {
         ratio,
         greaterThanOrEqualTo(4.5),
         reason:
-            'locale toggle foreground $foreground on app bar background '
+            'locale toggle foreground $foreground on its own fill '
             '$background measures $ratio:1, below the WCAG AA minimum of '
             '4.5:1 for normal text',
       );
