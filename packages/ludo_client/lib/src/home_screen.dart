@@ -1118,6 +1118,7 @@ class _HomeScreenState extends State<HomeScreen>
                                           ),
                                         ),
                                         Flexible(
+                                          flex: 3,
                                           child: Padding(
                                             padding: const EdgeInsets.symmetric(
                                               horizontal: kSpace3,
