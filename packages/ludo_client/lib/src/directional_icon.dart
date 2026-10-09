@@ -48,10 +48,7 @@ class DirectionalIcon extends StatelessWidget {
     final TextDirection? direction =
         textDirection ?? Directionality.maybeOf(context);
     if (direction == TextDirection.rtl) {
-      return Transform.flip(
-        flipX: true,
-        child: iconWidget,
-      );
+      return Transform.flip(flipX: true, child: iconWidget);
     }
     return iconWidget;
   }

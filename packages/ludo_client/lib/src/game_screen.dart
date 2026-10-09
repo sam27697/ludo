@@ -1224,14 +1224,7 @@ class _GameScreenState extends State<GameScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _playHeaderRow(
-            loc,
-            room,
-            seat,
-            turn,
-            offlineTurnSeat,
-            stale: stale,
-          ),
+          _playHeaderRow(loc, room, seat, turn, offlineTurnSeat, stale: stale),
           const SizedBox(height: kSpace2),
           Expanded(
             child: LudoBoard(
@@ -1309,12 +1302,7 @@ class _GameScreenState extends State<GameScreen> {
     SeatState? offlineTurnSeat, {
     bool stale = false,
   }) {
-    final String bannerText = _turnBannerText(
-      loc,
-      room,
-      seat,
-      stale: stale,
-    );
+    final String bannerText = _turnBannerText(loc, room, seat, stale: stale);
     final int turnSeat = turn?.seat ?? seat ?? 0;
     final Color seatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
     final bool myTurn = turn != null && turn.seat == seat;
