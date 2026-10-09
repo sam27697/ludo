@@ -235,9 +235,10 @@ Future<void> _holdUntil(
   }
 }
 
-/// 64 lowercase hex. The client stores `reveal` and does not check it
-/// (room_controller.dart `_reduceRolled`). The shape is protocol section
-/// 11: 64 lowercase hex characters, one per roll, distinct per `k`.
+/// 64 lowercase hex. The client does not read `reveal`
+/// (room_controller.dart `_reduceRolled`: not required, not stored).
+/// The shape is protocol section 11: 64 lowercase hex characters, one
+/// per roll, distinct per `k`.
 String _reveal(int k) => k.toRadixString(16).padLeft(64, '0');
 
 void _motion(String name) => debugPrint('MOTION $name');
