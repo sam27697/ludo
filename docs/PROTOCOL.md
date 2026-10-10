@@ -89,6 +89,7 @@ seat is not reassignable by anything a third party can observe.
 | `leave_room` | `{ }` | Voluntary. In LOBBY it frees the seat. In PLAYING it does not: the seat remains and is played by the timer. Answered on the leaving socket by the same `player_left` (LOBBY) or `presence` (PLAYING) frame the rest of the room receives, with `re` set. The leaver is told what everyone else was told, not a snapshot of a room it is no longer in. |
 | `ping` | `{ }` | Answered by `pong`. |
 | `rematch` | `{ }` | Any seated player. FINISHED (asks for a rematch) or a rematch LOBBY (accepts it). Answered by `room`. Section 16. |
+| `game_log` | `{ }` | Any seated player, PLAYING or FINISHED. Answered by `game_log` on that socket only. Section 17. |
 
 `name` is a display name: 1 to 24 characters after trimming, no control
 characters. It is held in memory for the life of the room and never persisted.
@@ -122,6 +123,7 @@ different games.
 | `game_over` | `{ "winner": int, "verify_url": string }`. **No `seed`.** Nothing is withheld until the end any more: every roll's secret was already published in its own `rolled` frame, so a client can finish verifying before this frame arrives. `verify_url` is the permalink for later and for strangers. Section 11. |
 | `error` | `{ "code": string, "message": string }`, with `re` set when it answers a specific message. |
 | `pong` | `{ }` |
+| `game_log` | `{ "game_id": string, "part": int, "parts": int, "frames": [ ... ] }`, one part of the answer to a `game_log` request, to that socket only. Section 17. |
 
 `deadline_ms` is milliseconds remaining, not an absolute timestamp. Four phones
 do not agree on the wall clock and the client must not be asked to reconcile
@@ -251,7 +253,7 @@ Every error is one of these codes. A code is never invented at a call site.
 | `ILLEGAL_MOVE` | the token is not in the `legal` list for the current roll. |
 | `BAD_SEAT_TOKEN` | `resume` with a token that matches no seat in that room. |
 | `SEED_ALREADY_SET` | a second `set_seed` from a seat that already has one. Section 11. |
-| `GAME_OVER` | any action against a FINISHED room, except `rematch`, `resume`, `leave_room` and `ping`. |
+| `GAME_OVER` | any action against a FINISHED room, except `rematch`, `resume`, `leave_room`, `game_log` and `ping`. |
 | `INTERNAL` | a bug. Logged with the room code and the sequence number. |
 
 Every inbound message is validated in this order and rejected at the first
@@ -299,6 +301,7 @@ Rate limits, per connection unless stated:
   implemented: nothing in this protocol identifies a device.
 - `join_room` and `resume`: 20 per minute per IP. A wrong code counts. This is
   what makes the 32^6 code space unenumerable rather than merely large.
+- `game_log`: 2 per minute per connection, then `RATE_LIMITED` (section 17).
 - any message: 30 per second, then `RATE_LIMITED`, then close at 60.
 
 "IP" is the immediate TCP peer address, unless that peer is listed in the
@@ -1013,3 +1016,57 @@ implementation. Each is a test before it is code.
    occupied when an accept arrives (16.4), so a seat that left never blocks
    it and a seat that joined is waited for. Auto-start is evaluated only on
    an accepted `rematch`, never on `leave_room`, `join_room` or `resume`.
+
+## 17. `game_log`: the current game's frames on request, 2026-10-10
+
+Section 8 answers a `resume` with a snapshot and replays nothing, which is
+right for playing on. It is not enough for the end card's numbers (doctrine
+P6), which a client computes on the device from the game's own frames: a
+socket that was down for one push has a hole, and an app that was killed
+has no frames at all. This message lets a seated client ask for the frames
+it may have missed. It adds nothing a seat has not already been sent.
+
+1. **Request.** `game_log` `{ }`, with an `id`. Accepted from a seated
+   socket when the room is PLAYING or FINISHED. In LOBBY (including a
+   rematch LOBBY): `WRONG_PHASE`. From a socket that holds no seat in the
+   room: the same error `roll` gets from such a socket. Validated in the
+   section 7 order like any other message.
+2. **Answer.** On the requesting socket only, one or more `game_log`
+   frames `{ "game_id": string, "part": int, "parts": int, "frames":
+   [ ... ] }`, each with `re` set to the request's `id`, sent back to back
+   with `part` running 1 to `parts`. `game_id` is the current game's.
+   Read in part order, the `frames` lists together are every push the
+   room broadcast for the current game, from its `game_started` up to the
+   moment of the answer, in ascending `seq`, each as an object
+   `{ "t": string, "d": object }` holding exactly the type and the data a
+   socket attached for the whole game received for that push (`seq`
+   included, `re` never). Frames sent to one socket only (`seat_assigned`,
+   errors, `pong`, a `room` that answers a request, another `game_log`) are
+   not in it. **Every part, encoded as a whole frame, is at most 8192
+   bytes** (section 1 holds in both directions, and the client refuses a
+   larger frame). The server fills each part with as many whole log
+   entries as fit, in order; an entry is never split across parts. A game
+   whose log is empty is answered with one part and an empty list.
+3. **No state change.** It carries no `seq` of its own, changes nothing in
+   the room and is never broadcast.
+4. **Rate.** At most 2 per minute per connection, then `RATE_LIMITED`
+   (counted before the room checks, like the other per-message limits).
+   One request is answered by all of its parts; the parts do not count
+   against any limit. A long game is several hundred entries, so tens of
+   parts.
+5. **Lifetime.** The log belongs to the room's current game: a new
+   `game_started` (a rematch) starts a new one, and it goes when the room
+   goes.
+6. **Nothing new is revealed.** Every frame in it has already been sent to
+   every connected seat. Section 11.3 holds: no face before its roll, no
+   chain reveal ahead of `turn.k`.
+7. **Tests this section requires before it is implemented.** A seat that
+   stayed connected for a whole game and records every push from
+   `game_started` gets exactly the same list, frame for frame, from a
+   `game_log` sent by another seat after `game_over`, reassembled from its
+   parts; the same mid-game; every part at most 8192 bytes encoded and a
+   long game spread over more than one part;
+   `WRONG_PHASE` in LOBBY; an unseated socket refused; the third request
+   in a minute `RATE_LIMITED`; after a rematch's `game_started` the log
+   holds the new game only; the answer reaches the requester and no other
+   socket.

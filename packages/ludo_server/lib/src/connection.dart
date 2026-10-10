@@ -265,6 +265,8 @@ class Connection {
         _handleMove(envelope);
       case 'rematch':
         _handleRematch(envelope);
+      case 'game_log':
+        _handleGameLog(envelope);
       default:
         // Unreachable: parseEnvelope already rejected anything outside
         // knownMessageTypes as BAD_TYPE.
@@ -925,6 +927,200 @@ class Connection {
       room: ok.room.code,
       seq: ok.room.seq,
     );
+  }
+
+  /// `game_log`, `docs/PROTOCOL.md` section 17. The current game's frames
+  /// on request from a seated socket in PLAYING or FINISHED. Ladder:
+  /// rate limit (2 per minute per connection), identity/room exists,
+  /// seat authorised, phase (LOBBY -> WRONG_PHASE), and payload (d must
+  /// be an empty object, anything else is BAD_FIELD).
+  void _handleGameLog(ParsedEnvelope envelope) {
+    if (!rateLimiter.recordGameLog(this)) {
+      _reject(envelope, ProtocolError.rateLimited);
+      return;
+    }
+    if (!_hasIdentity) {
+      _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    final Room? liveRoom = registry.lookup(roomCode!);
+    if (liveRoom == null) {
+      _reject(envelope, ProtocolError.noSuchRoom, room: roomCode);
+      return;
+    }
+    Seat? seat;
+    for (final Seat candidate in liveRoom.seats) {
+      if (candidate.seatToken == seatToken) {
+        seat = candidate;
+        break;
+      }
+    }
+    if (seat == null) {
+      _reject(envelope, ProtocolError.badSeatToken, room: liveRoom.code);
+      return;
+    }
+    if (liveRoom.state == RoomState.lobby) {
+      _reject(envelope, ProtocolError.wrongPhase, room: liveRoom.code);
+      return;
+    }
+    if (envelope.data.isNotEmpty) {
+      _reject(envelope, ProtocolError.badField, room: liveRoom.code);
+      return;
+    }
+
+    _publishGameLog(envelope, liveRoom, seat);
+  }
+
+  void _publishGameLog(
+    ParsedEnvelope envelope,
+    Room room,
+    Seat seat,
+  ) {
+    final String gameId = room.gameId ?? '';
+    final List<List<Map<String, Object?>>> chunks;
+    if (room.gameLog.isEmpty) {
+      chunks = <List<Map<String, Object?>>>[<Map<String, Object?>>[]];
+    } else {
+      int targetParts = 1;
+      List<List<Map<String, Object?>>>? packed;
+      for (int i = 0; i < 10; i++) {
+        packed = _packGameLog(
+          entries: room.gameLog,
+          gameId: gameId,
+          requestId: envelope.id,
+          targetParts: targetParts,
+        );
+        if (packed == null) {
+          break;
+        }
+        if (packed.length == targetParts) {
+          break;
+        }
+        targetParts = packed.length;
+      }
+      if (packed == null) {
+        _reject(envelope, ProtocolError.internal, room: room.code);
+        return;
+      }
+      chunks = packed;
+    }
+
+    final int partsCount = chunks.length;
+    for (int p = 0; p < partsCount; p++) {
+      final int bytes = _measurePartBytes(
+        gameId: gameId,
+        part: p + 1,
+        parts: partsCount,
+        frames: chunks[p],
+        requestId: envelope.id,
+      );
+      if (bytes > maxFrameBytes) {
+        _reject(envelope, ProtocolError.internal, room: room.code);
+        return;
+      }
+    }
+
+    for (int p = 0; p < partsCount; p++) {
+      if (_closed) {
+        return;
+      }
+      final Map<String, Object?> partData = <String, Object?>{
+        'game_id': gameId,
+        'part': p + 1,
+        'parts': partsCount,
+        'frames': chunks[p],
+      };
+      final String messageId = generateMessageId(random);
+      final String text = encodeEnvelope(
+        type: 'game_log',
+        id: messageId,
+        data: partData,
+        re: envelope.id,
+      );
+      channel.sink.add(text);
+    }
+
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: 'ok',
+      room: room.code,
+      seat: seat.seat,
+      seq: room.seq,
+    );
+  }
+
+  List<List<Map<String, Object?>>>? _packGameLog({
+    required List<Map<String, Object?>> entries,
+    required String gameId,
+    required String requestId,
+    required int targetParts,
+  }) {
+    final List<List<Map<String, Object?>>> chunks =
+        <List<Map<String, Object?>>>[];
+    List<Map<String, Object?>> currentChunk = <Map<String, Object?>>[];
+    int currentPart = 1;
+
+    for (final Map<String, Object?> entry in entries) {
+      final List<Map<String, Object?>> candidate = <Map<String, Object?>>[
+        ...currentChunk,
+        entry,
+      ];
+      final int bytes = _measurePartBytes(
+        gameId: gameId,
+        part: currentPart,
+        parts: targetParts,
+        frames: candidate,
+        requestId: requestId,
+      );
+      if (bytes <= maxFrameBytes) {
+        currentChunk.add(entry);
+      } else {
+        if (currentChunk.isEmpty) {
+          return null;
+        }
+        chunks.add(currentChunk);
+        currentChunk = <Map<String, Object?>>[entry];
+        currentPart++;
+        final int singleBytes = _measurePartBytes(
+          gameId: gameId,
+          part: currentPart,
+          parts: targetParts,
+          frames: currentChunk,
+          requestId: requestId,
+        );
+        if (singleBytes > maxFrameBytes) {
+          return null;
+        }
+      }
+    }
+    if (currentChunk.isNotEmpty) {
+      chunks.add(currentChunk);
+    }
+    return chunks;
+  }
+
+  int _measurePartBytes({
+    required String gameId,
+    required int part,
+    required int parts,
+    required List<Map<String, Object?>> frames,
+    required String requestId,
+  }) {
+    final Map<String, Object?> data = <String, Object?>{
+      'game_id': gameId,
+      'part': part,
+      'parts': parts,
+      'frames': frames,
+    };
+    const String placeholderId = '0123456789012345678901';
+    final String text = encodeEnvelope(
+      type: 'game_log',
+      id: placeholderId,
+      data: data,
+      re: requestId,
+    );
+    return utf8.encode(text).length;
   }
 
   /// `roll`, `docs/PROTOCOL.md` section 12.1. `_hasIdentity` is the
