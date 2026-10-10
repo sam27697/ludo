@@ -145,6 +145,7 @@ class RoomController extends ChangeNotifier {
 
   RoomPhase _phase = RoomPhase.idle;
   RoomSnapshot? _room;
+  RoomSnapshot? _lastFinished;
 
   /// The last non-null seat and seat token this controller has ever seen,
   /// from any connection. Rule 5: never cleared except by [dispose], because
@@ -200,6 +201,10 @@ class RoomController extends ChangeNotifier {
 
   RoomPhase get phase => _phase;
   RoomSnapshot? get room => _room;
+
+  /// C-310 rule 1: the snapshot as it stood in FINISHED for the current room,
+  /// preserved across a rematch LOBBY until the new game starts.
+  RoomSnapshot? get lastFinished => _lastFinished;
   int? get seat => _cachedSeat;
   String? get seatToken => _cachedSeatToken;
   bool get hasDesynced => _hasDesynced;
@@ -319,6 +324,7 @@ class RoomController extends ChangeNotifier {
       // saw a seat_assigned (an older server, or nothing moved) does this
       // fall back to the resumeRoom argument.
       _room = snapshot;
+      _recordLastFinished(snapshot);
       _cachedSeat = connection.seat ?? seat;
       _cachedSeatToken = seatToken;
       _phase = RoomPhase.connected;
@@ -362,6 +368,7 @@ class RoomController extends ChangeNotifier {
         return;
       }
       _room = snapshot;
+      _clearLastFinished();
       _phase = RoomPhase.connected;
       _blocked = false;
       _errorCode = null;
@@ -430,6 +437,7 @@ class RoomController extends ChangeNotifier {
         return;
       }
       _room = snapshot;
+      _recordLastFinished(snapshot);
       _phase = RoomPhase.connected;
       _blocked = false;
       _hasDesynced = false;
@@ -730,6 +738,7 @@ class RoomController extends ChangeNotifier {
     }
     _leftCalled = true;
     _cancelAutoReconnect();
+    _clearLastFinished();
     final RoomConnection? connection = _connection;
     _connection = null;
     unawaited(_frameSub?.cancel());
@@ -759,6 +768,7 @@ class RoomController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _cancelAutoReconnect();
+    _clearLastFinished();
     unawaited(_frameSub?.cancel());
     _frameSub = null;
     unawaited(_connection?.close());
@@ -835,6 +845,19 @@ class RoomController extends ChangeNotifier {
     if (liveToken != null) {
       _cachedSeatToken = liveToken;
     }
+  }
+
+  /// C-310 rule 1: records the snapshot when it becomes FINISHED.
+  void _recordLastFinished(RoomSnapshot snapshot) {
+    if (snapshot.state == RoomState.finished) {
+      _lastFinished = snapshot;
+    }
+  }
+
+  /// C-310 rule 1: clears the finished snapshot when a new game starts, on
+  /// leaving the room, or when joining or creating another room.
+  void _clearLastFinished() {
+    _lastFinished = null;
   }
 
   /// Every frame the current connection produces, including every one this
@@ -948,6 +971,7 @@ class RoomController extends ChangeNotifier {
       return;
     }
     _room = decoded;
+    _recordLastFinished(decoded);
     _hasDesynced = false;
     notifyListeners();
   }
@@ -1148,6 +1172,7 @@ class RoomController extends ChangeNotifier {
       seq: seqValue,
       recentRolls: const <(int k, int face)>[],
     );
+    _clearLastFinished();
     notifyListeners();
   }
 
@@ -1425,6 +1450,7 @@ class RoomController extends ChangeNotifier {
             turn: turn,
             seq: seqValue,
           );
+    _recordLastFinished(_room!);
     notifyListeners();
   }
 
@@ -1485,6 +1511,7 @@ class RoomController extends ChangeNotifier {
             }
             _resyncInFlight = false;
             _room = snapshot;
+            _recordLastFinished(snapshot);
             _hasDesynced = false;
             notifyListeners();
           },
