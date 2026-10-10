@@ -24,6 +24,7 @@ import 'link_pages.dart';
 import 'privacy_page.dart';
 import 'rate_limit.dart';
 import 'registry.dart';
+import 'room.dart';
 import 'room_code.dart';
 import 'snapshot.dart';
 import 'verify_page.dart';
@@ -133,7 +134,7 @@ class WireServer {
     this.automaticTurnExpiry = true,
   })  : _random = random ?? Random.secure(),
         _trustedProxies = trustedProxies,
-        _hub = _ConnectionHub(),
+        _hub = _ConnectionHub(registry),
         _privacyHtml = buildPrivacyPageHtml(contactEmail: privacyContactEmail),
         _assetLinksJson = _buildAssetLinksJsonOrNull(
           // `bin/server.dart` is the entry point that reads every other
@@ -628,6 +629,9 @@ class WireServer {
 /// can find its own room on detach without `connection.dart` exposing any
 /// private state for that purpose.
 class _ConnectionHub implements RoomHub {
+  _ConnectionHub(this._registry);
+
+  final RoomRegistry _registry;
   final Map<String, Set<Connection>> _byRoom = <String, Set<Connection>>{};
   final Map<Connection, String> _roomByConnection = <Connection, String>{};
 
@@ -677,6 +681,22 @@ class _ConnectionHub implements RoomHub {
     required Map<String, Object?> data,
     Connection? exceptConn,
   }) {
+    final Room? room = _registry.lookup(code);
+    if (room != null) {
+      if (type == 'game_started') {
+        room.gameLog.clear();
+        room.gameLog.add(<String, Object?>{
+          't': type,
+          'd': Map<String, Object?>.of(data),
+        });
+      } else if (room.game != null && room.state != RoomState.lobby) {
+        room.gameLog.add(<String, Object?>{
+          't': type,
+          'd': Map<String, Object?>.of(data),
+        });
+      }
+    }
+
     final Set<Connection>? sockets = _byRoom[code];
     if (sockets == null) {
       return;
