@@ -123,7 +123,7 @@ different games.
 | `game_over` | `{ "winner": int, "verify_url": string }`. **No `seed`.** Nothing is withheld until the end any more: every roll's secret was already published in its own `rolled` frame, so a client can finish verifying before this frame arrives. `verify_url` is the permalink for later and for strangers. Section 11. |
 | `error` | `{ "code": string, "message": string }`, with `re` set when it answers a specific message. |
 | `pong` | `{ }` |
-| `game_log` | `{ "game_id": string, "frames": [ ... ] }`, the answer to a `game_log` request, to that socket only. Section 17. |
+| `game_log` | `{ "game_id": string, "part": int, "parts": int, "frames": [ ... ] }`, one part of the answer to a `game_log` request, to that socket only. Section 17. |
 
 `deadline_ms` is milliseconds remaining, not an absolute timestamp. Four phones
 do not agree on the wall clock and the client must not be asked to reconcile
@@ -1031,22 +1031,29 @@ it may have missed. It adds nothing a seat has not already been sent.
    rematch LOBBY): `WRONG_PHASE`. From a socket that holds no seat in the
    room: the same error `roll` gets from such a socket. Validated in the
    section 7 order like any other message.
-2. **Answer.** On the requesting socket only, `game_log`
-   `{ "game_id": string, "frames": [ ... ] }` with `re` set to the
-   request's `id`. `game_id` is the current game's. `frames` is every push
-   the room broadcast for the current game, from its `game_started` up to
-   the moment of the answer, in ascending `seq`, each as an object
+2. **Answer.** On the requesting socket only, one or more `game_log`
+   frames `{ "game_id": string, "part": int, "parts": int, "frames":
+   [ ... ] }`, each with `re` set to the request's `id`, sent back to back
+   with `part` running 1 to `parts`. `game_id` is the current game's.
+   Read in part order, the `frames` lists together are every push the
+   room broadcast for the current game, from its `game_started` up to the
+   moment of the answer, in ascending `seq`, each as an object
    `{ "t": string, "d": object }` holding exactly the type and the data a
    socket attached for the whole game received for that push (`seq`
    included, `re` never). Frames sent to one socket only (`seat_assigned`,
    errors, `pong`, a `room` that answers a request, another `game_log`) are
-   not in it.
+   not in it. **Every part, encoded as a whole frame, is at most 8192
+   bytes** (section 1 holds in both directions, and the client refuses a
+   larger frame). The server fills each part with as many whole log
+   entries as fit, in order; an entry is never split across parts. A game
+   whose log is empty is answered with one part and an empty list.
 3. **No state change.** It carries no `seq` of its own, changes nothing in
    the room and is never broadcast.
 4. **Rate.** At most 2 per minute per connection, then `RATE_LIMITED`
    (counted before the room checks, like the other per-message limits).
-   An answer can be large, several hundred frames for a long game; the
-   8192-byte cap of section 7 is on inbound frames only.
+   One request is answered by all of its parts; the parts do not count
+   against any limit. A long game is several hundred entries, so tens of
+   parts.
 5. **Lifetime.** The log belongs to the room's current game: a new
    `game_started` (a rematch) starts a new one, and it goes when the room
    goes.
@@ -1056,7 +1063,9 @@ it may have missed. It adds nothing a seat has not already been sent.
 7. **Tests this section requires before it is implemented.** A seat that
    stayed connected for a whole game and records every push from
    `game_started` gets exactly the same list, frame for frame, from a
-   `game_log` sent by another seat after `game_over`; the same mid-game;
+   `game_log` sent by another seat after `game_over`, reassembled from its
+   parts; the same mid-game; every part at most 8192 bytes encoded and a
+   long game spread over more than one part;
    `WRONG_PHASE` in LOBBY; an unseated socket refused; the third request
    in a minute `RATE_LIMITED`; after a rematch's `game_started` the log
    holds the new game only; the answer reaches the requester and no other
