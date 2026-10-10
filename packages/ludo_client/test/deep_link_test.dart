@@ -567,8 +567,9 @@ void main() {
   // --- the cold path, driven through initialLinkReader --------------------
 
   group('the cold path', () {
-    testWidgets('item 10: a valid cold link fills the room code field through '
-        'HomeScreen directly, and nothing navigates', (tester) async {
+    testWidgets('item 10: first-time player (empty memory): a valid cold '
+        'link fills the room code field through HomeScreen directly, and '
+        'nothing navigates', (tester) async {
       final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
       final _RecordingNavigatorObserver observer =
           _RecordingNavigatorObserver();
@@ -589,8 +590,9 @@ void main() {
       expect(find.byType(LobbyScreen), findsNothing);
     });
 
-    testWidgets('item 10: a valid cold link fills the room code field through '
-        'LudoApp, and nothing navigates', (tester) async {
+    testWidgets('item 10: first-time player (empty memory): a valid cold '
+        'link fills the room code field through LudoApp, and nothing '
+        'navigates', (tester) async {
       final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
       await tester.pumpWidget(_ludoApp(initialLinkReader: reader.call));
       await tester.pump();
@@ -912,8 +914,8 @@ void main() {
     );
 
     testWidgets(
-      'item 19: cold and warm, valid and invalid, none of it ever pushes '
-      'or pops a route',
+      'item 19: first-time player (empty memory): cold and warm, valid '
+      'and invalid, none of it pushes or pops a route',
       (tester) async {
         final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
         final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
@@ -946,8 +948,9 @@ void main() {
           observer.pushCount,
           pushesAfterLoad,
           reason:
-              'declaration rule B4: a link, valid or invalid, cold or warm, '
-              'must never push a route; a link never joins a room by itself',
+              'first-time player (empty memory): cold or warm, valid or '
+              'invalid, a link does not push a route. A known player with '
+              'a valid link is not this case',
         );
         expect(observer.popCount, popsAfterLoad);
         expect(observer.replaceCount, replacesAfterLoad);

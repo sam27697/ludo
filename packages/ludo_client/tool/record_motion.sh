@@ -9,6 +9,18 @@
 
 set -euo pipefail
 
+# en or ar. Default en when unset. The test reads this through
+# --dart-define; anything else is refused before the emulator is touched.
+MOTION_LOCALE="${MOTION_LOCALE-en}"
+case "$MOTION_LOCALE" in
+  en|ar) ;;
+  *)
+    echo "MOTION_LOCALE must be en or ar, got: ${MOTION_LOCALE}" >&2
+    exit 2
+    ;;
+esac
+echo "MOTION_LOCALE=${MOTION_LOCALE}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLIENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$CLIENT_DIR"
@@ -80,6 +92,7 @@ flutter drive \
   --profile \
   --driver=test_driver/integration_test.dart \
   --target=integration_test/motion_test.dart \
+  --dart-define=MOTION_LOCALE="$MOTION_LOCALE" \
   -d emulator-5554 2>&1 | tee motion/drive.log
 drive_exit="${PIPESTATUS[0]}"
 set -e

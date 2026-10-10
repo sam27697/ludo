@@ -126,12 +126,11 @@ class _GameScreenState extends State<GameScreen> {
   bool _noMoveVisible = false;
   int? _noMoveFace;
 
-  // C-243: every frame this screen's own subscription has seen since it
-  // mounted, in arrival order. The end card's GameStats is computed from
-  // exactly this list (see _gameOverBody), never from anywhere else, so a
-  // post-game number never traces back further than frames this device
-  // already held.
-  final List<Frame> _frames = <Frame>[];
+  // C-293 rule 3: the last `turn` frame in gameTranscript when this screen
+  // mounted, if any. Tied to mount time so the initial your_turn cue cannot
+  // play a second time through _onFrame.
+  Frame? _mountTurnFrame;
+  bool _checkedMountTurnCue = false;
 
   // C-246 rule 5: the `game_id` every per-game thing below is currently
   // reckoned against. Set from whatever the controller already held at
@@ -170,6 +169,7 @@ class _GameScreenState extends State<GameScreen> {
   void initState() {
     super.initState();
     _currentGameId = widget.controller.room?.gameId;
+    _mountTurnFrame = _lastTurnFrame(widget.controller.gameTranscript);
     widget.controller.addListener(_onControllerChanged);
     _frameSub = widget.controller.frames.listen(_onFrame);
     _syncCountdown();
@@ -178,6 +178,7 @@ class _GameScreenState extends State<GameScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _checkMountTurnCue();
     _syncAutoMove();
   }
 
@@ -192,6 +193,7 @@ class _GameScreenState extends State<GameScreen> {
     _endHoldLimitTimer?.cancel();
     _heldGameOverCues.clear();
     _isEndHeld = false;
+    _mountTurnFrame = null;
     _frameSub?.cancel();
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
@@ -223,7 +225,6 @@ class _GameScreenState extends State<GameScreen> {
       }
     }
 
-    _frames.add(frame);
     final List<FeedbackCue> cues = cuesForFrame(
       frame,
       mySeat: widget.controller.seat,
@@ -317,6 +318,40 @@ class _GameScreenState extends State<GameScreen> {
     for (final FeedbackCue cue in cues) {
       feedback.play(cue);
     }
+  }
+
+  /// C-293 rule 3: plays `your_turn` once at mount if the last `turn` frame
+  /// in `gameTranscript` at mount named my seat and the room still shows my
+  /// turn awaiting a roll. Guarded to run once.
+  void _checkMountTurnCue() {
+    if (_checkedMountTurnCue) {
+      return;
+    }
+    _checkedMountTurnCue = true;
+    final Frame? mountTurn = _mountTurnFrame;
+    if (mountTurn == null) {
+      return;
+    }
+    final int? mySeat = widget.controller.seat;
+    if (mySeat == null || _intAt(mountTurn.data, 'seat') != mySeat) {
+      return;
+    }
+    final TurnState? turn = widget.controller.room?.turn;
+    if (turn == null ||
+        turn.seat != mySeat ||
+        turn.phase != TurnPhase.awaitRoll) {
+      return;
+    }
+    FeedbackScope.of(context).play(FeedbackCue.yourTurn);
+  }
+
+  static Frame? _lastTurnFrame(List<Frame> transcript) {
+    for (int i = transcript.length - 1; i >= 0; i--) {
+      if (transcript[i].type == 'turn') {
+        return transcript[i];
+      }
+    }
+    return null;
   }
 
   void _holdLandingCues(int seat, int token, List<FeedbackCue> cues) {
@@ -434,7 +469,6 @@ class _GameScreenState extends State<GameScreen> {
   /// stops showing a playing board (FINISHED, then the rematch LOBBY in
   /// between), which a new game always passes through first.
   void _resetForNewGame() {
-    _frames.clear();
     _noMoveTimer?.cancel();
     _noMoveTimer = null;
     _noMoveVisible = false;
@@ -1530,17 +1564,17 @@ class _GameScreenState extends State<GameScreen> {
       }
     }
 
-    // C-232: this seat's own numbers, computed from exactly the frames
-    // this screen has already received. No entry in room.seats for my own
-    // seat (a spectator view, or a seat the server never confirmed) leaves
-    // nothing honest to show, not a guess.
+    // C-293 rule 2: this seat's own numbers, computed from controller's
+    // gameTranscript. No entry in room.seats for my own seat (a spectator
+    // view, or a seat the server never confirmed) leaves nothing honest to
+    // show, not a guess.
     GameStats? stats;
     final int? mySeat = controller.seat;
     if (mySeat != null) {
       for (final SeatState seatState in room.seats) {
         if (seatState.seat == mySeat) {
           stats = computeGameStats(
-            frames: _frames,
+            frames: controller.gameTranscript,
             seat: mySeat,
             finalTokens: seatState.tokens,
           );

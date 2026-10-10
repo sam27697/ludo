@@ -3362,12 +3362,13 @@ void main() {
   });
 
   // ==========================================================================
-  // 19, 20: order 240's (X14) winner's end view -- `game_over` naming my own
+  // 19, 20: order 240's (X14) winner's end view. `game_over` names my own
   // seat (0, Priya) as `winner`. No `turn` frame follows a `game_over`
-  // (docs/PROTOCOL.md section 13's own last line), so this fixture pushes
-  // none; the `turn` `game_started` already set is what
-  // `room_controller.dart`'s own `_reduceGameOver` carries forward into
-  // `TurnPhase.finished`, exactly as sections 14.1/14.2 require.
+  // (docs/PROTOCOL.md section 13's own last line); `_reduceGameOver`
+  // carries the current turn forward into `TurnPhase.finished`, exactly
+  // as sections 14.1/14.2 require. Before that push, `_playEndCardScript`
+  // plays a short game on this same transport so the four stat tiles are
+  // this seat's own rolls, sixes, captures and tokens home.
   // ==========================================================================
   testWidgets('capture 19-end-winner-en', (tester) async {
     binding.testTextInput.register();
@@ -3414,13 +3415,10 @@ void main() {
           code: roomCode,
           players: 2,
           hostSeat: 0,
-          // X19, the winner rig (order 255, item 3): a real game ends with
-          // all four of the winner's tokens at 57, home. My own seat (0)
-          // is the winner named by game_over below; without this, the
-          // winner's end card reads "0 home" instead of "4 home".
-          seats: <Map<String, Object?>>[
-            _seatJson(0, name: hostName, tokens: const <int>[57, 57, 57, 57]),
-          ],
+          // Tokens start in the yard. The script after game_started moves
+          // the winner's four onto 57; a room snapshot that already says
+          // 57 is not a played game.
+          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
           seq: 1,
         ),
       ),
@@ -3481,6 +3479,16 @@ void main() {
     );
     expect(find.byType(LobbyScreen), findsNothing);
 
+    // Seat 0 (Priya), the seat this card is about:
+    // rolls 6, sixes 1, captures 1, home 4.
+    final int gameOverSeq19 = await _playEndCardScript(
+      tester,
+      transport,
+      controller,
+      gameStartedSeq: 3,
+      priyaWins: true,
+    );
+
     // My own seat (0, Priya) is named winner.
     transport.pushText(
       _frame(
@@ -3488,7 +3496,7 @@ void main() {
         data: <String, Object?>{
           'winner': 0,
           'verify_url': 'https://verify.example.invalid/shot19',
-          'seq': 4,
+          'seq': gameOverSeq19,
         },
       ),
     );
@@ -3515,6 +3523,16 @@ void main() {
       controller: controller,
       expectedWinner: 0,
       expectedText: loc19.endWinTitle,
+      momentDescription:
+          'after the post-game-over settle, immediately before capture 19',
+    );
+    // rolls 6, sixes 1, captures 1, home 4.
+    _expectEndCardStatTiles(
+      tester,
+      rolls: 6,
+      sixes: 1,
+      captures: 1,
+      home: 4,
       momentDescription:
           'after the post-game-over settle, immediately before capture 19',
     );
@@ -3574,11 +3592,9 @@ void main() {
           code: roomCode,
           players: 2,
           hostSeat: 0,
-          // X19's own Arabic twin (order 255, item 3): same winner-tokens
-          // fix as capture 19, see its comment.
-          seats: <Map<String, Object?>>[
-            _seatJson(0, name: hostName, tokens: const <int>[57, 57, 57, 57]),
-          ],
+          // Same yard start as capture 19. The script moves the winner's
+          // four onto 57 after game_started.
+          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
           seq: 1,
         ),
       ),
@@ -3639,13 +3655,23 @@ void main() {
     );
     expect(find.byType(LobbyScreen), findsNothing);
 
+    // Seat 0 (Priya), the seat this card is about:
+    // rolls 6, sixes 1, captures 1, home 4.
+    final int gameOverSeq20 = await _playEndCardScript(
+      tester,
+      transport,
+      controller,
+      gameStartedSeq: 3,
+      priyaWins: true,
+    );
+
     transport.pushText(
       _frame(
         type: 'game_over',
         data: <String, Object?>{
           'winner': 0,
           'verify_url': 'https://verify.example.invalid/shot20',
-          'seq': 4,
+          'seq': gameOverSeq20,
         },
       ),
     );
@@ -3680,17 +3706,27 @@ void main() {
       momentDescription:
           'after the post-game-over settle, immediately before capture 20',
     );
+    // rolls 6, sixes 1, captures 1, home 4.
+    _expectEndCardStatTiles(
+      tester,
+      rolls: 6,
+      sixes: 1,
+      captures: 1,
+      home: 4,
+      momentDescription:
+          'after the post-game-over settle, immediately before capture 20',
+    );
 
     await binding.takeScreenshot('20-end-winner-ar');
   });
 
   // ==========================================================================
-  // 21, 22: order 240's (X14) loser's end view -- `game_over` naming the
-  // other seat (1, Karim) as `winner`, so `_winnerText`'s second branch
-  // (game_screen.dart) is what this capture is evidence for:
-  // `loc.endLoseTitle(seatState.name)`, looked up from this tree's own
-  // AppLocalizations and the opponent's own name off controller.room, not
-  // hardcoded here.
+  // 21, 22: order 240's (X14) loser's end view. `game_over` names the
+  // other seat (1, Karim) as `winner`, so the lose title is what this
+  // capture is evidence for: `loc.endLoseTitle(seatState.name)`, looked up
+  // from this tree's own AppLocalizations and the opponent's own name off
+  // controller.room, not hardcoded here. The card's four tiles are Priya's
+  // own numbers from `_playEndCardScript`, not Karim's.
   // ==========================================================================
   testWidgets('capture 21-end-loser-en', (tester) async {
     binding.testTextInput.register();
@@ -3759,34 +3795,6 @@ void main() {
     );
     await tester.pump();
 
-    // X19's winner-tokens fix (order 255, item 3), carried over to the
-    // loser's own view: `game_over` below names seat 1 (Karim) the
-    // winner, and a real game ends with all four of the winner's tokens
-    // at 57, home. `player_joined` itself cannot carry that (the server
-    // always seeds a freshly joined seat's tokens at four -1s,
-    // room_controller.dart's own `_reducePlayerJoined`), so an ordinary
-    // unsolicited `room` resync carries it instead -- every other field
-    // unchanged from the create_room reply above, only seat 1's tokens
-    // set. Bumps the running seq to 3, so game_started below moves to 4
-    // and game_over to 5.
-    transport.pushText(
-      _frame(
-        type: 'room',
-        data: _roomJson(
-          code: roomCode,
-          players: 2,
-          hostSeat: 0,
-          seats: <Map<String, Object?>>[
-            _seatJson(0, name: hostName),
-            _seatJson(1, name: 'Karim', tokens: const <int>[57, 57, 57, 57]),
-          ],
-          seq: 3,
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
     await _expectLobbyScreen(
       tester,
       localeName: 'en',
@@ -3812,7 +3820,7 @@ void main() {
           'turn': 0,
           'game_id': 'g' * 16,
           'client_seeds': '0:seed',
-          'seq': 4,
+          'seq': 3,
         },
       ),
     );
@@ -3826,6 +3834,17 @@ void main() {
     );
     expect(find.byType(LobbyScreen), findsNothing);
 
+    // Seat 0 (Priya), the seat this card is about:
+    // rolls 2, sixes 1, captures 0, home 0.
+    // Karim is the capturing seat; his four tokens reach 57 by moved.
+    final int gameOverSeq21 = await _playEndCardScript(
+      tester,
+      transport,
+      controller,
+      gameStartedSeq: 3,
+      priyaWins: false,
+    );
+
     // The other seat (1, Karim) is named winner.
     transport.pushText(
       _frame(
@@ -3833,7 +3852,7 @@ void main() {
         data: <String, Object?>{
           'winner': 1,
           'verify_url': 'https://verify.example.invalid/shot21',
-          'seq': 5,
+          'seq': gameOverSeq21,
         },
       ),
     );
@@ -3860,6 +3879,16 @@ void main() {
       controller: controller,
       expectedWinner: 1,
       expectedText: loc21.endLoseTitle('Karim'),
+      momentDescription:
+          'after the post-game-over settle, immediately before capture 21',
+    );
+    // rolls 2, sixes 1, captures 0, home 0.
+    _expectEndCardStatTiles(
+      tester,
+      rolls: 2,
+      sixes: 1,
+      captures: 0,
+      home: 0,
       momentDescription:
           'after the post-game-over settle, immediately before capture 21',
     );
@@ -3941,27 +3970,6 @@ void main() {
     );
     await tester.pump();
 
-    // X19's winner-tokens fix (order 255, item 3), carried over to the
-    // loser's own view: see capture 21's own comment on the identical
-    // push just above it.
-    transport.pushText(
-      _frame(
-        type: 'room',
-        data: _roomJson(
-          code: roomCode,
-          players: 2,
-          hostSeat: 0,
-          seats: <Map<String, Object?>>[
-            _seatJson(0, name: hostName),
-            _seatJson(1, name: 'Karim', tokens: const <int>[57, 57, 57, 57]),
-          ],
-          seq: 3,
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
     await _expectLobbyScreen(
       tester,
       localeName: 'ar',
@@ -3987,7 +3995,7 @@ void main() {
           'turn': 0,
           'game_id': 'h' * 16,
           'client_seeds': '0:seed',
-          'seq': 4,
+          'seq': 3,
         },
       ),
     );
@@ -4001,13 +4009,24 @@ void main() {
     );
     expect(find.byType(LobbyScreen), findsNothing);
 
+    // Seat 0 (Priya), the seat this card is about:
+    // rolls 2, sixes 1, captures 0, home 0.
+    // Karim is the capturing seat; his four tokens reach 57 by moved.
+    final int gameOverSeq22 = await _playEndCardScript(
+      tester,
+      transport,
+      controller,
+      gameStartedSeq: 3,
+      priyaWins: false,
+    );
+
     transport.pushText(
       _frame(
         type: 'game_over',
         data: <String, Object?>{
           'winner': 1,
           'verify_url': 'https://verify.example.invalid/shot22',
-          'seq': 5,
+          'seq': gameOverSeq22,
         },
       ),
     );
@@ -4039,6 +4058,16 @@ void main() {
       controller: controller,
       expectedWinner: 1,
       expectedText: loc22.endLoseTitle('Karim'),
+      momentDescription:
+          'after the post-game-over settle, immediately before capture 22',
+    );
+    // rolls 2, sixes 1, captures 0, home 0.
+    _expectEndCardStatTiles(
+      tester,
+      rolls: 2,
+      sixes: 1,
+      captures: 0,
+      home: 0,
       momentDescription:
           'after the post-game-over settle, immediately before capture 22',
     );
@@ -4860,6 +4889,342 @@ void _expectCapturedTokenHome(
         '(seat $capturedSeat, token $capturedToken) to read -1 (back in '
         'its yard) in controller.room!.seats -- the same RoomController '
         'GameScreen renders from -- got ${seatState.tokens[capturedToken]}',
+  );
+}
+
+/// 64 lowercase hex. The client does not read `reveal`
+/// (room_controller.dart `_reduceRolled`: not required, not stored).
+/// Same shape as integration_test/motion_test.dart.
+String _endCardReveal(int k) => k.toRadixString(16).padLeft(64, '0');
+
+// motion_test.dart's `_deadlineMs`. A `rolled` or `turn` without it is
+// ignored by the reducer, and the next seq then looks like a gap.
+const int _endCardDeadlineMs = 45000;
+
+List<int> _endCardTokens(RoomController controller, int seat) {
+  final SeatState seatState = controller.room!.seats.firstWhere(
+    (SeatState s) => s.seat == seat,
+    orElse: () => throw TestFailure(
+      'end-card script: seat $seat absent from controller.room!.seats',
+    ),
+  );
+  return seatState.tokens;
+}
+
+/// Plays the short two-seat game captures 19-22 photograph, on the same
+/// [transport] the capture already used, with `seq` continuous from
+/// [gameStartedSeq].
+///
+/// Frame fields match integration_test/motion_test.dart: `rolled` carries
+/// seat, value, legal, deadline_ms, k, reveal and seq; `moved` carries
+/// seat, token, from, to, captured, extra_roll and seq; `turn` carries
+/// seat, deadline_ms and seq. Each roll is followed by one move, then a
+/// `turn`, except the last move of the game. The capture pushes
+/// `game_over` itself, and no `turn` follows that.
+///
+/// Every frame is pushed before the two pumps below. The board therefore
+/// sees one net change rather than a queue of single steps, and snaps.
+/// The snap clears the in-flight travel count, so the caller's
+/// `game_over` is not held behind a move that has not landed, and the
+/// capture's existing read of the end card straight after `game_over`
+/// still holds.
+///
+/// [priyaWins] true (captures 19 and 20). Seat 0's own frames, in order:
+/// rolled 6 and token 0 from -1 to 0; rolled 4 and token 0 from 0 to 4
+/// capturing seat 1 token 0; rolled 1 and token 1 from -1 to 57; rolled 1
+/// and token 2 from -1 to 57; rolled 1 and token 3 from -1 to 57; rolled 1
+/// and token 0 from 4 to 57. That is rolls 6, sixes 1, captures 1, home 4.
+/// Karim's opening 6 and 4 only put his token 0 on square 4 so there is a
+/// token to capture. They are not seat 0's numbers.
+///
+/// [priyaWins] false (captures 21 and 22). Seat 0's own frames: rolled 6
+/// and token 0 from -1 to 0; rolled 3 and token 0 from 0 to 3. That is
+/// rolls 2, sixes 1, captures 0, home 0. Karim, the capturing seat, then
+/// rolls a 6, rolls a 3 that captures seat 0 token 0, and moves each of
+/// his four tokens to 57. His six and his capture are in the script; the
+/// card shows Priya's numbers, not his.
+///
+/// Returns the seq the capture's `game_over` must carry: one past the
+/// last frame pushed here.
+Future<int> _playEndCardScript(
+  WidgetTester tester,
+  FakeTransport transport,
+  RoomController controller, {
+  required int gameStartedSeq,
+  required bool priyaWins,
+}) async {
+  expect(
+    controller.room?.seq,
+    gameStartedSeq,
+    reason:
+        'end-card script: room seq is ${controller.room?.seq}, expected '
+        '$gameStartedSeq (the game_started this capture already pushed)',
+  );
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason: 'end-card script: already desynced before the first roll',
+  );
+
+  var seq = gameStartedSeq;
+  var k = 0;
+
+  void pushRolled(int seat, int face, List<int> legal) {
+    k += 1;
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'rolled',
+        data: <String, Object?>{
+          'seat': seat,
+          'value': face,
+          'legal': legal,
+          'deadline_ms': _endCardDeadlineMs,
+          'k': k,
+          'reveal': _endCardReveal(k),
+          'seq': seq,
+        },
+      ),
+    );
+  }
+
+  void pushMoved(
+    int seat,
+    int token,
+    int from,
+    int to, {
+    List<(int, int)> captured = const <(int, int)>[],
+    required bool extra,
+  }) {
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'moved',
+        data: <String, Object?>{
+          'seat': seat,
+          'token': token,
+          'from': from,
+          'to': to,
+          'captured': <Object?>[
+            for (final (int capturedSeat, int capturedToken) in captured)
+              <String, Object?>{'seat': capturedSeat, 'token': capturedToken},
+          ],
+          'extra_roll': extra,
+          'seq': seq,
+        },
+      ),
+    );
+  }
+
+  void pushTurn(int seat) {
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'turn',
+        data: <String, Object?>{
+          'seat': seat,
+          'deadline_ms': _endCardDeadlineMs,
+          'seq': seq,
+        },
+      ),
+    );
+  }
+
+  void play({
+    required int seat,
+    required int face,
+    required int token,
+    required int from,
+    required int to,
+    List<(int, int)> captured = const <(int, int)>[],
+    required bool extra,
+    int? turnSeat,
+  }) {
+    pushRolled(seat, face, <int>[token]);
+    pushMoved(seat, token, from, to, captured: captured, extra: extra);
+    if (turnSeat != null) {
+      pushTurn(turnSeat);
+    }
+  }
+
+  if (priyaWins) {
+    play(seat: 1, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 1);
+    play(seat: 1, face: 4, token: 0, from: 0, to: 4, extra: false, turnSeat: 0);
+    play(seat: 0, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 0);
+    play(
+      seat: 0,
+      face: 4,
+      token: 0,
+      from: 0,
+      to: 4,
+      captured: const <(int, int)>[(1, 0)],
+      extra: true,
+      turnSeat: 0,
+    );
+    play(
+      seat: 0,
+      face: 1,
+      token: 1,
+      from: -1,
+      to: 57,
+      extra: false,
+      turnSeat: 0,
+    );
+    play(
+      seat: 0,
+      face: 1,
+      token: 2,
+      from: -1,
+      to: 57,
+      extra: false,
+      turnSeat: 0,
+    );
+    play(
+      seat: 0,
+      face: 1,
+      token: 3,
+      from: -1,
+      to: 57,
+      extra: false,
+      turnSeat: 0,
+    );
+    play(seat: 0, face: 1, token: 0, from: 4, to: 57, extra: false);
+  } else {
+    play(seat: 0, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 0);
+    play(seat: 0, face: 3, token: 0, from: 0, to: 3, extra: false, turnSeat: 1);
+    play(seat: 1, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 1);
+    play(
+      seat: 1,
+      face: 3,
+      token: 0,
+      from: 0,
+      to: 3,
+      captured: const <(int, int)>[(0, 0)],
+      extra: true,
+      turnSeat: 1,
+    );
+    play(
+      seat: 1,
+      face: 1,
+      token: 1,
+      from: -1,
+      to: 57,
+      extra: false,
+      turnSeat: 1,
+    );
+    play(
+      seat: 1,
+      face: 1,
+      token: 2,
+      from: -1,
+      to: 57,
+      extra: false,
+      turnSeat: 1,
+    );
+    play(
+      seat: 1,
+      face: 1,
+      token: 3,
+      from: -1,
+      to: 57,
+      extra: false,
+      turnSeat: 1,
+    );
+    play(seat: 1, face: 1, token: 0, from: 3, to: 57, extra: false);
+  }
+
+  await tester.pump();
+  await tester.pump();
+
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason:
+        'end-card script: seq gap (room seq ${controller.room?.seq}, '
+        'last pushed seq $seq)',
+  );
+  expect(
+    controller.room?.state,
+    RoomState.playing,
+    reason: 'end-card script must still be in play when it returns',
+  );
+  final int winnerSeat = priyaWins ? 0 : 1;
+  expect(
+    _endCardTokens(controller, winnerSeat),
+    <int>[57, 57, 57, 57],
+    reason:
+        'end-card script: seat $winnerSeat tokens must read 57 from the '
+        'moved frames above, got ${_endCardTokens(controller, winnerSeat)}',
+  );
+  if (!priyaWins) {
+    expect(
+      _endCardTokens(controller, 0),
+      <int>[-1, -1, -1, -1],
+      reason:
+          'end-card script: seat 0 was captured and has nothing on 57, '
+          'got ${_endCardTokens(controller, 0)}',
+    );
+  }
+  return seq + 1;
+}
+
+/// Captures 19-22: the four stat tiles are on screen and each shows the
+/// count passed in. Callers pass literals and name the same counts in a
+/// comment beside the call.
+void _expectEndCardStatTiles(
+  WidgetTester tester, {
+  required int rolls,
+  required int sixes,
+  required int captures,
+  required int home,
+  required String momentDescription,
+}) {
+  _expectOneEndCardStat(
+    tester,
+    keyName: 'end-card-stat-rolls',
+    count: rolls,
+    momentDescription: momentDescription,
+  );
+  _expectOneEndCardStat(
+    tester,
+    keyName: 'end-card-stat-sixes',
+    count: sixes,
+    momentDescription: momentDescription,
+  );
+  _expectOneEndCardStat(
+    tester,
+    keyName: 'end-card-stat-captures',
+    count: captures,
+    momentDescription: momentDescription,
+  );
+  _expectOneEndCardStat(
+    tester,
+    keyName: 'end-card-stat-home',
+    count: home,
+    momentDescription: momentDescription,
+  );
+}
+
+void _expectOneEndCardStat(
+  WidgetTester tester, {
+  required String keyName,
+  required int count,
+  required String momentDescription,
+}) {
+  final Finder tile = find.byKey(Key(keyName));
+  expect(
+    tile,
+    findsOneWidget,
+    reason:
+        'capture 19/20/21/22 ($momentDescription): expected $keyName on '
+        'screen',
+  );
+  expect(
+    find.descendant(of: tile, matching: find.text('$count')),
+    findsOneWidget,
+    reason:
+        'capture 19/20/21/22 ($momentDescription): expected $keyName to '
+        'show $count',
   );
 }
 

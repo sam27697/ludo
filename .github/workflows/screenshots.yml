@@ -141,6 +141,15 @@ jobs:
 
   motion:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        locale: [en, ar]
+    # Job env, not an assignment inside `script:`. android-emulator-runner
+    # passes each script line to its own `sh -c`, which would drop an inline
+    # MOTION_LOCALE= before record_motion.sh starts.
+    env:
+      MOTION_LOCALE: ${{ matrix.locale }}
     defaults:
       run:
         working-directory: packages/ludo_client
@@ -198,6 +207,6 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: motion-recording
+          name: motion-recording-${{ matrix.locale }}
           path: packages/ludo_client/motion/*
           if-no-files-found: warn
