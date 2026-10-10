@@ -1589,10 +1589,12 @@ class _GameScreenState extends State<GameScreen> {
     // server's game_log when fetched. An incomplete transcript falls back to
     // "N home" alone while the fetch is in flight or if it fails.
     GameStats? stats;
+    int? stepsLeft;
     final int? mySeat = controller.seat;
     if (mySeat != null) {
       for (final SeatState seatState in room.seats) {
         if (seatState.seat == mySeat) {
+          stepsLeft = stepsLeftOf(seatState.tokens);
           final GameStats localStats = computeGameStats(
             frames: controller.gameTranscript,
             seat: mySeat,
@@ -1641,6 +1643,7 @@ class _GameScreenState extends State<GameScreen> {
             winnerName: winnerName,
             seatColors: LudoColors.seats,
             stats: stats,
+            stepsLeft: stepsLeft,
             verifyUrl: room.verifyUrl,
             onVerify: _openVerifyUrl,
             onNewTable: _requestNewTable,
