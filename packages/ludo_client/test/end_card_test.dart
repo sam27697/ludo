@@ -146,6 +146,8 @@ Map<String, Object?> _decode(String text) =>
 
 String _idOf(String sentText) => _decode(sentText)['id']! as String;
 
+String _typeOf(String sentText) => _decode(sentText)['t']! as String;
+
 // --- a minimal valid docs/PROTOCOL.md section 6 room snapshot ---------------
 
 Map<String, Object?> _seatJson(
@@ -650,7 +652,40 @@ Future<(RoomController, FakeTransport)> _gapWinGame(WidgetTester tester) async {
   await s.moved(seat: 0, token: 0, from: 4, to: 57); // tokensHome: 0 -> 1
   await s.gameOver(winner: 0, verifyUrl: _gapVerifyUrl);
   await _pumpPastEndCardHold(tester);
+  // The gap leaves the transcript incomplete, so the end card asks for
+  // game_log once. A real server answers. RATE_LIMITED is the honest
+  // fallback C-304 keeps: home alone, and the request's timer is done.
+  await _refuseGameLog(tester, transport);
   return (controller, transport);
+}
+
+/// Answers every `game_log` already on [transport.sentRaw] with an `error`
+/// frame, `re` set to that request's id. No request means nothing is sent:
+/// a client that never asks sees the same fixture it always did.
+Future<void> _refuseGameLog(
+  WidgetTester tester,
+  FakeTransport transport,
+) async {
+  final List<String> requestIds = <String>[];
+  for (final String raw in transport.sentRaw) {
+    if (_typeOf(raw) == 'game_log') {
+      requestIds.add(_idOf(raw));
+    }
+  }
+  if (requestIds.isEmpty) {
+    return;
+  }
+  for (final String requestId in requestIds) {
+    transport.pushText(
+      _frame(
+        type: 'error',
+        re: requestId,
+        data: <String, Object?>{'code': 'RATE_LIMITED', 'message': 'game_log'},
+      ),
+    );
+  }
+  await tester.pump();
+  await tester.pump();
 }
 
 /// A room that ended with no winner named and no `game_over` ever sent --
@@ -1191,8 +1226,16 @@ void main() {
       'with a frame gap, only end-card-stat-home is shown, and it is still '
       'correct',
       (tester) async {
-        await _gapWinGame(tester);
+        final (_, FakeTransport transport) = await _gapWinGame(tester);
 
+        expect(
+          transport.sentRaw.where((String raw) => _typeOf(raw) == 'game_log'),
+          hasLength(1),
+          reason:
+              'gap, ask, refused, home alone: the incomplete transcript '
+              'sends one game_log, the fixture answers RATE_LIMITED, and '
+              'only end-card-stat-home is shown',
+        );
         expect(
           find.byKey(_statRollsKey),
           findsNothing,
