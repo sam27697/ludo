@@ -1546,7 +1546,7 @@ void main() {
             'endLoseTitle(name) under ar must be the contract\'s own '
             'wording; got "${loc.endLoseTitle('Bob')}"',
       );
-      expect(loc.endLoseNudge, 'كانت قريبة. جولة أخرى؟');
+      expect(loc.endLoseNudge, 'لعبة جيدة. جولة أخرى؟');
 
       expect(_titleText(tester, _winnerTitleKey), loc.endLoseTitle('Bob'));
       final String blob = _blobUnder(tester, find.byType(GameScreen));

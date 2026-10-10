@@ -200,3 +200,40 @@ GameStats computeGameStats({
     complete: !malformed,
   );
 }
+
+/// The threshold at or below which a loss is considered near home (C-307):
+/// two sixes' worth of squares (12) across all four tokens.
+const int kNearFinishSquares = 12;
+
+/// Total squares remaining for a seat to bring all four tokens home (C-307).
+///
+/// Each token at progress `p` (0..56) has `57 - p` squares left to reach
+/// home (57). A yard token (-1) counts 58 squares because it needs a six to
+/// enter at 0 and then 57 steps home.
+///
+/// Reads only [finalTokens], never the transcript, so the count is right
+/// even when reconnects leave a gap in the frames (C-232).
+///
+/// Throws [ArgumentError] if [finalTokens] is not of length 4 or any progress
+/// is outside -1..57. Reject, never repair.
+int stepsLeftOf(List<int> finalTokens) {
+  if (finalTokens.length != 4) {
+    throw ArgumentError.value(finalTokens, 'finalTokens', 'must have length 4');
+  }
+  int sum = 0;
+  for (final int token in finalTokens) {
+    if (token < -1 || token > 57) {
+      throw ArgumentError.value(
+        token,
+        'finalTokens',
+        'token progress must be in -1..57',
+      );
+    }
+    if (token == -1) {
+      sum += 58;
+    } else {
+      sum += 57 - token;
+    }
+  }
+  return sum;
+}

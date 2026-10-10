@@ -396,9 +396,18 @@
       }
     }
   },
-  "endLoseNudge": "So close. One more?",
+  "endLoseNudge": "Good game. One more?",
   "@endLoseNudge": {
-    "description": "Warm line under the loser's end-card title, inviting another game rather than stating a result."
+    "description": "Warm line under the loser's end-card title for a loss that was not close and makes no claim about the margin."
+  },
+  "endLoseNear": "{count, plural, =1{One square from home. One more?} other{Only {count} squares from home. One more?}}",
+  "@endLoseNear": {
+    "description": "Loser's end-card line when their tokens finished within a few squares of home; count is the squares left.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "endStatRolls": "rolls",
   "@endStatRolls": {
