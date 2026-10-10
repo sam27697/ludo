@@ -87,6 +87,18 @@ class _HomeScreenState extends State<HomeScreen>
   // H2's per-controller dedupe for the finished/seat-gone clear, reset the
   // same way.
   bool _seatClearedForOwned = false;
+  // Order 296: session memory must finish loading before deciding whether a
+  // link joins or leaves the code filled for a first-time player.
+  bool _sessionMemoryLoaded = false;
+  // Order 296 rule 5: a link arriving before session memory loads is held
+  // until the load finishes, with the latest link winning.
+  Uri? _pendingLinkUri;
+  // Order 296 rule 5b: bounded hold on a pending link before falling back to
+  // the first-time player behaviour.
+  Timer? _linkHoldTimer;
+  // Order 296 rule 6: guards against pushing duplicate routes when Android
+  // delivers the same link through both initial link reader and the stream.
+  bool _linkJoinInFlight = false;
   // Order 194: reach the join button's and the code field's render objects
   // from _handleLink without disturbing the Key('join-room-button') /
   // Key('room-code-field') values the rest of the suite finds those widgets
@@ -149,13 +161,19 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  /// Applies a room code found in an incoming link to the code field.
+  /// Applies a room code found in an incoming link to the code field, and
+  /// joins or rejoins the room when the player is known and Home is the
+  /// current route (order 296).
   ///
-  /// This never navigates: a link only pre-fills and validates the code, the
-  /// same way a player pastes one in by hand, and the player still taps Join
-  /// themselves. That holds whether the home screen is the front-most route
-  /// or another route (a lobby, a game) is currently pushed above it; either
-  /// way nothing here pops or pushes anything.
+  /// A returning player whose session memory held a name from an earlier
+  /// table navigates straight into the room: [LobbyAction.join] with the
+  /// pre-filled code, or [LobbyAction.resume] when the memory holds a seat
+  /// record for that same code.
+  ///
+  /// Navigation does not happen and the code is only pre-filled when the
+  /// player is first-time (their name is still needed, so Join remains
+  /// their tap), when another route (a lobby, a game) is currently pushed
+  /// above Home (rule B5), or when the code is invalid.
   void _handleLink(Uri uri) {
     if (!mounted) {
       return;
@@ -178,18 +196,115 @@ class _HomeScreenState extends State<HomeScreen>
         _errorText = loc.homeRoomCodeInvalid;
       }
     });
-    // Run 57: the code field a link fills sits at the bottom edge of the
-    // screen and Join Room can be below the fold, so scroll the one the
-    // player actually needs into view once the frame above has painted the
-    // code (or the error) this setState just wrote. Deferred past the
-    // current frame because the target's RenderBox from a GlobalKey attached
-    // this same build is not guaranteed to be laid out until then.
+    if (!codeIsValid) {
+      // Rule 4: an invalid code never joins, clears any link pending on
+      // session memory (the latest link wins), and keeps the error scroll.
+      _pendingLinkUri = null;
+      _linkHoldTimer?.cancel();
+      _linkHoldTimer = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        _scrollLinkTargetIntoView(codeIsValid: false);
+      });
+      return;
+    }
+    if (!_sessionMemoryLoaded) {
+      // Rule 5: held until session memory finishes loading; the latest
+      // incoming link wins.
+      // Rule 5b: bounded to 500 ms, so a store that never answers cannot
+      // hold a link forever; past that it is treated as a first-time player.
+      _pendingLinkUri = uri;
+      _linkHoldTimer ??= Timer(
+        const Duration(milliseconds: 500),
+        _onLinkHoldTimeout,
+      );
+      return;
+    }
+    _decideLinkAction(code);
+  }
+
+  /// Evaluates whether an incoming link with valid [code] can push into the
+  /// room or should leave the code filled in place (order 296).
+  void _decideLinkAction(String code) {
+    if (!mounted) {
+      return;
+    }
+    final bool isCurrent = ModalRoute.of(context)?.isCurrent ?? false;
+    if (isCurrent && !_linkJoinInFlight && _hasLastTable) {
+      final SeatRecord? record = _seatRecord;
+      if (record != null && record.code == code) {
+        unawaited(_joinFromLink(rejoin: true, seatRecord: record));
+      } else {
+        unawaited(_joinFromLink(rejoin: false));
+      }
+      return;
+    }
+    // Run 57: first-time player (rule 2) or home screen sitting underneath
+    // an existing route (rule 3) scrolls the target into view rather than
+    // navigating.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
       }
-      _scrollLinkTargetIntoView(codeIsValid: codeIsValid);
+      _scrollLinkTargetIntoView(codeIsValid: true);
     });
+  }
+
+  /// Resolves any pending link held while session memory was loading
+  /// (rule 5).
+  void _drainPendingLink() {
+    _linkHoldTimer?.cancel();
+    _linkHoldTimer = null;
+    final Uri? uri = _pendingLinkUri;
+    _pendingLinkUri = null;
+    if (uri == null) {
+      return;
+    }
+    final String? code = roomCodeFromUri(uri);
+    if (code == null) {
+      return;
+    }
+    _decideLinkAction(code);
+  }
+
+  /// Decides a pending link held while session memory was loading as a
+  /// first-time player when the 500 ms hold bound expires (order 296 rule 5b).
+  void _onLinkHoldTimeout() {
+    _linkHoldTimer = null;
+    if (!mounted) {
+      return;
+    }
+    final Uri? uri = _pendingLinkUri;
+    _pendingLinkUri = null;
+    if (uri == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _scrollLinkTargetIntoView(codeIsValid: true);
+    });
+  }
+
+  /// Runs a link-driven join or rejoin, guarding against duplicate pushes
+  /// while the route is in flight (rule 6).
+  Future<void> _joinFromLink({
+    required bool rejoin,
+    SeatRecord? seatRecord,
+  }) async {
+    _linkJoinInFlight = true;
+    try {
+      if (rejoin && seatRecord != null) {
+        await _rejoinRoom(seatRecord);
+      } else {
+        await _joinRoom();
+      }
+    } finally {
+      _linkJoinInFlight = false;
+    }
   }
 
   /// Scrolls the join button (a valid code) or the code field (an invalid
@@ -255,35 +370,45 @@ class _HomeScreenState extends State<HomeScreen>
   /// recent join codes, and a seat record held across a process kill (H3)
   /// from [SessionMemory]. An empty or unreadable store leaves the
   /// localised name default, the four-seat disclosure, no recent chips and
-  /// no rejoin button as they are.
+  /// no rejoin button as they are. The load itself returns empty on failure,
+  /// so nothing is caught here. Completing the load marks session memory as
+  /// loaded and drains any pending room link (order 296).
   Future<void> _restoreSessionMemory() async {
-    final SessionMemory memory = await SessionMemory.load();
-    if (!mounted) {
-      return;
+    try {
+      final SessionMemory memory = await SessionMemory.load();
+      if (!mounted) {
+        return;
+      }
+      final bool hasTable = memory.hasLastTable;
+      final bool hasCodes = memory.recentCodes.isNotEmpty;
+      final SeatRecord? seatRecord = memory.seatRecord;
+      if (hasTable || hasCodes || seatRecord != null) {
+        setState(() {
+          if (hasCodes) {
+            _recentCodes = List<String>.from(memory.recentCodes);
+          }
+          if (hasTable) {
+            final String name = memory.lastName!;
+            final int seats = memory.lastSeats!;
+            _hasLastTable = true;
+            _lastTableName = name;
+            _lastTableSeats = seats;
+            _nameController.text = name;
+            _players = seats;
+          }
+          if (seatRecord != null) {
+            _seatRecord = seatRecord;
+          }
+        });
+      }
+    } finally {
+      _linkHoldTimer?.cancel();
+      _linkHoldTimer = null;
+      _sessionMemoryLoaded = true;
+      if (mounted) {
+        _drainPendingLink();
+      }
     }
-    final bool hasTable = memory.hasLastTable;
-    final bool hasCodes = memory.recentCodes.isNotEmpty;
-    final SeatRecord? seatRecord = memory.seatRecord;
-    if (!hasTable && !hasCodes && seatRecord == null) {
-      return;
-    }
-    setState(() {
-      if (hasCodes) {
-        _recentCodes = List<String>.from(memory.recentCodes);
-      }
-      if (hasTable) {
-        final String name = memory.lastName!;
-        final int seats = memory.lastSeats!;
-        _hasLastTable = true;
-        _lastTableName = name;
-        _lastTableSeats = seats;
-        _nameController.text = name;
-        _players = seats;
-      }
-      if (seatRecord != null) {
-        _seatRecord = seatRecord;
-      }
-    });
   }
 
   /// Prefills the name field with the localised default on first paint, and
@@ -331,10 +456,12 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _linkSubscription?.cancel();
+    _linkHoldTimer?.cancel();
     _codeController.removeListener(_clearErrorOnEdit);
     _codeController.dispose();
     _nameController.dispose();
     _enter.dispose();
+    _pendingLinkUri = null;
     final RoomController? owned = _ownedController;
     _ownedController = null;
     // H1/H2: this screen's own life is the other end of the "as long as

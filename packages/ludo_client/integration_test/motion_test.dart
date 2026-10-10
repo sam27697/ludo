@@ -1,6 +1,7 @@
 // Recording script for one two-seat game, Priya (seat 0) against Karim
-// (seat 1), in English. Order 289 records the screen; this file only
-// plays the game and holds still, in real time, through each animation.
+// (seat 1). The locale comes from MOTION_LOCALE. Order 289 records the
+// screen; this file only plays the game and holds still, in real time,
+// through each animation.
 // It asserts the facts that keep that script honest, not pixels.
 //
 // The harness, the controller factory and the frame builders are copied
@@ -142,8 +143,13 @@ class _MotionHarness extends StatefulWidget {
   State<_MotionHarness> createState() => _MotionHarnessState();
 }
 
+const String _motionLocale = String.fromEnvironment(
+  'MOTION_LOCALE',
+  defaultValue: 'en',
+);
+
 class _MotionHarnessState extends State<_MotionHarness> {
-  Locale _locale = const Locale('en');
+  Locale _locale = const Locale(_motionLocale);
 
   void _toggleLocale() {
     setState(() {
@@ -595,7 +601,7 @@ void main() {
     final AppLocalizations homeLoc = AppLocalizations.of(
       tester.element(find.byType(HomeScreen)),
     );
-    expect(homeLoc.localeName, 'en');
+    expect(homeLoc.localeName, _motionLocale);
 
     const String hostName = 'Priya';
     await tester.enterText(find.byKey(const Key('home-name-field')), hostName);

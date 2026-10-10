@@ -16,6 +16,7 @@
 // comes back with the server's own snapshot.
 
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 
@@ -167,6 +168,9 @@ class RoomController extends ChangeNotifier {
   StreamSubscription<Frame>? _frameSub;
   final StreamController<Frame> _framesController =
       StreamController<Frame>.broadcast();
+  final List<Frame> _gameTranscript = <Frame>[];
+  bool _hasOpenedTranscript = false;
+  String? _transcriptGameId;
 
   bool _disposed = false;
 
@@ -227,6 +231,12 @@ class RoomController extends ChangeNotifier {
   /// attached before a drop keeps receiving frames from the connection
   /// [reconnect] opens afterwards.
   Stream<Frame> get frames => _framesController.stream;
+
+  /// C-293 rule 1: every frame delivered from the most recent `game_started`
+  /// onward, in arrival order. Empty before any `game_started`. An
+  /// unmodifiable view; adding to it throws.
+  List<Frame> get gameTranscript =>
+      UnmodifiableListView<Frame>(_gameTranscript);
 
   /// Both rules toggles on by default, matching [RoomToggles]'s own
   /// defaults. Forwarded to [RoomConnection.createRoom] as `toggles`; never
@@ -818,10 +828,22 @@ class RoomController extends ChangeNotifier {
   }
 
   /// Every frame the current connection produces, including every one this
-  /// controller's reducer ignores. Forwarded to [frames] unconditionally and
-  /// first, then handed to the reducer when it is one of the types
-  /// docs/PROTOCOL.md section 5 marks as carrying `seq`.
+  /// controller's reducer ignores. Recorded into [gameTranscript] from
+  /// `game_started` onward, forwarded to [frames] unconditionally, then
+  /// handed to the reducer when it is one of the types docs/PROTOCOL.md
+  /// section 5 marks as carrying `seq`.
   void _handleFrame(Frame frame) {
+    if (frame.type == 'game_started') {
+      final String? gameId = _asString(frame.data, 'game_id');
+      if (!_hasOpenedTranscript || gameId != _transcriptGameId) {
+        _hasOpenedTranscript = true;
+        _transcriptGameId = gameId;
+        _gameTranscript.clear();
+      }
+      _gameTranscript.add(frame);
+    } else if (_hasOpenedTranscript) {
+      _gameTranscript.add(frame);
+    }
     if (!_framesController.isClosed) {
       _framesController.add(frame);
     }
