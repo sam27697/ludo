@@ -15,6 +15,9 @@ const int _createRoomLimit = 5;
 const Duration _joinOrResumeWindow = Duration(minutes: 1);
 const int _joinOrResumeLimit = 20;
 
+const Duration _gameLogWindow = Duration(minutes: 1);
+const int _gameLogLimit = 2;
+
 const Duration _messageWindow = Duration(seconds: 1);
 const int _messageWarnLimit = 30;
 const int _messageCloseLimit = 60;
@@ -73,6 +76,8 @@ class RateLimiter {
       <String, _SlidingWindow>{};
   final Map<Object, _SlidingWindow> _messagesByConnection =
       <Object, _SlidingWindow>{};
+  final Map<Object, _SlidingWindow> _gameLogByConnection =
+      <Object, _SlidingWindow>{};
 
   /// True if this `create_room` may proceed. Only an admitted attempt is
   /// recorded, per connection scoped by IP: a call refused here leaves the
@@ -97,6 +102,15 @@ class RateLimiter {
     return count <= _joinOrResumeLimit;
   }
 
+  /// True if this `game_log` may proceed, `docs/PROTOCOL.md` section 17: "At
+  /// most 2 per minute per connection, then `RATE_LIMITED` (counted before the
+  /// room checks, like the other per-message limits)."
+  bool recordGameLog(Object connectionKey) {
+    final _SlidingWindow window =
+        _gameLogByConnection.putIfAbsent(connectionKey, () => _SlidingWindow());
+    return window.pruneAndAdmit(_clock.now, _gameLogWindow, _gameLogLimit);
+  }
+
   /// Any message at all, scoped to one connection. [connectionKey] is
   /// whatever the caller uses to identify one socket; it is never
   /// interpreted, only used as a map key.
@@ -118,6 +132,7 @@ class RateLimiter {
   /// never be looked at again.
   void forget(Object connectionKey) {
     _messagesByConnection.remove(connectionKey);
+    _gameLogByConnection.remove(connectionKey);
   }
 
   /// Periodic housekeeping for the two IP-keyed maps, which have no
