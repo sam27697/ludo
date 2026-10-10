@@ -6,9 +6,9 @@
 // fetchGameLog does not exist on the base this file was written against.
 // That is the one analyzer error expected here.
 //
-// The contract names no exception type for an out-of-sequence part or a
-// mismatched game_id, only that the future completes with an error. An
-// error reply and a close are the same outcomes request() already has:
+// An out-of-sequence part and a mismatched game_id complete with
+// FrameFormatException, before the request timeout. An error reply and a
+// close are the same outcomes request() already has:
 // ProtocolErrorException and ConnectionClosedException.
 
 import 'dart:async';
@@ -306,18 +306,51 @@ void main() {
     await pumpEventQueue();
     final String id = _gameLogId(transport);
 
-    // parts is 2, and the first part to arrive is part 2.
-    await _errorWithoutTimeout(future, () {
+    // Part 1 of 3 is in sequence, so the request stays open. The check
+    // under test is the next part's number against the last one plus 1,
+    // not the check that the first part is part 1.
+    var settled = false;
+    unawaited(
+      future.then(
+        (List<Frame> _) {
+          settled = true;
+        },
+        onError: (Object _, StackTrace _) {
+          settled = true;
+        },
+      ),
+    );
+    transport.pushText(
+      _part(
+        requestId: id,
+        gameId: _gameOne,
+        part: 1,
+        parts: 3,
+        frames: _partOneEntries,
+      ),
+    );
+    await pumpEventQueue();
+    expect(
+      settled,
+      isFalse,
+      reason: 'part 1 of 3 is in sequence, so the request is still open',
+    );
+
+    // Part 3, with part 2 never sent. parts and game_id match part 1,
+    // so the only failing check is the part sequence. No pump below
+    // reaches the request timeout: the error is already in hand.
+    final Object? failure = await _errorWithoutTimeout(future, () {
       transport.pushText(
         _part(
           requestId: id,
           gameId: _gameOne,
-          part: 2,
-          parts: 2,
+          part: 3,
+          parts: 3,
           frames: _partTwoEntries,
         ),
       );
     });
+    expect(failure, isA<FrameFormatException>());
   });
 
   test('a mismatched game_id completes with an error', () async {
@@ -340,8 +373,10 @@ void main() {
     );
     await pumpEventQueue();
 
-    // Part 1 was in sequence. Part 2 names a different game.
-    await _errorWithoutTimeout(future, () {
+    // Part 1 was in sequence. Part 2 names a different game. parts still
+    // matches, and 2 is the next part number, so the only failing check
+    // is game_id. No pump below reaches the request timeout.
+    final Object? failure = await _errorWithoutTimeout(future, () {
       transport.pushText(
         _part(
           requestId: id,
@@ -352,6 +387,7 @@ void main() {
         ),
       );
     });
+    expect(failure, isA<FrameFormatException>());
   });
 
   test('an error reply completes with an error', () async {

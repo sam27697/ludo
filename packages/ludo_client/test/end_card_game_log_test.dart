@@ -13,7 +13,10 @@
 // is the id of the game_log the client sent (read off sentRaw).
 //
 // RATE_LIMITED and the timeout are one contract bullet. They are two
-// mounts: one request cannot be both refused and timed out.
+// mounts: one request cannot be both refused and timed out. After each
+// of those, two presence pushes for the other seat arrive while the
+// card is up. Each carries the next seq, which is what the reducer
+// applies in FINISHED, so each one notifies. The count stays one.
 
 import 'dart:convert';
 
@@ -747,6 +750,66 @@ void _expectNoException(WidgetTester tester) {
   );
 }
 
+bool _connectedOf(RoomController controller, int seat) {
+  for (final SeatState state in controller.room!.seats) {
+    if (state.seat == seat) {
+      return state.connected;
+    }
+  }
+  fail('seat $seat is not in the room');
+}
+
+/// Two presence pushes for seat 1, the other seat, while the end card is
+/// up. The first flips connected; the second flips it back. Each seq is
+/// room.seq + 1. Presence is applied in FINISHED on those terms, and
+/// each apply notifies.
+Future<void> _pushTwoPresence(WidgetTester tester, _Table table) async {
+  const int otherSeat = 1;
+  final bool wasConnected = _connectedOf(table.controller, otherSeat);
+
+  final int firstSeq = table.controller.room!.seq + 1;
+  table.seq = firstSeq;
+  await _flush(
+    tester,
+    table.transport,
+    _frame(
+      type: 'presence',
+      data: <String, Object?>{
+        'seat': otherSeat,
+        'connected': !wasConnected,
+        'seq': firstSeq,
+      },
+    ),
+  );
+  expect(
+    table.controller.room!.seq,
+    firstSeq,
+    reason: 'presence at the next seq must be applied in FINISHED',
+  );
+  expect(_connectedOf(table.controller, otherSeat), !wasConnected);
+
+  final int secondSeq = table.controller.room!.seq + 1;
+  table.seq = secondSeq;
+  await _flush(
+    tester,
+    table.transport,
+    _frame(
+      type: 'presence',
+      data: <String, Object?>{
+        'seat': otherSeat,
+        'connected': wasConnected,
+        'seq': secondSeq,
+      },
+    ),
+  );
+  expect(
+    table.controller.room!.seq,
+    secondSeq,
+    reason: 'a second presence at the next seq must be applied in FINISHED',
+  );
+  expect(_connectedOf(table.controller, otherSeat), wasConnected);
+}
+
 List<int> _tokensOf(RoomController controller, int seat) {
   for (final SeatState state in controller.room!.seats) {
     if (state.seat == seat) {
@@ -1028,7 +1091,18 @@ void main() {
         await tester.pump();
         await _pumpFor(tester, _fewSeconds);
 
-        expect(_gameLogs(table), hasLength(1));
+        // The refusal has landed and the request is no longer in flight.
+        // Two later frames notify while the card is still up.
+        await _pushTwoPresence(tester, table);
+        await _pumpFor(tester, _fewSeconds);
+
+        expect(
+          _gameLogs(table),
+          hasLength(1),
+          reason:
+              'a refused game_log must not be asked again after later '
+              'frames; sent ${_sentTypes(table)}; ${_cardNote(tester)}',
+        );
         _expectHomeAlone(tester);
         _expectNoException(tester);
       } finally {
@@ -1054,12 +1128,17 @@ void main() {
         await _pumpFor(tester, _requestTimeout + const Duration(seconds: 1));
         await _pumpFor(tester, _fewSeconds);
 
+        // The timeout has landed. Two later frames notify while the card
+        // is still up.
+        await _pushTwoPresence(tester, table);
+        await _pumpFor(tester, _fewSeconds);
+
         expect(
           _gameLogs(table),
           hasLength(1),
           reason:
-              'a timeout must not send a second game_log; sent '
-              '${_sentTypes(table)}; ${_cardNote(tester)}',
+              'a timeout must not send a second game_log after later '
+              'frames; sent ${_sentTypes(table)}; ${_cardNote(tester)}',
         );
         _expectHomeAlone(tester);
         _expectNoException(tester);
