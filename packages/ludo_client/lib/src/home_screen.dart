@@ -93,6 +93,9 @@ class _HomeScreenState extends State<HomeScreen>
   // Order 296 rule 5: a link arriving before session memory loads is held
   // until the load finishes, with the latest link winning.
   Uri? _pendingLinkUri;
+  // Order 296 rule 5b: bounded hold on a pending link before falling back to
+  // the first-time player behaviour.
+  Timer? _linkHoldTimer;
   // Order 296 rule 6: guards against pushing duplicate routes when Android
   // delivers the same link through both initial link reader and the stream.
   bool _linkJoinInFlight = false;
@@ -197,6 +200,8 @@ class _HomeScreenState extends State<HomeScreen>
       // Rule 4: an invalid code never joins, clears any link pending on
       // session memory (the latest link wins), and keeps the error scroll.
       _pendingLinkUri = null;
+      _linkHoldTimer?.cancel();
+      _linkHoldTimer = null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
           return;
@@ -208,7 +213,13 @@ class _HomeScreenState extends State<HomeScreen>
     if (!_sessionMemoryLoaded) {
       // Rule 5: held until session memory finishes loading; the latest
       // incoming link wins.
+      // Rule 5b: bounded to 500 ms, so a store that never answers cannot
+      // hold a link forever; past that it is treated as a first-time player.
       _pendingLinkUri = uri;
+      _linkHoldTimer ??= Timer(
+        const Duration(milliseconds: 500),
+        _onLinkHoldTimeout,
+      );
       return;
     }
     _decideLinkAction(code);
@@ -244,6 +255,8 @@ class _HomeScreenState extends State<HomeScreen>
   /// Resolves any pending link held while session memory was loading
   /// (rule 5).
   void _drainPendingLink() {
+    _linkHoldTimer?.cancel();
+    _linkHoldTimer = null;
     final Uri? uri = _pendingLinkUri;
     _pendingLinkUri = null;
     if (uri == null) {
@@ -254,6 +267,26 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
     _decideLinkAction(code);
+  }
+
+  /// Decides a pending link held while session memory was loading as a
+  /// first-time player when the 500 ms hold bound expires (order 296 rule 5b).
+  void _onLinkHoldTimeout() {
+    _linkHoldTimer = null;
+    if (!mounted) {
+      return;
+    }
+    final Uri? uri = _pendingLinkUri;
+    _pendingLinkUri = null;
+    if (uri == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _scrollLinkTargetIntoView(codeIsValid: true);
+    });
   }
 
   /// Runs a link-driven join or rejoin, guarding against duplicate pushes
@@ -369,6 +402,8 @@ class _HomeScreenState extends State<HomeScreen>
         });
       }
     } finally {
+      _linkHoldTimer?.cancel();
+      _linkHoldTimer = null;
       _sessionMemoryLoaded = true;
       if (mounted) {
         _drainPendingLink();
@@ -421,6 +456,7 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _linkSubscription?.cancel();
+    _linkHoldTimer?.cancel();
     _codeController.removeListener(_clearErrorOnEdit);
     _codeController.dispose();
     _nameController.dispose();
