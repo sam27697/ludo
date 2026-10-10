@@ -62,6 +62,8 @@ Map<String, Object?> _decode(String text) =>
 
 String _idOf(String sentText) => _decode(sentText)['id']! as String;
 
+String _typeOf(String sentText) => _decode(sentText)['t']! as String;
+
 String _frame({
   required String type,
   String? re,
@@ -261,10 +263,46 @@ Widget _harness(Widget child) {
   );
 }
 
-Future<void> _mount(WidgetTester tester, RoomController controller) async {
+Future<void> _mount(
+  WidgetTester tester,
+  RoomController controller,
+  FakeTransport transport,
+) async {
   await tester.binding.setSurfaceSize(const Size(390, 844));
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(_harness(GameScreen(controller: controller)));
+  await tester.pump();
+  // Finished with no full transcript, so the card asks for game_log.
+  // These cases are about the verify card, not the stats. RATE_LIMITED
+  // leaves the card as it was and answers the request.
+  await _refuseGameLog(tester, transport);
+}
+
+/// Answers every `game_log` already on [transport.sentRaw] with an `error`
+/// frame, `re` set to that request's id. No request means nothing is sent.
+Future<void> _refuseGameLog(
+  WidgetTester tester,
+  FakeTransport transport,
+) async {
+  final List<String> requestIds = <String>[];
+  for (final String raw in transport.sentRaw) {
+    if (_typeOf(raw) == 'game_log') {
+      requestIds.add(_idOf(raw));
+    }
+  }
+  if (requestIds.isEmpty) {
+    return;
+  }
+  for (final String requestId in requestIds) {
+    transport.pushText(
+      _frame(
+        type: 'error',
+        re: requestId,
+        data: <String, Object?>{'code': 'RATE_LIMITED', 'message': 'game_log'},
+      ),
+    );
+  }
+  await tester.pump();
   await tester.pump();
 }
 
@@ -498,7 +536,7 @@ void main() {
       await script.gameOver(verifyUrl: _verifyUrl);
       expect(controller.room!.state, RoomState.finished);
 
-      await _mount(tester, controller);
+      await _mount(tester, controller, transport);
 
       final Finder verify = find.byKey(_verifyKey);
       expect(
@@ -553,7 +591,7 @@ void main() {
       await script.gameOver(verifyUrl: _verifyUrl);
       expect(controller.room!.state, RoomState.finished);
 
-      await _mount(tester, controller);
+      await _mount(tester, controller, transport);
 
       final Finder history = find.byKey(_historyKey);
       expect(
@@ -609,7 +647,7 @@ void main() {
           await _connectPlaying(tester);
       final _Script script = _Script(transport, tester);
       await script.gameOver(verifyUrl: _verifyUrl);
-      await _mount(tester, controller);
+      await _mount(tester, controller, transport);
 
       expect(
         find.byKey(_verifyKey),
@@ -644,7 +682,7 @@ void main() {
         await _connectPlaying(tester);
     final _Script script = _Script(transport, tester);
     await script.gameOver(verifyUrl: _verifyUrl);
-    await _mount(tester, controller);
+    await _mount(tester, controller, transport);
 
     expect(
       controller.room!.state,

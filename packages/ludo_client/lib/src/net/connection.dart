@@ -47,13 +47,170 @@ class RequestTimeoutException implements Exception {
   final String type;
 }
 
+/// Common interface for any request waiting on an inbound reply.
+abstract class _PendingEntry {
+  Timer get timer;
+  void fail(Object error);
+  bool handleFrame(Frame frame);
+}
+
 /// One pending `request()` call: the completer a reply resolves and the
 /// timer that fires if none arrives.
-class _PendingRequest {
+class _PendingRequest implements _PendingEntry {
   _PendingRequest({required this.completer, required this.timer});
 
   final Completer<Frame> completer;
+  @override
   final Timer timer;
+
+  @override
+  void fail(Object error) {
+    timer.cancel();
+    if (!completer.isCompleted) {
+      completer.completeError(error);
+    }
+  }
+
+  @override
+  bool handleFrame(Frame frame) {
+    timer.cancel();
+    if (completer.isCompleted) {
+      return true;
+    }
+    if (frame.type == 'error') {
+      final Object? codeValue = frame.data['code'];
+      final Object? messageValue = frame.data['message'];
+      final String code = codeValue is String ? codeValue : '';
+      final String message = messageValue is String ? messageValue : '';
+      completer.completeError(ProtocolErrorException(code, message, frame));
+    } else {
+      completer.complete(frame);
+    }
+    return true;
+  }
+}
+
+/// One pending `game_log` multi-part request. Accumulates frames across all
+/// parts in order and completes once part == parts arrives.
+class _PendingGameLog implements _PendingEntry {
+  _PendingGameLog({required this.completer, required this.timer});
+
+  final Completer<List<Frame>> completer;
+  @override
+  final Timer timer;
+
+  final List<Frame> _frames = <Frame>[];
+  String? _expectedGameId;
+  int? _totalParts;
+  int _lastPart = 0;
+
+  @override
+  void fail(Object error) {
+    timer.cancel();
+    if (!completer.isCompleted) {
+      completer.completeError(error);
+    }
+  }
+
+  @override
+  bool handleFrame(Frame frame) {
+    if (completer.isCompleted) {
+      timer.cancel();
+      return true;
+    }
+    if (frame.type == 'error') {
+      timer.cancel();
+      final Object? codeValue = frame.data['code'];
+      final Object? messageValue = frame.data['message'];
+      final String code = codeValue is String ? codeValue : '';
+      final String message = messageValue is String ? messageValue : '';
+      completer.completeError(ProtocolErrorException(code, message, frame));
+      return true;
+    }
+
+    if (frame.type != 'game_log') {
+      timer.cancel();
+      completer.completeError(
+        FrameFormatException('expected game_log, got ${frame.type}'),
+      );
+      return true;
+    }
+
+    final Object? gameIdValue = frame.data['game_id'];
+    final Object? partValue = frame.data['part'];
+    final Object? partsValue = frame.data['parts'];
+    final Object? framesValue = frame.data['frames'];
+
+    if (gameIdValue is! String ||
+        partValue is! int ||
+        partsValue is! int ||
+        framesValue is! List) {
+      timer.cancel();
+      completer.completeError(
+        const FrameFormatException('game_log missing or invalid fields'),
+      );
+      return true;
+    }
+
+    if (_totalParts == null) {
+      if (partValue != 1 || partsValue < 1) {
+        timer.cancel();
+        completer.completeError(
+          FrameFormatException(
+            'invalid initial part $partValue of $partsValue',
+          ),
+        );
+        return true;
+      }
+      _expectedGameId = gameIdValue;
+      _totalParts = partsValue;
+      _lastPart = 1;
+    } else {
+      if (partValue != _lastPart + 1 ||
+          partsValue != _totalParts ||
+          gameIdValue != _expectedGameId) {
+        timer.cancel();
+        completer.completeError(
+          FrameFormatException(
+            'out-of-sequence part $partValue of $partsValue for $gameIdValue',
+          ),
+        );
+        return true;
+      }
+      _lastPart = partValue;
+    }
+
+    for (final Object? item in framesValue) {
+      if (item is! Map) {
+        timer.cancel();
+        completer.completeError(
+          const FrameFormatException('game_log frame entry is not an object'),
+        );
+        return true;
+      }
+      final Object? tValue = item['t'];
+      final Object? dValue = item['d'];
+      if (tValue is! String || dValue is! Map) {
+        timer.cancel();
+        completer.completeError(
+          const FrameFormatException('game_log entry missing t or d'),
+        );
+        return true;
+      }
+      final Object? idValue = item['id'];
+      final String frameId = idValue is String ? idValue : '';
+      final Map<String, Object?> frameData = Map<String, Object?>.from(dValue);
+      _frames.add(Frame(type: tValue, id: frameId, data: frameData));
+    }
+
+    if (_lastPart == _totalParts) {
+      timer.cancel();
+      completer.complete(List<Frame>.unmodifiable(_frames));
+      return true;
+    }
+
+    return false;
+  }
 }
 
 /// The lifecycle a single [RoomConnection] instance moves through. There is
@@ -111,7 +268,7 @@ class RoomConnection {
 
   final StreamController<Frame> _framesController =
       StreamController<Frame>.broadcast();
-  final Map<String, _PendingRequest> _pending = <String, _PendingRequest>{};
+  final Map<String, _PendingEntry> _pending = <String, _PendingEntry>{};
   final Completer<void> _doneCompleter = Completer<void>();
 
   /// True once [open] has completed successfully, for the lifetime of this
@@ -199,13 +356,10 @@ class RoomConnection {
     }
     _state = _ConnState.closed;
     unawaited(_incomingSubscription?.cancel());
-    final List<_PendingRequest> outstanding = _pending.values.toList();
+    final List<_PendingEntry> outstanding = _pending.values.toList();
     _pending.clear();
-    for (final _PendingRequest pending in outstanding) {
-      pending.timer.cancel();
-      if (!pending.completer.isCompleted) {
-        pending.completer.completeError(const ConnectionClosedException());
-      }
+    for (final _PendingEntry pending in outstanding) {
+      pending.fail(const ConnectionClosedException());
     }
     if (!_framesController.isClosed) {
       unawaited(_framesController.close());
@@ -250,24 +404,12 @@ class RoomConnection {
     if (re == null) {
       return;
     }
-    final _PendingRequest? pending = _pending.remove(re);
+    final _PendingEntry? pending = _pending[re];
     if (pending == null) {
       return;
     }
-    pending.timer.cancel();
-    if (pending.completer.isCompleted) {
-      return;
-    }
-    if (frame.type == 'error') {
-      final Object? codeValue = frame.data['code'];
-      final Object? messageValue = frame.data['message'];
-      final String code = codeValue is String ? codeValue : '';
-      final String message = messageValue is String ? messageValue : '';
-      pending.completer.completeError(
-        ProtocolErrorException(code, message, frame),
-      );
-    } else {
-      pending.completer.complete(frame);
+    if (pending.handleFrame(frame)) {
+      _pending.remove(re);
     }
   }
 
@@ -288,9 +430,9 @@ class RoomConnection {
 
     final Completer<Frame> completer = Completer<Frame>();
     final Timer timer = Timer(_requestTimeout, () {
-      final _PendingRequest? pending = _pending.remove(id);
-      if (pending != null && !pending.completer.isCompleted) {
-        pending.completer.completeError(RequestTimeoutException(type));
+      final _PendingEntry? pending = _pending.remove(id);
+      if (pending != null) {
+        pending.fail(RequestTimeoutException(type));
       }
     });
     // Registered before send() so a transport that replies synchronously
@@ -386,6 +528,40 @@ class RoomConnection {
 
   Future<Frame> ping() {
     return request('ping', const <String, Object?>{});
+  }
+
+  /// C-304 rule 1: sends `game_log` `{}` and completes with the frames of all
+  /// its parts, in part order, once part == parts has arrived.
+  ///
+  /// Completes with [ProtocolErrorException] on an `error` reply,
+  /// [RequestTimeoutException] after `requestTimeout`, [FrameFormatException]
+  /// on a part that breaks sequence or carries invalid fields, and
+  /// [ConnectionClosedException] if the connection ends first or was never
+  /// open.
+  Future<List<Frame>> gameLog() async {
+    if (_state != _ConnState.open || _transport == null) {
+      throw const ConnectionClosedException();
+    }
+    final String id = newMessageId();
+    final Frame frame = Frame(
+      type: 'game_log',
+      id: id,
+      data: const <String, Object?>{},
+    );
+    final String text = frame.encode();
+
+    final Completer<List<Frame>> completer = Completer<List<Frame>>();
+    final Timer timer = Timer(_requestTimeout, () {
+      final _PendingEntry? pending = _pending.remove(id);
+      if (pending != null) {
+        pending.fail(const RequestTimeoutException('game_log'));
+      }
+    });
+    // Registered before send() so a transport that replies synchronously
+    // (as a fake in a test may) always finds a match.
+    _pending[id] = _PendingGameLog(completer: completer, timer: timer);
+    _transport!.send(text);
+    return completer.future;
   }
 
   RoomSnapshot _asRoomSnapshot(Frame frame) {
