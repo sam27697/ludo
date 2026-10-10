@@ -20,6 +20,13 @@
 // screen case. The order limits that getter to case 7 so cases 1-6 compile
 // on the base. Case 5 asserts the playing body, which is the screen half.
 //
+// Case 8 leaves one rolled out of the transcript, the way
+// test/end_card_game_log_test.dart skips a rolled, so the finished card
+// sends one game_log. The socket drops before any answer. Reconnect's
+// resume is the section 16.2 rematch LOBBY. The live room is LOBBY, so
+// that retry does not send a second game_log. The numbers stay the
+// incomplete fallback: home, and not the other three tiles.
+//
 // Check's tap is observed the way test/end_card_test.dart observes
 // game-screen-verify-button: the url_launcher method channels. GameScreen's
 // constructor takes only the controller, so there is no opener to inject.
@@ -109,6 +116,12 @@ const Key _rematchKey = Key('end-card-rematch');
 const Key _rematchAskKey = Key('end-card-rematch-ask');
 const Key _boardKey = Key('game-screen-board');
 const Key _dieKey = Key('game-die');
+const Key _reconnectKey = Key('game-screen-reconnect-button');
+
+/// Long enough for a post-frame game_log to have been sent, and short of
+/// RoomConnection's 10s request timeout. Same bound as
+/// test/end_card_game_log_test.dart.
+const Duration _fewSeconds = Duration(seconds: 3);
 
 const List<String> _urlLauncherChannels = <String>[
   'plugins.flutter.io/url_launcher',
@@ -244,7 +257,7 @@ class _Connector {
   }
 }
 
-Future<(RoomController, FakeTransport)> _connect(
+Future<(RoomController, FakeTransport, _Connector)> _connectTracked(
   WidgetTester tester, {
   required int mySeat,
   required Map<String, Object?> room,
@@ -271,6 +284,16 @@ Future<(RoomController, FakeTransport)> _connect(
   );
   transport.pushText(_frame(type: 'room', re: id, data: room));
   await future;
+  return (controller, transport, connector);
+}
+
+Future<(RoomController, FakeTransport)> _connect(
+  WidgetTester tester, {
+  required int mySeat,
+  required Map<String, Object?> room,
+}) async {
+  final (RoomController controller, FakeTransport transport, _) =
+      await _connectTracked(tester, mySeat: mySeat, room: room);
   return (controller, transport);
 }
 
@@ -346,17 +369,26 @@ class _Script {
     await tester.pump();
     await tester.pump();
   }
+
+  /// Consumes one seq and sends nothing, so the next push is a hole.
+  void skipOne() {
+    _seq += 1;
+  }
 }
 
-Future<void> _pumpPastEndCardHold(WidgetTester tester) async {
-  Duration remaining = kEndCardHoldLimit;
+Future<void> _pumpFor(WidgetTester tester, Duration total) async {
   const Duration chunk = Duration(milliseconds: 250);
+  Duration remaining = total;
   while (remaining > Duration.zero) {
     final Duration step = remaining > chunk ? chunk : remaining;
     await tester.pump(step);
     remaining -= step;
   }
   await tester.pump();
+}
+
+Future<void> _pumpPastEndCardHold(WidgetTester tester) async {
+  await _pumpFor(tester, kEndCardHoldLimit);
 }
 
 Widget _harness(Widget child) {
@@ -657,6 +689,101 @@ Future<(RoomController, FakeTransport, _Script)> _playToFinished(
     reason: _where(mySeat, 'FINISHED', 'fixture seat 1 tokens $_loserTokens'),
   );
   return (controller, transport, script);
+}
+
+/// The same game as [_playToFinished], except seat 1's rolled value 4 is
+/// not pushed. Later frames keep the seqs the full script uses, so the
+/// transcript has a hole there, the way test/end_card_game_log_test.dart
+/// skips a rolled. The reducer stops at the hole and resumes on the open
+/// socket; the resume answer is the finished room, which is what lands
+/// FINISHED. The missing rolled stays missing.
+Future<(RoomController, FakeTransport, _Connector, _Script)>
+_playToFinishedWithHole(WidgetTester tester) async {
+  const int mySeat = 1;
+  final (
+    RoomController controller,
+    FakeTransport transport,
+    _Connector connector,
+  ) = await _connectTracked(
+    tester,
+    mySeat: mySeat,
+    room: _roomJson(state: 'PLAYING', seq: 1),
+  );
+  await _mount(tester, controller);
+  final _Script script = _Script(tester, transport);
+
+  await script.gameStarted(turnSeat: 0, gameId: _finishedGameId);
+  await script.rolled(seat: 1, value: 6, k: 1);
+  await script.moved(seat: 1, token: 0, from: -1, to: 10, extraRoll: true);
+  await script.rolled(seat: 0, value: 6, k: 2);
+  await script.moved(
+    seat: 0,
+    token: 0,
+    from: -1,
+    to: 57,
+    captured: const <Map<String, Object?>>[
+      <String, Object?>{'seat': 1, 'token': 0},
+    ],
+  );
+  await script.rolled(seat: 0, value: 6, k: 3);
+  await script.moved(seat: 0, token: 1, from: -1, to: 57);
+  await script.rolled(seat: 0, value: 2, k: 4);
+  await script.moved(seat: 0, token: 2, from: -1, to: 57);
+  await script.moved(seat: 0, token: 3, from: -1, to: 57);
+  await script.rolled(seat: 1, value: 5, k: 5);
+  await script.moved(seat: 1, token: 0, from: -1, to: 57);
+  // Seq 14 would have been seat 1's rolled value 4. It is not pushed.
+  script.skipOne();
+  await script.moved(seat: 1, token: 1, from: -1, to: 57);
+  await script.rolled(seat: 1, value: 3, k: 7);
+  await script.moved(seat: 1, token: 2, from: -1, to: 57);
+  await script.moved(seat: 1, token: 3, from: -1, to: 48);
+  await script.gameOver(winner: 0, verifyUrl: _finishedVerifyUrl);
+
+  final List<String> resumes = transport.sentRaw
+      .where((String raw) => _typeOf(raw) == 'resume')
+      .toList();
+  expect(
+    resumes,
+    hasLength(1),
+    reason: _where(
+      mySeat,
+      'PLAYING',
+      'the hole at the skipped rolled sends one resume on the open socket',
+    ),
+  );
+
+  final int finishedSeq = script.seq + 1;
+  await script.pushRoom(
+    _roomJson(
+      state: 'FINISHED',
+      seq: finishedSeq,
+      seats: _finishedSeats(),
+      turn: _finishedTurnJson(),
+      winner: 0,
+      gameId: _finishedGameId,
+      clientSeeds: '0:sam-seed|1:bob-seed',
+      verifyUrl: _finishedVerifyUrl,
+    ),
+    re: _idOf(resumes.single),
+  );
+  expect(
+    controller.room!.state,
+    RoomState.finished,
+    reason: _where(
+      mySeat,
+      'FINISHED',
+      'the hole resume answers with the finished room',
+    ),
+  );
+  expect(
+    _tokensOf(controller.room!, 1),
+    _loserTokens,
+    reason: _where(mySeat, 'FINISHED', 'fixture seat 1 tokens $_loserTokens'),
+  );
+
+  await _pumpPastEndCardHold(tester);
+  return (controller, transport, connector, script);
 }
 
 Future<void> _pushRematchAsk(_Script script, {required int by}) async {
@@ -1257,6 +1384,161 @@ void main() {
         );
       },
     );
+  });
+
+  group('case 8: a rematch lobby does not fetch game_log again', () {
+    testWidgets('case 8: a socket-down game_log is not asked again after the '
+        'rematch LOBBY, and home 3 stays without the other tiles', (
+      WidgetTester tester,
+    ) async {
+      final (
+        RoomController controller,
+        FakeTransport transport,
+        _Connector connector,
+        _Script script,
+      ) = await _playToFinishedWithHole(
+        tester,
+      );
+
+      const int seat = 1;
+      const String finishedState = 'FINISHED';
+      expect(
+        _sentOfType(transport, 'game_log'),
+        1,
+        reason: _where(
+          seat,
+          finishedState,
+          'the hole makes the card send one game_log',
+        ),
+      );
+
+      // The game_log is still unanswered. Dropping the socket fails it
+      // with the connection closed, which is the socket-down failure
+      // the one retry is armed for.
+      transport.endFromFarSide();
+      await tester.pump();
+      await tester.pump();
+      expect(
+        controller.phase,
+        RoomPhase.closed,
+        reason: _where(seat, finishedState, 'phase closed after the drop'),
+      );
+      expect(
+        _sentOfType(transport, 'game_log'),
+        1,
+        reason: _where(
+          seat,
+          finishedState,
+          'the drop does not send a second game_log',
+        ),
+      );
+
+      // Automatic reconnect is off on this controller, the same as the
+      // other cases. The reconnect control calls controller.reconnect,
+      // which sends resume on a new transport.
+      final FakeTransport resumeTransport = FakeTransport();
+      connector.enqueue(resumeTransport);
+      final Finder reconnect = find.byKey(_reconnectKey);
+      await tester.ensureVisible(reconnect);
+      await tester.tap(reconnect);
+      await tester.pump();
+      expect(
+        resumeTransport.sentRaw,
+        isNotEmpty,
+        reason: _where(seat, finishedState, 'reconnect sends a resume'),
+      );
+      final String resumeId = _idOf(
+        resumeTransport.sentRaw
+            .where((String raw) => _typeOf(raw) == 'resume')
+            .last,
+      );
+
+      const String state = 'LOBBY rematch by seat 0';
+      // script.seq is the finished snapshot. Section 16.2 advances seq
+      // by one from that room. The answer goes to the transport the
+      // reconnect opened, not the one the drop already closed.
+      final int lobbySeq = script.seq + 1;
+      resumeTransport.pushText(
+        _frame(
+          type: 'room',
+          re: resumeId,
+          data: _rematchLobbyJson(seq: lobbySeq, by: 0),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      _expectLiveLobby(controller, mySeat: seat, by: 0);
+
+      // A post-frame callback scheduled by the lobby build, plus enough
+      // time for a game_log answer to have arrived if a second request
+      // had been sent. Nothing is pushed in reply: the assertion is that
+      // the request is not on the wire.
+      await _pumpFor(tester, _fewSeconds);
+
+      expect(
+        _sentOfType(transport, 'game_log'),
+        1,
+        reason: _where(
+          seat,
+          state,
+          'no second game_log on the dropped transport',
+        ),
+      );
+      expect(
+        _sentOfType(resumeTransport, 'game_log'),
+        0,
+        reason: _where(
+          seat,
+          state,
+          'no game_log on the reconnected transport after the LOBBY',
+        ),
+      );
+      expect(
+        find.byKey(_loseKey),
+        findsOneWidget,
+        reason: _where(seat, state, 'end-card-lose still up'),
+      );
+      expect(
+        find.byKey(_endedKey),
+        findsNothing,
+        reason: _where(seat, state, 'no end-card-ended in place of the loss'),
+      );
+      _expectTile(
+        tester,
+        _statHomeKey,
+        _loserHome,
+        seat: seat,
+        state: state,
+        name: 'home',
+      );
+      expect(
+        find.byKey(_statRollsKey),
+        findsNothing,
+        reason: _where(
+          seat,
+          state,
+          'no end-card-stat-rolls; stats stay incomplete',
+        ),
+      );
+      expect(
+        find.byKey(_statSixesKey),
+        findsNothing,
+        reason: _where(
+          seat,
+          state,
+          'no end-card-stat-sixes; stats stay incomplete',
+        ),
+      );
+      expect(
+        find.byKey(_statCapturesKey),
+        findsNothing,
+        reason: _where(
+          seat,
+          state,
+          'no end-card-stat-captures; stats stay incomplete',
+        ),
+      );
+    });
   });
 }
 
