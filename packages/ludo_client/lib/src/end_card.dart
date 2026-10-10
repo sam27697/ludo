@@ -298,10 +298,9 @@ class _EndCardState extends State<EndCard> {
           ]
         : <Widget>[homeTile];
     // Four tiles (or one, on the gap case) share the card's own width evenly
-    // -- `Expanded` rather than the bare spaceEvenly this replaced, so each
-    // tile's own text wraps onto a second line under a wide locale or a big
-    // text scale instead of pushing the row past the card's edge at an
-    // ordinary phone width.
+    // via `Expanded`. Each tile's text scales down on a single line under a
+    // wide locale or a large text scale, never breaking inside a word or
+    // pushing the row past the card's edge.
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -322,18 +321,27 @@ class _EndCardState extends State<EndCard> {
       children: <Widget>[
         Icon(icon, color: LudoColors.feltMid),
         const SizedBox(height: kSpace1),
-        Text(
-          value.toString(),
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontWeight: FontWeight.w700),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            value.toString(),
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            softWrap: false,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
         ),
-        Text(
-          label,
-          textAlign: TextAlign.center,
-          softWrap: true,
-          style: const TextStyle(
-            fontSize: kTypeLabel,
-            color: LudoColors.inkMuted,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            softWrap: false,
+            style: const TextStyle(
+              fontSize: kTypeLabel,
+              color: LudoColors.inkMuted,
+            ),
           ),
         ),
       ],
