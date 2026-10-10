@@ -44,7 +44,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/board.dart';
-import 'package:ludo_client/src/board_geometry.dart';
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
@@ -205,8 +204,8 @@ Map<String, Object?> _roomJson({
   'turn': turn,
   'winner': winner,
   'seq': seq,
-  if (verifyUrl != null) 'verify_url': verifyUrl,
-  if (rematch != null) 'rematch': rematch,
+  'verify_url': ?verifyUrl,
+  'rematch': ?rematch,
 };
 
 List<Map<String, Object?>> _playingSeats() => <Map<String, Object?>>[
