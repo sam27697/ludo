@@ -49,6 +49,13 @@ class EndCard extends StatefulWidget {
   /// none" extended to "no number at all" rather than inventing a seat.
   final GameStats? stats;
 
+  /// Total squares remaining for this seat to reach home when the game ended
+  /// (C-307), summed across all four tokens. Yard tokens count 58 squares
+  /// (one to enter and 57 home). Computed from final tokens rather than the
+  /// transcript, so it is right even with a frame gap (C-232). Null when no
+  /// seat matched (spectator view or unconfirmed seat).
+  final int? stepsLeft;
+
   /// `room.verifyUrl`. Null or empty disables the Check button rather than
   /// hiding it, so the fairness line always has somewhere to point.
   final String? verifyUrl;
@@ -109,6 +116,7 @@ class EndCard extends StatefulWidget {
     required this.winnerName,
     required this.seatColors,
     required this.stats,
+    this.stepsLeft,
     required this.verifyUrl,
     required this.onVerify,
     required this.onNewTable,
@@ -215,6 +223,10 @@ class _EndCardState extends State<EndCard> {
     final String name = widget.winnerName!;
     final Color seatColor = _seatColor(widget.winnerSeat!);
     final TextStyle? titleStyle = Theme.of(context).textTheme.headlineLarge;
+    final int? stepsLeft = widget.stepsLeft;
+    final String loseLine = stepsLeft != null && stepsLeft <= kNearFinishSquares
+        ? loc.endLoseNear(stepsLeft)
+        : loc.endLoseNudge;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -232,7 +244,11 @@ class _EndCardState extends State<EndCard> {
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: kSpace2),
-        Text(loc.endLoseNudge, textAlign: TextAlign.center),
+        Text(
+          loseLine,
+          key: const Key('end-card-lose-line'),
+          textAlign: TextAlign.center,
+        ),
         if (widget.stats != null) ...<Widget>[
           const SizedBox(height: kSpace4),
           _statRow(loc, widget.stats!),
