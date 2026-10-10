@@ -32,6 +32,7 @@ import 'end_card.dart';
 import 'feedback.dart';
 import 'game_die.dart';
 import 'game_stats.dart';
+import 'net/connection.dart';
 import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
@@ -165,6 +166,14 @@ class _GameScreenState extends State<GameScreen> {
   // second tap on the corner leave icon does not open a second sheet.
   bool _isLeaveConfirmOpen = false;
 
+  // C-304: stats fetched from the server's game_log when local gameTranscript
+  // is incomplete, and request guards.
+  GameStats? _fetchedStats;
+  String? _fetchedStatsGameId;
+  int _gameLogRequestsCount = 0;
+  bool _gameLogFailedSocketDown = false;
+  bool _gameLogFetchInFlight = false;
+
   @override
   void initState() {
     super.initState();
@@ -173,6 +182,9 @@ class _GameScreenState extends State<GameScreen> {
     widget.controller.addListener(_onControllerChanged);
     _frameSub = widget.controller.frames.listen(_onFrame);
     _syncCountdown();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeFetchGameLog();
+    });
   }
 
   @override
@@ -279,6 +291,7 @@ class _GameScreenState extends State<GameScreen> {
     } else {
       if (frame.type == 'game_over') {
         _flushPendingLandingCues();
+        _maybeFetchGameLog();
       }
       for (final FeedbackCue cue in cues) {
         feedback.play(cue);
@@ -423,6 +436,7 @@ class _GameScreenState extends State<GameScreen> {
     if (mounted) {
       setState(() {});
     }
+    _maybeFetchGameLog();
   }
 
   void _flushPendingLandingCues() {
@@ -490,6 +504,11 @@ class _GameScreenState extends State<GameScreen> {
     _heldGameOverCues.clear();
     _isEndHeld = false;
     _travelCount = 0;
+    _fetchedStats = null;
+    _fetchedStatsGameId = null;
+    _gameLogRequestsCount = 0;
+    _gameLogFailedSocketDown = false;
+    _gameLogFetchInFlight = false;
   }
 
   void _armNoMoveHold(int? face) {
@@ -527,6 +546,7 @@ class _GameScreenState extends State<GameScreen> {
       _syncAutoMove();
       _syncRollWait();
     });
+    _maybeFetchGameLog();
   }
 
   /// Tapping the die while it would roll: haptic now, start the tumble,
@@ -1564,20 +1584,37 @@ class _GameScreenState extends State<GameScreen> {
       }
     }
 
-    // C-293 rule 2: this seat's own numbers, computed from controller's
-    // gameTranscript. No entry in room.seats for my own seat (a spectator
-    // view, or a seat the server never confirmed) leaves nothing honest to
-    // show, not a guess.
+    // C-293 rule 2, amended by C-304 rules 3 and 5: this seat's numbers,
+    // computed from controller's gameTranscript when complete, or from the
+    // server's game_log when fetched. An incomplete transcript falls back to
+    // "N home" alone while the fetch is in flight or if it fails.
     GameStats? stats;
     final int? mySeat = controller.seat;
     if (mySeat != null) {
       for (final SeatState seatState in room.seats) {
         if (seatState.seat == mySeat) {
-          stats = computeGameStats(
+          final GameStats localStats = computeGameStats(
             frames: controller.gameTranscript,
             seat: mySeat,
             finalTokens: seatState.tokens,
           );
+          if (localStats.complete) {
+            stats = localStats;
+          } else if (_fetchedStats != null &&
+              _fetchedStatsGameId == room.gameId) {
+            stats = _fetchedStats;
+          } else {
+            stats = localStats;
+            if (!_gameLogFetchInFlight &&
+                (_gameLogRequestsCount == 0 ||
+                    (_gameLogRequestsCount == 1 &&
+                        _gameLogFailedSocketDown &&
+                        controller.phase == RoomPhase.connected))) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _maybeFetchGameLog();
+              });
+            }
+          }
           break;
         }
       }
@@ -1683,6 +1720,142 @@ class _GameScreenState extends State<GameScreen> {
         style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
       ),
     );
+  }
+
+  /// C-304 rules 3, 4, 5: when the end card is up and local gameTranscript
+  /// stats are incomplete, requests game_log from the server at most once,
+  /// plus one more only if the first failed because the socket was down and
+  /// a later reconnect succeeded while the card is still up.
+  void _maybeFetchGameLog() {
+    if (!mounted) {
+      return;
+    }
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    if (room == null) {
+      return;
+    }
+    final String? gameId = room.gameId;
+    if (gameId == null || gameId.isEmpty) {
+      return;
+    }
+    final bool endCardUp = !_isEndHeld &&
+        (room.state == RoomState.finished ||
+            (room.state == RoomState.lobby && room.rematch != null));
+    if (!endCardUp) {
+      return;
+    }
+    final int? mySeat = controller.seat;
+    if (mySeat == null) {
+      return;
+    }
+    SeatState? mySeatState;
+    for (final SeatState s in room.seats) {
+      if (s.seat == mySeat) {
+        mySeatState = s;
+        break;
+      }
+    }
+    if (mySeatState == null) {
+      return;
+    }
+
+    // Rule 5: No request when the transcript is complete.
+    final GameStats localStats = computeGameStats(
+      frames: controller.gameTranscript,
+      seat: mySeat,
+      finalTokens: mySeatState.tokens,
+    );
+    if (localStats.complete) {
+      return;
+    }
+
+    if (_fetchedStats != null && _fetchedStatsGameId == gameId) {
+      return;
+    }
+
+    // Rule 4: at most one request per game, plus one more only if the first
+    // failed because the socket was down and a later reconnect succeeded
+    // while the card is still up. Never a retry loop.
+    if (_gameLogFetchInFlight) {
+      return;
+    }
+    if (_gameLogRequestsCount >= 2) {
+      return;
+    }
+    if (_gameLogRequestsCount == 1) {
+      if (!_gameLogFailedSocketDown ||
+          controller.phase != RoomPhase.connected) {
+        return;
+      }
+    } else {
+      if (controller.phase != RoomPhase.connected) {
+        return;
+      }
+    }
+
+    _fetchGameLog(gameId, mySeat, mySeatState.tokens);
+  }
+
+  Future<void> _fetchGameLog(
+    String targetGameId,
+    int mySeat,
+    List<int> finalTokens,
+  ) async {
+    _gameLogFetchInFlight = true;
+    _gameLogRequestsCount++;
+    try {
+      final List<Frame> frames = await widget.controller.fetchGameLog();
+      _gameLogFetchInFlight = false;
+      if (!mounted) {
+        return;
+      }
+      final String? currentGameId = widget.controller.room?.gameId;
+      if (currentGameId != targetGameId) {
+        return;
+      }
+      if (frames.isEmpty) {
+        return;
+      }
+      final Frame first = frames.first;
+      if (first.type != 'game_started') {
+        return;
+      }
+      final Object? logGameId = first.data['game_id'];
+      if (logGameId is! String || logGameId != targetGameId) {
+        return;
+      }
+      final RoomSnapshot? room = widget.controller.room;
+      SeatState? currentSeatState;
+      if (room != null) {
+        for (final SeatState s in room.seats) {
+          if (s.seat == mySeat) {
+            currentSeatState = s;
+            break;
+          }
+        }
+      }
+      final List<int> tokens = currentSeatState?.tokens ?? finalTokens;
+      final GameStats stats = computeGameStats(
+        frames: frames,
+        seat: mySeat,
+        finalTokens: tokens,
+      );
+      setState(() {
+        _fetchedStats = stats;
+        _fetchedStatsGameId = targetGameId;
+      });
+    } on ConnectionClosedException {
+      _gameLogFetchInFlight = false;
+      _gameLogFailedSocketDown = true;
+    } catch (_) {
+      _gameLogFetchInFlight = false;
+      if (widget.controller.phase != RoomPhase.connected) {
+        _gameLogFailedSocketDown = true;
+      } else {
+        _gameLogFailedSocketDown = false;
+      }
+    }
   }
 }
 
