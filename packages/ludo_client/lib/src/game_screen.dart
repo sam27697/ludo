@@ -929,7 +929,16 @@ class _GameScreenState extends State<GameScreen> {
   /// Opens the match `verify_url` in an external browser. The app does not
   /// prove the rolls itself; a failure to open is shown honestly.
   Future<void> _openVerifyUrl() async {
-    final String? raw = widget.controller.room?.verifyUrl;
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    final RoomSnapshot? finished =
+        (room != null &&
+            room.state == RoomState.lobby &&
+            room.rematch != null &&
+            controller.lastFinished != null)
+        ? controller.lastFinished
+        : room;
+    final String? raw = finished?.verifyUrl;
     if (raw == null || raw.isEmpty) {
       return;
     }
@@ -1555,24 +1564,39 @@ class _GameScreenState extends State<GameScreen> {
     RoomSnapshot room, {
     bool rematchGone = false,
   }) {
-    final bool hasBoard = room.seats.length >= 2;
+    // C-310 rule 2: when a rematch is open in LOBBY, resolve the finished
+    // game's presentation (winner, numbers, loser line, verify link, board)
+    // from the last FINISHED snapshot held by the controller.
+    // Rule 4: when lastFinished is null (the process was killed and resumed
+    // straight into the rematch LOBBY), falling back to room keeps today's
+    // ended variant. That is the honest fallback, not a gap to paper over.
+    final RoomSnapshot finished =
+        (room.state == RoomState.lobby &&
+            room.rematch != null &&
+            controller.lastFinished != null)
+        ? controller.lastFinished!
+        : room;
+
+    final bool hasBoard = finished.seats.length >= 2;
 
     // Rule 4: a winner naming a seat absent from room.seats reads the same
     // as no winner at all (H7.21's own fallback, carried forward).
+    // C-310 rule 2: the winner's name comes from finished.seats, so a winner
+    // who left after asking is still named.
     String? winnerName;
-    if (room.winner != null) {
-      for (final SeatState seatState in room.seats) {
-        if (seatState.seat == room.winner) {
+    if (finished.winner != null) {
+      for (final SeatState seatState in finished.seats) {
+        if (seatState.seat == finished.winner) {
           winnerName = seatState.name;
           break;
         }
       }
     }
-    final int? winnerSeat = winnerName == null ? null : room.winner;
+    final int? winnerSeat = winnerName == null ? null : finished.winner;
 
     // C-246 rule 4: the ask line names `rematch.by`, resolved against
-    // room.seats the same way winnerName is above -- null when there is no
-    // rematch open, or when `by` has since left.
+    // live room.seats, falling back to finished.seats if that seat has since
+    // left. Null when there is no rematch open, or when `by` is in neither.
     final RematchState? rematch = room.rematch;
     String? rematchByName;
     if (rematch != null) {
@@ -1582,17 +1606,28 @@ class _GameScreenState extends State<GameScreen> {
           break;
         }
       }
+      if (rematchByName == null) {
+        for (final SeatState seatState in finished.seats) {
+          if (seatState.seat == rematch.by) {
+            rematchByName = seatState.name;
+            break;
+          }
+        }
+      }
     }
 
-    // C-293 rule 2, amended by C-304 rules 3 and 5: this seat's numbers,
-    // computed from controller's gameTranscript when complete, or from the
-    // server's game_log when fetched. An incomplete transcript falls back to
-    // "N home" alone while the fetch is in flight or if it fails.
+    // C-293 rule 2, amended by C-304 rules 3 and 5, and C-310 rule 2: this
+    // seat's numbers, computed from controller's gameTranscript when complete,
+    // or from the server's game_log when fetched. Final tokens and steps left
+    // come from finished.seats, and the fetched-stats cache is keyed on
+    // finished.gameId. The fetch gate stays on live room.state. An incomplete
+    // transcript falls back to "N home" alone while the fetch is in flight
+    // or if it fails.
     GameStats? stats;
     int? stepsLeft;
     final int? mySeat = controller.seat;
     if (mySeat != null) {
-      for (final SeatState seatState in room.seats) {
+      for (final SeatState seatState in finished.seats) {
         if (seatState.seat == mySeat) {
           stepsLeft = stepsLeftOf(seatState.tokens);
           final GameStats localStats = computeGameStats(
@@ -1603,7 +1638,7 @@ class _GameScreenState extends State<GameScreen> {
           if (localStats.complete) {
             stats = localStats;
           } else if (_fetchedStats != null &&
-              _fetchedStatsGameId == room.gameId) {
+              _fetchedStatsGameId == finished.gameId) {
             stats = _fetchedStats;
           } else {
             stats = localStats;
@@ -1644,7 +1679,7 @@ class _GameScreenState extends State<GameScreen> {
             seatColors: LudoColors.seats,
             stats: stats,
             stepsLeft: stepsLeft,
-            verifyUrl: room.verifyUrl,
+            verifyUrl: finished.verifyUrl,
             onVerify: _openVerifyUrl,
             onNewTable: _requestNewTable,
             rematch: rematch,
@@ -1661,9 +1696,9 @@ class _GameScreenState extends State<GameScreen> {
               aspectRatio: 1,
               child: LudoBoard(
                 key: const Key('game-screen-board'),
-                tokens: _tokensOf(room),
-                seatsInPlay: _seatsInPlayOf(room),
-                seatNames: _seatNamesOf(room),
+                tokens: _tokensOf(finished),
+                seatsInPlay: _seatsInPlayOf(finished),
+                seatNames: _seatNamesOf(finished),
                 youLabel: loc.seatYou,
                 turnSeat: null,
                 onTokenStep: (int stepSeat, int token) =>
@@ -1674,7 +1709,7 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ],
           const SizedBox(height: kSpace4),
-          _rollHistory(loc, room),
+          _rollHistory(loc, finished),
         ],
       ),
     );
