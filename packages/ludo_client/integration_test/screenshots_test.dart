@@ -4086,6 +4086,9 @@ void main() {
   // Priya's own `rematch` request lands as an unprompted push naming seat
   // 0 in `by` with only seat 0 in `ready` (docs/PROTOCOL.md section
   // 16.6/16.7, C-246 rule 4's "rematch LOBBY, my seat NOT in ready" case).
+  // Before that `game_over`, `_playEndCardScript` plays the same short game
+  // captures 19 and 20 play. This device is seat 1, so the tiles are
+  // Karim's own rolls and tokens home from that game, not Priya's.
   // ==========================================================================
   testWidgets('capture 23-rematch-ask-en', (tester) async {
     binding.testTextInput.register();
@@ -4192,6 +4195,19 @@ void main() {
     );
     expect(find.byType(LobbyScreen), findsNothing);
 
+    // Seat 1 (Karim), the seat this card is about. Priya wins, so this is
+    // the script captures 19 and 20 play. Rolls and tokens home are counted
+    // off the script once it returns; the shot below reads those counts.
+    final int gameOverSeq23 = await _playEndCardScript(
+      tester,
+      transport,
+      controller,
+      gameStartedSeq: 2,
+      priyaWins: true,
+    );
+    final int scriptRolls23 = _scriptedRolls(controller, 1);
+    final int scriptHome23 = _scriptedHome(controller, 1);
+
     // Priya (seat 0) wins the first game; I (seat 1, Karim) lose.
     transport.pushText(
       _frame(
@@ -4199,7 +4215,7 @@ void main() {
         data: <String, Object?>{
           'winner': 0,
           'verify_url': 'https://verify.example.invalid/shot23',
-          'seq': 3,
+          'seq': gameOverSeq23,
         },
       ),
     );
@@ -4242,7 +4258,7 @@ void main() {
               _seatJson(0, name: hostName),
               _seatJson(1, name: joinerName),
             ],
-            seq: 4,
+            seq: gameOverSeq23 + 1,
           ),
           'rematch': <String, Object?>{
             'by': 0,
@@ -4287,6 +4303,12 @@ void main() {
           'end-card-rematch-ask still on screen immediately before the '
           'capture',
     );
+    _expectScriptedEndCardTiles(
+      tester,
+      capture: 'capture 23',
+      rolls: scriptRolls23,
+      home: scriptHome23,
+    );
 
     await binding.takeScreenshot('23-rematch-ask-en');
   });
@@ -4296,6 +4318,9 @@ void main() {
   // host) taps her own end card's Rematch button and the server's reply
   // puts her alone in `rematch.ready`; Karim (seat 1) has not answered yet
   // (C-246 rule 4's "rematch LOBBY, my seat in ready" case), in Arabic.
+  // Before `game_over`, `_playEndCardScript` plays the same short game
+  // captures 19 and 20 play. This device is seat 0, so the tiles are
+  // Priya's own numbers from that game, including her tokens home.
   // ==========================================================================
   testWidgets('capture 24-rematch-waiting-ar', (tester) async {
     binding.testTextInput.register();
@@ -4406,6 +4431,19 @@ void main() {
     );
     expect(find.byType(LobbyScreen), findsNothing);
 
+    // Seat 0 (Priya), the seat this card is about. The script is the one
+    // captures 19 and 20 play. Rolls and tokens home are counted off the
+    // script once it returns; the shot below reads those counts.
+    final int gameOverSeq24 = await _playEndCardScript(
+      tester,
+      transport,
+      controller,
+      gameStartedSeq: 3,
+      priyaWins: true,
+    );
+    final int scriptRolls24 = _scriptedRolls(controller, 0);
+    final int scriptHome24 = _scriptedHome(controller, 0);
+
     // My own seat (0, Priya) is named winner.
     transport.pushText(
       _frame(
@@ -4413,7 +4451,7 @@ void main() {
         data: <String, Object?>{
           'winner': 0,
           'verify_url': 'https://verify.example.invalid/shot24',
-          'seq': 4,
+          'seq': gameOverSeq24,
         },
       ),
     );
@@ -4477,7 +4515,7 @@ void main() {
               _seatJson(0, name: hostName),
               _seatJson(1, name: 'Karim'),
             ],
-            seq: 5,
+            seq: gameOverSeq24 + 1,
           ),
           'rematch': <String, Object?>{
             'by': 0,
@@ -4531,6 +4569,12 @@ void main() {
           'capture 24: after the post-rematch-reply settle, expected '
           'end-card-rematch-waiting still on screen immediately before '
           'the capture',
+    );
+    _expectScriptedEndCardTiles(
+      tester,
+      capture: 'capture 24',
+      rolls: scriptRolls24,
+      home: scriptHome24,
     );
 
     await binding.takeScreenshot('24-rematch-waiting-ar');
@@ -4981,6 +5025,83 @@ List<int> _endCardTokens(RoomController controller, int seat) {
     ),
   );
   return seatState.tokens;
+}
+
+/// Rolls [seat] made in the game `_playEndCardScript` just played, counted
+/// from `rolled` frames on [controller]'s transcript. Captures 23 and 24
+/// assert the rolls tile against this count instead of a typed number.
+int _scriptedRolls(RoomController controller, int seat) {
+  var rolls = 0;
+  for (final Frame frame in controller.gameTranscript) {
+    if (frame.type != 'rolled') {
+      continue;
+    }
+    if (frame.data['seat'] == seat) {
+      rolls++;
+    }
+  }
+  return rolls;
+}
+
+/// Tokens on 57 for [seat] in the room `_playEndCardScript` just left.
+/// Captures 23 and 24 assert the home tile against this count instead of
+/// a typed number. Read it before `game_over`: that push does not move
+/// tokens, and the rematch LOBBY after it replaces the live room's seats.
+int _scriptedHome(RoomController controller, int seat) {
+  var home = 0;
+  for (final int progress in _endCardTokens(controller, seat)) {
+    if (progress == 57) {
+      home++;
+    }
+  }
+  return home;
+}
+
+/// Captures 23 and 24, immediately before the shot: the rolls tile shows
+/// [rolls], which the script left non-zero, and the home tile shows [home],
+/// the device seat's tokens on 57 after that same script.
+void _expectScriptedEndCardTiles(
+  WidgetTester tester, {
+  required String capture,
+  required int rolls,
+  required int home,
+}) {
+  expect(
+    rolls,
+    greaterThan(0),
+    reason: '$capture: rolls counted from the script must be non-zero',
+  );
+  _expectScriptedEndCardCount(
+    tester,
+    capture: capture,
+    keyName: 'end-card-stat-rolls',
+    count: rolls,
+  );
+  _expectScriptedEndCardCount(
+    tester,
+    capture: capture,
+    keyName: 'end-card-stat-home',
+    count: home,
+  );
+}
+
+void _expectScriptedEndCardCount(
+  WidgetTester tester, {
+  required String capture,
+  required String keyName,
+  required int count,
+}) {
+  final Finder tile = find.byKey(Key(keyName));
+  expect(
+    tile,
+    findsOneWidget,
+    reason: '$capture: expected $keyName on screen before the shot',
+  );
+  expect(
+    find.descendant(of: tile, matching: find.text('$count')),
+    findsOneWidget,
+    reason: '$capture: expected $keyName to show the script\'s count $count',
+  );
 }
 
 /// Plays the short two-seat game captures 19-22 photograph, on the same
