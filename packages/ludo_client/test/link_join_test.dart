@@ -249,10 +249,12 @@ Future<void> _pumpHome(WidgetTester tester, _Mount mount) async {
   await tester.pumpAndSettle();
 }
 
-/// One frame for the link's setState, then the route transition. Bounded
+/// The push lands one frame after the link's setState, and that route's
+/// first frame is offstage. Pump through the first onstage frame. Bounded
 /// on purpose: once LobbyScreen is up, its connecting indicator never
 /// settles.
 Future<void> _pumpAfterLink(WidgetTester tester) async {
+  await tester.pump();
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
 }
