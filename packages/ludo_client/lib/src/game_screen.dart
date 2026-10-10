@@ -1605,7 +1605,8 @@ class _GameScreenState extends State<GameScreen> {
             stats = _fetchedStats;
           } else {
             stats = localStats;
-            if (!_gameLogFetchInFlight &&
+            if (room.state == RoomState.finished &&
+                !_gameLogFetchInFlight &&
                 (_gameLogRequestsCount == 0 ||
                     (_gameLogRequestsCount == 1 &&
                         _gameLogFailedSocketDown &&
@@ -1739,9 +1740,7 @@ class _GameScreenState extends State<GameScreen> {
     if (gameId == null || gameId.isEmpty) {
       return;
     }
-    final bool endCardUp = !_isEndHeld &&
-        (room.state == RoomState.finished ||
-            (room.state == RoomState.lobby && room.rematch != null));
+    final bool endCardUp = !_isEndHeld && room.state == RoomState.finished;
     if (!endCardUp) {
       return;
     }
@@ -1806,7 +1805,6 @@ class _GameScreenState extends State<GameScreen> {
     _gameLogRequestsCount++;
     try {
       final List<Frame> frames = await widget.controller.fetchGameLog();
-      _gameLogFetchInFlight = false;
       if (!mounted) {
         return;
       }
@@ -1846,15 +1844,15 @@ class _GameScreenState extends State<GameScreen> {
         _fetchedStatsGameId = targetGameId;
       });
     } on ConnectionClosedException {
-      _gameLogFetchInFlight = false;
       _gameLogFailedSocketDown = true;
-    } catch (_) {
+    } on ProtocolErrorException {
+      _gameLogFailedSocketDown = widget.controller.phase != RoomPhase.connected;
+    } on RequestTimeoutException {
+      _gameLogFailedSocketDown = widget.controller.phase != RoomPhase.connected;
+    } on FrameFormatException {
+      _gameLogFailedSocketDown = widget.controller.phase != RoomPhase.connected;
+    } finally {
       _gameLogFetchInFlight = false;
-      if (widget.controller.phase != RoomPhase.connected) {
-        _gameLogFailedSocketDown = true;
-      } else {
-        _gameLogFailedSocketDown = false;
-      }
     }
   }
 }

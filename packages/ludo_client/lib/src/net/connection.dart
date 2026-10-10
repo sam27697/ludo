@@ -82,9 +82,7 @@ class _PendingRequest implements _PendingEntry {
       final Object? messageValue = frame.data['message'];
       final String code = codeValue is String ? codeValue : '';
       final String message = messageValue is String ? messageValue : '';
-      completer.completeError(
-        ProtocolErrorException(code, message, frame),
-      );
+      completer.completeError(ProtocolErrorException(code, message, frame));
     } else {
       completer.complete(frame);
     }
@@ -126,9 +124,7 @@ class _PendingGameLog implements _PendingEntry {
       final Object? messageValue = frame.data['message'];
       final String code = codeValue is String ? codeValue : '';
       final String message = messageValue is String ? messageValue : '';
-      completer.completeError(
-        ProtocolErrorException(code, message, frame),
-      );
+      completer.completeError(ProtocolErrorException(code, message, frame));
       return true;
     }
 
@@ -203,8 +199,7 @@ class _PendingGameLog implements _PendingEntry {
       }
       final Object? idValue = item['id'];
       final String frameId = idValue is String ? idValue : '';
-      final Map<String, Object?> frameData =
-          Map<String, Object?>.from(dValue);
+      final Map<String, Object?> frameData = Map<String, Object?>.from(dValue);
       _frames.add(Frame(type: tValue, id: frameId, data: frameData));
     }
 
@@ -568,9 +563,6 @@ class RoomConnection {
     _transport!.send(text);
     return completer.future;
   }
-
-  /// Alias for [gameLog].
-  Future<List<Frame>> fetchGameLog() => gameLog();
 
   RoomSnapshot _asRoomSnapshot(Frame frame) {
     if (frame.type != 'room') {

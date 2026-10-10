@@ -711,13 +711,13 @@ class RoomController extends ChangeNotifier {
   }
 
   /// C-304 rule 1: fetches the server's game log for the current game.
-  /// Forwards directly to the current connection's [fetchGameLog].
+  /// Forwards directly to the current connection's [gameLog].
   Future<List<Frame>> fetchGameLog() {
     final RoomConnection? connection = _connection;
     if (_disposed || _phase != RoomPhase.connected || connection == null) {
       return Future<List<Frame>>.error(const ConnectionClosedException());
     }
-    return connection.fetchGameLog();
+    return connection.gameLog();
   }
 
   /// Sends `leave_room` best-effort (its outcome, success or failure, is
