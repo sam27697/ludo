@@ -337,8 +337,9 @@ class _HomeScreenState extends State<HomeScreen>
   /// recent join codes, and a seat record held across a process kill (H3)
   /// from [SessionMemory]. An empty or unreadable store leaves the
   /// localised name default, the four-seat disclosure, no recent chips and
-  /// no rejoin button as they are. Completing or failing the load marks
-  /// session memory as loaded and drains any pending room link (order 296).
+  /// no rejoin button as they are. The load itself returns empty on failure,
+  /// so nothing is caught here. Completing the load marks session memory as
+  /// loaded and drains any pending room link (order 296).
   Future<void> _restoreSessionMemory() async {
     try {
       final SessionMemory memory = await SessionMemory.load();
@@ -367,8 +368,6 @@ class _HomeScreenState extends State<HomeScreen>
           }
         });
       }
-    } catch (_) {
-      // Swallowed: missing or broken storage counts as empty.
     } finally {
       _sessionMemoryLoaded = true;
       if (mounted) {
