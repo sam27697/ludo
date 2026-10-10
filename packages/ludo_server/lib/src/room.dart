@@ -136,7 +136,9 @@ class Room {
     this.seq = 0,
     this.rematch,
     DateTime? lifetimeStartedAt,
-  }) : lifetimeStartedAt = lifetimeStartedAt ?? createdAt;
+    List<Map<String, Object?>>? gameLog,
+  })  : lifetimeStartedAt = lifetimeStartedAt ?? createdAt,
+        gameLog = gameLog ?? <Map<String, Object?>>[];
 
   final String code;
   final DateTime createdAt;
@@ -255,6 +257,11 @@ class Room {
   /// auto-start (section 16.4 "Everyone accepted") or the host's forced
   /// `start_game` (section 16.4 "Not everyone").
   Rematch? rematch;
+
+  /// `docs/PROTOCOL.md` section 17. Every push the room broadcast for the
+  /// current game, from its `game_started` on, in ascending seq order. Each
+  /// entry is `{"t": type, "d": data}`.
+  final List<Map<String, Object?>> gameLog;
 
   @override
   String toString() => 'Room(code: $code, state: $state, '
