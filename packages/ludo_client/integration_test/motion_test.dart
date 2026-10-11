@@ -148,6 +148,16 @@ const String _motionLocale = String.fromEnvironment(
   defaultValue: 'en',
 );
 
+// Which seat the device plays. '0' (default) is today's recording: the
+// host, Priya, who creates the room and wins. '1' is Karim, the joiner
+// who loses. Parsed and range-checked in the test body, not here, so an
+// out-of-range value fails through `fail(...)` rather than a bare throw
+// before the binding exists.
+const String _motionSeatRaw = String.fromEnvironment(
+  'MOTION_SEAT',
+  defaultValue: '0',
+);
+
 class _MotionHarnessState extends State<_MotionHarness> {
   Locale _locale = const Locale(_motionLocale);
 
@@ -564,6 +574,12 @@ void main() {
       IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('records one two-seat game with motion on', (tester) async {
+    final int? parsedSeat = int.tryParse(_motionSeatRaw);
+    if (parsedSeat != 0 && parsedSeat != 1) {
+      fail('MOTION_SEAT must be "0" or "1"; got "$_motionSeatRaw"');
+    }
+    final int deviceSeat = parsedSeat!;
+
     if (tester
         .binding
         .platformDispatcher
@@ -603,190 +619,436 @@ void main() {
     );
     expect(homeLoc.localeName, _motionLocale);
 
-    const String hostName = 'Priya';
-    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
-    await tester.tap(find.byKey(const Key('home-players-disclosure')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    final Finder selector = find.byKey(const Key('home-players-selector'));
-    expect(selector, findsOneWidget);
-    await tester.tap(
-      find.descendant(
-        of: selector,
-        matching: find.text(homeLoc.homePlayersTwo),
-      ),
-    );
-    await tester.pump();
-
-    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-    expect(factory.controllers, hasLength(1));
-    final RoomController controller = factory.controllers.single;
-    final FakeTransport transport = factory.transports.single;
-    addTearDown(controller.dispose);
-
-    final List<String> createMessages = transport.sentRaw
-        .where((String s) => _typeOf(s) == 'create_room')
-        .toList();
-    expect(createMessages, hasLength(1));
-    final Map<String, Object?> createData = _dataOf(createMessages.single);
-    expect(createData['name'], hostName);
-    expect(createData['players'], 2);
-    expect(createData['rules'], <String, Object?>{
-      'blocks': true,
-      'capture_bonus': true,
-    });
-    expect(isValidRoomCode(_roomCode), isTrue);
-
-    transport.pushText(
-      _frame(
-        type: 'seat_assigned',
-        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-motion-288'},
-      ),
-    );
-    transport.pushText(
-      _frame(
-        type: 'room',
-        re: _idOf(createMessages.single),
-        data: _roomJson(
-          code: _roomCode,
-          players: 2,
-          hostSeat: 0,
-          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
-          seq: 1,
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-    await _pumpUntilFound(
-      tester,
-      find.byType(LobbyScreen),
-      'LobbyScreen after create_room',
-    );
-
-    transport.pushText(
-      _frame(
-        type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
-      ),
-    );
-    await tester.pump();
-    expect(find.byKey(const Key('lobby-room-code')), findsOneWidget);
-    expect(
-      tester.widget<Text>(find.byKey(const Key('lobby-room-code'))).data,
-      _roomCode,
-    );
-    expect(find.byKey(const Key('lobby-seat-0')), findsOneWidget);
-    expect(find.byKey(const Key('lobby-seat-1')), findsOneWidget);
-
-    final Finder startButton = find.byKey(const Key('lobby-start-button'));
-    expect(startButton, findsOneWidget);
-    await tester.tap(startButton);
-    await tester.pump();
-    final List<String> startMessages = transport.sentRaw
-        .where((String s) => _typeOf(s) == 'start_game')
-        .toList();
-    expect(startMessages, hasLength(1));
-    final String startId = _idOf(startMessages.single);
-
-    // Protocol 13.1: server seeds, then game_started, then a standalone
-    // turn at the next seq. The host's copies of game_started and turn
-    // carry re. seat_seed does not.
-    transport.pushText(
-      _frame(
-        type: 'seat_seed',
-        data: <String, Object?>{
-          'seat': 0,
-          'client_seed': 'srvseedseat0',
-          'origin': 'server',
-          'seq': 3,
-        },
-      ),
-    );
-    transport.pushText(
-      _frame(
-        type: 'seat_seed',
-        data: <String, Object?>{
-          'seat': 1,
-          'client_seed': 'srvseedseat1',
-          'origin': 'server',
-          'seq': 4,
-        },
-      ),
-    );
-    transport.pushText(
-      _frame(
-        type: 'game_started',
-        re: startId,
-        data: <String, Object?>{
-          'turn': 0,
-          'game_id': _gameId,
-          'client_seeds': _clientSeeds,
-          'seq': 5,
-        },
-      ),
-    );
-    transport.pushText(
-      _frame(
-        type: 'turn',
-        re: startId,
-        data: <String, Object?>{
-          'seat': 0,
-          'deadline_ms': _deadlineMs,
-          'seq': 6,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-    await _pumpUntilFound(
-      tester,
-      find.byType(GameScreen),
-      'GameScreen after game_started',
-    );
-    expect(find.byType(LobbyScreen), findsNothing);
-    expect(controller.room!.state, RoomState.playing);
-    expect(controller.room!.turn!.seat, 0);
-    expect(controller.room!.turn!.phase, TurnPhase.awaitRoll);
-    expect(controller.hasDesynced, isFalse);
-
-    await _holdFor(tester, const Duration(seconds: 2));
-
-    _motion('2 turn pulse');
-    expect(find.byKey(const Key('game-die-pulse')), findsOneWidget);
-    expect(controller.room!.turn!.seat, 0);
-    expect(controller.room!.turn!.phase, TurnPhase.awaitRoll);
-    final int sentAtPulse = transport.sentRaw.length;
-    await _holdFor(tester, const Duration(seconds: 3));
-    expect(find.byKey(const Key('game-die-pulse')), findsOneWidget);
-    expect(
-      transport.sentRaw
-          .skip(sentAtPulse)
-          .where((String s) => _typeOf(s) == 'roll'),
-      isEmpty,
-    );
-
-    final _Playback playback = _Playback(
-      tester: tester,
-      transport: transport,
-      controller: controller,
-    );
-    for (final ({_Roll roll, List<_Line> rest}) group in groups) {
-      await playback.play(group.roll, group.rest);
+    if (deviceSeat == 0) {
+      await _runHostSeat0(tester, factory, homeLoc, groups, elapsed);
+    } else {
+      await _runJoinerSeat1(tester, factory, homeLoc, groups, lines, elapsed);
     }
-
-    expect(controller.room!.state, RoomState.finished);
-    expect(controller.room!.winner, 0);
-    expect(controller.hasDesynced, isFalse);
-    debugPrint('motion elapsed ${elapsed.elapsed.inMilliseconds}ms');
-    expect(
-      elapsed.elapsed,
-      lessThan(const Duration(seconds: 120)),
-      reason:
-          'the script took ${elapsed.elapsed.inMilliseconds}ms after the '
-          'app was up; the limit is 120s',
-    );
   });
+}
+
+/// MOTION_SEAT=0 (default). Unchanged from the recording before order 313:
+/// Priya creates the room, starts the game, and plays seat 0 to the win.
+Future<void> _runHostSeat0(
+  WidgetTester tester,
+  _MotionControllerFactory factory,
+  AppLocalizations homeLoc,
+  List<({_Roll roll, List<_Line> rest})> groups,
+  Stopwatch elapsed,
+) async {
+  const String hostName = 'Priya';
+  await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
+  await tester.tap(find.byKey(const Key('home-players-disclosure')));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+  final Finder selector = find.byKey(const Key('home-players-selector'));
+  expect(selector, findsOneWidget);
+  await tester.tap(
+    find.descendant(of: selector, matching: find.text(homeLoc.homePlayersTwo)),
+  );
+  await tester.pump();
+
+  await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+  expect(factory.controllers, hasLength(1));
+  final RoomController controller = factory.controllers.single;
+  final FakeTransport transport = factory.transports.single;
+  addTearDown(controller.dispose);
+
+  final List<String> createMessages = transport.sentRaw
+      .where((String s) => _typeOf(s) == 'create_room')
+      .toList();
+  expect(createMessages, hasLength(1));
+  final Map<String, Object?> createData = _dataOf(createMessages.single);
+  expect(createData['name'], hostName);
+  expect(createData['players'], 2);
+  expect(createData['rules'], <String, Object?>{
+    'blocks': true,
+    'capture_bonus': true,
+  });
+  expect(isValidRoomCode(_roomCode), isTrue);
+
+  transport.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: <String, Object?>{'seat': 0, 'seat_token': 'tok-motion-288'},
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'room',
+      re: _idOf(createMessages.single),
+      data: _roomJson(
+        code: _roomCode,
+        players: 2,
+        hostSeat: 0,
+        seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
+        seq: 1,
+      ),
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byType(LobbyScreen),
+    'LobbyScreen after create_room',
+  );
+
+  transport.pushText(
+    _frame(
+      type: 'player_joined',
+      data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+    ),
+  );
+  await tester.pump();
+  expect(find.byKey(const Key('lobby-room-code')), findsOneWidget);
+  expect(
+    tester.widget<Text>(find.byKey(const Key('lobby-room-code'))).data,
+    _roomCode,
+  );
+  expect(find.byKey(const Key('lobby-seat-0')), findsOneWidget);
+  expect(find.byKey(const Key('lobby-seat-1')), findsOneWidget);
+
+  final Finder startButton = find.byKey(const Key('lobby-start-button'));
+  expect(startButton, findsOneWidget);
+  await tester.tap(startButton);
+  await tester.pump();
+  final List<String> startMessages = transport.sentRaw
+      .where((String s) => _typeOf(s) == 'start_game')
+      .toList();
+  expect(startMessages, hasLength(1));
+  final String startId = _idOf(startMessages.single);
+
+  // Protocol 13.1: server seeds, then game_started, then a standalone
+  // turn at the next seq. The host's copies of game_started and turn
+  // carry re. seat_seed does not.
+  transport.pushText(
+    _frame(
+      type: 'seat_seed',
+      data: <String, Object?>{
+        'seat': 0,
+        'client_seed': 'srvseedseat0',
+        'origin': 'server',
+        'seq': 3,
+      },
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'seat_seed',
+      data: <String, Object?>{
+        'seat': 1,
+        'client_seed': 'srvseedseat1',
+        'origin': 'server',
+        'seq': 4,
+      },
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'game_started',
+      re: startId,
+      data: <String, Object?>{
+        'turn': 0,
+        'game_id': _gameId,
+        'client_seeds': _clientSeeds,
+        'seq': 5,
+      },
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'turn',
+      re: startId,
+      data: <String, Object?>{'seat': 0, 'deadline_ms': _deadlineMs, 'seq': 6},
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byType(GameScreen),
+    'GameScreen after game_started',
+  );
+  expect(find.byType(LobbyScreen), findsNothing);
+  expect(controller.room!.state, RoomState.playing);
+  expect(controller.room!.turn!.seat, 0);
+  expect(controller.room!.turn!.phase, TurnPhase.awaitRoll);
+  expect(controller.hasDesynced, isFalse);
+
+  await _holdFor(tester, const Duration(seconds: 2));
+
+  _motion('2 turn pulse');
+  expect(find.byKey(const Key('game-die-pulse')), findsOneWidget);
+  expect(controller.room!.turn!.seat, 0);
+  expect(controller.room!.turn!.phase, TurnPhase.awaitRoll);
+  final int sentAtPulse = transport.sentRaw.length;
+  await _holdFor(tester, const Duration(seconds: 3));
+  expect(find.byKey(const Key('game-die-pulse')), findsOneWidget);
+  expect(
+    transport.sentRaw
+        .skip(sentAtPulse)
+        .where((String s) => _typeOf(s) == 'roll'),
+    isEmpty,
+  );
+
+  final _Playback playback = _Playback(
+    tester: tester,
+    transport: transport,
+    controller: controller,
+    deviceSeat: 0,
+    startSeq: 6,
+  );
+  for (final ({_Roll roll, List<_Line> rest}) group in groups) {
+    await playback.play(group.roll, group.rest);
+  }
+
+  expect(controller.room!.state, RoomState.finished);
+  expect(controller.room!.winner, 0);
+  expect(controller.hasDesynced, isFalse);
+  debugPrint('motion elapsed ${elapsed.elapsed.inMilliseconds}ms');
+  expect(
+    elapsed.elapsed,
+    lessThan(const Duration(seconds: 120)),
+    reason:
+        'the script took ${elapsed.elapsed.inMilliseconds}ms after the '
+        'app was up; the limit is 120s',
+  );
+}
+
+/// MOTION_SEAT=1. Karim joins by code and loses; Priya (seat 0, the host)
+/// is played entirely by the server, the same shape `_server` already
+/// gives seat 1 in the MOTION_SEAT=0 recording, generalised to whichever
+/// seat is not the device's own.
+Future<void> _runJoinerSeat1(
+  WidgetTester tester,
+  _MotionControllerFactory factory,
+  AppLocalizations homeLoc,
+  List<({_Roll roll, List<_Line> rest})> groups,
+  List<_Line> lines,
+  Stopwatch elapsed,
+) async {
+  const String hostName = 'Priya';
+  const String joinerName = 'Karim';
+
+  await tester.enterText(find.byKey(const Key('home-name-field')), joinerName);
+  await tester.enterText(find.byKey(const Key('room-code-field')), _roomCode);
+  await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
+
+  expect(factory.controllers, hasLength(1));
+  final RoomController controller = factory.controllers.single;
+  final FakeTransport transport = factory.transports.single;
+  addTearDown(controller.dispose);
+
+  final List<String> joinMessages = transport.sentRaw
+      .where((String s) => _typeOf(s) == 'join_room')
+      .toList();
+  expect(
+    joinMessages,
+    hasLength(1),
+    reason:
+        'expected LobbyScreen.initState, reached through RoomRoute, to '
+        'have sent exactly one join_room request; sent '
+        '${transport.sentRaw.map(_typeOf).toList()}',
+  );
+  final Map<String, Object?> joinData = _dataOf(joinMessages.single);
+  expect(joinData['name'], joinerName);
+  expect(joinData['code'], _roomCode);
+  final String joinId = _idOf(joinMessages.single);
+
+  transport.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: <String, Object?>{'seat': 1, 'seat_token': 'tok-motion-karim'},
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'room',
+      re: joinId,
+      data: _roomJson(
+        code: _roomCode,
+        players: 2,
+        hostSeat: 0,
+        seats: <Map<String, Object?>>[
+          _seatJson(0, name: hostName),
+          _seatJson(1, name: joinerName),
+        ],
+        seq: 1,
+      ),
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byType(LobbyScreen),
+    'LobbyScreen after the join_room reply carrying code "$_roomCode"',
+  );
+
+  expect(find.byKey(const Key('lobby-room-code')), findsOneWidget);
+  expect(
+    tester.widget<Text>(find.byKey(const Key('lobby-room-code'))).data,
+    _roomCode,
+  );
+  expect(find.byKey(const Key('lobby-seat-0')), findsOneWidget);
+  expect(find.byKey(const Key('lobby-seat-1')), findsOneWidget);
+
+  // The joiner's lobby, held on screen before the host starts the game.
+  await _holdFor(tester, const Duration(seconds: 2));
+
+  // Protocol 13.1, from the non-host side: server seeds, then
+  // game_started, then a standalone turn, none of it carrying `re` --
+  // this client never sent start_game.
+  transport.pushText(
+    _frame(
+      type: 'seat_seed',
+      data: <String, Object?>{
+        'seat': 0,
+        'client_seed': 'srvseedseat0',
+        'origin': 'server',
+        'seq': 2,
+      },
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'seat_seed',
+      data: <String, Object?>{
+        'seat': 1,
+        'client_seed': 'srvseedseat1',
+        'origin': 'server',
+        'seq': 3,
+      },
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'game_started',
+      data: <String, Object?>{
+        'turn': 0,
+        'game_id': _gameId,
+        'client_seeds': _clientSeeds,
+        'seq': 4,
+      },
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'turn',
+      data: <String, Object?>{'seat': 0, 'deadline_ms': _deadlineMs, 'seq': 5},
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byType(GameScreen),
+    'GameScreen after the unprompted game_started push',
+  );
+  expect(
+    find.byType(LobbyScreen),
+    findsNothing,
+    reason: 'RoomRoute must latch onto GameScreen and never go back',
+  );
+
+  final List<String> startMessages = transport.sentRaw
+      .where((String s) => _typeOf(s) == 'start_game')
+      .toList();
+  expect(
+    startMessages,
+    isEmpty,
+    reason:
+        'the joiner must never send start_game; sent '
+        '${transport.sentRaw.map(_typeOf).toList()}',
+  );
+
+  expect(controller.room!.state, RoomState.playing);
+  expect(controller.room!.turn!.seat, 0);
+  expect(controller.room!.turn!.phase, TurnPhase.awaitRoll);
+  expect(controller.hasDesynced, isFalse);
+
+  _motion('2 turn pulse');
+  // It is Priya's (seat 0) turn, not Karim's: no pulse on this device's
+  // die, and the device sends nothing while it waits.
+  expect(find.byKey(const Key('game-die-pulse')), findsNothing);
+  expect(controller.room!.turn!.seat, 0);
+  expect(controller.room!.turn!.phase, TurnPhase.awaitRoll);
+  final int sentAtPulse = transport.sentRaw.length;
+  await _holdFor(tester, const Duration(seconds: 2));
+  expect(find.byKey(const Key('game-die-pulse')), findsNothing);
+  expect(
+    transport.sentRaw
+        .skip(sentAtPulse)
+        .where((String s) => _typeOf(s) == 'roll' || _typeOf(s) == 'move'),
+    isEmpty,
+  );
+
+  final _Playback playback = _Playback(
+    tester: tester,
+    transport: transport,
+    controller: controller,
+    deviceSeat: 1,
+    startSeq: 5,
+  );
+  for (final ({_Roll roll, List<_Line> rest}) group in groups) {
+    await playback.play(group.roll, group.rest);
+  }
+
+  expect(controller.room!.state, RoomState.finished);
+  expect(controller.room!.winner, 0);
+  expect(controller.hasDesynced, isFalse);
+
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('end-card-lose')),
+    'end-card-lose after game_over',
+  );
+
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+  final Finder winnerTitle = find.byKey(const Key('game-screen-winner'));
+  expect(winnerTitle, findsOneWidget);
+  final Text winnerText = tester.widget<Text>(winnerTitle);
+  final String? shown = winnerText.data ?? winnerText.textSpan?.toPlainText();
+  expect(
+    shown,
+    loc.endLoseTitle(hostName),
+    reason:
+        'game-screen-winner must show endLoseTitle($hostName) on a loss; '
+        'got "$shown"',
+  );
+  expect(find.byKey(const Key('end-card-lose-line')), findsOneWidget);
+
+  final int seat1Rolls = lines
+      .whereType<_Roll>()
+      .where((_Roll line) => line.seat == 1)
+      .length;
+  final Finder rollsTile = find.byKey(const Key('end-card-stat-rolls'));
+  expect(rollsTile, findsOneWidget);
+  expect(
+    find.descendant(of: rollsTile, matching: find.text('$seat1Rolls')),
+    findsOneWidget,
+    reason:
+        'end-card-stat-rolls must show $seat1Rolls, the count of seat-1 '
+        'ROLL lines in the parsed log',
+  );
+
+  expect(find.byKey(const Key('game-screen-verify-button')), findsOneWidget);
+
+  // The loser's card, held so the recording shows it settled.
+  await _holdFor(tester, const Duration(seconds: 6));
+  expect(find.byKey(const Key('end-card-lose')), findsOneWidget);
+
+  debugPrint('motion elapsed ${elapsed.elapsed.inMilliseconds}ms');
+  expect(
+    elapsed.elapsed,
+    lessThan(const Duration(seconds: 120)),
+    reason:
+        'the script took ${elapsed.elapsed.inMilliseconds}ms after the '
+        'app was up; the limit is 120s',
+  );
 }
 
 class _Playback {
@@ -794,13 +1056,19 @@ class _Playback {
     required this.tester,
     required this.transport,
     required this.controller,
-  });
+    required this.deviceSeat,
+    required int startSeq,
+  }) : _seq = startSeq;
 
   final WidgetTester tester;
   final FakeTransport transport;
   final RoomController controller;
 
-  int _seq = 6;
+  /// Which seat this device plays: 0 (Priya, MOTION_SEAT=0) or 1 (Karim,
+  /// MOTION_SEAT=1).
+  final int deviceSeat;
+
+  int _seq;
   int _k = 0;
 
   int _nextSeq() {
@@ -934,7 +1202,7 @@ class _Playback {
     // The keyed Semantics node sits under the painted token, so the
     // center of the finder hits that token. The sent index is the check.
     await tester.tap(
-      find.byKey(Key('board-token-hit-0-$token')),
+      find.byKey(Key('board-token-hit-$deviceSeat-$token')),
       warnIfMissed: false,
     );
     await tester.pump();
@@ -988,34 +1256,107 @@ class _Playback {
       reason: 'a roll cannot both move and pass (${roll.tag})',
     );
 
-    if (roll.tag.contains('STEP3')) {
-      _motion('3 roll');
-      await _step3(roll, move!);
-      _motion('4 move');
-      await _step4(move, turn!);
+    if (deviceSeat == 0) {
+      // Unchanged dispatch: every STEP tag in the log belongs to seat 0
+      // except STEP5, which `_step5` already plays as the opponent's
+      // (seat 1's) capture, server-pushed with no tap.
+      if (roll.tag.contains('STEP3')) {
+        _motion('3 roll');
+        await _step3(roll, move!);
+        _motion('4 move');
+        await _step4(move, turn!);
+        return;
+      }
+      if (roll.tag.contains('STEP5')) {
+        _motion('5 captured');
+        await _step5(roll, move!);
+        return;
+      }
+      if (roll.tag.contains('STEP6')) {
+        _motion('6 capture');
+        await _step6(roll, move!);
+        return;
+      }
+      if (roll.tag.contains('STEP7')) {
+        _motion('7 no move');
+        await _step7(roll, pass!, turn!);
+        return;
+      }
+      if (roll.tag.contains('STEP8')) {
+        _motion('8 win');
+        await _step8(roll, move!);
+        return;
+      }
+      await _server(roll, move, pass, turn);
       return;
     }
-    if (roll.tag.contains('STEP5')) {
-      _motion('5 captured');
-      await _step5(roll, move!);
+
+    // deviceSeat == 1: the STEP tags were chosen for seat 0's camera
+    // beats and no longer mean the same thing on seat 1's turns, so
+    // every group is played by who actually rolled it: seat 1's rolls
+    // are tapped on the device (`_mine`), seat 0's are pushed by the
+    // server exactly like `_server` already pushes seat 1's moves in
+    // the MOTION_SEAT=0 recording, generalised to whichever seat is not
+    // the device's own. The device must send nothing while it is not
+    // its turn.
+    if (roll.seat == deviceSeat) {
+      await _mine(roll, move, pass, turn);
       return;
     }
-    if (roll.tag.contains('STEP6')) {
-      _motion('6 capture');
-      await _step6(roll, move!);
-      return;
-    }
-    if (roll.tag.contains('STEP7')) {
-      _motion('7 no move');
-      await _step7(roll, pass!, turn!);
-      return;
-    }
-    if (roll.tag.contains('STEP8')) {
-      _motion('8 win');
-      await _step8(roll, move!);
-      return;
-    }
+    final int before = transport.sentRaw.length;
     await _server(roll, move, pass, turn);
+    expect(
+      transport.sentRaw
+          .skip(before)
+          .where((String s) => _typeOf(s) == 'roll' || _typeOf(s) == 'move'),
+      isEmpty,
+      reason: "device sent a roll or move on seat 0's turn (${roll.tag})",
+    );
+  }
+
+  /// MOTION_SEAT=1 only. The device's own roll and, when `legal` is not
+  /// empty, its own move -- tap the die, then the token, the same
+  /// mechanics `_tapDie`/`_tapToken` already use for seat 0's taps,
+  /// generalised to `deviceSeat`.
+  Future<void> _mine(_Roll roll, _Move? move, _Pass? pass, _Turn? turn) async {
+    _expectInSync(roll.tag);
+    final String rollId = await _tapDie();
+    if (pass != null) {
+      expect(pass.reason, 'noLegalMove');
+      _pushRolled(roll, re: rollId);
+      _pushPassed(roll.seat, re: rollId);
+      _pushTurn(turn!.seat, re: rollId);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const Key('game-die-no-move-mark')), findsOneWidget);
+      return;
+    }
+    final _Move played = move!;
+    _expectFrom(played);
+    _pushRolled(roll, re: rollId);
+    await tester.pump();
+    if (roll.legal.length > 1) {
+      for (final int token in roll.legal) {
+        expect(
+          find.byKey(Key('board-legal-ring-${roll.seat}-$token')),
+          findsOneWidget,
+        );
+      }
+    }
+    final String moveId = await _tapToken(played.token);
+    _pushMoved(played, re: moveId);
+    if (turn != null) {
+      _pushTurn(turn.seat, re: moveId);
+    } else {
+      expect(played.extra, isTrue, reason: played.tag);
+      _pushTurn(roll.seat, re: moveId);
+    }
+    await tester.pump();
+    for (final (int seat, int token) in played.captured) {
+      expect(_tokens(seat)[token], -1);
+    }
+    expect(_tokens(played.seat)[played.token], played.to);
+    await _holdTravel(played);
   }
 
   Future<void> _step3(_Roll roll, _Move move) async {
