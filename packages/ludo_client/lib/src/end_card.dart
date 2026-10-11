@@ -109,6 +109,18 @@ class EndCard extends StatefulWidget {
   /// never sees this button at all.
   final VoidCallback? onStartReady;
 
+  /// C-316 rule 2: names of departed seats, in seat order.
+  final List<String> departedNames;
+
+  /// C-316 rule 2: true when every other seat has departed.
+  final bool everyoneLeft;
+
+  /// C-316 rule 2: true when rematch.by was a departed seat.
+  final bool rematchByDeparted;
+
+  /// C-316 rule 4: true when offline on the end card (failed, closed, or connecting).
+  final bool isOffline;
+
   const EndCard({
     super.key,
     required this.mySeat,
@@ -127,6 +139,10 @@ class EndCard extends StatefulWidget {
     this.rematchGone = false,
     this.onRematch,
     this.onStartReady,
+    this.departedNames = const <String>[],
+    this.everyoneLeft = false,
+    this.rematchByDeparted = false,
+    this.isOffline = false,
   });
 
   @override
@@ -450,6 +466,53 @@ class _EndCardState extends State<EndCard> {
       );
     }
 
+    if (widget.everyoneLeft) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            loc.endEveryoneLeft,
+            key: const Key('end-card-left'),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: kSpace3),
+          _newTableButton(loc, primary: true),
+        ],
+      );
+    }
+
+    final String separator =
+        Localizations.localeOf(context).languageCode == 'ar' ? '، ' : ', ';
+    final bool hasDeparted = widget.departedNames.isNotEmpty;
+    final Widget? leftLine = hasDeparted
+        ? Text(
+            loc.endLeft(widget.departedNames.join(separator)),
+            key: const Key('end-card-left'),
+            textAlign: TextAlign.center,
+          )
+        : null;
+
+    if (widget.isOffline) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          if (leftLine != null) ...<Widget>[
+            leftLine,
+            const SizedBox(height: kSpace2),
+          ],
+          Text(
+            loc.endOffline,
+            key: const Key('end-card-offline'),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: kSpace3),
+          _rematchButton(loc),
+          const SizedBox(height: kSpace2),
+          _newTableButton(loc, primary: false),
+        ],
+      );
+    }
+
     final RematchState? rematch = widget.rematch;
     final int? mySeat = widget.mySeat;
     final bool amReady =
@@ -463,6 +526,10 @@ class _EndCardState extends State<EndCard> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
+          if (leftLine != null) ...<Widget>[
+            leftLine,
+            const SizedBox(height: kSpace2),
+          ],
           Text(
             loc.endRematchWaiting,
             key: const Key('end-card-rematch-waiting'),
@@ -481,11 +548,31 @@ class _EndCardState extends State<EndCard> {
     }
 
     if (rematch != null && !amReady) {
+      final bool hideAsk =
+          widget.rematchByDeparted || widget.rematchByName == null;
+      if (hideAsk) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            if (leftLine != null) ...<Widget>[
+              leftLine,
+              const SizedBox(height: kSpace3),
+            ],
+            _rematchButton(loc),
+            const SizedBox(height: kSpace2),
+            _newTableButton(loc, primary: false),
+          ],
+        );
+      }
       final String byName = widget.rematchByName ?? '';
       final TextStyle? bodyStyle = Theme.of(context).textTheme.bodyLarge;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
+          if (leftLine != null) ...<Widget>[
+            leftLine,
+            const SizedBox(height: kSpace2),
+          ],
           Text.rich(
             TextSpan(
               children: _nameHighlightSpans(
@@ -510,6 +597,10 @@ class _EndCardState extends State<EndCard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
+        if (leftLine != null) ...<Widget>[
+          leftLine,
+          const SizedBox(height: kSpace3),
+        ],
         _rematchButton(loc),
         const SizedBox(height: kSpace2),
         _newTableButton(loc, primary: false),

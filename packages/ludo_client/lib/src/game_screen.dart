@@ -39,10 +39,10 @@ import 'net/snapshot.dart';
 import 'theme.dart';
 
 /// Distinct [Navigator.pop] result from the finished-board next-table
-/// button. The corner leave control pops with no result, so the screen
-/// that pushed this route can leave() and dispose the old controller
-/// without opening another table.
-enum GameScreenResult { newTable }
+/// button, or a forced removal from the room. The corner leave control
+/// pops with no result, so the screen that pushed this route can leave()
+/// and dispose the old controller without opening another table.
+enum GameScreenResult { newTable, removed }
 
 /// Safety-net fallback duration for held landing cues, contract C-268 rule 4e.
 const Duration kLandingCueFallback = Duration(milliseconds: 2000);
@@ -305,15 +305,13 @@ class _GameScreenState extends State<GameScreen> {
       }
     }
 
-    // C-246 rule 6: a seat removed by a host-forced start receives a
-    // `player_left` naming its own seat and nothing further from the room
-    // (docs/PROTOCOL.md section 16.9 rule 1). No existing "removed from a
-    // lobby" path exists under lib/ to reuse, so this is treated exactly
-    // as the corner Leave control treats leaving: pop with no result.
+    // C-246 rule 6, C-316 rule 3: a seat removed by a host-forced start receives
+    // a `player_left` naming its own seat and nothing further from the room
+    // (docs/PROTOCOL.md section 16.9 rule 1). Pops with GameScreenResult.removed.
     if (frame.type == 'player_left') {
       final int? seatValue = _intAt(frame.data, 'seat');
       if (seatValue != null && seatValue == widget.controller.seat) {
-        _leave();
+        Navigator.of(context).pop(GameScreenResult.removed);
       }
     }
   }
@@ -906,10 +904,11 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
-  /// C-246 rule 1 and rule 3: the end card's Rematch/accept tap. Guarded by
-  /// [_rematchInFlight] so a second tap while the request is open sends
-  /// nothing; `RoomController.rematch` never throws, so this always
-  /// reaches the end and clears the guard, whatever the server answered.
+  /// C-246 rule 1 and rule 3, C-316 rule 4: the end card's Rematch/accept tap.
+  /// Guarded by [_rematchInFlight] so a second tap while the request is open
+  /// sends nothing. When offline, starts the reconnect and sends rematch once
+  /// resumed. Neither method throws, so this always reaches the end and clears
+  /// the guard.
   Future<void> _onRematchTap() async {
     if (_rematchInFlight) {
       return;
@@ -917,7 +916,11 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {
       _rematchInFlight = true;
     });
-    await widget.controller.rematch();
+    if (widget.controller.phase != RoomPhase.connected) {
+      await widget.controller.reconnectAndRematch();
+    } else {
+      await widget.controller.rematch();
+    }
     if (!mounted) {
       return;
     }
@@ -991,13 +994,25 @@ class _GameScreenState extends State<GameScreen> {
         controller.errorCode == 'NO_SUCH_ROOM' &&
         room != null;
 
+    // C-316 rule 4: when the room is FINISHED or a rematch LOBBY with
+    // lastFinished, and the connection is failed, closed or connecting, the
+    // end card is drawn as when connected: not dimmed, not under IgnorePointer,
+    // no connection-lost card.
+    final bool isOffline =
+        controller.phase == RoomPhase.failed ||
+        controller.phase == RoomPhase.closed ||
+        controller.phase == RoomPhase.connecting;
+    final bool isOfflineEndCard = isOffline &&
+        room != null &&
+        ((room.state == RoomState.finished && !_isEndHeld) ||
+            (room.state == RoomState.lobby && controller.lastFinished != null));
+
     final Widget body;
     if (rematchGone) {
       body = _gameOverBody(loc, controller, room, rematchGone: true);
-    } else if (room != null &&
-        (controller.phase == RoomPhase.failed ||
-            controller.phase == RoomPhase.closed ||
-            controller.phase == RoomPhase.connecting)) {
+    } else if (isOfflineEndCard) {
+      body = _gameOverBody(loc, controller, room, isOffline: true);
+    } else if (room != null && isOffline) {
       // C-282 rules 1 and 2: a dropped or retrying connection keeps the
       // last snapshot's table in view (dimmed, untappable) under the
       // connection-lost card.
@@ -1563,6 +1578,7 @@ class _GameScreenState extends State<GameScreen> {
     RoomController controller,
     RoomSnapshot room, {
     bool rematchGone = false,
+    bool isOffline = false,
   }) {
     // C-310 rule 2: when a rematch is open in LOBBY, resolve the finished
     // game's presentation (winner, numbers, loser line, verify link, board)
@@ -1576,6 +1592,35 @@ class _GameScreenState extends State<GameScreen> {
             controller.lastFinished != null)
         ? controller.lastFinished!
         : room;
+
+    // C-316 rule 2: departed seats on the end card.
+    final RoomSnapshot? lastFinished = controller.lastFinished ??
+        (room.state == RoomState.finished ? room : null);
+    final List<String> departedNames = <String>[];
+    bool everyoneLeft = false;
+    bool rematchByDeparted = false;
+
+    if (lastFinished != null) {
+      final Set<int> liveSeats =
+          room.seats.map((SeatState s) => s.seat).toSet();
+      final List<SeatState> pastSeats =
+          List<SeatState>.from(lastFinished.seats)
+            ..sort((SeatState a, SeatState b) => a.seat.compareTo(b.seat));
+      for (final SeatState s in pastSeats) {
+        if (s.seat != controller.seat && !liveSeats.contains(s.seat)) {
+          departedNames.add(s.name);
+        }
+      }
+      final bool otherSeatPresent =
+          liveSeats.any((int seat) => seat != controller.seat);
+      if (departedNames.isNotEmpty && !otherSeatPresent) {
+        everyoneLeft = true;
+      }
+      final RematchState? rematch = room.rematch;
+      if (rematch != null && !liveSeats.contains(rematch.by)) {
+        rematchByDeparted = true;
+      }
+    }
 
     final bool hasBoard = finished.seats.length >= 2;
 
@@ -1687,6 +1732,10 @@ class _GameScreenState extends State<GameScreen> {
             occupiedSeats: _seatsInPlayOf(room),
             isHost: controller.isHost,
             rematchGone: rematchGone,
+            departedNames: departedNames,
+            everyoneLeft: everyoneLeft,
+            rematchByDeparted: rematchByDeparted,
+            isOffline: isOffline,
             onRematch: _rematchInFlight ? null : () => _onRematchTap(),
             onStartReady: controller.isHost ? controller.startGame : null,
           ),
@@ -1846,8 +1895,19 @@ class _GameScreenState extends State<GameScreen> {
       if (!mounted) {
         return;
       }
-      final String? currentGameId = widget.controller.room?.gameId;
-      if (currentGameId != targetGameId) {
+      final RoomSnapshot? room = widget.controller.room;
+      // C-316 rule 5: the answer is kept when its game is the finished game
+      // the card shows (lastFinished.gameId, or the FINISHED room's own id
+      // when the fetch started); discarded only when a new game has started
+      // since.
+      final String? showingGameId =
+          widget.controller.lastFinished?.gameId ?? room?.gameId;
+      if (showingGameId != targetGameId) {
+        return;
+      }
+      if (room != null &&
+          room.state == RoomState.playing &&
+          room.gameId != targetGameId) {
         return;
       }
       if (frames.isEmpty) {
@@ -1861,9 +1921,16 @@ class _GameScreenState extends State<GameScreen> {
       if (logGameId is! String || logGameId != targetGameId) {
         return;
       }
-      final RoomSnapshot? room = widget.controller.room;
+      final RoomSnapshot? finished = widget.controller.lastFinished;
       SeatState? currentSeatState;
-      if (room != null) {
+      if (finished != null) {
+        for (final SeatState s in finished.seats) {
+          if (s.seat == mySeat) {
+            currentSeatState = s;
+            break;
+          }
+        }
+      } else if (room != null) {
         for (final SeatState s in room.seats) {
           if (s.seat == mySeat) {
             currentSeatState = s;

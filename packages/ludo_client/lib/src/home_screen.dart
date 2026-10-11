@@ -63,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen>
   final TextEditingController _codeController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
   String? _errorText;
+  bool _removedNotice = false;
   int _players = 4;
   bool _playersSelectorOpen = false;
   bool _rulesBlocks = true;
@@ -588,6 +589,11 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _createRoom() async {
+    if (_removedNotice) {
+      setState(() {
+        _removedNotice = false;
+      });
+    }
     final AppLocalizations loc = AppLocalizations.of(context);
     final String name = _resolvedName(loc);
     final int players = _players;
@@ -656,6 +662,10 @@ class _HomeScreenState extends State<HomeScreen>
     }
     if (result == GameScreenResult.newTable) {
       await _createRoom();
+    } else if (result == GameScreenResult.removed) {
+      setState(() {
+        _removedNotice = true;
+      });
     }
   }
 
@@ -670,6 +680,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
     setState(() {
       _errorText = null;
+      _removedNotice = false;
     });
     final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
@@ -724,6 +735,10 @@ class _HomeScreenState extends State<HomeScreen>
     }
     if (result == GameScreenResult.newTable) {
       await _createRoom();
+    } else if (result == GameScreenResult.removed) {
+      setState(() {
+        _removedNotice = true;
+      });
     }
   }
 
@@ -734,6 +749,11 @@ class _HomeScreenState extends State<HomeScreen>
   /// this watches, is what records the seat again once the resume lands;
   /// nothing here writes [SessionMemory] directly.
   Future<void> _rejoinRoom(SeatRecord record) async {
+    if (_removedNotice) {
+      setState(() {
+        _removedNotice = false;
+      });
+    }
     final AppLocalizations loc = AppLocalizations.of(context);
     final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
@@ -759,6 +779,10 @@ class _HomeScreenState extends State<HomeScreen>
     }
     if (result == GameScreenResult.newTable) {
       await _createRoom();
+    } else if (result == GameScreenResult.removed) {
+      setState(() {
+        _removedNotice = true;
+      });
     }
   }
 
@@ -1220,6 +1244,19 @@ class _HomeScreenState extends State<HomeScreen>
                                     ),
                                   ],
                                   SizedBox(height: compact ? kSpace3 : kSpace6),
+                                  if (_removedNotice) ...[
+                                    Text(
+                                      loc.homeRemovedNotice,
+                                      key: const Key('home-removed-notice'),
+                                      textAlign: TextAlign.center,
+                                      style: textTheme.bodyMedium?.copyWith(
+                                        color: LudoColors.inkMuted,
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      height: compact ? kSpace2 : kSpace3,
+                                    ),
+                                  ],
                                   KeyedSubtree(
                                     key: _createButtonScrollKey,
                                     child: _weightedButton(
