@@ -887,7 +887,11 @@ void main() {
         // staying a plain `Navigator.of(context).pop()` with no result and
         // no notice recorded anywhere HomeScreen reads.
         await _pushPlayerLeft(tester, transport, seat: 0, seq: 3);
-        await tester.pump(const Duration(milliseconds: 100));
+        // The pop runs a page transition (about 300 ms); settle it with
+        // bounded pumps, never pumpAndSettle.
+        for (int i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
 
         expect(
           find.byType(GameScreen),
@@ -974,7 +978,11 @@ void main() {
         // handling at all (confirmed by grep: there is none on this tree)
         // and simply re-rendering with the seat missing from the grid.
         await _pushPlayerLeft(tester, transport, seat: 1, seq: 2);
-        await tester.pump(const Duration(milliseconds: 100));
+        // The pop runs a page transition (about 300 ms); settle it with
+        // bounded pumps, never pumpAndSettle.
+        for (int i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
 
         expect(
           find.byType(LobbyScreen),
