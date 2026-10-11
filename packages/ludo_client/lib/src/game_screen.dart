@@ -1002,7 +1002,8 @@ class _GameScreenState extends State<GameScreen> {
         controller.phase == RoomPhase.failed ||
         controller.phase == RoomPhase.closed ||
         controller.phase == RoomPhase.connecting;
-    final bool isOfflineEndCard = isOffline &&
+    final bool isOfflineEndCard =
+        isOffline &&
         room != null &&
         ((room.state == RoomState.finished && !_isEndHeld) ||
             (room.state == RoomState.lobby && controller.lastFinished != null));
@@ -1594,25 +1595,27 @@ class _GameScreenState extends State<GameScreen> {
         : room;
 
     // C-316 rule 2: departed seats on the end card.
-    final RoomSnapshot? lastFinished = controller.lastFinished ??
+    final RoomSnapshot? lastFinished =
+        controller.lastFinished ??
         (room.state == RoomState.finished ? room : null);
     final List<String> departedNames = <String>[];
     bool everyoneLeft = false;
     bool rematchByDeparted = false;
 
     if (lastFinished != null) {
-      final Set<int> liveSeats =
-          room.seats.map((SeatState s) => s.seat).toSet();
-      final List<SeatState> pastSeats =
-          List<SeatState>.from(lastFinished.seats)
-            ..sort((SeatState a, SeatState b) => a.seat.compareTo(b.seat));
+      final Set<int> liveSeats = room.seats
+          .map((SeatState s) => s.seat)
+          .toSet();
+      final List<SeatState> pastSeats = List<SeatState>.from(lastFinished.seats)
+        ..sort((SeatState a, SeatState b) => a.seat.compareTo(b.seat));
       for (final SeatState s in pastSeats) {
         if (s.seat != controller.seat && !liveSeats.contains(s.seat)) {
           departedNames.add(s.name);
         }
       }
-      final bool otherSeatPresent =
-          liveSeats.any((int seat) => seat != controller.seat);
+      final bool otherSeatPresent = liveSeats.any(
+        (int seat) => seat != controller.seat,
+      );
       if (departedNames.isNotEmpty && !otherSeatPresent) {
         everyoneLeft = true;
       }
