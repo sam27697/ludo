@@ -111,6 +111,21 @@ class _HomeScreenState extends State<HomeScreen>
   // disclosure's onPressed the same way, without disturbing
   // Key('create-room-button').
   final GlobalKey _createButtonScrollKey = GlobalKey();
+  // C-316 rule 3: set as the first line of dispose(), before anything else
+  // runs. _retireOwnedController's own setState guard cannot trust `mounted`
+  // here: dispose() can itself elapse the fake clock in a test (the comment
+  // on that call explains why) and resume a pending leave() mid-unmount,
+  // where this State's element is already defunct but `mounted` still reads
+  // true. This flag is set synchronously, with no such window.
+  bool _screenDisposed = false;
+  // C-316 rule 3: the controller [_retireOwnedController] is currently
+  // waiting on leave() for, non-null for exactly that window. dispose()
+  // reads this to flush that leave_room request's timer the same way it
+  // already flushes an in-flight create/join's, below -- a route pop no
+  // longer keeps this screen mounted once the test harness tears the tree
+  // down for its own reasons, and the request is still bounded at 10s
+  // either way.
+  RoomController? _retiringController;
 
   @override
   void initState() {
@@ -455,6 +470,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
+    _screenDisposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _linkSubscription?.cancel();
     _linkHoldTimer?.cancel();
@@ -472,7 +488,13 @@ class _HomeScreenState extends State<HomeScreen>
     // Timer. A connected table (Home unmounted under a live lobby, as in
     // a keyed relaunch) must not elapse FakeAsync. delayed() fires timers
     // on TestWidgetsFlutterBinding; a real binding has no delayed().
-    if (owned != null && owned.phase == RoomPhase.connecting) {
+    //
+    // C-316 rule 3: the same Timer exists on a leave_room request a
+    // player_left pop handed to _retireOwnedController, which this screen's
+    // own dispose() can now race if it unmounts before that leave()
+    // answers. _retiringController is that window's marker.
+    if ((owned != null && owned.phase == RoomPhase.connecting) ||
+        _retiringController != null) {
       try {
         (WidgetsBinding.instance as dynamic).delayed(
           const Duration(seconds: 11),
@@ -571,10 +593,22 @@ class _HomeScreenState extends State<HomeScreen>
     }
     controller.removeListener(_onOwnedControllerChanged);
     _ownedController = null;
+    _retiringController = controller;
     await controller.leave();
+    if (identical(_retiringController, controller)) {
+      _retiringController = null;
+    }
     controller.dispose();
     unawaited(SessionMemory.clearSeat());
-    if (mounted) {
+    // C-316 rule 3: `mounted` is not enough here. [leave] can resolve while
+    // this very State is partway through its own [dispose] -- dispose()'s
+    // fake-clock flush (its own comment explains why) can elapse a second
+    // owned controller's request timer and, as a side effect, this
+    // controller's leave() timer too, resuming this continuation from
+    // inside dispose()'s unmount. `mounted` still reads true there; the
+    // element is defunct anyway. `_screenDisposed` is set synchronously at
+    // the top of dispose(), with no such window.
+    if (!_screenDisposed && mounted) {
       setState(() {
         _seatRecord = null;
       });
@@ -645,6 +679,15 @@ class _HomeScreenState extends State<HomeScreen>
     } finally {
       controller.removeListener(persistSuccessfulCreate);
     }
+    // C-316 rule 3: a removed player must see home-removed-notice as soon
+    // as the route returns, not after the controller has retired. Set the
+    // notice here, before the retire below, which can sit for up to the
+    // 10 second request timeout on a dead socket.
+    if (result == GameScreenResult.removed && mounted) {
+      setState(() {
+        _removedNotice = true;
+      });
+    }
     // Rule 2 of order 080: LobbyScreen never disposes a controller it did
     // not create. This screen created it, so this screen retires it once
     // the player has walked away from the pushed route.
@@ -662,10 +705,6 @@ class _HomeScreenState extends State<HomeScreen>
     }
     if (result == GameScreenResult.newTable) {
       await _createRoom();
-    } else if (result == GameScreenResult.removed) {
-      setState(() {
-        _removedNotice = true;
-      });
     }
   }
 
@@ -725,6 +764,13 @@ class _HomeScreenState extends State<HomeScreen>
     } finally {
       controller.removeListener(persistSuccessfulJoin);
     }
+    // C-316 rule 3: set the notice before the retire below; see the
+    // matching comment in _createRoom.
+    if (result == GameScreenResult.removed && mounted) {
+      setState(() {
+        _removedNotice = true;
+      });
+    }
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
@@ -735,10 +781,6 @@ class _HomeScreenState extends State<HomeScreen>
     }
     if (result == GameScreenResult.newTable) {
       await _createRoom();
-    } else if (result == GameScreenResult.removed) {
-      setState(() {
-        _removedNotice = true;
-      });
     }
   }
 
