@@ -529,13 +529,14 @@ class Connection {
     // docs/PROTOCOL.md section 16.4, "Not everyone": every occupied seat
     // this start removed for not being ready, ascending seat order, one
     // `player_left` each at its own seq, before anything else this start
-    // does. Empty, and therefore a no-op, for every start that did not come
-    // through that path.
+    // does. Section 18 rule 2: each carries `host_seat`. Empty, and
+    // therefore a no-op, for every start that did not come through that
+    // path.
     for (final RemovedSeat removed in ok.removedSeats) {
       _sendAndBroadcast(
         room: ok.room.code,
         type: 'player_left',
-        data: buildPlayerLeft(removed.seat.seat, removed.seq),
+        data: buildPlayerLeft(removed.seat.seat, ok.room.hostSeat, removed.seq),
         re: envelope.id,
       );
       // docs/PROTOCOL.md section 16.9 rule 1: that was the last thing this
@@ -803,6 +804,7 @@ class Connection {
     );
   }
 
+  /// `leave_room`, docs/PROTOCOL.md section 4, section 16.3 and section 18.
   void _handleLeaveRoom(ParsedEnvelope envelope) {
     // docs/PROTOCOL.md section 7: identity before payload for the five
     // socket-identified messages.
@@ -833,7 +835,7 @@ class Connection {
 
     final Map<String, Object?> data = stillSeated
         ? buildPresence(seatIndex, false, ok.room.seq)
-        : buildPlayerLeft(seatIndex, ok.room.seq);
+        : buildPlayerLeft(seatIndex, ok.room.hostSeat, ok.room.seq);
     final String pushType = stillSeated ? 'presence' : 'player_left';
 
     _send(type: pushType, data: data, re: envelope.id);
