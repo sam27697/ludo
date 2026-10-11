@@ -67,7 +67,8 @@ seat is not reassignable by anything a third party can observe.
   canonical seat set for the new count.
 - **PLAYING.** No new seats. A disconnected seat stays in the game and its turns
   are played by the timer under rule 15 of `docs/RULES.md`.
-- **FINISHED.** Terminal for that game. A `rematch` (section 16) takes the room
+- **FINISHED.** Terminal for that game. `leave_room` frees the seat, as in
+  LOBBY (section 18). A `rematch` (section 16) takes the room
   back to LOBBY with a new chain; without one, the final state is served to anyone reconnecting, for
   10 minutes, then the room is reaped.
 - A room in any state is reaped 60 minutes after creation regardless. A LOBBY
@@ -86,7 +87,7 @@ seat is not reassignable by anything a third party can observe.
 | `set_players` | `{ "players": 2\|3\|4 }` | Host only. LOBBY only. Not below current occupancy. Re-seats everyone onto the canonical set for the new count and answers with `room`. |
 | `roll` | `{ }` | Only the seat whose turn it is, only when the turn is awaiting a roll. |
 | `move` | `{ "token": 0..3 }` | Only the seat whose turn it is, only when a roll is pending a selection. |
-| `leave_room` | `{ }` | Voluntary. In LOBBY it frees the seat. In PLAYING it does not: the seat remains and is played by the timer. Answered on the leaving socket by the same `player_left` (LOBBY) or `presence` (PLAYING) frame the rest of the room receives, with `re` set. The leaver is told what everyone else was told, not a snapshot of a room it is no longer in. |
+| `leave_room` | `{ }` | Voluntary. In LOBBY and in FINISHED it frees the seat (section 18). In PLAYING it does not: the seat remains and is played by the timer. Answered on the leaving socket by the same `player_left` (LOBBY, FINISHED) or `presence` (PLAYING) frame the rest of the room receives, with `re` set. The leaver is told what everyone else was told, not a snapshot of a room it is no longer in. |
 | `ping` | `{ }` | Answered by `pong`. |
 | `rematch` | `{ }` | Any seated player. FINISHED (asks for a rematch) or a rematch LOBBY (accepts it). Answered by `room`. Section 16. |
 | `game_log` | `{ }` | Any seated player, PLAYING or FINISHED. Answered by `game_log` on that socket only. Section 17. |
@@ -112,7 +113,7 @@ different games.
 | `room` | the full room state, section 6. Sent on create, join, resume, and whenever a client needs resynchronising. |
 | `seat_assigned` | `{ "seat": 0..3, "seat_token": string }`. Sent to one client immediately before the `room` that answers its `create_room`, `join_room` or `resume`, and again whenever `set_players` moves that client to a different seat. Section 15. |
 | `player_joined` | `{ "seat": int, "name": string }` |
-| `player_left` | `{ "seat": int }` |
+| `player_left` | `{ "seat": int, "host_seat": int }`. `host_seat` is the room's host after the seat was freed, -1 if no seat is left. Section 18. |
 | `presence` | `{ "seat": int, "connected": bool }` |
 | `seat_seed` | `{ "seat": int, "client_seed": string, "origin": "player"\|"server" }`. Broadcast when a seat's seed is fixed. The seed is not a secret. Section 11. |
 | `game_started` | `{ "turn": int, "game_id": string, "client_seeds": string }`. **No `seed_commit`** -- the commitment is `chain_commit` and it was published at room creation. Section 11. **A standalone `turn` always follows it**, carrying the first segment's `deadline_ms`, which this frame does not carry. Section 13.1. |
@@ -1070,3 +1071,48 @@ it may have missed. It adds nothing a seat has not already been sent.
    in a minute `RATE_LIMITED`; after a rematch's `game_started` the log
    holds the new game only; the answer reaches the requester and no other
    socket.
+
+## 18. Leaving a table, and who is host after, 2026-10-11
+
+Found by the player-eye sweep of run 83: the server already handed the
+host role on when the host left a LOBBY, but no frame said so, so every
+other client kept the old `host_seat` and nobody saw Start. And a seat that
+left a FINISHED room stayed in it, marked not connected, so a friend reading
+the end card was offered a rematch with someone who had gone, and could
+wait an hour for it. Doctrine P3 (the player never has to guess), P5, P6.
+
+1. **Host hand-on.** When `leave_room` (or a host-forced start, section
+   16.4) frees the host's seat, `host_seat` becomes the lowest seat still
+   occupied, or -1 when none is. This was already the server's behaviour;
+   it is now the rule.
+2. **`player_left` carries `host_seat`.** Every `player_left`, whatever
+   freed the seat, carries `host_seat`: the room's host after the seat was
+   freed, changed or not. A client sets its `host_seat` from it. The field
+   is additive: a client that does not read it behaves as before.
+3. **`leave_room` in FINISHED frees the seat**, exactly as in LOBBY: the
+   seat is removed from `seats`, rule 1 applies, `seq` advances by one and
+   `player_left` is broadcast; the leaving socket gets the same frame with
+   `re` and holds no seat afterwards (its `seat_token` is
+   `BAD_SEAT_TOKEN` from then on, as after a LOBBY leave). The game's record
+   at `/v/<game_id>` is not touched. A seat that drops its socket without
+   `leave_room` is unchanged: `presence`, and it may `resume` while the room
+   lasts.
+4. **A rematch after a leave** follows section 16 with the seats that are
+   left: the first `rematch` from any remaining seat opens the rematch
+   LOBBY, the freed seat can be taken by code (section 16.9 rule 4), and
+   the auto-start set is the seats occupied when an accept arrives.
+5. **Nothing changes at reap.** A reaped room sends nothing (section 3); a
+   client learns it from `NO_SUCH_ROOM` on its next request.
+6. **Tests this section requires before it is implemented.** Server: host
+   leaves a LOBBY of three, the `player_left` every remaining socket gets
+   carries the new `host_seat` (the lowest remaining seat) and that seat's
+   `start_game` is accepted once the room is full again; a non-host leaves,
+   `host_seat` unchanged in the frame; the last seat leaves, -1; a seat
+   leaves a FINISHED room, `player_left` to every remaining socket and the
+   leaver (with `re`), the seat gone from the next `room`, the leaver's
+   `resume` and `rematch` both `BAD_SEAT_TOKEN`, the `/v/` record
+   unchanged; a FINISHED room of two where one leaves, the other's
+   `rematch` opens a rematch LOBBY that a new joiner by code can fill and
+   that starts when the joiner accepts; host-forced start removals each
+   carry `host_seat` (unchanged, the host is never removed); a socket drop
+   in FINISHED still sends `presence` and the seat stays.
