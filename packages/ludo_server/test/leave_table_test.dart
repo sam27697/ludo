@@ -618,6 +618,16 @@ void main() {
       final Map<String, Object?> joinerAcceptReply = await newJoiner.next();
       expect(joinerAcceptReply['t'], 'room');
 
+      // Section 16.4: the host first gets the broadcast copy of the
+      // accept, both seats ready, before anything the start sends.
+      final Map<String, Object?> hostBroadcastOfAccept =
+          await lobby.host.client.next();
+      expect(hostBroadcastOfAccept['t'], 'room');
+      expect(
+          ((hostBroadcastOfAccept['d']! as Map<String, Object?>)['rematch']!
+              as Map<String, Object?>)['ready'],
+          <int>[lobby.host.seat, newJoinerSeat]..sort());
+
       // Section 16.4: both occupied seats are now ready and connected, so
       // the server starts the game itself, reaching both sockets.
       Map<String, Object?> hostFrame = await lobby.host.client.next();
