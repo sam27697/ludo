@@ -6911,7 +6911,10 @@ Future<void> _captureHomeRemoved(
   );
   final RoomController controller = factory.controllers.single;
   final FakeTransport transport = factory.transports.single;
-  addTearDown(controller.dispose);
+  // No addTearDown(controller.dispose) here, unlike the captures above:
+  // the removal pops GameScreen with GameScreenResult.removed and
+  // HomeScreen retires and disposes this controller itself (order 080
+  // rule 2), so a second dispose at teardown would assert.
 
   final List<String> createMessages = _sentOfType(transport, 'create_room');
   expect(
