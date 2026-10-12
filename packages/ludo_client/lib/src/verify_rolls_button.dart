@@ -42,9 +42,7 @@ class VerifyRollsButton extends StatelessWidget {
         children: <Widget>[
           const Icon(Icons.verified_outlined, size: 20),
           const SizedBox(width: kSpace2),
-          Flexible(
-            child: Text(loc.endFairCheck, textAlign: TextAlign.center),
-          ),
+          Flexible(child: Text(loc.endFairCheck, textAlign: TextAlign.center)),
           const SizedBox(width: kSpace2),
           const Icon(Icons.open_in_new, size: 20),
         ],

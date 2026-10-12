@@ -42,7 +42,6 @@ import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/game_stats.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
-import 'package:ludo_client/src/server_config.dart' show RoomControllerFactory;
 import 'package:ludo_client/src/session_memory.dart';
 import 'package:ludo_client/src/theme.dart' show LudoColors;
 import 'package:ludo_client/src/verify_rolls_button.dart';
