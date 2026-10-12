@@ -1044,9 +1044,7 @@ void main() {
   // 14. GAME_OVER: refused list and allowed list
   // =========================================================================
   group('GAME_OVER, section 7', () {
-    test(
-        'refused: start_game against a FINISHED room '
-        '(red -- see report: server answers ROOM_STARTED today)', () async {
+    test('refused: start_game against a FINISHED room', () async {
       final (WireTestLobby lobby, int _) = await finishedLobby();
       lobby.host.client.send('start_game', <String, Object?>{});
       final Map<String, Object?> reply = await lobby.host.client.next();
@@ -1067,9 +1065,7 @@ void main() {
       );
     });
 
-    test(
-        'refused: set_players against a FINISHED room '
-        '(red -- see report: server answers ROOM_STARTED today)', () async {
+    test('refused: set_players against a FINISHED room', () async {
       final (WireTestLobby lobby, int _) = await finishedLobby();
       lobby.host.client.send('set_players', <String, Object?>{'players': 2});
       final Map<String, Object?> reply = await lobby.host.client.next();
@@ -1087,9 +1083,7 @@ void main() {
       );
     });
 
-    test(
-        'refused: set_seed against a FINISHED room '
-        '(red -- see report: server answers WRONG_PHASE today)', () async {
+    test('refused: set_seed against a FINISHED room', () async {
       final (WireTestLobby lobby, int _) = await finishedLobby();
       lobby.host.client.send('set_seed', <String, Object?>{'client_seed': 'x'});
       final Map<String, Object?> reply = await lobby.host.client.next();
