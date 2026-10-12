@@ -81,6 +81,7 @@ import 'package:ludo_client/src/room_code.dart'
 import 'package:ludo_client/src/server_config.dart';
 import 'package:ludo_client/src/session_memory.dart'
     show LastGame, SeatRecord, SessionMemory;
+import 'package:ludo_client/src/verify_rolls_button.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../test/net/fake_transport.dart';
@@ -6991,9 +6992,11 @@ void _expectEndOfflineState(
         '$shotName ($momentDescription): game-screen-verify-button must show',
   );
   final Widget verifyWidget = tester.widget(verifyFinder);
-  final VoidCallback? onVerifyPressed = verifyWidget is ButtonStyleButton
-      ? verifyWidget.onPressed
-      : null;
+  final VoidCallback? onVerifyPressed = switch (verifyWidget) {
+    ButtonStyleButton() => verifyWidget.onPressed,
+    VerifyRollsButton() => verifyWidget.onPressed,
+    _ => null,
+  };
   expect(
     onVerifyPressed,
     isNotNull,
