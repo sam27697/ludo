@@ -957,12 +957,14 @@ class _GameScreenState extends State<GameScreen> {
   Future<void> _openVerifyUrl() async {
     final RoomController controller = widget.controller;
     final RoomSnapshot? room = controller.room;
+    final RoomSnapshot? lastFinished = controller.lastFinished;
     final RoomSnapshot? finished =
         (room != null &&
-            room.state == RoomState.lobby &&
-            room.rematch != null &&
-            controller.lastFinished != null)
-        ? controller.lastFinished
+            lastFinished != null &&
+            ((room.state == RoomState.lobby && room.rematch != null) ||
+                (room.state == RoomState.finished &&
+                    room.gameId == lastFinished.gameId)))
+        ? lastFinished
         : room;
     final String? raw = finished?.verifyUrl;
     if (raw == null || raw.isEmpty) {
@@ -1610,27 +1612,32 @@ class _GameScreenState extends State<GameScreen> {
     // Rule 4: when lastFinished is null (the process was killed and resumed
     // straight into the rematch LOBBY), falling back to room keeps today's
     // ended variant. That is the honest fallback, not a gap to paper over.
+    // C-316 rule 2: on a FINISHED room whose gameId equals
+    // controller.lastFinished?.gameId, finished is lastFinished so a departed
+    // seat does not clear the winner, numbers or board.
+    final RoomSnapshot? lastFinished = controller.lastFinished;
     final RoomSnapshot finished =
-        (room.state == RoomState.lobby &&
-            room.rematch != null &&
-            controller.lastFinished != null)
-        ? controller.lastFinished!
+        (lastFinished != null &&
+            ((room.state == RoomState.lobby && room.rematch != null) ||
+                (room.state == RoomState.finished &&
+                    room.gameId == lastFinished.gameId)))
+        ? lastFinished
         : room;
 
     // C-316 rule 2: departed seats on the end card.
-    final RoomSnapshot? lastFinished =
-        controller.lastFinished ??
-        (room.state == RoomState.finished ? room : null);
+    final RoomSnapshot? departedBaseline =
+        lastFinished ?? (room.state == RoomState.finished ? room : null);
     final List<String> departedNames = <String>[];
     bool everyoneLeft = false;
     bool rematchByDeparted = false;
 
-    if (lastFinished != null) {
+    if (departedBaseline != null) {
       final Set<int> liveSeats = room.seats
           .map((SeatState s) => s.seat)
           .toSet();
-      final List<SeatState> pastSeats = List<SeatState>.from(lastFinished.seats)
-        ..sort((SeatState a, SeatState b) => a.seat.compareTo(b.seat));
+      final List<SeatState> pastSeats = List<SeatState>.from(
+        departedBaseline.seats,
+      )..sort((SeatState a, SeatState b) => a.seat.compareTo(b.seat));
       for (final SeatState s in pastSeats) {
         if (s.seat != controller.seat && !liveSeats.contains(s.seat)) {
           departedNames.add(s.name);
