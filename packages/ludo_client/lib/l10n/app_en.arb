@@ -45,6 +45,10 @@
   "@homeRemovedNotice": {
     "description": "Quiet notice on the home screen shown after a player was removed by a host-forced rematch start."
   },
+  "homeLastGame": "Your last game: every roll is verifiable",
+  "@homeLastGame": {
+    "description": "Quiet home-screen entry over the last finished game's verify link, shown for 90 days after the game ends."
+  },
   "homeLocaleToggleTooltip": "Change language",
   "@homeLocaleToggleTooltip": {
     "description": "Tooltip on the button that switches the app language."

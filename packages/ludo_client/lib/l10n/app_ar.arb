@@ -10,6 +10,7 @@
   "homeRoomCodeFieldHint": "6 رموز، حروف وأرقام",
   "homeRoomCodeInvalid": "هذا لا يبدو رمز غرفة صحيحًا. تحقق من الحروف والأرقام وحاول مرة أخرى.",
   "homeRemovedNotice": "بدأت الجولة التالية بدونك",
+  "homeLastGame": "جولتك الأخيرة: كل رمية قابلة للتحقق",
   "homeLocaleToggleTooltip": "تغيير اللغة",
   "homeLocaleToggleLabel": "English",
   "homeNameFieldLabel": "اسمك",

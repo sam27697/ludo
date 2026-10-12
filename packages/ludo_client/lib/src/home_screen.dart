@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'deep_link.dart';
@@ -34,6 +35,7 @@ class HomeScreen extends StatefulWidget {
     this.controllerFactory = defaultRoomControllerFactory,
     this.initialLinkReader = noInitialLink,
     this.linkStream = noLinkStream,
+    this.clock = DateTime.now,
   });
 
   /// Flips the app between its two supported locales.
@@ -53,6 +55,11 @@ class HomeScreen extends StatefulWidget {
   /// warm-start path). Defaults to a stream that never emits, for the same
   /// reason as [initialLinkReader].
   final LinkStreamOpener linkStream;
+
+  /// C-322 rule 2: the "now" a finished game is recorded at, and rule 4's
+  /// 90-day window is measured against the same clock, so a test can
+  /// inject a fixed time instead of depending on the wall clock.
+  final DateTime Function() clock;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -80,6 +87,17 @@ class _HomeScreenState extends State<HomeScreen>
   // H3: the seat rejoin button shows exactly when this is non-null. Only
   // ever set from _restoreSessionMemory's one-time load and cleared by H2.
   SeatRecord? _seatRecord;
+  // C-322 rule 3: home-last-game shows exactly when this is non-null and
+  // not yet past rule 4's window. Set from _restoreSessionMemory's one-time
+  // load, and again by _maybeRecordLastGame the moment a finished game is
+  // observed, so the entry is there the instant the game route pops.
+  LastGame? _lastGame;
+  // C-322 rule 2's own dedupe, independent of which controller is owned:
+  // the gameId of the last LastGame this screen itself wrote, so a second
+  // controller later observing the same already-recorded game (a resumed
+  // finished room, say) never overwrites a true finishedAt with a later
+  // one. Seeded from storage on restore, not reset per controller.
+  String? _lastGameWrittenId;
   // H1's per-controller dedupe: the last record written to SessionMemory
   // for the controller currently owned, so a chatty controller does not
   // write the same seat on every notification. Reset whenever a new
@@ -383,12 +401,14 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   /// Restores last successful-create name and seats, the last-table chip,
-  /// recent join codes, and a seat record held across a process kill (H3)
-  /// from [SessionMemory]. An empty or unreadable store leaves the
-  /// localised name default, the four-seat disclosure, no recent chips and
-  /// no rejoin button as they are. The load itself returns empty on failure,
-  /// so nothing is caught here. Completing the load marks session memory as
-  /// loaded and drains any pending room link (order 296).
+  /// recent join codes, a seat record held across a process kill (H3), and
+  /// the last finished game's verify link (C-322 rule 3) from
+  /// [SessionMemory]. An empty or unreadable store leaves the localised
+  /// name default, the four-seat disclosure, no recent chips, no rejoin
+  /// button and no home-last-game entry as they are. The load itself
+  /// returns empty on failure, so nothing is caught here. Completing the
+  /// load marks session memory as loaded and drains any pending room link
+  /// (order 296).
   Future<void> _restoreSessionMemory() async {
     try {
       final SessionMemory memory = await SessionMemory.load();
@@ -398,7 +418,14 @@ class _HomeScreenState extends State<HomeScreen>
       final bool hasTable = memory.hasLastTable;
       final bool hasCodes = memory.recentCodes.isNotEmpty;
       final SeatRecord? seatRecord = memory.seatRecord;
-      if (hasTable || hasCodes || seatRecord != null) {
+      final LastGame? lastGame = memory.lastGame;
+      if (lastGame != null) {
+        // C-322 rule 2's dedupe is per screen life, not per load: seed it
+        // here so a controller later observing this same already-recorded
+        // game never overwrites its true finishedAt with a later one.
+        _lastGameWrittenId = lastGame.gameId;
+      }
+      if (hasTable || hasCodes || seatRecord != null || lastGame != null) {
         setState(() {
           if (hasCodes) {
             _recentCodes = List<String>.from(memory.recentCodes);
@@ -414,6 +441,9 @@ class _HomeScreenState extends State<HomeScreen>
           }
           if (seatRecord != null) {
             _seatRecord = seatRecord;
+          }
+          if (lastGame != null) {
+            _lastGame = lastGame;
           }
         });
       }
@@ -531,6 +561,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (controller == null) {
       return;
     }
+    _maybeRecordLastGame(controller);
     final RoomSnapshot? room = controller.room;
     if (controller.phase == RoomPhase.connected &&
         room != null &&
@@ -563,6 +594,107 @@ class _HomeScreenState extends State<HomeScreen>
         });
       }
     }
+  }
+
+  /// C-322 rule 2: the finished snapshot F is [controller]'s own room when
+  /// it is FINISHED, otherwise [RoomController.lastFinished] when the room
+  /// has already moved on to a rematch LOBBY. The moment F carries a
+  /// gameId, a non-empty verifyUrl on the http(s) scheme, and that gameId
+  /// is not the one this screen already wrote, the verify link is kept so
+  /// home can show it after the route pops -- without a reload, since the
+  /// screen's own copy is set in the same [setState]. Only the four
+  /// [LastGame] fields are kept; nothing else about the game (names,
+  /// stats) is persisted here.
+  void _maybeRecordLastGame(RoomController controller) {
+    final RoomSnapshot? room = controller.room;
+    RoomSnapshot? finished;
+    if (room != null && room.state == RoomState.finished) {
+      finished = room;
+    } else if (room != null &&
+        room.state == RoomState.lobby &&
+        room.rematch != null) {
+      finished = controller.lastFinished;
+    }
+    if (finished == null) {
+      return;
+    }
+    final String? gameId = finished.gameId;
+    final String? verifyUrl = finished.verifyUrl;
+    if (gameId == null || verifyUrl == null || verifyUrl.isEmpty) {
+      return;
+    }
+    if (gameId == _lastGameWrittenId) {
+      return;
+    }
+    final Uri? uri = Uri.tryParse(verifyUrl);
+    if (uri == null || (!uri.isScheme('https') && !uri.isScheme('http'))) {
+      return;
+    }
+    _lastGameWrittenId = gameId;
+    final LastGame game = LastGame(
+      gameId: gameId,
+      verifyUrl: verifyUrl,
+      finishedAt: widget.clock(),
+      won: finished.winner == controller.seat,
+    );
+    unawaited(SessionMemory.recordLastGame(game));
+    if (mounted) {
+      setState(() {
+        _lastGame = game;
+      });
+    }
+  }
+
+  /// C-322 rule 4: home-last-game shows a held [LastGame] only while it is
+  /// no older than [kVerifyRetention] by [widget.clock]'s "now". The record
+  /// itself is left in storage past the window; only the home entry hides.
+  bool get _showLastGame {
+    final LastGame? game = _lastGame;
+    if (game == null) {
+      return false;
+    }
+    final DateTime now = widget.clock();
+    final DateTime expiry = game.finishedAt.add(kVerifyRetention);
+    return !expiry.isBefore(now);
+  }
+
+  /// C-322 rule 5: opens the remembered game's verify link the same way the
+  /// end card's own verify button does -- the real `url_launcher` plugin,
+  /// no wrapper -- so this entry is observable on the same method channel.
+  /// Never sends a frame and never opens a room: this is a meta action on a
+  /// game that is already over.
+  Future<void> _openLastGameVerifyUrl() async {
+    final LastGame? game = _lastGame;
+    if (game == null) {
+      return;
+    }
+    final Uri? uri = Uri.tryParse(game.verifyUrl);
+    if (uri == null || (!uri.isScheme('https') && !uri.isScheme('http'))) {
+      _showLastGameVerifyOpenFailed();
+      return;
+    }
+    bool opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } on PlatformException {
+      opened = false;
+    } on ArgumentError {
+      opened = false;
+    }
+    if (!opened && mounted) {
+      _showLastGameVerifyOpenFailed();
+    }
+  }
+
+  void _showLastGameVerifyOpenFailed() {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(AppLocalizations.of(context).gameVerifyOpenFailed),
+      ),
+    );
   }
 
   /// C11: the app returning to the foreground is the other trigger, besides
@@ -1461,6 +1593,15 @@ class _HomeScreenState extends State<HomeScreen>
                                       onSelect: _fillCodeFromRecent,
                                     ),
                                   ],
+                                  if (_showLastGame) ...[
+                                    SizedBox(
+                                      height: compact ? kSpace3 : kSpace4,
+                                    ),
+                                    _LastGameEntry(
+                                      game: _lastGame!,
+                                      onCheck: _openLastGameVerifyUrl,
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),
@@ -1561,6 +1702,87 @@ class _LastTableChip extends StatelessWidget {
               style: textTheme.labelLarge?.copyWith(
                 color: LudoColors.ink,
                 fontSize: kTypeLabel,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// C-322: the last finished game's verify link, kept reachable from home
+/// for 90 days after the table is gone (rule 3). Same register as
+/// [_LastTableChip] -- paper wash, felt edge, ink text, no action fill --
+/// so a returning player reads this as a standing fact about their last
+/// game, not a third thing to tap toward. The leading icon is a second,
+/// non-colour signal that this entry carries a verified link (doctrine P9).
+class _LastGameEntry extends StatelessWidget {
+  const _LastGameEntry({required this.game, required this.onCheck});
+
+  final LastGame game;
+  final VoidCallback onCheck;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppLocalizations loc = AppLocalizations.of(context);
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    return DecoratedBox(
+      key: const Key('home-last-game'),
+      decoration: BoxDecoration(
+        color: LudoColors.paperWashTop,
+        borderRadius: BorderRadius.circular(kRadiusControl),
+        border: Border.all(color: LudoColors.feltLight),
+      ),
+      child: Semantics(
+        button: true,
+        label: '${loc.homeLastGame} ${loc.endFairCheck}',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            key: const Key('home-last-game-check'),
+            onTap: onCheck,
+            borderRadius: BorderRadius.circular(kRadiusControl),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Padding(
+                padding: const EdgeInsetsDirectional.symmetric(
+                  horizontal: kSpace3,
+                  vertical: kSpace2,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.verified_outlined,
+                      color: LudoColors.inkMuted,
+                    ),
+                    const SizedBox(width: kSpace2),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            loc.homeLastGame,
+                            style: textTheme.labelLarge?.copyWith(
+                              color: LudoColors.ink,
+                              fontSize: kTypeLabel,
+                            ),
+                          ),
+                          const SizedBox(height: kSpace1),
+                          Text(
+                            loc.endFairCheck,
+                            style: textTheme.labelMedium?.copyWith(
+                              color: LudoColors.inkMuted,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

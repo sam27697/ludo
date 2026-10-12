@@ -12,6 +12,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'room_code.dart';
 
+/// How long a finished game's verify link survives on the device (C-322
+/// rule 4). Matches docs/VERIFY.md `verifyRetention`: "records are kept
+/// for 90 days" on the server side; home follows the same window so it
+/// never offers a link the server has already reaped.
+const Duration kVerifyRetention = Duration(days: 90);
+
 /// A seat held on the server, kept so a killed and relaunched app can send
 /// `resume` for it. [seatToken] is a capability, so [toString] omits it.
 class SeatRecord {
@@ -45,27 +51,75 @@ class SeatRecord {
   String toString() => 'SeatRecord(code: $code, seat: $seat)';
 }
 
+/// The device's memory of the last finished game's verify link (C-322).
+/// Equality and [hashCode] are value based on all four fields; the url is
+/// already public by design (a permalink for strangers), so unlike
+/// [SeatRecord] nothing here is omitted from [toString].
+class LastGame {
+  const LastGame({
+    required this.gameId,
+    required this.verifyUrl,
+    required this.finishedAt,
+    required this.won,
+  });
+
+  /// The finished game this verify link belongs to.
+  final String gameId;
+
+  /// The server's permalink to this game's rolls.
+  final String verifyUrl;
+
+  /// When this screen observed the game as finished, from the clock
+  /// [HomeScreen] was built with.
+  final DateTime finishedAt;
+
+  /// Whether the player who held this device won that game.
+  final bool won;
+
+  @override
+  bool operator ==(Object other) {
+    return other is LastGame &&
+        other.gameId == gameId &&
+        other.verifyUrl == verifyUrl &&
+        other.finishedAt == finishedAt &&
+        other.won == won;
+  }
+
+  @override
+  int get hashCode => Object.hash(gameId, verifyUrl, finishedAt, won);
+
+  @override
+  String toString() =>
+      'LastGame(gameId: $gameId, verifyUrl: $verifyUrl, '
+      'finishedAt: $finishedAt, won: $won)';
+}
+
 /// On-device memory of the last successful Create Room, recent successful
-/// Join codes, and the currently held seat.
+/// Join codes, the currently held seat, and the last finished game's
+/// verify link.
 ///
 /// [load], [recordSuccessfulCreate] and [recordSuccessfulJoin] are the
 /// writers and readers. A later [load] on a fresh instance returns the
 /// name and seats the previous [recordSuccessfulCreate] wrote, and the
 /// recent codes [recordSuccessfulJoin] wrote (newest first, at most 3).
 /// [recordSeat] and [clearSeat] write and remove the seat record that a
-/// later [load] returns as [seatRecord].
+/// later [load] returns as [seatRecord]. [recordLastGame] writes the one
+/// record a later [load] returns as [lastGame]; clearing the seat does not
+/// touch it.
 class SessionMemory {
   const SessionMemory({
     this.lastName,
     this.lastSeats,
     this.recentCodes = const <String>[],
     this.seatRecord,
+    this.lastGame,
   });
 
   static const String _nameKey = 'session.lastName';
   static const String _seatsKey = 'session.lastSeats';
   static const String _codesKey = 'session.recentCodes';
   static const String _seatKey = 'session.seat';
+  static const String _lastGameKey = 'session.lastGame';
   static const int _maxRecentCodes = 3;
 
   /// Name sent on the last successful create. Null when nothing is stored.
@@ -82,6 +136,11 @@ class SessionMemory {
   /// The seat currently held, if the stored value is well formed. Null
   /// when nothing is stored or the stored value cannot be trusted.
   final SeatRecord? seatRecord;
+
+  /// The last finished game's verify link, if the stored value is well
+  /// formed. Null when nothing is stored or the stored value cannot be
+  /// trusted.
+  final LastGame? lastGame;
 
   /// True when Home can show `home-last-table-chip` from this snapshot.
   bool get hasLastTable {
@@ -106,6 +165,7 @@ class SessionMemory {
           prefs.getStringList(_codesKey) ?? const <String>[],
         ),
         seatRecord: _readSeatRecord(prefs),
+        lastGame: _readLastGame(prefs),
       );
     } on Object {
       return const SessionMemory();
@@ -137,6 +197,71 @@ class SessionMemory {
     } on Object {
       return;
     }
+  }
+
+  /// The stored last game, if any, isolated the same way [_readSeatRecord]
+  /// is: a stored value of the wrong type (which makes the platform's own
+  /// `getStringList` throw) yields `null` here without disturbing the rest
+  /// of [load].
+  static LastGame? _readLastGame(SharedPreferences prefs) {
+    try {
+      return _lastGameFrom(prefs.getStringList(_lastGameKey));
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Writes [game] under the single last-game key, replacing any previous
+  /// record (C-322 rule 1: only one is kept). Never throws, same as
+  /// [recordSeat].
+  static Future<void> recordLastGame(LastGame game) async {
+    try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_lastGameKey, <String>[
+        game.gameId,
+        game.verifyUrl,
+        game.finishedAt.millisecondsSinceEpoch.toString(),
+        game.won ? 'won' : 'lost',
+      ]);
+    } on Object {
+      return;
+    }
+  }
+
+  /// A [LastGame] from [raw] when it is exactly four strings shaped as
+  /// `[gameId, verifyUrl, finishedAtMillis, 'won' or 'lost']`, with a
+  /// non-empty gameId and verifyUrl and a finishedAtMillis that parses as
+  /// an integer. Anything else (wrong length, non-integer time, another
+  /// outcome word, empty id or url) is not trusted and yields null.
+  static LastGame? _lastGameFrom(List<String>? raw) {
+    if (raw == null || raw.length != 4) {
+      return null;
+    }
+    final String gameId = raw[0];
+    final String verifyUrl = raw[1];
+    final String finishedAtText = raw[2];
+    final String outcomeText = raw[3];
+    if (gameId.isEmpty || verifyUrl.isEmpty) {
+      return null;
+    }
+    final int? millis = int.tryParse(finishedAtText);
+    if (millis == null) {
+      return null;
+    }
+    final bool won;
+    if (outcomeText == 'won') {
+      won = true;
+    } else if (outcomeText == 'lost') {
+      won = false;
+    } else {
+      return null;
+    }
+    return LastGame(
+      gameId: gameId,
+      verifyUrl: verifyUrl,
+      finishedAt: DateTime.fromMillisecondsSinceEpoch(millis),
+      won: won,
+    );
   }
 
   /// Removes the stored seat record, if any. Never throws, and clearing
