@@ -19,6 +19,7 @@ import 'rule_off_strike.dart';
 import 'server_config.dart';
 import 'session_memory.dart';
 import 'theme.dart';
+import 'verify_rolls_button.dart';
 
 /// How long the home scroll view takes to bring a link's target back into
 /// view (order 194). Independent of the brand's own motion tokens in
@@ -1735,58 +1736,26 @@ class _LastGameEntry extends StatelessWidget {
         borderRadius: BorderRadius.circular(kRadiusControl),
         border: Border.all(color: LudoColors.feltLight),
       ),
-      child: Semantics(
-        button: true,
-        label: '${loc.homeLastGame} ${loc.endFairCheck}',
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            key: const Key('home-last-game-check'),
-            onTap: onCheck,
-            borderRadius: BorderRadius.circular(kRadiusControl),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 48),
-              child: Padding(
-                padding: const EdgeInsetsDirectional.symmetric(
-                  horizontal: kSpace3,
-                  vertical: kSpace2,
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    const Icon(
-                      Icons.verified_outlined,
-                      color: LudoColors.inkMuted,
-                    ),
-                    const SizedBox(width: kSpace2),
-                    Expanded(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            loc.homeLastGame,
-                            style: textTheme.labelLarge?.copyWith(
-                              color: LudoColors.ink,
-                              fontSize: kTypeLabel,
-                            ),
-                          ),
-                          const SizedBox(height: kSpace1),
-                          Text(
-                            loc.endFairCheck,
-                            style: textTheme.labelMedium?.copyWith(
-                              color: LudoColors.inkMuted,
-                              decoration: TextDecoration.underline,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+      child: Padding(
+        padding: const EdgeInsetsDirectional.all(kSpace3),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text(
+              loc.homeLastGame,
+              textAlign: TextAlign.center,
+              style: textTheme.labelLarge?.copyWith(
+                color: LudoColors.ink,
+                fontSize: kTypeLabel,
               ),
             ),
-          ),
+            const SizedBox(height: kSpace2),
+            VerifyRollsButton(
+              key: const Key('home-last-game-check'),
+              onPressed: onCheck,
+            ),
+          ],
         ),
       ),
     );
