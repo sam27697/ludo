@@ -45,6 +45,10 @@
   "@homeRemovedNotice": {
     "description": "Quiet notice on the home screen shown after a player was removed by a host-forced rematch start."
   },
+  "homeLastGame": "Your last game: every roll is verifiable",
+  "@homeLastGame": {
+    "description": "Quiet home-screen entry over the last finished game's verify link, shown for 90 days after the game ends."
+  },
   "homeLocaleToggleTooltip": "Change language",
   "@homeLocaleToggleTooltip": {
     "description": "Tooltip on the button that switches the app language."
@@ -413,21 +417,41 @@
       }
     }
   },
-  "endStatRolls": "rolls",
+  "endStatRolls": "{count, plural, =1{roll} other{rolls}}",
   "@endStatRolls": {
-    "description": "Label under the rolls count on the end card's stat row."
+    "description": "Label under the rolls count on the end card's stat row.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
-  "endStatSixes": "sixes",
+  "endStatSixes": "{count, plural, =1{six} other{sixes}}",
   "@endStatSixes": {
-    "description": "Label under the sixes count on the end card's stat row."
+    "description": "Label under the sixes count on the end card's stat row.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
-  "endStatCaptures": "captures",
+  "endStatCaptures": "{count, plural, =1{capture} other{captures}}",
   "@endStatCaptures": {
-    "description": "Label under the captures-made count on the end card's stat row."
+    "description": "Label under the captures-made count on the end card's stat row.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
-  "endStatHome": "home",
+  "endStatHome": "{count, plural, other{home}}",
   "@endStatHome": {
-    "description": "Label under the tokens-home count on the end card's stat row. Shown alone, without the other three tiles, when the game's numbers are incomplete."
+    "description": "Label under the tokens-home count on the end card's stat row. Shown alone, without the other three tiles, when the game's numbers are incomplete.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "endFairLine": "Every roll of this game is verifiable.",
   "@endFairLine": {
