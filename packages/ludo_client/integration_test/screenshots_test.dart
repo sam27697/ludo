@@ -80,7 +80,8 @@ import 'package:ludo_client/src/room_code.dart'
     show isValidRoomCode, normalizeRoomCode;
 import 'package:ludo_client/src/server_config.dart';
 import 'package:ludo_client/src/session_memory.dart'
-    show SeatRecord, SessionMemory;
+    show LastGame, SeatRecord, SessionMemory;
+import 'package:ludo_client/src/verify_rolls_button.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../test/net/fake_transport.dart';
@@ -4778,6 +4779,130 @@ void main() {
       shotName: '32-home-removed-ar',
     );
   });
+
+  // ==========================================================================
+  // 33, 34: contract C-322 (the last game's verify link on home). Fresh
+  // store seeded with last-create defaults (a name and 4 seats, so the
+  // last-table chip shows), two recent codes through recordSuccessfulJoin,
+  // and recordLastGame with a game finished 2 hours ago. Scrolled with
+  // tester.ensureVisible so home-last-game is fully on screen, in English
+  // and Arabic.
+  // ==========================================================================
+  testWidgets('capture 33-home-last-game-en, 34-home-last-game-ar', (
+    tester,
+  ) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    await (await SharedPreferences.getInstance()).clear();
+
+    const String hostName = 'Priya';
+    const int hostSeats = 4;
+    await SessionMemory.recordSuccessfulCreate(
+      name: hostName,
+      seats: hostSeats,
+    );
+    await SessionMemory.recordSuccessfulJoin('PLAY42');
+    await SessionMemory.recordSuccessfulJoin('K7M2QP');
+
+    const String gameId = 'g-shot33-home';
+    final DateTime finishedAt = DateTime.now().subtract(
+      const Duration(hours: 2),
+    );
+    await SessionMemory.recordLastGame(
+      LastGame(
+        gameId: gameId,
+        verifyUrl: 'https://provefair.app/v/$gameId',
+        finishedAt: finishedAt,
+        won: false,
+      ),
+    );
+
+    final factory = _ScreenshotControllerFactory();
+    await tester.pumpWidget(
+      _ScreenshotHarness(controllerFactory: factory.call),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder homeLastGameFinder = find.byKey(const Key('home-last-game'));
+    await tester.ensureVisible(homeLastGameFinder);
+    await tester.pumpAndSettle();
+
+    final AppLocalizations enHomeLoc = AppLocalizations.of(
+      tester.element(find.byType(HomeScreen)),
+    );
+    final String enLastGameText = enHomeLoc.homeLastGame;
+    await _settleForScreenshot(
+      tester,
+      find.text(enLastGameText),
+      'the English homeLastGame text ("$enLastGameText") laid out on the '
+      'home screen before capture 33',
+    );
+    await _expectHomeScreen(tester, localeName: 'en');
+    expect(
+      homeLastGameFinder,
+      findsOneWidget,
+      reason:
+          'capture 33-home-last-game-en: expected home-last-game on screen '
+          'before the shot',
+    );
+    expect(
+      find.byKey(const Key('home-last-game-check')),
+      findsOneWidget,
+      reason:
+          'capture 33-home-last-game-en: expected home-last-game-check on '
+          'screen before the shot',
+    );
+    expect(
+      find.text(enLastGameText),
+      findsOneWidget,
+      reason:
+          'capture 33-home-last-game-en: expected homeLastGame '
+          '("$enLastGameText") text on screen before the shot',
+    );
+    await binding.takeScreenshot('33-home-last-game-en');
+
+    await tester.tap(find.byKey(const Key('locale-toggle-button')));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(homeLastGameFinder);
+    await tester.pumpAndSettle();
+
+    final AppLocalizations arHomeLoc = AppLocalizations.of(
+      tester.element(find.byType(HomeScreen)),
+    );
+    final String arLastGameText = arHomeLoc.homeLastGame;
+    await _settleForScreenshot(
+      tester,
+      find.text(arLastGameText),
+      'the Arabic homeLastGame text ("$arLastGameText") laid out on the '
+      'home screen after the locale toggle, before capture 34',
+    );
+    await _expectHomeScreen(tester, localeName: 'ar');
+    expect(
+      homeLastGameFinder,
+      findsOneWidget,
+      reason:
+          'capture 34-home-last-game-ar: expected home-last-game on screen '
+          'before the shot',
+    );
+    expect(
+      find.byKey(const Key('home-last-game-check')),
+      findsOneWidget,
+      reason:
+          'capture 34-home-last-game-ar: expected home-last-game-check on '
+          'screen before the shot',
+    );
+    expect(
+      find.text(arLastGameText),
+      findsOneWidget,
+      reason:
+          'capture 34-home-last-game-ar: expected homeLastGame '
+          '("$arLastGameText") text on screen before the shot',
+    );
+    await binding.takeScreenshot('34-home-last-game-ar');
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -6867,9 +6992,11 @@ void _expectEndOfflineState(
         '$shotName ($momentDescription): game-screen-verify-button must show',
   );
   final Widget verifyWidget = tester.widget(verifyFinder);
-  final VoidCallback? onVerifyPressed = verifyWidget is ButtonStyleButton
-      ? verifyWidget.onPressed
-      : null;
+  final VoidCallback? onVerifyPressed = switch (verifyWidget) {
+    ButtonStyleButton() => verifyWidget.onPressed,
+    VerifyRollsButton() => verifyWidget.onPressed,
+    _ => null,
+  };
   expect(
     onVerifyPressed,
     isNotNull,

@@ -902,10 +902,10 @@ void main() {
   // =========================================================================
   // 11. Replayed request id
   // =========================================================================
-  group('replayed request id, section 1 and 7 (unspecified, pinned)', () {
+  group('replayed request id, section 20', () {
     test(
         'the same id resent for move is evaluated fresh against the '
-        'current state, not deduplicated (unspecified, pinned)', () async {
+        'current state, not deduplicated (section 20)', () async {
       final Uri uri = await start();
       final WireTestLobby lobby = await buildWireTestLobby(uri, clients);
       final Map<String, Object?> started = await startGame(lobby);
@@ -944,11 +944,9 @@ void main() {
       expect(
         replay['t'],
         'error',
-        reason: 'docs/PROTOCOL.md does not say a replayed id is '
-            'deduplicated or answered with a cached copy of the first '
-            'reply; pinning the server\'s current behaviour, which '
-            'evaluates the replay fresh against whatever state the room '
-            'is in by then',
+        reason: 'docs/PROTOCOL.md section 20: a replayed id is not '
+            'deduplicated and not answered from a cache; the replay is '
+            'evaluated fresh against whatever state the room is in by then',
       );
       expect(
         replay['re'],

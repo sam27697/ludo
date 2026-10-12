@@ -1139,3 +1139,26 @@ than `rematch`, `resume`, `leave_room`, `game_log` and `ping` is
 `GAME_OVER`. That includes `start_game`, `set_players` and `set_seed`,
 which answered `ROOM_STARTED` or `WRONG_PHASE` until this ruling.
 `ROOM_STARTED` stays the answer for those three on a PLAYING room.
+
+## 20. A replayed request id, 2026-10-12
+
+Section 1 makes `id` opaque and section 7 never said what a second frame
+with an `id` already used means. The conformance suite pinned the
+behaviour as found; this section makes it the rule.
+
+The server does not deduplicate `id`s and keeps no reply cache. Every
+frame is evaluated on its own against the room as it stands when it
+arrives, and its reply carries `re` equal to that frame's `id`, used
+before or not. A resent `roll` or `move` is therefore a new intention,
+not a retry of the old one.
+
+This is safe because every intention is gated on the turn state: after an
+accepted `roll` the seat is in `await_move` and a second `roll` is
+`WRONG_PHASE`; after an accepted `move` the turn has passed (`NOT_YOUR_TURN`)
+or a bonus roll is owed (`WRONG_PHASE` for a second `move`). The one case
+where a resent `roll` is accepted is the case where this seat may roll
+again anyway, and the face still comes from the chain.
+
+A client must not resend an intention after a drop. It sends `resume`,
+reads the snapshot (section 8), and acts on what it shows. The client in
+this repository never resends one.

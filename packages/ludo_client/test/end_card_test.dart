@@ -1558,17 +1558,40 @@ void main() {
       await _minimalWinGame(tester, locale: const Locale('ar'));
       final AppLocalizations loc = _locOf(tester);
 
-      expect(loc.endStatRolls, 'رميات');
-      expect(loc.endStatSixes, 'ستّات');
-      expect(loc.endStatCaptures, 'ضربات');
-      expect(loc.endStatHome, 'في البيت');
+      // C-325 rule 4: Arabic is the scoreboard's definite header, the
+      // same word under any number ("other" is the only plural branch
+      // the contract gives it), so the count argument below is this
+      // script's own tile values (rolls 1, sixes 0, captures 0, home 1)
+      // and not a free choice.
+      expect(
+        loc.endStatRolls(1),
+        'الرميات',
+        reason:
+            'C-325 rule 4 drops the indefinite "رميات" for the definite '
+            '"الرميات"',
+      );
+      expect(
+        loc.endStatSixes(0),
+        'الستّات',
+        reason:
+            'C-325 rule 4 drops the indefinite "ستّات" for the definite '
+            '"الستّات"',
+      );
+      expect(
+        loc.endStatCaptures(0),
+        'الضربات',
+        reason:
+            'C-325 rule 4 drops the indefinite "ضربات" for the definite '
+            '"الضربات"',
+      );
+      expect(loc.endStatHome(1), 'في البيت');
 
       final String blob = _blobUnder(tester, find.byType(GameScreen));
       for (final String label in <String>[
-        loc.endStatRolls,
-        loc.endStatSixes,
-        loc.endStatCaptures,
-        loc.endStatHome,
+        loc.endStatRolls(1),
+        loc.endStatSixes(0),
+        loc.endStatCaptures(0),
+        loc.endStatHome(1),
       ]) {
         expect(
           blob.contains(label),
