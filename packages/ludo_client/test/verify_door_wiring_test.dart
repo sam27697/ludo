@@ -189,7 +189,7 @@ Future<RoomController> _mountFinishedEndCard(
 
 // --- home half: a seeded LastGame, no network at all ----------------------
 
-final RoomControllerFactory _unusedControllerFactory = () => RoomController(
+RoomController _unusedControllerFactory() => RoomController(
   serverUrl: Uri.parse(_testUrl),
   connect: (Uri url) async {
     throw UnimplementedError(
