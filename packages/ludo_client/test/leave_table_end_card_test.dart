@@ -736,6 +736,81 @@ void main() {
       },
     );
 
+    // Rule 2, third bullet: the winner's name, numbers and verify link come
+    // from lastFinished whoever left. The winner leaving first is the
+    // common case, and this device is the loser.
+    // Mutation this catches: resolving the FINISHED card's winner against
+    // live room.seats, which loses the winner the moment they leave.
+    for (final int players in <int>[2, 3]) {
+      testWidgets(
+        'the winner leaves a FINISHED room of $players: the loser keeps the '
+        'lose card naming them, and the verify link',
+        (WidgetTester tester) async {
+          final List<Map<String, Object?>> seats = <Map<String, Object?>>[
+            _seatJson(0, name: 'Sam'),
+            _seatJson(1, name: 'Bob'),
+            if (players == 3) _seatJson(2, name: 'Ken'),
+          ];
+          final (
+            RoomController controller,
+            FakeTransport transport,
+            _,
+          ) = await _connectFinished(
+            tester,
+            mySeat: 1,
+            seats: seats,
+            winner: 0,
+            players: players,
+          );
+          addTearDown(controller.dispose);
+          await _mount(tester, controller);
+          final AppLocalizations loc = _locOf(tester);
+          expect(
+            find.byKey(const Key('end-card-lose')),
+            findsOneWidget,
+            reason: 'fixture: the loser card before anyone leaves',
+          );
+
+          await _pushPlayerLeft(tester, transport, seat: 0, seq: 3);
+          expect(
+            controller.room!.seats.any((s) => s.seat == 0),
+            isFalse,
+            reason: 'fixture: the winner, seat 0, must be gone',
+          );
+
+          expect(
+            find.byKey(const Key('end-card-lose')),
+            findsOneWidget,
+            reason:
+                'rule 2: the loser card stays after the winner leaves; '
+                'the winner comes from lastFinished',
+          );
+          _expectText(
+            tester,
+            find.byKey(_winnerTitleKey),
+            loc.endLoseTitle('Sam'),
+            what: 'winner title after the winner left',
+          );
+          expect(
+            find.byKey(_verifyKey),
+            findsOneWidget,
+            reason: 'rule 2: the verify link stays after the winner leaves',
+          );
+          final String blob = _blobUnder(tester, find.byKey(_endLeftKey));
+          final String expected = players == 2
+              ? _expectedEveryoneLeft(const Locale('en'))
+              : _expectedEndLeft(const Locale('en'), <String>['Sam']);
+          expect(
+            blob.contains(expected),
+            isTrue,
+            reason:
+                'rule 2: end-card-left must read "$expected"; blob was '
+                '"$blob"',
+          );
+        },
+      );
+    }
+
     testWidgets(
       'a rematch ask whose by seat then leaves: the ask line is gone',
       (WidgetTester tester) async {
