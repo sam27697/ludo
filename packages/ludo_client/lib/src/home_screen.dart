@@ -35,7 +35,7 @@ class HomeScreen extends StatefulWidget {
     this.controllerFactory = defaultRoomControllerFactory,
     this.initialLinkReader = noInitialLink,
     this.linkStream = noLinkStream,
-    this.clock = DateTime.now,
+    this.clock,
   });
 
   /// Flips the app between its two supported locales.
@@ -59,7 +59,8 @@ class HomeScreen extends StatefulWidget {
   /// C-322 rule 2: the "now" a finished game is recorded at, and rule 4's
   /// 90-day window is measured against the same clock, so a test can
   /// inject a fixed time instead of depending on the wall clock.
-  final DateTime Function() clock;
+  /// Null means the wall clock.
+  final DateTime Function()? clock;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -634,7 +635,7 @@ class _HomeScreenState extends State<HomeScreen>
     final LastGame game = LastGame(
       gameId: gameId,
       verifyUrl: verifyUrl,
-      finishedAt: widget.clock(),
+      finishedAt: (widget.clock ?? DateTime.now)(),
       won: finished.winner == controller.seat,
     );
     unawaited(SessionMemory.recordLastGame(game));
@@ -653,7 +654,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (game == null) {
       return false;
     }
-    final DateTime now = widget.clock();
+    final DateTime now = (widget.clock ?? DateTime.now)();
     final DateTime expiry = game.finishedAt.add(kVerifyRetention);
     return !expiry.isBefore(now);
   }
