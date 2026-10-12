@@ -192,10 +192,19 @@ class Connection {
       return;
     }
 
-    final String text = rawFrame is String ? rawFrame : utf8.decode(bytes);
-
     // Steps 2 to 6: JSON parse, v, t, id shape, d presence.
-    final EnvelopeResult parsed = parseEnvelope(text);
+    String? text;
+    try {
+      text = rawFrame is String ? rawFrame : utf8.decode(bytes);
+    } on FormatException {
+      text = null;
+    }
+    final EnvelopeResult parsed = text == null
+        ? EnvelopeError(
+            error: ProtocolError.badField,
+            closeConnection: false,
+          )
+        : parseEnvelope(text);
     if (parsed is EnvelopeError) {
       _log(
         type: '-',
@@ -499,9 +508,15 @@ class Connection {
     // below still answers NO_SUCH_ROOM in that case, so skipping straight to
     // the payload check loses nothing.
     final Room? liveRoom = registry.lookup(roomCode!);
-    if (liveRoom != null && liveRoom.state != RoomState.lobby) {
-      _reject(envelope, ProtocolError.roomStarted);
-      return;
+    if (liveRoom != null) {
+      if (liveRoom.state == RoomState.finished) {
+        _reject(envelope, ProtocolError.gameOver);
+        return;
+      }
+      if (liveRoom.state != RoomState.lobby) {
+        _reject(envelope, ProtocolError.roomStarted);
+        return;
+      }
     }
     if (envelope.data.isNotEmpty) {
       _reject(envelope, ProtocolError.badField);
@@ -652,6 +667,10 @@ class Connection {
     // safe to run ahead of the payload check.
     final Room? liveRoom = registry.lookup(roomCode!);
     if (liveRoom != null) {
+      if (liveRoom.state == RoomState.finished) {
+        _reject(envelope, ProtocolError.gameOver);
+        return;
+      }
       if (liveRoom.state != RoomState.lobby) {
         _reject(envelope, ProtocolError.roomStarted);
         return;
@@ -751,6 +770,10 @@ class Connection {
     final Room? liveRoom = registry.lookup(roomCode!);
     if (liveRoom == null) {
       _reject(envelope, ProtocolError.noSuchRoom);
+      return;
+    }
+    if (liveRoom.state == RoomState.finished) {
+      _reject(envelope, ProtocolError.gameOver);
       return;
     }
     if (liveRoom.state != RoomState.lobby) {

@@ -581,6 +581,9 @@ class RoomRegistry {
     if (seat == null) {
       return StartFailure(ProtocolError.badSeatToken);
     }
+    if (room.state == RoomState.finished) {
+      return StartFailure(ProtocolError.gameOver);
+    }
     if (seat.seat != room.hostSeat) {
       return StartFailure(ProtocolError.notHost);
     }
@@ -1119,6 +1122,9 @@ class RoomRegistry {
     if (room == null) {
       return SetSeedFailure(ProtocolError.noSuchRoom);
     }
+    if (room.state == RoomState.finished) {
+      return SetSeedFailure(ProtocolError.gameOver);
+    }
     if (room.state != RoomState.lobby) {
       return SetSeedFailure(ProtocolError.wrongPhase);
     }
@@ -1163,6 +1169,9 @@ class RoomRegistry {
     final Seat? callerSeat = _findSeat(room, seatToken);
     if (callerSeat == null) {
       return SetPlayersFailure(ProtocolError.badSeatToken);
+    }
+    if (room.state == RoomState.finished) {
+      return SetPlayersFailure(ProtocolError.gameOver);
     }
     if (room.state != RoomState.lobby) {
       return SetPlayersFailure(ProtocolError.roomStarted);
