@@ -21,6 +21,19 @@ case "$MOTION_LOCALE" in
 esac
 echo "MOTION_LOCALE=${MOTION_LOCALE}"
 
+# 0 or 1, which seat the device plays. Default 0 when unset. Same shape
+# as the MOTION_LOCALE check above: refused before the emulator is
+# touched.
+MOTION_SEAT="${MOTION_SEAT-0}"
+case "$MOTION_SEAT" in
+  0|1) ;;
+  *)
+    echo "MOTION_SEAT must be 0 or 1, got: ${MOTION_SEAT}" >&2
+    exit 2
+    ;;
+esac
+echo "MOTION_SEAT=${MOTION_SEAT}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLIENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$CLIENT_DIR"
@@ -93,6 +106,7 @@ flutter drive \
   --driver=test_driver/integration_test.dart \
   --target=integration_test/motion_test.dart \
   --dart-define=MOTION_LOCALE="$MOTION_LOCALE" \
+  --dart-define=MOTION_SEAT="$MOTION_SEAT" \
   -d emulator-5554 2>&1 | tee motion/drive.log
 drive_exit="${PIPESTATUS[0]}"
 set -e
