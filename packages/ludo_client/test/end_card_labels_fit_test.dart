@@ -289,22 +289,32 @@ void main() {
                   (
                     keyName: 'end-card-stat-rolls',
                     value: '${_completeStats.rolls}',
-                    label: loc.endStatRolls,
+                    // C-325 rule 4: the word is called with this tile's
+                    // own count (50, "other" branch -> "rolls"), the
+                    // longest English form this tile ever shows.
+                    label: loc.endStatRolls(_completeStats.rolls),
                   ),
                   (
                     keyName: 'end-card-stat-sixes',
                     value: '${_completeStats.sixes}',
-                    label: loc.endStatSixes,
+                    // 32, "other" branch -> "sixes".
+                    label: loc.endStatSixes(_completeStats.sixes),
                   ),
                   (
                     keyName: 'end-card-stat-captures',
                     value: '${_completeStats.capturesMade}',
-                    label: loc.endStatCaptures,
+                    // 1, the "=1" branch -> "capture": still the longest
+                    // of the four words at this recording's own count
+                    // (7 chars, against rolls/sixes at 5 and home at 4),
+                    // so the one-line proof below still covers the
+                    // longest form this exact tile ever renders.
+                    label: loc.endStatCaptures(_completeStats.capturesMade),
                   ),
                   (
                     keyName: 'end-card-stat-home',
                     value: '${_completeStats.tokensHome}',
-                    label: loc.endStatHome,
+                    // "home" for every count, per the contract.
+                    label: loc.endStatHome(_completeStats.tokensHome),
                   ),
                 ];
 
