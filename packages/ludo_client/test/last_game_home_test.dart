@@ -42,6 +42,8 @@ import 'net/fake_transport.dart';
 const String _testUrl = 'wss://last-game-home-test.invalid/ws';
 
 const Key _createKey = Key('create-room-button');
+const Key _codeKey = Key('room-code-field');
+const Key _joinKey = Key('join-room-button');
 const Key _appbarLeaveKey = Key('game-screen-appbar-leave');
 const Key _homeLastGameKey = Key('home-last-game');
 const Key _homeLastGameCheckKey = Key('home-last-game-check');
@@ -390,6 +392,84 @@ Future<_RecordingControllerFactory> _createPlayingFromHome(
   return factory;
 }
 
+/// Joins through the normal Join flow (home_rejoin_test.dart's own
+/// `_joinSuccessfully` path, copied rather than imported): types [code] in
+/// room-code-field, taps join-room-button, and answers with seat_assigned
+/// naming seat 1 followed by a room reply that lands straight on a PLAYING
+/// room with host_seat 0, carrying [gameId]. This device is never the host
+/// here, unlike every path through [_createPlayingFromHome].
+Future<_RecordingControllerFactory> _joinPlayingFromHome(
+  WidgetTester tester, {
+  required String gameId,
+  String code = 'LG3JQN',
+  DateTime Function()? clock,
+}) async {
+  final _RecordingControllerFactory factory = _RecordingControllerFactory();
+  await tester.pumpWidget(_homeScreenApp(factory.call, clock: clock));
+  await tester.pumpAndSettle();
+
+  await tester.enterText(find.byKey(_codeKey), code);
+  await _tapAndAwaitPushedRoute(tester, _joinKey);
+  expect(
+    factory.controllers,
+    hasLength(1),
+    reason: 'fixture is broken: Join Room must build exactly one controller',
+  );
+  final FakeTransport transport = factory.transports.single;
+  final List<String> joinMessages = transport.sentRaw
+      .where((String raw) => _typeOf(raw) == 'join_room')
+      .toList();
+  expect(
+    joinMessages,
+    hasLength(1),
+    reason:
+        'fixture is broken: expected one join_room; sent '
+        '${transport.sentRaw.map(_typeOf).toList()}',
+  );
+  final String joinId = _idOf(joinMessages.single);
+
+  transport.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: <String, Object?>{'seat': 1, 'seat_token': 'tok-last-game-1'},
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'room',
+      re: joinId,
+      data: _roomJson(
+        code: code,
+        state: 'PLAYING',
+        hostSeat: 0,
+        gameId: gameId,
+        seats: <Map<String, Object?>>[
+          _seatJson(0, name: 'Host'),
+          _seatJson(1, name: 'Joiner'),
+        ],
+        turn: _turnJson(seat: 0, phase: 'await_roll', deadlineMs: 45000, k: 0),
+        seq: 1,
+      ),
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+
+  expect(
+    factory.controllers.single.room!.state,
+    RoomState.playing,
+    reason: 'fixture is broken: the join_room reply must land PLAYING',
+  );
+  expect(
+    find.byType(GameScreen),
+    findsOneWidget,
+    reason:
+        'fixture is broken: a PLAYING room must latch RoomRoute onto '
+        'GameScreen',
+  );
+  return factory;
+}
+
 Future<void> _pushGameOver(
   WidgetTester tester,
   FakeTransport transport, {
@@ -494,9 +574,15 @@ void main() {
           );
           expect(beforeLeave!.gameId, gameId);
           expect(beforeLeave.verifyUrl, verifyUrl);
-          // Mutation this catches: won computed from the host seat or
-          // from room.winner's seat 0 literally, instead of comparing
-          // against this controller's own seat.
+          // This loop never lands this device anywhere but seat 0, and
+          // seat 0 is also always the host here, so it cannot tell the
+          // contract's own comparison (winner == this controller's seat)
+          // apart from the mutation won: finished.winner ==
+          // finished.hostSeat -- both read the same number on this
+          // fixture. Measured run 85: that mutation survives all 10 cases
+          // in this file with the mutation applied; the join-path case in
+          // "rule 2: won compares against this seat, never the host seat"
+          // below (this seat 1, host 0) is what actually kills it.
           expect(
             beforeLeave.won,
             thisSeatWon,
@@ -712,6 +798,54 @@ void main() {
       // request timer the way every other case here ends.
       await _leaveBackToHome(tester, factory.transports);
     });
+  });
+
+  group('rule 2: won compares against this seat, never the host seat', () {
+    testWidgets(
+      'join into a game that finishes with the host winning: this seat is '
+      '1, host is seat 0, winner is seat 0, so won must be false',
+      (tester) async {
+        const String gameId = 'g-rule2-join-host-wins';
+        const String verifyUrl =
+            'https://provefair.app/v/g-rule2-join-host-wins';
+        final _RecordingControllerFactory factory = await _joinPlayingFromHome(
+          tester,
+          gameId: gameId,
+        );
+        final FakeTransport transport = factory.transports.single;
+
+        await _pushGameOver(
+          tester,
+          transport,
+          winner: 0,
+          verifyUrl: verifyUrl,
+          seq: 2,
+        );
+        expect(
+          factory.controllers.single.room!.state,
+          RoomState.finished,
+          reason: 'fixture is broken: game_over must finish the room',
+        );
+
+        // Mutation this catches: won: finished.winner ==
+        // finished.hostSeat. On this fixture winner is 0 and hostSeat is
+        // also 0, so that mutation reads true; the contract's own rule
+        // (winner == this controller's own seat, which is 1) reads
+        // false. Every case above this one runs this device on seat 0,
+        // which is also always the host, so none of them could tell the
+        // two expressions apart -- this is the case that does.
+        final LastGame? stored = await _loadLastGame();
+        expect(
+          stored?.won,
+          false,
+          reason:
+              'this seat is 1, winner is 0: won must be false, not '
+              'true-by-host-seat-comparison; got ${stored?.won}',
+        );
+
+        await _leaveBackToHome(tester, factory.transports);
+      },
+    );
   });
 
   group('rule 3/4: the window and the card\'s copy', () {
