@@ -22,6 +22,7 @@ import '../l10n/gen/app_localizations.dart';
 import 'game_stats.dart';
 import 'net/snapshot.dart' show RematchState;
 import 'theme.dart';
+import 'verify_rolls_button.dart';
 
 /// Built by `GameScreen._gameOverBody`; never constructed from a
 /// `RoomController` or a `RoomSnapshot` directly. [winnerSeat] and
@@ -304,7 +305,7 @@ class _EndCardState extends State<EndCard> {
       key: const Key('end-card-stat-home'),
       icon: Icons.home,
       value: stats.tokensHome,
-      label: loc.endStatHome,
+      label: loc.endStatHome(stats.tokensHome),
     );
     final List<Widget> tiles = stats.complete
         ? <Widget>[
@@ -312,19 +313,19 @@ class _EndCardState extends State<EndCard> {
               key: const Key('end-card-stat-rolls'),
               icon: Icons.casino,
               value: stats.rolls,
-              label: loc.endStatRolls,
+              label: loc.endStatRolls(stats.rolls),
             ),
             _statTile(
               key: const Key('end-card-stat-sixes'),
               icon: Icons.star,
               value: stats.sixes,
-              label: loc.endStatSixes,
+              label: loc.endStatSixes(stats.sixes),
             ),
             _statTile(
               key: const Key('end-card-stat-captures'),
               icon: Icons.flash_on,
               value: stats.capturesMade,
-              label: loc.endStatCaptures,
+              label: loc.endStatCaptures(stats.capturesMade),
             ),
             homeTile,
           ]
@@ -409,11 +410,11 @@ class _EndCardState extends State<EndCard> {
           ],
         ),
         const SizedBox(height: kSpace1),
-        TextButton(
-          key: const Key('game-screen-verify-button'),
-          style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
-          onPressed: canVerify ? widget.onVerify : null,
-          child: Text(loc.endFairCheck),
+        Center(
+          child: VerifyRollsButton(
+            key: const Key('game-screen-verify-button'),
+            onPressed: canVerify ? widget.onVerify : null,
+          ),
         ),
       ],
     );
