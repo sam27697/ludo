@@ -707,6 +707,10 @@ void main() {
             'game B: winner is seat 1, this seat is 0, so won must be '
             'false',
       );
+
+      // Game B's game_log fetch is still in flight; leaving drains its
+      // request timer the way every other case here ends.
+      await _leaveBackToHome(tester, factory.transports);
     });
   });
 
