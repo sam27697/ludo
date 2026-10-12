@@ -192,10 +192,19 @@ class Connection {
       return;
     }
 
-    final String text = rawFrame is String ? rawFrame : utf8.decode(bytes);
-
     // Steps 2 to 6: JSON parse, v, t, id shape, d presence.
-    final EnvelopeResult parsed = parseEnvelope(text);
+    String? text;
+    try {
+      text = rawFrame is String ? rawFrame : utf8.decode(bytes);
+    } on FormatException {
+      text = null;
+    }
+    final EnvelopeResult parsed = text == null
+        ? EnvelopeError(
+            error: ProtocolError.badField,
+            closeConnection: false,
+          )
+        : parseEnvelope(text);
     if (parsed is EnvelopeError) {
       _log(
         type: '-',
@@ -499,9 +508,15 @@ class Connection {
     // below still answers NO_SUCH_ROOM in that case, so skipping straight to
     // the payload check loses nothing.
     final Room? liveRoom = registry.lookup(roomCode!);
-    if (liveRoom != null && liveRoom.state != RoomState.lobby) {
-      _reject(envelope, ProtocolError.roomStarted);
-      return;
+    if (liveRoom != null) {
+      if (liveRoom.state == RoomState.finished) {
+        _reject(envelope, ProtocolError.gameOver);
+        return;
+      }
+      if (liveRoom.state != RoomState.lobby) {
+        _reject(envelope, ProtocolError.roomStarted);
+        return;
+      }
     }
     if (envelope.data.isNotEmpty) {
       _reject(envelope, ProtocolError.badField);
@@ -529,13 +544,14 @@ class Connection {
     // docs/PROTOCOL.md section 16.4, "Not everyone": every occupied seat
     // this start removed for not being ready, ascending seat order, one
     // `player_left` each at its own seq, before anything else this start
-    // does. Empty, and therefore a no-op, for every start that did not come
-    // through that path.
+    // does. Section 18 rule 2: each carries `host_seat`. Empty, and
+    // therefore a no-op, for every start that did not come through that
+    // path.
     for (final RemovedSeat removed in ok.removedSeats) {
       _sendAndBroadcast(
         room: ok.room.code,
         type: 'player_left',
-        data: buildPlayerLeft(removed.seat.seat, removed.seq),
+        data: buildPlayerLeft(removed.seat.seat, ok.room.hostSeat, removed.seq),
         re: envelope.id,
       );
       // docs/PROTOCOL.md section 16.9 rule 1: that was the last thing this
@@ -651,6 +667,10 @@ class Connection {
     // safe to run ahead of the payload check.
     final Room? liveRoom = registry.lookup(roomCode!);
     if (liveRoom != null) {
+      if (liveRoom.state == RoomState.finished) {
+        _reject(envelope, ProtocolError.gameOver);
+        return;
+      }
       if (liveRoom.state != RoomState.lobby) {
         _reject(envelope, ProtocolError.roomStarted);
         return;
@@ -752,6 +772,10 @@ class Connection {
       _reject(envelope, ProtocolError.noSuchRoom);
       return;
     }
+    if (liveRoom.state == RoomState.finished) {
+      _reject(envelope, ProtocolError.gameOver);
+      return;
+    }
     if (liveRoom.state != RoomState.lobby) {
       _reject(envelope, ProtocolError.wrongPhase);
       return;
@@ -803,6 +827,7 @@ class Connection {
     );
   }
 
+  /// `leave_room`, docs/PROTOCOL.md section 4, section 16.3 and section 18.
   void _handleLeaveRoom(ParsedEnvelope envelope) {
     // docs/PROTOCOL.md section 7: identity before payload for the five
     // socket-identified messages.
@@ -833,7 +858,7 @@ class Connection {
 
     final Map<String, Object?> data = stillSeated
         ? buildPresence(seatIndex, false, ok.room.seq)
-        : buildPlayerLeft(seatIndex, ok.room.seq);
+        : buildPlayerLeft(seatIndex, ok.room.hostSeat, ok.room.seq);
     final String pushType = stillSeated ? 'presence' : 'player_left';
 
     _send(type: pushType, data: data, re: envelope.id);

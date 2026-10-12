@@ -35,6 +35,7 @@
 // One mount per case. Bounded pumps once GameScreen is up. SharedPreferences
 // is mocked and never read back.
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -1432,14 +1433,25 @@ void main() {
         ),
       );
 
-      // Automatic reconnect is off on this controller, the same as the
-      // other cases. The reconnect control calls controller.reconnect,
-      // which sends resume on a new transport.
+      // C-316 rule 4: offline in FINISHED keeps the end card up with
+      // end-card-offline in place of the connection-lost card, so there is
+      // no Reconnect control here any more. Automatic reconnect is off on
+      // this controller, the same as the other cases; call
+      // controller.reconnect directly, which is what automatic reconnect
+      // does, and which sends resume on a new transport.
+      expect(
+        find.byKey(const Key('end-card-offline')),
+        findsOneWidget,
+        reason: _where(seat, finishedState, 'C-316 rule 4 offline line'),
+      );
+      expect(
+        find.byKey(_reconnectKey),
+        findsNothing,
+        reason: _where(seat, finishedState, 'C-316 rule 4: no Reconnect'),
+      );
       final FakeTransport resumeTransport = FakeTransport();
       connector.enqueue(resumeTransport);
-      final Finder reconnect = find.byKey(_reconnectKey);
-      await tester.ensureVisible(reconnect);
-      await tester.tap(reconnect);
+      unawaited(controller.reconnect());
       await tester.pump();
       expect(
         resumeTransport.sentRaw,

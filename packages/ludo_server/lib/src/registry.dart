@@ -351,9 +351,9 @@ class LeaveOk extends LeaveResult {
   LeaveOk({required this.room, required this.seat});
   final Room room;
 
-  /// The seat that left. In LOBBY it has already been removed from
-  /// `room.seats`; in PLAYING and FINISHED it is still there, marked
-  /// disconnected.
+  /// The seat that left. In LOBBY and FINISHED it has already been removed
+  /// from `room.seats`; in PLAYING it is still there, marked disconnected,
+  /// per docs/PROTOCOL.md section 3 and section 18.
   final Seat seat;
 }
 
@@ -580,6 +580,9 @@ class RoomRegistry {
     final Seat? seat = _findSeat(room, seatToken);
     if (seat == null) {
       return StartFailure(ProtocolError.badSeatToken);
+    }
+    if (room.state == RoomState.finished) {
+      return StartFailure(ProtocolError.gameOver);
     }
     if (seat.seat != room.hostSeat) {
       return StartFailure(ProtocolError.notHost);
@@ -1119,6 +1122,9 @@ class RoomRegistry {
     if (room == null) {
       return SetSeedFailure(ProtocolError.noSuchRoom);
     }
+    if (room.state == RoomState.finished) {
+      return SetSeedFailure(ProtocolError.gameOver);
+    }
     if (room.state != RoomState.lobby) {
       return SetSeedFailure(ProtocolError.wrongPhase);
     }
@@ -1163,6 +1169,9 @@ class RoomRegistry {
     final Seat? callerSeat = _findSeat(room, seatToken);
     if (callerSeat == null) {
       return SetPlayersFailure(ProtocolError.badSeatToken);
+    }
+    if (room.state == RoomState.finished) {
+      return SetPlayersFailure(ProtocolError.gameOver);
     }
     if (room.state != RoomState.lobby) {
       return SetPlayersFailure(ProtocolError.roomStarted);
@@ -1216,6 +1225,7 @@ class RoomRegistry {
     return SetPlayersOk(room: room, movedSeats: movedSeats);
   }
 
+  /// `leave_room`, docs/PROTOCOL.md section 4, section 16.3 and section 18.
   LeaveResult leaveRoom({required String code, required String seatToken}) {
     final Room? room = _rooms[code];
     if (room == null) {
@@ -1225,7 +1235,14 @@ class RoomRegistry {
     if (seat == null) {
       return LeaveFailure(ProtocolError.badSeatToken);
     }
-    if (room.state == RoomState.lobby) {
+    if (room.state == RoomState.playing) {
+      // PLAYING: the seat stays in the game and is later played by the
+      // timer, per docs/PROTOCOL.md section 3. The seat is simply marked
+      // not connected.
+      seat.connected = false;
+    } else {
+      // LOBBY and FINISHED: frees the seat, per docs/PROTOCOL.md section 3
+      // and section 18 rules 1-3.
       room.seats =
           room.seats.where((Seat s) => s.seatToken != seatToken).toList();
       if (room.hostSeat == seat.seat) {
@@ -1245,12 +1262,9 @@ class RoomRegistry {
           ready: current.ready.where((int s) => s != seat.seat).toList(),
         );
       }
-      _refreshIdleTracking(room);
-    } else {
-      // PLAYING: the seat stays in the game and is later played by the
-      // timer, per docs/PROTOCOL.md section 3. FINISHED: nothing left to
-      // free. Either way the seat is simply marked not connected.
-      seat.connected = false;
+      if (room.state == RoomState.lobby) {
+        _refreshIdleTracking(room);
+      }
     }
     room.seq++;
     return LeaveOk(room: room, seat: seat);

@@ -166,9 +166,14 @@ Map<String, Object?> buildPlayerJoined(Seat seat, int seq) {
   };
 }
 
-/// `player_left`, section 5.
-Map<String, Object?> buildPlayerLeft(int seat, int seq) {
-  return <String, Object?>{'seat': seat, 'seq': seq};
+/// `player_left`, section 5 and section 18: `host_seat` is the room's host
+/// after the seat was freed, or -1 when none is left.
+Map<String, Object?> buildPlayerLeft(int seat, int hostSeat, int seq) {
+  return <String, Object?>{
+    'seat': seat,
+    'host_seat': hostSeat,
+    'seq': seq,
+  };
 }
 
 /// `presence`, section 5.

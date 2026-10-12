@@ -125,7 +125,6 @@ const Key _statSixesKey = Key('end-card-stat-sixes');
 const Key _statCapturesKey = Key('end-card-stat-captures');
 const Key _statHomeKey = Key('end-card-stat-home');
 const Key _connectionLostKey = Key('game-screen-connection-lost');
-const Key _errorMessageKey = Key('game-screen-error-message');
 const Key _reconnectButtonKey = Key('game-screen-reconnect-button');
 const Key _lobbyRematchAcceptKey = Key('lobby-rematch-accept');
 
@@ -1806,18 +1805,17 @@ void main() {
   });
 
   // ===========================================================================
-  // Bullet 7b: any other error on rematch -> the existing in-room error
-  // line, the Rematch button enabled again. Per this file's header
-  // ambiguity note 1: read here as the ordinary connection-lost body
-  // (game-screen-connection-lost / game-screen-error-message, the same
-  // body every other in-room request failure already produces on this
-  // screen) rather than a NO_SUCH_ROOM-shaped end-card state, with "enabled
-  // again" checked once the player reconnects back into the same lobby.
+  // Bullet 7b: any other error on rematch -> not a NO_SUCH_ROOM-shaped
+  // end-card state, and the Rematch button enabled again once the player
+  // reconnects back into the same lobby. This file's header ambiguity note
+  // 1 first read it as the ordinary connection-lost body; C-316 rule 4
+  // (2026-10-11) replaced that body on a FINISHED table with the end card
+  // kept up and end-card-offline in place of the rematch status line.
   // ===========================================================================
   group('bullet 7b (ambiguous, see file header note 1): any other rematch '
       'error', () {
-    testWidgets('WRONG_PHASE shows the existing in-room error line, not '
-        'end-card-rematch-gone', (tester) async {
+    testWidgets('WRONG_PHASE keeps the end card up with end-card-offline '
+        '(C-316 rule 4), not end-card-rematch-gone', (tester) async {
       final (RoomController controller, FakeTransport transport, _) =
           await _connectTo(tester, mySeat: 0, state: 'FINISHED', winner: 0);
       await _mount(tester, controller);
@@ -1837,20 +1835,23 @@ void main() {
 
       expect(controller.phase, RoomPhase.failed);
       expect(controller.errorCode, 'WRONG_PHASE');
+      // C-316 rule 4 replaces ambiguity note 1's old reading here: a
+      // failed connection in FINISHED keeps the end card up, with
+      // end-card-offline in place of the connection-lost body.
       expect(
         find.byKey(_connectionLostKey),
-        findsOneWidget,
+        findsNothing,
         reason:
-            'ambiguity note 1\'s own reading: any rematch error other '
-            'than NO_SUCH_ROOM falls through to the existing '
-            'game-screen-connection-lost body',
+            'C-316 rule 4: no connection-lost card on a FINISHED table; '
+            'any rematch error other than NO_SUCH_ROOM leaves the end card '
+            'up, offline',
       );
       expect(
-        find.byKey(_errorMessageKey),
+        find.byKey(const Key('end-card-offline')),
         findsOneWidget,
         reason:
-            'game-screen-error-message must show controller.errorMessage, '
-            'the same as every other in-room request failure',
+            'C-316 rule 4: end-card-offline takes the place of the rematch '
+            'status line while the connection is failed',
       );
       expect(
         find.byKey(_rematchGoneKey),

@@ -477,9 +477,34 @@ gate_server() {
 # 4. Protocol conformance. Every message type against docs/PROTOCOL.md, and the
 # malformed cases: out of turn, replayed move id, a move for another seat's
 # token, unknown room, full room, expired room, oversized payload, garbage.
+# The cases live in packages/ludo_server/test/protocol_conformance_test.dart
+# (order 319), one group per row of section 7's error table, one per close
+# code in 7.1, the validation ladder and section 19's rulings. The server gate
+# runs the same file among the rest; this gate runs it alone, so a red here
+# names the protocol rather than a whole suite.
 gate_protocol() {
-  echo "no server yet"
-  return 77
+  local dart
+  dart="$(resolve_dart)" || {
+    echo "no Dart SDK found on PATH, in \$DART_SDK, or at /workspace/toolchains/dart-sdk"
+    return 77
+  }
+
+  local suite="packages/ludo_server/test/protocol_conformance_test.dart"
+  if [ ! -f "$ROOT/$suite" ]; then
+    echo "missing $suite"
+    return 1
+  fi
+
+  local out rc summary
+  out="$(cd "$ROOT" && "$dart" test "$suite" 2>&1)"; rc=$?
+  summary="$(printf '%s\n' "$out" | grep -E '[+][0-9]+.*(All tests passed|Some tests failed)' | tail -1)"
+  if [ $rc -ne 0 ]; then
+    printf '%s\n' "$out" | grep -E '\[E\]$' | head -20
+    echo "${summary:-the conformance suite did not report a result}"
+    return 1
+  fi
+  echo "$summary"
+  return 0
 }
 
 # 5. The headless four-client simulator against a real server process. Create,

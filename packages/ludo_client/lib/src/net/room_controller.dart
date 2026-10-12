@@ -184,6 +184,10 @@ class RoomController extends ChangeNotifier {
   /// True once [leave] has been called, ever. One-way, like [_disposed].
   bool _leftCalled = false;
 
+  /// C-316 rule 4: true when Play again was tapped offline and should send
+  /// rematch as soon as the resume succeeds.
+  bool _sendRematchOnResume = false;
+
   /// The timer for the next scheduled automatic attempt, while one is
   /// pending. Null the rest of the time, including while an attempt opened
   /// by that timer is in flight.
@@ -424,6 +428,7 @@ class RoomController extends ChangeNotifier {
     );
     final bool opened = await _openAndAttach(connection);
     if (!opened) {
+      _sendRematchOnResume = false;
       _afterReconnectAttemptFailure(automatic);
       return;
     }
@@ -449,7 +454,12 @@ class RoomController extends ChangeNotifier {
         // A later drop starts a fresh sequence from autoReconnectDelays[0].
         _cancelAutoReconnect();
       }
+      if (_sendRematchOnResume) {
+        _sendRematchOnResume = false;
+        await rematch();
+      }
     } catch (error) {
+      _sendRematchOnResume = false;
       _failFromRequest(error);
       _afterReconnectAttemptFailure(automatic);
     }
@@ -676,6 +686,30 @@ class RoomController extends ChangeNotifier {
     }
   }
 
+  /// C-316 rule 4: tapping Play again offline starts the same reconnect
+  /// the connection-lost card's Reconnect starts, and sends `rematch` once
+  /// the resume succeeds.
+  Future<void> reconnectAndRematch() async {
+    if (_disposed) {
+      return;
+    }
+    if (_phase == RoomPhase.connected) {
+      await rematch();
+      return;
+    }
+    final RoomSnapshot? room = _room;
+    final String? token = _cachedSeatToken;
+    if (room == null || token == null) {
+      return;
+    }
+    _sendRematchOnResume = true;
+    if (_phase == RoomPhase.connecting) {
+      return;
+    }
+    _cancelAutoReconnect();
+    await _attemptReconnect(automatic: false, room: room, token: token);
+  }
+
   /// Forwards to the connection when [phase] is [RoomPhase.connected] and is
   /// a silent no-op otherwise. The reply is a plain frame, not a snapshot; it
   /// is not parsed as one and changes nothing here. The `rolled` frame that
@@ -737,6 +771,7 @@ class RoomController extends ChangeNotifier {
       return;
     }
     _leftCalled = true;
+    _sendRematchOnResume = false;
     _cancelAutoReconnect();
     _clearLastFinished();
     final RoomConnection? connection = _connection;
@@ -767,6 +802,7 @@ class RoomController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _sendRematchOnResume = false;
     _cancelAutoReconnect();
     _clearLastFinished();
     unawaited(_frameSub?.cancel());
@@ -848,9 +884,13 @@ class RoomController extends ChangeNotifier {
   }
 
   /// C-310 rule 1: records the snapshot when it becomes FINISHED.
+  /// C-316 rule 2: keeps the snapshot as it stood at game end for the same
+  /// gameId, preserving the finished seat list across later player leaves.
   void _recordLastFinished(RoomSnapshot snapshot) {
     if (snapshot.state == RoomState.finished) {
-      _lastFinished = snapshot;
+      if (_lastFinished == null || _lastFinished!.gameId != snapshot.gameId) {
+        _lastFinished = snapshot;
+      }
     }
   }
 
@@ -1024,15 +1064,30 @@ class RoomController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// `{seat}`: that seat is removed from `room.seats`. A seat absent from
-  /// `room.seats` is ignored entirely, ahead of the gap check, matching the
-  /// behaviour `presence` has always had.
+  /// `{seat, host_seat}`: that seat is removed from `room.seats`.
+  /// C-316 rule 1: sets `hostSeat` from `host_seat` when carried as an int in
+  /// -1..3; absent leaves `hostSeat` as it was. Any other value is treated as
+  /// a malformed frame (no state change). A seat absent from `room.seats` is
+  /// ignored entirely, ahead of the gap check, matching the behaviour
+  /// `presence` has always had.
   void _reducePlayerLeft(Frame frame, RoomSnapshot room) {
     final int? seatValue = _asInt(frame.data, 'seat');
     final int? seqValue = frame.seq;
     if (seatValue == null || seqValue == null) {
       return;
     }
+
+    final int hostSeat;
+    if (frame.data.containsKey('host_seat')) {
+      final Object? rawHost = frame.data['host_seat'];
+      if (rawHost is! int || rawHost < -1 || rawHost > 3) {
+        return;
+      }
+      hostSeat = rawHost;
+    } else {
+      hostSeat = room.hostSeat;
+    }
+
     final int index = room.seats.indexWhere(
       (SeatState s) => s.seat == seatValue,
     );
@@ -1047,7 +1102,7 @@ class RoomController extends ChangeNotifier {
 
     final List<SeatState> seats = List<SeatState>.from(room.seats)
       ..removeAt(index);
-    _room = room.copyWith(seats: seats, seq: seqValue);
+    _room = room.copyWith(seats: seats, hostSeat: hostSeat, seq: seqValue);
     notifyListeners();
   }
 

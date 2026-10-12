@@ -3,13 +3,17 @@
 // advances a turn. When the server disagrees with what this screen last
 // drew, the server wins and the next rebuild shows that.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'die_mark.dart';
+import 'game_screen.dart' show GameScreenResult;
 import 'net/connection.dart' show RoomToggles;
+import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'seat_card.dart';
@@ -107,21 +111,42 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// so a second tap on [lobby-rematch-accept] sends nothing.
   bool _rematchInFlight = false;
 
+  StreamSubscription<Frame>? _framesSubscription;
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onControllerChanged);
+    _framesSubscription = widget.controller.frames.listen(_onFrame);
     _issueRequest();
   }
 
   @override
   void dispose() {
+    _framesSubscription?.cancel();
+    _framesSubscription = null;
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
   }
 
   void _onControllerChanged() {
     setState(() {});
+  }
+
+  // C-316 rule 3: a player_left naming this seat while in lobby pops with
+  // GameScreenResult.removed.
+  void _onFrame(Frame frame) {
+    if (frame.type == 'player_left') {
+      final dynamic seatValue = frame.data['seat'];
+      final int? seat = seatValue is int
+          ? seatValue
+          : (seatValue is num ? seatValue.toInt() : null);
+      if (seat != null && seat == widget.controller.seat) {
+        if (mounted) {
+          _leaveLobby(GameScreenResult.removed);
+        }
+      }
+    }
   }
 
   /// The one request this screen ever issues on its own initiative: the
@@ -239,10 +264,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   /// Pops this lobby. Completes the pop immediately so Cancel is not gated
   /// on the page transition.
-  void _leaveLobby() {
+  void _leaveLobby([Object? result]) {
     final NavigatorState navigator = Navigator.of(context);
     final Route<dynamic> route = ModalRoute.of(context)!;
-    navigator.pop();
+    navigator.pop(result);
     if (route.navigator != null) {
       navigator.finalizeRoute(route);
     }

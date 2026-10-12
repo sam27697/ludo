@@ -193,3 +193,44 @@ List<int> buildScript({required List<int> secret}) {
     return i % 256;
   });
 }
+
+// -----------------------------------------------------------------------
+// Additive below this line, order 315 (docs/PROTOCOL.md section 18). A
+// three-seat room draws one extra seat token -- a second `joinRoom` call,
+// one per guest -- before `game_id`, so its script is longer than the
+// single-join layout above by exactly one [seatTokenDraws]. Nothing above
+// this line changes; every existing offset and every existing script built
+// from them keeps meaning exactly what it always meant.
+// -----------------------------------------------------------------------
+
+/// The offset, in script bytes, of the first of [gameIdDraws] bytes that
+/// become `game_id` in a three-seat room: step 5 of the header comment
+/// above, after the room code, the host's seat token, the server secret and
+/// *two* guest seat tokens (one more join than the two-seat layout
+/// [gameIdOffset] describes) have all already been drawn.
+const int threeSeatGameIdOffset =
+    serverSecretOffset + serverSecretDraws + seatTokenDraws * 2;
+
+/// Total script bytes a three-seat room's create + join + join + start
+/// sequence draws -- the three-seat counterpart of [fullScriptLength].
+final int threeSeatFullScriptLength =
+    threeSeatGameIdOffset + gameIdDraws + secureSeedDraws * 4;
+
+/// [buildScript]'s three-seat counterpart: the same fixed filler and the
+/// same [secret] splice at [serverSecretOffset], sized for a room with two
+/// joins instead of one.
+List<int> buildThreeSeatScript({required List<int> secret}) {
+  if (secret.length != serverSecretDraws) {
+    throw ArgumentError.value(
+      secret.length,
+      'secret.length',
+      'must be exactly $serverSecretDraws bytes',
+    );
+  }
+  return List<int>.generate(threeSeatFullScriptLength, (int i) {
+    if (i >= serverSecretOffset && i < serverSecretOffset + serverSecretDraws) {
+      return secret[i - serverSecretOffset];
+    }
+    return i % 256;
+  });
+}

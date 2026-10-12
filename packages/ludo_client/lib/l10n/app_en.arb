@@ -41,6 +41,10 @@
   "@homeRoomCodeInvalid": {
     "description": "Error shown under the room code field when the typed code does not match the expected shape."
   },
+  "homeRemovedNotice": "The next game started without you",
+  "@homeRemovedNotice": {
+    "description": "Quiet notice on the home screen shown after a player was removed by a host-forced rematch start."
+  },
   "homeLocaleToggleTooltip": "Change language",
   "@homeLocaleToggleTooltip": {
     "description": "Tooltip on the button that switches the app language."
@@ -468,6 +472,24 @@
   "endRematchGone": "This table has closed",
   "@endRematchGone": {
     "description": "Shown on the end card in place of the rematch action when the rematch request answers NO_SUCH_ROOM: the room was reaped before the rematch could be sent. New table becomes the primary action in this state."
+  },
+  "endLeft": "{names} left the table",
+  "@endLeft": {
+    "description": "Shown on the end card when one or more players have left the table, naming them in seat order.",
+    "placeholders": {
+      "names": {
+        "type": "String",
+        "example": "Sam, Cy"
+      }
+    }
+  },
+  "endEveryoneLeft": "Everyone else left the table",
+  "@endEveryoneLeft": {
+    "description": "Shown on the end card when every other player has left the table."
+  },
+  "endOffline": "No connection right now",
+  "@endOffline": {
+    "description": "Shown on the end card in place of rematch status when the connection is offline or reconnecting."
   },
   "feedbackHapticsToggle": "Vibration",
   "@feedbackHapticsToggle": {
