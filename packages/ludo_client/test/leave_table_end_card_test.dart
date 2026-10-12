@@ -1250,7 +1250,9 @@ void main() {
           _,
         ) = await _resumeFinished(
           tester,
-          mySeat: 1,
+          // The expected tiles below (2 rolls, 1 six, 1 capture, 4 home) are
+          // seat 0's numbers in this script, so the card is read as seat 0.
+          mySeat: 0,
           seats: seats,
           winner: 0,
           gameId: gameId,
