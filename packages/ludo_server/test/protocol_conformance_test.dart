@@ -564,12 +564,9 @@ void main() {
   // =========================================================================
   // 5. Garbage bytes: not JSON, JSON not an object, a binary frame
   // =========================================================================
-  group(
-      'garbage bytes, section 7 (unspecified cases pinned to today\'s '
-      'behaviour)', () {
-    test(
-        'not JSON at all is BAD_FIELD, connection stays open (unspecified, '
-        'pinned)', () async {
+  group('garbage bytes, section 7 and 19.1', () {
+    test('not JSON at all is BAD_FIELD, connection stays open (19.1)',
+        () async {
       final Uri uri = await start();
       final RawWireClient raw = await connectRaw(uri);
       raw.sendText('this is not { json at all');
@@ -590,9 +587,7 @@ void main() {
           reason: 'a JSON parse failure must not close the connection');
     });
 
-    test(
-        'valid JSON that is not an object is BAD_FIELD (unspecified, '
-        'pinned)', () async {
+    test('valid JSON that is not an object is BAD_FIELD (19.1)', () async {
       final Uri uri = await start();
       final RawWireClient raw = await connectRaw(uri);
       raw.sendText(jsonEncode(<Object?>['not', 'an', 'object']));
@@ -614,7 +609,7 @@ void main() {
 
     test(
         'a binary frame carrying a well-formed JSON envelope is processed '
-        'exactly like a text frame (unspecified, pinned)', () async {
+        'exactly like a text frame (19.1)', () async {
       final Uri uri = await start();
       final RawWireClient raw = await connectRaw(uri);
       final String text = _pingEnvelope(id: 'binary-case-well-formed');
@@ -632,45 +627,28 @@ void main() {
       );
     });
 
+    // Mutation this catches: utf8.decode left to throw out of handleFrame,
+    // which ends the read loop with no error frame and no close code.
     test(
-        'a binary frame that is not valid UTF-8 ends the connection with '
-        'no error frame and no close code (unspecified, pinned)', () async {
+        'a binary frame that is not valid UTF-8 is BAD_FIELD with no re, '
+        'connection stays open (section 7, 2026-10-12 ruling)', () async {
       final Uri uri = await start();
       final RawWireClient raw = await connectRaw(uri);
       raw.sendBytes(<int>[0xFF, 0xFE, 0xFD]);
-      // There is nothing to wait for: the server's read loop has died
-      // without sending anything, so no frame and no close ever arrives.
-      // Proving that is a short, bounded wait for silence, not a sleep
-      // standing in for a condition -- the condition being proven is the
-      // absence of a response, which a short timeout observes exactly as
-      // reliably as a long one would, since nothing on the server side is
-      // still running that could answer late.
-      bool timedOutWithNoFrame = false;
-      try {
-        await raw.next(timeout: const Duration(milliseconds: 500));
-      } on TestFailure {
-        timedOutWithNoFrame = true;
-      }
-      expect(
-        timedOutWithNoFrame,
-        isTrue,
-        reason: 'docs/PROTOCOL.md section 7 does not cover a binary frame '
-            'whose bytes are not valid UTF-8. The server today lets '
-            'utf8.decode throw inside Connection.handleFrame, uncaught; '
-            "wire_server.dart's _pump catches it in the same catch block "
-            'that treats an ordinary disconnect this way, breaking out of '
-            'its read loop with no error frame ever sent. Pinning that '
-            'observed behaviour, not asserting it is correct',
-      );
-      expect(
-        raw.closeCode,
-        isNull,
-        reason: 'the server never calls Connection.close for this path '
-            'either (only handleDisconnect, which does not touch the '
-            'socket), so dart:io never sees a close frame and closeCode '
-            'stays null; pinning that observed behaviour, not asserting '
-            'it is correct',
-      );
+      final RawFrame frame = await raw.next();
+      expect(frame.decoded?['t'], 'error',
+          reason: 'docs/PROTOCOL.md section 7, 2026-10-12 ruling: bytes '
+              'that are not valid UTF-8 fail the JSON parse step');
+      final Map<String, Object?> data =
+          frame.decoded!['d']! as Map<String, Object?>;
+      expect(data['code'], 'BAD_FIELD');
+      expect(frame.decoded?['re'], isNull,
+          reason: 'rejected before the id shape check, so no re');
+      raw.sendText(_pingEnvelope(id: 'garbage-case-bad-utf8-still-open'));
+      final RawFrame pong = await raw.next();
+      expect(pong.decoded?['t'], 'pong',
+          reason: 'a parse failure must not close the connection');
+      expect(raw.closeCode, isNull);
     });
   });
 

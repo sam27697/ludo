@@ -1116,3 +1116,26 @@ wait an hour for it. Doctrine P3 (the player never has to guess), P5, P6.
    that starts when the joiner accepts; host-forced start removals each
    carry `host_seat` (unchanged, the host is never removed); a socket drop
    in FINISHED still sends `presence` and the seat stays.
+
+## 19. Two rulings on section 7, 2026-10-12
+
+The conformance suite (`packages/ludo_server/test/protocol_conformance_test.dart`)
+walked section 7 end to end and found two places it was silent or not
+followed.
+
+### 19.1 A frame that does not parse
+
+Bytes that are not valid UTF-8, text that is not JSON, and JSON whose top
+level is not an object all fail the "JSON parse" step of the ladder. The
+answer is `BAD_FIELD` with no `re` (the `id` shape step never ran), and the
+connection stays open. A binary WebSocket frame is read exactly like a text
+frame carrying the same bytes. The server never lets a decode failure end
+the read loop without a reply.
+
+### 19.2 `GAME_OVER` is checked before `ROOM_STARTED` and `WRONG_PHASE`
+
+Section 7's table already says it: on a FINISHED room every action other
+than `rematch`, `resume`, `leave_room`, `game_log` and `ping` is
+`GAME_OVER`. That includes `start_game`, `set_players` and `set_seed`,
+which answered `ROOM_STARTED` or `WRONG_PHASE` until this ruling.
+`ROOM_STARTED` stays the answer for those three on a PLAYING room.
