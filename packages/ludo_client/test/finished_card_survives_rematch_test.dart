@@ -49,6 +49,7 @@ import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
 import 'package:ludo_client/src/net/transport.dart';
+import 'package:ludo_client/src/verify_rolls_button.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
@@ -486,9 +487,11 @@ void _expectTappable(
     reason: _where(seat, state, '$label present and tappable'),
   );
   final Widget widget = tester.widget(finder);
-  final VoidCallback? onPressed = widget is ButtonStyleButton
-      ? widget.onPressed
-      : null;
+  final VoidCallback? onPressed = switch (widget) {
+    ButtonStyleButton() => widget.onPressed,
+    VerifyRollsButton() => widget.onPressed,
+    _ => null,
+  };
   expect(
     onPressed,
     isNotNull,

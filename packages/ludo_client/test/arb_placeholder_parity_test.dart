@@ -45,8 +45,13 @@ Directory _findPackageRoot() {
 /// Every `{word}` substitution the message text itself uses, independent of
 /// the `@key.placeholders` metadata block. This is what the runtime
 /// `intl`-generated code actually substitutes into, so it is the set that
-/// has to match between locales key for key.
-final _placeholderPattern = RegExp(r'\{([A-Za-z0-9_]+)\}');
+/// has to match between locales key for key. A bare word that is itself a
+/// plural or select branch body (`=1{roll}`, `other{rolls}`) is message
+/// text, not a substitution, and is skipped; `{count}` inside a branch is
+/// still a substitution and still counted.
+final _placeholderPattern = RegExp(
+  r'(?<!(?:=\d{1,3}|zero|one|two|few|many|other))\{([A-Za-z0-9_]+)\}',
+);
 
 Set<String> _placeholdersIn(String message) =>
     _placeholderPattern.allMatches(message).map((m) => m.group(1)!).toSet();
