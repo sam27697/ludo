@@ -4647,6 +4647,137 @@ void main() {
       shotName: '26-end-reconnect-loser-ar',
     );
   });
+
+  // ==========================================================================
+  // 27, 28: contract C-316 rule 2 (departed seats on the end card). A 3-seat
+  // game finishes; this device is seat 1 (Karim) and loses, with seat 0
+  // (Priya) winning. Seat 2 (Lina) then leaves: player_left naming seat 2,
+  // followed by the room frame with seat 2 removed. end-card-left shows
+  // endLeft with Lina's name, Play again stays visible, and the verify
+  // button remains shown.
+  // ==========================================================================
+  testWidgets('capture 27-end-friend-left-en', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    await (await SharedPreferences.getInstance()).clear();
+
+    await _captureFriendLeft(
+      tester,
+      binding,
+      locale: const Locale('en'),
+      roomCode: 'SHOT27',
+      verifyUrl: 'https://verify.example.invalid/shot27',
+      shotName: '27-end-friend-left-en',
+    );
+  });
+
+  // 28: capture 27's Arabic twin, mounted directly in Arabic.
+  testWidgets('capture 28-end-friend-left-ar', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    await (await SharedPreferences.getInstance()).clear();
+
+    await _captureFriendLeft(
+      tester,
+      binding,
+      locale: const Locale('ar'),
+      roomCode: 'SHOT28',
+      verifyUrl: 'https://verify.example.invalid/shot28',
+      shotName: '28-end-friend-left-ar',
+    );
+  });
+
+  // ==========================================================================
+  // 29: contract C-316 rule 2. A 2-seat game finishes; this device is seat
+  // 1 (Karim) and loses, with seat 0 (Priya) winning. Seat 0 then leaves:
+  // player_left naming seat 0, followed by the room frame leaving only this
+  // device. end-card-left reads endEveryoneLeft, Play again is gone, and
+  // New table is shown as primary.
+  // ==========================================================================
+  testWidgets('capture 29-end-everyone-left-en', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    await (await SharedPreferences.getInstance()).clear();
+
+    await _captureEveryoneLeft(
+      tester,
+      binding,
+      locale: const Locale('en'),
+      roomCode: 'SHOT29',
+      verifyUrl: 'https://verify.example.invalid/shot29',
+      shotName: '29-end-everyone-left-en',
+    );
+  });
+
+  // ==========================================================================
+  // 30, 31: contract C-316 rule 4 (offline on the end card). A 2-seat game
+  // finishes; this device is seat 1 (Karim) and loses. The transport drops
+  // from the far side with automatic reconnect not yet fired. The end card
+  // stays up showing end-card-offline, no connection-lost card is shown, and
+  // the verify button remains shown and hit-testable.
+  // ==========================================================================
+  testWidgets('capture 30-end-offline-ar', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    await (await SharedPreferences.getInstance()).clear();
+
+    await _captureEndOffline(
+      tester,
+      binding,
+      locale: const Locale('ar'),
+      roomCode: 'SHOT30',
+      verifyUrl: 'https://verify.example.invalid/shot30',
+      shotName: '30-end-offline-ar',
+    );
+  });
+
+  // 31: capture 30's English twin.
+  testWidgets('capture 31-end-offline-en', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    await (await SharedPreferences.getInstance()).clear();
+
+    await _captureEndOffline(
+      tester,
+      binding,
+      locale: const Locale('en'),
+      roomCode: 'SHOT31',
+      verifyUrl: 'https://verify.example.invalid/shot31',
+      shotName: '31-end-offline-en',
+    );
+  });
+
+  // ==========================================================================
+  // 32: contract C-316 rule 3 (removed by a forced start). This device is in
+  // a rematch LOBBY on GameScreen after a finished game, and receives
+  // player_left naming its own seat. The route pops back to HomeScreen, which
+  // displays home-removed-notice. Captured on HomeScreen in Arabic.
+  // ==========================================================================
+  testWidgets('capture 32-home-removed-ar', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    await (await SharedPreferences.getInstance()).clear();
+
+    await _captureHomeRemoved(
+      tester,
+      binding,
+      locale: const Locale('ar'),
+      roomCode: 'SHOT32',
+      shotName: '32-home-removed-ar',
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -6103,4 +6234,852 @@ void _expectReconnectLoserTiles(
           '$count',
     );
   }
+}
+
+// --- captures 27 through 32: C-316 end card and home screen states ---------
+
+Map<String, Object?> _finishedTurnJson() => const <String, Object?>{
+  'seat': 0,
+  'phase': 'finished',
+  'deadline_ms': 0,
+  'k': 8,
+};
+
+/// Captures 27 and 28: 3-seat FINISHED game, seat 1 lost, seat 2 leaves.
+Future<void> _captureFriendLeft(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required Locale locale,
+  required String roomCode,
+  required String verifyUrl,
+  required String shotName,
+}) async {
+  final FakeTransport transport = FakeTransport();
+  final RoomController controller = RoomController(
+    serverUrl: Uri.parse(_testUrl),
+    connect: (Uri url) async => transport,
+  );
+  addTearDown(controller.dispose);
+
+  final Future<void> createFuture = controller.createRoom(
+    name: 'Karim',
+    players: 3,
+  );
+  await tester.pump();
+  await tester.pump();
+
+  final List<String> createMessages = _sentOfType(transport, 'create_room');
+  expect(
+    createMessages,
+    hasLength(1),
+    reason: '$shotName: createRoom must have sent create_room',
+  );
+  final String createId = _idOf(createMessages.single);
+
+  transport.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: const <String, Object?>{'seat': 1, 'seat_token': 'tok-shot-karim'},
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'room',
+      re: createId,
+      data: _roomJson(
+        code: roomCode,
+        state: 'PLAYING',
+        hostSeat: 0,
+        players: 3,
+        seats: <Map<String, Object?>>[
+          _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
+          _seatJson(1, name: 'Karim'),
+          _seatJson(2, name: 'Lina'),
+        ],
+        turn: const <String, Object?>{
+          'seat': 0,
+          'phase': 'await_roll',
+          'deadline_ms': 45000,
+          'k': 0,
+        },
+        seq: 1,
+      ),
+    ),
+  );
+  await createFuture;
+
+  // Unsolicited room push into FINISHED, populating lastFinished.
+  transport.pushText(
+    _frame(
+      type: 'room',
+      data: <String, Object?>{
+        ..._roomJson(
+          code: roomCode,
+          state: 'FINISHED',
+          hostSeat: 0,
+          players: 3,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
+            _seatJson(1, name: 'Karim'),
+            _seatJson(2, name: 'Lina'),
+          ],
+          turn: _finishedTurnJson(),
+          winner: 0,
+          seq: 2,
+        ),
+        'verify_url': verifyUrl,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      GameScreen(controller: controller),
+      locale: locale,
+    ),
+  );
+  await tester.pump();
+
+  // Seat 2 (Lina) leaves: player_left naming seat 2, then room update.
+  transport.pushText(
+    _frame(
+      type: 'player_left',
+      data: const <String, Object?>{'seat': 2, 'host_seat': 0, 'seq': 3},
+    ),
+  );
+  await tester.pump();
+
+  transport.pushText(
+    _frame(
+      type: 'room',
+      data: <String, Object?>{
+        ..._roomJson(
+          code: roomCode,
+          state: 'FINISHED',
+          hostSeat: 0,
+          players: 3,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
+            _seatJson(1, name: 'Karim'),
+          ],
+          turn: _finishedTurnJson(),
+          winner: 0,
+          seq: 4,
+        ),
+        'verify_url': verifyUrl,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+
+  _expectFriendLeftState(
+    tester,
+    controller: controller,
+    departedName: 'Lina',
+    shotName: shotName,
+    momentDescription: 'before settle',
+  );
+
+  await _pumpRealDurationFrames(tester);
+
+  _expectFriendLeftState(
+    tester,
+    controller: controller,
+    departedName: 'Lina',
+    shotName: shotName,
+    momentDescription: 'after settle',
+  );
+
+  await binding.takeScreenshot(shotName);
+}
+
+void _expectFriendLeftState(
+  WidgetTester tester, {
+  required RoomController controller,
+  required String departedName,
+  required String shotName,
+  required String momentDescription,
+}) {
+  expect(
+    controller.room?.state,
+    RoomState.finished,
+    reason: '$shotName ($momentDescription): room must be finished',
+  );
+  expect(controller.room?.seats.map((SeatState s) => s.seat).toList(), <int>[
+    0,
+    1,
+  ], reason: '$shotName ($momentDescription): seat 2 must be gone from room');
+  expect(
+    controller.lastFinished?.seats.map((SeatState s) => s.seat).toList(),
+    <int>[0, 1, 2],
+    reason:
+        '$shotName ($momentDescription): lastFinished must keep all 3 seats',
+  );
+
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+
+  final Finder leftFinder = find.byKey(const Key('end-card-left'));
+  expect(
+    leftFinder,
+    findsOneWidget,
+    reason: '$shotName ($momentDescription): end-card-left must be shown',
+  );
+  final Text leftText = tester.widget<Text>(leftFinder);
+  final String expectedLeft = loc.endLeft(departedName);
+  expect(
+    leftText.data,
+    expectedLeft,
+    reason:
+        '$shotName ($momentDescription): end-card-left must read '
+        '"$expectedLeft", got "${leftText.data}"',
+  );
+
+  final Finder rematchFinder = find.byKey(const Key('end-card-rematch'));
+  expect(
+    rematchFinder,
+    findsOneWidget,
+    reason: '$shotName ($momentDescription): end-card-rematch must be shown',
+  );
+  final Widget rematchWidget = tester.widget(rematchFinder);
+  final VoidCallback? onRematchPressed = rematchWidget is ButtonStyleButton
+      ? rematchWidget.onPressed
+      : null;
+  expect(
+    onRematchPressed,
+    isNotNull,
+    reason: '$shotName ($momentDescription): Play again must be enabled',
+  );
+
+  final Finder verifyFinder = find.byKey(
+    const Key('game-screen-verify-button'),
+  );
+  expect(
+    verifyFinder,
+    findsOneWidget,
+    reason:
+        '$shotName ($momentDescription): game-screen-verify-button must show',
+  );
+  expect(
+    find.byKey(const Key('end-card-lose')),
+    findsOneWidget,
+    reason: '$shotName ($momentDescription): end-card-lose must be shown',
+  );
+}
+
+/// Capture 29: 2-seat FINISHED game, seat 1 lost, seat 0 leaves.
+Future<void> _captureEveryoneLeft(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required Locale locale,
+  required String roomCode,
+  required String verifyUrl,
+  required String shotName,
+}) async {
+  final FakeTransport transport = FakeTransport();
+  final RoomController controller = RoomController(
+    serverUrl: Uri.parse(_testUrl),
+    connect: (Uri url) async => transport,
+  );
+  addTearDown(controller.dispose);
+
+  final Future<void> createFuture = controller.createRoom(
+    name: 'Karim',
+    players: 2,
+  );
+  await tester.pump();
+  await tester.pump();
+
+  final List<String> createMessages = _sentOfType(transport, 'create_room');
+  expect(
+    createMessages,
+    hasLength(1),
+    reason: '$shotName: createRoom must have sent create_room',
+  );
+  final String createId = _idOf(createMessages.single);
+
+  transport.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: const <String, Object?>{'seat': 1, 'seat_token': 'tok-shot-karim'},
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'room',
+      re: createId,
+      data: _roomJson(
+        code: roomCode,
+        state: 'PLAYING',
+        hostSeat: 0,
+        players: 2,
+        seats: <Map<String, Object?>>[
+          _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
+          _seatJson(1, name: 'Karim'),
+        ],
+        turn: const <String, Object?>{
+          'seat': 0,
+          'phase': 'await_roll',
+          'deadline_ms': 45000,
+          'k': 0,
+        },
+        seq: 1,
+      ),
+    ),
+  );
+  await createFuture;
+
+  // Unsolicited room push into FINISHED, populating lastFinished.
+  transport.pushText(
+    _frame(
+      type: 'room',
+      data: <String, Object?>{
+        ..._roomJson(
+          code: roomCode,
+          state: 'FINISHED',
+          hostSeat: 0,
+          players: 2,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
+            _seatJson(1, name: 'Karim'),
+          ],
+          turn: _finishedTurnJson(),
+          winner: 0,
+          seq: 2,
+        ),
+        'verify_url': verifyUrl,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      GameScreen(controller: controller),
+      locale: locale,
+    ),
+  );
+  await tester.pump();
+
+  // Seat 0 (Priya) leaves: player_left naming seat 0, host_seat becomes 1.
+  transport.pushText(
+    _frame(
+      type: 'player_left',
+      data: const <String, Object?>{'seat': 0, 'host_seat': 1, 'seq': 3},
+    ),
+  );
+  await tester.pump();
+
+  transport.pushText(
+    _frame(
+      type: 'room',
+      data: <String, Object?>{
+        ..._roomJson(
+          code: roomCode,
+          state: 'FINISHED',
+          hostSeat: 1,
+          players: 2,
+          seats: <Map<String, Object?>>[_seatJson(1, name: 'Karim')],
+          turn: _finishedTurnJson(),
+          winner: 0,
+          seq: 4,
+        ),
+        'verify_url': verifyUrl,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+
+  _expectEveryoneLeftState(
+    tester,
+    controller: controller,
+    shotName: shotName,
+    momentDescription: 'before settle',
+  );
+
+  await _pumpRealDurationFrames(tester);
+
+  _expectEveryoneLeftState(
+    tester,
+    controller: controller,
+    shotName: shotName,
+    momentDescription: 'after settle',
+  );
+
+  await binding.takeScreenshot(shotName);
+}
+
+void _expectEveryoneLeftState(
+  WidgetTester tester, {
+  required RoomController controller,
+  required String shotName,
+  required String momentDescription,
+}) {
+  expect(
+    controller.room?.state,
+    RoomState.finished,
+    reason: '$shotName ($momentDescription): room must be finished',
+  );
+  expect(controller.room?.seats.map((SeatState s) => s.seat).toList(), <int>[
+    1,
+  ], reason: '$shotName ($momentDescription): only seat 1 must remain');
+  expect(
+    controller.lastFinished?.seats.map((SeatState s) => s.seat).toList(),
+    <int>[0, 1],
+    reason: '$shotName ($momentDescription): lastFinished must keep both seats',
+  );
+
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+
+  final Finder leftFinder = find.byKey(const Key('end-card-left'));
+  expect(
+    leftFinder,
+    findsOneWidget,
+    reason: '$shotName ($momentDescription): end-card-left must be shown',
+  );
+  final Text leftText = tester.widget<Text>(leftFinder);
+  expect(
+    leftText.data,
+    loc.endEveryoneLeft,
+    reason:
+        '$shotName ($momentDescription): end-card-left must read '
+        'endEveryoneLeft ("${loc.endEveryoneLeft}"), got "${leftText.data}"',
+  );
+
+  expect(
+    find.byKey(const Key('end-card-rematch')),
+    findsNothing,
+    reason: '$shotName ($momentDescription): no rematch button when alone',
+  );
+
+  final Finder newRoomFinder = find.byKey(
+    const Key('game-screen-new-room-button'),
+  );
+  expect(
+    newRoomFinder,
+    findsOneWidget,
+    reason: '$shotName ($momentDescription): game-screen-new-room-button shown',
+  );
+  final Widget newRoomWidget = tester.widget(newRoomFinder);
+  expect(
+    newRoomWidget is ElevatedButton,
+    isTrue,
+    reason:
+        '$shotName ($momentDescription): New table button must be primary '
+        '(ElevatedButton), got ${newRoomWidget.runtimeType}',
+  );
+
+  expect(
+    find.byKey(const Key('game-screen-verify-button')),
+    findsOneWidget,
+    reason: '$shotName ($momentDescription): verify button must be shown',
+  );
+  expect(
+    find.byKey(const Key('end-card-lose')),
+    findsOneWidget,
+    reason: '$shotName ($momentDescription): end-card-lose must be shown',
+  );
+}
+
+/// Captures 30 and 31: 2-seat FINISHED game, lost, transport drops offline.
+Future<void> _captureEndOffline(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required Locale locale,
+  required String roomCode,
+  required String verifyUrl,
+  required String shotName,
+}) async {
+  final FakeTransport transport = FakeTransport();
+  final RoomController controller = RoomController(
+    serverUrl: Uri.parse(_testUrl),
+    connect: (Uri url) async => transport,
+    autoReconnectDelays: const <Duration>[
+      Duration(minutes: 5),
+      Duration(minutes: 5),
+    ],
+  );
+  addTearDown(controller.dispose);
+
+  final Future<void> createFuture = controller.createRoom(
+    name: 'Karim',
+    players: 2,
+  );
+  await tester.pump();
+  await tester.pump();
+
+  final List<String> createMessages = _sentOfType(transport, 'create_room');
+  expect(
+    createMessages,
+    hasLength(1),
+    reason: '$shotName: createRoom must have sent create_room',
+  );
+  final String createId = _idOf(createMessages.single);
+
+  transport.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: const <String, Object?>{'seat': 1, 'seat_token': 'tok-shot-karim'},
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'room',
+      re: createId,
+      data: _roomJson(
+        code: roomCode,
+        state: 'PLAYING',
+        hostSeat: 0,
+        players: 2,
+        seats: <Map<String, Object?>>[
+          _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
+          _seatJson(1, name: 'Karim'),
+        ],
+        turn: const <String, Object?>{
+          'seat': 0,
+          'phase': 'await_roll',
+          'deadline_ms': 45000,
+          'k': 0,
+        },
+        seq: 1,
+      ),
+    ),
+  );
+  await createFuture;
+
+  transport.pushText(
+    _frame(
+      type: 'room',
+      data: <String, Object?>{
+        ..._roomJson(
+          code: roomCode,
+          state: 'FINISHED',
+          hostSeat: 0,
+          players: 2,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
+            _seatJson(1, name: 'Karim'),
+          ],
+          turn: _finishedTurnJson(),
+          winner: 0,
+          seq: 2,
+        ),
+        'verify_url': verifyUrl,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      GameScreen(controller: controller),
+      locale: locale,
+    ),
+  );
+  await tester.pump();
+
+  // Socket drops from far side.
+  transport.endFromFarSide();
+  await tester.pump();
+  await tester.pump();
+
+  _expectEndOfflineState(
+    tester,
+    controller: controller,
+    shotName: shotName,
+    momentDescription: 'before settle',
+  );
+
+  await _pumpRealDurationFrames(tester);
+
+  _expectEndOfflineState(
+    tester,
+    controller: controller,
+    shotName: shotName,
+    momentDescription: 'after settle',
+  );
+
+  await binding.takeScreenshot(shotName);
+}
+
+void _expectEndOfflineState(
+  WidgetTester tester, {
+  required RoomController controller,
+  required String shotName,
+  required String momentDescription,
+}) {
+  expect(
+    controller.phase,
+    RoomPhase.closed,
+    reason: '$shotName ($momentDescription): controller phase must be closed',
+  );
+
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+
+  final Finder offlineFinder = find.byKey(const Key('end-card-offline'));
+  expect(
+    offlineFinder,
+    findsOneWidget,
+    reason: '$shotName ($momentDescription): end-card-offline must be shown',
+  );
+  final Text offlineText = tester.widget<Text>(offlineFinder);
+  expect(
+    offlineText.data,
+    loc.endOffline,
+    reason:
+        '$shotName ($momentDescription): end-card-offline must read '
+        'endOffline ("${loc.endOffline}"), got "${offlineText.data}"',
+  );
+
+  expect(
+    find.byKey(const Key('game-screen-connection-lost')),
+    findsNothing,
+    reason:
+        '$shotName ($momentDescription): game-screen-connection-lost '
+        'must not be shown on the end card offline',
+  );
+  expect(
+    find.byKey(const Key('game-screen-stale-table')),
+    findsNothing,
+    reason:
+        '$shotName ($momentDescription): game-screen-stale-table '
+        'must not be shown on the end card offline',
+  );
+
+  final Finder verifyFinder = find.byKey(
+    const Key('game-screen-verify-button'),
+  );
+  expect(
+    verifyFinder,
+    findsOneWidget,
+    reason:
+        '$shotName ($momentDescription): game-screen-verify-button must show',
+  );
+  final Widget verifyWidget = tester.widget(verifyFinder);
+  final VoidCallback? onVerifyPressed = verifyWidget is ButtonStyleButton
+      ? verifyWidget.onPressed
+      : null;
+  expect(
+    onVerifyPressed,
+    isNotNull,
+    reason:
+        '$shotName ($momentDescription): verify button must be hit-testable',
+  );
+
+  expect(
+    find.byKey(const Key('end-card-lose')),
+    findsOneWidget,
+    reason: '$shotName ($momentDescription): end-card-lose must be shown',
+  );
+}
+
+/// Capture 32: rematch LOBBY, removed by forced start, HomeScreen notice.
+Future<void> _captureHomeRemoved(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required Locale locale,
+  required String roomCode,
+  required String shotName,
+}) async {
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+      locale: locale,
+    ),
+  );
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+  await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+
+  expect(
+    factory.controllers,
+    hasLength(1),
+    reason: '$shotName: tapping Create Room must build exactly one controller',
+  );
+  final RoomController controller = factory.controllers.single;
+  final FakeTransport transport = factory.transports.single;
+  addTearDown(controller.dispose);
+
+  final List<String> createMessages = _sentOfType(transport, 'create_room');
+  expect(
+    createMessages,
+    hasLength(1),
+    reason: '$shotName: create_room must have been sent',
+  );
+  final String createId = _idOf(createMessages.single);
+
+  transport.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: const <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-priya'},
+    ),
+  );
+  transport.pushText(
+    _frame(
+      type: 'room',
+      re: createId,
+      data: <String, Object?>{
+        ..._roomJson(
+          code: roomCode,
+          state: 'FINISHED',
+          hostSeat: 0,
+          players: 2,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
+            _seatJson(1, name: 'Karim'),
+          ],
+          turn: _finishedTurnJson(),
+          winner: 0,
+          seq: 1,
+        ),
+        'verify_url': 'https://verify.example.invalid/shot32',
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+
+  expect(
+    find.byType(GameScreen),
+    findsOneWidget,
+    reason: '$shotName: FINISHED reply must latch GameScreen',
+  );
+
+  // Server pushes rematch LOBBY frame.
+  transport.pushText(
+    _frame(
+      type: 'room',
+      data: <String, Object?>{
+        ..._roomJson(
+          code: roomCode,
+          state: 'LOBBY',
+          hostSeat: 0,
+          players: 2,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Priya'),
+            _seatJson(1, name: 'Karim'),
+          ],
+          seq: 2,
+        ),
+        'rematch': const <String, Object?>{
+          'by': 1,
+          'ready': <int>[1],
+        },
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+
+  expect(
+    find.byType(GameScreen),
+    findsOneWidget,
+    reason: '$shotName: rematch LOBBY stays on GameScreen',
+  );
+
+  // player_left naming seat 0 (this client) arrives.
+  transport.pushText(
+    _frame(
+      type: 'player_left',
+      data: const <String, Object?>{'seat': 0, 'host_seat': 1, 'seq': 3},
+    ),
+  );
+
+  // Allow the route pop transition to finish.
+  for (var i = 0; i < 6; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
+  // Answer leave_room if HomeScreen's retirement sent it.
+  final List<String> leaveMessages = _sentOfType(transport, 'leave_room');
+  if (leaveMessages.isNotEmpty) {
+    transport.pushText(
+      _frame(
+        type: 'player_left',
+        re: _idOf(leaveMessages.single),
+        data: const <String, Object?>{'seat': 0, 'host_seat': 1, 'seq': 4},
+      ),
+    );
+    await tester.pump();
+  }
+
+  _expectHomeRemovedState(
+    tester,
+    locale: locale,
+    shotName: shotName,
+    momentDescription: 'before settle',
+  );
+
+  await _pumpRealDurationFrames(tester);
+
+  _expectHomeRemovedState(
+    tester,
+    locale: locale,
+    shotName: shotName,
+    momentDescription: 'after settle',
+  );
+
+  await binding.takeScreenshot(shotName);
+}
+
+void _expectHomeRemovedState(
+  WidgetTester tester, {
+  required Locale locale,
+  required String shotName,
+  required String momentDescription,
+}) {
+  expect(
+    find.byType(GameScreen),
+    findsNothing,
+    reason:
+        '$shotName ($momentDescription): GameScreen must have popped after '
+        'removal',
+  );
+  expect(
+    find.byType(HomeScreen),
+    findsOneWidget,
+    reason: '$shotName ($momentDescription): HomeScreen must be on screen',
+  );
+
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(HomeScreen)),
+  );
+  expect(
+    loc.localeName,
+    locale.languageCode,
+    reason:
+        '$shotName ($momentDescription): expected locale '
+        '"${locale.languageCode}", got "${loc.localeName}"',
+  );
+
+  final Finder noticeFinder = find.byKey(const Key('home-removed-notice'));
+  expect(
+    noticeFinder,
+    findsOneWidget,
+    reason:
+        '$shotName ($momentDescription): home-removed-notice must be shown '
+        'on HomeScreen',
+  );
+  final Text noticeText = tester.widget<Text>(noticeFinder);
+  expect(
+    noticeText.data,
+    loc.homeRemovedNotice,
+    reason:
+        '$shotName ($momentDescription): home-removed-notice must read '
+        'homeRemovedNotice ("${loc.homeRemovedNotice}"), got '
+        '"${noticeText.data}"',
+  );
 }
