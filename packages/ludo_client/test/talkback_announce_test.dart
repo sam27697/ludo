@@ -1401,6 +1401,58 @@ void main() {
         );
       },
     );
+    // Kills: the once-per-entry guard dropped, so every controller
+    // notification while the body stays (a reconnect attempt moving the
+    // phase from closed to connecting) announces it again.
+    testWidgets(
+      'lobbyConnectionLost: a reconnect attempt while the connection-lost '
+      'body stays adds no second announcement',
+      (tester) async {
+        final _AnnouncementRecorder recorder = _AnnouncementRecorder();
+        recorder.install(tester);
+        addTearDown(() => recorder.remove(tester));
+
+        final (RoomController controller, _) = await _connectAndCloseMidGame(
+          tester,
+        );
+        addTearDown(controller.dispose);
+
+        await _mount(tester, controller);
+        expect(
+          recorder.recorded,
+          hasLength(1),
+          reason:
+              'fixture check: entering the connection-lost body announces '
+              'once; recorded ${recorder.recorded}',
+        );
+
+        await tester.tap(find.byKey(const Key('game-screen-reconnect-button')));
+        await tester.pump();
+
+        expect(
+          controller.phase,
+          isNot(RoomPhase.connected),
+          reason:
+              'fixture check: the reconnect attempt must not have connected '
+              'yet, or the body has legitimately left',
+        );
+        expect(
+          find.byKey(_connectionLostKey),
+          findsOneWidget,
+          reason:
+              'fixture check: the connection-lost body must still be '
+              'showing during the reconnect attempt',
+        );
+        expect(
+          recorder.recorded,
+          hasLength(1),
+          reason:
+              'a controller notification while the connection-lost body '
+              'stays must not announce it again; recorded '
+              '${recorder.recorded}',
+        );
+      },
+    );
   });
 
   // ==========================================================================
