@@ -390,6 +390,18 @@
   "@gameNoMove": {
     "description": "Shown next to the die, with a red X on it, when the player's own roll gives no legal move and the turn passes."
   },
+  "announceCapturedOther": "You captured a token",
+  "@announceCapturedOther": {
+    "description": "Screen-reader announcement sent the moment this player's own move captures another seat's token."
+  },
+  "announceCapturedMe": "Your token was captured",
+  "@announceCapturedMe": {
+    "description": "Screen-reader announcement sent the moment another seat's move captures this player's own token."
+  },
+  "announceHome": "A token reached home",
+  "@announceHome": {
+    "description": "Screen-reader announcement sent the moment a token this player controls reaches home."
+  },
   "endWinTitle": "You won!",
   "@endWinTitle": {
     "description": "End-card title when this player's own seat won the game, shown in gold with a celebration behind it."
@@ -514,14 +526,6 @@
   "endOffline": "No connection right now",
   "@endOffline": {
     "description": "Shown on the end card in place of rematch status when the connection is offline or reconnecting."
-  },
-  "feedbackHapticsToggle": "Vibration",
-  "@feedbackHapticsToggle": {
-    "description": "Settings switch that turns game vibration on or off."
-  },
-  "feedbackSoundToggle": "Sound",
-  "@feedbackSoundToggle": {
-    "description": "Settings switch that turns game sounds on or off."
   },
   "settingsTooltip": "Sound and vibration",
   "@settingsTooltip": {

@@ -172,6 +172,12 @@ class _GameScreenState extends State<GameScreen> {
   // second tap on the corner leave icon does not open a second sheet.
   bool _isLeaveConfirmOpen = false;
 
+  // C-337 rule 3: true once this screen has announced the connection-lost
+  // body for the entrance it is currently in, so a rebuild while it stays
+  // up never repeats it. Dropped back to false the moment the body stops
+  // showing, so the next entrance is announced again.
+  bool _announcedConnectionLost = false;
+
   // C-304: stats fetched from the server's game_log when local gameTranscript
   // is incomplete, and request guards.
   GameStats? _fetchedStats;
@@ -198,6 +204,7 @@ class _GameScreenState extends State<GameScreen> {
     super.didChangeDependencies();
     _checkMountTurnCue();
     _syncAutoMove();
+    _syncConnectionLostAnnouncement();
   }
 
   @override
@@ -290,7 +297,7 @@ class _GameScreenState extends State<GameScreen> {
         }
       }
       for (final FeedbackCue cue in immediateCues) {
-        feedback.play(cue);
+        _playCue(feedback, cue);
       }
       if (landingCues.isNotEmpty) {
         _holdLandingCues(moverSeat, moverToken, landingCues);
@@ -301,7 +308,7 @@ class _GameScreenState extends State<GameScreen> {
         _maybeFetchGameLog();
       }
       for (final FeedbackCue cue in cues) {
-        feedback.play(cue);
+        _playCue(feedback, cue);
       }
     }
     if (frame.type == 'rolled') {
@@ -334,8 +341,85 @@ class _GameScreenState extends State<GameScreen> {
     }
     final FeedbackService feedback = FeedbackScope.of(context);
     for (final FeedbackCue cue in cues) {
-      feedback.play(cue);
+      _playCue(feedback, cue);
     }
+  }
+
+  /// C-337 rule 1: the one place a cue is both played through the feedback
+  /// service and, when it is felt, announced to a screen reader in the same
+  /// synchronous call. Every place on this screen that plays a cue -- the
+  /// two loops in [_onFrame], [_playCues] (landing cues released on
+  /// landing, on the fallback timer, or with the end-card hold), and the
+  /// mount-time `yourTurn` in [_checkMountTurnCue] -- calls this and only
+  /// this, so rule 1 holds by construction rather than by each site
+  /// remembering to add its own announcement.
+  void _playCue(FeedbackService feedback, FeedbackCue cue) {
+    feedback.play(cue);
+    final String? message = _announcementFor(cue);
+    if (message != null) {
+      _announce(message);
+    }
+  }
+
+  /// Rule 1's table. Rule 2: `canMove`, `step` and `invalidTap` are not
+  /// felt-event words for a screen reader -- the die and the legal tokens
+  /// already carry labels -- and answer null here, which [_playCue] takes
+  /// as "nothing to announce", never an empty string sent to
+  /// [SemanticsService].
+  String? _announcementFor(FeedbackCue cue) {
+    final AppLocalizations loc = AppLocalizations.of(context);
+    switch (cue) {
+      case FeedbackCue.yourTurn:
+        return loc.gameYourTurnStale;
+      case FeedbackCue.noMove:
+        return loc.gameNoMove;
+      case FeedbackCue.capturedOther:
+        return loc.announceCapturedOther;
+      case FeedbackCue.capturedMe:
+        return loc.announceCapturedMe;
+      case FeedbackCue.home:
+        return loc.announceHome;
+      case FeedbackCue.win:
+        return loc.gameOverYouWin;
+      case FeedbackCue.gameOver:
+        return _gameOverAnnouncement(loc);
+      case FeedbackCue.canMove:
+      case FeedbackCue.step:
+      case FeedbackCue.invalidTap:
+        return null;
+    }
+  }
+
+  /// Rule 1's `gameOver` row: the winner's name, read off the room the same
+  /// way [_gameOverBody] itself resolves it, or [AppLocalizations.gameOverEnded]
+  /// when the winning seat cannot be named (no winner sent, or a winner
+  /// naming a seat no longer in the room).
+  String _gameOverAnnouncement(AppLocalizations loc) {
+    final RoomSnapshot? room = widget.controller.room;
+    final int? winner = room?.winner;
+    if (room != null && winner != null) {
+      for (final SeatState seatState in room.seats) {
+        if (seatState.seat == winner) {
+          return loc.gameOverPlayerWins(seatState.name);
+        }
+      }
+    }
+    return loc.gameOverEnded;
+  }
+
+  /// The one call to [SemanticsService.sendAnnouncement] every announcement
+  /// on this screen -- a felt cue, the die's no-answer line, the
+  /// connection-lost body -- goes through, the same shape
+  /// [_announceAutoMove] already uses.
+  void _announce(String message) {
+    if (!mounted || message.isEmpty) {
+      return;
+    }
+    SemanticsService.sendAnnouncement(
+      View.of(context),
+      message,
+      Directionality.of(context),
+    );
   }
 
   /// C-293 rule 3: plays `your_turn` once at mount if the last `turn` frame
@@ -360,7 +444,7 @@ class _GameScreenState extends State<GameScreen> {
         turn.phase != TurnPhase.awaitRoll) {
       return;
     }
-    FeedbackScope.of(context).play(FeedbackCue.yourTurn);
+    _playCue(FeedbackScope.of(context), FeedbackCue.yourTurn);
   }
 
   static Frame? _lastTurnFrame(List<Frame> transcript) {
@@ -551,7 +635,66 @@ class _GameScreenState extends State<GameScreen> {
       _syncAutoMove();
       _syncRollWait();
     });
+    _syncConnectionLostAnnouncement();
     _maybeFetchGameLog();
+  }
+
+  /// C-337 rule 3: announces [AppLocalizations.lobbyConnectionLost] once
+  /// each time this screen enters the connection-lost body -- either the
+  /// stale-table overlay or the no-room card, [_connectionLostBody]'s own
+  /// two call sites in [build] -- and clears the guard the moment the body
+  /// stops showing, so the next drop is announced again. Never on a
+  /// rebuild while it stays up.
+  void _syncConnectionLostAnnouncement() {
+    final bool showing = _isShowingConnectionLostBody();
+    if (!showing) {
+      _announcedConnectionLost = false;
+      return;
+    }
+    if (_announcedConnectionLost) {
+      return;
+    }
+    _announcedConnectionLost = true;
+    _announce(AppLocalizations.of(context).lobbyConnectionLost);
+  }
+
+  /// Mirrors [build]'s own decision of when [_connectionLostBody] is the
+  /// body drawn, without rebuilding the widget tree: the end card (a gone
+  /// rematch, or an offline end card) always wins over it, same priority
+  /// order as [build].
+  bool _isShowingConnectionLostBody() {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+
+    final bool rematchGone =
+        controller.phase == RoomPhase.failed &&
+        controller.errorCode == 'NO_SUCH_ROOM' &&
+        room != null;
+    if (rematchGone) {
+      return false;
+    }
+
+    final bool isOffline =
+        controller.phase == RoomPhase.failed ||
+        controller.phase == RoomPhase.closed ||
+        controller.phase == RoomPhase.connecting;
+    final bool isOfflineEndCard =
+        isOffline &&
+        room != null &&
+        ((room.state == RoomState.finished && !_isEndHeld) ||
+            (room.state == RoomState.lobby && controller.lastFinished != null));
+    if (isOfflineEndCard) {
+      return false;
+    }
+
+    if (room != null && isOffline) {
+      return true;
+    }
+    if (room == null) {
+      return controller.phase == RoomPhase.failed ||
+          controller.phase == RoomPhase.closed;
+    }
+    return false;
   }
 
   /// Tapping the die while it would roll: haptic now, start the tumble,
@@ -612,6 +755,11 @@ class _GameScreenState extends State<GameScreen> {
       _rollWaitK = null;
       _rollNoAnswer = true;
     });
+    // C-337 rule 3: the die's no-answer line, spoken once each time it
+    // appears. This is the only place `_rollNoAnswer` turns true, so
+    // nothing else can make it appear a second time without another trip
+    // through here.
+    _announce(AppLocalizations.of(context).gameRollNoAnswer);
   }
 
   /// True when this seat is awaiting a move and the server named exactly
