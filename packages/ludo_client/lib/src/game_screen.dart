@@ -147,11 +147,10 @@ class _GameScreenState extends State<GameScreen> {
   // or failure alike -- `RoomController.rematch` never throws, so the
   // `await` below always resumes.
   bool _rematchInFlight = false;
-  // C-316 rule 4: set as the first line of dispose(). `mounted` is not
-  // enough to guard _onRematchTap's own setState: dispose() can itself
-  // elapse the fake clock in a test (that call's own comment explains why)
-  // and resume a pending reconnectAndRematch()/rematch() mid-unmount, where
-  // this State's element is already defunct but `mounted` still reads true.
+  // Set as the first line of dispose(). _onRematchTap's own setState guard
+  // reads this alongside `mounted`, synchronously true from the top of
+  // dispose() rather than depending on the framework's own unmount
+  // bookkeeping.
   bool _screenDisposed = false;
 
   // C-268 rules 3 to 5: landing cues (capturedOther, capturedMe, home) held
@@ -215,21 +214,6 @@ class _GameScreenState extends State<GameScreen> {
     _mountTurnFrame = null;
     _frameSub?.cancel();
     widget.controller.removeListener(_onControllerChanged);
-    // C-316 rule 4: Play again offline leaves reconnectAndRematch's own
-    // rematch() awaiting a reply on the new connection, with
-    // RoomConnection's 10s request Timer still running, the same hazard
-    // home_screen.dart's dispose() already guards against for an in-flight
-    // create/join. delayed() fires timers on TestWidgetsFlutterBinding; a
-    // real binding has no delayed().
-    if (_rematchInFlight) {
-      try {
-        (WidgetsBinding.instance as dynamic).delayed(
-          const Duration(seconds: 11),
-        );
-      } on Object {
-        // Production WidgetsBinding, or nested FakeAsync elapse.
-      }
-    }
     super.dispose();
   }
 

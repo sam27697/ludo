@@ -131,21 +131,11 @@ class _HomeScreenState extends State<HomeScreen>
   // disclosure's onPressed the same way, without disturbing
   // Key('create-room-button').
   final GlobalKey _createButtonScrollKey = GlobalKey();
-  // C-316 rule 3: set as the first line of dispose(), before anything else
-  // runs. _retireOwnedController's own setState guard cannot trust `mounted`
-  // here: dispose() can itself elapse the fake clock in a test (the comment
-  // on that call explains why) and resume a pending leave() mid-unmount,
-  // where this State's element is already defunct but `mounted` still reads
-  // true. This flag is set synchronously, with no such window.
+  // Set as the first line of dispose(), before anything else runs.
+  // _retireOwnedController's own setState guard reads this alongside
+  // `mounted`, synchronously true from the top of dispose() rather than
+  // depending on the framework's own unmount bookkeeping.
   bool _screenDisposed = false;
-  // C-316 rule 3: the controller [_retireOwnedController] is currently
-  // waiting on leave() for, non-null for exactly that window. dispose()
-  // reads this to flush that leave_room request's timer the same way it
-  // already flushes an in-flight create/join's, below -- a route pop no
-  // longer keeps this screen mounted once the test harness tears the tree
-  // down for its own reasons, and the request is still bounded at 10s
-  // either way.
-  RoomController? _retiringController;
 
   @override
   void initState() {
@@ -516,25 +506,6 @@ class _HomeScreenState extends State<HomeScreen>
     // H1/H2: this screen's own life is the other end of the "as long as
     // HomeScreen owns a controller" window; stop watching before it goes.
     owned?.removeListener(_onOwnedControllerChanged);
-    // An in-flight create/join still has RoomConnection's 10s request
-    // Timer. A connected table (Home unmounted under a live lobby, as in
-    // a keyed relaunch) must not elapse FakeAsync. delayed() fires timers
-    // on TestWidgetsFlutterBinding; a real binding has no delayed().
-    //
-    // C-316 rule 3: the same Timer exists on a leave_room request a
-    // player_left pop handed to _retireOwnedController, which this screen's
-    // own dispose() can now race if it unmounts before that leave()
-    // answers. _retiringController is that window's marker.
-    if ((owned != null && owned.phase == RoomPhase.connecting) ||
-        _retiringController != null) {
-      try {
-        (WidgetsBinding.instance as dynamic).delayed(
-          const Duration(seconds: 11),
-        );
-      } on Object {
-        // Production WidgetsBinding, or nested FakeAsync elapse.
-      }
-    }
     super.dispose();
   }
 
@@ -727,21 +698,12 @@ class _HomeScreenState extends State<HomeScreen>
     }
     controller.removeListener(_onOwnedControllerChanged);
     _ownedController = null;
-    _retiringController = controller;
     await controller.leave();
-    if (identical(_retiringController, controller)) {
-      _retiringController = null;
-    }
     controller.dispose();
     unawaited(SessionMemory.clearSeat());
-    // C-316 rule 3: `mounted` is not enough here. [leave] can resolve while
-    // this very State is partway through its own [dispose] -- dispose()'s
-    // fake-clock flush (its own comment explains why) can elapse a second
-    // owned controller's request timer and, as a side effect, this
-    // controller's leave() timer too, resuming this continuation from
-    // inside dispose()'s unmount. `mounted` still reads true there; the
-    // element is defunct anyway. `_screenDisposed` is set synchronously at
-    // the top of dispose(), with no such window.
+    // `_screenDisposed` is set synchronously at the top of dispose(), ahead
+    // of the framework's own unmount bookkeeping that `mounted` reads; kept
+    // here alongside `mounted` as the stricter of the two checks.
     if (!_screenDisposed && mounted) {
       setState(() {
         _seatRecord = null;
