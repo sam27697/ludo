@@ -21,6 +21,7 @@ import 'package:flutter/widgets.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board_geometry.dart';
+import 'seat_mark.dart';
 import 'theme.dart';
 
 export 'board_geometry.dart';
@@ -765,6 +766,16 @@ class _LudoBoardState extends State<LudoBoard> {
     // old 7px floor is exactly what let the name itself go unreadable even
     // once the chip stopped being a sliver.
     final double nameFontSize = math.max(10.0, chipHeight * 0.6);
+    // Rule 3: the chip draws no disc of its own today (it is a plain pill
+    // around the name); this is the one this rule adds, as tall as the
+    // chip's inner content height -- chipHeight less the vertical padding
+    // already applied below -- holding the seat's mark at half that disc's
+    // own diameter.
+    final double chipVerticalPadding = chipHeight * 0.08;
+    final double nameDiscSize = math.max(
+      0.0,
+      chipHeight - chipVerticalPadding * 2,
+    );
 
     return Positioned(
       left: chipLeft,
@@ -789,6 +800,19 @@ class _LudoBoardState extends State<LudoBoard> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
+                    Container(
+                      key: Key('board-seat-name-$seat-mark'),
+                      width: nameDiscSize,
+                      height: nameDiscSize,
+                      decoration: BoxDecoration(
+                        color: seatColor,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Center(
+                        child: SeatMark(seat: seat, size: nameDiscSize * 0.5),
+                      ),
+                    ),
+                    SizedBox(width: cellSize * 0.15),
                     Flexible(
                       child: Text(
                         name,
@@ -984,6 +1008,13 @@ class _LudoBoardState extends State<LudoBoard> {
             color: LudoColors.ink.withValues(alpha: 0.55),
             width: math.max(1, tokenSize * 0.06),
           ),
+        ),
+        // Rule 2: every token carries its seat's shape, centred, at half the
+        // drawn disc's diameter, in every state this disc is ever drawn in
+        // -- yard, track, home column, finished, mid-travel, mid-capture --
+        // since all of those share this one `token` widget.
+        child: Center(
+          child: SeatMark(seat: seat, size: tokenSize * 0.5),
         ),
       ),
     );

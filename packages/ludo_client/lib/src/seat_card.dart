@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 
 import 'net/snapshot.dart' show SeatState;
+import 'seat_mark.dart';
 import 'theme.dart';
 
 /// Every card in the lobby grid is at least this tall (C-254 rule 3).
@@ -82,7 +83,13 @@ class SeatCard extends StatelessWidget {
                     color: seatColor,
                     shape: BoxShape.circle,
                   ),
-                  child: const SizedBox(width: kSpace6, height: kSpace6),
+                  child: SizedBox(
+                    width: kSpace6,
+                    height: kSpace6,
+                    child: Center(
+                      child: SeatMark(seat: seat.seat, size: kSpace6 * 0.5),
+                    ),
+                  ),
                 ),
                 if (isHost)
                   PositionedDirectional(

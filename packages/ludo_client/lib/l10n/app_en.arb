@@ -523,6 +523,22 @@
   "@feedbackSoundToggle": {
     "description": "Settings switch that turns game sounds on or off."
   },
+  "settingsTooltip": "Sound and vibration",
+  "@settingsTooltip": {
+    "description": "Tooltip and semantics label for the icon button on home and game screens that opens the sound/vibration settings sheet."
+  },
+  "settingsTitle": "Sound and vibration",
+  "@settingsTitle": {
+    "description": "Title of the sound/vibration settings sheet."
+  },
+  "settingsHaptics": "Vibration",
+  "@settingsHaptics": {
+    "description": "Label of the vibration switch in the sound/vibration settings sheet."
+  },
+  "settingsSound": "Sound",
+  "@settingsSound": {
+    "description": "Label of the sound switch in the sound/vibration settings sheet."
+  },
   "lobbyShareButton": "Invite friends",
   "@lobbyShareButton": {
     "description": "Main lobby button. Opens the phone's share sheet with the room link and a short invite line."
