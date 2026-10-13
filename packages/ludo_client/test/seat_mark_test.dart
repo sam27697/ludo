@@ -427,6 +427,15 @@ void main() {
               'no new semantics label naming a shape must appear under '
               'SeatMark',
         );
+        // childrenCount alone also reads 0 without ExcludeSemantics, since an
+        // unlabelled child merges into its parent. Kills: the wrapper removed.
+        expect(
+          find.descendant(
+            of: find.byType(SeatMark),
+            matching: find.byType(ExcludeSemantics),
+          ),
+          findsOneWidget,
+        );
         handle.dispose();
       },
     );
