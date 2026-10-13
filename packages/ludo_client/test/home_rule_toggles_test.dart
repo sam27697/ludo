@@ -177,6 +177,17 @@ Map<String, Object?> _singleCreateRoomRules(FakeTransport transport) {
   return data['rules']! as Map<String, Object?>;
 }
 
+/// T3 through T8 all drive Create (and T8's Retry drives it a second time)
+/// without ever answering the create_room request on the wire, so
+/// RoomConnection's 10 second request timeout outlives the widget tree
+/// each of those tests leaves mounted; firing it here, after the test's
+/// own assertions are done, is what keeps flutter_test from finding that
+/// timer still pending at teardown.
+Future<void> _drainPendingRequestTimeout(WidgetTester tester) async {
+  await tester.pump(const Duration(seconds: 11));
+  await tester.pump();
+}
+
 void main() {
   testWidgets(
     'T1: disclosure closed shows neither switch, and the closed label is '
@@ -407,6 +418,8 @@ void main() {
         rules,
         equals(<String, Object?>{'blocks': true, 'capture_bonus': true}),
       );
+
+      await _drainPendingRequestTimeout(tester);
     },
   );
 
@@ -438,6 +451,8 @@ void main() {
         rules,
         equals(<String, Object?>{'blocks': false, 'capture_bonus': true}),
       );
+
+      await _drainPendingRequestTimeout(tester);
     },
   );
 
@@ -467,6 +482,8 @@ void main() {
       rules,
       equals(<String, Object?>{'blocks': true, 'capture_bonus': false}),
     );
+
+    await _drainPendingRequestTimeout(tester);
   });
 
   testWidgets(
@@ -506,6 +523,8 @@ void main() {
         rules,
         equals(<String, Object?>{'blocks': false, 'capture_bonus': false}),
       );
+
+      await _drainPendingRequestTimeout(tester);
     },
   );
 
@@ -576,6 +595,8 @@ void main() {
             'wire after changing the player count',
       );
       expect(rules['capture_bonus'], isTrue);
+
+      await _drainPendingRequestTimeout(tester);
     },
   );
 
@@ -673,6 +694,8 @@ void main() {
         secondData['rules'],
         equals(<String, Object?>{'blocks': false, 'capture_bonus': true}),
       );
+
+      await _drainPendingRequestTimeout(tester);
     },
   );
 }
