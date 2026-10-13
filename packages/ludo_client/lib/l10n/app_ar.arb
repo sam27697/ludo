@@ -99,8 +99,6 @@
   "endLeft": "غادر الطاولة: {names}",
   "endEveryoneLeft": "غادر الجميع الطاولة",
   "endOffline": "لا يوجد اتصال الآن",
-  "feedbackHapticsToggle": "الاهتزاز",
-  "feedbackSoundToggle": "الصوت",
   "settingsTooltip": "الصوت والاهتزاز",
   "settingsTitle": "الصوت والاهتزاز",
   "settingsHaptics": "الاهتزاز",

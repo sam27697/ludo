@@ -515,14 +515,6 @@
   "@endOffline": {
     "description": "Shown on the end card in place of rematch status when the connection is offline or reconnecting."
   },
-  "feedbackHapticsToggle": "Vibration",
-  "@feedbackHapticsToggle": {
-    "description": "Settings switch that turns game vibration on or off."
-  },
-  "feedbackSoundToggle": "Sound",
-  "@feedbackSoundToggle": {
-    "description": "Settings switch that turns game sounds on or off."
-  },
   "settingsTooltip": "Sound and vibration",
   "@settingsTooltip": {
     "description": "Tooltip and semantics label for the icon button on home and game screens that opens the sound/vibration settings sheet."
