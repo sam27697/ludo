@@ -365,6 +365,13 @@ void main() {
           'Create after relaunch, with no seat re-pick, must still send '
           'players $hostedSeats; got ${pushed.players}',
     );
+
+    // The relaunch's own Create (above) is never answered on the wire, so
+    // RoomConnection's 10 second request timeout outlives this widget tree;
+    // fire it now that this test's assertions are done so flutter_test does
+    // not find that timer still pending at teardown.
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pump();
   });
 
   testWidgets('relaunch after successful create shows home-last-table-chip and '
