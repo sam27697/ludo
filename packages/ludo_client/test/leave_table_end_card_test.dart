@@ -997,6 +997,14 @@ void main() {
           findsNothing,
           reason: 'rule 3: tapping Create Room must clear the notice',
         );
+
+        // The player_left pop above sent this screen's own leave_room on
+        // its way out through _retireOwnedController, and this test never
+        // answers it, so RoomConnection's 10 second request timeout
+        // outlives the widget tree; fire it now, after this test's own
+        // assertions are done.
+        await tester.pump(const Duration(seconds: 11));
+        await tester.pump();
       },
     );
 
@@ -1071,6 +1079,9 @@ void main() {
           findsOneWidget,
           reason: 'rule 3: HomeScreen must show home-removed-notice here too',
         );
+
+        await tester.pump(const Duration(seconds: 11));
+        await tester.pump();
       },
     );
   });
@@ -1239,6 +1250,30 @@ void main() {
         reason:
             'rule 4: once the resume lands, exactly one rematch must be '
             'sent on the new connection',
+      );
+
+      // Unlike the drains elsewhere in this file, this one answers rather
+      // than advances the clock: a timed-out rematch routes through
+      // _failFromInRoomRequest (room_controller.dart), which treats
+      // 'timeout' as retryable and arms its own fresh reconnect Timer, so
+      // firing this one would just trade it for another still pending at
+      // teardown.
+      final String rematchRequestId = _idOf(
+        resumeTransport.sentRaw
+            .where((String r) => _typeOf(r) == 'rematch')
+            .single,
+      );
+      await _pushRoom(
+        tester,
+        resumeTransport,
+        _roomJson(
+          state: 'LOBBY',
+          players: 2,
+          seats: seats,
+          gameId: null,
+          seq: 2,
+        ),
+        re: rematchRequestId,
       );
     });
 
