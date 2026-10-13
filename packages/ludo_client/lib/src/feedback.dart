@@ -12,8 +12,9 @@
 // [FeedbackScope.of] hands back to a widget tree that never wired one in,
 // so existing screen tests that build a bare `GameScreen` keep working.
 //
-// Wiring this service into the screens, and the settings switches
-// themselves, are a later order. This file only builds the instrument.
+// Wiring this service into the screens (order 236) and the settings
+// switches themselves (order 329, lib/src/feedback_settings_sheet.dart)
+// both build on the instrument this file provides.
 
 import 'dart:async';
 
@@ -397,5 +398,15 @@ class FeedbackScope extends InheritedNotifier<FeedbackSettings> {
     final FeedbackScope? scope = context
         .dependOnInheritedWidgetOfExactType<FeedbackScope>();
     return scope?.service ?? const NoopFeedbackService();
+  }
+
+  /// The read side for a settings screen: the scope's own
+  /// [FeedbackSettings], so a switch built below a [FeedbackScope] can show
+  /// and flip it. A widget tree with no scope above it (a bare widget test)
+  /// gets [FeedbackSettings.forTest], the same fallback idea as [of].
+  static FeedbackSettings settingsOf(BuildContext context) {
+    final FeedbackScope? scope = context
+        .dependOnInheritedWidgetOfExactType<FeedbackScope>();
+    return scope?.notifier ?? FeedbackSettings.forTest();
   }
 }

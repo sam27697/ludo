@@ -30,6 +30,7 @@ import 'board.dart';
 import 'die_mark.dart';
 import 'end_card.dart';
 import 'feedback.dart';
+import 'feedback_settings_sheet.dart';
 import 'game_die.dart';
 import 'game_stats.dart';
 import 'net/connection.dart';
@@ -1113,6 +1114,18 @@ class _GameScreenState extends State<GameScreen> {
                           tooltip: loc.gameLeaveButton,
                           onPressed: () => _handleLeaveRequest(context, loc),
                           icon: const Icon(Icons.close),
+                        ),
+                      ),
+                      PositionedDirectional(
+                        end: kSpace2,
+                        child: IconButton(
+                          key: const Key('game-settings-button'),
+                          style: IconButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                          ),
+                          tooltip: loc.settingsTooltip,
+                          onPressed: () => showFeedbackSettingsSheet(context),
+                          icon: const Icon(Icons.tune_rounded),
                         ),
                       ),
                     ],

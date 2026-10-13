@@ -101,6 +101,10 @@
   "endOffline": "لا يوجد اتصال الآن",
   "feedbackHapticsToggle": "الاهتزاز",
   "feedbackSoundToggle": "الصوت",
+  "settingsTooltip": "الصوت والاهتزاز",
+  "settingsTitle": "الصوت والاهتزاز",
+  "settingsHaptics": "الاهتزاز",
+  "settingsSound": "الصوت",
   "lobbyShareButton": "ادعُ أصدقاءك",
   "lobbyShareText": "تعال نلعب لودو! ادخل غرفتي من هذا الرابط: {link} أو اكتب الرمز {code} في Ludo RNG."
 }

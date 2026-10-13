@@ -8,6 +8,7 @@ import '../l10n/gen/app_localizations.dart';
 import 'deep_link.dart';
 import 'die_mark.dart';
 import 'directional_icon.dart';
+import 'feedback_settings_sheet.dart';
 import 'game_screen.dart' show GameScreenResult;
 import 'lobby_screen.dart' show LobbyAction;
 import 'net/connection.dart' show RoomToggles;
@@ -1037,28 +1038,55 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
                 child: Align(
                   alignment: AlignmentDirectional.topEnd,
-                  child: TextButton(
-                    key: const Key('locale-toggle-button'),
-                    onPressed: widget.onToggleLocale,
-                    style: TextButton.styleFrom(
-                      backgroundColor: LudoColors.paperElevated,
-                      foregroundColor: LudoColors.ink,
-                      minimumSize: const Size(48, 48),
-                      shape: StadiumBorder(
-                        side: BorderSide(
-                          color: LudoColors.inkMuted.withValues(alpha: 0.3),
-                          width: 1,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        key: const Key('home-settings-button'),
+                        onPressed: () => showFeedbackSettingsSheet(context),
+                        style: IconButton.styleFrom(
+                          backgroundColor: LudoColors.paperElevated,
+                          foregroundColor: LudoColors.ink,
+                          minimumSize: const Size(48, 48),
+                          shape: StadiumBorder(
+                            side: BorderSide(
+                              color: LudoColors.inkMuted.withValues(alpha: 0.3),
+                              width: 1,
+                            ),
+                          ),
+                          side: BorderSide(
+                            color: LudoColors.inkMuted.withValues(alpha: 0.3),
+                            width: 1,
+                          ),
+                        ),
+                        tooltip: loc.settingsTooltip,
+                        icon: const Icon(Icons.tune_rounded),
+                      ),
+                      const SizedBox(width: kSpace2),
+                      TextButton(
+                        key: const Key('locale-toggle-button'),
+                        onPressed: widget.onToggleLocale,
+                        style: TextButton.styleFrom(
+                          backgroundColor: LudoColors.paperElevated,
+                          foregroundColor: LudoColors.ink,
+                          minimumSize: const Size(48, 48),
+                          shape: StadiumBorder(
+                            side: BorderSide(
+                              color: LudoColors.inkMuted.withValues(alpha: 0.3),
+                              width: 1,
+                            ),
+                          ),
+                          side: BorderSide(
+                            color: LudoColors.inkMuted.withValues(alpha: 0.3),
+                            width: 1,
+                          ),
+                        ),
+                        child: Tooltip(
+                          message: loc.homeLocaleToggleTooltip,
+                          child: Text(loc.homeLocaleToggleLabel),
                         ),
                       ),
-                      side: BorderSide(
-                        color: LudoColors.inkMuted.withValues(alpha: 0.3),
-                        width: 1,
-                      ),
-                    ),
-                    child: Tooltip(
-                      message: loc.homeLocaleToggleTooltip,
-                      child: Text(loc.homeLocaleToggleLabel),
-                    ),
+                    ],
                   ),
                 ),
               ),
