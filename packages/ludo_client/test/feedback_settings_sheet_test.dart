@@ -62,7 +62,6 @@ import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
-import 'package:ludo_client/src/server_config.dart';
 
 import 'net/fake_transport.dart';
 
