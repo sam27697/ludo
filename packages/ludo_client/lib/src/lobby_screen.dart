@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'die_mark.dart';
+import 'feedback_settings_sheet.dart' show showFeedbackSettingsSheet;
 import 'game_screen.dart' show GameScreenResult;
 import 'net/connection.dart' show RoomToggles;
 import 'net/frame.dart';
@@ -372,6 +373,21 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           tooltip: loc.gameLeaveButton,
                           onPressed: _leaveLobby,
                           icon: const Icon(Icons.close),
+                        ),
+                      ),
+                      // C-335 rule 1: the mirror of lobby-leave-button, at
+                      // the end corner, so a player waiting on friends can
+                      // mute sound and vibration without leaving.
+                      PositionedDirectional(
+                        end: kSpace2,
+                        child: IconButton(
+                          key: const Key('lobby-settings-button'),
+                          style: IconButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                          ),
+                          tooltip: loc.settingsTooltip,
+                          onPressed: () => showFeedbackSettingsSheet(context),
+                          icon: const Icon(Icons.tune_rounded),
                         ),
                       ),
                     ],

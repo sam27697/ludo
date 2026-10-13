@@ -45,6 +45,10 @@
 //                    real players who joined it
 //   04-game-en.png   game board mid-game, English
 //   05-game-ar.png   game board mid-game, Arabic
+//   35-settings-sheet-en.png  the sound and vibration settings sheet,
+//                             English, both switches on
+//   36-settings-sheet-ar.png  the sound and vibration settings sheet,
+//                             Arabic, sound switched off
 //
 // Two workflow runs (33183494414, 33185182659) each produced a room-screen
 // capture that was not a room screen at all: a silently dropped enterText
@@ -4902,6 +4906,235 @@ void main() {
           '("$arLastGameText") text on screen before the shot',
     );
     await binding.takeScreenshot('34-home-last-game-ar');
+  });
+
+  // ==========================================================================
+  // 35, 36: C-329's sound/vibration settings sheet (order 334). X46 (C-329)
+  // closed in run 86 with the sheet proven by
+  // test/feedback_settings_sheet_test.dart but never seen: this rig never
+  // opened it. Fresh SharedPreferences (cleared, as the 33/34 block above),
+  // home in English, then Arabic, the sheet opened from
+  // home-settings-button both times.
+  //
+  // _ScreenshotHarness (this file's own) wraps HomeScreen in a bare
+  // MaterialApp with no FeedbackScope above it. showFeedbackSettingsSheet
+  // reads FeedbackScope.settingsOf(context), which falls back to a brand
+  // new FeedbackSettings.forTest() (haptics: true, sound: true,
+  // lib/src/feedback.dart) on every call when there is no scope above it --
+  // never a shared instance. So each of the two taps on
+  // home-settings-button below opens its own fresh settings object:
+  // capture 35's sheet starts at the forTest() default (haptics true,
+  // sound true) and is never touched; capture 36's sheet, opened fresh a
+  // second time after the first sheet closes and the locale toggles,
+  // starts at that same default and is then flipped off by this test's own
+  // tap on the sound row's label. There is no state carried from the first
+  // sheet to the second.
+  //
+  // Closing the sheet: the order asks for whichever of "tap outside it" or
+  // Navigator.pop this rig's other captures use for a modal. This rig
+  // opens no other modal anywhere in this file -- 01 through 34 above
+  // never show one -- so there is no in-rig precedent to follow.
+  // Navigator.pop is used here, the same way the sheet's own contract test
+  // (test/feedback_settings_sheet_test.dart's _closeSheet) pops the
+  // sheet's own route, rather than guessing at a barrier tap point that
+  // would have to be hand-picked clear of every on-screen control across
+  // two locales and two screen sizes.
+  // ==========================================================================
+  testWidgets('capture 35-settings-sheet-en, 36-settings-sheet-ar', (
+    tester,
+  ) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    await (await SharedPreferences.getInstance()).clear();
+
+    final factory = _ScreenshotControllerFactory();
+    await tester.pumpWidget(
+      _ScreenshotHarness(controllerFactory: factory.call),
+    );
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: 'en');
+
+    const Key sheetKey = Key('feedback-settings-sheet');
+    const Key hapticsSwitchKey = Key('feedback-settings-haptics');
+    const Key soundSwitchKey = Key('feedback-settings-sound');
+
+    await tester.tap(find.byKey(const Key('home-settings-button')));
+    await tester.pumpAndSettle();
+
+    final AppLocalizations enSheetLoc = AppLocalizations.of(
+      tester.element(find.byKey(sheetKey)),
+    );
+    await _settleForScreenshot(
+      tester,
+      find.descendant(
+        of: find.byKey(sheetKey),
+        matching: find.text(enSheetLoc.settingsTitle),
+      ),
+      'capture 35-settings-sheet-en: the English settingsTitle text '
+      '("${enSheetLoc.settingsTitle}") laid out inside '
+      'feedback-settings-sheet before the shot',
+    );
+
+    expect(
+      find.byKey(sheetKey),
+      findsOneWidget,
+      reason:
+          'capture 35-settings-sheet-en: expected feedback-settings-sheet '
+          'on screen before the shot',
+    );
+    expect(
+      find.byKey(hapticsSwitchKey),
+      findsOneWidget,
+      reason:
+          'capture 35-settings-sheet-en: expected feedback-settings-haptics '
+          'on screen before the shot',
+    );
+    expect(
+      find.byKey(soundSwitchKey),
+      findsOneWidget,
+      reason:
+          'capture 35-settings-sheet-en: expected feedback-settings-sound '
+          'on screen before the shot',
+    );
+    final Switch enHapticsSwitch = tester.widget<Switch>(
+      find.byKey(hapticsSwitchKey),
+    );
+    expect(
+      enHapticsSwitch.value,
+      isTrue,
+      reason:
+          'capture 35-settings-sheet-en: expected feedback-settings-haptics '
+          'to show value: true before the shot, showed '
+          '${enHapticsSwitch.value}',
+    );
+    final Switch enSoundSwitch = tester.widget<Switch>(
+      find.byKey(soundSwitchKey),
+    );
+    expect(
+      enSoundSwitch.value,
+      isTrue,
+      reason:
+          'capture 35-settings-sheet-en: expected feedback-settings-sound '
+          'to show value: true before the shot, showed '
+          '${enSoundSwitch.value}',
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(sheetKey),
+        matching: find.text(enSheetLoc.settingsTitle),
+      ),
+      findsOneWidget,
+      reason:
+          'capture 35-settings-sheet-en: expected the sheet\'s title text '
+          'to read the English settingsTitle '
+          '("${enSheetLoc.settingsTitle}") before the shot',
+    );
+    await binding.takeScreenshot('35-settings-sheet-en');
+
+    // Close the sheet by popping its own route -- see this block's own
+    // header for why Navigator.pop, not a barrier tap, is used here.
+    Navigator.of(tester.element(find.byKey(sheetKey))).pop();
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(sheetKey),
+      findsNothing,
+      reason:
+          'capture 36-settings-sheet-ar fixture is broken: '
+          'feedback-settings-sheet must be gone from the tree after '
+          'Navigator.pop and the settle above',
+    );
+
+    await tester.tap(find.byKey(const Key('locale-toggle-button')));
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: 'ar');
+
+    await tester.tap(find.byKey(const Key('home-settings-button')));
+    await tester.pumpAndSettle();
+
+    final AppLocalizations arSheetLoc = AppLocalizations.of(
+      tester.element(find.byKey(sheetKey)),
+    );
+    final String soundLabelAr = arSheetLoc.settingsSound;
+    final Finder soundLabelFinderAr = find.descendant(
+      of: find.byKey(sheetKey),
+      matching: find.text(soundLabelAr),
+    );
+    expect(
+      soundLabelFinderAr,
+      findsOneWidget,
+      reason:
+          'capture 36-settings-sheet-ar fixture is broken: expected the '
+          'Arabic settingsSound label ("$soundLabelAr") inside the '
+          'reopened sheet before tapping it',
+    );
+    await tester.tap(soundLabelFinderAr);
+    await tester.pump();
+
+    await _settleForScreenshot(
+      tester,
+      find.descendant(
+        of: find.byKey(sheetKey),
+        matching: find.byIcon(Icons.volume_off_rounded),
+      ),
+      'capture 36-settings-sheet-ar: Icons.volume_off_rounded laid out '
+      'inside feedback-settings-sheet after tapping the '
+      'feedback-settings-sound row\'s label, before the shot',
+    );
+
+    expect(
+      find.byKey(sheetKey),
+      findsOneWidget,
+      reason:
+          'capture 36-settings-sheet-ar: expected feedback-settings-sheet '
+          'on screen before the shot',
+    );
+    final Switch arHapticsSwitch = tester.widget<Switch>(
+      find.byKey(hapticsSwitchKey),
+    );
+    expect(
+      arHapticsSwitch.value,
+      isTrue,
+      reason:
+          'capture 36-settings-sheet-ar: expected feedback-settings-haptics '
+          'to still show value: true before the shot, showed '
+          '${arHapticsSwitch.value}',
+    );
+    final Switch arSoundSwitch = tester.widget<Switch>(
+      find.byKey(soundSwitchKey),
+    );
+    expect(
+      arSoundSwitch.value,
+      isFalse,
+      reason:
+          'capture 36-settings-sheet-ar: expected feedback-settings-sound '
+          'to show value: false (tapped off above) before the shot, '
+          'showed ${arSoundSwitch.value}',
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(sheetKey),
+        matching: find.text(arSheetLoc.settingsTitle),
+      ),
+      findsOneWidget,
+      reason:
+          'capture 36-settings-sheet-ar: expected the sheet\'s title text '
+          'to read the Arabic settingsTitle '
+          '("${arSheetLoc.settingsTitle}") before the shot',
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(sheetKey),
+        matching: find.byIcon(Icons.volume_off_rounded),
+      ),
+      findsOneWidget,
+      reason:
+          'capture 36-settings-sheet-ar: expected Icons.volume_off_rounded '
+          'inside feedback-settings-sheet before the shot, with '
+          'feedback-settings-sound switched off',
+    );
+    await binding.takeScreenshot('36-settings-sheet-ar');
   });
 }
 
