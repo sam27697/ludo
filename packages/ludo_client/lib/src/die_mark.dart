@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'seat_mark.dart';
 import 'theme.dart';
 
 /// Face size for [DieMark] on short vs tall viewports. Home and lobby share
@@ -67,6 +68,9 @@ class SeatPipStrip extends StatelessWidget {
         color: LudoColors.seats[seat],
         shape: BoxShape.circle,
         border: isTurn ? Border.all(color: LudoColors.ink, width: 1) : null,
+      ),
+      child: Center(
+        child: SeatMark(seat: seat, size: size * 0.5),
       ),
     );
     if (!isTurn) {
