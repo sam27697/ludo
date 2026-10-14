@@ -1658,6 +1658,10 @@ class _LastTableChip extends StatelessWidget {
   final String name;
   final int seats;
 
+  /// U+00A0, spelled as an escape so the character can never be mistaken
+  /// for a plain space by a reader or silently normalised by an editor.
+  static const String _noBreakSpace = '\u00A0';
+
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -1680,8 +1684,8 @@ class _LastTableChip extends StatelessWidget {
     // space that glues name to "·" is non-breaking, and every space inside
     // the seat label is made non-breaking too, leaving the single plain
     // space after "·" as the only place Flutter's line breaker can act.
-    final String seatsNoBreak = seatsLabel.replaceAll(' ', ' ');
-    final String painted = '$name · $seatsNoBreak';
+    final String seatsNoBreak = seatsLabel.replaceAll(' ', _noBreakSpace);
+    final String painted = '$name$_noBreakSpace· $seatsNoBreak';
     return Center(
       child: Semantics(
         container: true,
