@@ -1533,15 +1533,56 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// C-250 rule 1: one row of fixed height between the pip strip and the
-  /// board, the same height in every playing state and both locales --
-  /// rule 2's chip and rule 3's countdown ring are what the row holds, and
-  /// both read straight off `room.turn`, so none of the die's own overlays
-  /// (the tumble, the no-move mark) have to be threaded through here. The
-  /// chip sits at the row's logical start and the ring at its end; a `Row`
+  /// C-250 rule 1: one row between the pip strip and the board, the same
+  /// height in every playing state and both locales -- rule 2's chip and
+  /// rule 3's countdown ring are what the row holds, and both read
+  /// straight off `room.turn`, so none of the die's own overlays (the
+  /// tumble, the no-move mark) have to be threaded through here. The chip
+  /// sits at the row's logical start and the ring at its end; a `Row`
   /// under the ambient `Directionality` mirrors that for Arabic on its
   /// own, nothing here flips anything by hand.
-  static const double _headerRowHeight = 44;
+  ///
+  /// C-339 decision 3: at the system's default text size this row is
+  /// still exactly the old fixed 44 holding a one-line banner -- that
+  /// case returns the literal constant, not a computed value, so it can
+  /// never drift from it by a rounding hair. Above that scale the row's
+  /// height grows, but only with the scale itself (`_headerRowHeightFor`
+  /// never reads `room` or `turn`): the same number for a given scale in
+  /// every state, so the board underneath never jumps as the turn
+  /// changes. What it grows to is measured, not guessed -- the banner's
+  /// own font at the ambient scale, two lines of it (decision 3's "the
+  /// banner may take two lines there") plus the chip's fixed vertical
+  /// padding, since two lines is what a banner that no longer fits one
+  /// line at the chip's width (decision 3's own defect) can need, in
+  /// every state alike. The countdown ring itself is untouched by any of
+  /// this (the measurement found it "fine at every scale"); it keeps the
+  /// old fixed 44 box under its own name, `_countdownRingSize`, below.
+  static const double _headerRowHeightAtRest = 44;
+  static const double _countdownRingSize = 44;
+
+  double _headerRowHeightFor(BuildContext context) {
+    final TextScaler scaler = MediaQuery.textScalerOf(context);
+    final double scaleFactor = scaler.scale(100.0) / 100.0;
+    if (scaleFactor <= 1.0) {
+      return _headerRowHeightAtRest;
+    }
+    // The banner itself sets no fontSize of its own (only `fontWeight`), so
+    // it paints at whatever the ambient `DefaultTextStyle` resolves to --
+    // which, under the real tree, is the `Scaffold`'s own `Material`
+    // setting it from `Theme.of(context).textTheme.bodyMedium`
+    // (`Material.build`), not whatever `DefaultTextStyle.of(context)`
+    // would answer from here, above that `Material`.
+    final TextStyle bannerStyle = Theme.of(context).textTheme.bodyMedium!;
+    final TextPainter template = TextPainter(
+      text: TextSpan(text: ' ', style: bannerStyle),
+      textDirection: Directionality.of(context),
+      textScaler: scaler,
+    );
+    final double oneLine = template.preferredLineHeight;
+    template.dispose();
+    final double contentHeight = math.max(kSpace2, oneLine * 2);
+    return contentHeight + kSpace1 * 2;
+  }
 
   Widget _playHeaderRow(
     AppLocalizations loc,
@@ -1556,9 +1597,11 @@ class _GameScreenState extends State<GameScreen> {
     final Color seatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
     final bool myTurn = turn != null && turn.seat == seat;
     final bool offline = offlineTurnSeat != null;
+    final double headerRowHeight = _headerRowHeightFor(context);
+    final int bannerMaxLines = headerRowHeight > _headerRowHeightAtRest ? 2 : 1;
 
     return SizedBox(
-      height: _headerRowHeight,
+      height: headerRowHeight,
       child: Row(
         children: [
           Expanded(
@@ -1599,7 +1642,7 @@ class _GameScreenState extends State<GameScreen> {
                       child: Text(
                         bannerText,
                         key: const Key('game-screen-turn-banner'),
-                        maxLines: 1,
+                        maxLines: bannerMaxLines,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontWeight: myTurn
@@ -1645,8 +1688,8 @@ class _GameScreenState extends State<GameScreen> {
       key: const Key('game-header-countdown-semantics'),
       label: loc.gameTurnCountdown(_countdownRemainingSeconds),
       child: SizedBox(
-        width: _headerRowHeight,
-        height: _headerRowHeight,
+        width: _countdownRingSize,
+        height: _countdownRingSize,
         child: Stack(
           alignment: Alignment.center,
           children: [
