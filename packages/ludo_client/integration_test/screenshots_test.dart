@@ -57,6 +57,8 @@
 //                             scale 2.0
 //   40-end-loser-large-ar.png the loser's end card, Arabic, system text
 //                             scale 2.0
+//   41-lobby-large-ar.png     capture 39's own Arabic twin: the host's
+//                             lobby, Arabic, system text scale 2.0
 //
 // Two workflow runs (33183494414, 33185182659) each produced a room-screen
 // capture that was not a room screen at all: a silently dropped enterText
@@ -73,6 +75,7 @@ import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderBox, RenderParagraph;
 import 'package:flutter/services.dart' show MethodCall, MethodChannel;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5194,7 +5197,7 @@ void main() {
   // seats. Flagged here and in the final report as a judgement call on an
   // order that could be read either way, not invented around silently.
   // ==========================================================================
-  testWidgets('capture 37-40 large text', (tester) async {
+  testWidgets('capture 37-41 large text', (tester) async {
     binding.testTextInput.register();
     _stubScreenshotChannel(tester);
     await binding.convertFlutterSurfaceToImage();
@@ -5452,6 +5455,11 @@ void main() {
             'shot',
       );
 
+      _printChipRigProbe(
+        tester,
+        capture: '37-game-large-en',
+        controller: controller37,
+      );
       await binding.takeScreenshot('37-game-large-en');
     } finally {
       controller37?.dispose();
@@ -5670,6 +5678,11 @@ void main() {
             'the shot, got "${bannerText38.data}"',
       );
 
+      _printChipRigProbe(
+        tester,
+        capture: '38-game-large-ar',
+        controller: controller38,
+      );
       await binding.takeScreenshot('38-game-large-ar');
     } finally {
       controller38?.dispose();
@@ -6032,10 +6045,291 @@ void main() {
       controller40?.dispose();
     }
 
+    // ------------------------------------------------------------------
+    // 41: capture 39's own Arabic twin -- the host's lobby, Arabic,
+    // system text scale 2.0, the same two names ($hostName, $otherName),
+    // built the way capture 38 builds capture 37's Arabic twin (HomeScreen
+    // pumped directly in the Arabic locale through
+    // _reconnectingCaptureHarness, since _ScreenshotHarness itself only
+    // ever starts in English). Every assertion capture 39 makes before its
+    // shot, repeated here for 'ar'.
+    // ------------------------------------------------------------------
+    await (await SharedPreferences.getInstance()).clear();
+    final factory41 = _ScreenshotControllerFactory();
+    RoomController? controller41;
+    try {
+      await tester.pumpWidget(
+        _reconnectingCaptureHarness(
+          HomeScreen(controllerFactory: factory41.call, onToggleLocale: () {}),
+          locale: const Locale('ar'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _expectHomeScreen(tester, localeName: 'ar');
+
+      const String roomCode41 = 'SHOT41';
+      await tester.enterText(
+        find.byKey(const Key('home-name-field')),
+        hostName,
+      );
+      await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+
+      expect(
+        factory41.controllers,
+        hasLength(1),
+        reason:
+            'capture 41: tapping Create Room must build exactly one '
+            'controller through the injected controllerFactory '
+            '(home_screen.dart)',
+      );
+      controller41 = factory41.controllers.single;
+      final FakeTransport transport41 = factory41.transports.single;
+
+      final List<String> createMessages41 = transport41.sentRaw
+          .where((s) => _typeOf(s) == 'create_room')
+          .toList();
+      expect(
+        createMessages41,
+        hasLength(1),
+        reason:
+            'capture 41: expected LobbyScreen.initState, reached through '
+            'RoomRoute, to have sent exactly one create_room request; '
+            'sent ${transport41.sentRaw.map(_typeOf).toList()}',
+      );
+      final String createId41 = _idOf(createMessages41.single);
+
+      transport41.pushText(
+        _frame(
+          type: 'seat_assigned',
+          data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-41'},
+        ),
+      );
+      transport41.pushText(
+        _frame(
+          type: 'room',
+          re: createId41,
+          data: _roomJson(
+            code: roomCode41,
+            players: 2,
+            hostSeat: 0,
+            seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
+            seq: 1,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      await _pumpUntilFound(
+        tester,
+        find.byType(LobbyScreen),
+        'capture 41: LobbyScreen after the create_room reply carrying '
+        'code "$roomCode41"',
+      );
+
+      transport41.pushText(
+        _frame(
+          type: 'player_joined',
+          data: <String, Object?>{'seat': 1, 'name': otherName, 'seq': 2},
+        ),
+      );
+      await tester.pump();
+
+      await _expectLobbyScreen(
+        tester,
+        localeName: 'ar',
+        code: roomCode41,
+        expectedSeatCount: 2,
+      );
+
+      // Same audit as capture 39: no bare pumpAndSettle past this point
+      // (LobbyScreen's connecting-state ticker never settles), so the
+      // frame is held open for real wall time instead, then everything
+      // the capture depends on is re-read immediately before the shot.
+      await _pumpRealDurationFrames(tester);
+
+      await _expectLobbyScreen(
+        tester,
+        localeName: 'ar',
+        code: roomCode41,
+        expectedSeatCount: 2,
+      );
+      final AppLocalizations settledLobbyLoc41 = AppLocalizations.of(
+        tester.element(find.byType(LobbyScreen)),
+      );
+      final Finder settledStartButton41 = find.byKey(
+        const Key('lobby-start-button'),
+      );
+      expect(
+        settledStartButton41,
+        findsOneWidget,
+        reason:
+            'capture 41: after the post-join settle, expected the '
+            'host\'s Start button still on screen immediately before '
+            'the shot',
+      );
+      final ElevatedButton settledStartWidget41 = tester.widget<ElevatedButton>(
+        settledStartButton41,
+      );
+      final Text settledStartLabel41 = settledStartWidget41.child! as Text;
+      expect(
+        settledStartLabel41.data,
+        settledLobbyLoc41.lobbyStartButton,
+        reason:
+            'capture 41: after the post-join settle, the room is full '
+            '(2 of 2 seats joined) so expected lobby-start-button\'s '
+            'label to still read loc.lobbyStartButton '
+            '("${settledLobbyLoc41.lobbyStartButton}"), got '
+            '"${settledStartLabel41.data}"',
+      );
+
+      await binding.takeScreenshot('41-lobby-large-ar');
+    } finally {
+      controller41?.dispose();
+    }
+
     // The whole case's own scale, cleared here, in the body, before the
     // case ends -- not only in the addTearDown registered above.
     tester.platformDispatcher.clearTextScaleFactorTestValue();
   });
+}
+
+/// Order 348: prints the device's own numbers for the own-seat board chip,
+/// immediately before captures 37 and 38 take their shot, against X53 (a
+/// widget test mounting LudoBoard alone said the own-seat name fits at
+/// W=325; the device frames do not). Prints only, asserts nothing: every
+/// line starts `CASE RIG <capture>` so the master can grep the CI log for
+/// them. A failure anywhere in here is caught and reported as its own
+/// `CASE RIG <capture> probe-error <error>` line rather than failing the
+/// capture -- the capture must still take its screenshot after this
+/// returns, so nothing outside this function is allowed to catch in its
+/// place.
+void _printChipRigProbe(
+  WidgetTester tester, {
+  required String capture,
+  required RoomController controller,
+}) {
+  try {
+    final int seat = controller.seat!;
+    final Size physicalSize = tester.view.physicalSize;
+    final double devicePixelRatio = tester.view.devicePixelRatio;
+    final Size logicalSize = physicalSize / devicePixelRatio;
+    // ignore: avoid_print
+    print('CASE RIG $capture view.physicalSize=$physicalSize');
+    // ignore: avoid_print
+    print('CASE RIG $capture view.devicePixelRatio=$devicePixelRatio');
+    // ignore: avoid_print
+    print('CASE RIG $capture view.logicalSize=$logicalSize');
+    final physicalPadding = tester.view.padding;
+    final physicalViewPadding = tester.view.viewPadding;
+    // ignore: avoid_print
+    print(
+      'CASE RIG $capture view.padding(logical)='
+      'left=${physicalPadding.left / devicePixelRatio},'
+      'top=${physicalPadding.top / devicePixelRatio},'
+      'right=${physicalPadding.right / devicePixelRatio},'
+      'bottom=${physicalPadding.bottom / devicePixelRatio}',
+    );
+    // ignore: avoid_print
+    print(
+      'CASE RIG $capture view.viewPadding(logical)='
+      'left=${physicalViewPadding.left / devicePixelRatio},'
+      'top=${physicalViewPadding.top / devicePixelRatio},'
+      'right=${physicalViewPadding.right / devicePixelRatio},'
+      'bottom=${physicalViewPadding.bottom / devicePixelRatio}',
+    );
+
+    // LudoBoard's own LayoutBuilder (keyed 'ludo-board') sizes itself to
+    // whatever constraints its parent hands it, which is not the square
+    // the board actually paints -- that square is the SizedBox(width:
+    // side, height: side) its builder returns as the first SizedBox
+    // descendant, before the Stack holding every seat's chip and token.
+    final RenderBox boardBox = tester
+        .renderObjectList<RenderBox>(
+          find.descendant(
+            of: find.byKey(const Key('ludo-board')),
+            matching: find.byType(SizedBox),
+          ),
+        )
+        .first;
+    final double side = boardBox.size.width;
+    // ignore: avoid_print
+    print('CASE RIG $capture board.size=${boardBox.size}');
+    // ignore: avoid_print
+    print('CASE RIG $capture board.cellSize=${side / 15}');
+
+    final Finder chipFinder = find.byKey(Key('board-seat-name-$seat'));
+    final RenderBox chipBox = tester.renderObject<RenderBox>(chipFinder);
+    // ignore: avoid_print
+    print('CASE RIG $capture chip.size=${chipBox.size}');
+
+    final RenderParagraph nameParagraph = tester.renderObject<RenderParagraph>(
+      find.descendant(of: chipFinder, matching: find.byType(RichText)).first,
+    );
+    final TextSpan nameSpan = nameParagraph.text as TextSpan;
+    final TextStyle? nameStyle = nameSpan.style;
+    // ignore: avoid_print
+    print('CASE RIG $capture name.size=${nameParagraph.size}');
+    // ignore: avoid_print
+    print(
+      'CASE RIG $capture name.didExceedMaxLines='
+      '${nameParagraph.didExceedMaxLines}',
+    );
+    // ignore: avoid_print
+    print('CASE RIG $capture name.style.fontFamily=${nameStyle?.fontFamily}');
+    // ignore: avoid_print
+    print(
+      'CASE RIG $capture name.style.fontFamilyFallback='
+      '${nameStyle?.fontFamilyFallback}',
+    );
+    // ignore: avoid_print
+    print('CASE RIG $capture name.style.fontSize=${nameStyle?.fontSize}');
+    // ignore: avoid_print
+    print('CASE RIG $capture name.style.fontWeight=${nameStyle?.fontWeight}');
+    // ignore: avoid_print
+    print(
+      'CASE RIG $capture name.style.letterSpacing='
+      '${nameStyle?.letterSpacing}',
+    );
+    // ignore: avoid_print
+    print('CASE RIG $capture name.style.wordSpacing=${nameStyle?.wordSpacing}');
+    // ignore: avoid_print
+    print('CASE RIG $capture name.style.height=${nameStyle?.height}');
+    // ignore: avoid_print
+    print('CASE RIG $capture name.textScaler=${nameParagraph.textScaler}');
+    // ignore: avoid_print
+    print('CASE RIG $capture name.locale=${nameParagraph.locale}');
+    // ignore: avoid_print
+    print(
+      'CASE RIG $capture name.getMaxIntrinsicWidth='
+      '${nameParagraph.getMaxIntrinsicWidth(double.infinity)}',
+    );
+
+    final RenderParagraph youParagraph = tester.renderObject<RenderParagraph>(
+      find.descendant(
+        of: find.byKey(const Key('board-seat-you')),
+        matching: find.byType(RichText),
+      ),
+    );
+    final TextSpan youSpan = youParagraph.text as TextSpan;
+    // ignore: avoid_print
+    print('CASE RIG $capture you.size=${youParagraph.size}');
+    // ignore: avoid_print
+    print('CASE RIG $capture you.style.fontSize=${youSpan.style?.fontSize}');
+
+    final TextPainter painter = TextPainter(
+      text: nameParagraph.text,
+      textScaler: nameParagraph.textScaler,
+      textDirection: nameParagraph.textDirection,
+      locale: nameParagraph.locale,
+    )..layout();
+    // ignore: avoid_print
+    print('CASE RIG $capture name.textPainter.width=${painter.width}');
+    painter.dispose();
+  } catch (error) {
+    // ignore: avoid_print
+    print('CASE RIG $capture probe-error $error');
+  }
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
