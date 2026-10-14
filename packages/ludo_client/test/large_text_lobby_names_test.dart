@@ -1,6 +1,11 @@
-// Measurement for X52 and X53, order 345, run 88. No implementation exists
-// or is ordered yet; this file does not merge alone and is expected mostly
-// RED.
+// Order 350, run 89. Proves C-347's acceptance: lobby seat-card names at
+// large text (group X52) and the five decisions C-347 made about that grid
+// (group A). Split from test/large_text_names_test.dart, which also held
+// the X53 own-seat-chip measurement (groups X53, B, C) -- nine cases red on
+// a finding with no fix yet, which would turn main red if merged with
+// C-347's half tonight. That half is unchanged, including this file's own
+// provenance comments and helpers, on the pushed branch `measure/x53-chip`
+// at 1c842bc; X53's work continues there.
 //
 // Based on test/large_text_fit_test.dart: real fonts (Poppins, Noto Sans
 // Arabic), the ambient MediaQuery text scale overridden through
@@ -16,22 +21,14 @@
 // the player; Samantha12 at seat 1) so every chip this file reads is one
 // that actually has ten characters to cut.
 //
-// X53's own-seat-chip reading matches the order's own wording literally:
+// X52's seat-card name reading matches the order's own wording literally:
 // ellipsis is read off the live RenderParagraph's own didExceedMaxLines,
-// not a fresh TextPainter rebuilt from it (large_text_fit_test.dart's own
-// `_painterFor` precedent is for its banner/countdown text, which the
-// ambient text scaler actually reaches; board.dart's name and "You" labels
-// are painted with `TextScaler.noScaling` and an explicit `fontSize` set by
-// the chip's own fitting math, so the live paragraph's resolved TextSpan
-// style already carries the number this file reports). X52's seat-card
-// name has no such override (lobby_screen.dart / seat_card.dart set no
-// font size and no textScaler on it), so the ambient scale reaches it
-// directly; the same live-paragraph reading applies to it too, for one
-// rule in this file rather than two.
+// not a fresh TextPainter rebuilt from it. lobby_screen.dart / seat_card.dart
+// set no font size and no textScaler on the name, so the ambient scale
+// reaches it directly and this live-paragraph reading is sufficient.
 //
-// No pumpAndSettle (a turn arms a one-second countdown). No bare
-// pumpEventQueue() inside a testWidgets body. The controller is disposed in
-// the test body.
+// No pumpAndSettle inside a testWidgets body. No bare pumpEventQueue(). The
+// controller is disposed in the test body.
 
 import 'dart:convert';
 import 'dart:math' as math;
@@ -43,9 +40,6 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
-import 'package:ludo_client/src/board.dart' show LudoBoard;
-import 'package:ludo_client/src/feedback.dart';
-import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
@@ -79,8 +73,6 @@ const String _shortNameC = 'Cy';
 /// operator) rather than typed out by hand so its length is exactly right
 /// by construction, not by counting.
 final String _longName40 = List<String>.filled(4, _mySeatName).join();
-
-const Key _boardKey = Key('game-screen-board');
 
 // The order's own matrix: 360x640, 411x704 (the CI emulator); text scales
 // 1.0, 1.3, 2.0; locales en and ar.
@@ -137,37 +129,6 @@ List<Map<String, Object?>> _twoSeats() => <Map<String, Object?>>[
   _seatJson(1, name: _otherSeatName),
 ];
 
-Map<String, Object?> _turnJson({required int seat, required String phase}) =>
-    <String, Object?>{
-      'seat': seat,
-      'phase': phase,
-      'deadline_ms': 45000,
-      'k': 0,
-    };
-
-Map<String, Object?> _gameRoomJson({
-  required List<Map<String, Object?>> seats,
-  Map<String, Object?>? turn,
-}) => <String, Object?>{
-  'code': 'K7M2QP',
-  'state': 'PLAYING',
-  'host_seat': 0,
-  'players': 2,
-  'rules': <String, Object?>{
-    'blocks': true,
-    'capture_bonus': true,
-    'turn_seconds': 45,
-  },
-  'chain_commit': 'a' * 64,
-  'chain_index': 0,
-  'game_id': null,
-  'client_seeds': null,
-  'seats': seats,
-  'turn': turn,
-  'winner': null,
-  'seq': 1,
-};
-
 /// [seats] and [players] default to the two-seat room every existing case
 /// in this file mounts; group A's 4-seat cases pass both explicitly.
 Map<String, Object?> _lobbyRoomJson({
@@ -209,11 +170,6 @@ class _Connector {
   }
 }
 
-class _FakeFeedbackService implements FeedbackService {
-  @override
-  void play(FeedbackCue cue) {}
-}
-
 typedef _Keep = void Function(RoomController controller);
 
 // ---------------------------------------------------------------------------
@@ -247,65 +203,6 @@ Widget _harness(
     },
     home: child,
   );
-}
-
-/// Registers the controller before the first await that can throw, so the
-/// caller's finally still disposes it. Copied from
-/// test/large_text_fit_test.dart's own `_connect`.
-Future<(RoomController, FakeTransport)> _connectGame(
-  WidgetTester tester,
-  _Keep keep, {
-  required List<Map<String, Object?>> seats,
-  Map<String, Object?>? turn,
-}) async {
-  final _Connector connector = _Connector();
-  final FakeTransport transport = FakeTransport();
-  connector.enqueue(transport);
-  final RoomController controller = RoomController(
-    serverUrl: Uri.parse(_testUrl),
-    connect: connector.call,
-  );
-  keep(controller);
-
-  final Future<void> future = controller.createRoom(name: 'Sam', players: 2);
-  await tester.runAsync(() => pumpEventQueue());
-  await tester.pump();
-  final String id = _idOf(transport.sentRaw.last);
-  transport.pushText(
-    _frame(
-      type: 'seat_assigned',
-      data: <String, Object?>{'seat': 0, 'seat_token': 'tok-0'},
-    ),
-  );
-  transport.pushText(
-    _frame(
-      type: 'room',
-      re: id,
-      data: _gameRoomJson(seats: seats, turn: turn),
-    ),
-  );
-  await future;
-  return (controller, transport);
-}
-
-Future<void> _mountGame(
-  WidgetTester tester,
-  RoomController controller, {
-  required Locale locale,
-  required double textScale,
-}) async {
-  await tester.pumpWidget(
-    _harness(
-      FeedbackScope(
-        settings: FeedbackSettings.forTest(),
-        service: _FakeFeedbackService(),
-        child: GameScreen(controller: controller),
-      ),
-      locale: locale,
-      textScale: textScale,
-    ),
-  );
-  await tester.pump();
 }
 
 /// Mounts a host `LobbyScreen` (seat 0) for a [players]-seat room, pushes
@@ -382,8 +279,9 @@ Future<void> _mountLobby(
 /// controller is disposed here even if [body] throws.
 ///
 /// [insets], when given, is set on both `tester.view.padding` and
-/// `tester.view.viewPadding` (group C: the system bars a real phone leaves
-/// around the game screen), reset alongside the physical size.
+/// `tester.view.viewPadding` (a real phone's system bars; no case in this
+/// file sets it, the parameter stays with the shared helper), reset
+/// alongside the physical size.
 Future<void> _surface(
   WidgetTester tester,
   Size size,
@@ -443,13 +341,9 @@ Future<void> _loadAppFonts() async {
 
 // ---------------------------------------------------------------------------
 // Measurement plumbing: find a Text's live RenderParagraph and read its own
-// didExceedMaxLines and resolved (painted) font size directly off it,
-// following test/end_card_labels_fit_test.dart's own `_textFinder` /
-// `_paragraphOf` precedent but stopping short of rebuilding a fresh
-// TextPainter: the order asks for "didExceedMaxLines on the live
-// RenderParagraph" and board.dart's own chip text is pinned to
-// TextScaler.noScaling with an explicit fontSize, so the live paragraph's
-// resolved TextSpan already carries the number painted.
+// didExceedMaxLines directly off it, following
+// test/end_card_labels_fit_test.dart's own `_textFinder` / `_paragraphOf`
+// precedent but stopping short of rebuilding a fresh TextPainter.
 // ---------------------------------------------------------------------------
 
 String _textOf(Text text) => text.data ?? text.textSpan?.toPlainText() ?? '';
@@ -467,14 +361,6 @@ RenderParagraph _paragraphOf(WidgetTester tester, Finder textFinder) {
     matching: find.byType(RichText),
   );
   return tester.renderObject<RenderParagraph>(rich);
-}
-
-/// The resolved fontSize of [paragraph]'s own text span, or null when its
-/// span is not a plain TextSpan (never the case for the Text widgets this
-/// file reads, which all set an explicit style).
-double? _paintedFontSize(RenderParagraph paragraph) {
-  final InlineSpan span = paragraph.text;
-  return span is TextSpan ? span.style?.fontSize : null;
 }
 
 void _print(String line) {
@@ -503,119 +389,6 @@ Future<List<FlutterErrorDetails>> _withCapturedFlutterErrors(
 
 void main() {
   setUpAll(_loadAppFonts);
-
-  // ===========================================================================
-  // X53: own seat's turn on the game screen. The board's width, whether the
-  // own-seat chip's name is ellipsized, and the painted font size of the
-  // name and of board-seat-you.
-  // ===========================================================================
-  group('X53: own seat chip at large text', () {
-    for (final Size surface in _surfaces) {
-      final String surfaceLabel = _surfaceLabel(surface);
-
-      for (final double scale in _scales) {
-        final String scaleLabel = scale.toStringAsFixed(1);
-
-        for (final Locale locale in _locales) {
-          final String label =
-              'X53 ${locale.languageCode} $surfaceLabel scale $scaleLabel';
-
-          testWidgets(label, (tester) async {
-            await _surface(tester, surface, (_Keep keep) async {
-              final (RoomController controller, _) = await _connectGame(
-                tester,
-                keep,
-                seats: _twoSeats(),
-                turn: _turnJson(seat: 0, phase: 'await_roll'),
-              );
-              await _mountGame(
-                tester,
-                controller,
-                locale: locale,
-                textScale: scale,
-              );
-
-              final double boardWidth = tester
-                  .getSize(find.byKey(_boardKey))
-                  .width;
-
-              final Finder nameChip = find.byKey(
-                const Key('board-seat-name-0'),
-              );
-              expect(
-                nameChip,
-                findsOneWidget,
-                reason:
-                    'fixture ($label): board-seat-name-0 must be on the '
-                    'board',
-              );
-              final Finder nameText = _textFinderByData(nameChip, _mySeatName);
-              expect(
-                nameText,
-                findsOneWidget,
-                reason:
-                    'fixture ($label): seat 0 name text "$_mySeatName" '
-                    'must be inside its chip',
-              );
-              final RenderParagraph nameParagraph = _paragraphOf(
-                tester,
-                nameText,
-              );
-              final bool nameEllipsized = nameParagraph.didExceedMaxLines;
-              final double? nameFontSize = _paintedFontSize(nameParagraph);
-
-              final Finder youText = find.byKey(const Key('board-seat-you'));
-              expect(
-                youText,
-                findsOneWidget,
-                reason:
-                    'fixture ($label): board-seat-you must be in seat 0\'s '
-                    'chip',
-              );
-              final RenderParagraph youParagraph = _paragraphOf(
-                tester,
-                youText,
-              );
-              final bool youEllipsized = youParagraph.didExceedMaxLines;
-              final double? youFontSize = _paintedFontSize(youParagraph);
-
-              _print(
-                'CASE $label boardWidth=${boardWidth.toStringAsFixed(1)} '
-                'nameEllipsized=$nameEllipsized '
-                'nameFontSize=${nameFontSize?.toStringAsFixed(1)} '
-                'youEllipsized=$youEllipsized '
-                'youFontSize=${youFontSize?.toStringAsFixed(1)}',
-              );
-
-              expect(
-                nameEllipsized,
-                isFalse,
-                reason:
-                    '$label: own seat name "$_mySeatName" must not be '
-                    'ellipsized (board width '
-                    '${boardWidth.toStringAsFixed(1)})',
-              );
-              expect(
-                youFontSize,
-                isNotNull,
-                reason:
-                    '$label: board-seat-you must resolve a TextSpan with an '
-                    'explicit fontSize',
-              );
-              expect(
-                youFontSize!,
-                greaterThanOrEqualTo(9.0),
-                reason:
-                    '$label: "You" painted font size '
-                    '${youFontSize.toStringAsFixed(1)} must be at least 9 '
-                    '(board width ${boardWidth.toStringAsFixed(1)})',
-              );
-            });
-          });
-        }
-      }
-    }
-  });
 
   // ===========================================================================
   // X52: host lobby, both seats taken. Whether each seat card's name
@@ -691,11 +464,9 @@ void main() {
   });
 
   // ===========================================================================
-  // Order 346, group A: C-347 (X52) acceptance, host lobby, mounted the way
-  // this file already mounts it. No implementation of C-347 exists on this
-  // base; per the order, A1 is expected to pass (decision 2's two-up case
-  // is also today's only layout) and A2/A3 are expected to fail (today's
-  // grid is always two-up, never one-up).
+  // Group A: C-347's five decisions about the lobby seat-card grid, host
+  // lobby, mounted the same way group X52 mounts it. C-347's code is
+  // present on this branch; every case below runs against it and is green.
   // ===========================================================================
   group('A: C-347 (X52) decisions', () {
     // A1. Decision 2: two 10-character names stay two to a row at 1.3 on
@@ -1168,184 +939,5 @@ void main() {
         );
       });
     });
-  });
-
-  // ===========================================================================
-  // Order 346, group B: X53 measurement, the board alone. No implementation
-  // of X53 exists or is ordered; this group measures and prints, asserting
-  // only that the own-seat name is not ellipsized.
-  // ===========================================================================
-  group('B: X53 measurement, board alone at a range of widths', () {
-    const List<double> boardWidths = <double>[300, 312, 325, 344, 395];
-    const List<double> boardScales = <double>[1.0, 2.0];
-
-    for (final double width in boardWidths) {
-      for (final double scale in boardScales) {
-        for (final Locale locale in _locales) {
-          final String label =
-              'B (X53 board alone) ${locale.languageCode} '
-              'W=${width.toInt()} scale ${scale.toStringAsFixed(1)}';
-
-          testWidgets(label, (tester) async {
-            await tester.pumpWidget(
-              _harness(
-                Scaffold(
-                  body: Center(
-                    child: SizedBox(
-                      width: width,
-                      height: width,
-                      child: Builder(
-                        builder: (BuildContext context) {
-                          final AppLocalizations loc = AppLocalizations.of(
-                            context,
-                          );
-                          return LudoBoard(
-                            tokens: const <int, List<int>>{
-                              0: <int>[-1, -1, -1, -1],
-                              1: <int>[-1, -1, -1, -1],
-                            },
-                            seatsInPlay: const <int>[0, 1],
-                            mySeat: 0,
-                            seatNames: const <int, String>{
-                              0: _mySeatName,
-                              1: _otherSeatName,
-                            },
-                            youLabel: loc.seatYou,
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                ),
-                locale: locale,
-                textScale: scale,
-              ),
-            );
-            await tester.pump();
-
-            final Finder nameChip = find.byKey(const Key('board-seat-name-0'));
-            expect(
-              nameChip,
-              findsOneWidget,
-              reason:
-                  'fixture ($label): board-seat-name-0 must be on the board',
-            );
-            final Finder nameText = _textFinderByData(nameChip, _mySeatName);
-            expect(
-              nameText,
-              findsOneWidget,
-              reason:
-                  'fixture ($label): seat 0 name text "$_mySeatName" must '
-                  'be inside its chip',
-            );
-            final RenderParagraph nameParagraph = _paragraphOf(
-              tester,
-              nameText,
-            );
-            final bool nameEllipsized = nameParagraph.didExceedMaxLines;
-            final double? nameFontSize = _paintedFontSize(nameParagraph);
-
-            final Finder youText = find.byKey(const Key('board-seat-you'));
-            expect(
-              youText,
-              findsOneWidget,
-              reason:
-                  "fixture ($label): board-seat-you must be in seat 0's "
-                  'chip',
-            );
-            final RenderParagraph youParagraph = _paragraphOf(tester, youText);
-            final double? youFontSize = _paintedFontSize(youParagraph);
-
-            _print(
-              'CASE $label nameEllipsized=$nameEllipsized '
-              'nameFontSize=${nameFontSize?.toStringAsFixed(1)} '
-              'youFontSize=${youFontSize?.toStringAsFixed(1)}',
-            );
-
-            expect(
-              nameEllipsized,
-              isFalse,
-              reason:
-                  '$label: own seat name "$_mySeatName" must not be '
-                  'ellipsized (board width ${width.toStringAsFixed(1)})',
-            );
-          });
-        }
-      }
-    }
-  });
-
-  // ===========================================================================
-  // Order 346, group C: X53 measurement, the whole game screen with system
-  // bars. Same mount as the file's own X53 game cases, with
-  // tester.view.padding/viewPadding standing in for a phone's status and
-  // navigation bars.
-  // ===========================================================================
-  group('C: X53 measurement, whole game screen with system bars', () {
-    const FakeViewPadding systemBars = FakeViewPadding(top: 24, bottom: 48);
-
-    for (final double scale in <double>[1.0, 2.0]) {
-      for (final Locale locale in _locales) {
-        final String label =
-            'C (X53 game screen, system bars) ${locale.languageCode} '
-            '411x704 scale ${scale.toStringAsFixed(1)}';
-
-        testWidgets(label, (tester) async {
-          await _surface(tester, const Size(411, 704), (_Keep keep) async {
-            final (RoomController controller, _) = await _connectGame(
-              tester,
-              keep,
-              seats: _twoSeats(),
-              turn: _turnJson(seat: 0, phase: 'await_roll'),
-            );
-            await _mountGame(
-              tester,
-              controller,
-              locale: locale,
-              textScale: scale,
-            );
-
-            final double boardWidth = tester
-                .getSize(find.byKey(_boardKey))
-                .width;
-
-            final Finder nameChip = find.byKey(const Key('board-seat-name-0'));
-            expect(
-              nameChip,
-              findsOneWidget,
-              reason:
-                  'fixture ($label): board-seat-name-0 must be on the board',
-            );
-            final Finder nameText = _textFinderByData(nameChip, _mySeatName);
-            expect(
-              nameText,
-              findsOneWidget,
-              reason:
-                  'fixture ($label): seat 0 name text "$_mySeatName" must '
-                  'be inside its chip',
-            );
-            final RenderParagraph nameParagraph = _paragraphOf(
-              tester,
-              nameText,
-            );
-            final bool nameEllipsized = nameParagraph.didExceedMaxLines;
-
-            _print(
-              'CASE $label boardWidth=${boardWidth.toStringAsFixed(1)} '
-              'nameEllipsized=$nameEllipsized',
-            );
-
-            expect(
-              nameEllipsized,
-              isFalse,
-              reason:
-                  '$label: own seat name "$_mySeatName" must not be '
-                  'ellipsized under system-bar insets (board width '
-                  '${boardWidth.toStringAsFixed(1)})',
-            );
-          }, insets: systemBars);
-        });
-      }
-    }
   });
 }
