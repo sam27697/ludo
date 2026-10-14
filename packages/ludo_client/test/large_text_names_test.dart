@@ -49,7 +49,8 @@ import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
-import 'package:ludo_client/src/theme.dart' show buildAppTheme, kSpace2;
+import 'package:ludo_client/src/theme.dart'
+    show buildAppTheme, kSpace1, kSpace2, kSpace6;
 
 import 'net/fake_transport.dart';
 
@@ -799,8 +800,9 @@ void main() {
       const String label =
           'A3 (C-347 decision 1, whole grid) en 360x640 scale 1.0';
       const String longName = 'AlexanderChristoph';
+      const double surfaceWidth = 360;
 
-      await _surface(tester, const Size(360, 640), (_Keep keep) async {
+      await _surface(tester, const Size(surfaceWidth, 640), (_Keep keep) async {
         await _mountLobby(
           tester,
           keep,
@@ -862,29 +864,36 @@ void main() {
               'inside lobby-seat-3',
         );
 
-        final double halfCardWidth = tester
-            .getSize(find.byKey(const Key('lobby-seat-0')))
-            .width;
-        // The name sits under two nested `Expanded`s (seat_card.dart's own,
-        // then lobby_screen.dart's row-level one): `.first` is the nearer
-        // one, whose width is the half-width card's own text column.
-        final double halfAvailable = tester
-            .getSize(
-              find
-                  .ancestor(
-                    of: shortNameFinder,
-                    matching: find.byType(Expanded),
-                  )
-                  .first,
-            )
-            .width;
-        // Today's grid is always two cards to a row: a row's own total
-        // width is 2 * halfCardWidth + kSpace2 (the gap the Row puts
-        // between the two Expanded cards). The furniture around the
-        // name (token disc, paddings, gap) is fixed regardless of card
-        // width, so it cancels out of the difference between the two
-        // available widths.
-        final double fullAvailable = halfAvailable + halfCardWidth + kSpace2;
+        // Fixture sanity: the half-width and full-width name boxes,
+        // computed from the surface and the lobby's own geometry alone,
+        // never read off the grid under test. (RETURN 1, run 89: today's
+        // grid already lays out one card per row on the base this file
+        // also runs against, so a live card picked up the full-width box
+        // for both halfAvailable and fullAvailable, and the sanity check
+        // below failed before any product assertion was reached.)
+        //
+        // lobby_screen.dart's `_connectedBody` pads its scroll body
+        // `kSpace6` on each side (`EdgeInsets.fromLTRB(kSpace6, ...,
+        // kSpace6, ...)`), so the grid itself gets `surfaceWidth - 2 *
+        // kSpace6` (360 - 48 = 312 at this surface). `_seatGrid`'s two-up
+        // row splits that width around one `kSpace2` gap between its two
+        // `Expanded` cards; its one-up row hands a single `Expanded` the
+        // whole grid width, no gap.
+        //
+        // Inside either card, seat_card.dart's `SeatCard.build` pads
+        // `kSpace2` on each side, then reserves `kSpace6` for the token
+        // disc's own slot and `kSpace1` for the gap after it before the
+        // name's own `Expanded` starts. C-347 (c412e6d) renamed these three
+        // literals to exported constants but did not change their values,
+        // so the arithmetic below holds on both the base this file also
+        // runs against and the tree under test.
+        const double gridWidth = surfaceWidth - 2 * kSpace6;
+        const double halfCardWidth = (gridWidth - kSpace2) / 2;
+        const double fullCardWidth = gridWidth;
+        double nameAvailable(double cardWidth) =>
+            cardWidth - (2 * kSpace2) - kSpace6 - kSpace1;
+        final double halfAvailable = nameAvailable(halfCardWidth);
+        final double fullAvailable = nameAvailable(fullCardWidth);
         final double candidateWidth = naturalWidth(longName);
 
         _print(
