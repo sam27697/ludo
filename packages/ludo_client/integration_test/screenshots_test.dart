@@ -5155,7 +5155,7 @@ void main() {
   // over a hand-held RoomController, never through this rig's own
   // HomeScreen -> RoomRoute -> LobbyScreen -> RoomRoute (latched) ->
   // GameScreen route, and it never touches LobbyScreen or the end card at
-  // all. These four captures put the large-text game screen, the
+  // all. These five captures put the large-text game screen, the
   // large-text lobby and the large-text end card in front of the master
   // for the first time, staged the way captures 03/04/22 already are (same
   // harness, _stubScreenshotChannel, convertFlutterSurfaceToImage, cleared
@@ -5177,16 +5177,16 @@ void main() {
   // last capture, and again in addTearDown as a backstop if the body
   // throws first.
   //
-  // Each of the four captures below mounts its own HomeScreen and its own
+  // Each of the five captures below mounts its own HomeScreen and its own
   // RoomController (through a fresh _ScreenshotControllerFactory), the way
   // every other multi-capture block in this file mounts one continuous
-  // flow per testWidgets -- except here the four flows are independent
+  // flow per testWidgets -- except here the five flows are independent
   // (different screens, alternating locales), so each one's controller is
   // retired with an explicit dispose() in a finally block, immediately
   // after that capture's own screenshot, the same "this screen created it,
   // this screen retires it" rule home_screen.dart's own _createRoom
   // follows -- rather than deferred to this test's own addTearDown, which
-  // runs once, after all four, and only for whichever controller is still
+  // runs once, after all five, and only for whichever controller is still
   // live when the body throws.
   //
   // Capture 39 ("the same two names seated") is staged with exactly two
@@ -6053,8 +6053,24 @@ void main() {
     // _reconnectingCaptureHarness, since _ScreenshotHarness itself only
     // ever starts in English). Every assertion capture 39 makes before its
     // shot, repeated here for 'ar'.
+    //
+    // Unlike 38 (preceded by 37's _ScreenshotHarness tree) and 40
+    // (preceded by 39's _ScreenshotHarness tree), this capture's immediate
+    // predecessor (40) is built from the very same
+    // _reconnectingCaptureHarness(HomeScreen, locale: ar) shape. Two
+    // pumpWidget calls of identical widget type at every depth do not tear
+    // the tree down -- Flutter's own element diffing updates the existing
+    // elements in place instead of unmounting and remounting -- so the
+    // Navigator mounted for 40 would otherwise carry 40's own pushed route
+    // (RoomRoute -> GameScreen -> the loser's end card) straight into 41,
+    // and _expectHomeScreen below would find GameScreen still on screen,
+    // not HomeScreen. Pumping a widget of a different shape first forces
+    // the old element tree (and the stale route riding on it) to unmount
+    // before 41's own fresh HomeScreen is mounted.
     // ------------------------------------------------------------------
     await (await SharedPreferences.getInstance()).clear();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
     final factory41 = _ScreenshotControllerFactory();
     RoomController? controller41;
     try {
@@ -6214,12 +6230,21 @@ void _printChipRigProbe(
     final Size physicalSize = tester.view.physicalSize;
     final double devicePixelRatio = tester.view.devicePixelRatio;
     final Size logicalSize = physicalSize / devicePixelRatio;
+    // Size.toString() is one of the dart:ui overrides the device's profile
+    // build strips (see _expectRectInsideView's own doc comment on
+    // Rect.toString, run 61, order 207's RETURN 1); every Size below is
+    // printed as its own width and height doubles instead, never through
+    // its own toString.
     // ignore: avoid_print
-    print('CASE RIG $capture view.physicalSize=$physicalSize');
+    print('CASE RIG $capture view.physicalSize.width=${physicalSize.width}');
+    // ignore: avoid_print
+    print('CASE RIG $capture view.physicalSize.height=${physicalSize.height}');
     // ignore: avoid_print
     print('CASE RIG $capture view.devicePixelRatio=$devicePixelRatio');
     // ignore: avoid_print
-    print('CASE RIG $capture view.logicalSize=$logicalSize');
+    print('CASE RIG $capture view.logicalSize.width=${logicalSize.width}');
+    // ignore: avoid_print
+    print('CASE RIG $capture view.logicalSize.height=${logicalSize.height}');
     final physicalPadding = tester.view.padding;
     final physicalViewPadding = tester.view.viewPadding;
     // ignore: avoid_print
@@ -6254,14 +6279,18 @@ void _printChipRigProbe(
         .first;
     final double side = boardBox.size.width;
     // ignore: avoid_print
-    print('CASE RIG $capture board.size=${boardBox.size}');
+    print('CASE RIG $capture board.size.width=${boardBox.size.width}');
+    // ignore: avoid_print
+    print('CASE RIG $capture board.size.height=${boardBox.size.height}');
     // ignore: avoid_print
     print('CASE RIG $capture board.cellSize=${side / 15}');
 
     final Finder chipFinder = find.byKey(Key('board-seat-name-$seat'));
     final RenderBox chipBox = tester.renderObject<RenderBox>(chipFinder);
     // ignore: avoid_print
-    print('CASE RIG $capture chip.size=${chipBox.size}');
+    print('CASE RIG $capture chip.size.width=${chipBox.size.width}');
+    // ignore: avoid_print
+    print('CASE RIG $capture chip.size.height=${chipBox.size.height}');
 
     final RenderParagraph nameParagraph = tester.renderObject<RenderParagraph>(
       find.descendant(of: chipFinder, matching: find.byType(RichText)).first,
@@ -6269,7 +6298,9 @@ void _printChipRigProbe(
     final TextSpan nameSpan = nameParagraph.text as TextSpan;
     final TextStyle? nameStyle = nameSpan.style;
     // ignore: avoid_print
-    print('CASE RIG $capture name.size=${nameParagraph.size}');
+    print('CASE RIG $capture name.size.width=${nameParagraph.size.width}');
+    // ignore: avoid_print
+    print('CASE RIG $capture name.size.height=${nameParagraph.size.height}');
     // ignore: avoid_print
     print(
       'CASE RIG $capture name.didExceedMaxLines='
@@ -6284,8 +6315,13 @@ void _printChipRigProbe(
     );
     // ignore: avoid_print
     print('CASE RIG $capture name.style.fontSize=${nameStyle?.fontSize}');
+    // FontWeight.toString() is stripped the same way Size's is; print its
+    // own numeric value (100-900) instead.
     // ignore: avoid_print
-    print('CASE RIG $capture name.style.fontWeight=${nameStyle?.fontWeight}');
+    print(
+      'CASE RIG $capture name.style.fontWeight.value='
+      '${nameStyle?.fontWeight?.value}',
+    );
     // ignore: avoid_print
     print(
       'CASE RIG $capture name.style.letterSpacing='
@@ -6295,8 +6331,13 @@ void _printChipRigProbe(
     print('CASE RIG $capture name.style.wordSpacing=${nameStyle?.wordSpacing}');
     // ignore: avoid_print
     print('CASE RIG $capture name.style.height=${nameStyle?.height}');
+    // TextScaler's toString is stripped the same way; print the number it
+    // actually scales 1 logical pixel to instead.
     // ignore: avoid_print
-    print('CASE RIG $capture name.textScaler=${nameParagraph.textScaler}');
+    print(
+      'CASE RIG $capture name.textScaler.scale(1)='
+      '${nameParagraph.textScaler.scale(1)}',
+    );
     // ignore: avoid_print
     print('CASE RIG $capture name.locale=${nameParagraph.locale}');
     // ignore: avoid_print
@@ -6313,7 +6354,9 @@ void _printChipRigProbe(
     );
     final TextSpan youSpan = youParagraph.text as TextSpan;
     // ignore: avoid_print
-    print('CASE RIG $capture you.size=${youParagraph.size}');
+    print('CASE RIG $capture you.size.width=${youParagraph.size.width}');
+    // ignore: avoid_print
+    print('CASE RIG $capture you.size.height=${youParagraph.size.height}');
     // ignore: avoid_print
     print('CASE RIG $capture you.style.fontSize=${youSpan.style?.fontSize}');
 
