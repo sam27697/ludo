@@ -1668,6 +1668,20 @@ class _LastTableChip extends StatelessWidget {
       _ => loc.homePlayersFour,
     };
     final String label = '$name · $seatsLabel';
+    // C-351: at a system text scale of 1.5 and above the label may wrap to
+    // a second line; below that nothing changes (one line, ellipsis). The
+    // scale is read off the ambient TextScaler at this chip's own font
+    // size, never off the platform directly, so it answers "how much
+    // bigger is this text actually drawn", not "what did the OS report".
+    final double scaleAtLabel =
+        MediaQuery.textScalerOf(context).scale(kTypeLabel) / kTypeLabel;
+    final int maxLines = scaleAtLabel >= 1.5 ? 2 : 1;
+    // The break may only fall between the name and the seat count: the
+    // space that glues name to "·" is non-breaking, and every space inside
+    // the seat label is made non-breaking too, leaving the single plain
+    // space after "·" as the only place Flutter's line breaker can act.
+    final String seatsNoBreak = seatsLabel.replaceAll(' ', ' ');
+    final String painted = '$name · $seatsNoBreak';
     return Center(
       child: Semantics(
         container: true,
@@ -1687,8 +1701,8 @@ class _LastTableChip extends StatelessWidget {
               vertical: kSpace2,
             ),
             child: Text(
-              label,
-              maxLines: 1,
+              painted,
+              maxLines: maxLines,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
               style: textTheme.labelLarge?.copyWith(
