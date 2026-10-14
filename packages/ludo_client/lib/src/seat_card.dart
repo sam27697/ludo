@@ -12,6 +12,56 @@ import 'theme.dart';
 /// Every card in the lobby grid is at least this tall (C-254 rule 3).
 const double kSeatCardMinHeight = 56;
 
+// C-347: the fixed-width chrome [SeatCard.build] lays its own padding,
+// token disc and offline icon out with, named and exported so the lobby
+// grid's own column-count measurement (`lobby_screen.dart`'s `_seatGrid`)
+// reads the exact same numbers rather than guessing at them from outside.
+// Nothing below changes what the card looks like; each name here is the
+// literal already in [SeatCard.build], given a name.
+
+/// The card's own horizontal padding, each side.
+const double kSeatCardHorizontalPadding = kSpace2;
+
+/// The width of the token disc's own slot at the row's start.
+const double kSeatCardTokenSlotWidth = kSpace6;
+
+/// The gap between the token disc's slot and the name.
+const double kSeatCardTokenGap = kSpace1;
+
+/// The gap between the name and the offline icon, on a seat that shows one.
+const double kSeatCardOfflineIconGap = kSpace1;
+
+/// The offline icon's own width, on a seat that shows one.
+const double kSeatCardOfflineIconWidth = kSpace5;
+
+/// The width the name `Text` actually gets inside a card [cardWidth] wide,
+/// once the card's own padding, the token disc's slot, the gap after it,
+/// and -- on an [offline] seat -- the gap and icon before the wifi-off
+/// mark are taken out. Floors at zero rather than going negative, so a
+/// caller handing this straight to `TextPainter.layout`'s `maxWidth` never
+/// passes it a negative number.
+double seatCardNameWidth(double cardWidth, {required bool offline}) {
+  double width =
+      cardWidth -
+      (2 * kSeatCardHorizontalPadding) -
+      kSeatCardTokenSlotWidth -
+      kSeatCardTokenGap;
+  if (offline) {
+    width -= kSeatCardOfflineIconGap + kSeatCardOfflineIconWidth;
+  }
+  return width < 0 ? 0 : width;
+}
+
+/// The style the name `Text` actually paints in: the ambient
+/// `DefaultTextStyle` at [context] merged with the one override
+/// [SeatCard.build] itself applies to it, the name's colour. Exposed so a
+/// measurement taken outside the card (the lobby grid) uses the exact
+/// style the card paints with, not a guess at it.
+TextStyle seatCardNameStyle(BuildContext context, {required bool offline}) {
+  final Color nameColor = offline ? LudoColors.inkMuted : LudoColors.ink;
+  return DefaultTextStyle.of(context).style.merge(TextStyle(color: nameColor));
+}
+
 /// C-254 rule 1: one occupied seat. A rounded tile tinted in the seat's
 /// colour with a filled token disc at its start, the player's name with
 /// ellipsis, a "You" chip on the local seat, a crown on the host's seat,
@@ -37,13 +87,12 @@ class SeatCard extends StatelessWidget {
     final Color tileColor = offline
         ? LudoColors.inkMuted.withValues(alpha: 0.08)
         : seatColor.withValues(alpha: 0.16);
-    final Color nameColor = offline ? LudoColors.inkMuted : LudoColors.ink;
 
     return Container(
       key: Key('lobby-seat-${seat.seat}'),
       constraints: const BoxConstraints(minHeight: kSeatCardMinHeight),
       padding: const EdgeInsets.symmetric(
-        horizontal: kSpace2,
+        horizontal: kSeatCardHorizontalPadding,
         vertical: kSpace2,
       ),
       decoration: BoxDecoration(
@@ -72,8 +121,8 @@ class SeatCard extends StatelessWidget {
           // out that most of the badge clears the token and none of it
           // reaches the name's own box.
           SizedBox(
-            width: kSpace6,
-            height: kSpace6,
+            width: kSeatCardTokenSlotWidth,
+            height: kSeatCardTokenSlotWidth,
             child: Stack(
               clipBehavior: Clip.none,
               children: [
@@ -84,10 +133,13 @@ class SeatCard extends StatelessWidget {
                     shape: BoxShape.circle,
                   ),
                   child: SizedBox(
-                    width: kSpace6,
-                    height: kSpace6,
+                    width: kSeatCardTokenSlotWidth,
+                    height: kSeatCardTokenSlotWidth,
                     child: Center(
-                      child: SeatMark(seat: seat.seat, size: kSpace6 * 0.5),
+                      child: SeatMark(
+                        seat: seat.seat,
+                        size: kSeatCardTokenSlotWidth * 0.5,
+                      ),
                     ),
                   ),
                 ),
@@ -114,7 +166,7 @@ class SeatCard extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: kSpace1),
+          const SizedBox(width: kSeatCardTokenGap),
           // The name gets the row's own line to itself; the "You" tag
           // drops to a second, smaller line beneath it instead of
           // sharing the name's line with the crown and the offline icon
@@ -128,7 +180,7 @@ class SeatCard extends StatelessWidget {
                   seat.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: nameColor),
+                  style: seatCardNameStyle(context, offline: offline),
                 ),
                 if (isMine) ...[
                   const SizedBox(height: kSpaceTight),
@@ -164,10 +216,10 @@ class SeatCard extends StatelessWidget {
           // Rule 1's last line: a disconnected seat carries its own icon,
           // not only the muted tile and text (doctrine P9).
           if (offline) ...[
-            const SizedBox(width: kSpace1),
+            const SizedBox(width: kSeatCardOfflineIconGap),
             const Icon(
               Icons.wifi_off,
-              size: kSpace5,
+              size: kSeatCardOfflineIconWidth,
               color: LudoColors.inkMuted,
             ),
           ],

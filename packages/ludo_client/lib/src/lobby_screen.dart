@@ -775,12 +775,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
     );
   }
 
-  /// C-254 rules 1-3: the occupied seats (in `room.seats` order, never
-  /// re-sorted by seat number) followed by one open-seat placeholder per
-  /// seat nobody has taken yet, laid out two to a row. A plain `Row` of
-  /// each pair sits under the ambient `Directionality`, so Arabic mirrors
-  /// seat order to start at the right on its own; nothing here flips
-  /// anything by hand.
+  /// C-254 rules 1-3, C-347 decisions 1-3: the occupied seats (in
+  /// `room.seats` order, never re-sorted by seat number) followed by one
+  /// open-seat placeholder per seat nobody has taken yet. Two to a row
+  /// while every seated name still fits one line in the width it gets
+  /// inside a half-width card at the current text scale; one to a row,
+  /// for the whole grid at once, the moment any one of them does not. A
+  /// plain `Row` of each pair (or, one-up, of each single card) sits under
+  /// the ambient `Directionality`, so Arabic mirrors seat order to start
+  /// at the right on its own; nothing here flips anything by hand.
   Widget _seatGrid(
     AppLocalizations loc,
     RoomSnapshot room,
@@ -799,26 +802,88 @@ class _LobbyScreenState extends State<LobbyScreen> {
         OpenSeatCard(index: i, label: loc.lobbyOpenSeat),
     ];
 
-    final List<Widget> rows = [];
-    for (int i = 0; i < cards.length; i += 2) {
-      final bool hasSecond = i + 1 < cards.length;
-      rows.add(
-        Padding(
-          padding: const EdgeInsets.only(bottom: kSpace2),
-          child: IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(child: cards[i]),
-                const SizedBox(width: kSpace2),
-                Expanded(child: hasSecond ? cards[i + 1] : const SizedBox()),
-              ],
-            ),
-          ),
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final bool twoColumns = _seatedNamesFitTwoUp(
+          context,
+          room,
+          constraints,
+        );
+        final List<Widget> rows = [];
+        if (twoColumns) {
+          for (int i = 0; i < cards.length; i += 2) {
+            final bool hasSecond = i + 1 < cards.length;
+            rows.add(
+              Padding(
+                padding: const EdgeInsets.only(bottom: kSpace2),
+                child: IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(child: cards[i]),
+                      const SizedBox(width: kSpace2),
+                      Expanded(
+                        child: hasSecond ? cards[i + 1] : const SizedBox(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }
+        } else {
+          for (final Widget card in cards) {
+            rows.add(
+              Padding(
+                padding: const EdgeInsets.only(bottom: kSpace2),
+                child: Row(children: [Expanded(child: card)]),
+              ),
+            );
+          }
+        }
+        return Column(children: rows);
+      },
+    );
+  }
+
+  /// C-347 decision 1: true while every seated player's name, measured in
+  /// the card's own ambient style (`SeatCard`'s `DefaultTextStyle` merged
+  /// with its name colour) at the ambient `TextScaler`, still lays out to
+  /// one line inside the width that name would get in a half-width card --
+  /// the grid's own [constraints] width, less the gap between the two
+  /// columns, halved, less what `SeatCard` itself spends on padding, the
+  /// token disc and (on an offline seat) the wifi-off icon. False the
+  /// moment one name does not fit, so the whole grid drops to one column
+  /// together (decision 1's "every row switches together"). Every
+  /// `TextPainter` built to ask the question is disposed before this
+  /// returns.
+  bool _seatedNamesFitTwoUp(
+    BuildContext context,
+    RoomSnapshot room,
+    BoxConstraints constraints,
+  ) {
+    final double halfCardWidth = (constraints.maxWidth - kSpace2) / 2;
+    final TextDirection textDirection = Directionality.of(context);
+    final TextScaler textScaler = MediaQuery.textScalerOf(context);
+
+    bool allFit = true;
+    for (final SeatState seat in room.seats) {
+      final bool offline = !seat.connected;
+      final TextPainter painter = TextPainter(
+        text: TextSpan(
+          text: seat.name,
+          style: seatCardNameStyle(context, offline: offline),
         ),
-      );
+        textDirection: textDirection,
+        textScaler: textScaler,
+        maxLines: 1,
+      )..layout(maxWidth: seatCardNameWidth(halfCardWidth, offline: offline));
+      if (painter.didExceedMaxLines) {
+        allFit = false;
+      }
+      painter.dispose();
     }
-    return Column(children: rows);
+    return allFit;
   }
 
   /// C-254 rule 4: an icon plus the existing label `Text`, key and string
