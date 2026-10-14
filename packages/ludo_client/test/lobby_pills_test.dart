@@ -53,11 +53,15 @@
 //      interaction state.
 //   3. Contract rule 3 asks the resync pill's border and label to sit in
 //      the desync strip's `onErrorContainer` colour specifically. Order
-//      341's own "What to assert" checklist (its numbered items 1-7) is the
-//      authority for what this file proves, and its item 1 asks only for
-//      "colour alpha > 0" on the border, not a match to that exact hue; this
-//      file follows the order's checklist and does not add a separate
-//      onErrorContainer colour-match assertion beyond what the order lists.
+//      341's own "What to assert" checklist (its numbered items 1-7) asks
+//      only for "colour alpha > 0" on the border, not a match to that exact
+//      hue; this file originally followed the checklist alone. RETURN 1
+//      (run 88, defect 2) resolved that reading: it names the resync case
+//      explicitly as the one place this file must also check the resolved
+//      side colour and the resolved foreground colour against
+//      `Theme.of(context).colorScheme.onErrorContainer` read from the
+//      strip's own context, so items 1-3's resync case now does exactly
+//      that, in addition to (not instead of) the order's own alpha check.
 //   4. Item 4 (rule 2's background/ordering case) is wholly green on this
 //      tree, before order 340 lands, because none of its four sub-checks
 //      depend on that order: a bare `TextButton`'s own stock default
@@ -372,6 +376,22 @@ Future<_LobbyHarness> _mountConnectedHostLobby(
 /// `seq` does not follow the room's last seq (the mounted room above is
 /// seq 1; this pushes seq 9). That is what makes `lobby-resync-button`
 /// appear inside the desync strip on an otherwise ordinary connected lobby.
+///
+/// RETURN 1 (run 88, defect 1): that same seq gap also makes the controller
+/// send a background `resume` on this already-open transport
+/// (`RoomController._beginResync`, lib/src/net/room_controller.dart:1549),
+/// and flutter_test's own pending-timer invariant check runs before any
+/// `addTearDown` callback fires, so that `resume` request's outstanding
+/// timer has to be resolved here, inside the body, not left for tear-down.
+/// This ends it the same way test/lobby_screen_test.dart's own "rule 5"
+/// group does near its line 714: end the transport from the far side, which
+/// fails every request still pending on it with `ConnectionClosedException`
+/// and cancels that request's timer (`connection.dart`'s `_finishClosing`).
+/// `hasDesynced` stays true (only a successful reconnect clears it; ending
+/// the transport is not that), and `lobby-resync-button` stays reachable
+/// inside the strip regardless of phase (the banner renders on
+/// `hasDesynced` alone, not on `phase`), so every caller below still finds
+/// what it came to measure.
 Future<void> _desync(
   WidgetTester tester,
   FakeTransport transport,
@@ -398,6 +418,34 @@ Future<void> _desync(
         'set controller.hasDesynced (scenario: seq 9 pushed against room '
         'seq 1); it did not, so lobby-resync-button cannot be reached',
   );
+
+  transport.endFromFarSide();
+  await tester.pump();
+  await tester.pump();
+}
+
+/// A dispose callback that runs [controller.dispose] at most once.
+///
+/// RETURN 1 (run 88, defect 1) requires each case that desyncs to dispose
+/// the controller directly inside the test body -- flutter_test's
+/// pending-timer invariant check runs before any `addTearDown` callback
+/// fires, so a case with a resync pending cannot rely on `addTearDown`
+/// alone to beat that check (standing lesson: never dispose only via
+/// `addTearDown`) -- while still keeping `addTearDown` registered as a
+/// safety net for a case that throws before reaching the explicit call.
+/// `ChangeNotifier.dispose` throws if called a second time on an
+/// already-disposed notifier, so the callback this returns guards against
+/// that: whichever of the two call sites runs first actually disposes, and
+/// the other becomes a no-op.
+VoidCallback _disposeOnce(RoomController controller) {
+  bool disposed = false;
+  return () {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
+    controller.dispose();
+  };
 }
 
 // --- ButtonStyle resolution: widget style, then component theme, then
@@ -459,18 +507,22 @@ ButtonStyle? _ownStyleOf(Widget widget) {
 }
 
 /// What this file measures off a resolved [ButtonStyle]: enough to prove
-/// contract rule 1 (side, shape) and rule 2 (backgroundColor), at the
-/// enabled-and-at-rest state (ambiguity 2).
+/// contract rule 1 (side, shape), rule 2 (backgroundColor) and, for the
+/// resync case only (RETURN 1, run 88, defect 2), rule 3's foregroundColor
+/// against the desync strip's `onErrorContainer`, at the enabled-and-at-rest
+/// state (ambiguity 2).
 class _ResolvedButtonStyle {
   const _ResolvedButtonStyle({
     required this.side,
     required this.shape,
     required this.backgroundColor,
+    required this.foregroundColor,
   });
 
   final BorderSide? side;
   final OutlinedBorder? shape;
   final Color? backgroundColor;
+  final Color? foregroundColor;
 }
 
 const Set<WidgetState> _enabledAtRest = <WidgetState>{};
@@ -493,6 +545,9 @@ _ResolvedButtonStyle _resolveEnabledStyle(WidgetTester tester, Finder finder) {
     shape: resolve<OutlinedBorder?>((ButtonStyle? style) => style?.shape),
     backgroundColor: resolve<Color?>(
       (ButtonStyle? style) => style?.backgroundColor,
+    ),
+    foregroundColor: resolve<Color?>(
+      (ButtonStyle? style) => style?.foregroundColor,
     ),
   );
 }
@@ -571,7 +626,17 @@ void main() {
           tester,
           pill.key,
         );
-        addTearDown(harness.controller.dispose);
+        // RETURN 1 (run 88, defect 1): the resync case's _desync above left
+        // a resume request pending on the already-closed transport; a
+        // guarded dispose lets this body end it explicitly (beating
+        // flutter_test's pending-timer check, which runs before
+        // addTearDown fires) while addTearDown still covers a failure that
+        // throws before that point. Every other pill never desyncs, so its
+        // addTearDown alone is unchanged.
+        final VoidCallback disposeController = pill.key == _resyncKey
+            ? _disposeOnce(harness.controller)
+            : harness.controller.dispose;
+        addTearDown(disposeController);
 
         final Finder finder = find.byKey(pill.key);
         expect(
@@ -589,10 +654,25 @@ void main() {
           matching: find.byIcon(pill.icon),
         );
 
+        // RETURN 1 (run 88, defect 2): rule 3's onErrorContainer match,
+        // only reachable (and only required) for the resync pill, which
+        // alone sits inside the desync strip.
+        Color? expectedOnColour;
+        if (pill.key == _resyncKey) {
+          final BuildContext stripContext = tester.element(
+            find.byKey(const Key('lobby-desync-banner')),
+          );
+          expectedOnColour = Theme.of(stripContext)
+              .colorScheme
+              .onErrorContainer;
+        }
+
         _print(
-          'CASE ${pill.key}: side=${style.side} shape=${style.shape} '
+          'CASE ${pill.key}: side=${style.side} '
+          'foreground=${style.foregroundColor} shape=${style.shape} '
           'height=${size.height} icon=${pill.icon} '
-          'iconDescendants=${iconFinder.evaluate().length}',
+          'iconDescendants=${iconFinder.evaluate().length} '
+          'expectedOnColour=$expectedOnColour',
         );
 
         expect(
@@ -641,6 +721,28 @@ void main() {
               'rule 1/3: ${pill.key} rendered height must be >= 48; '
               'measured ${size.height}',
         );
+
+        if (pill.key == _resyncKey) {
+          expect(
+            style.side!.color,
+            expectedOnColour,
+            reason:
+                'rule 3: ${pill.key} resolved side colour must equal the '
+                "desync strip's onErrorContainer colour "
+                '($expectedOnColour); measured ${style.side!.color}',
+          );
+          expect(
+            style.foregroundColor,
+            expectedOnColour,
+            reason:
+                'rule 3: ${pill.key} resolved foreground colour must '
+                "equal the desync strip's onErrorContainer colour "
+                '($expectedOnColour); measured ${style.foregroundColor}',
+          );
+          // RETURN 1 (run 88, defect 1): dispose directly here, inside the
+          // body, ahead of addTearDown; see _disposeOnce.
+          disposeController();
+        }
       });
     }
   });
@@ -736,7 +838,13 @@ void main() {
             pill.key,
             locale: locale,
           );
-          addTearDown(harness.controller.dispose);
+          // RETURN 1 (run 88, defect 1): same guarded dispose as items
+          // 1-3's resync case, and for the same reason -- see
+          // _disposeOnce.
+          final VoidCallback disposeController = pill.key == _resyncKey
+              ? _disposeOnce(harness.controller)
+              : harness.controller.dispose;
+          addTearDown(disposeController);
 
           final Finder finder = find.byKey(pill.key);
           expect(
@@ -800,6 +908,12 @@ void main() {
                   'rule 4: ar, ${pill.key}\'s icon centre x ($iconX) must '
                   'be greater than its label centre x ($labelX)',
             );
+          }
+
+          if (pill.key == _resyncKey) {
+            // RETURN 1 (run 88, defect 1): dispose directly here, inside
+            // the body, ahead of addTearDown; see _disposeOnce.
+            disposeController();
           }
         });
       }
