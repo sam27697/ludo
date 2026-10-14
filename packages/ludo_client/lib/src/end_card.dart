@@ -24,6 +24,12 @@ import 'net/snapshot.dart' show RematchState;
 import 'theme.dart';
 import 'verify_rolls_button.dart';
 
+/// C-343 rule 1's floor: a name-carrying title never shrinks past this,
+/// even at system text scale 2.0. Only ever a ceiling on how far a title
+/// already at or above it may fall; a title that starts below it (a body
+/// style) is never pushed up to it (rule 3: scale 1.0 does not move).
+const double kEndCardTitleMinFontSize = 20;
+
 /// Built by `GameScreen._gameOverBody`; never constructed from a
 /// `RoomController` or a `RoomSnapshot` directly. [winnerSeat] and
 /// [winnerName] are already resolved against `room.seats` by the caller: a
@@ -244,21 +250,34 @@ class _EndCardState extends State<EndCard> {
     final String loseLine = stepsLeft != null && stepsLeft <= kNearFinishSquares
         ? loc.endLoseNear(stepsLeft)
         : loc.endLoseNudge;
+    final String titleText = loc.endLoseTitle(name);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        Text.rich(
-          TextSpan(
-            children: _nameHighlightSpans(
-              loc.endLoseTitle(name),
-              name,
-              seatColor,
-              titleStyle,
-            ),
-          ),
-          key: const Key('game-screen-winner'),
-          textAlign: TextAlign.center,
+        LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final TextStyle? fitStyle = _fitTitleFontSize(
+              text: titleText,
+              base: titleStyle,
+              maxWidth: constraints.maxWidth,
+              scaler: MediaQuery.textScalerOf(context),
+              direction: Directionality.of(context),
+              locale: Localizations.maybeLocaleOf(context),
+            );
+            return Text.rich(
+              TextSpan(
+                children: _nameHighlightSpans(
+                  titleText,
+                  name,
+                  seatColor,
+                  fitStyle,
+                ),
+              ),
+              key: const Key('game-screen-winner'),
+              textAlign: TextAlign.center,
+            );
+          },
         ),
         const SizedBox(height: kSpace2),
         Text(
@@ -333,13 +352,19 @@ class _EndCardState extends State<EndCard> {
     // Four tiles (or one, on the gap case) share the card's own width evenly
     // via `Expanded`. Each tile's text scales down on a single line under a
     // wide locale or a large text scale, never breaking inside a word or
-    // pushing the row past the card's edge.
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        for (final Widget tile in tiles) Expanded(child: tile),
-      ],
-    );
+    // pushing the row past the card's edge. Rule 2 (C-343): a fixed
+    // `kSpace2` gutter between every pair, a real empty strip rather than
+    // a gap hoped for from the label's own scale-down -- at a large scale
+    // the scaled-down label fills its tile edge to edge, so without this
+    // the gutter would be zero.
+    final List<Widget> row = <Widget>[];
+    for (int i = 0; i < tiles.length; i++) {
+      if (i > 0) {
+        row.add(const SizedBox(width: kSpace2));
+      }
+      row.add(Expanded(child: tiles[i]));
+    }
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: row);
   }
 
   Widget _statTile({
@@ -567,6 +592,7 @@ class _EndCardState extends State<EndCard> {
       }
       final String byName = widget.rematchByName ?? '';
       final TextStyle? bodyStyle = Theme.of(context).textTheme.bodyLarge;
+      final String askText = loc.endRematchAsk(byName);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -574,17 +600,29 @@ class _EndCardState extends State<EndCard> {
             leftLine,
             const SizedBox(height: kSpace2),
           ],
-          Text.rich(
-            TextSpan(
-              children: _nameHighlightSpans(
-                loc.endRematchAsk(byName),
-                byName,
-                _seatColor(rematch.by),
-                bodyStyle,
-              ),
-            ),
-            key: const Key('end-card-rematch-ask'),
-            textAlign: TextAlign.center,
+          LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final TextStyle? fitStyle = _fitTitleFontSize(
+                text: askText,
+                base: bodyStyle,
+                maxWidth: constraints.maxWidth,
+                scaler: MediaQuery.textScalerOf(context),
+                direction: Directionality.of(context),
+                locale: Localizations.maybeLocaleOf(context),
+              );
+              return Text.rich(
+                TextSpan(
+                  children: _nameHighlightSpans(
+                    askText,
+                    byName,
+                    _seatColor(rematch.by),
+                    fitStyle,
+                  ),
+                ),
+                key: const Key('end-card-rematch-ask'),
+                textAlign: TextAlign.center,
+              );
+            },
           ),
           const SizedBox(height: kSpace3),
           _rematchButton(loc),
@@ -724,6 +762,62 @@ List<InlineSpan> _nameHighlightSpans(
     ),
     if (after.isNotEmpty) TextSpan(text: after, style: baseStyle),
   ];
+}
+
+/// C-343 rule 1: a name must never break inside itself, so the title's own
+/// font shrinks just enough for [text]'s widest word to fit [maxWidth] at
+/// [scaler] -- never the other way around. Starts from [base]'s own font
+/// size (already a fit returns [base] unchanged, so scale 1.0 never moves,
+/// rule 3) and only ever falls, down to the smaller of
+/// [kEndCardTitleMinFontSize] and that starting size, so a style that began
+/// under the floor (a body style, not a headline) is never pushed up to it.
+TextStyle? _fitTitleFontSize({
+  required String text,
+  required TextStyle? base,
+  required double maxWidth,
+  required TextScaler scaler,
+  required TextDirection direction,
+  Locale? locale,
+}) {
+  if (base == null || !maxWidth.isFinite || maxWidth <= 0) {
+    return base;
+  }
+  final List<String> words = text
+      .split(RegExp(r'\s+'))
+      .where((String w) => w.isNotEmpty)
+      .toList();
+  if (words.isEmpty) {
+    return base;
+  }
+  double widestWordWidth(TextStyle style) {
+    double widest = 0;
+    for (final String word in words) {
+      final TextPainter painter = TextPainter(
+        text: TextSpan(text: word, style: style),
+        textDirection: direction,
+        textScaler: scaler,
+        locale: locale,
+      )..layout();
+      widest = math.max(widest, painter.width);
+      painter.dispose();
+    }
+    return widest;
+  }
+
+  if (widestWordWidth(base) <= maxWidth) {
+    return base;
+  }
+  final double startSize = base.fontSize ?? kEndCardTitleMinFontSize;
+  final double floor = math.min(startSize, kEndCardTitleMinFontSize);
+  double size = startSize;
+  while (size > floor) {
+    size -= 1;
+    final TextStyle candidate = base.copyWith(fontSize: size);
+    if (widestWordWidth(candidate) <= maxWidth) {
+      return candidate;
+    }
+  }
+  return base.copyWith(fontSize: floor);
 }
 
 /// Rule 2: a burst of gold and seat-colour particles from behind the title,
