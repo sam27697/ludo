@@ -698,6 +698,150 @@ class _LudoBoardState extends State<LudoBoard> {
     return layer;
   }
 
+  /// C-339 decision 2: "You" gives way before the name does -- the name is
+  /// what a player is actually reading, "You" is the badge beside it --
+  /// so when the two do not both fit at their own base size (board art,
+  /// no system scaling, contract decision 1), "You" is the one asked to
+  /// shrink first, down to its own floor (7px, unchanged), before the
+  /// name gives up anything at all. Only once "You" is already at that
+  /// floor and the pair still does not fit does the name shrink too, into
+  /// whatever "You" at its floor left over, never below its own floor
+  /// (10px, A2). Both are measured with a disposable [TextPainter], laid
+  /// out unconstrained, in the same font and weight the chip itself
+  /// paints ([kLudoFontFamily] / [kLudoFontFallbacks] -- the name's own
+  /// `FontWeight.w600` matters here, semibold glyphs measure wider than
+  /// the regular weight "You" uses). A small margin against rounding
+  /// keeps a fit that is merely exact from reading as a one-pixel
+  /// overflow. A name over 10 characters can still ask for a scale the
+  /// floor refuses: `Flexible` and `TextOverflow.ellipsis` on the actual
+  /// `Text` below are what the contract's "may still ellipsize" leans on
+  /// when that happens.
+  ({double name, double? you}) _fittedChipFontSizes({
+    required String name,
+    required String? you,
+    required double baseNameFontSize,
+    required double baseYouFontSize,
+    required double available,
+    required TextDirection direction,
+    required TextStyle ambientStyle,
+  }) {
+    const double nameFloor = 10.0;
+    const double youFloor = 7.0;
+    const double safetyMargin = 0.98;
+    // A flat, visually-silent 1px held back from whatever the geometry
+    // offers: the branch that keeps one side at its full base size (no
+    // ratio, so no `safetyMargin` of its own) would otherwise sit exactly
+    // on the boundary, where this measurement's own rounding and the
+    // live `RenderParagraph`'s do not quite have to agree.
+    available = math.max(0.0, available - 1.0);
+
+    // The real `Text` below inherits (`TextStyle.inherit` defaults true)
+    // whatever is ambient -- letter spacing and the rest of it -- merged
+    // under the fontFamily/size/weight it sets itself; measuring against
+    // the bare override alone under-counts exactly that inherited part.
+    double naturalWidth(String text, double fontSize, FontWeight weight) {
+      final TextPainter painter = TextPainter(
+        text: TextSpan(
+          text: text,
+          style: ambientStyle.merge(
+            TextStyle(
+              fontFamily: kLudoFontFamily,
+              fontFamilyFallback: kLudoFontFallbacks,
+              fontSize: fontSize,
+              fontWeight: weight,
+            ),
+          ),
+        ),
+        textDirection: direction,
+        textScaler: TextScaler.noScaling,
+        maxLines: 1,
+      )..layout();
+      final double width = painter.width;
+      painter.dispose();
+      return width;
+    }
+
+    final double nameNaturalBase = naturalWidth(
+      name,
+      baseNameFontSize,
+      FontWeight.w600,
+    );
+
+    if (you == null) {
+      if (available >= nameNaturalBase || nameNaturalBase <= 0) {
+        return (name: baseNameFontSize, you: null);
+      }
+      final double scale = math.min(
+        1.0,
+        math.max(
+          (available / nameNaturalBase) * safetyMargin,
+          nameFloor / baseNameFontSize,
+        ),
+      );
+      return (name: math.max(nameFloor, baseNameFontSize * scale), you: null);
+    }
+
+    final double youNaturalBase = naturalWidth(
+      you,
+      baseYouFontSize,
+      FontWeight.normal,
+    );
+
+    if (nameNaturalBase + youNaturalBase <= available) {
+      return (name: baseNameFontSize, you: baseYouFontSize);
+    }
+
+    final double availableForYouAtFullName = math.max(
+      0.0,
+      available - nameNaturalBase,
+    );
+    if (availableForYouAtFullName >=
+            youNaturalBase * (youFloor / baseYouFontSize) ||
+        youNaturalBase <= 0) {
+      // The name keeps its own base size; "You" alone shrinks (never below
+      // its own floor) to make room for it.
+      final double youScale = youNaturalBase <= 0
+          ? 1.0
+          : math.min(
+              1.0,
+              math.max(
+                (availableForYouAtFullName / youNaturalBase) * safetyMargin,
+                youFloor / baseYouFontSize,
+              ),
+            );
+      return (
+        name: baseNameFontSize,
+        you: math.max(youFloor, baseYouFontSize * youScale),
+      );
+    }
+
+    // "You" at its own floor still leaves the name short of room: pin
+    // "You" there and let the name shrink into what is left, never below
+    // its own floor.
+    final double youNaturalAtFloor = naturalWidth(
+      you,
+      youFloor,
+      FontWeight.normal,
+    );
+    final double availableForName = math.max(
+      0.0,
+      available - youNaturalAtFloor,
+    );
+    final double nameScale = nameNaturalBase <= 0
+        ? 1.0
+        : math.min(
+            1.0,
+            math.max(
+              (availableForName / nameNaturalBase) * safetyMargin,
+              nameFloor / baseNameFontSize,
+            ),
+          );
+    return (
+      name: math.max(nameFloor, baseNameFontSize * nameScale),
+      you: youFloor,
+    );
+  }
+
   /// [seat]'s name chip: a pill in [LudoColors.seats][seat], sat in the row
   /// of its yard that touches the real edge of the board (the top row for
   /// the two top yards, the bottom row for the two bottom ones), centred
@@ -764,8 +908,12 @@ class _LudoBoardState extends State<LudoBoard> {
     final String? you = isMine ? widget.youLabel : null;
     // A2: about 60% of the chip height, never below 10 logical px -- the
     // old 7px floor is exactly what let the name itself go unreadable even
-    // once the chip stopped being a sliver.
-    final double nameFontSize = math.max(10.0, chipHeight * 0.6);
+    // once the chip stopped being a sliver. These are the chip's own
+    // *base* sizes -- what it draws when there is room -- not yet the
+    // sizes it actually paints; C-339 decision 2 may shrink both of them
+    // together, see `_fittedChipFontSizes` below.
+    final double baseNameFontSize = math.max(10.0, chipHeight * 0.6);
+    final double baseYouFontSize = math.max(7.0, chipHeight * 0.55);
     // Rule 3: the chip draws no disc of its own today (it is a plain pill
     // around the name); this is the one this rule adds, as tall as the
     // chip's inner content height -- chipHeight less the vertical padding
@@ -776,6 +924,31 @@ class _LudoBoardState extends State<LudoBoard> {
       0.0,
       chipHeight - chipVerticalPadding * 2,
     );
+    // C-339 decision 1: the chip's text is board art, not system text --
+    // it is measured and painted with no system scaling at all, the same
+    // at every text-size setting. Width left for the name and "You" once
+    // the fixed parts of the row (the two outer/inner paddings, the mark
+    // disc, the spacer before the name, and -- when there is a "You" --
+    // the spacer before it) are taken out.
+    final double contentMaxWidth = math.max(0.0, chipWidth - cellSize * 1.0);
+    final double textAvailableWidth = math.max(
+      0.0,
+      contentMaxWidth -
+          nameDiscSize -
+          cellSize * 0.15 -
+          (you != null ? cellSize * 0.15 : 0.0),
+    );
+    final ({double name, double? you}) fittedFontSizes = _fittedChipFontSizes(
+      name: name,
+      you: you,
+      baseNameFontSize: baseNameFontSize,
+      baseYouFontSize: baseYouFontSize,
+      available: textAvailableWidth,
+      direction: Directionality.of(context),
+      ambientStyle: DefaultTextStyle.of(context).style,
+    );
+    final double nameFontSize = fittedFontSizes.name;
+    final double? youFontSize = fittedFontSizes.you;
 
     return Positioned(
       left: chipLeft,
@@ -819,8 +992,13 @@ class _LudoBoardState extends State<LudoBoard> {
                         maxLines: 1,
                         softWrap: false,
                         overflow: TextOverflow.ellipsis,
+                        // C-339 decision 1: pinned to the board's own
+                        // measure, never the system text scale.
+                        textScaler: TextScaler.noScaling,
                         style: TextStyle(
                           color: ink,
+                          fontFamily: kLudoFontFamily,
+                          fontFamilyFallback: kLudoFontFallbacks,
                           fontSize: nameFontSize,
                           fontWeight: FontWeight.w600,
                         ),
@@ -828,15 +1006,27 @@ class _LudoBoardState extends State<LudoBoard> {
                     ),
                     if (you != null) ...<Widget>[
                       SizedBox(width: cellSize * 0.15),
+                      // Not `Flexible`: `_fittedChipFontSizes` already sized
+                      // this and the name above it to share the chip's
+                      // width honestly (by how wide each actually is at its
+                      // own font size), not by `Flex`'s own equal-by-default
+                      // split of whatever is left -- a plain child takes
+                      // exactly the natural width that sizing computed, and
+                      // the name's own `Flexible` absorbs whatever is left
+                      // over (or, past the 10-character guarantee, still
+                      // ellipsizes).
                       Text(
                         you,
                         key: const Key('board-seat-you'),
                         maxLines: 1,
                         softWrap: false,
                         overflow: TextOverflow.ellipsis,
+                        textScaler: TextScaler.noScaling,
                         style: TextStyle(
                           color: ink,
-                          fontSize: math.max(7.0, chipHeight * 0.55),
+                          fontFamily: kLudoFontFamily,
+                          fontFamilyFallback: kLudoFontFallbacks,
+                          fontSize: youFontSize,
                         ),
                       ),
                     ],

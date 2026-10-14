@@ -635,19 +635,49 @@ class _LobbyScreenState extends State<LobbyScreen> {
           Row(
             children: [
               Expanded(
-                child: TextButton(
+                // C-340 rule 1-2: an outlined pill, quieter than the filled
+                // Invite friends button above it -- a visible border and a
+                // leading icon so the label reads as tappable (doctrine P3,
+                // P8), never a bare caption. Rule 6: two of these side by
+                // side at 360dp leaves little room for icon plus label, so
+                // the pill's own padding is trimmed (never the label's
+                // text) and the label sits in a FittedBox that shrinks
+                // before it would ever wrap or ellipsize.
+                child: OutlinedButton.icon(
                   key: const Key('lobby-copy-link-button'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                    padding: const EdgeInsetsDirectional.symmetric(
+                      horizontal: kSpace2,
+                      vertical: kSpace3,
+                    ),
+                  ),
                   onPressed: () =>
                       _copyToClipboard(kRoomLinkBase + room.code, loc),
-                  child: Text(loc.lobbyCopyLinkButton),
+                  icon: const Icon(Icons.link, size: 18),
+                  label: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(loc.lobbyCopyLinkButton, maxLines: 1),
+                  ),
                 ),
               ),
               const SizedBox(width: kSpace3),
               Expanded(
-                child: TextButton(
+                child: OutlinedButton.icon(
                   key: const Key('lobby-copy-code-button'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                    padding: const EdgeInsetsDirectional.symmetric(
+                      horizontal: kSpace2,
+                      vertical: kSpace3,
+                    ),
+                  ),
                   onPressed: () => _copyToClipboard(room.code, loc),
-                  child: Text(loc.lobbyCopyCodeButton),
+                  icon: const Icon(Icons.content_copy, size: 18),
+                  label: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(loc.lobbyCopyCodeButton, maxLines: 1),
+                  ),
                 ),
               ),
             ],
@@ -865,10 +895,21 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 ),
               ),
             ),
-            TextButton(
+            // C-340 rule 3: same outlined-pill treatment as the copy
+            // actions, in the strip's own onErrorContainer colour so it
+            // reads against the error-tinted banner, not the paper theme.
+            OutlinedButton.icon(
               key: const Key('lobby-resync-button'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
+                side: BorderSide(
+                  color: Theme.of(context).colorScheme.onErrorContainer,
+                ),
+                minimumSize: const Size(48, 48),
+              ),
               onPressed: controller.reconnect,
-              child: Text(loc.lobbyResyncButton),
+              icon: const Icon(Icons.sync, size: 20),
+              label: Text(loc.lobbyResyncButton),
             ),
           ],
         ),
