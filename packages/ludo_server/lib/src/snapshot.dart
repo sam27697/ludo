@@ -30,7 +30,10 @@ Map<String, Object?> buildRoomSnapshot(Room room, {required DateTime now}) {
     'host_seat': room.hostSeat,
     'players': room.players,
     'rules': <String, Object?>{
-      'blocks': room.rules.blocks,
+      // docs/PROTOCOL.md section 4, 2026-10-15 ruling: every room plays
+      // with blocks off, so every frame that carries rules says so,
+      // whatever was requested at create_room.
+      'blocks': false,
       'capture_bonus': room.rules.captureBonus,
       'turn_seconds': room.rules.turnSeconds,
     },
