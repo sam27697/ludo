@@ -101,6 +101,14 @@ characters. It is held in memory for the life of the room and never persisted.
 { "blocks": true, "capture_bonus": true, "turn_seconds": 45 }
 ```
 
+**`blocks` is accepted and ignored since 2026-10-15** (Sam's ruling, rule 21
+of `docs/RULES.md`): it must still be a bool if present, so the type check and
+`BAD_FIELD` stay exactly as they are, but every room is created with blocks
+off whatever the value, and every frame that carries `rules` says
+`"blocks": false`. Clients up to v1.8.2 send it; later clients do not. Every
+room also plays rule 11a (a token reaching home earns another roll); that is
+not a toggle and is not on the wire.
+
 Defaults are those values. `turn_seconds` accepts 15 to 120. Any other key is
 rejected with `BAD_FIELD` rather than ignored, because silently dropping an
 unknown rule toggle produces two clients that believe they are playing
@@ -771,7 +779,8 @@ are those values", which only means something if the object can be left out.
 
 The ruling, in full, because the middle case is the one that bites:
 
-- **`rules` absent** -- accepted, and the room gets `blocks: true`,
+- **`rules` absent** -- accepted, and the room gets `blocks: false` (section 4,
+  2026-10-15; it read `true` before),
   `capture_bonus: true`, `turn_seconds: 45`.
 - **`rules` present with a subset of keys** -- accepted; the keys given are
   taken and the rest default individually.
@@ -1162,3 +1171,44 @@ again anyway, and the face still comes from the chain.
 A client must not resend an intention after a drop. It sends `resume`,
 reads the snapshot (section 8), and acts on what it shows. The client in
 this repository never resends one.
+
+## 21. The roll queue on the wire, 2026-10-15
+
+**Status: specified, not yet built.** Until the server orders land, live
+rooms play rules 9 to 13 as written above.
+
+`docs/RULES.md` section 3.2a and `docs/ENGINE_API.md` section 10 are the
+rule. Every room plays it; it is not a toggle on the wire, like rule 11a.
+`v` stays 1: every change below is an added field or an optional one, and a
+client up to v1.8.2 that ignores them still plays a legal, if clumsier,
+game (it always spends the default face).
+
+### 21.1 Fields
+
+- `turn` gains `queue: [int]`, the unspent faces in roll order, present in
+  `await_roll` and `await_move` (in `await_roll` it may be non-empty: a
+  bonus roll owed mid-turn). In `await_move` it also gains
+  `legal_by_face: [{"face": int, "tokens": [int]}]`, in first-queued order,
+  only faces with a legal token. `value` is `defaultFace` and `legal` its
+  tokens, exactly as before for an old client.
+- `rolled` gains `queue` and, when the phase after it is `await_move`,
+  `legal_by_face`. After a 6 that owes another roll, `legal` is `[]` and a
+  `turn` for the same seat in `await_roll` follows (as after an extra roll).
+- `move` gains optional `face` (int). Absent: the server spends
+  `defaultFace`. Present and not an integer 1..6: `BAD_FIELD`, checked with
+  `token`. Not in the queue, or `token` not legal for it: `ILLEGAL_MOVE`.
+- `moved` gains `face`, the face spent. `extra_roll` is true exactly when a
+  roll is owed after it (a capture or a home arrival; never a spent 6).
+- After a `moved` that leaves faces to spend: a `turn` for the same seat in
+  `await_move` with the new `queue` and `legal_by_face`. After one that
+  leaves only dead faces: `turn_passed` `no_legal_move`, then `turn` for the
+  next seat.
+
+### 21.2 Timing
+
+The segment restarts (section 6, `deadline_ms`) on every frame that leaves
+the same seat to act: a `rolled` 6 that owes another roll, a `rolled` that
+leaves a move pending, a `moved` that owes a roll or leaves faces. On expiry
+the timer takes one step (rule 15q), and the step's frames restart the
+segment as above. The verify record is unchanged: rolls are still drawn one
+per `k`, in order, whoever spends them later.

@@ -43,7 +43,12 @@ enum TurnEndReason { noLegalMove, threeSixes }
 class RulesConfig {
   final bool blocks;         // rule 21, default true
   final bool captureBonus;   // rule 11, default true
-  const RulesConfig({this.blocks = true, this.captureBonus = true});
+  final bool homeBonus;      // rule 11a, default false (see section 8)
+  const RulesConfig({
+    this.blocks = true,
+    this.captureBonus = true,
+    this.homeBonus = false,
+  });
 }
 
 class GameConfig {
@@ -228,8 +233,10 @@ moment the turn changes hands or a non-6 is rolled.
    is that seat, `phase` is `finished`, emit `GameWon`, and emit nothing after
    it. No extra roll is granted to a winning move; the game is over.
 5. Otherwise decide the extra roll, rule 12: the same seat rolls again if the
-   roll was a 6, or the move captured and `rules.captureBonus` is on. There is
-   no queue and no stacking beyond that single boolean.
+   roll was a 6, or the move captured and `rules.captureBonus` is on, or the
+   token reached 57 in step 3 and `rules.homeBonus` is on. There is no queue
+   and no stacking beyond that single boolean: a move that is a 6, a capture
+   and a home arrival at once still grants exactly one `ExtraRoll`.
    - Extra roll: phase `awaitRoll`, same `currentSeat`, `sixes` unchanged
      (it was already incremented by the roll step), emit `ExtraRoll`.
    - No extra roll: phase `awaitRoll`, `currentSeat` advances to the next seat
@@ -355,7 +362,7 @@ is a face sequence nobody can audit. It is no longer read by the engine.
 order, and `GameState.fromJson()` round-trips it:
 
 ```
-config: { seats: [int], rules: { blocks: bool, captureBonus: bool }, seed: int }
+config: { seats: [int], rules: { blocks: bool, captureBonus: bool[, homeBonus: true] }, seed: int }
 tokens: [[int,int,int,int], x4]
 currentSeat: int
 phase: "awaitRoll" | "awaitMove" | "finished"
@@ -365,6 +372,14 @@ winner: int | null
 seq: int
 rngState: int
 ```
+
+**`homeBonus` is written only when it is true** (2026-10-15, rule 11a). A
+state whose `homeBonus` is false serialises to exactly the bytes it did before
+the toggle existed, so every `finalHash` in the golden corpus and every state
+recorded before the ruling keeps its hash. `fromJson()` reads an absent
+`homeBonus` as false and accepts an explicit `true`; an explicit `false` or any
+non-bool is a `FormatException`-class error like any other malformed field,
+because accepting it would give one state two serialisations.
 
 This is the **internal** form. It contains `seed` and `rngState` and it is
 never sent to a client. The server builds the redacted snapshot of
@@ -406,3 +421,95 @@ the field order above is normative and not a suggestion.
 
 `deadline_ms` has no engine equivalent and must not acquire one. The timer is
 the server's, by rule 37.
+
+## 10. The roll queue (`rollQueue`), 2026-10-15
+
+**Status: specified, not yet built.** Until the server orders land, live
+rooms play rules 9 to 13 as written above.
+
+`docs/RULES.md` section 3.2a is the rule; this is its engine shape. With
+`rules.rollQueue` false nothing in sections 1 to 9 changes, byte for byte:
+the golden corpus and every legacy state replay and hash exactly as before.
+
+### 10.1 Types
+
+```dart
+class RulesConfig {
+  final bool rollQueue;      // rule 9q, default false; toJson writes it only when true
+}
+
+class GameState {
+  final List<int> queue;     // unspent faces in roll order; always [] when !rollQueue
+}
+
+class MoveIntention extends Intention {
+  final int token;
+  final int? face;           // the queued face to spend; null = the default face
+  const MoveIntention(int seat, this.token, {this.face});
+}
+
+/// Faces with at least one legal token, in first-queued order, each with
+/// its legal tokens ascending. Empty in awaitRoll and finished. With
+/// !rollQueue: `{state.roll: legalTokens(state)}` in awaitMove.
+Map<int, List<int>> legalByFace(GameState state);
+
+/// The face a move with `face == null` spends: the first entry of the
+/// queue, in queue order, that has a legal token. Null when none.
+int? defaultFace(GameState state);
+```
+
+`legalTokens(state)` keeps its signature and, with `rollQueue`, returns the
+legal tokens of `defaultFace(state)`. `state.roll` is always null with
+`rollQueue` on; the queue replaces it.
+
+### 10.2 Serialisation
+
+`queue` is written in `toJson()` right after `roll`, as a list of ints,
+**only when `config.rules.rollQueue` is true** (then always, even empty).
+`rollQueue` is written in `rules` after `captureBonus` and before
+`homeBonus`, only when true. `fromJson()` reads both absent as false / `[]`,
+and rejects an explicit `rollQueue: false`, a `queue` key on a state whose
+rules lack `rollQueue`, a missing `queue` when `rollQueue` is true, and a
+face outside 1..6.
+
+### 10.3 RollIntention with `rollQueue`
+
+1. `badFace` exactly as section 5.
+2. A 6 with `state.sixes == 2`: rule 10q. Emit `Rolled` then
+   `TurnEnded(threeSixes)` then `TurnBegan` for the next seat; `queue = []`,
+   `sixes = 0`, phase `awaitRoll`.
+3. A 6 otherwise: append it, `sixes + 1`, phase stays `awaitRoll`, same
+   seat. Emit `Rolled` then `ExtraRoll`.
+4. A non-6: append it, `sixes = 0`. If `legalByFace` of the new state is
+   empty, rule 13q: emit `Rolled` then `TurnEnded(noLegalMove)` then
+   `TurnBegan`; `queue = []`, next seat, `awaitRoll`. Otherwise phase
+   `awaitMove`; emit `Rolled`.
+
+### 10.4 MoveIntention with `rollQueue`
+
+Checks, in order, after the shared ones of section 4 (phase, seat, token
+range): `face` given and not in the queue, or not in 1..6: `illegalMove`;
+`face` null and `defaultFace` null: impossible in `awaitMove` by 10.3;
+the token not legal for the face: `illegalMove`.
+
+1. Remove the first occurrence of the face from the queue.
+2. Move, capture, `TokenHome` and the win exactly as section 5 steps 1 to 4
+   for that face. A win: queue `[]`, `GameWon`, nothing after.
+3. A bonus is owed if the move captured with `captureBonus` or reached 57
+   with `homeBonus`. A 6 spent grants nothing (rule 12q). Bonus: phase
+   `awaitRoll`, same seat, `sixes = 0`, emit `ExtraRoll`.
+4. No bonus, and `legalByFace` of the new state non-empty: phase
+   `awaitMove`, same seat. No event beyond the move's own.
+5. No bonus, queue empty: next seat, `awaitRoll`, `sixes = 0`, emit
+   `TurnBegan`.
+6. No bonus, queue non-empty but no face can move: emit
+   `TurnEnded(noLegalMove)` then `TurnBegan`; queue `[]`, next seat.
+
+`sixes` is untouched by a move except where a step sets it.
+
+### 10.5 The golden corpus
+
+Records with `"rollQueue": true` in `rules` carry `face` on every `move`
+intention (mandatory there, absent elsewhere). The 40 legacy records stay
+byte-identical. The generator spends, on each move, the face and token its
+seeded choice picks among `legalByFace`.

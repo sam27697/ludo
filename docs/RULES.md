@@ -98,11 +98,58 @@ also safe, trivially, because no opponent can reach it.
     passes immediately. Any moves made on the first and second 6 stand.
 11. A capture grants another roll after the capturing move is applied. This is
     on by default.
+11a. A move that brings a token home (`progress = 57`) grants another roll,
+    unless that move wins the game (rule 34). Sam's ruling of 2026-10-15. The
+    engine toggle is `homeBonus`; it defaults off in the engine so that
+    records written before the ruling replay unchanged, and the server turns
+    it on for every room.
 12. Extra rolls stack in the sense that they are a single boolean: after
-    applying a move, the same seat rolls again if the roll was a 6 or the move
-    captured, subject to rule 10. There is no queue of pending extra rolls.
+    applying a move, the same seat rolls again if the roll was a 6, the move
+    captured, or the move brought a token home, subject to rule 10. There is
+    no queue of pending extra rolls.
 13. Rule 7 applies to an extra roll exactly as it applies to a first roll: if
     the extra roll produces no legal move, the turn passes.
+
+### 3.2a The roll queue (`rollQueue`), Sam's ruling of 2026-10-15
+
+**Status: specified, not yet built.** Until the server orders land, live
+rooms play rules 9 to 13 as written above.
+
+Sam: «لازم اللاعب يرمي كل مرات النرد الممكنة قبل ما يلعب واذا اجاه فرصة رمي
+جديدة اثناء التحريك وقتها بيرمي». Every roll a seat is owed is rolled first,
+then the faces are spent. Engine toggle `rollQueue`, default off in the
+engine (records from before the ruling replay unchanged), on for every
+server room. With `rollQueue` on, rules 9, 12 and 13 are replaced by 9q to
+13q; rules 7, 10 and 11, 11a keep their meaning as stated here.
+
+9q. A turn holds a **queue** of unspent faces, in the order they were
+    rolled. A turn begins with an empty queue and a roll.
+10q. Rolling a 6 appends it to the queue and the same seat rolls again at
+    once, before any move. Three consecutive 6s void the turn (rule 10):
+    the third 6 is not queued, every unspent face is discarded, the turn
+    passes; moves already made in the turn stand. `sixes` counts the
+    current streak of consecutive 6s and resets to 0 on any non-6.
+11q. A non-6 is appended and ends the rolling. The seat then spends the
+    queue one face at a time, choosing which queued face and which token
+    each time. A face may be spent on any token it moves legally; the
+    order of spending is the player's choice.
+12q. A move that captures (with `captureBonus`) or brings a token home
+    (with `homeBonus`, not a winning move) owes one roll, rolled at once,
+    before the next face is spent. That roll follows 10q and 11q: its
+    faces join the end of the queue, a 6 rolls again, and three 6s in a
+    row from it void the turn. A 6 spent on a move grants nothing; the 6
+    was already rolled again when it landed.
+13q. The turn passes when the queue is empty and no roll is owed, or when
+    no queued face has any legal move (rule 7). A face with no legal move
+    stays queued while another face can still move, because spending that
+    other face may make it legal (a 6 brings a token out, then the 3 moves
+    it). When the turn passes with faces left, they are discarded and the
+    seat is told there was no move for them.
+14q. Winning ends the game at once; unspent faces are discarded.
+15q. Under the timer (rule 15), the server acts one step at a time exactly
+    as a player would: roll if a roll is owed, otherwise spend the first
+    queued face that has a legal move on its first legal token, in queue
+    order then ascending token order.
 
 ### 3.3 The timer
 
@@ -145,7 +192,10 @@ also safe, trivially, because no opponent can reach it.
 ### 4.1 Blocks
 
 21. Two or more tokens of the same seat on one main track square form a block.
-    This is on by default.
+    The engine toggle defaults on, but **since 2026-10-15 the server creates
+    every room with `blocks` off** (Sam's ruling: a pair is safe from capture,
+    never a wall). Rules 22 to 26 therefore describe the engine toggle and the
+    records played before that date; a live game plays rule 28a.
 22. A block cannot be passed or landed on by any token of another seat. A move
     whose path crosses a square holding an opponent's block is illegal.
 23. "Path" means every square strictly between the origin and the destination,

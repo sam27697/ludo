@@ -76,7 +76,6 @@ class _HomeScreenState extends State<HomeScreen>
   bool _removedNotice = false;
   int _players = 4;
   bool _playersSelectorOpen = false;
-  bool _rulesBlocks = true;
   bool _rulesCaptureBonus = true;
   String? _nameLocaleDefault;
   StreamSubscription<Uri>? _linkSubscription;
@@ -728,10 +727,7 @@ class _HomeScreenState extends State<HomeScreen>
     final AppLocalizations loc = AppLocalizations.of(context);
     final String name = _resolvedName(loc);
     final int players = _players;
-    final RoomToggles toggles = RoomToggles(
-      blocks: _rulesBlocks,
-      captureBonus: _rulesCaptureBonus,
-    );
+    final RoomToggles toggles = RoomToggles(captureBonus: _rulesCaptureBonus);
     final RoomController controller = widget.controllerFactory();
     _watchOwnedController(controller);
     // LobbyScreen/RoomRoute must not take a store dependency. Listen here
@@ -1358,43 +1354,25 @@ class _HomeScreenState extends State<HomeScreen>
                                     SizedBox(
                                       height: compact ? kSpace2 : kSpace3,
                                     ),
-                                    IntrinsicHeight(
-                                      child: Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.stretch,
-                                        children: [
-                                          Expanded(
-                                            child: HomeRuleToggle(
-                                              key: const Key(
-                                                'home-rule-blocks',
-                                              ),
-                                              value: _rulesBlocks,
-                                              onChanged: (value) => setState(
-                                                () => _rulesBlocks = value,
-                                              ),
-                                              icon: Icons.shield_outlined,
-                                              title: loc.homeRuleBlocks,
-                                              hint: loc.homeRuleBlocksHint,
-                                            ),
-                                          ),
-                                          const SizedBox(width: kSpace3),
-                                          Expanded(
-                                            child: HomeRuleToggle(
-                                              key: const Key(
-                                                'home-rule-capture-bonus',
-                                              ),
-                                              value: _rulesCaptureBonus,
-                                              onChanged: (value) => setState(
-                                                () =>
-                                                    _rulesCaptureBonus = value,
-                                              ),
-                                              icon: Icons.replay_rounded,
-                                              title: loc.homeRuleCaptureBonus,
-                                              hint:
-                                                  loc.homeRuleCaptureBonusHint,
-                                            ),
-                                          ),
-                                        ],
+                                    HomeRuleToggle(
+                                      key: const Key('home-rule-capture-bonus'),
+                                      value: _rulesCaptureBonus,
+                                      onChanged: (value) => setState(
+                                        () => _rulesCaptureBonus = value,
+                                      ),
+                                      icon: Icons.replay_rounded,
+                                      title: loc.homeRuleCaptureBonus,
+                                      hint: loc.homeRuleCaptureBonusHint,
+                                    ),
+                                    SizedBox(
+                                      height: compact ? kSpace2 : kSpace3,
+                                    ),
+                                    Text(
+                                      loc.houseRulesLine,
+                                      key: const Key('home-house-rules'),
+                                      textAlign: TextAlign.center,
+                                      style: textTheme.bodySmall?.copyWith(
+                                        color: LudoColors.inkMuted,
                                       ),
                                     ),
                                   ],
@@ -1891,10 +1869,10 @@ class _PlayersSelector extends StatelessWidget {
   }
 }
 
-/// C-276 rule 3: toggle card for a game rule (Blocks, Capture bonus) on the
-/// home screen, matching the lobby screen rule chips instead of a settings
-/// page switch. Off state displays a diagonal strike over the icon and
-/// removes the check badge (doctrine P9).
+/// C-276 rule 3: toggle card for a game rule (Capture bonus) on the home
+/// screen, matching the lobby screen rule chips instead of a settings page
+/// switch. Off state displays a diagonal strike over the icon and removes
+/// the check badge (doctrine P9).
 class HomeRuleToggle extends StatelessWidget {
   const HomeRuleToggle({
     super.key,
