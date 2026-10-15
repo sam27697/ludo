@@ -297,7 +297,7 @@ void main() {
             'players': 3,
             // Order 202: Home's rule toggles, untouched, reach the wire as
             // defaults.
-            'rules': <String, Object?>{'blocks': true, 'capture_bonus': true},
+            'rules': <String, Object?>{'capture_bonus': true},
           },
           reason:
               'the name typed on the home screen and the non-default '
