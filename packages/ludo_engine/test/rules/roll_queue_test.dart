@@ -2,21 +2,11 @@
 // the roll queue. With rollQueue on, a turn rolls every owed die first and
 // spends the queued faces afterward, in whichever order the player picks.
 //
-// Two things the docs leave unspecified, deliberately not asserted on below:
-//
-//  - The content of Rolled.legal under rollQueue. Section 5 ties it to the
-//    single `state.roll` value; section 10.3 only says "emit Rolled" and
-//    never redefines what `legal` holds once there is a queue instead of a
-//    single roll. No test here reads `.legal` off a Rolled event; every
-//    check goes through `.seat` and `.value`, which are unambiguous.
-//  - docs/ENGINE_API.md section 10.4 step 6 (a move that leaves a dead
-//    remainder forces a turn pass) does not restate "sixes = 0" the way
-//    step 5 does. The Q6 test below still asserts sixes == 0 after it,
-//    relying on the general rule that sixes resets the moment the turn
-//    changes hands (docs/ENGINE_API.md section 5, carried over by rule 12).
-//    That is an inference from a rule stated elsewhere, not a restatement
-//    in section 10.4 itself, and is called out again at the test.
-//
+// Q14 to Q16 pin the run 91 rulings in section 10: Rolled.legal is
+// legalTokens of the state after the roll, defaultFace is null outside
+// awaitMove, and spending a repeated face removes its first occurrence.
+// Every seat change sets sixes to 0 (10.4, last paragraph); Q6 checks it.
+
 // Every fixture below that turns rollQueue on also passes `queue` explicitly,
 // even when empty: docs/ENGINE_API.md section 10.2 requires both keys
 // together ("rollQueue without queue throws", covered in
@@ -386,7 +376,7 @@ void main() {
 
     test(
       'Q6: a dead remainder after a move ends the turn with '
-      "TurnEnded(noLegalMove), TurnBegan, and an empty queue",
+      'TurnEnded(noLegalMove), TurnBegan, and an empty queue',
       () {
         // seat 2 holds a block at absolute square 3 (progress 29: (26+29)
         // % 52 = 3). The lone seat 0 token leaves the yard on the 6, lands
@@ -885,6 +875,91 @@ void main() {
         expect(afterForfeit.state.queue, equals(const <int>[]));
         expect(afterForfeit.state.sixes, 0);
         expect(afterForfeit.state.currentSeat, 2);
+      },
+    );
+
+    test(
+      'Q14: Rolled.legal is legalTokens of the state after the roll: [] '
+      'after a queued 6, the default face tokens after the closing non-6',
+      () {
+        final start = buildState(
+          seats: twoPlayerSeats,
+          phase: 'awaitRoll',
+          rollQueue: true,
+          queue: const <int>[],
+          currentSeat: 0,
+          sixes: 0,
+        );
+
+        // Every token is in the yard, so a 6 alone could bring any of them
+        // out; the roll still owes another roll, so nothing is movable yet.
+        final r1 = apply(start, const RollIntention(0, 6)) as Applied;
+        expect((r1.events.first as Rolled).legal, isEmpty);
+
+        // The closing 3 moves nothing by itself, but the queued 6 can bring
+        // every token out: legal is the default face's tokens, not the 3's.
+        final r2 = apply(r1.state, const RollIntention(0, 3)) as Applied;
+        final rolled = r2.events.first as Rolled;
+        expect(rolled.value, 3);
+        expect(rolled.legal, equals(const [0, 1, 2, 3]));
+        expect(rolled.legal, equals(legalTokens(r2.state)));
+      },
+    );
+
+    test(
+      'Q14b: Rolled.legal is [] when the roll passes the turn',
+      () {
+        final start = buildState(
+          seats: twoPlayerSeats,
+          phase: 'awaitRoll',
+          rollQueue: true,
+          queue: const <int>[],
+          currentSeat: 0,
+          sixes: 0,
+        );
+        final r = apply(start, const RollIntention(0, 3)) as Applied;
+        expect(r.events[1], isA<TurnEnded>());
+        expect((r.events.first as Rolled).legal, isEmpty);
+      },
+    );
+
+    test(
+      'Q15: defaultFace is null in awaitRoll even when a queued face has a '
+      'legal token',
+      () {
+        final state = buildState(
+          seats: twoPlayerSeats,
+          phase: 'awaitRoll',
+          rollQueue: true,
+          queue: const [6],
+          sixes: 1,
+          currentSeat: 0,
+          tokens: const {
+            0: <int>[10, -1, -1, -1],
+          },
+        );
+        expect(defaultFace(state), isNull);
+        expect(legalTokens(state), isEmpty);
+      },
+    );
+
+    test(
+      'Q16: spending a face queued twice removes its first occurrence and '
+      'keeps the order of the rest',
+      () {
+        final start = buildState(
+          seats: twoPlayerSeats,
+          phase: 'awaitMove',
+          rollQueue: true,
+          queue: const [6, 3, 6],
+          currentSeat: 0,
+          sixes: 0,
+          tokens: const {
+            0: <int>[10, -1, -1, -1],
+          },
+        );
+        final r = apply(start, const MoveIntention(0, 0, face: 6)) as Applied;
+        expect(r.state.queue, equals(const [3, 6]));
       },
     );
   });
