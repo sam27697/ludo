@@ -98,9 +98,15 @@ also safe, trivially, because no opponent can reach it.
     passes immediately. Any moves made on the first and second 6 stand.
 11. A capture grants another roll after the capturing move is applied. This is
     on by default.
+11a. A move that brings a token home (`progress = 57`) grants another roll,
+    unless that move wins the game (rule 34). Sam's ruling of 2026-10-15. The
+    engine toggle is `homeBonus`; it defaults off in the engine so that
+    records written before the ruling replay unchanged, and the server turns
+    it on for every room.
 12. Extra rolls stack in the sense that they are a single boolean: after
-    applying a move, the same seat rolls again if the roll was a 6 or the move
-    captured, subject to rule 10. There is no queue of pending extra rolls.
+    applying a move, the same seat rolls again if the roll was a 6, the move
+    captured, or the move brought a token home, subject to rule 10. There is
+    no queue of pending extra rolls.
 13. Rule 7 applies to an extra roll exactly as it applies to a first roll: if
     the extra roll produces no legal move, the turn passes.
 
@@ -145,7 +151,10 @@ also safe, trivially, because no opponent can reach it.
 ### 4.1 Blocks
 
 21. Two or more tokens of the same seat on one main track square form a block.
-    This is on by default.
+    The engine toggle defaults on, but **since 2026-10-15 the server creates
+    every room with `blocks` off** (Sam's ruling: a pair is safe from capture,
+    never a wall). Rules 22 to 26 therefore describe the engine toggle and the
+    records played before that date; a live game plays rule 28a.
 22. A block cannot be passed or landed on by any token of another seat. A move
     whose path crosses a square holding an opponent's block is illegal.
 23. "Path" means every square strictly between the origin and the destination,

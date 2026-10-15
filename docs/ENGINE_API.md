@@ -43,7 +43,12 @@ enum TurnEndReason { noLegalMove, threeSixes }
 class RulesConfig {
   final bool blocks;         // rule 21, default true
   final bool captureBonus;   // rule 11, default true
-  const RulesConfig({this.blocks = true, this.captureBonus = true});
+  final bool homeBonus;      // rule 11a, default false (see section 8)
+  const RulesConfig({
+    this.blocks = true,
+    this.captureBonus = true,
+    this.homeBonus = false,
+  });
 }
 
 class GameConfig {
@@ -228,8 +233,10 @@ moment the turn changes hands or a non-6 is rolled.
    is that seat, `phase` is `finished`, emit `GameWon`, and emit nothing after
    it. No extra roll is granted to a winning move; the game is over.
 5. Otherwise decide the extra roll, rule 12: the same seat rolls again if the
-   roll was a 6, or the move captured and `rules.captureBonus` is on. There is
-   no queue and no stacking beyond that single boolean.
+   roll was a 6, or the move captured and `rules.captureBonus` is on, or the
+   token reached 57 in step 3 and `rules.homeBonus` is on. There is no queue
+   and no stacking beyond that single boolean: a move that is a 6, a capture
+   and a home arrival at once still grants exactly one `ExtraRoll`.
    - Extra roll: phase `awaitRoll`, same `currentSeat`, `sixes` unchanged
      (it was already incremented by the roll step), emit `ExtraRoll`.
    - No extra roll: phase `awaitRoll`, `currentSeat` advances to the next seat
@@ -355,7 +362,7 @@ is a face sequence nobody can audit. It is no longer read by the engine.
 order, and `GameState.fromJson()` round-trips it:
 
 ```
-config: { seats: [int], rules: { blocks: bool, captureBonus: bool }, seed: int }
+config: { seats: [int], rules: { blocks: bool, captureBonus: bool[, homeBonus: true] }, seed: int }
 tokens: [[int,int,int,int], x4]
 currentSeat: int
 phase: "awaitRoll" | "awaitMove" | "finished"
@@ -365,6 +372,14 @@ winner: int | null
 seq: int
 rngState: int
 ```
+
+**`homeBonus` is written only when it is true** (2026-10-15, rule 11a). A
+state whose `homeBonus` is false serialises to exactly the bytes it did before
+the toggle existed, so every `finalHash` in the golden corpus and every state
+recorded before the ruling keeps its hash. `fromJson()` reads an absent
+`homeBonus` as false and accepts an explicit `true`; an explicit `false` or any
+non-bool is a `FormatException`-class error like any other malformed field,
+because accepting it would give one state two serialisations.
 
 This is the **internal** form. It contains `seed` and `rngState` and it is
 never sent to a client. The server builds the redacted snapshot of

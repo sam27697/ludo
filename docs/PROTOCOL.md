@@ -101,6 +101,14 @@ characters. It is held in memory for the life of the room and never persisted.
 { "blocks": true, "capture_bonus": true, "turn_seconds": 45 }
 ```
 
+**`blocks` is accepted and ignored since 2026-10-15** (Sam's ruling, rule 21
+of `docs/RULES.md`): it must still be a bool if present, so the type check and
+`BAD_FIELD` stay exactly as they are, but every room is created with blocks
+off whatever the value, and every frame that carries `rules` says
+`"blocks": false`. Clients up to v1.8.2 send it; later clients do not. Every
+room also plays rule 11a (a token reaching home earns another roll); that is
+not a toggle and is not on the wire.
+
 Defaults are those values. `turn_seconds` accepts 15 to 120. Any other key is
 rejected with `BAD_FIELD` rather than ignored, because silently dropping an
 unknown rule toggle produces two clients that believe they are playing
@@ -771,7 +779,8 @@ are those values", which only means something if the object can be left out.
 
 The ruling, in full, because the middle case is the one that bites:
 
-- **`rules` absent** -- accepted, and the room gets `blocks: true`,
+- **`rules` absent** -- accepted, and the room gets `blocks: false` (section 4,
+  2026-10-15; it read `true` before),
   `capture_bonus: true`, `turn_seconds: 45`.
 - **`rules` present with a subset of keys** -- accepted; the keys given are
   taken and the rest default individually.
