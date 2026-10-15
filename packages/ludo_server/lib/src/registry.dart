@@ -250,9 +250,19 @@ class RollOk extends RollResult {
   /// restart until the `turn` frame below.
   final int rolledDeadlineMs;
 
-  /// Set together, and only, when the roll ended the turn: the `seq` for
-  /// `turn_passed` and for the `turn` frame that follows it.
+  /// Set only when the roll ended the turn: the `seq` for `turn_passed`,
+  /// which precedes the `turn` frame in that case. `docs/PROTOCOL.md`
+  /// section 21.3 rule 4: a queued 6 that owes another roll also sends a
+  /// `turn` (below) but never a `turn_passed` -- the turn has not passed,
+  /// the same seat still holds it -- so this stays null for that case even
+  /// though [turnSeq] is set.
   final int? turnPassedSeq;
+
+  /// Set whenever a `turn` frame follows the `rolled`: the turn ended (next
+  /// seat), or the roll queued a 6 that owes another roll (same seat,
+  /// `await_roll`, section 21.3 rule 4). Null exactly when the roll left a
+  /// move pending and nothing else needs announcing beyond the `rolled`
+  /// frame itself.
   final int? turnSeq;
 
   /// The freshly restarted segment's `deadline_ms` for the `turn` frame,
@@ -276,8 +286,10 @@ class MoveOk extends MoveResult {
     required this.room,
     required this.events,
     required this.movedSeq,
+    required this.face,
     this.gameOverSeq,
     this.verifyUrl,
+    this.turnPassedSeq,
     this.turnSeq,
     this.nextDeadlineMs,
   });
@@ -286,13 +298,30 @@ class MoveOk extends MoveResult {
   final List<engine.GameEvent> events;
   final int movedSeq;
 
+  /// `docs/PROTOCOL.md` section 21.1: the face this move actually spent --
+  /// the caller's own `face`, when it gave one, or `engine.defaultFace` of
+  /// the state the move was applied against, when it did not. The engine's
+  /// own `Moved` event carries no face (it predates the queue), so this is
+  /// fixed here, at the one call site that knows which of the two the
+  /// engine used, rather than guessed from `from`/`to` -- a token leaving
+  /// the yard moves to progress `0` however large the spent face, so a
+  /// `to - from` reconstruction is wrong for exactly that move.
+  final int face;
+
   /// Set together, and only, when this move won the game.
   final int? gameOverSeq;
   final String? verifyUrl;
 
-  /// Set together, and only, when the game continues: either the turn
-  /// passed, or the same seat was granted an extra roll. Section 12.2 sends
-  /// a `turn` frame for the seat that now holds the turn either way.
+  /// Set only when the move left faces queued that no token could spend:
+  /// `docs/PROTOCOL.md` section 21.3 rule 4, "move, only dead faces left".
+  /// The `turn_passed` this carries precedes the `turn` frame below.
+  final int? turnPassedSeq;
+
+  /// Set together, and only, when the game continues: the turn passed, the
+  /// same seat was granted an extra roll, or the same seat keeps spending
+  /// faces still in the queue. Section 12.2 and section 21.3 rule 4 both
+  /// send a `turn` frame for the seat that now holds the turn, whichever of
+  /// the three it is.
   final int? turnSeq;
   final int? nextDeadlineMs;
 }
@@ -751,9 +780,13 @@ class RoomRegistry {
       // docs/RULES.md rules 11a and 21, the 2026-10-15 ruling: every server
       // room plays blocks off and homeBonus on, regardless of what was
       // requested at create_room; only captureBonus comes from room.rules.
+      // docs/PROTOCOL.md section 21.3 rule 5: every room also plays the
+      // roll queue -- it is not a toggle on the wire, and nothing here ever
+      // sets it to false.
       rules: engine.RulesConfig(
         blocks: false,
         captureBonus: room.rules.captureBonus,
+        rollQueue: true,
         homeBonus: true,
       ),
       seed: _secureSeed(),
@@ -959,24 +992,34 @@ class RoomRegistry {
 
     final bool turnEnded =
         appliedOk.events.whereType<engine.TurnEnded>().isNotEmpty;
+    // docs/PROTOCOL.md section 21.3 rule 4: a queued 6 that owes another
+    // roll keeps the same seat in `await_roll` and still needs its own
+    // `turn` frame -- the uniform "a turn segment began" signal 13.1
+    // already established for the start of a game, now reused for the
+    // start of every roll segment, not only the first.
+    final bool extraRollGranted =
+        appliedOk.events.whereType<engine.ExtraRoll>().isNotEmpty;
 
     int rolledDeadlineMs;
     int? turnPassedSeq;
     int? turnSeq;
     int? nextDeadlineMs;
 
-    if (!turnEnded) {
+    if (!turnEnded && !extraRollGranted) {
       // The roll leaves a legal move pending: the segment restarts now.
       rolledDeadlineMs = _restartSegment(room);
     } else {
-      // The turn is about to pass. This rolled frame reports what was left
-      // of the segment that was already running; that segment does not
-      // restart until the turn frame for the next seat, below -- a moved
-      // that ends a turn does not restart it either, by the same rule, and
+      // Either the turn is about to pass, or the same seat owes another
+      // roll at once. In both cases this `rolled` frame reports what was
+      // left of the segment that was already running; that segment does
+      // not restart until the `turn` frame below -- a moved that leaves the
+      // same seat to act does not restart it either, by the same rule, and
       // this is a roll's analogue of that.
       rolledDeadlineMs = _remainingSegmentMs(room);
-      room.seq++;
-      turnPassedSeq = room.seq;
+      if (turnEnded) {
+        room.seq++;
+        turnPassedSeq = room.seq;
+      }
       room.seq++;
       turnSeq = room.seq;
       nextDeadlineMs = _restartSegment(room);
@@ -995,17 +1038,23 @@ class RoomRegistry {
     );
   }
 
-  /// `move`, `docs/PROTOCOL.md` section 12.2. Same ladder shape as [roll],
-  /// with `WRONG_PHASE` when the turn is awaiting a roll rather than a move.
-  /// [token] has already passed the wire layer's `BAD_FIELD` check (absent,
-  /// not an integer, or outside `0..3`) by the time it reaches here -- that
-  /// is why this method's own signature takes a plain `int` -- but the range
-  /// is re-checked below anyway, the same defence in depth every other
-  /// registry call applies to what its own caller already validated.
+  /// `move`, `docs/PROTOCOL.md` section 12.2 and section 21.1. Same ladder
+  /// shape as [roll], with `WRONG_PHASE` when the turn is awaiting a roll
+  /// rather than a move. [token] and [face] have already passed the wire
+  /// layer's own `BAD_FIELD` checks (absent or the wrong type, [token]
+  /// outside `0..3`, [face] outside `1..6`) by the time either reaches
+  /// here -- that is why this method's own signature takes a plain `int`
+  /// for [token] -- but both ranges are re-checked below anyway, the same
+  /// defence in depth every other registry call applies to what its own
+  /// caller already validated. [face] null means "the default face"; this
+  /// file never picks one itself, it only forwards the caller's choice (or
+  /// its absence) to `engine.MoveIntention`, which is the one thing that
+  /// decides whether a given face is legal for this move at all.
   MoveResult move({
     required String code,
     required String seatToken,
     required int token,
+    int? face,
   }) {
     final Room? room = _rooms[code];
     if (room == null) {
@@ -1032,13 +1081,24 @@ class RoomRegistry {
       return MoveFailure(ProtocolError.badField);
     }
 
-    final engine.ApplyResult applied =
-        engine.apply(game, engine.MoveIntention(seat.seat, token));
+    final engine.ApplyResult applied = engine.apply(
+      game,
+      engine.MoveIntention(seat.seat, token, face: face),
+    );
     if (applied is engine.Rejected) {
       return MoveFailure(_mapEngineError(applied.error));
     }
     final engine.Applied appliedOk = applied as engine.Applied;
     room.game = appliedOk.state;
+
+    // docs/PROTOCOL.md section 21.1: the face this move spent. `face` is
+    // the caller's own choice when it gave one -- the engine has already
+    // rejected a `face` that was not in `game.queue`, so a successful apply
+    // means this is exactly what it spent. Absent, the engine spent
+    // `defaultFace(game)` (ENGINE_API.md section 10.4), read here off the
+    // same pre-move `game` the engine itself read it from, never
+    // recomputed from any legality rule of this file's own.
+    final int faceSpent = face ?? engine.defaultFace(game)!;
 
     room.seq++;
     final int movedSeq = room.seq;
@@ -1047,6 +1107,7 @@ class RoomRegistry {
 
     int? gameOverSeq;
     String? verifyUrl;
+    int? turnPassedSeq;
     int? turnSeq;
     int? nextDeadlineMs;
 
@@ -1089,10 +1150,20 @@ class RoomRegistry {
       gameOverSeq = room.seq;
       verifyUrl = '$_verifyUrlBase${room.gameId}';
     } else {
-      // Rule 12 of docs/RULES.md, via the engine's own ExtraRoll/TurnBegan
-      // events: either the same seat rolls again or the next seat's turn
-      // begins. Section 12.2 sends a `turn` frame either way, and section 6
-      // restarts the segment either way.
+      // docs/PROTOCOL.md section 21.3 rule 4: a move that leaves only dead
+      // faces in the queue gets its own `turn_passed` (reason
+      // `no_legal_move`), ahead of the `turn` below, exactly as a `roll`
+      // that passes the turn does. The engine's own `TurnEnded` event is
+      // how it tells us which of the four non-winning rows this move
+      // landed on; every one of them still ends with a `turn` frame
+      // (section 12.2 and section 21.3 rule 4), so that part stays
+      // unconditional.
+      final bool turnEnded =
+          appliedOk.events.whereType<engine.TurnEnded>().isNotEmpty;
+      if (turnEnded) {
+        room.seq++;
+        turnPassedSeq = room.seq;
+      }
       room.seq++;
       turnSeq = room.seq;
       nextDeadlineMs = _restartSegment(room);
@@ -1102,8 +1173,10 @@ class RoomRegistry {
       room: room,
       events: appliedOk.events,
       movedSeq: movedSeq,
+      face: faceSpent,
       gameOverSeq: gameOverSeq,
       verifyUrl: verifyUrl,
+      turnPassedSeq: turnPassedSeq,
       turnSeq: turnSeq,
       nextDeadlineMs: nextDeadlineMs,
     );
