@@ -10,6 +10,18 @@
 //
 // HomeRuleToggle fields, as the contract states them: value, onChanged,
 // icon, title, hint.
+//
+// Amended for C-356 (the 10-15 rule ruling, work/ludo/orders/C-356-house-
+// rules-client.md): the Blocks card (home-rule-blocks) is gone outright, and
+// the surviving Capture bonus card now takes the full row width (no Row,
+// no side-by-side layout, nothing to be "side by side" with). The en and ar
+// side-by-side-layout case, the on/off tap case and the turn-off-then-Create
+// case below all pinned Blocks directly; each is re-pointed at Capture bonus
+// where the assertion has a direct counterpart (on/off tap, Create's wire
+// rules) and turned into an absence assertion where it does not (there is no
+// second card left to sit beside). The text-scale-no-overflow loop and the
+// title/hint loop, which already iterate over both cards, now iterate over
+// Capture bonus alone.
 
 import 'dart:convert';
 
@@ -142,49 +154,24 @@ Finder _checkIn(Finder card) {
   return find.descendant(of: card, matching: find.byIcon(Icons.check_circle));
 }
 
-/// Blocks on the start side of capture bonus (left in ltr, right in rtl),
-/// same top, same height.
-void _expectSideBySide(WidgetTester tester, String localeName) {
+/// C-356: no Blocks card exists beside Capture bonus any more, and Capture
+/// bonus itself still starts on. There is no second card left for it to be
+/// "side by side" with, so this no longer measures a relative position --
+/// only that the removed card is well and truly gone and the surviving one
+/// still reads its own default.
+void _expectNoBlocksCaptureBonusOn(WidgetTester tester, String localeName) {
   final Finder blocks = find.byKey(_blocksKey);
   final Finder capture = find.byKey(_captureKey);
-  final HomeRuleToggle blocksCard = tester.widget<HomeRuleToggle>(blocks);
+  expect(
+    blocks,
+    findsNothing,
+    reason: '$localeName: home-rule-blocks must not exist',
+  );
   final HomeRuleToggle captureCard = tester.widget<HomeRuleToggle>(capture);
-  expect(blocksCard.value, isTrue, reason: '$localeName: blocks starts on');
   expect(
     captureCard.value,
     isTrue,
     reason: '$localeName: capture bonus starts on',
-  );
-
-  final Rect blocksRect = tester.getRect(blocks);
-  final Rect captureRect = tester.getRect(capture);
-  final bool ltr =
-      Directionality.of(tester.element(blocks)) == TextDirection.ltr;
-  expect(
-    ltr
-        ? blocksRect.center.dx < captureRect.center.dx
-        : blocksRect.center.dx > captureRect.center.dx,
-    isTrue,
-    reason:
-        '$localeName: blocks must sit on the start side of capture bonus '
-        '(${ltr ? 'left' : 'right'}); blocks ${_formatRect(blocksRect)}, '
-        'capture ${_formatRect(captureRect)}',
-  );
-  expect(
-    blocksRect.top,
-    captureRect.top,
-    reason:
-        '$localeName: the two cards must share a top; '
-        'blocks ${_formatRect(blocksRect)}, '
-        'capture ${_formatRect(captureRect)}',
-  );
-  expect(
-    blocksRect.height,
-    captureRect.height,
-    reason:
-        '$localeName: the two cards must share a height; '
-        'blocks ${_formatRect(blocksRect)}, '
-        'capture ${_formatRect(captureRect)}',
   );
 }
 
@@ -201,42 +188,34 @@ List<Map<String, Object?>> _decodeSent(FakeTransport transport) {
 }
 
 void main() {
-  testWidgets(
-    'en: rules open, both cards are HomeRuleToggle, no SwitchListTile '
-    'and no Switch, blocks on the start side',
-    (tester) async {
-      _usePhone(tester);
-      await tester.pumpWidget(_homeScreenApp(locale: const Locale('en')));
-      await tester.pumpAndSettle();
+  testWidgets('en: rules open, no home-rule-blocks at all, capture bonus is a '
+      'HomeRuleToggle, no SwitchListTile and no Switch', (tester) async {
+    _usePhone(tester);
+    await tester.pumpWidget(_homeScreenApp(locale: const Locale('en')));
+    await tester.pumpAndSettle();
 
-      await _openPlayersDisclosure(tester);
+    await _openPlayersDisclosure(tester);
 
-      expect(
-        tester.widget<HomeRuleToggle>(find.byKey(_blocksKey)).icon,
-        Icons.shield_outlined,
-        reason: 'blocks must use Icons.shield_outlined',
-      );
-      expect(
-        tester.widget<HomeRuleToggle>(find.byKey(_captureKey)).icon,
-        Icons.replay_rounded,
-        reason: 'capture bonus must use Icons.replay_rounded',
-      );
-      expect(
-        find.byType(SwitchListTile),
-        findsNothing,
-        reason: 'rules open must not build a SwitchListTile',
-      );
-      expect(
-        find.byType(Switch),
-        findsNothing,
-        reason: 'rules open must not build a Switch',
-      );
-      _expectSideBySide(tester, 'en');
-    },
-  );
+    expect(
+      tester.widget<HomeRuleToggle>(find.byKey(_captureKey)).icon,
+      Icons.replay_rounded,
+      reason: 'capture bonus must use Icons.replay_rounded',
+    );
+    expect(
+      find.byType(SwitchListTile),
+      findsNothing,
+      reason: 'rules open must not build a SwitchListTile',
+    );
+    expect(
+      find.byType(Switch),
+      findsNothing,
+      reason: 'rules open must not build a Switch',
+    );
+    _expectNoBlocksCaptureBonusOn(tester, 'en');
+  });
 
-  testWidgets('ar: rules open, blocks sits on the start side of capture bonus, '
-      'same top and same height', (tester) async {
+  testWidgets('ar: rules open, no home-rule-blocks at all, capture bonus '
+      'lays out rtl', (tester) async {
     _usePhone(tester);
     await tester.pumpWidget(_homeScreenApp(locale: const Locale('ar')));
     await tester.pumpAndSettle();
@@ -244,111 +223,127 @@ void main() {
     await _openPlayersDisclosure(tester);
 
     expect(
-      Directionality.of(tester.element(find.byKey(_blocksKey))),
+      Directionality.of(tester.element(find.byKey(_captureKey))),
       TextDirection.rtl,
-      reason: 'ar fixture: the cards must lay out rtl',
+      reason: 'ar fixture: the capture bonus card must lay out rtl',
     );
-    _expectSideBySide(tester, 'ar');
+    _expectNoBlocksCaptureBonusOn(tester, 'ar');
   });
 
-  testWidgets('blocks card on shows a check and no strike; a tap turns it off; '
-      'a second tap turns it back on; semantics isToggled follows value', (
+  // Re-pointed at capture bonus: this test exercises HomeRuleToggle's own
+  // on/off/tap/semantics behaviour, not anything specific to the rule it
+  // happened to be wired to. Blocks is gone, so the only surviving
+  // HomeRuleToggle instance in this screen is where that behaviour must now
+  // be proven; nothing about the proof itself changes.
+  testWidgets(
+    'capture bonus card on shows a check and no strike; a tap turns it off; '
+    'a second tap turns it back on; semantics isToggled follows value',
+    (tester) async {
+      final SemanticsHandle handle = tester.ensureSemantics();
+      var semanticsDisposed = false;
+      void disposeSemantics() {
+        if (semanticsDisposed) {
+          return;
+        }
+        semanticsDisposed = true;
+        handle.dispose();
+      }
+
+      addTearDown(disposeSemantics);
+
+      _usePhone(tester);
+      await tester.pumpWidget(_homeScreenApp(locale: const Locale('en')));
+      await tester.pumpAndSettle();
+      await _openPlayersDisclosure(tester);
+
+      final Finder capture = find.byKey(_captureKey);
+      final AppLocalizations loc = AppLocalizations.of(tester.element(capture));
+
+      void expectSemantics(bool value) {
+        final HomeRuleToggle card = tester.widget<HomeRuleToggle>(capture);
+        expect(
+          card.value,
+          value,
+          reason: 'HomeRuleToggle.value must be $value',
+        );
+        final SemanticsNode node = tester.getSemantics(capture);
+        expect(
+          node.flagsCollection.isButton,
+          isTrue,
+          reason: 'the card must be one semantics button',
+        );
+        expect(
+          node.flagsCollection.isToggled.toBoolOrNull(),
+          value,
+          reason:
+              'semantics isToggled must follow HomeRuleToggle.value '
+              '($value); flags were ${node.flagsCollection}',
+        );
+        expect(
+          node.label,
+          card.title,
+          reason:
+              'semantics label must be the card title "${card.title}"; '
+              'got "${node.label}"',
+        );
+        expect(
+          node.hint,
+          card.hint,
+          reason:
+              'semantics hint must be the card hint "${card.hint}"; '
+              'got "${node.hint}"',
+        );
+        expect(
+          card.title,
+          loc.homeRuleCaptureBonus,
+          reason:
+              'capture bonus title must be the homeRuleCaptureBonus '
+              'string',
+        );
+        expect(
+          card.hint,
+          loc.homeRuleCaptureBonusHint,
+          reason:
+              'capture bonus hint must be the homeRuleCaptureBonusHint '
+              'string',
+        );
+      }
+
+      expect(_checkIn(capture), findsOneWidget, reason: 'on: a check badge');
+      expect(_strikeIn(capture), findsNothing, reason: 'on: no strike');
+      expectSemantics(true);
+
+      await tester.ensureVisible(capture);
+      await tester.tap(capture);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(_checkIn(capture), findsNothing, reason: 'off: no check badge');
+      expect(
+        _strikeIn(capture),
+        findsOneWidget,
+        reason: 'off: a RuleOffStrikePainter over the icon',
+      );
+      expectSemantics(false);
+
+      await tester.tap(capture);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(_checkIn(capture), findsOneWidget, reason: 'on again: a check');
+      expect(_strikeIn(capture), findsNothing, reason: 'on again: no strike');
+      expectSemantics(true);
+
+      disposeSemantics();
+    },
+  );
+
+  testWidgets('no home-rule-blocks to turn off; turning capture bonus off then '
+      'Create sends exactly capture_bonus false, no blocks key', (
     tester,
   ) async {
-    final SemanticsHandle handle = tester.ensureSemantics();
-    var semanticsDisposed = false;
-    void disposeSemantics() {
-      if (semanticsDisposed) {
-        return;
-      }
-      semanticsDisposed = true;
-      handle.dispose();
-    }
-
-    addTearDown(disposeSemantics);
-
-    _usePhone(tester);
-    await tester.pumpWidget(_homeScreenApp(locale: const Locale('en')));
-    await tester.pumpAndSettle();
-    await _openPlayersDisclosure(tester);
-
-    final Finder blocks = find.byKey(_blocksKey);
-    final AppLocalizations loc = AppLocalizations.of(tester.element(blocks));
-
-    void expectSemantics(bool value) {
-      final HomeRuleToggle card = tester.widget<HomeRuleToggle>(blocks);
-      expect(card.value, value, reason: 'HomeRuleToggle.value must be $value');
-      final SemanticsNode node = tester.getSemantics(blocks);
-      expect(
-        node.flagsCollection.isButton,
-        isTrue,
-        reason: 'the card must be one semantics button',
-      );
-      expect(
-        node.flagsCollection.isToggled.toBoolOrNull(),
-        value,
-        reason:
-            'semantics isToggled must follow HomeRuleToggle.value '
-            '($value); flags were ${node.flagsCollection}',
-      );
-      expect(
-        node.label,
-        card.title,
-        reason:
-            'semantics label must be the card title "${card.title}"; '
-            'got "${node.label}"',
-      );
-      expect(
-        node.hint,
-        card.hint,
-        reason:
-            'semantics hint must be the card hint "${card.hint}"; '
-            'got "${node.hint}"',
-      );
-      expect(
-        card.title,
-        loc.homeRuleBlocks,
-        reason: 'blocks title must be the homeRuleBlocks string',
-      );
-      expect(
-        card.hint,
-        loc.homeRuleBlocksHint,
-        reason: 'blocks hint must be the homeRuleBlocksHint string',
-      );
-    }
-
-    expect(_checkIn(blocks), findsOneWidget, reason: 'on: a check badge');
-    expect(_strikeIn(blocks), findsNothing, reason: 'on: no strike');
-    expectSemantics(true);
-
-    await tester.ensureVisible(blocks);
-    await tester.tap(blocks);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 150));
-    await tester.pump(const Duration(milliseconds: 50));
-
-    expect(_checkIn(blocks), findsNothing, reason: 'off: no check badge');
-    expect(
-      _strikeIn(blocks),
-      findsOneWidget,
-      reason: 'off: a RuleOffStrikePainter over the icon',
-    );
-    expectSemantics(false);
-
-    await tester.tap(blocks);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 150));
-    await tester.pump(const Duration(milliseconds: 50));
-
-    expect(_checkIn(blocks), findsOneWidget, reason: 'on again: a check');
-    expect(_strikeIn(blocks), findsNothing, reason: 'on again: no strike');
-    expectSemantics(true);
-
-    disposeSemantics();
-  });
-
-  testWidgets('turning blocks off then Create sends blocks false and '
-      'capture_bonus true', (tester) async {
     final _LiveControllerFactory factory = _LiveControllerFactory();
     var disposed = false;
     void disposeControllers() {
@@ -373,20 +368,21 @@ void main() {
     await tester.pumpAndSettle();
     await _openPlayersDisclosure(tester);
 
-    await tester.ensureVisible(find.byKey(_blocksKey));
-    await tester.tap(find.byKey(_blocksKey));
+    expect(
+      find.byKey(_blocksKey),
+      findsNothing,
+      reason: 'C-356: home-rule-blocks must not exist to be turned off',
+    );
+
+    await tester.ensureVisible(find.byKey(_captureKey));
+    await tester.tap(find.byKey(_captureKey));
     await tester.pump();
     expect(
-      tester.widget<HomeRuleToggle>(find.byKey(_blocksKey)).value,
+      tester.widget<HomeRuleToggle>(find.byKey(_captureKey)).value,
       isFalse,
       reason:
-          'fixture: tapping home-rule-blocks must turn its value off '
-          'before Create is tapped',
-    );
-    expect(
-      tester.widget<HomeRuleToggle>(find.byKey(_captureKey)).value,
-      isTrue,
-      reason: 'fixture: capture bonus must still be on',
+          'fixture: tapping home-rule-capture-bonus must turn its value '
+          'off before Create is tapped',
     );
 
     await _tapAndAwaitPushedRoute(tester, _createButtonKey);
@@ -412,18 +408,18 @@ void main() {
     final Map<String, Object?> data = sent.single['d']! as Map<String, Object?>;
     final Map<String, Object?> rules = data['rules']! as Map<String, Object?>;
     expect(
-      rules['blocks'],
+      rules.containsKey('blocks'),
       isFalse,
       reason:
-          'create_room rules.blocks must be false after the blocks '
-          'card was turned off; rules were $rules',
+          'C-356: no blocks key may appear on the wire, ever; rules '
+          'were $rules',
     );
     expect(
       rules['capture_bonus'],
-      isTrue,
+      isFalse,
       reason:
-          'create_room rules.capture_bonus must stay true; rules were '
-          '$rules',
+          'create_room rules.capture_bonus must be false after the '
+          'capture bonus card was turned off; rules were $rules',
     );
 
     disposeControllers();
@@ -451,9 +447,17 @@ void main() {
                 'not throw',
           );
 
+          expect(
+            find.byKey(_blocksKey),
+            findsNothing,
+            reason:
+                '$localeName scale $textScale: C-356: home-rule-blocks '
+                'must not exist',
+          );
+
           final double viewWidth =
               tester.view.physicalSize.width / tester.view.devicePixelRatio;
-          for (final Key key in <Key>[_blocksKey, _captureKey]) {
+          for (final Key key in <Key>[_captureKey]) {
             final String name = (key as ValueKey<String>).value;
             final Rect rect = tester.getRect(find.byKey(key));
             expect(
@@ -486,9 +490,16 @@ void main() {
       await tester.pumpAndSettle();
       await _openPlayersDisclosure(tester);
 
+      expect(
+        find.byKey(_blocksKey),
+        findsNothing,
+        reason:
+            '${locale.languageCode}: C-356: home-rule-blocks must not '
+            'exist to draw a title or hint',
+      );
+
       final AppLocalizations loc = lookupAppLocalizations(locale);
       final List<(Key, String, String)> cards = <(Key, String, String)>[
-        (_blocksKey, loc.homeRuleBlocks, loc.homeRuleBlocksHint),
         (_captureKey, loc.homeRuleCaptureBonus, loc.homeRuleCaptureBonusHint),
       ];
       for (final (Key key, String title, String hint) in cards) {

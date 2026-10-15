@@ -16,6 +16,19 @@
 //   equality, toJson() exactly {'blocks': b, 'capture_bonus': c}.
 //
 // Each test's name starts with its id (U1..U5), per the order.
+//
+// Amended for C-356 (the 10-15 rule ruling, work/ludo/orders/C-356-house-
+// rules-client.md): RoomToggles loses blocks outright --
+// `const RoomToggles({this.captureBonus = true})`, toJson() exactly
+// {'capture_bonus': captureBonus}, ==/hashCode on captureBonus alone. Every
+// case below that exercised blocks (U1's key list and both-off encoding, U2's
+// blocks-alone inequality, U3's wire case, U5's default rules) is re-pointed
+// at captureBonus, the one field that survives; U2's "a difference in blocks
+// alone" case has no surviving counterpart (there is only one field left to
+// differ), so it is dropped rather than duplicated, noted here rather than
+// silently -- RoomToggles().toJson() equalling exactly {'capture_bonus': true}
+// (U1) already proves blocks emits nothing, which is the only form an
+// absence assertion for a removed constructor parameter can take.
 
 import 'dart:convert';
 
@@ -104,42 +117,34 @@ Future<(RoomConnection, FakeTransport)> _openConnection() async {
 
 void main() {
   group('U1: RoomToggles().toJson() key order', () {
-    test('the key list is exactly [blocks, capture_bonus], in that order', () {
+    test('the key list is exactly [capture_bonus], blocks gone entirely', () {
       final Map<String, Object?> json = const RoomToggles().toJson();
       expect(
         json.keys.toList(),
-        <String>['blocks', 'capture_bonus'],
+        <String>['capture_bonus'],
         reason:
-            'RoomToggles().toJson() must carry exactly the keys '
-            '[blocks, capture_bonus] in that order; got '
+            'C-356: RoomToggles().toJson() must carry exactly the key '
+            '[capture_bonus] and no blocks key at all; got '
             '${json.keys.toList()}',
       );
     });
 
-    test('the default values are both true', () {
+    test('the default value is true', () {
       final Map<String, Object?> json = const RoomToggles().toJson();
-      expect(
-        json,
-        equals(<String, Object?>{'blocks': true, 'capture_bonus': true}),
-      );
+      expect(json, equals(<String, Object?>{'capture_bonus': true}));
     });
 
-    test('a toggles object with both switches off encodes both as false', () {
-      final Map<String, Object?> json = const RoomToggles(
-        blocks: false,
-        captureBonus: false,
-      ).toJson();
-      expect(
-        json,
-        equals(<String, Object?>{'blocks': false, 'capture_bonus': false}),
-      );
+    test('captureBonus off encodes as false, still with no blocks key', () {
+      final Map<String, Object?> json = const RoomToggles(captureBonus: false)
+          .toJson();
+      expect(json, equals(<String, Object?>{'capture_bonus': false}));
     });
   });
 
   group('U2: RoomToggles value equality and hashCode', () {
-    test('two instances built from the same values are ==', () {
-      const RoomToggles a = RoomToggles(blocks: false, captureBonus: true);
-      const RoomToggles b = RoomToggles(blocks: false, captureBonus: true);
+    test('two instances built from the same value are ==', () {
+      const RoomToggles a = RoomToggles(captureBonus: true);
+      const RoomToggles b = RoomToggles(captureBonus: true);
       expect(
         a,
         equals(b),
@@ -149,9 +154,9 @@ void main() {
       );
     });
 
-    test('two instances built from the same values share a hashCode', () {
-      const RoomToggles a = RoomToggles(blocks: false, captureBonus: true);
-      const RoomToggles b = RoomToggles(blocks: false, captureBonus: true);
+    test('two instances built from the same value share a hashCode', () {
+      const RoomToggles a = RoomToggles(captureBonus: true);
+      const RoomToggles b = RoomToggles(captureBonus: true);
       expect(
         a.hashCode,
         equals(b.hashCode),
@@ -161,30 +166,29 @@ void main() {
       );
     });
 
-    test('a difference in blocks alone makes two instances unequal', () {
-      const RoomToggles a = RoomToggles(blocks: true, captureBonus: true);
-      const RoomToggles b = RoomToggles(blocks: false, captureBonus: true);
-      expect(a, isNot(equals(b)));
-    });
-
+    // C-356: "a difference in blocks alone makes two instances unequal" had
+    // no surviving counterpart once blocks is gone -- there is only one
+    // field left, so it cannot differ "alone" against anything else. Dropped
+    // rather than duplicated; U1's key-list and default-value cases already
+    // carry the absence proof for blocks.
     test('a difference in captureBonus alone makes two instances unequal', () {
-      const RoomToggles a = RoomToggles(blocks: true, captureBonus: true);
-      const RoomToggles b = RoomToggles(blocks: true, captureBonus: false);
+      const RoomToggles a = RoomToggles(captureBonus: true);
+      const RoomToggles b = RoomToggles(captureBonus: false);
       expect(a, isNot(equals(b)));
     });
 
-    test('the default constructor equals one built with both defaults named '
+    test('the default constructor equals one built with the default named '
         'explicitly', () {
       const RoomToggles a = RoomToggles();
-      const RoomToggles b = RoomToggles(blocks: true, captureBonus: true);
+      const RoomToggles b = RoomToggles(captureBonus: true);
       expect(a, equals(b));
       expect(a.hashCode, equals(b.hashCode));
     });
   });
 
   group('U3: RoomConnection.createRoom(toggles: ...) on the wire', () {
-    test('toggles: RoomToggles(blocks: false) sends d.rules == '
-        '{blocks: false, capture_bonus: true}', () async {
+    test('toggles: RoomToggles(captureBonus: false) sends d.rules == '
+        '{capture_bonus: false}, no blocks key', () async {
       final (RoomConnection connection, FakeTransport transport) =
           await _openConnection();
       addTearDown(connection.close);
@@ -192,7 +196,7 @@ void main() {
       final Future<RoomSnapshot> future = connection.createRoom(
         name: 'Sam',
         players: 4,
-        toggles: const RoomToggles(blocks: false),
+        toggles: const RoomToggles(captureBonus: false),
       );
       await pumpEventQueue();
 
@@ -200,11 +204,11 @@ void main() {
       final Map<String, Object?> data = sent['d']! as Map<String, Object?>;
       expect(
         data['rules'],
-        equals(<String, Object?>{'blocks': false, 'capture_bonus': true}),
+        equals(<String, Object?>{'capture_bonus': false}),
         reason:
-            'createRoom(toggles: RoomToggles(blocks: false)) must send '
-            'exactly the toggles\' own toJson() as d.rules; got '
-            '${data['rules']}',
+            'C-356: createRoom(toggles: RoomToggles(captureBonus: false)) '
+            'must send exactly the toggles\' own toJson() as d.rules, with '
+            'no blocks key at all; got ${data['rules']}',
       );
 
       transport.pushText(
@@ -283,7 +287,7 @@ void main() {
   });
 
   group('U5: RoomController.createRoom(name:, players:) with no toggles', () {
-    test('sends rules == {blocks: true, capture_bonus: true}', () async {
+    test('sends rules == {capture_bonus: true}, no blocks key', () async {
       final FakeTransport transport = FakeTransport();
       final RoomController controller = RoomController(
         serverUrl: Uri.parse(_testUrl),
@@ -309,11 +313,11 @@ void main() {
       final Map<String, Object?> data = sent['d']! as Map<String, Object?>;
       expect(
         data['rules'],
-        equals(<String, Object?>{'blocks': true, 'capture_bonus': true}),
+        equals(<String, Object?>{'capture_bonus': true}),
         reason:
-            'RoomController.createRoom with no toggles argument must '
-            'still send the default RoomToggles as d.rules; got '
-            '${data['rules']}',
+            'C-356: RoomController.createRoom with no toggles argument must '
+            'still send the default RoomToggles as d.rules, with no blocks '
+            'key; got ${data['rules']}',
       );
 
       transport.pushText(
