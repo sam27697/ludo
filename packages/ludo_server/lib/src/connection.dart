@@ -1443,6 +1443,11 @@ class Connection {
   /// clients from silently disagreeing about the rules they think they are
   /// playing, and a present-but-null `rules` gets no special exemption from
   /// that.
+  ///
+  /// `blocks` is accepted and type-checked since 2026-10-15 (Sam's ruling,
+  /// `docs/PROTOCOL.md` section 4 and `docs/RULES.md` rule 21) but then
+  /// discarded: every room is created with blocks off regardless of what
+  /// was sent, so `RulesConfig` here has no field to carry the value into.
   RulesConfig? _parseRules(Object? raw) {
     if (raw is! Map<String, Object?>) {
       return null;
@@ -1455,13 +1460,11 @@ class Connection {
     if (!raw.keys.every(allowedKeys.contains)) {
       return null;
     }
-    bool blocks = const RulesConfig().blocks;
     if (raw.containsKey('blocks')) {
       final Object? v = raw['blocks'];
       if (v is! bool) {
         return null;
       }
-      blocks = v;
     }
     bool captureBonus = const RulesConfig().captureBonus;
     if (raw.containsKey('capture_bonus')) {
@@ -1480,7 +1483,6 @@ class Connection {
       turnSeconds = v;
     }
     return RulesConfig(
-      blocks: blocks,
       captureBonus: captureBonus,
       turnSeconds: turnSeconds,
     );

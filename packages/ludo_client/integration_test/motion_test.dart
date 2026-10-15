@@ -661,10 +661,7 @@ Future<void> _runHostSeat0(
   final Map<String, Object?> createData = _dataOf(createMessages.single);
   expect(createData['name'], hostName);
   expect(createData['players'], 2);
-  expect(createData['rules'], <String, Object?>{
-    'blocks': true,
-    'capture_bonus': true,
-  });
+  expect(createData['rules'], <String, Object?>{'capture_bonus': true});
   expect(isValidRoomCode(_roomCode), isTrue);
 
   transport.pushText(

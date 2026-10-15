@@ -61,6 +61,8 @@ import 'package:ludo_engine/ludo_engine.dart'
         Moved,
         Rolled,
         legalTokens;
+import 'package:ludo_engine/ludo_engine.dart' as engine
+    show GameConfig, RulesConfig;
 import 'package:ludo_server/ludo_server.dart';
 import 'package:test/test.dart';
 
@@ -166,10 +168,21 @@ void _forceGame(
   required Map<int, List<int>> tokens,
   int sixes = 0,
   int? winner,
+  bool? blocks,
 }) {
   final GameState base = room.game!;
   room.game = GameState(
-    config: base.config,
+    config: blocks == null
+        ? base.config
+        : engine.GameConfig(
+            seats: base.config.seats,
+            rules: engine.RulesConfig(
+              blocks: blocks,
+              captureBonus: base.config.rules.captureBonus,
+              homeBonus: base.config.rules.homeBonus,
+            ),
+            seed: base.config.seed,
+          ),
     tokens: _boardFor(tokens),
     currentSeat: currentSeat,
     phase: phase,
@@ -516,8 +529,13 @@ void main() {
       // because nothing of seat 0's has left the yard. Every one of the six
       // possible faces therefore leaves seat 0 with no legal move; this
       // does not depend on which face the room's real dice chain draws.
+      // Since the 2026-10-15 ruling a server room plays blocks off, where a
+      // pair is a shelter and no position leaves every face illegal, so
+      // this fixture turns the engine's blocks rule back on for its own
+      // game: what is under test is the timer's frames, not rule 21.
       _forceGame(
         table.room,
+        blocks: true,
         currentSeat: 0,
         phase: GamePhase.awaitRoll,
         tokens: <int, List<int>>{

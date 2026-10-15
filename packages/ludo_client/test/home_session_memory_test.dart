@@ -230,7 +230,7 @@ Future<void> _completeSuccessfulCreate(
       'name': name,
       'players': seats,
       // Order 202: Home's rule toggles, untouched, reach the wire as defaults.
-      'rules': <String, Object?>{'blocks': true, 'capture_bonus': true},
+      'rules': <String, Object?>{'capture_bonus': true},
     },
     reason:
         'the typed name and chosen seat count must reach the wire before '

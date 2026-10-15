@@ -1631,7 +1631,7 @@ void main() {
             // Order 202: every create_room the app sends carries both
             // toggles, and a LobbyScreen built without them carries the
             // defaults, never turn_seconds.
-            'rules': <String, Object?>{'blocks': true, 'capture_bonus': true},
+            'rules': <String, Object?>{'capture_bonus': true},
           },
           reason:
               'rule 7: retry must re-issue the same request with the same '

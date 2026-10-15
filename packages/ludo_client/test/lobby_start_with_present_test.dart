@@ -797,6 +797,12 @@ void main() {
   });
 
   // --- L7/L8/L9 ---------------------------------------------------------
+  // C-356 (run 90, order 357, the 10-15 rule ruling): lobby-rule-blocks is
+  // gone outright, and loc.lobbyRuleBlocksOff/On no longer exist as l10n
+  // getters at all, so L7/L8/L9 can no longer read either. Each case keeps
+  // the server-side blocks value in its room fixture (net/snapshot.dart
+  // still parses it) and every capture-bonus assertion exactly as it was,
+  // and turns the removed widget check into an absence assertion.
   group('L7/L8/L9: the rules lines under the seat list', () {
     testWidgets('L7: guest view, blocks off / capture bonus on, en', (
       tester,
@@ -837,13 +843,6 @@ void main() {
       final context = tester.element(find.byType(LobbyScreen));
       final loc = AppLocalizations.of(context);
       expect(
-        loc.lobbyRuleBlocksOff,
-        'Blocks: off',
-        reason:
-            'L7 pins the exact en string from order 206\'s ARB table for '
-            'lobbyRuleBlocksOff',
-      );
-      expect(
         loc.lobbyRuleCaptureBonusOn,
         'Capture bonus: on',
         reason:
@@ -851,15 +850,12 @@ void main() {
             'lobbyRuleCaptureBonusOn',
       );
 
-      final blocksText = tester.widget<Text>(
-        find.byKey(const Key('lobby-rule-blocks')),
-      );
       expect(
-        blocksText.data,
-        'Blocks: off',
+        find.byKey(const Key('lobby-rule-blocks')),
+        findsNothing,
         reason:
-            'L7: lobby-rule-blocks must read "Blocks: off" for '
-            'rules.blocks == false; got "${blocksText.data}"',
+            'C-356: lobby-rule-blocks must not exist, even though the '
+            'room\'s own rules carry blocks: false',
       );
       final captureText = tester.widget<Text>(
         find.byKey(const Key('lobby-rule-capture-bonus')),
@@ -907,13 +903,6 @@ void main() {
       final context = tester.element(find.byType(LobbyScreen));
       final loc = AppLocalizations.of(context);
       expect(
-        loc.lobbyRuleBlocksOff,
-        'الحواجز: معطّلة',
-        reason:
-            'L8 pins the exact ar string from order 206\'s ARB table for '
-            'lobbyRuleBlocksOff',
-      );
-      expect(
         loc.lobbyRuleCaptureBonusOn,
         'مكافأة الأكل: مفعّلة',
         reason:
@@ -921,15 +910,12 @@ void main() {
             'lobbyRuleCaptureBonusOn',
       );
 
-      final blocksText = tester.widget<Text>(
-        find.byKey(const Key('lobby-rule-blocks')),
-      );
       expect(
-        blocksText.data,
-        'الحواجز: معطّلة',
+        find.byKey(const Key('lobby-rule-blocks')),
+        findsNothing,
         reason:
-            'L8: lobby-rule-blocks must read the ar string for blocks '
-            'off; got "${blocksText.data}"',
+            'C-356: lobby-rule-blocks must not exist, even though the '
+            'room\'s own rules carry blocks: false, in Arabic too',
       );
       final captureText = tester.widget<Text>(
         find.byKey(const Key('lobby-rule-capture-bonus')),
@@ -976,18 +962,14 @@ void main() {
 
       final context = tester.element(find.byType(LobbyScreen));
       final loc = AppLocalizations.of(context);
-      expect(loc.lobbyRuleBlocksOn, 'Blocks: on');
       expect(loc.lobbyRuleCaptureBonusOn, 'Capture bonus: on');
 
-      final blocksText = tester.widget<Text>(
-        find.byKey(const Key('lobby-rule-blocks')),
-      );
       expect(
-        blocksText.data,
-        'Blocks: on',
+        find.byKey(const Key('lobby-rule-blocks')),
+        findsNothing,
         reason:
-            'L9: lobby-rule-blocks must read "Blocks: on" for the '
-            'default rules, for the host too; got "${blocksText.data}"',
+            'C-356: lobby-rule-blocks must not exist for the host view '
+            'either, even with the room\'s own default rules (blocks: true)',
       );
       final captureText = tester.widget<Text>(
         find.byKey(const Key('lobby-rule-capture-bonus')),

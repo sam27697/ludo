@@ -46,6 +46,21 @@
 // key at all on its outer `DecoratedBox`, so all four cases are red for the
 // missing `-chip` key specifically, not for the icon/strike logic: see the
 // report pasted with this round's red tail.
+//
+// RETURN 2 (run 90, order 357): amended for C-356 (the 10-15 rule ruling,
+// work/ludo/orders/C-356-house-rules-client.md). `lobby-rule-blocks` and
+// `lobby-rule-blocks-chip` are gone outright, not merely re-labelled: rule
+// 4's three blocks-chip cases (the on-label case, the no-strike-on case and
+// the differs-from-on-when-off case) collapse into two absence cases (blocks
+// true, blocks false in the room's own rules) that assert neither widget
+// exists, whatever the wire value reads -- a stronger claim than the three
+// partial on/off/strike checks they replace, not a weaker one: if there is
+// no widget at all, there is no icon, no strike and nothing left to compare.
+// The capture-bonus-chip cases alongside them pin nothing removed and are
+// unchanged. `_roomJson`'s and `_mountConnectedLobby`'s own `blocks`
+// parameters stay exactly as they are: they build the server's own wire
+// shape for the `rules` map (net/snapshot.dart still parses `blocks`,
+// because servers still send it), not a client-side toggle.
 
 import 'dart:convert';
 
@@ -761,7 +776,8 @@ void main() {
     ];
 
     testWidgets(
-      'lobby-rule-blocks-chip contains an Icon and the unchanged on-label',
+      'C-356: no lobby-rule-blocks-chip exists even though the room\'s own '
+      'rules carry blocks: true',
       (tester) async {
         final RoomController controller = await _mountConnectedLobby(
           tester,
@@ -771,33 +787,62 @@ void main() {
           seats: oneSeat(),
           blocks: true,
         );
-        expect(controller.room!.rules.blocks, isTrue);
-
-        final Finder chip = find.byKey(const Key('lobby-rule-blocks-chip'));
         expect(
-          chip,
-          findsOneWidget,
+          controller.room!.rules.blocks,
+          isTrue,
           reason:
-              'amendment run 72 rule 8: lobby-rule-blocks-chip must exist '
-              'as the rule chip\'s own outer DecoratedBox key',
-        );
-        expect(
-          find.descendant(of: chip, matching: find.byType(Icon)),
-          findsOneWidget,
-          reason: 'rule 4: lobby-rule-blocks-chip must contain an Icon',
+              'fixture: net/snapshot.dart still parses the server\'s own '
+              'blocks rule unchanged; this is only meaningful as a '
+              'blocks-is-on scenario if that much holds',
         );
 
-        final AppLocalizations loc = AppLocalizations.of(
-          tester.element(find.byType(LobbyScreen)),
+        expect(
+          find.byKey(const Key('lobby-rule-blocks-chip')),
+          findsNothing,
+          reason:
+              'C-356: lobby-rule-blocks-chip must not exist, even though '
+              'the room\'s own blocks rule reads true',
         );
         expect(
-          find.descendant(of: chip, matching: find.text(loc.lobbyRuleBlocksOn)),
-          findsOneWidget,
+          find.byKey(const Key('lobby-rule-blocks')),
+          findsNothing,
+          reason: 'C-356: lobby-rule-blocks must not exist either',
+        );
+      },
+    );
+
+    testWidgets(
+      'C-356: no lobby-rule-blocks-chip exists even though the room\'s own '
+      'rules carry blocks: false',
+      (tester) async {
+        final RoomController controller = await _mountConnectedLobby(
+          tester,
+          mySeat: 0,
+          hostSeat: 0,
+          players: 4,
+          seats: oneSeat(),
+          blocks: false,
+        );
+        expect(
+          controller.room!.rules.blocks,
+          isFalse,
           reason:
-              'rule 4: lobby-rule-blocks-chip must still contain the '
-              'unchanged loc.lobbyRuleBlocksOn string '
-              '("${loc.lobbyRuleBlocksOn}") on the unchanged '
-              'lobby-rule-blocks label key',
+              'fixture: net/snapshot.dart still parses the server\'s own '
+              'blocks rule unchanged; this is only meaningful as a '
+              'blocks-is-off scenario if that much holds',
+        );
+
+        expect(
+          find.byKey(const Key('lobby-rule-blocks-chip')),
+          findsNothing,
+          reason:
+              'C-356: lobby-rule-blocks-chip must not exist, even though '
+              'the room\'s own blocks rule reads false',
+        );
+        expect(
+          find.byKey(const Key('lobby-rule-blocks')),
+          findsNothing,
+          reason: 'C-356: lobby-rule-blocks must not exist either',
         );
       },
     );
@@ -847,66 +892,13 @@ void main() {
       );
     });
 
-    // RETURN 2 (run 72, defect 1): the single-test, two-mount versions of
-    // these two cases failed their own fixture check on the second
-    // _mountConnectedLobby ("sentRaw is empty",
-    // lobby_seat_cards_test.dart:238) -- a rig error (lessons 33 and 35:
-    // one mount per case), not a product defect. Split into one mount per
-    // case: an "on" case asserting the chip shows no strike, and an "off"
-    // case asserting either a strike or an IconData different from the on
-    // icon C-254 rule 4 names (Icons.shield_outlined / Icons.replay_rounded),
-    // read as a literal here rather than from a second mount.
-    testWidgets('blocks on: lobby-rule-blocks-chip shows no strike', (
-      tester,
-    ) async {
-      await _mountConnectedLobby(
-        tester,
-        mySeat: 0,
-        hostSeat: 0,
-        players: 4,
-        seats: oneSeat(),
-        blocks: true,
-      );
-      final IconData onIcon = _iconInChip(tester, 'lobby-rule-blocks-chip');
-      final bool onHasStrike = _hasStrikeInChip(
-        tester,
-        'lobby-rule-blocks-chip',
-      );
-      expect(
-        onHasStrike,
-        isFalse,
-        reason:
-            'amendment run 72 rule 8: lobby-rule-blocks-chip must show no '
-            'strike while blocks is on; icon read was $onIcon',
-      );
-    });
-
-    testWidgets(
-      'blocks off: lobby-rule-blocks-chip differs from on by icon or strike',
-      (tester) async {
-        await _mountConnectedLobby(
-          tester,
-          mySeat: 0,
-          hostSeat: 0,
-          players: 4,
-          seats: oneSeat(),
-          blocks: false,
-        );
-        final IconData offIcon = _iconInChip(tester, 'lobby-rule-blocks-chip');
-        final bool offHasStrike = _hasStrikeInChip(
-          tester,
-          'lobby-rule-blocks-chip',
-        );
-
-        _expectDiffersWhenOff(
-          'lobby-rule-blocks-chip',
-          onIcon: Icons.shield_outlined,
-          onHasStrike: false,
-          offIcon: offIcon,
-          offHasStrike: offHasStrike,
-        );
-      },
-    );
+    // C-356 (run 90, order 357): the two on/off strike cases that used to
+    // live here ("blocks on: lobby-rule-blocks-chip shows no strike" and
+    // "blocks off: ...differs from on by icon or strike") are dropped rather
+    // than kept as degenerate duplicates: both mounts above already prove
+    // the chip does not exist at all, in either wire state, which subsumes
+    // "no strike" and "differs by icon or strike" -- there is nothing left
+    // to read an icon or a strike from.
 
     testWidgets(
       'capture bonus on: lobby-rule-capture-bonus-chip shows no strike',
@@ -1052,6 +1044,12 @@ void main() {
   // (`_RuleOffStrikePainter`) paints over the existing icon box and adds no
   // width. So the "on" cases already measure at or above the "off" width
   // in both locales; no separate off-state case is added.
+  //
+  // C-356 (run 90, order 357): lobby-rule-blocks-chip no longer exists, so
+  // the four cases below now put only lobby-rule-capture-bonus-chip on
+  // screen alongside the seat grid; the overflow claim and its history above
+  // are otherwise unchanged and still worth keeping as the record of why
+  // this group exists.
   // ===========================================================================
   group('C-254 rule 7: no overflow at 360x800', () {
     for (final Locale locale in <Locale>[

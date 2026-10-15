@@ -211,7 +211,8 @@ ApplyResult _applyMove(GameState state, MoveIntention intention) {
     }
   }
 
-  if (toProgress == 57) {
+  final reachedHome = toProgress == 57;
+  if (reachedHome) {
     events.add(TokenHome(seat: seat, token: token));
   }
 
@@ -232,8 +233,9 @@ ApplyResult _applyMove(GameState state, MoveIntention intention) {
     return Applied(newState, events);
   }
 
-  final grantsExtraRoll =
-      rollValue == 6 || (captured && state.config.rules.captureBonus);
+  final grantsExtraRoll = rollValue == 6 ||
+      (captured && state.config.rules.captureBonus) ||
+      (reachedHome && state.config.rules.homeBonus);
 
   if (grantsExtraRoll) {
     events.add(ExtraRoll(seat: seat));

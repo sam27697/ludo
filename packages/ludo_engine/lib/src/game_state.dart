@@ -150,6 +150,7 @@ Map<String, Object?> _configToJson(GameConfig config) => <String, Object?>{
       'rules': <String, Object?>{
         'blocks': config.rules.blocks,
         'captureBonus': config.rules.captureBonus,
+        if (config.rules.homeBonus) 'homeBonus': true,
       },
       'seed': config.seed,
     };
@@ -159,10 +160,24 @@ GameConfig _configFromJson(Map<String, Object?> json) {
   final rules = RulesConfig(
     blocks: rulesJson['blocks']! as bool,
     captureBonus: rulesJson['captureBonus']! as bool,
+    homeBonus: _homeBonusFromJson(rulesJson['homeBonus']),
   );
   final seatsJson = json['seats']! as List<Object?>;
   final seats = <int>[for (final s in seatsJson) _asInt(s)];
   return GameConfig(seats: seats, rules: rules, seed: _asInt(json['seed']));
+}
+
+/// Rule 11a / docs/ENGINE_API.md section 8: absent means false, `true` is
+/// accepted, and an explicit `false` or any non-bool is malformed -- allowing
+/// it would give one state two serialisations.
+bool _homeBonusFromJson(Object? value) {
+  if (value == null) {
+    return false;
+  }
+  if (value == true) {
+    return true;
+  }
+  throw FormatException('rules.homeBonus must be absent or true, got $value');
 }
 
 String _phaseToWire(GamePhase phase) => switch (phase) {

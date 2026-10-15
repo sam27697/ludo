@@ -3,9 +3,10 @@
 //
 // Capture 13 on the CI emulator showed a returning player open Home's
 // players/rules disclosure (home-players-disclosure) with create-room-button
-// already tight against the bottom of the screen: opening the two rule
-// switches (home-rule-blocks, home-rule-capture-bonus) pushes Create Room
-// off the bottom edge, and nothing on this base ever scrolls it back. The
+// already tight against the bottom of the screen: opening the rule switch
+// (amended for C-356, the 10-15 rule ruling: home-rule-blocks is gone, only
+// home-rule-capture-bonus remains) pushes Create Room off the bottom edge,
+// and nothing on this base ever scrolls it back. The
 // shared contract (both orders): once home-players-disclosure is tapped and
 // the rules/switches are on screen, the home scroll view scrolls with
 // ScrollPositionAlignmentPolicy.keepVisibleAtEnd on create-room-button --
@@ -456,60 +457,64 @@ void main() {
     },
   );
 
-  testWidgets(
-    'RS-6 (control, switches do not scroll): toggling home-rule-blocks '
-    'after the rules are open does not move the home scroll offset',
-    (tester) async {
-      _useSurface(tester, _kSurfaceSize);
+  // C-356 (the 10-15 rule ruling): home-rule-blocks is gone outright, so this
+  // control re-points at home-rule-capture-bonus, the only switch left on
+  // home -- the claim under test ("a rule switch is not the rules disclosure
+  // and must never trigger the create-room-button scroll") is unchanged.
+  testWidgets('RS-6 (control, switches do not scroll): toggling '
+      'home-rule-capture-bonus after the rules are open does not move the '
+      'home scroll offset', (tester) async {
+    _useSurface(tester, _kSurfaceSize);
 
-      await tester.pumpWidget(_homeScreenApp());
-      await tester.pump();
+    await tester.pumpWidget(_homeScreenApp());
+    await tester.pump();
 
-      await tester.tap(find.byKey(const Key('home-players-disclosure')));
-      await _settleAfterRulesOpen(tester);
+    await tester.tap(find.byKey(const Key('home-players-disclosure')));
+    await _settleAfterRulesOpen(tester);
 
-      final Finder switchFinder = find.byKey(const Key('home-rule-blocks'));
-      expect(
-        switchFinder.hitTestable(),
-        findsOneWidget,
-        reason:
-            'RS-6 fixture check: home-rule-blocks must be hit-testable '
-            'once the rules disclosure has opened and settled, or this '
-            'case cannot reach the tap it needs to measure; if RS-1\'s own '
-            'settle on this base leaves the switch off screen, that is '
-            'this fixture check failing, and this case is not rewritten '
-            'to make it pass',
-      );
+    final Finder switchFinder = find.byKey(
+      const Key('home-rule-capture-bonus'),
+    );
+    expect(
+      switchFinder.hitTestable(),
+      findsOneWidget,
+      reason:
+          'RS-6 fixture check: home-rule-capture-bonus must be '
+          'hit-testable once the rules disclosure has opened and settled, '
+          'or this case cannot reach the tap it needs to measure; if '
+          'RS-1\'s own settle on this base leaves the switch off screen, '
+          'that is this fixture check failing, and this case is not '
+          'rewritten to make it pass',
+    );
 
-      final ScrollPosition position = _homeScrollPosition(tester);
-      final double pixelsBeforeSwitchTap = position.pixels;
+    final ScrollPosition position = _homeScrollPosition(tester);
+    final double pixelsBeforeSwitchTap = position.pixels;
 
-      await tester.tap(switchFinder);
-      await _settleAfterRulesOpen(tester);
+    await tester.tap(switchFinder);
+    await _settleAfterRulesOpen(tester);
 
-      final double pixelsAfterSwitchTap = position.pixels;
-      expect(
-        pixelsAfterSwitchTap,
-        pixelsBeforeSwitchTap,
-        reason:
-            'RS-6: the home scroll offset must be identical before tapping '
-            'home-rule-blocks ($pixelsBeforeSwitchTap) and after '
-            '($pixelsAfterSwitchTap); a rule switch is not the rules '
-            'disclosure and must never trigger the create-room-button '
-            'scroll',
-      );
+    final double pixelsAfterSwitchTap = position.pixels;
+    expect(
+      pixelsAfterSwitchTap,
+      pixelsBeforeSwitchTap,
+      reason:
+          'RS-6: the home scroll offset must be identical before tapping '
+          'home-rule-capture-bonus ($pixelsBeforeSwitchTap) and after '
+          '($pixelsAfterSwitchTap); a rule switch is not the rules '
+          'disclosure and must never trigger the create-room-button '
+          'scroll',
+    );
 
-      final HomeRuleToggle blocksRule = tester.widget<HomeRuleToggle>(
-        switchFinder,
-      );
-      expect(
-        blocksRule.value,
-        isFalse,
-        reason:
-            'RS-6 fixture check: tapping home-rule-blocks must flip its '
-            'HomeRuleToggle.value to false (it defaults true), or the tap '
-            'above never actually reached the switch',
-      );
-    },
-  );
+    final HomeRuleToggle captureBonusRule = tester.widget<HomeRuleToggle>(
+      switchFinder,
+    );
+    expect(
+      captureBonusRule.value,
+      isFalse,
+      reason:
+          'RS-6 fixture check: tapping home-rule-capture-bonus must flip '
+          'its HomeRuleToggle.value to false (it defaults true), or the '
+          'tap above never actually reached the switch',
+    );
+  });
 }
