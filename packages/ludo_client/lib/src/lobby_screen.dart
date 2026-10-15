@@ -691,15 +691,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
             runSpacing: kSpace2,
             children: [
               _ruleChip(
-                chipKey: const Key('lobby-rule-blocks-chip'),
-                icon: Icons.shield_outlined,
-                on: room.rules.blocks,
-                textKey: const Key('lobby-rule-blocks'),
-                text: room.rules.blocks
-                    ? loc.lobbyRuleBlocksOn
-                    : loc.lobbyRuleBlocksOff,
-              ),
-              _ruleChip(
                 chipKey: const Key('lobby-rule-capture-bonus-chip'),
                 icon: Icons.replay_rounded,
                 on: room.rules.captureBonus,
@@ -709,6 +700,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     : loc.lobbyRuleCaptureBonusOff,
               ),
             ],
+          ),
+          SizedBox(height: compact ? kSpace1 : kSpace2),
+          Text(
+            loc.houseRulesLine,
+            key: const Key('lobby-house-rules'),
+            textAlign: TextAlign.center,
+            style: textTheme.bodySmall?.copyWith(color: LudoColors.inkMuted),
           ),
           if (inRematchLobby && !amReadyForRematch) ...[
             const SizedBox(height: kSpace4),

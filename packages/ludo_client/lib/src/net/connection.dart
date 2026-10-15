@@ -220,29 +220,27 @@ class _PendingGameLog implements _PendingEntry {
 /// [TransportConnector] documents as worth retrying.
 enum _ConnState { idle, connecting, open, closed }
 
-/// The two rules toggles a host picks when creating a room
+/// The one rule toggle a host picks when creating a room
 /// (docs/PROTOCOL.md section 4, section 13.4). Never carries `turn_seconds`:
 /// the turn timer stays the server's default, on purpose, for every room
-/// this client creates.
+/// this client creates. Blocks is no longer a room setting: the server
+/// always creates a room with blocks off (X55).
 class RoomToggles {
-  const RoomToggles({this.blocks = true, this.captureBonus = true});
+  const RoomToggles({this.captureBonus = true});
 
-  final bool blocks;
   final bool captureBonus;
 
-  /// Exactly `{'blocks': .., 'capture_bonus': ..}`, in that order.
+  /// Exactly `{'capture_bonus': ..}`.
   Map<String, Object?> toJson() {
-    return <String, Object?>{'blocks': blocks, 'capture_bonus': captureBonus};
+    return <String, Object?>{'capture_bonus': captureBonus};
   }
 
   @override
   bool operator ==(Object other) =>
-      other is RoomToggles &&
-      other.blocks == blocks &&
-      other.captureBonus == captureBonus;
+      other is RoomToggles && other.captureBonus == captureBonus;
 
   @override
-  int get hashCode => Object.hash(blocks, captureBonus);
+  int get hashCode => captureBonus.hashCode;
 }
 
 class RoomConnection {
