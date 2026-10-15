@@ -73,21 +73,17 @@
   "@homePlayersDisclosureClosed": {
     "description": "Closed disclosure on the home screen that names the default four-seat table before the selector is opened."
   },
-  "homeRuleBlocks": "Blocks",
-  "@homeRuleBlocks": {
-    "description": "Title of the switch, under the open player-count disclosure on the home screen, that turns the blocks rule on or off for the room being created."
-  },
-  "homeRuleBlocksHint": "Two of your tokens on one square cannot be passed",
-  "@homeRuleBlocksHint": {
-    "description": "Subtitle under the blocks switch on the home screen, explaining what the rule does."
-  },
   "homeRuleCaptureBonus": "Capture bonus",
   "@homeRuleCaptureBonus": {
     "description": "Title of the switch, under the open player-count disclosure on the home screen, that turns the capture bonus rule on or off for the room being created."
   },
-  "homeRuleCaptureBonusHint": "Sending a token home earns another roll",
+  "homeRuleCaptureBonusHint": "Capturing a token earns another roll",
   "@homeRuleCaptureBonusHint": {
     "description": "Subtitle under the capture bonus switch on the home screen, explaining what the rule does."
+  },
+  "houseRulesLine": "Two tokens on one square are safe from capture. A token reaching home earns another roll.",
+  "@houseRulesLine": {
+    "description": "One line stating the two fixed house rules that are no longer switches: a pair of tokens on one square cannot be captured, and a token reaching home earns another roll. Shown under the capture-bonus switch on the home screen and under the rule chips on the lobby screen."
   },
   "homePlayersTwo": "2 players",
   "@homePlayersTwo": {
@@ -173,14 +169,6 @@
         "type": "int"
       }
     }
-  },
-  "lobbyRuleBlocksOn": "Blocks: on",
-  "@lobbyRuleBlocksOn": {
-    "description": "Line under the seat list on the lobby screen naming the state of the blocks rule for this room, shown to host and guests alike."
-  },
-  "lobbyRuleBlocksOff": "Blocks: off",
-  "@lobbyRuleBlocksOff": {
-    "description": "Line under the seat list on the lobby screen naming the state of the blocks rule for this room, shown to host and guests alike."
   },
   "lobbyRuleCaptureBonusOn": "Capture bonus: on",
   "@lobbyRuleCaptureBonusOn": {
