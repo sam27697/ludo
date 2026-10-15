@@ -103,9 +103,12 @@ Map<int, List<int>> legalByFace(GameState state) {
 
 /// docs/ENGINE_API.md section 10.1: the face a move with `face == null`
 /// spends -- the first entry of the queue, in queue order, that has a legal
-/// token. Null when none (including always, with `!rollQueue`, since the
-/// queue is then always empty).
+/// token. Null outside `awaitMove` (a queue may be non-empty in `awaitRoll`,
+/// e.g. a queued 6 that owes another roll) and when no face can move.
 int? defaultFace(GameState state) {
+  if (state.phase != GamePhase.awaitMove) {
+    return null;
+  }
   for (final face in state.queue) {
     if (_legalTokensFor(state, state.currentSeat, face).isNotEmpty) {
       return face;
@@ -355,15 +358,12 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
     ]);
   }
 
-  // The board has not moved since the last move was played, so the legal
-  // set for this face alone is well defined regardless of what else is
-  // already queued.
-  final legalForFace = _legalTokensFor(state, seat, value);
   final newQueue = <int>[...state.queue, value];
 
   if (value == 6) {
     // Rule 10q: a 6 is queued and the same seat rolls again at once, before
-    // any move is offered.
+    // any move is offered. Section 10.3: the new state is awaitRoll, so
+    // nothing is movable yet -- Rolled.legal is [], not the 6's own set.
     final newState = GameState(
       config: state.config,
       tokens: state.tokens,
@@ -377,7 +377,7 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
       queue: newQueue,
     );
     return Applied(newState, <GameEvent>[
-      Rolled(seat: seat, value: value, legal: legalForFace),
+      Rolled(seat: seat, value: value, legal: const <int>[]),
       ExtraRoll(seat: seat),
     ]);
   }
@@ -397,7 +397,8 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
   );
 
   if (legalByFace(tentativeState).isEmpty) {
-    // Rule 13q: no queued face has a legal move. The faces are discarded.
+    // Rule 13q: no queued face has a legal move. The faces are discarded and
+    // the turn passes, so Rolled.legal is [], not the closing face's set.
     final nextSeat = _nextSeat(state.config.seats, seat);
     final newState = GameState(
       config: state.config,
@@ -412,14 +413,17 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
       queue: const <int>[],
     );
     return Applied(newState, <GameEvent>[
-      Rolled(seat: seat, value: value, legal: legalForFace),
+      Rolled(seat: seat, value: value, legal: const <int>[]),
       TurnEnded(seat: seat, reason: TurnEndReason.noLegalMove),
       TurnBegan(seat: nextSeat),
     ]);
   }
 
+  // Section 10.3: the new state is awaitMove, so Rolled.legal is
+  // legalTokens of that state -- the default face's tokens, not
+  // necessarily this closing face's own set.
   return Applied(tentativeState, <GameEvent>[
-    Rolled(seat: seat, value: value, legal: legalForFace),
+    Rolled(seat: seat, value: value, legal: legalTokens(tentativeState)),
   ]);
 }
 
