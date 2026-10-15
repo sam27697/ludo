@@ -748,9 +748,13 @@ class RoomRegistry {
       ..sort();
     final engine.GameConfig config = engine.GameConfig(
       seats: seatIndices,
+      // docs/RULES.md rules 11a and 21, the 2026-10-15 ruling: every server
+      // room plays blocks off and homeBonus on, regardless of what was
+      // requested at create_room; only captureBonus comes from room.rules.
       rules: engine.RulesConfig(
-        blocks: room.rules.blocks,
+        blocks: false,
         captureBonus: room.rules.captureBonus,
+        homeBonus: true,
       ),
       seed: _secureSeed(),
     );
