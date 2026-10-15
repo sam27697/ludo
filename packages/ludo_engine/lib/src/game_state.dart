@@ -1,6 +1,6 @@
-// docs/ENGINE_API.md section 2 (the GameState shape) and section 8 (the
-// serialisation). The toJson key order below is normative: the golden
-// corpus hash is pinned to it.
+// docs/ENGINE_API.md section 2 (the GameState shape), section 8 (the
+// serialisation) and section 10 (the roll queue). The toJson key order below
+// is normative: the golden corpus hash is pinned to it.
 
 import 'enums.dart';
 import 'game_config.dart';
@@ -17,7 +17,9 @@ class GameState {
     required this.winner,
     required this.seq,
     required this.rngState,
-  }) : tokens = _freezeTokens(tokens);
+    List<int> queue = const <int>[],
+  })  : tokens = _freezeTokens(tokens),
+        queue = List<int>.unmodifiable(queue);
 
   final GameConfig config;
 
@@ -28,8 +30,14 @@ class GameState {
   final int currentSeat;
   final GamePhase phase;
 
-  /// null in awaitRoll and finished; 1..6 in awaitMove.
+  /// null in awaitRoll and finished; 1..6 in awaitMove. Always null with
+  /// `rules.rollQueue` on (docs/ENGINE_API.md section 10.1): `queue` carries
+  /// the faces instead.
   final int? roll;
+
+  /// docs/ENGINE_API.md section 10.1: unspent faces in roll order. Always
+  /// `[]` when `rules.rollQueue` is off.
+  final List<int> queue;
 
   /// Consecutive 6s already rolled this turn, 0..2.
   final int sixes;
@@ -65,6 +73,7 @@ class GameState {
         'currentSeat': currentSeat,
         'phase': _phaseToWire(phase),
         'roll': roll,
+        if (config.rules.rollQueue) 'queue': List<int>.of(queue),
         'sixes': sixes,
         'winner': winner,
         'seq': seq,
@@ -89,6 +98,7 @@ class GameState {
       winner: _asIntOrNull(json['winner']),
       seq: _asInt(json['seq']),
       rngState: _asInt(json['rngState']),
+      queue: _queueFromJson(json, config.rules.rollQueue),
     );
   }
 
@@ -122,6 +132,14 @@ class GameState {
         }
       }
     }
+    if (queue.length != other.queue.length) {
+      return false;
+    }
+    for (var i = 0; i < queue.length; i++) {
+      if (queue[i] != other.queue[i]) {
+        return false;
+      }
+    }
     return true;
   }
 
@@ -136,13 +154,14 @@ class GameState {
         winner,
         seq,
         rngState,
+        Object.hashAll(queue),
       );
 
   @override
   String toString() =>
       'GameState(config: $config, tokens: $tokens, currentSeat: $currentSeat, '
-      'phase: $phase, roll: $roll, sixes: $sixes, winner: $winner, '
-      'seq: $seq, rngState: $rngState)';
+      'phase: $phase, roll: $roll, queue: $queue, sixes: $sixes, '
+      'winner: $winner, seq: $seq, rngState: $rngState)';
 }
 
 Map<String, Object?> _configToJson(GameConfig config) => <String, Object?>{
@@ -150,6 +169,7 @@ Map<String, Object?> _configToJson(GameConfig config) => <String, Object?>{
       'rules': <String, Object?>{
         'blocks': config.rules.blocks,
         'captureBonus': config.rules.captureBonus,
+        if (config.rules.rollQueue) 'rollQueue': true,
         if (config.rules.homeBonus) 'homeBonus': true,
       },
       'seed': config.seed,
@@ -160,6 +180,7 @@ GameConfig _configFromJson(Map<String, Object?> json) {
   final rules = RulesConfig(
     blocks: rulesJson['blocks']! as bool,
     captureBonus: rulesJson['captureBonus']! as bool,
+    rollQueue: _rollQueueFromJson(rulesJson['rollQueue']),
     homeBonus: _homeBonusFromJson(rulesJson['homeBonus']),
   );
   final seatsJson = json['seats']! as List<Object?>;
@@ -178,6 +199,47 @@ bool _homeBonusFromJson(Object? value) {
     return true;
   }
   throw FormatException('rules.homeBonus must be absent or true, got $value');
+}
+
+/// docs/ENGINE_API.md section 10.2: same shape as [_homeBonusFromJson] --
+/// absent means false, `true` is accepted, an explicit `false` or any
+/// non-bool is malformed.
+bool _rollQueueFromJson(Object? value) {
+  if (value == null) {
+    return false;
+  }
+  if (value == true) {
+    return true;
+  }
+  throw FormatException('rules.rollQueue must be absent or true, got $value');
+}
+
+/// docs/ENGINE_API.md section 10.2: `queue` is present, and only present,
+/// exactly when `rollQueue` is on; a mismatch in either direction is
+/// malformed, as is a face outside 1..6.
+List<int> _queueFromJson(Map<String, Object?> json, bool rollQueue) {
+  final hasQueue = json.containsKey('queue');
+  if (!rollQueue) {
+    if (hasQueue) {
+      throw FormatException(
+        'queue is present but rules.rollQueue is not set: ${json['queue']}',
+      );
+    }
+    return const <int>[];
+  }
+  if (!hasQueue) {
+    throw FormatException('rules.rollQueue is set but queue is missing');
+  }
+  final queueJson = json['queue']! as List<Object?>;
+  return <int>[for (final v in queueJson) _asQueueFace(v)];
+}
+
+int _asQueueFace(Object? value) {
+  final face = _asInt(value);
+  if (face < 1 || face > 6) {
+    throw FormatException('queue face must be 1..6, got $face');
+  }
+  return face;
 }
 
 String _phaseToWire(GamePhase phase) => switch (phase) {
