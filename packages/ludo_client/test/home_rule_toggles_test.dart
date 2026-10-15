@@ -22,6 +22,28 @@
 // open.
 //
 // Each test's name starts with its id (T1..T8), per the order.
+//
+// Amended for C-356 (the 10-15 rule ruling, work/ludo/orders/C-356-house-
+// rules-client.md): the Blocks switch (home-rule-blocks, _rulesBlocks) is
+// gone outright, not merely re-labelled. T1 needed no change: it already
+// only asserted both switches' absence while the disclosure is closed, which
+// still holds. T2's presence/value/title assertions for home-rule-blocks are
+// replaced with one absence assertion (findsNothing, disclosure open or not,
+// survives a locale toggle too); its capture-bonus assertions are unchanged.
+// T3, T7 and T8 are re-pointed: the rules map T3 checks drops the blocks key
+// entirely (exactly {capture_bonus: true} now, not {blocks, capture_bonus});
+// T7 and T8, which each needed *a* switch toggled off before Create to prove
+// something else (player-count survival, retry resending the same rules),
+// now toggle home-rule-capture-bonus instead of home-rule-blocks, since it is
+// the only switch left to toggle. T4 ("turning Blocks off...") and T6
+// ("turning both off...") are dropped rather than kept as degenerate
+// duplicates: every assertion either of them made was about the now-absent
+// Blocks switch or about the wire rules map once it was turned off, and the
+// per-assertion absence/re-pointed form of both collapses to content T2 and
+// the re-pointed T5 (turning the one remaining switch off) already prove
+// verbatim -- keeping them as separately named tests would only assert the
+// same thing twice under an old name. Flagged here as a judgement call, not
+// invented around silently.
 
 import 'dart:convert';
 
@@ -269,8 +291,9 @@ void main() {
   );
 
   testWidgets(
-    'T2: disclosure opened shows both switches on by default with the '
-    'localised titles, in English and in Arabic (Directionality rtl)',
+    'T2: disclosure opened shows no Blocks switch at all and the Capture '
+    'bonus switch on by default with its localised title, in English and in '
+    'Arabic (Directionality rtl)',
     (tester) async {
       await tester.pumpWidget(const LudoApp());
       await tester.pumpAndSettle();
@@ -281,8 +304,10 @@ void main() {
       final Finder captureSwitch = find.byKey(_captureSwitchKey);
       expect(
         blocksSwitch,
-        findsOneWidget,
-        reason: 'opening the disclosure must reveal home-rule-blocks',
+        findsNothing,
+        reason:
+            'C-356: home-rule-blocks must not exist anywhere on home, '
+            'including with the disclosure open',
       );
       expect(
         captureSwitch,
@@ -291,11 +316,6 @@ void main() {
       );
 
       expect(
-        tester.widget<HomeRuleToggle>(blocksSwitch).value,
-        isTrue,
-        reason: 'Blocks must be on when Home first builds',
-      );
-      expect(
         tester.widget<HomeRuleToggle>(captureSwitch).value,
         isTrue,
         reason: 'Capture bonus must be on when Home first builds',
@@ -303,16 +323,6 @@ void main() {
 
       final AppLocalizations enLoc = AppLocalizations.of(
         tester.element(find.byType(Scaffold)),
-      );
-      expect(
-        find.descendant(
-          of: blocksSwitch,
-          matching: find.text(enLoc.homeRuleBlocks),
-        ),
-        findsOneWidget,
-        reason:
-            'the Blocks switch title must read the localised homeRuleBlocks '
-            'string in English',
       );
       expect(
         find.descendant(
@@ -330,10 +340,10 @@ void main() {
 
       expect(
         blocksSwitch,
-        findsOneWidget,
+        findsNothing,
         reason:
-            'the Blocks switch must survive a locale toggle without the '
-            'disclosure re-closing',
+            'C-356: home-rule-blocks must still not exist after a locale '
+            'toggle, with the disclosure still open',
       );
       expect(
         captureSwitch,
@@ -341,11 +351,6 @@ void main() {
         reason:
             'the Capture bonus switch must survive a locale toggle '
             'without the disclosure re-closing',
-      );
-      expect(
-        tester.widget<HomeRuleToggle>(blocksSwitch).value,
-        isTrue,
-        reason: 'Blocks must still read on after a locale toggle alone',
       );
       expect(
         tester.widget<HomeRuleToggle>(captureSwitch).value,
@@ -358,16 +363,6 @@ void main() {
       );
       expect(
         find.descendant(
-          of: blocksSwitch,
-          matching: find.text(arLoc.homeRuleBlocks),
-        ),
-        findsOneWidget,
-        reason:
-            'the Blocks switch title must read the localised homeRuleBlocks '
-            'string in Arabic',
-      );
-      expect(
-        find.descendant(
           of: captureSwitch,
           matching: find.text(arLoc.homeRuleCaptureBonus),
         ),
@@ -377,19 +372,18 @@ void main() {
             'homeRuleCaptureBonus string in Arabic',
       );
       expect(
-        Directionality.of(tester.element(blocksSwitch)),
+        Directionality.of(tester.element(captureSwitch)),
         TextDirection.rtl,
         reason:
-            'the ambient Directionality over the switches must be rtl '
+            'the ambient Directionality over the switch must be rtl '
             'once Arabic is the active locale',
       );
     },
   );
 
   testWidgets(
-    'T3: tapping Create with both switches at their default sends rules '
-    'with exactly blocks true and capture_bonus true, and no turn_seconds '
-    'key',
+    'T3: tapping Create with the switch at its default sends rules with '
+    'exactly capture_bonus true, no blocks key and no turn_seconds key',
     (tester) async {
       final _LiveControllerFactory factory = _LiveControllerFactory();
       await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
@@ -409,55 +403,25 @@ void main() {
       );
       expect(
         rules.keys.toSet(),
-        <String>{'blocks', 'capture_bonus'},
+        <String>{'capture_bonus'},
         reason:
-            'd.rules must carry exactly the keys blocks and capture_bonus, '
-            'never turn_seconds; got ${rules.keys.toList()}',
+            'C-356: d.rules must carry exactly the key capture_bonus, '
+            'never blocks and never turn_seconds; got ${rules.keys.toList()}',
       );
-      expect(
-        rules,
-        equals(<String, Object?>{'blocks': true, 'capture_bonus': true}),
-      );
+      expect(rules, equals(<String, Object?>{'capture_bonus': true}));
 
       await _drainPendingRequestTimeout(tester);
     },
   );
 
-  testWidgets(
-    'T4: turning Blocks off before Create sends blocks false, capture_bonus '
-    'true',
-    (tester) async {
-      final _LiveControllerFactory factory = _LiveControllerFactory();
-      await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
-      await tester.pumpAndSettle();
+  // T4 ("turning Blocks off before Create sends blocks false, capture_bonus
+  // true") is dropped: its only assertions were about tapping home-rule-blocks
+  // and reading the resulting wire rules, and the Blocks switch no longer
+  // exists for anything to tap. Collapsed into T2's absence check plus T3's
+  // default-rules case; see the file header for the full note.
 
-      await _openPlayersDisclosure(tester);
-      await tester.tap(find.byKey(_blocksSwitchKey));
-      await tester.pump();
-      expect(
-        tester.widget<HomeRuleToggle>(find.byKey(_blocksSwitchKey)).value,
-        isFalse,
-        reason:
-            'fixture is broken: tapping home-rule-blocks must turn it '
-            'off before Create is even tapped',
-      );
-
-      await _tapAndAwaitPushedRoute(tester, _createButtonKey);
-
-      final Map<String, Object?> rules = _singleCreateRoomRules(
-        factory.transports.single,
-      );
-      expect(
-        rules,
-        equals(<String, Object?>{'blocks': false, 'capture_bonus': true}),
-      );
-
-      await _drainPendingRequestTimeout(tester);
-    },
-  );
-
-  testWidgets('T5: turning Capture bonus off before Create sends blocks true, '
-      'capture_bonus false', (tester) async {
+  testWidgets('T5: turning Capture bonus off before Create sends exactly '
+      'capture_bonus false, no blocks key', (tester) async {
     final _LiveControllerFactory factory = _LiveControllerFactory();
     await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
     await tester.pumpAndSettle();
@@ -478,66 +442,26 @@ void main() {
     final Map<String, Object?> rules = _singleCreateRoomRules(
       factory.transports.single,
     );
-    expect(
-      rules,
-      equals(<String, Object?>{'blocks': true, 'capture_bonus': false}),
-    );
+    expect(rules, equals(<String, Object?>{'capture_bonus': false}));
 
     await _drainPendingRequestTimeout(tester);
   });
 
+  // T6 ("turning both Blocks and Capture bonus off...") is dropped for the
+  // same reason as T4: with only one switch left, "both off" is identical to
+  // T5's "the one switch off", and keeping it would assert the same wire
+  // content twice under a name that no longer describes two switches.
+
   testWidgets(
-    'T6: turning both Blocks and Capture bonus off before Create sends '
-    'both false',
+    'T7: the toggle survives changing the player count: Capture bonus off, '
+    'then 2 players, then Create sends players 2 and capture_bonus false',
     (tester) async {
       final _LiveControllerFactory factory = _LiveControllerFactory();
       await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
       await tester.pumpAndSettle();
 
       await _openPlayersDisclosure(tester);
-      await tester.tap(find.byKey(_blocksSwitchKey));
-      await tester.pump();
       await tester.tap(find.byKey(_captureSwitchKey));
-      await tester.pump();
-      expect(
-        tester.widget<HomeRuleToggle>(find.byKey(_blocksSwitchKey)).value,
-        isFalse,
-        reason:
-            'fixture is broken: both switches must read off before '
-            'Create is even tapped',
-      );
-      expect(
-        tester.widget<HomeRuleToggle>(find.byKey(_captureSwitchKey)).value,
-        isFalse,
-        reason:
-            'fixture is broken: both switches must read off before '
-            'Create is even tapped',
-      );
-
-      await _tapAndAwaitPushedRoute(tester, _createButtonKey);
-
-      final Map<String, Object?> rules = _singleCreateRoomRules(
-        factory.transports.single,
-      );
-      expect(
-        rules,
-        equals(<String, Object?>{'blocks': false, 'capture_bonus': false}),
-      );
-
-      await _drainPendingRequestTimeout(tester);
-    },
-  );
-
-  testWidgets(
-    'T7: toggles survive changing the player count: Blocks off, then 2 '
-    'players, then Create sends players 2 and blocks false',
-    (tester) async {
-      final _LiveControllerFactory factory = _LiveControllerFactory();
-      await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
-      await tester.pumpAndSettle();
-
-      await _openPlayersDisclosure(tester);
-      await tester.tap(find.byKey(_blocksSwitchKey));
       await tester.pump();
 
       final AppLocalizations loc = AppLocalizations.of(
@@ -572,7 +496,7 @@ void main() {
         2,
         reason:
             'the chosen player count must still reach LobbyScreen after '
-            'Blocks was toggled off',
+            'Capture bonus was toggled off',
       );
 
       final List<Map<String, Object?>> sent = _decodeSent(
@@ -588,13 +512,17 @@ void main() {
       );
       final Map<String, Object?> rules = data['rules']! as Map<String, Object?>;
       expect(
-        rules['blocks'],
+        rules.containsKey('blocks'),
+        isFalse,
+        reason: 'C-356: no blocks key may appear on the wire, ever',
+      );
+      expect(
+        rules['capture_bonus'],
         isFalse,
         reason:
-            'Blocks toggled off before Create must still read false on the '
-            'wire after changing the player count',
+            'Capture bonus toggled off before Create must still read false '
+            'on the wire after changing the player count',
       );
-      expect(rules['capture_bonus'], isTrue);
 
       await _drainPendingRequestTimeout(tester);
     },
@@ -602,14 +530,14 @@ void main() {
 
   testWidgets(
     'T8: Retry after a failed create resends the same rules the first '
-    'attempt did, with Blocks off going in',
+    'attempt did, with Capture bonus off going in',
     (tester) async {
       final _LiveControllerFactory factory = _LiveControllerFactory();
       await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
       await tester.pumpAndSettle();
 
       await _openPlayersDisclosure(tester);
-      await tester.tap(find.byKey(_blocksSwitchKey));
+      await tester.tap(find.byKey(_captureSwitchKey));
       await tester.pump();
 
       await _tapAndAwaitPushedRoute(tester, _createButtonKey);
@@ -632,10 +560,10 @@ void main() {
           firstData['rules']! as Map<String, Object?>;
       expect(
         firstRules,
-        equals(<String, Object?>{'blocks': false, 'capture_bonus': true}),
+        equals(<String, Object?>{'capture_bonus': false}),
         reason:
             'fixture is broken: the first create_room must already carry '
-            'Blocks off, or this test proves nothing about Retry '
+            'Capture bonus off, or this test proves nothing about Retry '
             'preserving it',
       );
 
@@ -692,7 +620,7 @@ void main() {
       );
       expect(
         secondData['rules'],
-        equals(<String, Object?>{'blocks': false, 'capture_bonus': true}),
+        equals(<String, Object?>{'capture_bonus': false}),
       );
 
       await _drainPendingRequestTimeout(tester);
