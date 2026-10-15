@@ -424,6 +424,9 @@ the server's, by rule 37.
 
 ## 10. The roll queue (`rollQueue`), 2026-10-15
 
+**Status: specified, not yet built.** Until the server orders land, live
+rooms play rules 9 to 13 as written above.
+
 `docs/RULES.md` section 3.2a is the rule; this is its engine shape. With
 `rules.rollQueue` false nothing in sections 1 to 9 changes, byte for byte:
 the golden corpus and every legacy state replay and hash exactly as before.

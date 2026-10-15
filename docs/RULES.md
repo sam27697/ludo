@@ -112,6 +112,9 @@ also safe, trivially, because no opponent can reach it.
 
 ### 3.2a The roll queue (`rollQueue`), Sam's ruling of 2026-10-15
 
+**Status: specified, not yet built.** Until the server orders land, live
+rooms play rules 9 to 13 as written above.
+
 Sam: «لازم اللاعب يرمي كل مرات النرد الممكنة قبل ما يلعب واذا اجاه فرصة رمي
 جديدة اثناء التحريك وقتها بيرمي». Every roll a seat is owed is rolled first,
 then the faces are spent. Engine toggle `rollQueue`, default off in the

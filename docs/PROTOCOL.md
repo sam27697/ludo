@@ -1174,6 +1174,9 @@ this repository never resends one.
 
 ## 21. The roll queue on the wire, 2026-10-15
 
+**Status: specified, not yet built.** Until the server orders land, live
+rooms play rules 9 to 13 as written above.
+
 `docs/RULES.md` section 3.2a and `docs/ENGINE_API.md` section 10 are the
 rule. Every room plays it; it is not a toggle on the wire, like rule 11a.
 `v` stays 1: every change below is an added field or an optional one, and a
