@@ -1106,10 +1106,11 @@ void main() {
             reason: 'docs/PROTOCOL.md 21.2: the timer\'s own step restarts '
                 'the segment exactly as a player\'s move would; got '
                 '$turnData');
-        expect(await lobby.guest.client.next(), <String, Object?>{
-          't': 'turn',
-          'd': turnData,
-        });
+        final Map<String, Object?> guestTurn = await lobby.guest.client.next();
+        expect(guestTurn['t'], 'turn');
+        expect(guestTurn['d'], turnData,
+            reason: 'both seats get the same turn payload; the envelope '
+                'id is per socket and is not compared');
       }
 
       // (b) expiry in await_roll mid-streak.
