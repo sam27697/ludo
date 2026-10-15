@@ -1212,3 +1212,44 @@ leaves a move pending, a `moved` that owes a roll or leaves faces. On expiry
 the timer takes one step (rule 15q), and the step's frames restart the
 segment as above. The verify record is unchanged: rolls are still drawn one
 per `k`, in order, whoever spends them later.
+
+### 21.3 Rulings of 2026-10-15 (run 91)
+
+21.1 named the fields; these fix where they travel and in what order.
+
+1. **The pushed `turn` frame** gains `phase` (`"await_roll"` or
+   `"await_move"`) and `queue` on every frame. In `await_move` it also
+   carries `value` (`defaultFace`), `legal` (that face's tokens, ascending)
+   and `legal_by_face`. A client that ignores them sees the frame it always
+   saw.
+2. **The snapshot's `turn` object** gains `queue` in `await_roll` and
+   `await_move`, and `legal_by_face` in `await_move`. Its `value` in
+   `await_move` is `defaultFace` (the engine's `roll` is always null under
+   the queue). In `finished` it carries `queue: []` and no
+   `legal_by_face`.
+3. **`rolled`**: `queue` is the queue after the roll, `[]` when the roll
+   voided or passed the turn. `legal` is the engine's `Rolled.legal`
+   (ENGINE_API.md 10.3): the default face's tokens when a move is pending,
+   otherwise `[]`.
+4. **Frame order for each step**, replacing section 12 for queue rooms:
+
+   | Step | Frames |
+   |---|---|
+   | roll, a 6 owing another roll | `rolled`, `turn` (same seat, `await_roll`) |
+   | roll, a move pending | `rolled` |
+   | roll, turn voided or passed | `rolled`, `turn_passed`, `turn` (next seat) |
+   | move, a roll owed | `moved` (`extra_roll: true`), `turn` (same seat, `await_roll`) |
+   | move, faces left that can move | `moved`, `turn` (same seat, `await_move`) |
+   | move, queue empty | `moved`, `turn` (next seat) |
+   | move, only dead faces left | `moved`, `turn_passed` `no_legal_move`, `turn` (next seat) |
+   | move that wins | `moved`, `game_over` |
+
+   The timer's step (rule 15q) publishes exactly the frames of the same
+   step taken by a player.
+5. **Every room** is created with the engine's `rollQueue: true`, next to
+   `blocks: false` and `homeBonus: true`. Nothing on the wire turns it off.
+6. **Old clients (up to v1.9.0).** They read a same-seat `turn` in
+   `await_move` as "roll now"; their roll is refused with `WRONG_PHASE` and
+   the timer spends the default face. So the queue server goes to
+   production only with a client release that reads these fields. Staging
+   may run it earlier.
