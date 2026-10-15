@@ -36,6 +36,13 @@ List<List<int>> _tokenRows(Map<int, List<int>> tokens) {
 /// [tokens] maps seat index to that seat's four progress values, in token
 /// order 0..3. [phase] is one of `'awaitRoll'`, `'awaitMove'`, `'finished'`,
 /// matching the wire values from docs/ENGINE_API.md section 8 exactly.
+///
+/// [homeBonus] is left out of the rules JSON entirely when null, which is
+/// how a true `fromJson()` caller spells "off" (docs/ENGINE_API.md section
+/// 8: the key is written only when true). Pass `true` for a home-bonus
+/// fixture. Passing `false` writes the key explicitly, which is the one
+/// shape `fromJson()` is specified to reject -- that is only useful for
+/// proving the rejection itself.
 GameState buildState({
   required List<int> seats,
   Map<int, List<int>> tokens = const <int, List<int>>{},
@@ -49,14 +56,19 @@ GameState buildState({
   int seed = 1,
   bool blocks = true,
   bool captureBonus = true,
+  bool? homeBonus,
 }) {
+  final Map<String, Object?> rules = <String, Object?>{
+    'blocks': blocks,
+    'captureBonus': captureBonus,
+  };
+  if (homeBonus != null) {
+    rules['homeBonus'] = homeBonus;
+  }
   final Map<String, Object?> json = <String, Object?>{
     'config': <String, Object?>{
       'seats': seats,
-      'rules': <String, Object?>{
-        'blocks': blocks,
-        'captureBonus': captureBonus
-      },
+      'rules': rules,
       'seed': seed,
     },
     'tokens': _tokenRows(tokens),
