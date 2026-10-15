@@ -740,13 +740,17 @@ class RoomController extends ChangeNotifier {
   /// here would be a second implementation of the rules the server already
   /// owns. A screen may grey a button out, but that is the screen's business,
   /// not this method's.
-  Future<void> move(int token) async {
+  ///
+  /// `face`, docs/PROTOCOL.md section 21.1: the queued face this move
+  /// spends, forwarded to [RoomConnection.move] exactly as given. Null means
+  /// the server spends `defaultFace`.
+  Future<void> move(int token, {int? face}) async {
     final RoomConnection? connection = _connection;
     if (_disposed || _phase != RoomPhase.connected || connection == null) {
       return;
     }
     try {
-      await connection.move(token);
+      await connection.move(token, face: face);
     } catch (error) {
       _failFromRollOrMove(error);
     }
@@ -1244,12 +1248,35 @@ class RoomController extends ChangeNotifier {
   /// snapshot that never carried a turn or from anywhere else `room.turn` can
   /// be null; this reducer does not distinguish those cases and neither does
   /// the rule.
+  ///
+  /// docs/PROTOCOL.md section 21.3 ruling 1 (C-362 A2): `phase`, present,
+  /// is `await_roll` or `await_move`; any other value is malformed and the
+  /// whole frame is ignored, the same as a missing `seat` or `deadline_ms`
+  /// above. Absent `phase` is today's frame and behaves exactly as before:
+  /// `await_roll`, no `value`/`legal`/`legal_by_face`. `queue` is read
+  /// whenever present, on every phase; `value`, `legal` and `legal_by_face`
+  /// are only ever read under `await_move`, because that is the only phase
+  /// the wire carries them in.
   void _reduceTurn(Frame frame, RoomSnapshot room) {
     final int? seatValue = _asInt(frame.data, 'seat');
     final int? deadlineMs = _asInt(frame.data, 'deadline_ms');
     final int? seqValue = frame.seq;
     if (seatValue == null || deadlineMs == null || seqValue == null) {
       return;
+    }
+
+    final TurnPhase phase;
+    if (frame.data.containsKey('phase')) {
+      final Object? phaseRaw = frame.data['phase'];
+      if (phaseRaw == 'await_roll') {
+        phase = TurnPhase.awaitRoll;
+      } else if (phaseRaw == 'await_move') {
+        phase = TurnPhase.awaitMove;
+      } else {
+        return;
+      }
+    } else {
+      phase = TurnPhase.awaitRoll;
     }
 
     if (!room.seats.any((SeatState s) => s.seat == seatValue)) {
@@ -1261,14 +1288,27 @@ class RoomController extends ChangeNotifier {
       return;
     }
 
+    final List<int> queue = _asIntList(frame.data, 'queue') ?? const <int>[];
+    final int? value = phase == TurnPhase.awaitMove
+        ? _asInt(frame.data, 'value')
+        : null;
+    final List<int>? legal = phase == TurnPhase.awaitMove
+        ? _asIntList(frame.data, 'legal')
+        : null;
+    final List<FaceLegal>? legalByFace = phase == TurnPhase.awaitMove
+        ? _asFaceLegalList(frame.data, 'legal_by_face')
+        : null;
+
     final TurnState turn = TurnState(
       seat: seatValue,
-      phase: TurnPhase.awaitRoll,
+      phase: phase,
       deadlineMs: deadlineMs,
       k: room.turn?.k ?? 0,
-      value: null,
-      legal: null,
+      value: value,
+      legal: legal,
       sixes: null,
+      queue: queue,
+      legalByFace: legalByFace,
     );
     _room = room.copyWith(turn: turn, seq: seqValue);
     notifyListeners();
@@ -1278,6 +1318,17 @@ class RoomController extends ChangeNotifier {
   /// is not required and not stored: nothing in this client verifies the
   /// chain yet. An empty `legal` is legal input, stored as an empty list.
   /// Absent seat: ignored entirely, ahead of the gap check.
+  ///
+  /// docs/PROTOCOL.md section 21.3 ruling 3 (C-362 A3): `queue` and
+  /// `legal_by_face` are read whenever present. When `queue` is present, the
+  /// roll owes another roll -- `await_roll`, confirmed by the `turn` that
+  /// follows -- exactly when `legal_by_face` is absent; otherwise a move is
+  /// pending, `await_move`, same as today. When `queue` is absent this is a
+  /// server with no roll queue and the phase is `await_move` exactly as
+  /// before this order. `value` and `legal` are unconditional fields of this
+  /// frame on every server, queue or not, and are stored exactly as they
+  /// arrived regardless of which phase this resolves to. `recentRolls`
+  /// records every rolled face, queue or not.
   void _reduceRolled(Frame frame, RoomSnapshot room) {
     final int? seatValue = _asInt(frame.data, 'seat');
     final int? value = _asInt(frame.data, 'value');
@@ -1303,19 +1354,32 @@ class RoomController extends ChangeNotifier {
       return;
     }
 
+    final List<int>? queueRaw = _asIntList(frame.data, 'queue');
+    final List<FaceLegal>? legalByFace = _asFaceLegalList(
+      frame.data,
+      'legal_by_face',
+    );
+    final TurnPhase phase = queueRaw == null
+        ? TurnPhase.awaitMove
+        : (legalByFace != null ? TurnPhase.awaitMove : TurnPhase.awaitRoll);
+    final List<int> queue = queueRaw ?? const <int>[];
+
     final TurnState turn = TurnState(
       seat: seatValue,
-      phase: TurnPhase.awaitMove,
+      phase: phase,
       deadlineMs: deadlineMs,
       k: k,
       value: value,
       legal: legal,
       sixes: null,
+      queue: queue,
+      legalByFace: legalByFace,
     );
     _room = room.copyWith(
       turn: turn,
       seq: seqValue,
       recentRolls: _appendRecentRoll(room.recentRolls, k, value),
+      lastSpentFace: null,
     );
     notifyListeners();
   }
@@ -1331,6 +1395,16 @@ class RoomController extends ChangeNotifier {
   /// present, returns to await-roll with `value`, `legal` and `sixes`
   /// cleared and `seat`, `deadlineMs` and `k` kept; `extra_roll` is required
   /// so a malformed frame is caught and is otherwise not acted on.
+  ///
+  /// docs/PROTOCOL.md section 21.1, 21.3 (C-362 A4): `face`, the spent
+  /// face, is optional and, when present, is kept on
+  /// [RoomSnapshot.lastSpentFace] so the screen can read the face a move
+  /// just spent. The intermediate `turn` this method builds is unchanged by
+  /// it, and stays today's placeholder (`await_roll`, `value`/`legal`
+  /// cleared): the real phase, `queue` and `legal_by_face` are what the
+  /// `turn` push that follows carries (A2), per the 21.3 frame-order table.
+  /// A `moved` with no `face` (no roll queue) leaves `lastSpentFace` exactly
+  /// as it was.
   void _reduceMoved(Frame frame, RoomSnapshot room) {
     final int? seatValue = _asInt(frame.data, 'seat');
     final int? token = _asInt(frame.data, 'token');
@@ -1374,6 +1448,8 @@ class RoomController extends ChangeNotifier {
       return;
     }
 
+    final int? face = _asInt(frame.data, 'face');
+
     final List<SeatState> seats = List<SeatState>.from(room.seats);
     final int moverIndex = seats.indexWhere(
       (SeatState s) => s.seat == seatValue,
@@ -1407,9 +1483,10 @@ class RoomController extends ChangeNotifier {
             sixes: null,
           );
 
-    _room = turn == null
+    final RoomSnapshot updated = turn == null
         ? room.copyWith(seats: seats, seq: seqValue)
         : room.copyWith(seats: seats, turn: turn, seq: seqValue);
+    _room = face == null ? updated : updated.copyWith(lastSpentFace: face);
     notifyListeners();
   }
 
@@ -1737,6 +1814,30 @@ List<int>? _asIntList(Map<String, Object?> data, String key) {
       return null;
     }
     result.add(element);
+  }
+  return result;
+}
+
+/// docs/PROTOCOL.md section 21.1, `legal_by_face`: `[{"face": int, "tokens":
+/// [int]}]`. Missing or wrong-shaped, at any level, reads as null the same
+/// as every other helper in this section -- a caller cannot tell "absent"
+/// from "wrong type" apart here either.
+List<FaceLegal>? _asFaceLegalList(Map<String, Object?> data, String key) {
+  final Object? value = data[key];
+  if (value is! List) {
+    return null;
+  }
+  final List<FaceLegal> result = <FaceLegal>[];
+  for (final Object? element in value) {
+    if (element is! Map<String, Object?>) {
+      return null;
+    }
+    final int? face = _asInt(element, 'face');
+    final List<int>? tokens = _asIntList(element, 'tokens');
+    if (face == null || tokens == null) {
+      return null;
+    }
+    result.add(FaceLegal(face: face, tokens: tokens));
   }
   return result;
 }
