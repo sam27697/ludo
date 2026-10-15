@@ -56,12 +56,17 @@ GameState buildState({
   int seed = 1,
   bool blocks = true,
   bool captureBonus = true,
+  bool? rollQueue,
+  List<int>? queue,
   bool? homeBonus,
 }) {
   final Map<String, Object?> rules = <String, Object?>{
     'blocks': blocks,
     'captureBonus': captureBonus,
   };
+  if (rollQueue != null) {
+    rules['rollQueue'] = rollQueue;
+  }
   if (homeBonus != null) {
     rules['homeBonus'] = homeBonus;
   }
@@ -75,6 +80,7 @@ GameState buildState({
     'currentSeat': currentSeat,
     'phase': phase,
     'roll': roll,
+    if (queue != null) 'queue': queue,
     'sixes': sixes,
     'winner': winner,
     'seq': seq,

@@ -59,11 +59,59 @@ void _validateConfig(GameConfig config) {
 
 /// Token indices, ascending, movable with `state.roll`. Empty whenever
 /// `state.phase != awaitMove`. Never throws.
+///
+/// docs/ENGINE_API.md section 10.1: with `rules.rollQueue` on, `state.roll`
+/// is always null and this returns the legal tokens of `defaultFace(state)`
+/// instead.
 List<int> legalTokens(GameState state) {
   if (state.phase != GamePhase.awaitMove) {
     return const <int>[];
   }
+  if (state.config.rules.rollQueue) {
+    final face = defaultFace(state);
+    if (face == null) {
+      return const <int>[];
+    }
+    return _legalTokensFor(state, state.currentSeat, face);
+  }
   return _legalTokensFor(state, state.currentSeat, state.roll!);
+}
+
+/// docs/ENGINE_API.md section 10.1: faces with at least one legal token, in
+/// first-queued order, each with its legal tokens ascending. Empty in
+/// `awaitRoll` and `finished`. With `!rollQueue`, this is
+/// `{state.roll: legalTokens(state)}` in `awaitMove`.
+Map<int, List<int>> legalByFace(GameState state) {
+  if (state.phase != GamePhase.awaitMove) {
+    return const <int, List<int>>{};
+  }
+  if (!state.config.rules.rollQueue) {
+    return <int, List<int>>{state.roll!: legalTokens(state)};
+  }
+  final result = <int, List<int>>{};
+  for (final face in state.queue) {
+    if (result.containsKey(face)) {
+      continue;
+    }
+    final legal = _legalTokensFor(state, state.currentSeat, face);
+    if (legal.isNotEmpty) {
+      result[face] = legal;
+    }
+  }
+  return result;
+}
+
+/// docs/ENGINE_API.md section 10.1: the face a move with `face == null`
+/// spends -- the first entry of the queue, in queue order, that has a legal
+/// token. Null when none (including always, with `!rollQueue`, since the
+/// queue is then always empty).
+int? defaultFace(GameState state) {
+  for (final face in state.queue) {
+    if (_legalTokensFor(state, state.currentSeat, face).isNotEmpty) {
+      return face;
+    }
+  }
+  return null;
 }
 
 /// A state with a winner accepts no further roll, move or timer action.
@@ -100,6 +148,10 @@ ApplyResult _applyRoll(GameState state, RollIntention intention) {
   }
 
   final seat = state.currentSeat;
+
+  if (state.config.rules.rollQueue) {
+    return _applyRollQueued(state, seat, value);
+  }
 
   if (value == 6 && state.sixes == 2) {
     // Rule 10: the third consecutive 6 is not played at all.
@@ -172,6 +224,11 @@ ApplyResult _applyMove(GameState state, MoveIntention intention) {
   if (token < 0 || token > 3) {
     return const Rejected(EngineError.noSuchToken);
   }
+
+  if (state.config.rules.rollQueue) {
+    return _applyMoveQueued(state, intention, token);
+  }
+
   if (!legalTokens(state).contains(token)) {
     return const Rejected(EngineError.illegalMove);
   }
@@ -267,6 +324,273 @@ ApplyResult _applyMove(GameState state, MoveIntention intention) {
     rngState: state.rngState,
   );
   return Applied(newState, events);
+}
+
+/// docs/RULES.md section 3.2a / docs/ENGINE_API.md section 10.3. Rules 9, 12
+/// and 13 are replaced wholesale by rules 9q to 13q when `rollQueue` is on;
+/// this is a separate path from `_applyRoll`'s rather than threaded through
+/// it, because the two share nothing past the face-range check -- the queue
+/// changes what "the turn passes" and "the move is offered" mean.
+ApplyResult _applyRollQueued(GameState state, int seat, int value) {
+  if (value == 6 && state.sixes == 2) {
+    // Rule 10q: the third consecutive 6 is not queued; every unspent face is
+    // discarded and the turn passes. Moves already made this turn stand.
+    final nextSeat = _nextSeat(state.config.seats, seat);
+    final newState = GameState(
+      config: state.config,
+      tokens: state.tokens,
+      currentSeat: nextSeat,
+      phase: GamePhase.awaitRoll,
+      roll: null,
+      sixes: 0,
+      winner: state.winner,
+      seq: state.seq + 1,
+      rngState: state.rngState,
+      queue: const <int>[],
+    );
+    return Applied(newState, <GameEvent>[
+      Rolled(seat: seat, value: value, legal: const <int>[]),
+      TurnEnded(seat: seat, reason: TurnEndReason.threeSixes),
+      TurnBegan(seat: nextSeat),
+    ]);
+  }
+
+  // The board has not moved since the last move was played, so the legal
+  // set for this face alone is well defined regardless of what else is
+  // already queued.
+  final legalForFace = _legalTokensFor(state, seat, value);
+  final newQueue = <int>[...state.queue, value];
+
+  if (value == 6) {
+    // Rule 10q: a 6 is queued and the same seat rolls again at once, before
+    // any move is offered.
+    final newState = GameState(
+      config: state.config,
+      tokens: state.tokens,
+      currentSeat: seat,
+      phase: GamePhase.awaitRoll,
+      roll: null,
+      sixes: state.sixes + 1,
+      winner: state.winner,
+      seq: state.seq + 1,
+      rngState: state.rngState,
+      queue: newQueue,
+    );
+    return Applied(newState, <GameEvent>[
+      Rolled(seat: seat, value: value, legal: legalForFace),
+      ExtraRoll(seat: seat),
+    ]);
+  }
+
+  // Rule 11q: a non-6 ends the rolling. sixes resets to 0 either way below.
+  final tentativeState = GameState(
+    config: state.config,
+    tokens: state.tokens,
+    currentSeat: seat,
+    phase: GamePhase.awaitMove,
+    roll: null,
+    sixes: 0,
+    winner: state.winner,
+    seq: state.seq + 1,
+    rngState: state.rngState,
+    queue: newQueue,
+  );
+
+  if (legalByFace(tentativeState).isEmpty) {
+    // Rule 13q: no queued face has a legal move. The faces are discarded.
+    final nextSeat = _nextSeat(state.config.seats, seat);
+    final newState = GameState(
+      config: state.config,
+      tokens: state.tokens,
+      currentSeat: nextSeat,
+      phase: GamePhase.awaitRoll,
+      roll: null,
+      sixes: 0,
+      winner: state.winner,
+      seq: state.seq + 1,
+      rngState: state.rngState,
+      queue: const <int>[],
+    );
+    return Applied(newState, <GameEvent>[
+      Rolled(seat: seat, value: value, legal: legalForFace),
+      TurnEnded(seat: seat, reason: TurnEndReason.noLegalMove),
+      TurnBegan(seat: nextSeat),
+    ]);
+  }
+
+  return Applied(tentativeState, <GameEvent>[
+    Rolled(seat: seat, value: value, legal: legalForFace),
+  ]);
+}
+
+/// docs/RULES.md rules 12q to 14q / docs/ENGINE_API.md section 10.4.
+ApplyResult _applyMoveQueued(
+  GameState state,
+  MoveIntention intention,
+  int token,
+) {
+  final seat = state.currentSeat;
+  final requestedFace = intention.face;
+  int faceToUse;
+  if (requestedFace != null) {
+    if (requestedFace < 1 ||
+        requestedFace > 6 ||
+        !state.queue.contains(requestedFace)) {
+      return const Rejected(EngineError.illegalMove);
+    }
+    faceToUse = requestedFace;
+  } else {
+    final chosen = defaultFace(state);
+    if (chosen == null) {
+      // Impossible in awaitMove per 10.3: legalByFace is non-empty whenever
+      // the engine puts a seat in awaitMove under rollQueue. Guarded anyway
+      // because apply() never throws.
+      return const Rejected(EngineError.illegalMove);
+    }
+    faceToUse = chosen;
+  }
+
+  final legalForFace = _legalTokensFor(state, seat, faceToUse);
+  if (!legalForFace.contains(token)) {
+    return const Rejected(EngineError.illegalMove);
+  }
+
+  final fromProgress = state.tokens[seat][token];
+  final toProgress = fromProgress == -1 ? 0 : fromProgress + faceToUse;
+
+  final newTokens = <List<int>>[
+    for (final row in state.tokens) List<int>.of(row),
+  ];
+  newTokens[seat][token] = toProgress;
+
+  final events = <GameEvent>[
+    Moved(seat: seat, token: token, from: fromProgress, to: toProgress),
+  ];
+
+  var captured = false;
+  if (toProgress >= 0 && toProgress <= 51) {
+    final destination = absoluteSquare(seat, toProgress);
+    if (!isSafeSquare(destination)) {
+      final opponents = _opponentsAt(state.tokens, seat, destination);
+      if (opponents.length == 1) {
+        final (victimSeat, victimToken) = opponents[0];
+        newTokens[victimSeat][victimToken] = -1;
+        captured = true;
+        events.add(
+          Captured(
+            seat: victimSeat,
+            token: victimToken,
+            by: seat,
+            byToken: token,
+          ),
+        );
+      }
+    }
+  }
+
+  final reachedHome = toProgress == 57;
+  if (reachedHome) {
+    events.add(TokenHome(seat: seat, token: token));
+  }
+
+  final queueAfterSpend = _removeFirstOccurrence(state.queue, faceToUse);
+
+  final allHome = newTokens[seat].every((p) => p == 57);
+  if (allHome) {
+    // Rule 14q: winning discards whatever is left unspent.
+    events.add(GameWon(seat: seat));
+    final newState = GameState(
+      config: state.config,
+      tokens: newTokens,
+      currentSeat: seat,
+      phase: GamePhase.finished,
+      roll: null,
+      sixes: state.sixes,
+      winner: seat,
+      seq: state.seq + 1,
+      rngState: state.rngState,
+      queue: const <int>[],
+    );
+    return Applied(newState, events);
+  }
+
+  // Rule 12q: a 6 spent on a move grants nothing by itself -- it already
+  // earned its reroll when it landed in the queue (rule 10q).
+  final bonusOwed = (captured && state.config.rules.captureBonus) ||
+      (reachedHome && state.config.rules.homeBonus);
+
+  if (bonusOwed) {
+    events.add(ExtraRoll(seat: seat));
+    final newState = GameState(
+      config: state.config,
+      tokens: newTokens,
+      currentSeat: seat,
+      phase: GamePhase.awaitRoll,
+      roll: null,
+      sixes: 0,
+      winner: state.winner,
+      seq: state.seq + 1,
+      rngState: state.rngState,
+      queue: queueAfterSpend,
+    );
+    return Applied(newState, events);
+  }
+
+  final tentativeState = GameState(
+    config: state.config,
+    tokens: newTokens,
+    currentSeat: seat,
+    phase: GamePhase.awaitMove,
+    roll: null,
+    sixes: state.sixes,
+    winner: state.winner,
+    seq: state.seq + 1,
+    rngState: state.rngState,
+    queue: queueAfterSpend,
+  );
+
+  if (legalByFace(tentativeState).isNotEmpty) {
+    // No event beyond the move's own: the same seat keeps spending.
+    return Applied(tentativeState, events);
+  }
+
+  final nextSeat = _nextSeat(state.config.seats, seat);
+  if (queueAfterSpend.isEmpty) {
+    events.add(TurnBegan(seat: nextSeat));
+  } else {
+    // Rule 13q: faces remain but none can move. They are discarded.
+    events.add(TurnEnded(seat: seat, reason: TurnEndReason.noLegalMove));
+    events.add(TurnBegan(seat: nextSeat));
+  }
+  final newState = GameState(
+    config: state.config,
+    tokens: newTokens,
+    currentSeat: nextSeat,
+    phase: GamePhase.awaitRoll,
+    roll: null,
+    sixes: 0,
+    winner: state.winner,
+    seq: state.seq + 1,
+    rngState: state.rngState,
+    queue: const <int>[],
+  );
+  return Applied(newState, events);
+}
+
+/// The first occurrence of [face] removed from [queue], preserving the
+/// order of everything else. Rule 11q: the player chooses which queued face
+/// to spend; only that one occurrence leaves the queue.
+List<int> _removeFirstOccurrence(List<int> queue, int face) {
+  final result = <int>[];
+  var removed = false;
+  for (final f in queue) {
+    if (!removed && f == face) {
+      removed = true;
+      continue;
+    }
+    result.add(f);
+  }
+  return result;
 }
 
 /// The core legality computation, rules 17 to 26. Shared by `legalTokens`
