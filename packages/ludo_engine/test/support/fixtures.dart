@@ -49,20 +49,27 @@ GameState buildState({
   int seed = 1,
   bool blocks = true,
   bool captureBonus = true,
+  bool? rollQueue,
+  List<int>? queue,
 }) {
+  final Map<String, Object?> rules = <String, Object?>{
+    'blocks': blocks,
+    'captureBonus': captureBonus,
+  };
+  if (rollQueue != null) {
+    rules['rollQueue'] = rollQueue;
+  }
   final Map<String, Object?> json = <String, Object?>{
     'config': <String, Object?>{
       'seats': seats,
-      'rules': <String, Object?>{
-        'blocks': blocks,
-        'captureBonus': captureBonus
-      },
+      'rules': rules,
       'seed': seed,
     },
     'tokens': _tokenRows(tokens),
     'currentSeat': currentSeat,
     'phase': phase,
     'roll': roll,
+    if (queue != null) 'queue': queue,
     'sixes': sixes,
     'winner': winner,
     'seq': seq,
