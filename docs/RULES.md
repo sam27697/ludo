@@ -110,6 +110,44 @@ also safe, trivially, because no opponent can reach it.
 13. Rule 7 applies to an extra roll exactly as it applies to a first roll: if
     the extra roll produces no legal move, the turn passes.
 
+### 3.2a The roll queue (`rollQueue`), Sam's ruling of 2026-10-15
+
+Sam: «لازم اللاعب يرمي كل مرات النرد الممكنة قبل ما يلعب واذا اجاه فرصة رمي
+جديدة اثناء التحريك وقتها بيرمي». Every roll a seat is owed is rolled first,
+then the faces are spent. Engine toggle `rollQueue`, default off in the
+engine (records from before the ruling replay unchanged), on for every
+server room. With `rollQueue` on, rules 9, 12 and 13 are replaced by 9q to
+13q; rules 7, 10 and 11, 11a keep their meaning as stated here.
+
+9q. A turn holds a **queue** of unspent faces, in the order they were
+    rolled. A turn begins with an empty queue and a roll.
+10q. Rolling a 6 appends it to the queue and the same seat rolls again at
+    once, before any move. Three consecutive 6s void the turn (rule 10):
+    the third 6 is not queued, every unspent face is discarded, the turn
+    passes; moves already made in the turn stand. `sixes` counts the
+    current streak of consecutive 6s and resets to 0 on any non-6.
+11q. A non-6 is appended and ends the rolling. The seat then spends the
+    queue one face at a time, choosing which queued face and which token
+    each time. A face may be spent on any token it moves legally; the
+    order of spending is the player's choice.
+12q. A move that captures (with `captureBonus`) or brings a token home
+    (with `homeBonus`, not a winning move) owes one roll, rolled at once,
+    before the next face is spent. That roll follows 10q and 11q: its
+    faces join the end of the queue, a 6 rolls again, and three 6s in a
+    row from it void the turn. A 6 spent on a move grants nothing; the 6
+    was already rolled again when it landed.
+13q. The turn passes when the queue is empty and no roll is owed, or when
+    no queued face has any legal move (rule 7). A face with no legal move
+    stays queued while another face can still move, because spending that
+    other face may make it legal (a 6 brings a token out, then the 3 moves
+    it). When the turn passes with faces left, they are discarded and the
+    seat is told there was no move for them.
+14q. Winning ends the game at once; unspent faces are discarded.
+15q. Under the timer (rule 15), the server acts one step at a time exactly
+    as a player would: roll if a roll is owed, otherwise spend the first
+    queued face that has a legal move on its first legal token, in queue
+    order then ascending token order.
+
 ### 3.3 The timer
 
 14. A seat has 45 seconds from the moment the roll is delivered to it to select

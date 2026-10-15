@@ -421,3 +421,92 @@ the field order above is normative and not a suggestion.
 
 `deadline_ms` has no engine equivalent and must not acquire one. The timer is
 the server's, by rule 37.
+
+## 10. The roll queue (`rollQueue`), 2026-10-15
+
+`docs/RULES.md` section 3.2a is the rule; this is its engine shape. With
+`rules.rollQueue` false nothing in sections 1 to 9 changes, byte for byte:
+the golden corpus and every legacy state replay and hash exactly as before.
+
+### 10.1 Types
+
+```dart
+class RulesConfig {
+  final bool rollQueue;      // rule 9q, default false; toJson writes it only when true
+}
+
+class GameState {
+  final List<int> queue;     // unspent faces in roll order; always [] when !rollQueue
+}
+
+class MoveIntention extends Intention {
+  final int token;
+  final int? face;           // the queued face to spend; null = the default face
+  const MoveIntention(int seat, this.token, {this.face});
+}
+
+/// Faces with at least one legal token, in first-queued order, each with
+/// its legal tokens ascending. Empty in awaitRoll and finished. With
+/// !rollQueue: `{state.roll: legalTokens(state)}` in awaitMove.
+Map<int, List<int>> legalByFace(GameState state);
+
+/// The face a move with `face == null` spends: the first entry of the
+/// queue, in queue order, that has a legal token. Null when none.
+int? defaultFace(GameState state);
+```
+
+`legalTokens(state)` keeps its signature and, with `rollQueue`, returns the
+legal tokens of `defaultFace(state)`. `state.roll` is always null with
+`rollQueue` on; the queue replaces it.
+
+### 10.2 Serialisation
+
+`queue` is written in `toJson()` right after `roll`, as a list of ints,
+**only when `config.rules.rollQueue` is true** (then always, even empty).
+`rollQueue` is written in `rules` after `captureBonus` and before
+`homeBonus`, only when true. `fromJson()` reads both absent as false / `[]`,
+and rejects an explicit `rollQueue: false`, a `queue` key on a state whose
+rules lack `rollQueue`, a missing `queue` when `rollQueue` is true, and a
+face outside 1..6.
+
+### 10.3 RollIntention with `rollQueue`
+
+1. `badFace` exactly as section 5.
+2. A 6 with `state.sixes == 2`: rule 10q. Emit `Rolled` then
+   `TurnEnded(threeSixes)` then `TurnBegan` for the next seat; `queue = []`,
+   `sixes = 0`, phase `awaitRoll`.
+3. A 6 otherwise: append it, `sixes + 1`, phase stays `awaitRoll`, same
+   seat. Emit `Rolled` then `ExtraRoll`.
+4. A non-6: append it, `sixes = 0`. If `legalByFace` of the new state is
+   empty, rule 13q: emit `Rolled` then `TurnEnded(noLegalMove)` then
+   `TurnBegan`; `queue = []`, next seat, `awaitRoll`. Otherwise phase
+   `awaitMove`; emit `Rolled`.
+
+### 10.4 MoveIntention with `rollQueue`
+
+Checks, in order, after the shared ones of section 4 (phase, seat, token
+range): `face` given and not in the queue, or not in 1..6: `illegalMove`;
+`face` null and `defaultFace` null: impossible in `awaitMove` by 10.3;
+the token not legal for the face: `illegalMove`.
+
+1. Remove the first occurrence of the face from the queue.
+2. Move, capture, `TokenHome` and the win exactly as section 5 steps 1 to 4
+   for that face. A win: queue `[]`, `GameWon`, nothing after.
+3. A bonus is owed if the move captured with `captureBonus` or reached 57
+   with `homeBonus`. A 6 spent grants nothing (rule 12q). Bonus: phase
+   `awaitRoll`, same seat, `sixes = 0`, emit `ExtraRoll`.
+4. No bonus, and `legalByFace` of the new state non-empty: phase
+   `awaitMove`, same seat. No event beyond the move's own.
+5. No bonus, queue empty: next seat, `awaitRoll`, `sixes = 0`, emit
+   `TurnBegan`.
+6. No bonus, queue non-empty but no face can move: emit
+   `TurnEnded(noLegalMove)` then `TurnBegan`; queue `[]`, next seat.
+
+`sixes` is untouched by a move except where a step sets it.
+
+### 10.5 The golden corpus
+
+Records with `"rollQueue": true` in `rules` carry `face` on every `move`
+intention (mandatory there, absent elsewhere). The 40 legacy records stay
+byte-identical. The generator spends, on each move, the face and token its
+seeded choice picks among `legalByFace`.
