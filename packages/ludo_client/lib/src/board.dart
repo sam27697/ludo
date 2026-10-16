@@ -1,6 +1,6 @@
 // The board widget: draws the 15 by 15 grid and every seat's tokens on top
-// of it. Every token's position comes from board_geometry.dart's cellFor;
-// this file adds no coordinate logic of its own.
+// of it. Every token's board-space cell comes from cellFor; every conversion
+// of a cell into pixels goes through toView(cell, viewQuarters(mySeat)).
 //
 // Pure function of its arguments, same as the geometry underneath it: no
 // network, no timers, no clock, no game rules beyond the coordinate mapping.
@@ -17,6 +17,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/semantics.dart';
 import 'package:flutter/widgets.dart';
 
 import '../l10n/gen/app_localizations.dart';
@@ -60,11 +61,11 @@ Rect _tokenHitRect({
   required int tokenIndex,
   required int progress,
   required double cellSize,
+  required int? mySeat,
 }) {
-  final BoardCell cell = cellFor(
-    seat: seat,
-    progress: progress,
-    tokenIndex: tokenIndex,
+  final BoardCell cell = toView(
+    cellFor(seat: seat, progress: progress, tokenIndex: tokenIndex),
+    viewQuarters(mySeat),
   );
   final double fan = cellSize * 0.12;
   final double fanDx = tokenIndex.isEven ? -fan : fan;
@@ -91,11 +92,11 @@ Rect _tokenDrawnRect({
   required int tokenIndex,
   required int progress,
   required double cellSize,
+  required int? mySeat,
 }) {
-  final BoardCell cell = cellFor(
-    seat: seat,
-    progress: progress,
-    tokenIndex: tokenIndex,
+  final BoardCell cell = toView(
+    cellFor(seat: seat, progress: progress, tokenIndex: tokenIndex),
+    viewQuarters(mySeat),
   );
   final double fan = cellSize * 0.12;
   final double fanDx = tokenIndex.isEven ? -fan : fan;
@@ -107,6 +108,51 @@ Rect _tokenDrawnRect({
     center: Offset(centerX, centerY),
     width: tokenSize,
     height: tokenSize,
+  );
+}
+
+/// Top-left cell and size of the axis-aligned block that [toView] maps
+/// the [width] by [height] rectangle at ([col], [row]) onto after
+/// [quarters] clockwise turns. A rotated rectangle's own top-left is not
+/// in general [toView] of its pre-rotation top-left (the same reason
+/// [yardQuadrantOrigin] is listed rather than generated).
+({int col, int row, int width, int height}) _viewBlock({
+  required int col,
+  required int row,
+  required int width,
+  required int height,
+  required int quarters,
+}) {
+  int minCol = col;
+  int minRow = row;
+  int maxCol = col;
+  int maxRow = row;
+  var first = true;
+  for (final BoardCell corner in <BoardCell>[
+    BoardCell(col, row),
+    BoardCell(col + width - 1, row),
+    BoardCell(col, row + height - 1),
+    BoardCell(col + width - 1, row + height - 1),
+  ]) {
+    final BoardCell viewed = toView(corner, quarters);
+    if (first) {
+      minCol = viewed.col;
+      minRow = viewed.row;
+      maxCol = viewed.col;
+      maxRow = viewed.row;
+      first = false;
+    } else {
+      if (viewed.col < minCol) minCol = viewed.col;
+      if (viewed.row < minRow) minRow = viewed.row;
+      if (viewed.col > maxCol) maxCol = viewed.col;
+      if (viewed.row > maxRow) maxRow = viewed.row;
+    }
+  }
+  return (
+    col: minCol,
+    row: minRow,
+    width: maxCol - minCol + 1,
+    height: maxRow - minRow + 1,
   );
 }
 
@@ -147,7 +193,7 @@ bool _sameSeats(List<int> a, List<int> b) {
 }
 
 /// A Ludo board: the static grid plus every token of every seat in
-/// [seatsInPlay], each placed by [cellFor].
+/// [seatsInPlay], each placed by [cellFor] then [toView].
 ///
 /// This widget does not decide whose turn it is, does not know a game rule
 /// beyond the coordinate mapping in board_geometry.dart and the legality
@@ -551,16 +597,21 @@ class _LudoBoardState extends State<LudoBoard> {
       );
       byCell.putIfAbsent(cell, () => <int>[]).add(index);
     }
-    return <_CellGroup>[
-      for (final MapEntry<BoardCell, List<int>> entry in byCell.entries)
+    final int quarters = viewQuarters(widget.mySeat);
+    final List<_CellGroup> groups = <_CellGroup>[];
+    for (final MapEntry<BoardCell, List<int>> entry in byCell.entries) {
+      final BoardCell viewed = toView(entry.key, quarters);
+      groups.add(
         _CellGroup(
           center: Offset(
-            entry.key.col * cellSize + cellSize / 2,
-            entry.key.row * cellSize + cellSize / 2,
+            viewed.col * cellSize + cellSize / 2,
+            viewed.row * cellSize + cellSize / 2,
           ),
           indices: entry.value..sort(),
         ),
-    ];
+      );
+    }
+    return groups;
   }
 
   void _handleTapUp(TapUpDetails details, double cellSize, double tokenSize) {
@@ -642,8 +693,16 @@ class _LudoBoardState extends State<LudoBoard> {
     required double cellSize,
   }) {
     final BoardCell origin = yardQuadrantOrigin(seat);
-    final double left = origin.col * cellSize;
-    final double top = origin.row * cellSize;
+    final ({int col, int row, int width, int height}) viewed = _viewBlock(
+      col: origin.col,
+      row: origin.row,
+      width: yardQuadrantSide,
+      height: yardQuadrantSide,
+      quarters: viewQuarters(widget.mySeat),
+    );
+    final BoardCell viewedOrigin = BoardCell(viewed.col, viewed.row);
+    final double left = viewedOrigin.col * cellSize;
+    final double top = viewedOrigin.row * cellSize;
     final double side = yardQuadrantSide * cellSize;
 
     final List<Widget> layer = <Widget>[];
@@ -691,7 +750,12 @@ class _LudoBoardState extends State<LudoBoard> {
     final String? name = widget.seatNames?[seat];
     if (name != null) {
       layer.add(
-        _nameChip(seat: seat, name: name, cellSize: cellSize, origin: origin),
+        _nameChip(
+          seat: seat,
+          name: name,
+          cellSize: cellSize,
+          origin: viewedOrigin,
+        ),
       );
     }
 
@@ -885,6 +949,7 @@ class _LudoBoardState extends State<LudoBoard> {
         tokenIndex: tokenIndex,
         progress: -1,
         cellSize: cellSize,
+        mySeat: widget.mySeat,
       );
       if (discRect.bottom <= rowTop || discRect.top >= rowBottom) {
         continue;
@@ -1060,10 +1125,13 @@ class _LudoBoardState extends State<LudoBoard> {
                 children: [
                   Positioned.fill(
                     child: CustomPaint(
-                      painter: _BoardPainter(seatsInPlay: widget.seatsInPlay),
+                      painter: _BoardPainter(
+                        seatsInPlay: widget.seatsInPlay,
+                        mySeat: widget.mySeat,
+                      ),
                     ),
                   ),
-                  ..._safeSquareMarks(cellSize),
+                  ..._safeSquareMarks(cellSize, widget.mySeat),
                   for (final seat in widget.seatsInPlay)
                     ..._seatIdentityLayer(seat: seat, cellSize: cellSize),
                   for (final seat in widget.seatsInPlay)
@@ -1097,6 +1165,7 @@ class _LudoBoardState extends State<LudoBoard> {
       progress: progress,
       tokenIndex: tokenIndex,
     );
+    final BoardCell viewCell = toView(cell, viewQuarters(widget.mySeat));
 
     // Two tokens of one seat can land on the same cell on purpose (see
     // board_geometry.dart). Fan them out a little by token index rather
@@ -1108,13 +1177,20 @@ class _LudoBoardState extends State<LudoBoard> {
 
     final double tokenSize = cellSize * 0.7;
     final double left =
-        cell.col * cellSize + (cellSize - tokenSize) / 2 + fanDx;
-    final double top = cell.row * cellSize + (cellSize - tokenSize) / 2 + fanDy;
+        viewCell.col * cellSize + (cellSize - tokenSize) / 2 + fanDx;
+    final double top =
+        viewCell.row * cellSize + (cellSize - tokenSize) / 2 + fanDy;
 
     final bool isMine = seat == widget.mySeat;
     final bool legalHere = isMine && widget.legal.contains(tokenIndex);
     final bool autoMoveHere = isMine && widget.autoMoveToken == tokenIndex;
     final bool shakingHere = isMine && _shakingToken == tokenIndex;
+    final int seatRank = widget.mySeat == null
+        ? seat
+        : (seat - widget.mySeat!) % 4;
+    final OrdinalSortKey tokenSortKey = OrdinalSortKey(
+      seatRank * 4.0 + tokenIndex,
+    );
 
     final List<Widget> layer = <Widget>[];
 
@@ -1124,6 +1200,7 @@ class _LudoBoardState extends State<LudoBoard> {
         tokenIndex: tokenIndex,
         progress: progress,
         cellSize: cellSize,
+        mySeat: widget.mySeat,
       );
       final AppLocalizations loc = AppLocalizations.of(context);
       layer.add(
@@ -1145,6 +1222,7 @@ class _LudoBoardState extends State<LudoBoard> {
           // pixel one.
           child: Semantics(
             key: Key('board-token-hit-$seat-$tokenIndex'),
+            sortKey: tokenSortKey,
             button: true,
             label: loc.gameTokenButton(tokenIndex + 1),
             enabled: legalHere,
@@ -1190,6 +1268,7 @@ class _LudoBoardState extends State<LudoBoard> {
     final Widget token = Semantics(
       key: Key('token-$seat-$tokenIndex'),
       identifier: 'cell-${cell.col}-${cell.row}',
+      sortKey: tokenSortKey,
       child: DecoratedBox(
         decoration: BoxDecoration(
           shape: BoxShape.circle,
@@ -1209,15 +1288,23 @@ class _LudoBoardState extends State<LudoBoard> {
       ),
     );
 
-    // Contract C-252 rule 1: `cell`, `left` and `top` above stay truth, feeding
-    // the hit target, the ring and the Semantics identifier exactly as they
-    // always have. Only the drawn circle below reads `_drawnProgress`, which
-    // is truth too except mid-travel or mid-capture-hold.
+    // Contract C-252 rule 1: `cell` (board space) still feeds the
+    // Semantics identifier; `left` and `top` are that cell in view space,
+    // feeding the hit target and the ring. Only the drawn circle below
+    // reads `_drawnProgress`, which is truth too except mid-travel or
+    // mid-capture-hold.
     final int drawnProgress = _drawnProgress(seat, tokenIndex);
     final bool isDrawnAtTruth = drawnProgress == progress;
     final BoardCell drawnCell = isDrawnAtTruth
-        ? cell
-        : cellFor(seat: seat, progress: drawnProgress, tokenIndex: tokenIndex);
+        ? viewCell
+        : toView(
+            cellFor(
+              seat: seat,
+              progress: drawnProgress,
+              tokenIndex: tokenIndex,
+            ),
+            viewQuarters(widget.mySeat),
+          );
     final double drawnLeft = isDrawnAtTruth
         ? left
         : drawnCell.col * cellSize + (cellSize - tokenSize) / 2 + fanDx;
@@ -1232,10 +1319,13 @@ class _LudoBoardState extends State<LudoBoard> {
       // `drawnLeft`/`drawnTop` here are truth's yard slot -- the capture
       // already cleared this pair's override in `_onMoveArrived`, so
       // `_drawnProgress` fell back to truth, which is already -1.
-      final BoardCell fromCell = cellFor(
-        seat: seat,
-        progress: flying.fromProgress,
-        tokenIndex: tokenIndex,
+      final BoardCell fromCell = toView(
+        cellFor(
+          seat: seat,
+          progress: flying.fromProgress,
+          tokenIndex: tokenIndex,
+        ),
+        viewQuarters(widget.mySeat),
       );
       final double fromLeft =
           fromCell.col * cellSize + (cellSize - tokenSize) / 2 + fanDx;
@@ -1313,13 +1403,14 @@ class _LudoBoardState extends State<LudoBoard> {
 /// [IgnorePointer] so the mark never answers a tap meant for the token on
 /// it: a legal tap on a token that happens to sit on a safe square must
 /// still resolve to exactly one move.
-List<Widget> _safeSquareMarks(double cellSize) {
+List<Widget> _safeSquareMarks(double cellSize, int? mySeat) {
+  final int quarters = viewQuarters(mySeat);
   return <Widget>[
     for (final int absolute in safeTrackSquares)
       Positioned(
         key: Key('board-safe-$absolute'),
-        left: safeSquareCell(absolute).col * cellSize,
-        top: safeSquareCell(absolute).row * cellSize,
+        left: toView(safeSquareCell(absolute), quarters).col * cellSize,
+        top: toView(safeSquareCell(absolute), quarters).row * cellSize,
         width: cellSize,
         height: cellSize,
         child: IgnorePointer(
@@ -1775,7 +1866,7 @@ class _StarPainter extends CustomPainter {
 ///
 /// Seat fills and board inks come from [LudoColors]: one paintbox with theme.
 class _BoardPainter extends CustomPainter {
-  const _BoardPainter({required this.seatsInPlay});
+  const _BoardPainter({required this.seatsInPlay, this.mySeat});
 
   /// Which seats are playing, same list [LudoBoard] was given. A seat not
   /// in it gets its yard fill muted -- C-248 rule 4, the one default change
@@ -1783,30 +1874,41 @@ class _BoardPainter extends CustomPainter {
   /// whether or not anyone sat there.
   final List<int> seatsInPlay;
 
+  /// The seat this board is drawn for. Null is today's unrotated layout.
+  final int? mySeat;
+
   @override
   void paint(Canvas canvas, Size size) {
     final cellSize = size.width / 15;
+    final int quarters = viewQuarters(mySeat);
 
     canvas.drawRect(Offset.zero & size, Paint()..color = LudoColors.dieFace);
 
     for (var seat = 0; seat < 4; seat++) {
       final BoardCell origin = yardQuadrantOrigin(seat);
+      final ({int col, int row, int width, int height}) viewed = _viewBlock(
+        col: origin.col,
+        row: origin.row,
+        width: yardQuadrantSide,
+        height: yardQuadrantSide,
+        quarters: quarters,
+      );
       final bool inPlay = seatsInPlay.contains(seat);
       final double yardAlpha = inPlay ? 0.16 : 0.16 * 0.35;
       _fillCells(
         canvas,
         cellSize,
-        origin.col,
-        origin.row,
-        yardQuadrantSide,
-        yardQuadrantSide,
+        viewed.col,
+        viewed.row,
+        viewed.width,
+        viewed.height,
         LudoColors.seats[seat].withValues(alpha: yardAlpha),
       );
     }
 
     for (var seat = 0; seat < 4; seat++) {
       for (var progress = 52; progress <= 56; progress++) {
-        final cell = cellFor(seat: seat, progress: progress);
+        final cell = toView(cellFor(seat: seat, progress: progress), quarters);
         _fillCell(
           canvas,
           cellSize,
@@ -1817,7 +1919,7 @@ class _BoardPainter extends CustomPainter {
     }
 
     for (var progress = 0; progress < 52; progress++) {
-      final cell = cellFor(seat: 0, progress: progress);
+      final cell = toView(cellFor(seat: 0, progress: progress), quarters);
       _fillCell(
         canvas,
         cellSize,
@@ -1830,7 +1932,7 @@ class _BoardPainter extends CustomPainter {
     // plain track fill above so it is not painted over. Contract C-241 rule
     // 2; the four absolute squares are 0, 13, 26, 39, one per seat.
     for (var seat = 0; seat < 4; seat++) {
-      final cell = cellFor(seat: seat, progress: 0);
+      final cell = toView(cellFor(seat: seat, progress: 0), quarters);
       _fillCell(
         canvas,
         cellSize,
@@ -1839,13 +1941,20 @@ class _BoardPainter extends CustomPainter {
       );
     }
 
+    final ({int col, int row, int width, int height}) centre = _viewBlock(
+      col: 6,
+      row: 6,
+      width: 3,
+      height: 3,
+      quarters: quarters,
+    );
     _fillCells(
       canvas,
       cellSize,
-      6,
-      6,
-      3,
-      3,
+      centre.col,
+      centre.row,
+      centre.width,
+      centre.height,
       LudoColors.inkMuted.withValues(alpha: 0.5),
     );
 
@@ -1897,5 +2006,6 @@ class _BoardPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _BoardPainter oldDelegate) =>
+      oldDelegate.mySeat != mySeat ||
       !_sameSeats(oldDelegate.seatsInPlay, seatsInPlay);
 }
