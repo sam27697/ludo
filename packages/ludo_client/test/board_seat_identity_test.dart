@@ -305,17 +305,29 @@ Rect _boardRect(WidgetTester tester) {
   return (colLow: cell.col <= 5 ? 0 : 9, rowLow: cell.row <= 5 ? 0 : 9);
 }
 
-/// [seat]'s 6x6 yard quadrant, in the same screen coordinates [tester]
-/// reports for any other widget rect.
-Rect _yardQuadrantRect(WidgetTester tester, int seat) {
+/// [seat]'s 6x6 yard quadrant in view space, in the same screen coordinates
+/// [tester] reports for any other widget rect: the bounding box of [toView]
+/// of the quadrant's four board-space corner cells under `viewQuarters(mySeat)`.
+Rect _yardQuadrantRect(WidgetTester tester, int seat, {int? mySeat}) {
   final Rect board = _boardRect(tester);
   final double cellSize = board.width / 15;
   final ({int colLow, int rowLow}) origin = _yardQuadrantOrigin(seat);
-  return Rect.fromLTWH(
-    board.left + origin.colLow * cellSize,
-    board.top + origin.rowLow * cellSize,
-    6 * cellSize,
-    6 * cellSize,
+  final int quarters = viewQuarters(mySeat);
+  final List<BoardCell> corners = <BoardCell>[
+    toView(BoardCell(origin.colLow, origin.rowLow), quarters),
+    toView(BoardCell(origin.colLow + 5, origin.rowLow), quarters),
+    toView(BoardCell(origin.colLow, origin.rowLow + 5), quarters),
+    toView(BoardCell(origin.colLow + 5, origin.rowLow + 5), quarters),
+  ];
+  final int minCol = corners.map((BoardCell c) => c.col).reduce(math.min);
+  final int maxCol = corners.map((BoardCell c) => c.col).reduce(math.max);
+  final int minRow = corners.map((BoardCell c) => c.row).reduce(math.min);
+  final int maxRow = corners.map((BoardCell c) => c.row).reduce(math.max);
+  return Rect.fromLTRB(
+    board.left + minCol * cellSize,
+    board.top + minRow * cellSize,
+    board.left + (maxCol + 1) * cellSize,
+    board.top + (maxRow + 1) * cellSize,
   );
 }
 
@@ -657,7 +669,7 @@ void main() {
         final Rect chip = tester.getRect(
           find.byKey(Key('board-seat-name-$seat')),
         );
-        final Rect quadrant = _yardQuadrantRect(tester, seat);
+        final Rect quadrant = _yardQuadrantRect(tester, seat, mySeat: 0);
         expect(
           _rectInside(quadrant, chip),
           isTrue,
@@ -1212,12 +1224,12 @@ void main() {
         );
 
         // Ruling 6: "the board is not mirrored in Arabic (yards keep their
-        // corners)". Seat 0's chip must still be in seat 0's own top-left
-        // quadrant, not mirrored to the top-right.
+        // corners)". Seat 0's chip must still be in seat 0's own view-space
+        // quadrant, not mirrored horizontally across the board.
         final Rect chipRect = tester.getRect(
           find.byKey(const Key('board-seat-name-0')),
         );
-        final Rect seat0Quadrant = _yardQuadrantRect(tester, 0);
+        final Rect seat0Quadrant = _yardQuadrantRect(tester, 0, mySeat: 0);
         expect(
           _rectInside(seat0Quadrant, chipRect),
           isTrue,

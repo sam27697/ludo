@@ -61,6 +61,17 @@ BoardCell _rotateBy(BoardCell c, int quarters) {
   return out;
 }
 
+/// Clockwise quarter-turns that put [mySeat]'s yard at bottom-left.
+///
+/// Null (spectator, or a board that has not been seated yet) is 0, which
+/// is today's unrotated layout. Seats 0..3 map to `(3 - mySeat) % 4`, so
+/// 0 -> 3, 1 -> 2, 2 -> 1, 3 -> 0.
+int viewQuarters(int? mySeat) => mySeat == null ? 0 : (3 - mySeat) % 4;
+
+/// Applies [_rotate] [quarters] times. Render-time only: [cellFor] and
+/// every board-space number stay as they are.
+BoardCell toView(BoardCell cell, int quarters) => _rotateBy(cell, quarters);
+
 /// Builds the four seats' versions of one seat-0 template by rotation.
 List<List<BoardCell>> _rotations(List<BoardCell> seatZero) => <List<BoardCell>>[
   for (int seat = 0; seat < 4; seat++)
