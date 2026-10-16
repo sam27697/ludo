@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import 'board_geometry.dart';
+import 'dead_mark.dart';
 import 'theme.dart';
 
 /// Travel and tumble of a thrown die, landing at the end of it. C-377 D5.
@@ -62,31 +63,6 @@ _kFaceAxes =
       4: (right: (0, 0, 1), down: (0, 1, 0)),
     };
 
-/// Pip positions for each face, unit offsets from the face centre. The
-/// flat die and every cube face both paint from this, so a 6 is the same
-/// six pips in both places.
-const Map<int, List<Offset>> _pipUnits = <int, List<Offset>>{
-  1: <Offset>[Offset(0, 0)],
-  2: <Offset>[Offset(-1, -1), Offset(1, 1)],
-  3: <Offset>[Offset(-1, -1), Offset(0, 0), Offset(1, 1)],
-  4: <Offset>[Offset(-1, -1), Offset(1, -1), Offset(-1, 1), Offset(1, 1)],
-  5: <Offset>[
-    Offset(-1, -1),
-    Offset(1, -1),
-    Offset(0, 0),
-    Offset(-1, 1),
-    Offset(1, 1),
-  ],
-  6: <Offset>[
-    Offset(-1, -1),
-    Offset(1, -1),
-    Offset(-1, 0),
-    Offset(1, 0),
-    Offset(-1, 1),
-    Offset(1, 1),
-  ],
-};
-
 /// Pure rotation (no perspective, no translation) that turns face
 /// [face] toward the viewer: transforming kFaceNormals[face] by it
 /// gives (0, 0, 1) within 1e-9. Throws ArgumentError outside 1..6.
@@ -125,12 +101,14 @@ enum ThrownDiePhase { tumble, rest, fade }
 
 /// The flat numbered face: rounded square, seat-coloured border, pips.
 /// [face] is 1..6. The idle cube is not this; a null face is the caller's
-/// to paint.
+/// to paint. [pipOpacity] is 1 for a live face and 0.45 for a dead one
+/// (C-380 D2): the face is still drawn whole, only the pips dim.
 void paintNumberedDieFace(
   Canvas canvas,
   Size size, {
   required Color edgeColor,
   required int face,
+  double pipOpacity = 1,
 }) {
   final double s = size.shortestSide;
   final RRect faceRect = RRect.fromRectAndRadius(
@@ -145,25 +123,22 @@ void paintNumberedDieFace(
       ..style = PaintingStyle.stroke
       ..strokeWidth = math.max(2.5, s * 0.05),
   );
-  _paintPips(canvas, size, face);
+  _paintPips(canvas, size, face, opacity: pipOpacity);
 }
 
-void _paintPips(Canvas canvas, Size size, int face) {
-  final List<Offset>? units = _pipUnits[face];
-  if (units == null) {
+/// Pips for one numbered face. Centres and radius come from [pipCentresFor]
+/// and [pipRadiusFor] (C-380 D3), the same call the tray's die painter makes.
+void _paintPips(Canvas canvas, Size size, int face, {double opacity = 1}) {
+  if (face < 1 || face > 6) {
     return;
   }
-  final double s = size.shortestSide;
-  final double pipR = s * 0.09;
-  final Offset centre = Offset(s / 2, s / 2);
-  final double off = s * 0.22;
-  final Paint pipPaint = Paint()..color = LudoColors.ink;
-  for (final Offset unit in units) {
-    canvas.drawCircle(
-      centre + Offset(unit.dx * off, unit.dy * off),
-      pipR,
-      pipPaint,
-    );
+  final Paint pipPaint = Paint()
+    ..color = opacity >= 1
+        ? LudoColors.ink
+        : LudoColors.ink.withValues(alpha: opacity);
+  final double pipR = pipRadiusFor(size);
+  for (final Offset centre in pipCentresFor(face, size)) {
+    canvas.drawCircle(centre, pipR, pipPaint);
   }
 }
 
