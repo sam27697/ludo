@@ -17,6 +17,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'dead_mark.dart';
 import 'die_cube.dart';
 import 'theme.dart';
 
@@ -59,11 +60,12 @@ class GameDie extends StatefulWidget {
   final bool noAnswer;
 
   /// C-236 rule 4: true for the 1500ms the no-move beat holds, from a
-  /// `rolled` for my seat with an empty `legal`. Draws the red X
-  /// (`game-die-no-move-mark`, an X shape and not only a colour, doctrine
-  /// P9) over whatever the die is otherwise showing, independent of
-  /// [face], [enabled] or [tumbling] -- the mark is not delayed or hidden
-  /// by the next seat's turn landing underneath it.
+  /// `rolled` for my seat with an empty `legal`. Draws the dead badge
+  /// (`game-die-no-move-mark`, a white X on a red disc, not colour alone,
+  /// doctrine P9) on the die's top-right corner, over whatever the die is
+  /// otherwise showing, independent of [face], [enabled] or [tumbling].
+  /// The mark is not delayed or hidden by the next seat's turn landing
+  /// underneath it. The face under it stays whole, pips at 0.45 (C-380).
   final bool noMove;
 
   /// Fires on a tap while [enabled]. The widget itself still guards this:
@@ -165,7 +167,13 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
   Widget _dieArt({required Color edgeColor, required int? shown}) {
     final Widget paint = CustomPaint(
       size: const Size.square(_kDieSize),
-      painter: _GameDiePainter(edgeColor: edgeColor, face: shown),
+      painter: _GameDiePainter(
+        edgeColor: edgeColor,
+        face: shown,
+        // C-380 D2: a no-move face keeps every pip, dimmed. The idle cube
+        // (shown == null) has no numbered face to dim.
+        pipOpacity: widget.noMove && shown != null ? 0.45 : 1,
+      ),
     );
     return shown == null
         ? KeyedSubtree(key: const Key('game-die-idle-art'), child: paint)
@@ -229,22 +237,16 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
       child: die,
     );
 
-    // C-236 rule 4: the no-move mark sits in its own stack layer, above
+    // C-236 rule 4: the no-move badge sits in its own stack layer, above
     // whatever `die` is doing (resting face, tumble, shake), so it is never
-    // delayed or hidden by the die's own animation state.
+    // delayed or hidden by the die's own animation state. It hangs off the
+    // top-right corner (C-380 D1). Clip.none keeps the overhang; the badge
+    // is positioned, so the die's 72dp box does not grow.
     final Widget dieFace = widget.noMove
         ? Stack(
-            alignment: Alignment.center,
-            children: [
-              die,
-              IgnorePointer(
-                key: const Key('game-die-no-move-mark'),
-                child: const CustomPaint(
-                  size: Size.square(_kDieSize),
-                  painter: _NoMoveMarkPainter(),
-                ),
-              ),
-            ],
+            alignment: Alignment.topLeft,
+            clipBehavior: Clip.none,
+            children: <Widget>[die, _noMoveBadge()],
           )
         : die;
 
@@ -293,6 +295,22 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     );
   }
 
+  /// C-380 D4: `game-die-no-move-mark` sits on the badge, not on the face.
+  /// Physical top-right, not [PositionedDirectional], so Arabic does not
+  /// mirror it.
+  Widget _noMoveBadge() {
+    final Rect badge = deadBadgeRect(const Size.square(_kDieSize));
+    return Positioned.fromRect(
+      rect: badge,
+      child: const IgnorePointer(
+        child: CustomPaint(
+          key: Key('game-die-no-move-mark'),
+          painter: DeadMarkPainter(),
+        ),
+      ),
+    );
+  }
+
   /// C-223 clarification 1: `game-die-face-N` names only a face the die
   /// rests on. Motion tumble is [DieCube] and never reaches here. Reduced
   /// motion tumble shows `game-die-blank` and the idle cube (C-238 rule 4,
@@ -313,41 +331,18 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
   }
 }
 
-/// C-236 rule 4, doctrine P9: the no-move result is never colour alone. Two
-/// crossing strokes over the die's full face, static -- nothing here needs a
-/// reduced-motion branch because nothing here moves; the mark's 1500ms
-/// lifetime is `game_screen.dart`'s clock, not this painter's.
-class _NoMoveMarkPainter extends CustomPainter {
-  const _NoMoveMarkPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final double inset = size.shortestSide * 0.22;
-    final Paint paint = Paint()
-      ..color = LudoColors.error
-      ..strokeWidth = math.max(3, size.shortestSide * 0.09)
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(
-      Offset(inset, inset),
-      Offset(size.width - inset, size.height - inset),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(size.width - inset, inset),
-      Offset(inset, size.height - inset),
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _NoMoveMarkPainter oldDelegate) => false;
-}
-
 class _GameDiePainter extends CustomPainter {
-  const _GameDiePainter({required this.edgeColor, required this.face});
+  const _GameDiePainter({
+    required this.edgeColor,
+    required this.face,
+    required this.pipOpacity,
+  });
 
   final Color edgeColor;
   final int? face;
+
+  /// 1 for a live face, 0.45 while [GameDie.noMove] holds a numbered face.
+  final double pipOpacity;
 
   // C-238: the idle cube's seven corner points, as fractions of the box's
   // shortest side, origin at its top-left. `_cubeCenterF` is the near
@@ -396,7 +391,13 @@ class _GameDiePainter extends CustomPainter {
       _paintIdleCube(canvas, s);
       return;
     }
-    paintNumberedDieFace(canvas, size, edgeColor: edgeColor, face: f);
+    paintNumberedDieFace(
+      canvas,
+      size,
+      edgeColor: edgeColor,
+      face: f,
+      pipOpacity: pipOpacity,
+    );
   }
 
   /// C-238: the die waiting to be tapped, drawn as an object (an isometric
@@ -475,5 +476,7 @@ class _GameDiePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _GameDiePainter oldDelegate) =>
-      oldDelegate.edgeColor != edgeColor || oldDelegate.face != face;
+      oldDelegate.edgeColor != edgeColor ||
+      oldDelegate.face != face ||
+      oldDelegate.pipOpacity != pipOpacity;
 }

@@ -18,6 +18,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'dead_mark.dart';
 import 'theme.dart';
 
 /// One tray die's state, K3: a face is never both selected and dead.
@@ -320,8 +321,12 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
       ),
     );
 
+    // The badge hangs off the corner (C-380 D1). Clip.none keeps that
+    // overhang. The badge is positioned, so the tray row does not grow
+    // or shift to make room for it.
     final Widget stacked = Stack(
       alignment: Alignment.center,
+      clipBehavior: Clip.none,
       children: <Widget>[
         if (selected)
           KeyedSubtree(
@@ -329,16 +334,7 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
             child: _SelectedGlow(color: widget.seatColor),
           ),
         face,
-        if (!alive)
-          KeyedSubtree(
-            key: Key('game-roll-tray-dead-$index'),
-            child: const IgnorePointer(
-              child: CustomPaint(
-                size: Size.square(_kTrayDieArt),
-                painter: _TrayDeadMarkPainter(),
-              ),
-            ),
-          ),
+        if (!alive) _deadBadge(index),
       ],
     );
 
@@ -383,6 +379,21 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
               child: Center(child: shaking),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// C-380 D4: `game-roll-tray-dead-<i>` sits on the badge. Physical
+  /// top-right, the same corner in Arabic as in English.
+  Widget _deadBadge(int index) {
+    final Rect badge = deadBadgeRect(const Size.square(_kTrayDieArt));
+    return Positioned.fromRect(
+      rect: badge,
+      child: IgnorePointer(
+        child: CustomPaint(
+          key: Key('game-roll-tray-dead-$index'),
+          painter: const DeadMarkPainter(),
         ),
       ),
     );
@@ -444,35 +455,10 @@ class _SelectedGlow extends StatelessWidget {
   }
 }
 
-/// Pip layout, one private copy of game_die.dart's own map: that one is
-/// private to its file and this tray must never draw its dice through
-/// GameDie itself (K2: `game-die-face-N` is reserved for the big die).
-const Map<int, List<Offset>> _trayPipUnits = <int, List<Offset>>{
-  1: <Offset>[Offset(0, 0)],
-  2: <Offset>[Offset(-1, -1), Offset(1, 1)],
-  3: <Offset>[Offset(-1, -1), Offset(0, 0), Offset(1, 1)],
-  4: <Offset>[Offset(-1, -1), Offset(1, -1), Offset(-1, 1), Offset(1, 1)],
-  5: <Offset>[
-    Offset(-1, -1),
-    Offset(1, -1),
-    Offset(0, 0),
-    Offset(-1, 1),
-    Offset(1, 1),
-  ],
-  6: <Offset>[
-    Offset(-1, -1),
-    Offset(1, -1),
-    Offset(-1, 0),
-    Offset(1, 0),
-    Offset(-1, 1),
-    Offset(1, 1),
-  ],
-};
-
 /// A small die face, in GameDie's own rounded-square-with-seat-edge style,
-/// at tray scale. [dimmed] (P9: a dead face is never colour alone, the X
-/// mark drawn over it by [_TrayDeadMarkPainter] is the real signal) lowers
-/// the face and pip contrast rather than hiding anything.
+/// at tray scale. [dimmed] (P9: a dead face is never colour alone; the
+/// badge from [DeadMarkPainter] is the signal) keeps every pip and draws
+/// them at 0.45 (C-380 D2). Pip places come from [pipCentresFor] (D3).
 class _TrayDiePainter extends CustomPainter {
   const _TrayDiePainter({
     required this.face,
@@ -493,9 +479,9 @@ class _TrayDiePainter extends CustomPainter {
     );
     // A dead die still has to read its face at a glance (K3, doctrine
     // P3/P9): the body stays close to the plain die colour (only a light
-    // wash, not a grey fill that swallows the pips) and the pips are the
-    // real ink at reduced alpha, so they stay clearly darker than the
-    // body. The X on top is the "no" signal, not the missing pips.
+    // wash, not a grey fill that swallows the pips) and the pips stay
+    // the real ink at 0.45, so they stay darker than the body. The badge
+    // is the "no" signal. No stroke crosses the face.
     final Color faceColor = dimmed
         ? Color.alphaBlend(
             LudoColors.ink.withValues(alpha: 0.08),
@@ -503,7 +489,7 @@ class _TrayDiePainter extends CustomPainter {
           )
         : LudoColors.dieFace;
     final Color pipColor = dimmed
-        ? LudoColors.ink.withValues(alpha: 0.55)
+        ? LudoColors.ink.withValues(alpha: 0.45)
         : LudoColors.ink;
     final Color edge = dimmed ? LudoColors.inkMuted : edgeColor;
 
@@ -516,20 +502,13 @@ class _TrayDiePainter extends CustomPainter {
         ..strokeWidth = math.max(2.0, s * 0.07),
     );
 
-    final List<Offset>? units = _trayPipUnits[face];
-    if (units == null) {
+    if (face < 1 || face > 6) {
       return;
     }
-    final double pipR = s * 0.1;
-    final Offset centre = Offset(s / 2, s / 2);
-    final double off = s * 0.23;
+    final double pipR = pipRadiusFor(size);
     final Paint pipPaint = Paint()..color = pipColor;
-    for (final Offset unit in units) {
-      canvas.drawCircle(
-        centre + Offset(unit.dx * off, unit.dy * off),
-        pipR,
-        pipPaint,
-      );
+    for (final Offset centre in pipCentresFor(face, size)) {
+      canvas.drawCircle(centre, pipR, pipPaint);
     }
   }
 
@@ -538,36 +517,4 @@ class _TrayDiePainter extends CustomPainter {
       oldDelegate.face != face ||
       oldDelegate.edgeColor != edgeColor ||
       oldDelegate.dimmed != dimmed;
-}
-
-/// K3, doctrine P9: the dead mark, a plain X, same idea as game_die.dart's
-/// own `_NoMoveMarkPainter` at tray scale (that one is private to its file
-/// too, hence this second small copy).
-class _TrayDeadMarkPainter extends CustomPainter {
-  const _TrayDeadMarkPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final double inset = size.shortestSide * 0.24;
-    // Thinner and semi-transparent (doctrine P9: a shape, not a colour,
-    // carries the "no" meaning) so the X reads as a mark over the face
-    // rather than a block that hides the pips underneath it.
-    final Paint paint = Paint()
-      ..color = LudoColors.error.withValues(alpha: 0.82)
-      ..strokeWidth = math.max(1.5, size.shortestSide * 0.055)
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(
-      Offset(inset, inset),
-      Offset(size.width - inset, size.height - inset),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(size.width - inset, inset),
-      Offset(inset, size.height - inset),
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _TrayDeadMarkPainter oldDelegate) => false;
 }
