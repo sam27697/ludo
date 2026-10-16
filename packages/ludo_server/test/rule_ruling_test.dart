@@ -31,8 +31,9 @@
 // RoomRegistry, and only then is Room.game replaced by a hand-edited
 // round-trip of GameState.toJson()/fromJson(), one token row rewritten to
 // progress 55 with the rest of that seat's tokens left in the yard and the
-// phase moved to awaitMove with roll: 2 -- the exact point a real room would
-// have reached after a real roll of 2 left that token the only legal move.
+// phase moved to awaitMove with queue: [2] (roll stays null; the engine
+// reads the queue). That is the point a real room would have reached after
+// a closing roll of 2 left that token the only legal move.
 // room.dart's own header says this kind of direct mutation of Room.game is
 // expected ("order 008's turn loop does that by mutating Room.game and
 // Room.state directly").
@@ -256,7 +257,7 @@ void main() {
     test(
         'defaults (capture_bonus left at its own default true) produce '
         'engine.RulesConfig(blocks: false, captureBonus: true, '
-        'homeBonus: true)', () {
+        'rollQueue: true, homeBonus: true)', () {
       final RoomRegistry registry = _directHarness().registry;
       final ({Room room, Map<int, String> seatTokens}) started =
           _startedTwoSeatRoom(registry);
@@ -266,21 +267,22 @@ void main() {
         engine.RulesConfig(
           blocks: false,
           captureBonus: true,
+          rollQueue: true,
           homeBonus: true,
         ),
-        reason: 'docs/ENGINE_API.md section 2 and the server side of the '
-            '2026-10-15 ruling: registry.dart must build every game\'s '
-            'engine.RulesConfig with blocks: false and homeBonus: true '
-            'regardless of what was requested, and captureBonus taken from '
-            'the room\'s own rules; got '
-            '${started.room.game!.config.rules}',
+        reason: 'docs/ENGINE_API.md section 2, docs/PROTOCOL.md 21.3 rule 5 '
+            'and the server side of the 2026-10-15 ruling: registry.dart '
+            'must build every game\'s engine.RulesConfig with blocks: '
+            'false, rollQueue: true and homeBonus: true regardless of what '
+            'was requested, and captureBonus taken from the room\'s own '
+            'rules; got ${started.room.game!.config.rules}',
       );
     });
 
     test(
         'capture_bonus: false at create_room carries through to '
         'engine.RulesConfig(blocks: false, captureBonus: false, '
-        'homeBonus: true)', () {
+        'rollQueue: true, homeBonus: true)', () {
       final RoomRegistry registry = _directHarness().registry;
       final ({Room room, Map<int, String> seatTokens}) started =
           _startedTwoSeatRoom(
@@ -293,11 +295,12 @@ void main() {
         engine.RulesConfig(
           blocks: false,
           captureBonus: false,
+          rollQueue: true,
           homeBonus: true,
         ),
         reason: 'a room created with capture_bonus: false must still turn '
-            'blocks off and homeBonus on, carrying only captureBonus '
-            'through from the room\'s own rules; got '
+            'blocks off, rollQueue on and homeBonus on, carrying only '
+            'captureBonus through from the room\'s own rules; got '
             '${started.room.game!.config.rules}',
       );
     });
@@ -316,22 +319,24 @@ void main() {
       final String seatAToken = started.seatTokens[seatA]!;
 
       // One token one square short of home, the rest still in the yard, so
-      // the only legal move for a roll of 2 is that one token -- and seatA
+      // the only legal move for a queued 2 is that one token, and seatA
       // cannot possibly win this move, since its other three tokens are
-      // nowhere near progress 57.
+      // nowhere near progress 57. `roll` stays null; the queue carries the
+      // face (docs/ENGINE_API.md section 10.1).
       final Map<String, Object?> gameJson = room.game!.toJson();
       final List<Object?> tokens = gameJson['tokens']! as List<Object?>;
       tokens[seatA] = const <int>[55, -1, -1, -1];
       gameJson['phase'] = 'awaitMove';
-      gameJson['roll'] = 2;
+      gameJson['roll'] = null;
+      gameJson['queue'] = <Object?>[2];
       room.game = engine.GameState.fromJson(gameJson);
 
       final List<int> legal = engine.legalTokens(room.game!);
       expect(
         legal,
         <int>[0],
-        reason: 'fixture sanity check: with roll 2 and only token 0 above '
-            'progress -1, token 0 must be the single legal move; got '
+        reason: 'fixture sanity check: with queue [2] and only token 0 '
+            'above progress -1, token 0 must be the single legal move; got '
             'legalTokens=$legal',
       );
 

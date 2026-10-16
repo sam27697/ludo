@@ -121,12 +121,13 @@ Future<Map<String, Object?>> _next(WireTestLobby lobby, int actingSeat) async {
   return mine;
 }
 
-/// Drives exactly [count] rolls starting with [startingSeat] on turn,
-/// sending a `move` with the first legal token whenever one is required to
-/// reach the next roll (docs/PROTOCOL.md section 12.1: a `roll` is only
-/// accepted when "the turn is awaiting a move, not a roll" is false, i.e.
-/// the previous roll's move, if any, must already be resolved), and
-/// collecting each `rolled` frame's `k`, `seat`, `value` and `reveal`.
+/// Drives exactly [count] rolls starting with [startingSeat] on turn.
+/// A `roll` is only accepted in `await_roll` (docs/PROTOCOL.md section
+/// 12.1 and section 21.3). An empty `legal` is either a 6 that owes
+/// another roll (`turn` for the same seat, phase `await_roll`) or a turn
+/// that passed (`turn_passed`, then `turn`). A non-empty `legal` is spent,
+/// `legal.first` each time, until the phase leaves `await_move`. Each
+/// `rolled` frame's `k`, `seat`, `value` and `reveal` is collected.
 Future<List<_RollRecord>> _driveRolls(
   WireTestLobby lobby,
   int startingSeat,
@@ -156,48 +157,120 @@ Future<List<_RollRecord>> _driveRolls(
     );
     final List<Object?> legal = rolledData['legal']! as List<Object?>;
     if (legal.isEmpty) {
-      final Map<String, Object?> passed = await _next(lobby, current);
-      expect(
-        passed['t'],
-        'turn_passed',
-        reason: 'an empty-legal rolled must be followed by turn_passed '
-            '(section 12.1); got "${passed['t']}": ${passed['d']}',
-      );
-      final Map<String, Object?> turn = await _next(lobby, current);
-      expect(
-        turn['t'],
-        'turn',
-        reason: 'turn_passed must be followed by turn (section 12.1); got '
-            '"${turn['t']}": ${turn['d']}',
-      );
-      current = (turn['d']! as Map<String, Object?>)['seat']! as int;
+      current = await _afterEmptyLegalRoll(lobby, current, records.length);
       continue;
     }
-    seat.client.send('move', <String, Object?>{'token': legal.first});
-    final Map<String, Object?> moved = await _next(lobby, current);
+    current = await _spendUntilAwaitRoll(
+      lobby,
+      current,
+      legal,
+      records.length,
+      count,
+    );
+  }
+  return records;
+}
+
+/// The frame after an empty-legal `rolled`. A 6 (rule 10q) is followed by
+/// `turn` for the same seat, still `await_roll`. Anything else passed the
+/// turn: `turn_passed`, then `turn` for the seat that now holds it.
+Future<int> _afterEmptyLegalRoll(
+  WireTestLobby lobby,
+  int actingSeat,
+  int rollsSoFar,
+) async {
+  final Map<String, Object?> next = await _next(lobby, actingSeat);
+  if (next['t'] == 'turn') {
+    final Map<String, Object?> turnData = next['d']! as Map<String, Object?>;
+    expect(
+      turnData['phase'],
+      'await_roll',
+      reason: 'roll $rollsSoFar: an empty-legal rolled followed by turn '
+          'is the extra roll a 6 owes (section 21.3), which stays '
+          'await_roll; got phase=${turnData['phase']}: $turnData',
+    );
+    return turnData['seat']! as int;
+  }
+  expect(
+    next['t'],
+    'turn_passed',
+    reason: 'roll $rollsSoFar: an empty-legal rolled must be followed by '
+        'turn (a 6 owing another roll) or turn_passed (section 12.1 and '
+        '21.3); got "${next['t']}": ${next['d']}',
+  );
+  final Map<String, Object?> turn = await _next(lobby, actingSeat);
+  expect(
+    turn['t'],
+    'turn',
+    reason: 'turn_passed must be followed by turn (section 12.1); got '
+        '"${turn['t']}": ${turn['d']}',
+  );
+  return (turn['d']! as Map<String, Object?>)['seat']! as int;
+}
+
+/// Spends [legal] and every face still pending after it, always
+/// `legal.first`, until the phase is no longer `await_move`. Returns the
+/// seat that then holds the turn.
+Future<int> _spendUntilAwaitRoll(
+  WireTestLobby lobby,
+  int actingSeat,
+  List<Object?> legal,
+  int rollsSoFar,
+  int count,
+) async {
+  List<Object?> pending = legal;
+  while (true) {
+    final WireTestSeat seat = _seatFor(lobby, actingSeat);
+    seat.client.send('move', <String, Object?>{'token': pending.first});
+    final Map<String, Object?> moved = await _next(lobby, actingSeat);
     expect(
       moved['t'],
       'moved',
       reason: 'expected moved, got "${moved['t']}": ${moved['d']}',
     );
-    final Map<String, Object?> after = await _next(lobby, current);
+    final Map<String, Object?> after = await _next(lobby, actingSeat);
     if (after['t'] == 'game_over') {
       throw TestFailure(
-        'reached game_over after only ${records.length} of $count steered '
+        'reached game_over after only $rollsSoFar of $count steered '
         'rolls; unexpected this early in a fresh 2-seat game -- if this '
         'reproduces, the wanted faces $_wantedFaces or the moves this '
         'driver chose (always legal.first) are the place to look',
       );
     }
+    if (after['t'] == 'turn_passed') {
+      final Map<String, Object?> turn = await _next(lobby, actingSeat);
+      expect(
+        turn['t'],
+        'turn',
+        reason: 'turn_passed after a move must be followed by turn '
+            '(section 21.3); got "${turn['t']}": ${turn['d']}',
+      );
+      return (turn['d']! as Map<String, Object?>)['seat']! as int;
+    }
     expect(
       after['t'],
       'turn',
-      reason: 'moved must be followed by either game_over or turn (section '
-          '12.2); got "${after['t']}": ${after['d']}',
+      reason: 'moved must be followed by game_over, turn_passed or turn '
+          '(section 12.2 and 21.3); got "${after['t']}": ${after['d']}',
     );
-    current = (after['d']! as Map<String, Object?>)['seat']! as int;
+    final Map<String, Object?> turnData = after['d']! as Map<String, Object?>;
+    if (turnData['phase'] == 'await_move') {
+      pending = turnData['legal']! as List<Object?>;
+      expect(
+        pending,
+        isNotEmpty,
+        reason: 'await_move must still name a legal token; got $turnData',
+      );
+      continue;
+    }
+    expect(
+      turnData['phase'],
+      'await_roll',
+      reason: 'a turn after the queue is spent must be await_roll; got '
+          '$turnData',
+    );
+    return turnData['seat']! as int;
   }
-  return records;
 }
 
 void main() {

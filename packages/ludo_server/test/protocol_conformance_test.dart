@@ -255,14 +255,54 @@ void main() {
     return (lobby, startedData);
   }
 
+  /// The next frame on [actingSeat]'s socket. A broadcast is also taken off
+  /// the other socket before this returns: once the turn passes, that
+  /// socket's next read has to be the roll it is about to send, not a
+  /// leftover `rolled` from the seat that just finished.
+  Future<Map<String, Object?>> _nextBroadcast(
+    WireTestLobby lobby,
+    int actingSeat,
+  ) async {
+    final Map<String, Object?> mine =
+        await seatFor(lobby, actingSeat).client.next();
+    if (mine['t'] == 'error') {
+      return mine;
+    }
+    final WireTestSeat other =
+        actingSeat == lobby.host.seat ? lobby.guest : lobby.host;
+    final Map<String, Object?> theirs = await other.client.next();
+    expect(
+      theirs['t'],
+      mine['t'],
+      reason: 'room ${lobby.code}: a broadcast push must reach every '
+          'socket with the same frame type (section 12.3); seat '
+          '$actingSeat saw "${mine['t']}", the other socket saw '
+          '"${theirs['t']}"',
+    );
+    expect(
+      theirs['d'],
+      mine['d'],
+      reason: 'room ${lobby.code}: a broadcast push must reach every '
+          'socket with the identical payload (section 12.3); seat '
+          '$actingSeat saw ${mine['d']}, the other socket saw ${theirs['d']}',
+    );
+    expect(
+      theirs['re'],
+      isNull,
+      reason: 'room ${lobby.code}: a socket that did not send the message '
+          'must not see re on the broadcast (section 12.3); the other '
+          'socket saw re=${theirs['re']} on "${theirs['t']}"',
+    );
+    return mine;
+  }
+
   /// Drives [faces] one roll at a time on whichever socket currently holds
-  /// the turn, moving `legal.first` after every roll except the last one,
-  /// and returns the lobby, the seat the last roll belongs to, and that
-  /// roll's own `rolled` payload, untouched. Reads only off the acting
-  /// seat's own socket -- unlike `turn_loop_test.dart`'s equivalent, this
-  /// file never needs to inspect the other seat's broadcast copy, because
-  /// nothing downstream of these two helpers ever reads from the other
-  /// socket again.
+  /// the turn. Every roll except the last is driven through: an empty
+  /// `legal` is either a 6 owing another roll (`turn`, phase `await_roll`)
+  /// or a passed turn (`turn_passed`, then `turn`); a non-empty `legal` is
+  /// spent, `legal.first` each time, until the phase leaves `await_move`.
+  /// Returns the lobby, the seat the last roll belongs to, and that roll's
+  /// own `rolled` payload, untouched.
   Future<(WireTestLobby, int, Map<String, Object?>)> driveToSteeredRoll(
     List<int> faces,
   ) async {
@@ -274,7 +314,8 @@ void main() {
       final bool isLast = i == faces.length - 1;
       final WireTestSeat actor = seatFor(lobby, current);
       actor.client.send('roll', <String, Object?>{});
-      final Map<String, Object?> rolledFrame = await actor.client.next();
+      final Map<String, Object?> rolledFrame =
+          await _nextBroadcast(lobby, current);
       expect(
         rolledFrame['t'],
         'rolled',
@@ -297,29 +338,64 @@ void main() {
       }
       final List<int> legal = (data['legal']! as List<Object?>).cast<int>();
       if (legal.isEmpty) {
-        final Map<String, Object?> passed = await actor.client.next();
-        expect(passed['t'], 'turn_passed');
-        final Map<String, Object?> turnFrame = await actor.client.next();
-        expect(turnFrame['t'], 'turn');
-        current = (turnFrame['d']! as Map<String, Object?>)['seat']! as int;
+        final Map<String, Object?> next =
+            await _nextBroadcast(lobby, current);
+        if (next['t'] == 'turn') {
+          final Map<String, Object?> turnData =
+              next['d']! as Map<String, Object?>;
+          expect(
+            turnData['phase'],
+            'await_roll',
+            reason: 'steered roll ${i + 1}/${faces.length}: an empty legal '
+                'list followed by turn is a 6 owing another roll '
+                '(section 21.3); got $turnData',
+          );
+          current = turnData['seat']! as int;
+        } else {
+          expect(next['t'], 'turn_passed');
+          final Map<String, Object?> turnFrame =
+              await _nextBroadcast(lobby, current);
+          expect(turnFrame['t'], 'turn');
+          current = (turnFrame['d']! as Map<String, Object?>)['seat']! as int;
+        }
       } else {
-        actor.client.send('move', <String, Object?>{'token': legal.first});
-        final Map<String, Object?> movedFrame = await actor.client.next();
-        expect(
-          movedFrame['t'],
-          'moved',
-          reason: 'steered roll ${i + 1}/${faces.length}: expected moved '
-              'after driving the first legal move, got '
-              '"${movedFrame['t']}": ${movedFrame['d']}',
-        );
-        final Map<String, Object?> after = await actor.client.next();
-        expect(
-          after['t'],
-          'turn',
-          reason: 'the steered face sequence $faces must not reach '
-              'game_over before its last roll; got "${after['t']}" instead',
-        );
-        current = (after['d']! as Map<String, Object?>)['seat']! as int;
+        List<int> pending = legal;
+        while (true) {
+          actor.client.send('move', <String, Object?>{'token': pending.first});
+          final Map<String, Object?> movedFrame =
+              await _nextBroadcast(lobby, current);
+          expect(
+            movedFrame['t'],
+            'moved',
+            reason: 'steered roll ${i + 1}/${faces.length}: expected moved '
+                'after driving the first legal move, got '
+                '"${movedFrame['t']}": ${movedFrame['d']}',
+          );
+          final Map<String, Object?> after =
+              await _nextBroadcast(lobby, current);
+          if (after['t'] == 'turn_passed') {
+            final Map<String, Object?> turnFrame =
+                await _nextBroadcast(lobby, current);
+            expect(turnFrame['t'], 'turn');
+            current =
+                (turnFrame['d']! as Map<String, Object?>)['seat']! as int;
+            break;
+          }
+          expect(
+            after['t'],
+            'turn',
+            reason: 'the steered face sequence $faces must not reach '
+                'game_over before its last roll; got "${after['t']}" instead',
+          );
+          final Map<String, Object?> turnData =
+              after['d']! as Map<String, Object?>;
+          if (turnData['phase'] == 'await_move') {
+            pending = (turnData['legal']! as List<Object?>).cast<int>();
+            continue;
+          }
+          current = turnData['seat']! as int;
+          break;
+        }
       }
     }
     return (lobby, current, lastData!);
@@ -328,6 +404,7 @@ void main() {
   Future<(WireTestLobby, int, Map<String, Object?>)> freshLegalRoll() async {
     final List<int>? faces = findFaceSequence(
       seats: steeredSeats,
+      rules: serverRoomRules,
       accepts: (EngineRollStep step, GameState state) => step.legal.isNotEmpty,
     );
     expect(
@@ -343,6 +420,7 @@ void main() {
   Future<(WireTestLobby, int, Map<String, Object?>)> partialLegalRoll() async {
     final List<int>? faces = findFaceSequence(
       seats: steeredSeats,
+      rules: serverRoomRules,
       accepts: (EngineRollStep step, GameState state) =>
           step.legal.isNotEmpty && step.legal.length < 4,
     );
@@ -922,19 +1000,60 @@ void main() {
             '${first['t']}: ${first['d']}',
       );
       expect(first['re'], rollId);
-      final List<int> legal =
-          ((first['d']! as Map<String, Object?>)['legal']! as List<Object?>)
-              .cast<int>();
 
+      // A 6 leaves legal empty and the same seat still in await_roll, so
+      // resending the id then would be a fresh legal roll, not an error.
+      // Keep rolling (a new id each time) until the original seat is either
+      // awaiting a move or no longer on turn. A fresh board resolves within
+      // three rolls: two queued 6s, then a closer or the forfeited third.
       int currentTurnSeat = onTurn;
-      if (legal.isEmpty) {
-        final Map<String, Object?> passed = await actor.client.next();
-        expect(passed['t'], 'turn_passed');
+      Map<String, Object?> rolledFrame = first;
+      var awaitingMove = false;
+      for (var extra = 0; extra < 6; extra++) {
+        final List<int> legal =
+            ((rolledFrame['d']! as Map<String, Object?>)['legal']!
+                    as List<Object?>)
+                .cast<int>();
+        if (legal.isNotEmpty) {
+          awaitingMove = true;
+          break;
+        }
+        final Map<String, Object?> next = await actor.client.next();
+        if (next['t'] == 'turn') {
+          final Map<String, Object?> turnData =
+              next['d']! as Map<String, Object?>;
+          expect(turnData['phase'], 'await_roll');
+          expect(
+            turnData['seat'],
+            onTurn,
+            reason: 'a 6 owing another roll stays with seat $onTurn; got '
+                '${turnData['seat']}',
+          );
+          actor.client.send('roll', <String, Object?>{},
+              id: 'replay-roll-cont-$extra');
+          rolledFrame = await actor.client.next();
+          expect(
+            rolledFrame['t'],
+            'rolled',
+            reason: 'the follow-up roll after a queued 6 must be accepted; '
+                'got "${rolledFrame['t']}": ${rolledFrame['d']}',
+          );
+          continue;
+        }
+        expect(next['t'], 'turn_passed');
         final Map<String, Object?> turnFrame = await actor.client.next();
         expect(turnFrame['t'], 'turn');
         currentTurnSeat =
             (turnFrame['d']! as Map<String, Object?>)['seat']! as int;
+        break;
       }
+      expect(
+        awaitingMove || currentTurnSeat != onTurn,
+        isTrue,
+        reason: 'the first seat\'s turn never resolved to a pending move '
+            'or a pass within 6 rolls, so the replay below would not be '
+            'an error',
+      );
 
       // Resend the exact same frame: same type, same (empty) payload, same
       // id as the accepted roll above.
@@ -955,16 +1074,16 @@ void main() {
             'it is still echoed as re, even though this exact id was '
             'already used once',
       );
-      if (legal.isEmpty) {
-        expectErrorFrame(replay, 'NOT_YOUR_TURN',
-            because: 'seat $onTurn\'s turn already passed to seat '
-                '$currentTurnSeat; a replayed roll from $onTurn is simply '
-                'an off-turn roll by the time it is resent');
-      } else {
+      if (awaitingMove) {
         expectErrorFrame(replay, 'WRONG_PHASE',
             because: 'seat $onTurn is still on turn but is now awaiting a '
                 'move, not a roll; a replayed roll is simply a second roll '
                 'while a move is pending');
+      } else {
+        expectErrorFrame(replay, 'NOT_YOUR_TURN',
+            because: 'seat $onTurn\'s turn already passed to seat '
+                '$currentTurnSeat; a replayed roll from $onTurn is simply '
+                'an off-turn roll by the time it is resent');
       }
     });
   });
