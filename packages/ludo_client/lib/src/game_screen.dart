@@ -86,14 +86,18 @@ class _GameScreenState extends State<GameScreen> {
   int? _countdownK;
   int _countdownRemainingSeconds = 0;
 
-  // Client-side unique-legal hold. Armed once per turn.k when legal has
-  // exactly one token; cancelled by a manual token press, or the turn
-  // leaving that unique-legal awaitMove. controller.move is not called
-  // until the hold elapses without cancel.
+  // Client-side unique-legal hold. Armed once per await_move decision
+  // (this seat, turn.k, and the queue) when exactly one token is legal.
+  // Several spends of one roll queue share a k; a new queue arms again.
+  // With no roll queue the queue is empty, so this is once per turn.k.
+  // Cancelled by a manual token press, or the turn leaving that
+  // unique-legal awaitMove. controller.move is not called until the hold
+  // elapses without cancel.
   static const Duration _autoMoveHold = Duration(milliseconds: 1500);
   Timer? _autoMoveTimer;
   int? _pendingAutoMoveToken;
   int? _autoMoveHandledK;
+  List<int>? _autoMoveHandledQueue;
 
   // K8 (order 365, C-362 Part B): the face the auto-move hold's single
   // legal entry would spend, alongside the token above. Null under the
@@ -139,10 +143,18 @@ class _GameScreenState extends State<GameScreen> {
   List<int>? _selectedFaceSeenQueue;
 
   // The one guard both move paths (the hold's own timer and a token tap)
-  // share: once a move has gone out for a turn.k, nothing sends a second
-  // one for that same k, however it is reached. A tap landing just after
-  // the hold already committed is exactly the race this exists for.
+  // share. At most one move is sent for the current decision: this seat,
+  // await_move, this turn.k, and this queue. A tap landing just after the
+  // hold already committed is the race this still blocks. Cleared once
+  // the server has answered that decision, when the snapshot is no longer
+  // it. A `moved` for my seat does that (the reducer leaves await_move),
+  // and so does any frame that ends or changes the decision: a new queue,
+  // a new phase, or another seat's turn. The next decision may then send
+  // once, from a tap or from the one-legal-move hold, even when turn.k is
+  // unchanged. With no roll queue the queue is empty, so a single
+  // await_move of that k stays blocked until the decision ends.
   int? _moveSentForK;
+  List<int>? _moveSentForQueue;
 
   // The die's "waiting for my roll result" state. Set together with the
   // turn.k a rolling tap was sent under; cleared when the snapshot shows my
@@ -276,6 +288,7 @@ class _GameScreenState extends State<GameScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _checkMountTurnCue();
+    _releaseMoveGuard();
     _syncSelectedFace();
     _syncAutoMove();
     _syncConnectionLostAnnouncement();
@@ -672,7 +685,9 @@ class _GameScreenState extends State<GameScreen> {
     _pendingAutoMoveToken = null;
     _pendingAutoMoveFace = null;
     _autoMoveHandledK = null;
+    _autoMoveHandledQueue = null;
     _moveSentForK = null;
+    _moveSentForQueue = null;
     _rollNoAnswerTimer?.cancel();
     _rollNoAnswerTimer = null;
     _rollWaitK = null;
@@ -753,6 +768,34 @@ class _GameScreenState extends State<GameScreen> {
       }
     }
     return true;
+  }
+
+  /// True when [turn] is this seat in await_move at [k] with [queue].
+  bool _sameMoveDecision(TurnState? turn, int? k, List<int>? queue) {
+    if (turn == null || k == null) {
+      return false;
+    }
+    return turn.seat == widget.controller.seat &&
+        turn.phase == TurnPhase.awaitMove &&
+        turn.k == k &&
+        _sameFaces(turn.queue, queue);
+  }
+
+  /// Drops the move guard once the live turn is no longer the decision a
+  /// move was sent for. See [_moveSentForK].
+  void _releaseMoveGuard() {
+    if (_moveSentForK == null) {
+      return;
+    }
+    if (_sameMoveDecision(
+      widget.controller.room?.turn,
+      _moveSentForK,
+      _moveSentForQueue,
+    )) {
+      return;
+    }
+    _moveSentForK = null;
+    _moveSentForQueue = null;
   }
 
   /// Reads whatever `frame` just did to `widget.controller.room`'s
@@ -965,6 +1008,7 @@ class _GameScreenState extends State<GameScreen> {
     _syncOpponentThrows();
     setState(() {
       _syncCountdown();
+      _releaseMoveGuard();
       _syncSelectedFace();
       _syncAutoMove();
       _syncRollWait();
@@ -1256,20 +1300,33 @@ class _GameScreenState extends State<GameScreen> {
     return turn.legal != null && turn.legal!.length == 1;
   }
 
-  /// Arms the 1.5s unique-legal hold once per `turn.k`, or drops a pending
-  /// hold when the turn is no longer that unique-legal awaitMove. The
-  /// board draws the held token's glow itself from `autoMoveToken`; there
-  /// is no Undo to announce alongside it any more.
+  /// Arms the 1.5s unique-legal hold once per await_move decision (this
+  /// seat, `turn.k`, and the queue), or drops a pending hold when the turn
+  /// is no longer that unique-legal awaitMove. A new queue under the same
+  /// k is a new decision and arms again. The board draws the held token's
+  /// glow itself from `autoMoveToken`; there is no Undo to announce
+  /// alongside it any more.
   void _syncAutoMove() {
+    final TurnState? turnNow = widget.controller.room?.turn;
+    final bool stillArmed = _sameMoveDecision(
+      turnNow,
+      _autoMoveHandledK,
+      _autoMoveHandledQueue,
+    );
+    if (!stillArmed) {
+      _autoMoveHandledK = null;
+      _autoMoveHandledQueue = null;
+    }
     if (_isEndHeld || !_isUniqueLegalAwaitMove()) {
       _clearPendingHold();
       return;
     }
-    final TurnState turn = widget.controller.room!.turn!;
-    if (_autoMoveHandledK == turn.k) {
+    final TurnState turn = turnNow!;
+    if (stillArmed) {
       return;
     }
     _autoMoveHandledK = turn.k;
+    _autoMoveHandledQueue = List<int>.from(turn.queue);
     final List<FaceLegal>? legalByFace = turn.legalByFace;
     if (legalByFace != null) {
       _pendingAutoMoveToken = legalByFace.single.tokens.single;
@@ -1298,12 +1355,18 @@ class _GameScreenState extends State<GameScreen> {
     final int? token = _pendingAutoMoveToken;
     final int? face = _pendingAutoMoveFace;
     final int? k = _autoMoveHandledK;
+    final List<int>? armedQueue = _autoMoveHandledQueue;
     if (token == null || k == null) {
       return;
     }
     _autoMoveTimer = null;
     _pendingAutoMoveToken = null;
     _pendingAutoMoveFace = null;
+    final TurnState? turn = widget.controller.room?.turn;
+    if (!_sameMoveDecision(turn, k, armedQueue)) {
+      setState(() {});
+      return;
+    }
     final AppLocalizations loc = AppLocalizations.of(context);
     _announceAutoMove(loc.gameTokenButton(token + 1));
     setState(() {});
@@ -1311,8 +1374,8 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   /// The one path that actually calls `controller.move`: a tap on the board
-  /// and the hold's own timer both end up here, and whichever reaches a
-  /// given `turn.k` first is the only one that sends anything for it.
+  /// and the hold's own timer both end up here, and whichever reaches the
+  /// current decision first is the only one that sends anything for it.
   ///
   /// K6 (order 365, C-362 Part B): `face` goes out only when the caller
   /// read it off a non-null `legalByFace`; `RoomController.move` itself
@@ -1320,10 +1383,18 @@ class _GameScreenState extends State<GameScreen> {
   /// without the roll queue, where `face` is always null here, sends the
   /// byte-identical frame it always did.
   void _sendMove(int token, int k, {int? face}) {
-    if (_moveSentForK == k) {
+    final TurnState? turn = widget.controller.room?.turn;
+    if (turn == null ||
+        turn.seat != widget.controller.seat ||
+        turn.phase != TurnPhase.awaitMove ||
+        turn.k != k) {
+      return;
+    }
+    if (_moveSentForK == k && _sameFaces(_moveSentForQueue, turn.queue)) {
       return;
     }
     _moveSentForK = k;
+    _moveSentForQueue = List<int>.from(turn.queue);
     widget.controller.move(token, face: face);
   }
 
