@@ -1,12 +1,13 @@
-// Recording script for one two-seat game, Priya (seat 0) against Karim
-// (seat 1). The locale comes from MOTION_LOCALE. Order 289 records the
-// screen; this file only plays the game and holds still, in real time,
-// through each animation.
+// Recording script for one two-seat game, Priya (seat 0, the host) against
+// Karim (seat 2). A two-player room is seated [0, 2]. The locale comes
+// from MOTION_LOCALE, the seat this device plays from MOTION_SEAT (0 or
+// 2). Order 289 records the screen; this file only plays the game and
+// holds still, in real time, through each animation.
 // It asserts the facts that keep that script honest, not pixels.
 //
-// The harness, the controller factory and the frame builders are copied
-// from integration_test/screenshots_test.dart (captures 15, 17 and 19).
-// Helpers there are private. Nothing here takes a screenshot.
+// The harness and the frame builders started as copies of
+// integration_test/screenshots_test.dart. Helpers there are private.
+// Nothing here takes a screenshot.
 //
 // pumpAndSettle is used once, on the home screen, before Create Room
 // can mount LobbyScreen. After that every pump is bounded: LobbyScreen's
@@ -21,8 +22,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart'
     show appSupportedLocales, buildAppTheme;
-import 'package:ludo_client/src/board.dart'
-    show kCaptureFlightDuration, kTokenStepDuration;
+import 'package:ludo_client/src/board.dart' show kTokenStepDuration;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
@@ -41,11 +41,42 @@ const String _gameId = 'mvt288mvt288mvt2';
 
 // Seat seeds joined the way room.dart builds client_seeds: `seat:seed`
 // in ascending seat order, separated by `|`.
-const String _clientSeeds = '0:srvseedseat0|1:srvseedseat1';
+const String _clientSeeds = '0:srvseedseat0|2:srvseedseat2';
 
 const String _roomCode = 'MVTN88';
 
 const int _deadlineMs = 45000;
+
+// Faces, queues and legal sets below were accepted by package:ludo_engine
+// for seats [0, 2] with blocks off, capture bonus, home bonus and the
+// roll queue. A 6 is rolled again before anyone moves. A non-6 ends the
+// rolling. On the queued turn the 3 is spent before either 6.
+const List<Map<String, Object?>> _sixLegal = <Map<String, Object?>>[
+  <String, Object?>{
+    'face': 6,
+    'tokens': <int>[0, 1, 2, 3],
+  },
+];
+
+const List<Map<String, Object?>> _sixAndThreeLegal = <Map<String, Object?>>[
+  <String, Object?>{
+    'face': 6,
+    'tokens': <int>[0, 1, 2, 3],
+  },
+  <String, Object?>{
+    'face': 3,
+    'tokens': <int>[0],
+  },
+];
+
+const List<Map<String, Object?>> _twoLegal = <Map<String, Object?>>[
+  <String, Object?>{
+    'face': 2,
+    'tokens': <int>[0],
+  },
+];
+
+const List<int> _allTokens = <int>[0, 1, 2, 3];
 
 int _serverIdSeq = 0;
 
@@ -104,7 +135,8 @@ Map<String, Object?> _roomJson({
   'host_seat': hostSeat,
   'players': players,
   'rules': <String, Object?>{
-    'blocks': true,
+    // Live rooms publish blocks off (PROTOCOL section 4, 2026-10-15).
+    'blocks': false,
     'capture_bonus': true,
     'turn_seconds': 45,
   },
@@ -148,11 +180,11 @@ const String _motionLocale = String.fromEnvironment(
   defaultValue: 'en',
 );
 
-// Which seat the device plays. '0' (default) is today's recording: the
-// host, Priya, who creates the room and wins. '1' is Karim, the joiner
-// who loses. Parsed and range-checked in the test body, not here, so an
-// out-of-range value fails through `fail(...)` rather than a bare throw
-// before the binding exists.
+// Which seat the device plays. '0' (default) is the host, Priya, who
+// creates the room. '2' is Karim, the joiner. A two-player room has no
+// seat 1. Parsed in the test body, not here, so an out-of-range value
+// fails through fail(...) rather than a bare throw before the binding
+// exists.
 const String _motionSeatRaw = String.fromEnvironment(
   'MOTION_SEAT',
   defaultValue: '0',
@@ -237,20 +269,6 @@ Future<void> _holdFor(WidgetTester tester, Duration total) async {
   }
 }
 
-Future<void> _holdUntil(
-  WidgetTester tester,
-  Stopwatch watch,
-  Duration mark,
-) async {
-  while (watch.elapsed < mark) {
-    final Duration left = mark - watch.elapsed;
-    final Duration slice = left < const Duration(milliseconds: 32)
-        ? left
-        : const Duration(milliseconds: 32);
-    await tester.pump(slice);
-  }
-}
-
 /// 64 lowercase hex. The client does not read `reveal`
 /// (room_controller.dart `_reduceRolled`: not required, not stored).
 /// The shape is protocol section 11: 64 lowercase hex characters, one
@@ -259,314 +277,321 @@ String _reveal(int k) => k.toRadixString(16).padLeft(64, '0');
 
 void _motion(String name) => debugPrint('MOTION $name');
 
-// The engine log this recording plays. Faces, legal sets, captures and
-// the win were accepted by package:ludo_engine for seats [0, 1] with
-// blocks and capture bonus on. Square count of every MOVE `steps` is 260.
-const String _actionLog = '''
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 SETUP exit 0
-MOVE seat=0 token=0 from=-1 to=0 captured=[] extra=true won=false steps=1 tag=move 0 token 0 SETUP exit 0
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 SETUP exit 1
-MOVE seat=0 token=1 from=-1 to=0 captured=[] extra=true won=false steps=1 tag=move 0 token 1 SETUP exit 1
-ROLL seat=0 face=5 legal=[0,1] tag=roll 0 face 5 STEP3
-MOVE seat=0 token=0 from=0 to=5 captured=[] extra=false won=false steps=5 tag=move 0 token 0 STEP4
-TURN seat=1 tag=move 0 token 0 STEP4
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 SETUP karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 SETUP karim pass
-TURN seat=0 tag=roll 1 face 5 SETUP karim pass
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 SETUP park
-MOVE seat=0 token=0 from=5 to=11 captured=[] extra=true won=false steps=6 tag=move 0 token 0 SETUP park
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 SETUP park
-MOVE seat=0 token=0 from=11 to=17 captured=[] extra=true won=false steps=6 tag=move 0 token 0 SETUP park
-ROLL seat=0 face=5 legal=[0,1] tag=roll 0 face 5 SETUP park aside
-MOVE seat=0 token=1 from=0 to=5 captured=[] extra=false won=false steps=5 tag=move 0 token 1 SETUP park aside
-TURN seat=1 tag=move 0 token 1 SETUP park aside
-ROLL seat=1 face=6 legal=[0,1,2,3] tag=roll 1 face 6 SETUP karim exit
-MOVE seat=1 token=0 from=-1 to=0 captured=[] extra=true won=false steps=1 tag=move 1 token 0 SETUP karim exit
-ROLL seat=1 face=4 legal=[0] tag=roll 1 face 4 STEP5
-MOVE seat=1 token=0 from=0 to=4 captured=[{0,0}] extra=true won=false steps=4 tag=move 1 token 0 STEP5 capture
-ROLL seat=1 face=5 legal=[0] tag=roll 1 face 5 SETUP karim after capture
-MOVE seat=1 token=0 from=4 to=9 captured=[] extra=false won=false steps=5 tag=move 1 token 0 SETUP karim after capture
-TURN seat=0 tag=move 1 token 0 SETUP karim after capture
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 SETUP approach capture
-MOVE seat=0 token=1 from=5 to=11 captured=[] extra=true won=false steps=6 tag=move 0 token 1 SETUP approach capture
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 SETUP approach capture
-MOVE seat=0 token=1 from=11 to=17 captured=[] extra=true won=false steps=6 tag=move 0 token 1 SETUP approach capture
-ROLL seat=0 face=5 legal=[1] tag=roll 0 face 5 STEP6
-MOVE seat=0 token=1 from=17 to=22 captured=[{1,0}] extra=true won=false steps=5 tag=move 0 token 1 STEP6 capture
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=0 from=-1 to=0 captured=[] extra=true won=false steps=1 tag=move 0 token 0 MARCH
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=2 from=-1 to=0 captured=[] extra=true won=false steps=1 tag=move 0 token 2 MARCH
-ROLL seat=0 face=5 legal=[0,1,2] tag=roll 0 face 5 MARCH
-MOVE seat=0 token=0 from=0 to=5 captured=[] extra=false won=false steps=5 tag=move 0 token 0 MARCH
-TURN seat=1 tag=move 0 token 0 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=3 from=-1 to=0 captured=[] extra=true won=false steps=1 tag=move 0 token 3 MARCH
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=2 from=0 to=6 captured=[] extra=true won=false steps=6 tag=move 0 token 2 MARCH
-ROLL seat=0 face=5 legal=[0,1,2,3] tag=roll 0 face 5 MARCH
-MOVE seat=0 token=3 from=0 to=5 captured=[] extra=false won=false steps=5 tag=move 0 token 3 MARCH
-TURN seat=1 tag=move 0 token 3 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=0 from=5 to=11 captured=[] extra=true won=false steps=6 tag=move 0 token 0 MARCH
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=2 from=6 to=12 captured=[] extra=true won=false steps=6 tag=move 0 token 2 MARCH
-ROLL seat=0 face=5 legal=[0,1,2,3] tag=roll 0 face 5 MARCH
-MOVE seat=0 token=3 from=5 to=10 captured=[] extra=false won=false steps=5 tag=move 0 token 3 MARCH
-TURN seat=1 tag=move 0 token 3 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=0 from=11 to=17 captured=[] extra=true won=false steps=6 tag=move 0 token 0 MARCH
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=2 from=12 to=18 captured=[] extra=true won=false steps=6 tag=move 0 token 2 MARCH
-ROLL seat=0 face=5 legal=[0,1,2,3] tag=roll 0 face 5 MARCH
-MOVE seat=0 token=3 from=10 to=15 captured=[] extra=false won=false steps=5 tag=move 0 token 3 MARCH
-TURN seat=1 tag=move 0 token 3 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=0 from=17 to=23 captured=[] extra=true won=false steps=6 tag=move 0 token 0 MARCH
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=2 from=18 to=24 captured=[] extra=true won=false steps=6 tag=move 0 token 2 MARCH
-ROLL seat=0 face=5 legal=[0,1,2,3] tag=roll 0 face 5 MARCH
-MOVE seat=0 token=3 from=15 to=20 captured=[] extra=false won=false steps=5 tag=move 0 token 3 MARCH
-TURN seat=1 tag=move 0 token 3 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=1 from=22 to=28 captured=[] extra=true won=false steps=6 tag=move 0 token 1 MARCH
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=0 from=23 to=29 captured=[] extra=true won=false steps=6 tag=move 0 token 0 MARCH
-ROLL seat=0 face=5 legal=[0,1,2,3] tag=roll 0 face 5 MARCH
-MOVE seat=0 token=2 from=24 to=29 captured=[] extra=false won=false steps=5 tag=move 0 token 2 MARCH
-TURN seat=1 tag=move 0 token 2 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=3 from=20 to=26 captured=[] extra=true won=false steps=6 tag=move 0 token 3 MARCH
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=1 from=28 to=34 captured=[] extra=true won=false steps=6 tag=move 0 token 1 MARCH
-ROLL seat=0 face=5 legal=[0,1,2,3] tag=roll 0 face 5 MARCH
-MOVE seat=0 token=0 from=29 to=34 captured=[] extra=false won=false steps=5 tag=move 0 token 0 MARCH
-TURN seat=1 tag=move 0 token 0 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=2 from=29 to=35 captured=[] extra=true won=false steps=6 tag=move 0 token 2 MARCH
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=3 from=26 to=32 captured=[] extra=true won=false steps=6 tag=move 0 token 3 MARCH
-ROLL seat=0 face=5 legal=[0,1,2,3] tag=roll 0 face 5 MARCH
-MOVE seat=0 token=0 from=34 to=39 captured=[] extra=false won=false steps=5 tag=move 0 token 0 MARCH
-TURN seat=1 tag=move 0 token 0 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=1 from=34 to=40 captured=[] extra=true won=false steps=6 tag=move 0 token 1 MARCH
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=2 from=35 to=41 captured=[] extra=true won=false steps=6 tag=move 0 token 2 MARCH
-ROLL seat=0 face=5 legal=[0,1,2,3] tag=roll 0 face 5 MARCH
-MOVE seat=0 token=3 from=32 to=37 captured=[] extra=false won=false steps=5 tag=move 0 token 3 MARCH
-TURN seat=1 tag=move 0 token 3 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=0 from=39 to=45 captured=[] extra=true won=false steps=6 tag=move 0 token 0 MARCH
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=1 from=40 to=46 captured=[] extra=true won=false steps=6 tag=move 0 token 1 MARCH
-ROLL seat=0 face=5 legal=[0,1,2,3] tag=roll 0 face 5 MARCH
-MOVE seat=0 token=2 from=41 to=46 captured=[] extra=false won=false steps=5 tag=move 0 token 2 MARCH
-TURN seat=1 tag=move 0 token 2 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=3 from=37 to=43 captured=[] extra=true won=false steps=6 tag=move 0 token 3 MARCH
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=0 from=45 to=51 captured=[] extra=true won=false steps=6 tag=move 0 token 0 MARCH
-ROLL seat=0 face=5 legal=[0,1,2,3] tag=roll 0 face 5 MARCH
-MOVE seat=0 token=1 from=46 to=51 captured=[] extra=false won=false steps=5 tag=move 0 token 1 MARCH
-TURN seat=1 tag=move 0 token 1 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=6 legal=[0,1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=0 from=51 to=57 captured=[] extra=true won=false steps=6 tag=move 0 token 0 MARCH
-ROLL seat=0 face=6 legal=[1,2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=1 from=51 to=57 captured=[] extra=true won=false steps=6 tag=move 0 token 1 MARCH
-ROLL seat=0 face=5 legal=[2,3] tag=roll 0 face 5 MARCH
-MOVE seat=0 token=2 from=46 to=51 captured=[] extra=false won=false steps=5 tag=move 0 token 2 MARCH
-TURN seat=1 tag=move 0 token 2 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=6 legal=[2,3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=2 from=51 to=57 captured=[] extra=true won=false steps=6 tag=move 0 token 2 MARCH
-ROLL seat=0 face=6 legal=[3] tag=roll 0 face 6 MARCH
-MOVE seat=0 token=3 from=43 to=49 captured=[] extra=true won=false steps=6 tag=move 0 token 3 MARCH
-ROLL seat=0 face=4 legal=[3] tag=roll 0 face 4 MARCH
-MOVE seat=0 token=3 from=49 to=53 captured=[] extra=false won=false steps=4 tag=move 0 token 3 MARCH
-TURN seat=1 tag=move 0 token 3 MARCH
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 MARCH karim pass
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 MARCH karim pass
-TURN seat=0 tag=roll 1 face 5 MARCH karim pass
-ROLL seat=0 face=5 legal=[] tag=roll 0 face 5 STEP7
-PASS seat=0 reason=noLegalMove tag=roll 0 face 5 STEP7
-TURN seat=1 tag=roll 0 face 5 STEP7
-ROLL seat=1 face=5 legal=[] tag=roll 1 face 5 SETUP karim before win
-PASS seat=1 reason=noLegalMove tag=roll 1 face 5 SETUP karim before win
-TURN seat=0 tag=roll 1 face 5 SETUP karim before win
-ROLL seat=0 face=4 legal=[3] tag=roll 0 face 4 STEP8
-MOVE seat=0 token=3 from=53 to=57 captured=[] extra=false won=true steps=4 tag=move 0 token 3 STEP8 win
-''';
+int _nextSeat(int seat) => seat == 0 ? 2 : 0;
 
-sealed class _Line {
-  const _Line(this.tag);
-  final String tag;
+Map<String, Object?> _openingTurn(int seq) => <String, Object?>{
+  'seat': 0,
+  'phase': 'await_roll',
+  'queue': <int>[],
+  'deadline_ms': _deadlineMs,
+  'seq': seq,
+};
+
+sealed class _Step {
+  const _Step();
 }
 
-class _Roll extends _Line {
-  const _Roll(this.seat, this.face, this.legal, String tag) : super(tag);
-  final int seat;
+class _RollStep extends _Step {
+  const _RollStep({
+    required this.face,
+    required this.queue,
+    required this.legal,
+    this.legalByFace,
+    this.passTo,
+    this.rollAgain = false,
+  });
+
   final int face;
+
+  /// Queue after this roll, as `rolled.queue`. Empty when the roll passes.
+  final List<int> queue;
   final List<int> legal;
+  final List<Map<String, Object?>>? legalByFace;
+
+  /// Set when the roll passes the turn. The next seat.
+  final int? passTo;
+
+  /// A 6 that owes another roll: `turn` for the same seat, `await_roll`.
+  final bool rollAgain;
 }
 
-class _Move extends _Line {
-  const _Move(
-    this.seat,
-    this.token,
-    this.from,
-    this.to,
-    this.captured,
-    this.extra,
-    this.won,
-    this.steps,
-    String tag,
-  ) : super(tag);
-  final int seat;
+class _MoveStep extends _Step {
+  const _MoveStep({
+    required this.token,
+    required this.face,
+    required this.from,
+    required this.to,
+    required this.steps,
+    this.pickTrayIndex,
+    this.stayQueue,
+    this.stayValue,
+    this.stayLegal,
+    this.stayLegalByFace,
+    this.passTo,
+  });
+
   final int token;
+  final int face;
   final int from;
   final int to;
-  final List<(int, int)> captured;
-  final bool extra;
-  final bool won;
+
+  /// Board steps. One for a yard exit, otherwise `to - from`.
   final int steps;
+
+  /// Tray die to tap before the token, when this face is not the default.
+  final int? pickTrayIndex;
+
+  /// Queue left on a same-seat `await_move` turn. Null when the turn passes.
+  final List<int>? stayQueue;
+  final int? stayValue;
+  final List<int>? stayLegal;
+  final List<Map<String, Object?>>? stayLegalByFace;
+  final int? passTo;
 }
 
-class _Pass extends _Line {
-  const _Pass(this.seat, this.reason, String tag) : super(tag);
+class _Turn {
+  const _Turn(this.seat, this.steps);
+
   final int seat;
-  final String reason;
+  final List<_Step> steps;
 }
 
-class _Turn extends _Line {
-  const _Turn(this.seat, String tag) : super(tag);
-  final int seat;
-}
+// Both seats: one roll that cannot move (every token still in the yard),
+// one exit that leaves a dead 2 beside the live 6, then 6, 6, 3 spent
+// as the 3 first and a 6 next. Seat 0 opens.
+const List<_Turn> _script = <_Turn>[
+  _Turn(0, <_Step>[
+    _RollStep(face: 5, queue: <int>[], legal: <int>[], passTo: 2),
+  ]),
+  _Turn(2, <_Step>[
+    _RollStep(face: 4, queue: <int>[], legal: <int>[], passTo: 0),
+  ]),
+  _Turn(0, <_Step>[
+    _RollStep(face: 6, queue: <int>[6], legal: <int>[], rollAgain: true),
+    _RollStep(
+      face: 2,
+      queue: <int>[6, 2],
+      legal: _allTokens,
+      legalByFace: _sixLegal,
+    ),
+    _MoveStep(
+      token: 0,
+      face: 6,
+      from: -1,
+      to: 0,
+      steps: 1,
+      stayQueue: <int>[2],
+      stayValue: 2,
+      stayLegal: <int>[0],
+      stayLegalByFace: _twoLegal,
+    ),
+    _MoveStep(token: 0, face: 2, from: 0, to: 2, steps: 2, passTo: 2),
+  ]),
+  _Turn(2, <_Step>[
+    _RollStep(face: 6, queue: <int>[6], legal: <int>[], rollAgain: true),
+    _RollStep(
+      face: 2,
+      queue: <int>[6, 2],
+      legal: _allTokens,
+      legalByFace: _sixLegal,
+    ),
+    _MoveStep(
+      token: 0,
+      face: 6,
+      from: -1,
+      to: 0,
+      steps: 1,
+      stayQueue: <int>[2],
+      stayValue: 2,
+      stayLegal: <int>[0],
+      stayLegalByFace: _twoLegal,
+    ),
+    _MoveStep(token: 0, face: 2, from: 0, to: 2, steps: 2, passTo: 0),
+  ]),
+  _Turn(0, <_Step>[
+    _RollStep(face: 6, queue: <int>[6], legal: <int>[], rollAgain: true),
+    _RollStep(face: 6, queue: <int>[6, 6], legal: <int>[], rollAgain: true),
+    _RollStep(
+      face: 3,
+      queue: <int>[6, 6, 3],
+      legal: _allTokens,
+      legalByFace: _sixAndThreeLegal,
+    ),
+    _MoveStep(
+      token: 0,
+      face: 3,
+      from: 2,
+      to: 5,
+      steps: 3,
+      pickTrayIndex: 2,
+      stayQueue: <int>[6, 6],
+      stayValue: 6,
+      stayLegal: _allTokens,
+      stayLegalByFace: _sixLegal,
+    ),
+    _MoveStep(
+      token: 0,
+      face: 6,
+      from: 5,
+      to: 11,
+      steps: 6,
+      stayQueue: <int>[6],
+      stayValue: 6,
+      stayLegal: _allTokens,
+      stayLegalByFace: _sixLegal,
+    ),
+    _MoveStep(token: 1, face: 6, from: -1, to: 0, steps: 1, passTo: 2),
+  ]),
+  _Turn(2, <_Step>[
+    _RollStep(face: 6, queue: <int>[6], legal: <int>[], rollAgain: true),
+    _RollStep(face: 6, queue: <int>[6, 6], legal: <int>[], rollAgain: true),
+    _RollStep(
+      face: 3,
+      queue: <int>[6, 6, 3],
+      legal: _allTokens,
+      legalByFace: _sixAndThreeLegal,
+    ),
+    _MoveStep(
+      token: 0,
+      face: 3,
+      from: 2,
+      to: 5,
+      steps: 3,
+      pickTrayIndex: 2,
+      stayQueue: <int>[6, 6],
+      stayValue: 6,
+      stayLegal: _allTokens,
+      stayLegalByFace: _sixLegal,
+    ),
+    _MoveStep(
+      token: 0,
+      face: 6,
+      from: 5,
+      to: 11,
+      steps: 6,
+      stayQueue: <int>[6],
+      stayValue: 6,
+      stayLegal: _allTokens,
+      stayLegalByFace: _sixLegal,
+    ),
+    _MoveStep(token: 1, face: 6, from: -1, to: 0, steps: 1, passTo: 0),
+  ]),
+];
 
-final RegExp _rollPattern = RegExp(
-  r'^ROLL seat=(\d+) face=(\d+) legal=\[([^\]]*)\] tag=(.*)$',
-);
-final RegExp _movePattern = RegExp(
-  r'^MOVE seat=(\d+) token=(\d+) from=(-?\d+) to=(-?\d+) '
-  r'captured=\[(.*)\] extra=(true|false) won=(true|false) '
-  r'steps=(\d+) tag=(.*)$',
-);
-final RegExp _passPattern = RegExp(r'^PASS seat=(\d+) reason=(\w+) tag=(.*)$');
-final RegExp _turnPattern = RegExp(r'^TURN seat=(\d+) tag=(.*)$');
-final RegExp _capturedPair = RegExp(r'\{(\d+),(\d+)\}');
+List<int> _rollFaces(_Turn turn) => <int>[
+  for (final _Step step in turn.steps)
+    if (step is _RollStep) step.face,
+];
 
-List<_Line> _parseLog(String log) {
-  final List<_Line> lines = <_Line>[];
-  for (final String raw in log.split('\n')) {
-    final String line = raw.trim();
-    if (line.isEmpty) {
-      continue;
+bool _sixThenAnotherRoll(_Turn turn) {
+  final List<_Step> steps = turn.steps;
+  for (var i = 0; i < steps.length - 1; i++) {
+    final _Step step = steps[i];
+    if (step is _RollStep &&
+        step.face == 6 &&
+        step.rollAgain &&
+        steps[i + 1] is _RollStep) {
+      return true;
     }
-    final RegExpMatch? roll = _rollPattern.firstMatch(line);
-    if (roll != null) {
-      final String legalText = roll.group(3)!;
-      final List<int> legal = legalText.isEmpty
-          ? <int>[]
-          : legalText.split(',').map(int.parse).toList();
-      lines.add(
-        _Roll(
-          int.parse(roll.group(1)!),
-          int.parse(roll.group(2)!),
-          legal,
-          roll.group(4)!,
-        ),
-      );
-      continue;
-    }
-    final RegExpMatch? move = _movePattern.firstMatch(line);
-    if (move != null) {
-      final List<(int, int)> captured = <(int, int)>[
-        for (final RegExpMatch pair in _capturedPair.allMatches(move.group(5)!))
-          (int.parse(pair.group(1)!), int.parse(pair.group(2)!)),
-      ];
-      lines.add(
-        _Move(
-          int.parse(move.group(1)!),
-          int.parse(move.group(2)!),
-          int.parse(move.group(3)!),
-          int.parse(move.group(4)!),
-          captured,
-          move.group(6) == 'true',
-          move.group(7) == 'true',
-          int.parse(move.group(8)!),
-          move.group(9)!,
-        ),
-      );
-      continue;
-    }
-    final RegExpMatch? pass = _passPattern.firstMatch(line);
-    if (pass != null) {
-      lines.add(
-        _Pass(int.parse(pass.group(1)!), pass.group(2)!, pass.group(3)!),
-      );
-      continue;
-    }
-    final RegExpMatch? turn = _turnPattern.firstMatch(line);
-    if (turn != null) {
-      lines.add(_Turn(int.parse(turn.group(1)!), turn.group(2)!));
-      continue;
-    }
-    throw TestFailure('motion log line did not parse: $line');
   }
-  return lines;
+  return false;
 }
 
-List<({_Roll roll, List<_Line> rest})> _groupRolls(List<_Line> lines) {
-  final List<({_Roll roll, List<_Line> rest})> groups =
-      <({_Roll roll, List<_Line> rest})>[];
-  for (var i = 0; i < lines.length; i++) {
-    final _Line line = lines[i];
-    if (line is! _Roll) {
-      throw TestFailure('motion log left a ${line.runtimeType} outside a roll');
+void _expectScript(List<_Turn> turns) {
+  expect(turns.map((_Turn turn) => turn.seat).toList(), <int>[
+    0,
+    2,
+    0,
+    2,
+    0,
+    2,
+  ]);
+  final List<List<int>> tokens = <List<int>>[
+    for (var seat = 0; seat < 4; seat++) <int>[-1, -1, -1, -1],
+  ];
+  var rolls = 0;
+  var moves = 0;
+  var walked = 0;
+  for (final _Turn turn in turns) {
+    expect(turn.seat == 0 || turn.seat == 2, isTrue);
+    for (final _Step step in turn.steps) {
+      if (step is _RollStep) {
+        rolls += 1;
+        expect(step.passTo != null && step.rollAgain, isFalse);
+        if (step.passTo != null) {
+          expect(step.passTo, _nextSeat(turn.seat));
+          expect(step.queue, isEmpty);
+          expect(step.legal, isEmpty);
+          expect(step.legalByFace, isNull);
+        } else if (step.rollAgain) {
+          expect(step.face, 6);
+          expect(step.legal, isEmpty);
+          expect(step.legalByFace, isNull);
+          expect(step.queue, isNotEmpty);
+        } else {
+          expect(step.legalByFace, isNotNull);
+          expect(step.legal, isNotEmpty);
+        }
+      } else if (step is _MoveStep) {
+        moves += 1;
+        walked += step.steps;
+        final int boardSteps = step.from < 0 ? 1 : step.to - step.from;
+        expect(step.steps, boardSteps, reason: 'seat ${turn.seat}');
+        expect(tokens[turn.seat][step.token], step.from);
+        tokens[turn.seat][step.token] = step.to;
+        expect((step.stayQueue == null) != (step.passTo == null), isTrue);
+        if (step.passTo != null) {
+          expect(step.passTo, _nextSeat(turn.seat));
+        }
+      }
     }
-    final List<_Line> rest = <_Line>[];
-    while (i + 1 < lines.length && lines[i + 1] is! _Roll) {
-      i += 1;
-      rest.add(lines[i]);
-    }
-    groups.add((roll: line, rest: rest));
   }
-  return groups;
+  expect(rolls, 12);
+  expect(moves, 10);
+  expect(walked, 26);
+  expect(tokens[0], <int>[11, 0, -1, -1]);
+  expect(tokens[2], <int>[11, 0, -1, -1]);
+  for (final int seat in <int>[0, 2]) {
+    final List<_Turn> mine = turns
+        .where((_Turn turn) => turn.seat == seat)
+        .toList();
+    final List<_RollStep> passes = <_RollStep>[
+      for (final _Turn turn in mine)
+        for (final _Step step in turn.steps)
+          if (step is _RollStep && step.passTo != null) step,
+    ];
+    expect(passes, hasLength(1), reason: 'seat $seat owes one dead roll');
+    var queued = 0;
+    for (final _Turn turn in mine) {
+      final List<int> faces = _rollFaces(turn);
+      if (faces.length == 3 &&
+          faces[0] == 6 &&
+          faces[1] == 6 &&
+          faces[2] == 3) {
+        queued += 1;
+        final List<_MoveStep> spent = <_MoveStep>[
+          for (final _Step step in turn.steps)
+            if (step is _MoveStep) step,
+        ];
+        expect(spent[0].face, 3);
+        expect(spent[0].pickTrayIndex, 2);
+        expect(spent[1].face, 6);
+      }
+    }
+    expect(queued, 1, reason: 'seat $seat owes one 6, 6, 3 turn');
+    final List<_RollStep> watched = <_RollStep>[
+      for (final _Turn turn in turns)
+        if (turn.seat != seat)
+          for (final _Step step in turn.steps)
+            if (step is _RollStep) step,
+    ];
+    expect(watched.length, greaterThanOrEqualTo(3));
+    expect(
+      turns.where((_Turn turn) => turn.seat != seat).any(_sixThenAnotherRoll),
+      isTrue,
+      reason: 'seat $seat watches a 6 followed at once by another roll',
+    );
+  }
 }
 
 void main() {
@@ -575,10 +600,11 @@ void main() {
 
   testWidgets('records one two-seat game with motion on', (tester) async {
     final int? parsedSeat = int.tryParse(_motionSeatRaw);
-    if (parsedSeat != 0 && parsedSeat != 1) {
-      fail('MOTION_SEAT must be "0" or "1"; got "$_motionSeatRaw"');
+    if (parsedSeat != 0 && parsedSeat != 2) {
+      fail('MOTION_SEAT must be "0" or "2"; got "$_motionSeatRaw"');
     }
     final int deviceSeat = parsedSeat!;
+    _expectScript(_script);
 
     if (tester
         .binding
@@ -591,16 +617,6 @@ void main() {
       );
     }
     _motion('start');
-
-    final List<_Line> lines = _parseLog(_actionLog);
-    expect(lines, hasLength(168));
-    final List<_Move> moves = <_Move>[
-      for (final _Line line in lines)
-        if (line is _Move) line,
-    ];
-    expect(moves, hasLength(52));
-    expect(moves.fold<int>(0, (int sum, _Move move) => sum + move.steps), 260);
-    final List<({_Roll roll, List<_Line> rest})> groups = _groupRolls(lines);
 
     binding.testTextInput.register();
     await (await SharedPreferences.getInstance()).clear();
@@ -620,20 +636,18 @@ void main() {
     expect(homeLoc.localeName, _motionLocale);
 
     if (deviceSeat == 0) {
-      await _runHostSeat0(tester, factory, homeLoc, groups, elapsed);
+      await _runHostSeat0(tester, factory, homeLoc, elapsed);
     } else {
-      await _runJoinerSeat1(tester, factory, homeLoc, groups, lines, elapsed);
+      await _runJoinerSeat2(tester, factory, homeLoc, elapsed);
     }
   });
 }
 
-/// MOTION_SEAT=0 (default). Unchanged from the recording before order 313:
-/// Priya creates the room, starts the game, and plays seat 0 to the win.
+/// MOTION_SEAT=0. Priya creates the room, starts the game, and plays seat 0.
 Future<void> _runHostSeat0(
   WidgetTester tester,
   _MotionControllerFactory factory,
   AppLocalizations homeLoc,
-  List<({_Roll roll, List<_Line> rest})> groups,
   Stopwatch elapsed,
 ) async {
   const String hostName = 'Priya';
@@ -694,7 +708,7 @@ Future<void> _runHostSeat0(
   transport.pushText(
     _frame(
       type: 'player_joined',
-      data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+      data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
     ),
   );
   await tester.pump();
@@ -704,7 +718,9 @@ Future<void> _runHostSeat0(
     _roomCode,
   );
   expect(find.byKey(const Key('lobby-seat-0')), findsOneWidget);
-  expect(find.byKey(const Key('lobby-seat-1')), findsOneWidget);
+  expect(find.byKey(const Key('lobby-seat-2')), findsOneWidget);
+  expect(find.byKey(const Key('lobby-seat-1')), findsNothing);
+  expect(controller.room!.seats.map((seat) => seat.seat).toList(), <int>[0, 2]);
 
   final Finder startButton = find.byKey(const Key('lobby-start-button'));
   expect(startButton, findsOneWidget);
@@ -718,7 +734,8 @@ Future<void> _runHostSeat0(
 
   // Protocol 13.1: server seeds, then game_started, then a standalone
   // turn at the next seq. The host's copies of game_started and turn
-  // carry re. seat_seed does not.
+  // carry re. seat_seed does not. Section 21.3: the opening turn carries
+  // phase and an empty queue.
   transport.pushText(
     _frame(
       type: 'seat_seed',
@@ -734,8 +751,8 @@ Future<void> _runHostSeat0(
     _frame(
       type: 'seat_seed',
       data: <String, Object?>{
-        'seat': 1,
-        'client_seed': 'srvseedseat1',
+        'seat': 2,
+        'client_seed': 'srvseedseat2',
         'origin': 'server',
         'seq': 4,
       },
@@ -753,13 +770,7 @@ Future<void> _runHostSeat0(
       },
     ),
   );
-  transport.pushText(
-    _frame(
-      type: 'turn',
-      re: startId,
-      data: <String, Object?>{'seat': 0, 'deadline_ms': _deadlineMs, 'seq': 6},
-    ),
-  );
+  transport.pushText(_frame(type: 'turn', re: startId, data: _openingTurn(6)));
   await tester.pump();
   await tester.pump();
   await _pumpUntilFound(
@@ -771,6 +782,7 @@ Future<void> _runHostSeat0(
   expect(controller.room!.state, RoomState.playing);
   expect(controller.room!.turn!.seat, 0);
   expect(controller.room!.turn!.phase, TurnPhase.awaitRoll);
+  expect(controller.room!.turn!.queue, isEmpty);
   expect(controller.hasDesynced, isFalse);
 
   await _holdFor(tester, const Duration(seconds: 2));
@@ -796,13 +808,12 @@ Future<void> _runHostSeat0(
     deviceSeat: 0,
     startSeq: 6,
   );
-  for (final ({_Roll roll, List<_Line> rest}) group in groups) {
-    await playback.play(group.roll, group.rest);
-  }
+  await playback.playAll(_script);
+  playback.expectEnd();
+  await _holdFor(tester, const Duration(seconds: 6));
+  playback.expectEnd();
+  _motion('7 done');
 
-  expect(controller.room!.state, RoomState.finished);
-  expect(controller.room!.winner, 0);
-  expect(controller.hasDesynced, isFalse);
   debugPrint('motion elapsed ${elapsed.elapsed.inMilliseconds}ms');
   expect(
     elapsed.elapsed,
@@ -813,16 +824,12 @@ Future<void> _runHostSeat0(
   );
 }
 
-/// MOTION_SEAT=1. Karim joins by code and loses; Priya (seat 0, the host)
-/// is played entirely by the server, the same shape `_server` already
-/// gives seat 1 in the MOTION_SEAT=0 recording, generalised to whichever
-/// seat is not the device's own.
-Future<void> _runJoinerSeat1(
+/// MOTION_SEAT=2. Karim joins by code. Priya (seat 0, the host) is played
+/// by the server. Karim plays seat 2.
+Future<void> _runJoinerSeat2(
   WidgetTester tester,
   _MotionControllerFactory factory,
   AppLocalizations homeLoc,
-  List<({_Roll roll, List<_Line> rest})> groups,
-  List<_Line> lines,
   Stopwatch elapsed,
 ) async {
   const String hostName = 'Priya';
@@ -856,7 +863,7 @@ Future<void> _runJoinerSeat1(
   transport.pushText(
     _frame(
       type: 'seat_assigned',
-      data: <String, Object?>{'seat': 1, 'seat_token': 'tok-motion-karim'},
+      data: <String, Object?>{'seat': 2, 'seat_token': 'tok-motion-karim'},
     ),
   );
   transport.pushText(
@@ -869,7 +876,7 @@ Future<void> _runJoinerSeat1(
         hostSeat: 0,
         seats: <Map<String, Object?>>[
           _seatJson(0, name: hostName),
-          _seatJson(1, name: joinerName),
+          _seatJson(2, name: joinerName),
         ],
         seq: 1,
       ),
@@ -889,14 +896,17 @@ Future<void> _runJoinerSeat1(
     _roomCode,
   );
   expect(find.byKey(const Key('lobby-seat-0')), findsOneWidget);
-  expect(find.byKey(const Key('lobby-seat-1')), findsOneWidget);
+  expect(find.byKey(const Key('lobby-seat-2')), findsOneWidget);
+  expect(find.byKey(const Key('lobby-seat-1')), findsNothing);
+  expect(controller.room!.seats.map((seat) => seat.seat).toList(), <int>[0, 2]);
 
   // The joiner's lobby, held on screen before the host starts the game.
   await _holdFor(tester, const Duration(seconds: 2));
 
   // Protocol 13.1, from the non-host side: server seeds, then
-  // game_started, then a standalone turn, none of it carrying `re` --
-  // this client never sent start_game.
+  // game_started, then a standalone turn, none of it carrying `re`.
+  // This client never sent start_game. The opening turn carries phase
+  // and an empty queue (section 21.3).
   transport.pushText(
     _frame(
       type: 'seat_seed',
@@ -912,8 +922,8 @@ Future<void> _runJoinerSeat1(
     _frame(
       type: 'seat_seed',
       data: <String, Object?>{
-        'seat': 1,
-        'client_seed': 'srvseedseat1',
+        'seat': 2,
+        'client_seed': 'srvseedseat2',
         'origin': 'server',
         'seq': 3,
       },
@@ -930,12 +940,7 @@ Future<void> _runJoinerSeat1(
       },
     ),
   );
-  transport.pushText(
-    _frame(
-      type: 'turn',
-      data: <String, Object?>{'seat': 0, 'deadline_ms': _deadlineMs, 'seq': 5},
-    ),
-  );
+  transport.pushText(_frame(type: 'turn', data: _openingTurn(5)));
   await tester.pump();
   await tester.pump();
   await _pumpUntilFound(
@@ -963,11 +968,12 @@ Future<void> _runJoinerSeat1(
   expect(controller.room!.state, RoomState.playing);
   expect(controller.room!.turn!.seat, 0);
   expect(controller.room!.turn!.phase, TurnPhase.awaitRoll);
+  expect(controller.room!.turn!.queue, isEmpty);
   expect(controller.hasDesynced, isFalse);
 
   _motion('2 turn pulse');
-  // It is Priya's (seat 0) turn, not Karim's: no pulse on this device's
-  // die, and the device sends nothing while it waits.
+  // It is Priya's turn, not Karim's: no pulse on this device's die, and
+  // the device sends nothing while it waits.
   expect(find.byKey(const Key('game-die-pulse')), findsNothing);
   expect(controller.room!.turn!.seat, 0);
   expect(controller.room!.turn!.phase, TurnPhase.awaitRoll);
@@ -985,58 +991,14 @@ Future<void> _runJoinerSeat1(
     tester: tester,
     transport: transport,
     controller: controller,
-    deviceSeat: 1,
+    deviceSeat: 2,
     startSeq: 5,
   );
-  for (final ({_Roll roll, List<_Line> rest}) group in groups) {
-    await playback.play(group.roll, group.rest);
-  }
-
-  expect(controller.room!.state, RoomState.finished);
-  expect(controller.room!.winner, 0);
-  expect(controller.hasDesynced, isFalse);
-
-  await _pumpUntilFound(
-    tester,
-    find.byKey(const Key('end-card-lose')),
-    'end-card-lose after game_over',
-  );
-
-  final AppLocalizations loc = AppLocalizations.of(
-    tester.element(find.byType(GameScreen)),
-  );
-  final Finder winnerTitle = find.byKey(const Key('game-screen-winner'));
-  expect(winnerTitle, findsOneWidget);
-  final Text winnerText = tester.widget<Text>(winnerTitle);
-  final String? shown = winnerText.data ?? winnerText.textSpan?.toPlainText();
-  expect(
-    shown,
-    loc.endLoseTitle(hostName),
-    reason:
-        'game-screen-winner must show endLoseTitle($hostName) on a loss; '
-        'got "$shown"',
-  );
-  expect(find.byKey(const Key('end-card-lose-line')), findsOneWidget);
-
-  final int seat1Rolls = lines
-      .whereType<_Roll>()
-      .where((_Roll line) => line.seat == 1)
-      .length;
-  final Finder rollsTile = find.byKey(const Key('end-card-stat-rolls'));
-  expect(rollsTile, findsOneWidget);
-  expect(
-    find.descendant(of: rollsTile, matching: find.text('$seat1Rolls')),
-    findsOneWidget,
-    reason:
-        'end-card-stat-rolls must show $seat1Rolls, the count of seat-1 '
-        'ROLL lines in the parsed log',
-  );
-
-  expect(find.byKey(const Key('game-screen-verify-button')), findsOneWidget);
-
-  // The loser's card, held so the recording shows it settled.
+  await playback.playAll(_script);
+  playback.expectEnd();
   await _holdFor(tester, const Duration(seconds: 6));
-  expect(find.byKey(const Key('end-card-lose')), findsOneWidget);
+  playback.expectEnd();
+  _motion('7 done');
 
   debugPrint('motion elapsed ${elapsed.elapsed.inMilliseconds}ms');
   expect(
@@ -1061,8 +1023,7 @@ class _Playback {
   final FakeTransport transport;
   final RoomController controller;
 
-  /// Which seat this device plays: 0 (Priya, MOTION_SEAT=0) or 1 (Karim,
-  /// MOTION_SEAT=1).
+  /// 0 (Priya) or 2 (Karim).
   final int deviceSeat;
 
   int _seq;
@@ -1079,106 +1040,63 @@ class _Playback {
         .tokens;
   }
 
-  void _expectInSync(String where) {
-    expect(
-      controller.hasDesynced,
-      isFalse,
-      reason: 'seq gap before $where (room seq ${controller.room?.seq})',
-    );
-  }
-
-  void _expectFrom(_Move move) {
-    _expectInSync('move ${move.tag}');
-    expect(
-      _tokens(move.seat)[move.token],
-      move.from,
-      reason:
-          'seat ${move.seat} token ${move.token} is '
-          '${_tokens(move.seat)[move.token]}, next move starts at '
-          '${move.from} (${move.tag})',
-    );
-  }
-
-  void _pushRolled(_Roll roll, {String? re}) {
-    _k += 1;
+  Future<void> _push(
+    String type,
+    Map<String, Object?> data, {
+    String? re,
+  }) async {
+    if (type == 'rolled') {
+      expect(data.containsKey('queue'), isTrue, reason: 'rolled carries queue');
+      expect(data.containsKey('legal'), isTrue);
+      // `legal` is a List<int>. List is invariant, so `as List<Object?>` throws.
+      final bool moveOwed = (data['legal']! as List).isNotEmpty;
+      expect(
+        data.containsKey('legal_by_face'),
+        moveOwed ? isTrue : isFalse,
+        reason: 'legal_by_face rides on rolled only when a move is owed',
+      );
+    }
     transport.pushText(
       _frame(
-        type: 'rolled',
+        type: type,
         re: re,
-        data: <String, Object?>{
-          'seat': roll.seat,
-          'value': roll.face,
-          'legal': roll.legal,
-          'deadline_ms': _deadlineMs,
-          'k': _k,
-          'reveal': _reveal(_k),
-          'seq': _nextSeq(),
-        },
+        data: <String, Object?>{...data, 'seq': _nextSeq()},
       ),
     );
+    await tester.pump();
+    await tester.pump();
   }
 
-  void _pushMoved(_Move move, {String? re}) {
-    transport.pushText(
-      _frame(
-        type: 'moved',
-        re: re,
-        data: <String, Object?>{
-          'seat': move.seat,
-          'token': move.token,
-          'from': move.from,
-          'to': move.to,
-          'captured': <Object?>[
-            for (final (int seat, int token) in move.captured)
-              <String, Object?>{'seat': seat, 'token': token},
-          ],
-          'extra_roll': move.extra,
-          'seq': _nextSeq(),
-        },
-      ),
-    );
+  Map<String, Object?> _rolledData(_RollStep step, int seat, int k) {
+    return <String, Object?>{
+      'seat': seat,
+      'value': step.face,
+      'legal': step.legal,
+      'deadline_ms': _deadlineMs,
+      'k': k,
+      'reveal': _reveal(k),
+      'queue': step.queue,
+      'legal_by_face': ?step.legalByFace,
+    };
   }
 
-  void _pushPassed(int seat, {String? re}) {
-    transport.pushText(
-      _frame(
-        type: 'turn_passed',
-        re: re,
-        data: <String, Object?>{
-          'seat': seat,
-          'reason': 'no_legal_move',
-          'seq': _nextSeq(),
-        },
-      ),
-    );
-  }
-
-  void _pushTurn(int seat, {String? re}) {
-    transport.pushText(
-      _frame(
-        type: 'turn',
-        re: re,
-        data: <String, Object?>{
-          'seat': seat,
-          'deadline_ms': _deadlineMs,
-          'seq': _nextSeq(),
-        },
-      ),
-    );
-  }
-
-  void _pushGameOver({String? re}) {
-    transport.pushText(
-      _frame(
-        type: 'game_over',
-        re: re,
-        data: <String, Object?>{
-          'winner': 0,
-          'verify_url': 'https://provefair.app/v/$_gameId',
-          'seq': _nextSeq(),
-        },
-      ),
-    );
+  Map<String, Object?> _turnData({
+    required int seat,
+    required String phase,
+    required List<int> queue,
+    int? value,
+    List<int>? legal,
+    List<Map<String, Object?>>? legalByFace,
+  }) {
+    return <String, Object?>{
+      'seat': seat,
+      'deadline_ms': _deadlineMs,
+      'phase': phase,
+      'queue': queue,
+      'value': ?value,
+      'legal': ?legal,
+      'legal_by_face': ?legalByFace,
+    };
   }
 
   Future<String> _tapDie() async {
@@ -1194,7 +1112,7 @@ class _Playback {
     return _singleSent(before, 'roll');
   }
 
-  Future<String> _tapToken(int token) async {
+  Future<String> _tapToken(int token, int face) async {
     final int before = transport.sentRaw.length;
     // The keyed Semantics node sits under the painted token, so the
     // center of the finder hits that token. The sent index is the check.
@@ -1203,8 +1121,16 @@ class _Playback {
       warnIfMissed: false,
     );
     await tester.pump();
-    final String id = _singleSent(before, 'move');
-    expect(_dataOf(_sentSince(before, 'move').single)['token'], token);
+    final String raw = _sentSince(before, 'move').single;
+    final String id = _idOf(raw);
+    final Map<String, Object?> data = _dataOf(raw);
+    expect(data['token'], token);
+    expect(
+      data.containsKey('face'),
+      isTrue,
+      reason: 'a move under the roll queue carries face',
+    );
+    expect(data['face'], face);
     return id;
   }
 
@@ -1225,243 +1151,132 @@ class _Playback {
     return _idOf(found.single);
   }
 
-  Future<void> _holdTravel(_Move move) async {
-    var milliseconds = move.steps * kTokenStepDuration.inMilliseconds + 120;
-    if (move.captured.isNotEmpty) {
-      milliseconds += kCaptureFlightDuration.inMilliseconds + 80;
-    }
+  Future<void> _holdTravel(int steps) async {
+    final int milliseconds = steps * kTokenStepDuration.inMilliseconds + 120;
     await _holdFor(tester, Duration(milliseconds: milliseconds));
   }
 
-  Future<void> play(_Roll roll, List<_Line> rest) async {
-    _Move? move;
-    _Pass? pass;
-    _Turn? turn;
-    for (final _Line line in rest) {
-      if (line is _Move) {
-        expect(move, isNull, reason: 'two moves under one roll (${roll.tag})');
-        move = line;
-      } else if (line is _Pass) {
-        pass = line;
-      } else if (line is _Turn) {
-        turn = line;
-      }
-    }
-    expect(
-      pass == null || move == null,
-      isTrue,
-      reason: 'a roll cannot both move and pass (${roll.tag})',
-    );
-
-    if (deviceSeat == 0) {
-      // Unchanged dispatch: every STEP tag in the log belongs to seat 0
-      // except STEP5, which `_step5` already plays as the opponent's
-      // (seat 1's) capture, server-pushed with no tap.
-      if (roll.tag.contains('STEP3')) {
-        _motion('3 roll');
-        await _step3(roll, move!);
-        _motion('4 move');
-        await _step4(move, turn!);
-        return;
-      }
-      if (roll.tag.contains('STEP5')) {
-        _motion('5 captured');
-        await _step5(roll, move!);
-        return;
-      }
-      if (roll.tag.contains('STEP6')) {
-        _motion('6 capture');
-        await _step6(roll, move!);
-        return;
-      }
-      if (roll.tag.contains('STEP7')) {
-        _motion('7 no move');
-        await _step7(roll, pass!, turn!);
-        return;
-      }
-      if (roll.tag.contains('STEP8')) {
-        _motion('8 win');
-        await _step8(roll, move!);
-        return;
-      }
-      await _server(roll, move, pass, turn);
-      return;
-    }
-
-    // deviceSeat == 1: the STEP tags were chosen for seat 0's camera
-    // beats and no longer mean the same thing on seat 1's turns, so
-    // every group is played by who actually rolled it: seat 1's rolls
-    // are tapped on the device (`_mine`), seat 0's are pushed by the
-    // server exactly like `_server` already pushes seat 1's moves in
-    // the MOTION_SEAT=0 recording, generalised to whichever seat is not
-    // the device's own. The device must send nothing while it is not
-    // its turn.
-    if (roll.seat == deviceSeat) {
-      await _mine(roll, move, pass, turn);
-      return;
-    }
-    final int before = transport.sentRaw.length;
-    await _server(roll, move, pass, turn);
-    expect(
-      transport.sentRaw
-          .skip(before)
-          .where((String s) => _typeOf(s) == 'roll' || _typeOf(s) == 'move'),
-      isEmpty,
-      reason: "device sent a roll or move on seat 0's turn (${roll.tag})",
-    );
+  bool _showsTray({required List<int> queue, required bool awaitRoll}) {
+    return queue.length >= 2 || (awaitRoll && queue.isNotEmpty);
   }
 
-  /// MOTION_SEAT=1 only. The device's own roll and, when `legal` is not
-  /// empty, its own move -- tap the die, then the token, the same
-  /// mechanics `_tapDie`/`_tapToken` already use for seat 0's taps,
-  /// generalised to `deviceSeat`.
-  Future<void> _mine(_Roll roll, _Move? move, _Pass? pass, _Turn? turn) async {
-    _expectInSync(roll.tag);
-    final String rollId = await _tapDie();
-    if (pass != null) {
-      expect(pass.reason, 'noLegalMove');
-      _pushRolled(roll, re: rollId);
-      _pushPassed(roll.seat, re: rollId);
-      _pushTurn(turn!.seat, re: rollId);
-      await tester.pump();
-      await tester.pump();
-      expect(find.byKey(const Key('game-die-no-move-mark')), findsOneWidget);
-      return;
+  Set<int> _liveFaces(List<Map<String, Object?>>? legalByFace) {
+    if (legalByFace == null) {
+      return const <int>{};
     }
-    final _Move played = move!;
-    _expectFrom(played);
-    _pushRolled(roll, re: rollId);
-    await tester.pump();
-    if (roll.legal.length > 1) {
-      for (final int token in roll.legal) {
-        expect(
-          find.byKey(Key('board-legal-ring-${roll.seat}-$token')),
-          findsOneWidget,
-        );
-      }
-    }
-    final String moveId = await _tapToken(played.token);
-    _pushMoved(played, re: moveId);
-    if (turn != null) {
-      _pushTurn(turn.seat, re: moveId);
-    } else {
-      expect(played.extra, isTrue, reason: played.tag);
-      _pushTurn(roll.seat, re: moveId);
-    }
-    await tester.pump();
-    for (final (int seat, int token) in played.captured) {
-      expect(_tokens(seat)[token], -1);
-    }
-    expect(_tokens(played.seat)[played.token], played.to);
-    await _holdTravel(played);
+    return <int>{
+      for (final Map<String, Object?> entry in legalByFace)
+        entry['face']! as int,
+    };
   }
 
-  Future<void> _step3(_Roll roll, _Move move) async {
-    final Stopwatch hold = Stopwatch()..start();
-    final int before = transport.sentRaw.length;
-    await tester.tap(find.byKey(const Key('game-die')));
-    await tester.pump();
-    expect(find.byKey(const Key('game-die-tumbling')), findsOneWidget);
-    await _holdUntil(tester, hold, const Duration(milliseconds: 640));
-    final String rollId = _singleSent(before, 'roll');
-    _pushRolled(roll, re: rollId);
-    await tester.pump();
+  List<int> _tokensForFace(List<Map<String, Object?>> legalByFace, int face) {
+    for (final Map<String, Object?> entry in legalByFace) {
+      if (entry['face'] == face) {
+        return List<int>.from(entry['tokens']! as List);
+      }
+    }
+    return const <int>[];
+  }
 
-    expect(controller.room!.turn!.phase, TurnPhase.awaitMove);
-    expect(controller.room!.turn!.value, roll.face);
-    expect(roll.legal.length, greaterThanOrEqualTo(2));
-    expect(roll.legal.contains(move.token), isTrue);
-    expect(
-      roll.legal.any((int token) => _tokens(roll.seat)[token] >= 0),
-      isTrue,
-      reason: 'at least one legal token is already on the track',
-    );
-    expect(move.from, greaterThanOrEqualTo(0));
-    expect(move.to - move.from, greaterThanOrEqualTo(4));
-    for (final int token in roll.legal) {
+  void _expectRings(int seat, List<int> tokens) {
+    for (var token = 0; token < 4; token++) {
       expect(
-        find.byKey(Key('board-legal-ring-${roll.seat}-$token')),
-        findsOneWidget,
+        find.byKey(Key('board-legal-ring-$seat-$token')),
+        tokens.contains(token) ? findsOneWidget : findsNothing,
+        reason: 'seat $seat token $token',
       );
     }
-    await _holdUntil(tester, hold, const Duration(seconds: 3));
-    expect(_sentSince(before, 'move'), isEmpty);
-    _expectFrom(move);
   }
 
-  Future<void> _step4(_Move move, _Turn turn) async {
-    final String moveId = await _tapToken(move.token);
-    _pushMoved(move, re: moveId);
-    _pushTurn(turn.seat, re: moveId);
-    await tester.pump();
-    expect(_tokens(move.seat)[move.token], move.to);
-    expect(controller.room!.turn!.seat, turn.seat);
-    expect(controller.room!.turn!.phase, TurnPhase.awaitRoll);
-    await _holdFor(tester, const Duration(seconds: 3));
+  void _expectChild(Key parent, Key child, {required bool present}) {
+    expect(
+      find.descendant(of: find.byKey(parent), matching: find.byKey(child)),
+      present ? findsOneWidget : findsNothing,
+    );
   }
 
-  Future<void> _step5(_Roll roll, _Move move) async {
-    _expectFrom(move);
-    expect(move.captured, isNotEmpty);
-    final Stopwatch hold = Stopwatch()..start();
-    _pushRolled(roll);
-    await tester.pump();
-    await _holdUntil(tester, hold, const Duration(milliseconds: 400));
-    _pushMoved(move);
-    // Capture grants the extra roll. Protocol 12.2 still sends `turn`
-    // for the same seat. The log has no TURN line on this beat; the
-    // next roll is Karim's.
-    expect(move.extra, isTrue);
-    _pushTurn(roll.seat);
-    await tester.pump();
-    for (final (int seat, int token) in move.captured) {
-      expect(_tokens(seat)[token], -1);
+  /// Tray, selected die and dead die, from the queue the wire just set.
+  /// [selectedFace] overrides the default after a tray tap.
+  void _expectTray({
+    required int seat,
+    required List<int> queue,
+    required bool awaitRoll,
+    required bool mine,
+    List<Map<String, Object?>>? legalByFace,
+    int? selectedFace,
+  }) {
+    final bool show = _showsTray(queue: queue, awaitRoll: awaitRoll);
+    expect(
+      find.byKey(const Key('game-roll-tray')),
+      show ? findsOneWidget : findsNothing,
+      reason: 'tray when a queue is owed, queue $queue awaitRoll $awaitRoll',
+    );
+    // A single remaining face in await_move hides the tray and still rings
+    // that face's tokens. Rings follow the selected face, not the tray.
+    final int? face = awaitRoll
+        ? null
+        : (selectedFace ??
+              (legalByFace == null || legalByFace.isEmpty
+                  ? null
+                  : legalByFace.first['face']! as int));
+    if (show) {
+      final Set<int> live = _liveFaces(legalByFace);
+      var selectedTaken = false;
+      for (var i = 0; i < queue.length; i++) {
+        final Key die = Key('game-roll-tray-die-$i');
+        expect(find.byKey(die), findsOneWidget);
+        final bool selected = !awaitRoll && !selectedTaken && queue[i] == face;
+        if (selected) {
+          selectedTaken = true;
+        }
+        final bool dead =
+            !awaitRoll && legalByFace != null && !live.contains(queue[i]);
+        _expectChild(die, Key('game-roll-tray-selected-$i'), present: selected);
+        _expectChild(die, Key('game-roll-tray-dead-$i'), present: dead);
+      }
+      expect(
+        find.byKey(Key('game-roll-tray-die-${queue.length}')),
+        findsNothing,
+      );
     }
-    expect(_tokens(move.seat)[move.token], move.to);
-    await _holdUntil(tester, hold, const Duration(seconds: 4));
-  }
-
-  Future<void> _step6(_Roll roll, _Move move) async {
-    _expectFrom(move);
-    expect(roll.legal, <int>[move.token]);
-    expect(move.captured, isNotEmpty);
-    final String rollId = await _tapDie();
-    _pushRolled(roll, re: rollId);
-    await tester.pump();
-    // One legal token arms a 1500ms auto-move. Tap before that fires.
-    final String moveId = await _tapToken(move.token);
-    _pushMoved(move, re: moveId);
-    expect(move.extra, isTrue);
-    _pushTurn(roll.seat, re: moveId);
-    await tester.pump();
-    for (final (int seat, int token) in move.captured) {
-      expect(seat, 1);
-      expect(_tokens(seat)[token], -1);
+    if (mine) {
+      if (!awaitRoll && face != null && legalByFace != null) {
+        _expectRings(seat, _tokensForFace(legalByFace, face));
+      } else {
+        _expectRings(seat, const <int>[]);
+      }
     }
-    expect(_tokens(move.seat)[move.token], move.to);
-    await _holdFor(tester, const Duration(seconds: 4));
   }
 
-  Future<void> _step7(_Roll roll, _Pass pass, _Turn turn) async {
-    _expectInSync('no move');
-    expect(_tokens(0), <int>[57, 57, 57, 53]);
-    expect(_tokens(1), <int>[-1, -1, -1, -1]);
-    expect(controller.room!.turn!.seat, 0);
-    expect(controller.room!.turn!.phase, TurnPhase.awaitRoll);
-    // Capture 15's face. Protocol 12.1 also sends turn_passed, which
-    // that capture left out; the reducer accepts it and the mark stays.
-    expect(roll.face, 5);
-    expect(roll.legal, isEmpty);
-    expect(pass.reason, 'noLegalMove');
+  void _expectModel({
+    required int seat,
+    required TurnPhase phase,
+    required List<int> queue,
+    int? value,
+    List<Map<String, Object?>>? legalByFace,
+  }) {
+    expect(controller.hasDesynced, isFalse);
+    expect(controller.room!.turn!.seat, seat);
+    expect(controller.room!.turn!.phase, phase);
+    expect(controller.room!.turn!.queue, queue);
+    expect(controller.room!.turn!.value, value);
+    final got = controller.room!.turn!.legalByFace;
+    if (legalByFace == null) {
+      expect(got, isNull);
+      return;
+    }
+    expect(got, isNotNull);
+    expect(got!.map((entry) => entry.face).toList(), <int>[
+      for (final Map<String, Object?> entry in legalByFace)
+        entry['face']! as int,
+    ]);
+    for (var i = 0; i < legalByFace.length; i++) {
+      expect(got[i].tokens, List<int>.from(legalByFace[i]['tokens']! as List));
+    }
+  }
 
-    final String rollId = await _tapDie();
-    _pushRolled(roll, re: rollId);
-    _pushPassed(roll.seat, re: rollId);
-    _pushTurn(turn.seat, re: rollId);
-    await tester.pump();
-    await tester.pump();
-
-    expect(controller.room!.turn!.seat, turn.seat);
+  void _expectNoMove() {
     expect(find.byKey(const Key('game-die-no-move-mark')), findsOneWidget);
     final Finder notice = find.byKey(const Key('game-no-move-notice'));
     expect(notice, findsOneWidget);
@@ -1469,74 +1284,249 @@ class _Playback {
       tester.element(find.byType(GameScreen)),
     );
     expect(tester.widget<Text>(notice).data, loc.gameNoMove);
-    await _holdFor(tester, const Duration(seconds: 4));
   }
 
-  Future<void> _step8(_Roll roll, _Move move) async {
-    _expectFrom(move);
-    expect(move.won, isTrue);
-    expect(move.to, 57);
-    expect(move.to - move.from, greaterThanOrEqualTo(1));
-    final String rollId = await _tapDie();
-    _pushRolled(roll, re: rollId);
-    await tester.pump();
-    final String moveId = await _tapToken(move.token);
-    final Stopwatch hold = Stopwatch()..start();
-    _pushMoved(move, re: moveId);
-    _pushGameOver(re: moveId);
-    await tester.pump();
-    await _holdUntil(tester, hold, const Duration(milliseconds: 120));
-    expect(controller.room!.state, RoomState.finished);
-    expect(controller.room!.winner, 0);
-    expect(_tokens(0), <int>[57, 57, 57, 57]);
-    expect(find.byKey(const Key('game-screen-board')), findsOneWidget);
-    expect(find.byKey(const Key('game-screen-winner')), findsNothing);
-    await _holdUntil(tester, hold, const Duration(seconds: 6));
-    final Finder winner = find.byKey(const Key('game-screen-winner'));
-    expect(winner, findsOneWidget);
-    final AppLocalizations loc = AppLocalizations.of(
-      tester.element(find.byType(GameScreen)),
+  void _expectFrom(int seat, _MoveStep step) {
+    expect(
+      _tokens(seat)[step.token],
+      step.from,
+      reason:
+          'seat $seat token ${step.token} is ${_tokens(seat)[step.token]}, '
+          'next move starts at ${step.from}',
     );
-    final Text winnerText = tester.widget<Text>(winner);
-    final String? shown = winnerText.data ?? winnerText.textSpan?.toPlainText();
-    expect(shown, loc.endWinTitle);
   }
 
-  /// A turn the player did not ask for. No `re`: the same shape as a
-  /// timer-played turn (buildExpiryFrames). Pushed as its own diff so
-  /// the board can travel it, then held until that travel is finished
-  /// and the next beat starts from an idle board.
-  Future<void> _server(
-    _Roll roll,
-    _Move? move,
-    _Pass? pass,
-    _Turn? turn,
-  ) async {
-    _expectInSync(roll.tag);
-    if (pass != null) {
-      expect(pass.reason, 'noLegalMove');
-      _pushRolled(roll);
-      _pushPassed(roll.seat);
-      _pushTurn(turn!.seat);
-      await tester.pump();
+  Future<void> playAll(List<_Turn> turns) async {
+    for (final _Turn turn in turns) {
+      final bool mine = turn.seat == deviceSeat;
+      final int before = transport.sentRaw.length;
+      expect(
+        controller.hasDesynced,
+        isFalse,
+        reason: 'before seat ${turn.seat}',
+      );
+      for (final _Step step in turn.steps) {
+        switch (step) {
+          case _RollStep():
+            await _playRoll(turn.seat, step, mine: mine);
+          case _MoveStep():
+            await _playMove(turn.seat, step, mine: mine);
+        }
+      }
+      if (!mine) {
+        expect(
+          transport.sentRaw
+              .skip(before)
+              .where(
+                (String text) =>
+                    _typeOf(text) == 'roll' || _typeOf(text) == 'move',
+              ),
+          isEmpty,
+          reason: 'device sent on seat ${turn.seat}\'s turn',
+        );
+      }
+    }
+  }
+
+  Future<void> _playRoll(int seat, _RollStep step, {required bool mine}) async {
+    final String? re = mine ? await _tapDie() : null;
+    _k += 1;
+    final int k = _k;
+    await _push('rolled', _rolledData(step, seat, k), re: re);
+    if (!mine) {
+      // The thrown die of contract C-377 plays in this gap once it lands on this branch's base.
+      await _holdFor(tester, const Duration(milliseconds: 1600));
+    }
+    final bool awaitRoll = step.rollAgain || step.passTo != null;
+    _expectModel(
+      seat: seat,
+      phase: awaitRoll ? TurnPhase.awaitRoll : TurnPhase.awaitMove,
+      queue: step.queue,
+      value: step.face,
+      legalByFace: step.legalByFace,
+    );
+    _expectTray(
+      seat: seat,
+      queue: step.queue,
+      awaitRoll: awaitRoll,
+      mine: mine,
+      legalByFace: step.legalByFace,
+    );
+    if (step.passTo != null) {
+      if (mine) {
+        _motion('3 no move');
+        _expectNoMove();
+      }
+      await _push('turn_passed', <String, Object?>{
+        'seat': seat,
+        'reason': 'no_legal_move',
+      }, re: re);
+      await _push(
+        'turn',
+        _turnData(
+          seat: step.passTo!,
+          phase: 'await_roll',
+          queue: const <int>[],
+        ),
+        re: re,
+      );
+      if (mine) {
+        await _holdFor(tester, const Duration(milliseconds: 1000));
+        _expectNoMove();
+      }
       return;
     }
-    final _Move played = move!;
-    _expectFrom(played);
-    _pushRolled(roll);
-    _pushMoved(played);
-    if (played.won) {
-      _pushGameOver();
-    } else if (turn != null) {
-      _pushTurn(turn.seat);
+    if (step.rollAgain) {
+      if (mine) {
+        await _holdFor(tester, const Duration(milliseconds: 600));
+      }
+      await _push(
+        'turn',
+        _turnData(seat: seat, phase: 'await_roll', queue: step.queue),
+        re: re,
+      );
+      _expectModel(
+        seat: seat,
+        phase: TurnPhase.awaitRoll,
+        queue: step.queue,
+        value: null,
+      );
+      _expectTray(seat: seat, queue: step.queue, awaitRoll: true, mine: mine);
+      if (mine) {
+        await _holdFor(tester, const Duration(milliseconds: 400));
+      }
+      return;
+    }
+    if (mine) {
+      final bool dead = step.queue.any(
+        (int face) => !_liveFaces(step.legalByFace).contains(face),
+      );
+      _motion(dead ? '4 dead face' : '5 queue');
+      await _holdFor(tester, const Duration(milliseconds: 700));
+    }
+  }
+
+  Future<void> _playMove(int seat, _MoveStep step, {required bool mine}) async {
+    _expectFrom(seat, step);
+    String? re;
+    if (mine && step.pickTrayIndex != null) {
+      _motion('6 pick');
+      final int index = step.pickTrayIndex!;
+      final int before = transport.sentRaw.length;
+      final Finder die = find.byKey(Key('game-roll-tray-die-$index'));
+      await tester.ensureVisible(die);
+      await tester.pump();
+      await tester.tap(die);
+      await tester.pump();
+      expect(
+        transport.sentRaw.length,
+        before,
+        reason: 'picking a tray die sends nothing',
+      );
+      _expectTray(
+        seat: seat,
+        queue: controller.room!.turn!.queue,
+        awaitRoll: false,
+        mine: true,
+        legalByFace: _legalByFaceRaw(),
+        selectedFace: step.face,
+      );
+      await _holdFor(tester, const Duration(milliseconds: 800));
+    }
+    if (mine) {
+      re = await _tapToken(step.token, step.face);
+    }
+    await _push('moved', <String, Object?>{
+      'seat': seat,
+      'token': step.token,
+      'from': step.from,
+      'to': step.to,
+      'captured': <Object?>[],
+      'extra_roll': false,
+      'face': step.face,
+    }, re: re);
+    if (step.stayQueue != null) {
+      await _push(
+        'turn',
+        _turnData(
+          seat: seat,
+          phase: 'await_move',
+          queue: step.stayQueue!,
+          value: step.stayValue,
+          legal: step.stayLegal,
+          legalByFace: step.stayLegalByFace,
+        ),
+        re: re,
+      );
+      _expectModel(
+        seat: seat,
+        phase: TurnPhase.awaitMove,
+        queue: step.stayQueue!,
+        value: step.stayValue,
+        legalByFace: step.stayLegalByFace,
+      );
+      _expectTray(
+        seat: seat,
+        queue: step.stayQueue!,
+        awaitRoll: false,
+        mine: mine,
+        legalByFace: step.stayLegalByFace,
+      );
     } else {
-      expect(played.extra, isTrue, reason: played.tag);
-      _pushTurn(roll.seat);
+      await _push(
+        'turn',
+        _turnData(
+          seat: step.passTo!,
+          phase: 'await_roll',
+          queue: const <int>[],
+        ),
+        re: re,
+      );
     }
     await tester.pump();
-    expect(_tokens(played.seat)[played.token], played.to);
-    if (!played.won) {
-      await _holdTravel(played);
+    expect(_tokens(seat)[step.token], step.to);
+    await _holdTravel(step.steps);
+    expect(_tokens(seat)[step.token], step.to);
+  }
+
+  List<Map<String, Object?>>? _legalByFaceRaw() {
+    final byFace = controller.room!.turn!.legalByFace;
+    if (byFace == null) {
+      return null;
+    }
+    return <Map<String, Object?>>[
+      for (final entry in byFace)
+        <String, Object?>{'face': entry.face, 'tokens': entry.tokens},
+    ];
+  }
+
+  void expectEnd() {
+    expect(controller.hasDesynced, isFalse);
+    expect(controller.room!.state, RoomState.playing);
+    expect(controller.room!.winner, isNull);
+    expect(controller.room!.turn!.seat, 0);
+    expect(controller.room!.turn!.phase, TurnPhase.awaitRoll);
+    expect(controller.room!.turn!.queue, isEmpty);
+    expect(_tokens(0), <int>[11, 0, -1, -1]);
+    expect(_tokens(2), <int>[11, 0, -1, -1]);
+    final List<String> rolls = transport.sentRaw
+        .where((String text) => _typeOf(text) == 'roll')
+        .toList();
+    final List<String> moves = transport.sentRaw
+        .where((String text) => _typeOf(text) == 'move')
+        .toList();
+    expect(rolls, hasLength(6));
+    expect(moves, hasLength(5));
+    for (final String text in moves) {
+      final Map<String, Object?> data = _dataOf(text);
+      expect(
+        data.containsKey('face'),
+        isTrue,
+        reason: 'every move this device sends carries face',
+      );
+      final Object? face = data['face'];
+      expect(face, isA<int>());
+      expect(face, inInclusiveRange(1, 6));
     }
   }
 }

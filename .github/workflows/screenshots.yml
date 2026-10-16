@@ -145,7 +145,7 @@ jobs:
       fail-fast: false
       matrix:
         locale: [en, ar]
-        seat: [0, 1]
+        seat: [0, 2]
     # Job env, not an assignment inside `script:`. android-emulator-runner
     # passes each script line to its own `sh -c`, which would drop an inline
     # MOTION_LOCALE= or MOTION_SEAT= before record_motion.sh starts.

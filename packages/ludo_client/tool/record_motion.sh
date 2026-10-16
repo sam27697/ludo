@@ -21,14 +21,15 @@ case "$MOTION_LOCALE" in
 esac
 echo "MOTION_LOCALE=${MOTION_LOCALE}"
 
-# 0 or 1, which seat the device plays. Default 0 when unset. Same shape
+# 0 or 2, which seat the device plays. Default 0 when unset. A two-player
+# room is seated 0 and 2; seat 1 is not a seat in that room. Same shape
 # as the MOTION_LOCALE check above: refused before the emulator is
 # touched.
 MOTION_SEAT="${MOTION_SEAT-0}"
 case "$MOTION_SEAT" in
-  0|1) ;;
+  0|2) ;;
   *)
-    echo "MOTION_SEAT must be 0 or 1, got: ${MOTION_SEAT}" >&2
+    echo "MOTION_SEAT must be 0 or 2, got: ${MOTION_SEAT}" >&2
     exit 2
     ;;
 esac
