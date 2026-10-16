@@ -237,6 +237,17 @@ class _GameScreenState extends State<GameScreen> {
     _mountTurnFrame = _lastTurnFrame(widget.controller.gameTranscript);
     widget.controller.addListener(_onControllerChanged);
     _frameSub = widget.controller.frames.listen(_onFrame);
+    // K9: this screen can mount straight into a turn already mid-queue
+    // (a resumed app, a reconnect) with no `turn` or `rolled` frame of
+    // its own to have called `_rememberQueue` from. The queue the room
+    // snapshot already carries is just as much "the queue the client
+    // held for that seat" as one read off a frame, so seed it the same
+    // way; the very next `turn` frame for this seat overwrites it as
+    // usual.
+    final TurnState? mountTurn = widget.controller.room?.turn;
+    if (mountTurn != null) {
+      _rememberQueue(mountTurn.seat, mountTurn.queue);
+    }
     _syncCountdown();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _maybeFetchGameLog();
@@ -1811,14 +1822,23 @@ class _GameScreenState extends State<GameScreen> {
       );
     }
     final List<FaceLegal>? legalByFace = turn.legalByFace;
-    final List<TrayDieState> states = <TrayDieState>[
-      for (final int face in faces)
-        face == _selectedFace
-            ? TrayDieState.selected
-            : (legalByFace != null && _faceIsAlive(legalByFace, face)
-                  ? TrayDieState.plain
-                  : TrayDieState.dead),
-    ];
+    // A queue can hold the same face twice (two queued 6s): exactly one
+    // die is ever selected (the master's ruling on defect 1), the first
+    // queue index carrying the selected face. Any later die with that
+    // same face is alive but plain, reading as `trayDieCanMove`, never a
+    // second `selected`.
+    final List<TrayDieState> states = <TrayDieState>[];
+    bool selectedTaken = false;
+    for (final int face in faces) {
+      if (!selectedTaken && face == _selectedFace) {
+        states.add(TrayDieState.selected);
+        selectedTaken = true;
+      } else if (legalByFace != null && _faceIsAlive(legalByFace, face)) {
+        states.add(TrayDieState.plain);
+      } else {
+        states.add(TrayDieState.dead);
+      }
+    }
     return (faces, states, color);
   }
 

@@ -357,8 +357,16 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
       child: AnimatedOpacity(
         opacity: slot.visible ? 1 : 0,
         duration: reduced ? Duration.zero : _kTrayMotion,
+        // K11: each die keeps its own announcement through the whole
+        // enter fade, never silently absent mid-transition.
+        alwaysIncludeSemantics: true,
         child: Semantics(
           key: Key('game-roll-tray-die-$index'),
+          // K2/K11: a boundary of its own -- without it, two adjacent
+          // dice with their own tap action and label collapse into one
+          // merged node, which hid die 1 and 2's own reading behind
+          // die 0's whenever a queue held more than one die.
+          container: true,
           button: true,
           label: label,
           enabled: exposesTapAction,
