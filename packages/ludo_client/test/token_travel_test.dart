@@ -49,20 +49,21 @@ Map<int, List<int>> _allInYard() => <int, List<int>>{
 };
 
 /// The centre board.dart's `_tokenLayer` draws token [tokenIndex] of [seat]
-/// at, when it sits still at [progress]: `cellFor`'s cell centre plus the
-/// fan offset `_tokenLayer` applies today by token index (`cellSize * 0.12`,
-/// negated for an even index on one axis, negated again for index < 2 on
-/// the other) -- the same arithmetic `_tokenHitRect` uses for a hit target's
-/// centre, which is why this one function covers both.
+/// at, when it sits still at [progress]: `toView` of `cellFor`'s cell centre
+/// under `viewQuarters(mySeat)` plus the fan offset `_tokenLayer` applies
+/// today by token index (`cellSize * 0.12`, negated for an even index on one
+/// axis, negated again for index < 2 on the other) -- the same arithmetic
+/// `_tokenHitRect` uses for a hit target's centre, which is why this one
+/// function covers both.
 Offset _expectedCenter({
   required int seat,
   required int tokenIndex,
   required int progress,
+  int? mySeat,
 }) {
-  final BoardCell cell = cellFor(
-    seat: seat,
-    progress: progress,
-    tokenIndex: tokenIndex,
+  final BoardCell cell = toView(
+    cellFor(seat: seat, progress: progress, tokenIndex: tokenIndex),
+    viewQuarters(mySeat),
   );
   final double fan = _cellSize * 0.12;
   final double fanDx = tokenIndex.isEven ? -fan : fan;
@@ -88,6 +89,7 @@ void _expectDrawnAt(
   required int seat,
   required int tokenIndex,
   required int progress,
+  int? mySeat,
   required String because,
 }) {
   final Offset actual =
@@ -97,6 +99,7 @@ void _expectDrawnAt(
     seat: seat,
     tokenIndex: tokenIndex,
     progress: progress,
+    mySeat: mySeat,
   );
   final double distance = (actual - expected).distance;
   expect(
@@ -354,6 +357,7 @@ void main() {
           seat: 0,
           tokenIndex: 0,
           progress: 7,
+          mySeat: 0,
         );
         final double hitDistance =
             (hitRect.center - _boardOrigin(tester) - expectedHitCenter)
@@ -386,6 +390,7 @@ void main() {
           seat: 0,
           tokenIndex: 0,
           progress: 3,
+          mySeat: 0,
           because:
               'the drawn token itself must still be travelling: only the '
               'tap target and the Semantics identifier jump immediately',
