@@ -315,8 +315,7 @@ void main() {
     final Map<String, Object?> next =
         await readAndDrain(actingClient, otherClient, because: because);
     if (next['t'] == 'turn') {
-      final Map<String, Object?> turnData =
-          next['d']! as Map<String, Object?>;
+      final Map<String, Object?> turnData = next['d']! as Map<String, Object?>;
       expect(
         turnData['phase'],
         'await_roll',
@@ -398,8 +397,7 @@ void main() {
         reason: '$because: moved must be followed by game_over, '
             'turn_passed or turn; got "${after['t']}": ${after['d']}',
       );
-      final Map<String, Object?> turnData =
-          after['d']! as Map<String, Object?>;
+      final Map<String, Object?> turnData = after['d']! as Map<String, Object?>;
       if (turnData['phase'] == 'await_move') {
         final Object? rawLegal = turnData['legal'];
         if (rawLegal is! List<Object?> || rawLegal.isEmpty) {

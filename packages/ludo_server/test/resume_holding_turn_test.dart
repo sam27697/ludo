@@ -259,8 +259,7 @@ void main() {
     final Map<String, Object?> next =
         await readAndDrain(actingClient, otherClient, because: because);
     if (next['t'] == 'turn') {
-      final Map<String, Object?> turnData =
-          next['d']! as Map<String, Object?>;
+      final Map<String, Object?> turnData = next['d']! as Map<String, Object?>;
       expect(
         turnData['phase'],
         'await_roll',
@@ -276,8 +275,7 @@ void main() {
           'followed by turn (a queued 6) or turn_passed; got '
           '"${next['t']}": ${next['d']}',
     );
-    final Map<String, Object?> passedData =
-        next['d']! as Map<String, Object?>;
+    final Map<String, Object?> passedData = next['d']! as Map<String, Object?>;
     expect(
       passedData['reason'],
       anyOf('no_legal_move', 'three_sixes'),
@@ -324,8 +322,7 @@ void main() {
         reason: '$because: expected rolled for face ${faces[i]}, got '
             '"${rolled['t']}": ${rolled['d']}',
       );
-      final Map<String, Object?> data =
-          rolled['d']! as Map<String, Object?>;
+      final Map<String, Object?> data = rolled['d']! as Map<String, Object?>;
       expect(data['seat'], seat);
       expect(
         data['value'],

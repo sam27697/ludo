@@ -249,8 +249,7 @@ Future<_Observed> _readRollBranch(WireTestClient client) async {
       timeout: const Duration(seconds: 3),
     );
     if (next['t'] == 'turn') {
-      final Map<String, Object?> turnData =
-          next['d']! as Map<String, Object?>;
+      final Map<String, Object?> turnData = next['d']! as Map<String, Object?>;
       expect(
         turnData['phase'],
         'await_roll',

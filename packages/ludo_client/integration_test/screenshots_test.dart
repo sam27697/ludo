@@ -8460,10 +8460,7 @@ Future<_OpenedTrayGame> _openHostGame(
     final Widget home;
     if (locale.languageCode == 'ar') {
       home = _reconnectingCaptureHarness(
-        HomeScreen(
-          controllerFactory: trayFactory.call,
-          onToggleLocale: () {},
-        ),
+        HomeScreen(controllerFactory: trayFactory.call, onToggleLocale: () {}),
         locale: locale,
       );
     } else {
@@ -8623,10 +8620,7 @@ Future<int> _pushTraySeq(
 }) async {
   final int next = seq + 1;
   transport.pushText(
-    _frame(
-      type: type,
-      data: <String, Object?>{...data, 'seq': next},
-    ),
+    _frame(type: type, data: <String, Object?>{...data, 'seq': next}),
   );
   await tester.pump();
   await tester.pump();
@@ -8834,7 +8828,8 @@ Future<void> _shootLiveTray(
     expect(
       _progressOf(controller, 0, 0),
       0,
-      reason: 'capture $shotName: token 0 must sit on square 0 before the rolls',
+      reason:
+          'capture $shotName: token 0 must sit on square 0 before the rolls',
     );
     seq = await _pushSixSixThen(
       tester,
@@ -8965,8 +8960,7 @@ Future<void> _shootLiveTray(
         tester,
         Key('board-legal-ring-0-$token'),
         present: true,
-        reason:
-            'capture $shotName: K7 the default 6 rings token $token',
+        reason: 'capture $shotName: K7 the default 6 rings token $token',
       );
     }
     _expectTrayBesideDie(
@@ -9070,11 +9064,12 @@ Future<void> _shootPickedTray(
       'awaitMove',
       reason: 'capture $shotName: the pick does not leave awaitMove',
     );
-    expect(
-      turn.queue,
-      <int>[6, 6, 3, 2],
-      reason: 'capture $shotName: the queue is [6, 6, 3, 2]',
-    );
+    expect(turn.queue, <int>[
+      6,
+      6,
+      3,
+      2,
+    ], reason: 'capture $shotName: the queue is [6, 6, 3, 2]');
     final AppLocalizations loc = AppLocalizations.of(
       tester.element(find.byType(GameScreen)),
     );
@@ -9247,7 +9242,8 @@ Future<void> _shootDeadTray(
     expect(
       _progressOf(controller, 0, 0),
       10,
-      reason: 'capture $shotName: token 0 must sit on square 10 before the move',
+      reason:
+          'capture $shotName: token 0 must sit on square 10 before the move',
     );
 
     // One live face and one token would auto-move after 1500ms. The

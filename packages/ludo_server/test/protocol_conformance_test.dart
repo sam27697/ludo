@@ -338,8 +338,7 @@ void main() {
       }
       final List<int> legal = (data['legal']! as List<Object?>).cast<int>();
       if (legal.isEmpty) {
-        final Map<String, Object?> next =
-            await _nextBroadcast(lobby, current);
+        final Map<String, Object?> next = await _nextBroadcast(lobby, current);
         if (next['t'] == 'turn') {
           final Map<String, Object?> turnData =
               next['d']! as Map<String, Object?>;
@@ -377,8 +376,7 @@ void main() {
             final Map<String, Object?> turnFrame =
                 await _nextBroadcast(lobby, current);
             expect(turnFrame['t'], 'turn');
-            current =
-                (turnFrame['d']! as Map<String, Object?>)['seat']! as int;
+            current = (turnFrame['d']! as Map<String, Object?>)['seat']! as int;
             break;
           }
           expect(
@@ -1010,10 +1008,9 @@ void main() {
       Map<String, Object?> rolledFrame = first;
       var awaitingMove = false;
       for (var extra = 0; extra < 6; extra++) {
-        final List<int> legal =
-            ((rolledFrame['d']! as Map<String, Object?>)['legal']!
-                    as List<Object?>)
-                .cast<int>();
+        final List<int> legal = ((rolledFrame['d']!
+                as Map<String, Object?>)['legal']! as List<Object?>)
+            .cast<int>();
         if (legal.isNotEmpty) {
           awaitingMove = true;
           break;
@@ -1029,8 +1026,8 @@ void main() {
             reason: 'a 6 owing another roll stays with seat $onTurn; got '
                 '${turnData['seat']}',
           );
-          actor.client.send('roll', <String, Object?>{},
-              id: 'replay-roll-cont-$extra');
+          actor.client
+              .send('roll', <String, Object?>{}, id: 'replay-roll-cont-$extra');
           rolledFrame = await actor.client.next();
           expect(
             rolledFrame['t'],

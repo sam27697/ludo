@@ -308,8 +308,7 @@ void main() {
           'turn (a 6 owing another roll) or turn_passed (section 12.1 and '
           '21.3); got "${next['t']}": ${next['d']}',
     );
-    final Map<String, Object?> passedData =
-        next['d']! as Map<String, Object?>;
+    final Map<String, Object?> passedData = next['d']! as Map<String, Object?>;
     expect(
       passedData['reason'],
       anyOf('no_legal_move', 'three_sixes'),
@@ -371,8 +370,7 @@ void main() {
             'turn_passed or turn (section 12.2 and 21.3); got '
             '"${after['t']}": ${after['d']}',
       );
-      final Map<String, Object?> turnData =
-          after['d']! as Map<String, Object?>;
+      final Map<String, Object?> turnData = after['d']! as Map<String, Object?>;
       if (turnData['phase'] == 'await_move') {
         pending = (turnData['legal']! as List<Object?>).cast<int>();
         expect(
@@ -1627,9 +1625,8 @@ void main() {
       // under any face sequence; see _winUnreachable above for the fuller
       // accounting), rather than this file assuming it.
       const int wanted = 5;
-      final List<int>? faces =
-          findRollBudgetFaces(
-              seats: steeredSeats, rolls: wanted, rules: serverRoomRules);
+      final List<int>? faces = findRollBudgetFaces(
+          seats: steeredSeats, rolls: wanted, rules: serverRoomRules);
       expect(
         faces,
         isNotNull,
