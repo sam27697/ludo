@@ -35,6 +35,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
+import 'package:ludo_client/src/die_cube.dart' show kThrowTumble;
 import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
@@ -505,6 +506,29 @@ void main() {
               'rule 4a: the hold ending early clears the notice together '
               'with the mark; game-no-move-notice is still shown',
         );
+        // C-377 D2: seat 1's roll is thrown on the board first, and the
+        // shared die keeps its face hidden until that throw lands. What it
+        // must never do meanwhile is keep showing the stale held face 3.
+        expect(
+          find.byKey(_faceKey(3)),
+          findsNothing,
+          reason:
+              'the hold has ended: the die must not keep the stale held '
+              'face 3 while seat 1\'s throw is in flight',
+        );
+        expect(
+          find.byKey(_faceKey(5)),
+          findsNothing,
+          reason:
+              'C-377 D2: face 5 is not given away before seat 1\'s throw '
+              'lands',
+        );
+        Duration waited = Duration.zero;
+        const Duration step = Duration(milliseconds: 16);
+        while (waited < kThrowTumble + step) {
+          await tester.pump(step);
+          waited += step;
+        }
         expect(
           find.byKey(_faceKey(5)),
           findsOneWidget,
