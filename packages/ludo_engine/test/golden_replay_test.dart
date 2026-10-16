@@ -16,6 +16,16 @@
 // names both the record and the physical line number in the corpus file,
 // because "line 17" is what someone actually greps for.
 //
+// Section 10.5 does the same for a move when the record's rules carry
+// rollQueue: face is mandatory there and absent otherwise. rules.rollQueue
+// and rules.homeBonus are read when present; absent, the RulesConfig
+// default is used, so the 40 legacy lines build the same config they did
+// before those keys existed.
+//
+// LUDO_CORPUS, when set to a non-empty path, is the file replayed instead
+// of the committed corpus. The replay suite points it at a file outside
+// the repo.
+//
 // Ambiguity worth flagging for whoever blesses the corpus: the work order's
 // example intention objects carry only {"t", "seat", "token"?, "face"?},
 // with no documented field for an intention that is expected to be
@@ -33,7 +43,17 @@ import 'dart:io';
 import 'package:ludo_engine/ludo_engine.dart';
 import 'package:test/test.dart';
 
-const String _corpusPath = 'test/golden/corpus.jsonl';
+const String _defaultCorpusPath = 'test/golden/corpus.jsonl';
+
+String _corpusPathFromEnvironment() {
+  final fromEnv = Platform.environment['LUDO_CORPUS'];
+  if (fromEnv == null || fromEnv.isEmpty) {
+    return _defaultCorpusPath;
+  }
+  return fromEnv;
+}
+
+final String _corpusPath = _corpusPathFromEnvironment();
 
 EngineError _parseEngineError(String name) {
   for (final value in EngineError.values) {
@@ -44,14 +64,48 @@ EngineError _parseEngineError(String name) {
   throw FormatException('unknown EngineError "$name" in golden corpus');
 }
 
+/// A rules flag the corpus may omit. Absent yields the [RulesConfig]
+/// default for that flag, not a hard-coded stand-in.
+bool _optionalRuleFlag(Map<String, Object?> rules, String key) {
+  final defaults = const RulesConfig();
+  if (!rules.containsKey(key)) {
+    return switch (key) {
+      'rollQueue' => defaults.rollQueue,
+      'homeBonus' => defaults.homeBonus,
+      _ => throw ArgumentError('unknown rules flag "$key"'),
+    };
+  }
+  final value = rules[key];
+  if (value is! bool) {
+    throw FormatException(
+      'rules.$key must be a bool when present, got $value',
+    );
+  }
+  return value;
+}
+
 GameConfig _parseConfig(Map<String, Object?> record) {
   final rawSeats = record['seats']! as List<Object?>;
   final seats = rawSeats.map((s) => s! as int).toList();
   final rawRules = record['rules']! as Map<String, Object?>;
-  final rules = RulesConfig(
-    blocks: rawRules['blocks']! as bool,
-    captureBonus: rawRules['captureBonus']! as bool,
-  );
+  final hasRollQueue = rawRules.containsKey('rollQueue');
+  final hasHomeBonus = rawRules.containsKey('homeBonus');
+  // Neither key: the constructor a legacy record has always taken.
+  // rollQueue and homeBonus stay at the RulesConfig defaults.
+  final RulesConfig rules;
+  if (!hasRollQueue && !hasHomeBonus) {
+    rules = RulesConfig(
+      blocks: rawRules['blocks']! as bool,
+      captureBonus: rawRules['captureBonus']! as bool,
+    );
+  } else {
+    rules = RulesConfig(
+      blocks: rawRules['blocks']! as bool,
+      captureBonus: rawRules['captureBonus']! as bool,
+      rollQueue: _optionalRuleFlag(rawRules, 'rollQueue'),
+      homeBonus: _optionalRuleFlag(rawRules, 'homeBonus'),
+    );
+  }
   final seed = record['seed']! as int;
   return GameConfig(seats: seats, rules: rules, seed: seed);
 }
@@ -66,6 +120,7 @@ Intention _parseIntention(
   required String recordName,
   required int physicalLine,
   required int intentionIndex,
+  required bool rollQueue,
 }) {
   final type = raw['t']! as String;
   final seat = raw['seat']! as int;
@@ -86,7 +141,30 @@ Intention _parseIntention(
       }
       return RollIntention(seat, rawFace);
     case 'move':
-      return MoveIntention(seat, raw['token']! as int);
+      final token = raw['token']! as int;
+      final rawFace = raw['face'];
+      if (rollQueue) {
+        if (rawFace is! int) {
+          throw FormatException(
+            'golden corpus line $physicalLine, record "$recordName", '
+            'intention $intentionIndex ($raw): a "move" record in a '
+            'rollQueue game has no integer "face" field. '
+            'docs/ENGINE_API.md section 10.5 makes "face" mandatory on '
+            'every move intention when rules.rollQueue is true, and absent '
+            'on every move intention otherwise.',
+          );
+        }
+        return MoveIntention(seat, token, face: rawFace);
+      }
+      if (raw.containsKey('face')) {
+        throw FormatException(
+          'golden corpus line $physicalLine, record "$recordName", '
+          'intention $intentionIndex ($raw): a "move" record carries '
+          '"face", which docs/ENGINE_API.md section 10.5 allows only when '
+          'rules.rollQueue is true.',
+        );
+      }
+      return MoveIntention(seat, token);
     default:
       throw FormatException(
         'golden corpus line $physicalLine, record "$recordName", '
@@ -111,6 +189,7 @@ void _replayRecord(Map<String, Object?> record, int physicalLine) {
       recordName: name,
       physicalLine: physicalLine,
       intentionIndex: i,
+      rollQueue: config.rules.rollQueue,
     );
     final result = apply(state, intention);
     final expectedErrorName = raw['error'] as String?;
