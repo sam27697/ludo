@@ -454,7 +454,8 @@ class MoveIntention extends Intention {
 Map<int, List<int>> legalByFace(GameState state);
 
 /// The face a move with `face == null` spends: the first entry of the
-/// queue, in queue order, that has a legal token. Null when none.
+/// queue, in queue order, that has a legal token. Null outside awaitMove
+/// (a queue may be non-empty in awaitRoll) and when no face can move.
 int? defaultFace(GameState state);
 ```
 
@@ -485,6 +486,12 @@ face outside 1..6.
    `TurnBegan`; `queue = []`, next seat, `awaitRoll`. Otherwise phase
    `awaitMove`; emit `Rolled`.
 
+`Rolled.legal` is `legalTokens` of the state after the roll, as in section
+5: the tokens of `defaultFace` when that state is `awaitMove`, `[]` in every
+other case (a queued 6 that owes another roll, a voided or passed turn).
+It is never the legal set of the rolled face alone. PROTOCOL.md section
+21.1 sends the same list as `legal`.
+
 ### 10.4 MoveIntention with `rollQueue`
 
 Checks, in order, after the shared ones of section 4 (phase, seat, token
@@ -503,7 +510,11 @@ the token not legal for the face: `illegalMove`.
 5. No bonus, queue empty: next seat, `awaitRoll`, `sixes = 0`, emit
    `TurnBegan`.
 6. No bonus, queue non-empty but no face can move: emit
-   `TurnEnded(noLegalMove)` then `TurnBegan`; queue `[]`, next seat.
+   `TurnEnded(noLegalMove)` then `TurnBegan`; queue `[]`, next seat,
+   `awaitRoll`, `sixes = 0`.
+
+Every seat change in this section sets `sixes = 0`. Every malformed state
+in 10.2 is a `FormatException`, as for `homeBonus`.
 
 `sixes` is untouched by a move except where a step sets it.
 

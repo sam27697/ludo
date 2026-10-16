@@ -634,11 +634,16 @@ class Connection {
     // docs/PROTOCOL.md section 13.1: a standalone `turn` frame always
     // follows `game_started`, announcing the opening segment the same way
     // every later one is announced, at its own seq one greater than
-    // `game_started`'s.
+    // `game_started`'s. Section 21.3 rule 1: every `turn` frame carries
+    // `phase` and `queue`; the opening one is always `await_roll` with an
+    // empty queue, since nobody has rolled yet.
+    final TurnQueueFields openingFields = turnQueueFields(ok.room.game!);
     final Map<String, Object?> turnData = buildTurn(
       seat: ok.room.game!.currentSeat,
       deadlineMs: ok.nextDeadlineMs,
       seq: ok.turnSeq,
+      phase: openingFields.phase,
+      queue: openingFields.queue,
     );
     _sendAndBroadcast(
       room: ok.room.code,
@@ -1200,7 +1205,10 @@ class Connection {
       return;
     }
 
-    const Set<String> allowedKeys = <String>{'token'};
+    // docs/PROTOCOL.md section 21.1: `move` gains an optional `face`,
+    // checked at the same ladder position as `token` -- a malformed field
+    // is not an illegal move, whichever of the two it is.
+    const Set<String> allowedKeys = <String>{'token', 'face'};
     if (!envelope.data.keys.every(allowedKeys.contains)) {
       _reject(envelope, ProtocolError.badField);
       return;
@@ -1210,11 +1218,21 @@ class Connection {
       _reject(envelope, ProtocolError.badField);
       return;
     }
+    int? face;
+    if (envelope.data.containsKey('face')) {
+      final Object? rawFace = envelope.data['face'];
+      if (rawFace is! int || rawFace < 1 || rawFace > 6) {
+        _reject(envelope, ProtocolError.badField);
+        return;
+      }
+      face = rawFace;
+    }
 
     final MoveResult result = registry.move(
       code: roomCode!,
       seatToken: seatToken!,
       token: rawToken,
+      face: face,
     );
     if (result is MoveFailure) {
       _reject(envelope, result.error, room: roomCode);
@@ -1268,13 +1286,19 @@ class Connection {
   }
 
   /// Builds and sends every frame `RoomRegistry.roll` decided on, in the
-  /// order section 12.1 fixes: `rolled` always, then `turn_passed` and
-  /// `turn` together, exactly when the roll ended the turn. `re` is set on
-  /// every one of them for this socket's own copy, and on none of them for
-  /// anyone else's, per section 12.3.
+  /// order section 21.3 rule 4 fixes (replacing section 12.1 for every room,
+  /// since every room plays the queue): `rolled` always, carrying the
+  /// queue after the roll and, when a move is now pending, `legal_by_face`;
+  /// then, exactly when [ok] set them, `turn_passed` and/or a `turn` for
+  /// whichever seat holds the segment next -- the same seat, owing another
+  /// roll after a queued 6, or the next seat once the turn has passed. `re`
+  /// is set on every one of them for this socket's own copy, and on none of
+  /// them for anyone else's, per section 12.3.
   void _publishRoll(ParsedEnvelope envelope, RollOk ok) {
     final engine.Rolled rolledEvent =
         ok.events.whereType<engine.Rolled>().single;
+    final engine.GameState afterRoll = ok.room.game!;
+    final TurnQueueFields afterRollFields = turnQueueFields(afterRoll);
     final Map<String, Object?> rolledData = buildRolled(
       seat: rolledEvent.seat,
       value: rolledEvent.value,
@@ -1283,6 +1307,8 @@ class Connection {
       k: ok.k,
       reveal: ok.reveal,
       seq: ok.rolledSeq,
+      queue: afterRollFields.queue,
+      legalByFace: afterRollFields.legalByFace,
     );
     _sendAndBroadcast(
       room: ok.room.code,
@@ -1291,9 +1317,23 @@ class Connection {
       re: envelope.id,
     );
 
-    final List<engine.TurnEnded> turnEndedEvents =
-        ok.events.whereType<engine.TurnEnded>().toList();
-    if (turnEndedEvents.isEmpty) {
+    if (ok.turnPassedSeq != null) {
+      final engine.TurnEnded turnEnded =
+          ok.events.whereType<engine.TurnEnded>().single;
+      final Map<String, Object?> passedData = buildTurnPassed(
+        seat: turnEnded.seat,
+        reason: _wireTurnEndReason(turnEnded.reason),
+        seq: ok.turnPassedSeq!,
+      );
+      _sendAndBroadcast(
+        room: ok.room.code,
+        type: 'turn_passed',
+        data: passedData,
+        re: envelope.id,
+      );
+    }
+
+    if (ok.turnSeq == null) {
       _log(
         type: envelope.type,
         id: envelope.id,
@@ -1305,23 +1345,15 @@ class Connection {
       return;
     }
 
-    final engine.TurnEnded turnEnded = turnEndedEvents.single;
-    final Map<String, Object?> passedData = buildTurnPassed(
-      seat: turnEnded.seat,
-      reason: _wireTurnEndReason(turnEnded.reason),
-      seq: ok.turnPassedSeq!,
-    );
-    _sendAndBroadcast(
-      room: ok.room.code,
-      type: 'turn_passed',
-      data: passedData,
-      re: envelope.id,
-    );
-
     final Map<String, Object?> turnData = buildTurn(
-      seat: ok.room.game!.currentSeat,
+      seat: afterRoll.currentSeat,
       deadlineMs: ok.nextDeadlineMs!,
       seq: ok.turnSeq!,
+      phase: afterRollFields.phase,
+      queue: afterRollFields.queue,
+      value: afterRollFields.value,
+      legal: afterRollFields.legal,
+      legalByFace: afterRollFields.legalByFace,
     );
     _sendAndBroadcast(
       room: ok.room.code,
@@ -1340,7 +1372,10 @@ class Connection {
   }
 
   /// Builds and sends every frame `RoomRegistry.move` decided on: `moved`
-  /// always, then exactly one of `game_over` or `turn`, per section 12.2.
+  /// always, carrying the face it spent, then exactly one of `game_over`,
+  /// or `turn_passed` followed by `turn`, or a bare `turn` -- section 12.2
+  /// and section 21.3 rule 4, which replaces it for every room since every
+  /// room plays the queue.
   void _publishMove(ParsedEnvelope envelope, MoveOk ok) {
     final engine.Moved movedEvent = ok.events.whereType<engine.Moved>().single;
     final List<Map<String, Object?>> captured = <Map<String, Object?>>[
@@ -1356,6 +1391,7 @@ class Connection {
       captured: captured,
       extraRoll: extraRoll,
       seq: ok.movedSeq,
+      face: ok.face,
     );
     _sendAndBroadcast(
       room: ok.room.code,
@@ -1390,10 +1426,33 @@ class Connection {
       return;
     }
 
+    if (ok.turnPassedSeq != null) {
+      final engine.TurnEnded turnEnded =
+          ok.events.whereType<engine.TurnEnded>().single;
+      final Map<String, Object?> passedData = buildTurnPassed(
+        seat: turnEnded.seat,
+        reason: _wireTurnEndReason(turnEnded.reason),
+        seq: ok.turnPassedSeq!,
+      );
+      _sendAndBroadcast(
+        room: ok.room.code,
+        type: 'turn_passed',
+        data: passedData,
+        re: envelope.id,
+      );
+    }
+
+    final engine.GameState afterMove = ok.room.game!;
+    final TurnQueueFields afterMoveFields = turnQueueFields(afterMove);
     final Map<String, Object?> turnData = buildTurn(
-      seat: ok.room.game!.currentSeat,
+      seat: afterMove.currentSeat,
       deadlineMs: ok.nextDeadlineMs!,
       seq: ok.turnSeq!,
+      phase: afterMoveFields.phase,
+      queue: afterMoveFields.queue,
+      value: afterMoveFields.value,
+      legal: afterMoveFields.legal,
+      legalByFace: afterMoveFields.legalByFace,
     );
     _sendAndBroadcast(
       room: ok.room.code,

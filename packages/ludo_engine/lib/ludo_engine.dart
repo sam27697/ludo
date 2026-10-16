@@ -23,4 +23,5 @@ export 'src/game_state.dart' show GameState;
 export 'src/intentions.dart' show Intention, RollIntention, MoveIntention;
 export 'src/rules_config.dart' show RulesConfig;
 export 'src/hash.dart' show stateHash;
-export 'src/engine_core.dart' show newGame, apply, legalTokens, isTerminal;
+export 'src/engine_core.dart'
+    show newGame, apply, legalTokens, isTerminal, legalByFace, defaultFace;

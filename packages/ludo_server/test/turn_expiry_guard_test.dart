@@ -161,6 +161,7 @@ class _MoveFailingRegistry extends RoomRegistry {
     required String code,
     required String seatToken,
     required int token,
+    int? face,
   }) {
     moveCalls++;
     return MoveFailure(ProtocolError.internal);
