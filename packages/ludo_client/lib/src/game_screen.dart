@@ -37,6 +37,7 @@ import 'net/connection.dart';
 import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
+import 'roll_tray.dart';
 import 'theme.dart';
 
 /// Distinct [Navigator.pop] result from the finished-board next-table
@@ -92,6 +93,49 @@ class _GameScreenState extends State<GameScreen> {
   Timer? _autoMoveTimer;
   int? _pendingAutoMoveToken;
   int? _autoMoveHandledK;
+
+  // K8 (order 365, C-362 Part B): the face the auto-move hold's single
+  // legal entry would spend, alongside the token above. Null under the
+  // `legal.length == 1` fallback for a server with no roll queue.
+  int? _pendingAutoMoveFace;
+
+  // docs/PROTOCOL.md section 21 (C-362 Part B), order 365, K9/K10: the
+  // roll queue's own bookkeeping, kept here because the model clears
+  // `TurnState.queue` back to its placeholder `[]` on `moved` and
+  // `turn_passed` (A4, 21.3 ruling 1) and this screen is what has to
+  // rebuild a dead-ending turn's unspent faces across that gap.
+  //
+  // `_lastKnownQueue`: the queue this screen last confirmed real (read
+  // off a `turn` frame, or a `rolled` that did not end the turn) for a
+  // given seat -- "the queue the client held for that seat before the
+  // roll [or move]", K9's own phrase.
+  final Map<int, List<int>> _lastKnownQueue = <int, List<int>>{};
+
+  // A `rolled`- or `moved`-dead candidate, banked the moment this screen
+  // sees the turn might be about to die on dead faces, resolved into D
+  // (K9) the instant `turn_passed` names why, or dropped if anything else
+  // arrives first.
+  int? _deadCandidateSeat;
+  List<int>? _deadCandidateQueueBefore;
+  int? _deadCandidateFace;
+  bool _deadCandidateFromMove = false;
+
+  // K1c/K9: the tray's own dead-faces hold. Deliberately not seat-gated
+  // the way the die's own `_noMoveVisible` hold below is (C-236 rule 4
+  // kept that mechanism, and its gating, exactly as it was): K1's own
+  // closing line is "every player sees every seat's tray", so this one
+  // arms for whichever seat's turn died, for every viewer.
+  int? _trayDeadSeat;
+  List<int>? _trayDeadFaces;
+  Timer? _trayDeadTimer;
+
+  // K4: the face selected to spend from the queue, and the (k, queue)
+  // pair it was last reset against, so a manual tray tap is not undone by
+  // the next frame that merely repeats the same turn (a countdown tick,
+  // say) rather than genuinely moving it on.
+  int? _selectedFace;
+  int? _selectedFaceSeenK;
+  List<int>? _selectedFaceSeenQueue;
 
   // The one guard both move paths (the hold's own timer and a token tap)
   // share: once a move has gone out for a turn.k, nothing sends a second
@@ -203,6 +247,7 @@ class _GameScreenState extends State<GameScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _checkMountTurnCue();
+    _syncSelectedFace();
     _syncAutoMove();
     _syncConnectionLostAnnouncement();
   }
@@ -214,6 +259,7 @@ class _GameScreenState extends State<GameScreen> {
     _autoMoveTimer?.cancel();
     _rollNoAnswerTimer?.cancel();
     _noMoveTimer?.cancel();
+    _trayDeadTimer?.cancel();
     _dropPendingLandingCues();
     _endHoldDwellTimer?.cancel();
     _endHoldLimitTimer?.cancel();
@@ -251,10 +297,20 @@ class _GameScreenState extends State<GameScreen> {
       }
     }
 
-    final List<FeedbackCue> cues = cuesForFrame(
+    List<FeedbackCue> cues = cuesForFrame(
       frame,
       mySeat: widget.controller.seat,
     );
+    // docs/PROTOCOL.md section 21 (C-362 Part B), order 365, K9/K10: must
+    // run ahead of every use of `cues` below, since a 6 (or a bonus roll)
+    // that still owes another roll makes `cuesForFrame` answer `noMove`
+    // for this same `rolled` -- correct for an old server's genuine dead
+    // roll, wrong here.
+    if (_trackRollQueue(frame)) {
+      cues = cues
+          .where((FeedbackCue cue) => cue != FeedbackCue.noMove)
+          .toList();
+    }
     final FeedbackService feedback = FeedbackScope.of(context);
     final int? from = _intAt(frame.data, 'from');
     final int? to = _intAt(frame.data, 'to');
@@ -316,6 +372,7 @@ class _GameScreenState extends State<GameScreen> {
         _armNoMoveHold(_intAt(frame.data, 'value'));
       } else if (_intAt(frame.data, 'value') != null) {
         _dropNoMoveHold();
+        _dropTrayDead();
       }
     }
 
@@ -579,12 +636,22 @@ class _GameScreenState extends State<GameScreen> {
     _autoMoveTimer?.cancel();
     _autoMoveTimer = null;
     _pendingAutoMoveToken = null;
+    _pendingAutoMoveFace = null;
     _autoMoveHandledK = null;
     _moveSentForK = null;
     _rollNoAnswerTimer?.cancel();
     _rollNoAnswerTimer = null;
     _rollWaitK = null;
     _rollNoAnswer = false;
+    _lastKnownQueue.clear();
+    _dropDeadCandidate();
+    _trayDeadTimer?.cancel();
+    _trayDeadTimer = null;
+    _trayDeadSeat = null;
+    _trayDeadFaces = null;
+    _selectedFace = null;
+    _selectedFaceSeenK = null;
+    _selectedFaceSeenQueue = null;
     _dropPendingLandingCues();
     _endHoldDwellTimer?.cancel();
     _endHoldDwellTimer = null;
@@ -624,6 +691,236 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
+  // == docs/PROTOCOL.md section 21 (C-362 Part B), order 365: the roll ==
+  // == queue's own bookkeeping (K9/K10).                               ==
+
+  void _rememberQueue(int seat, List<int> queue) {
+    _lastKnownQueue[seat] = List<int>.from(queue);
+  }
+
+  void _dropDeadCandidate() {
+    _deadCandidateSeat = null;
+    _deadCandidateQueueBefore = null;
+    _deadCandidateFace = null;
+    _deadCandidateFromMove = false;
+  }
+
+  bool _sameFaces(List<int>? a, List<int>? b) {
+    if (a == null || b == null) {
+      return a == b;
+    }
+    if (a.length != b.length) {
+      return false;
+    }
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// Reads whatever `frame` just did to `widget.controller.room`'s
+  /// already-reduced `turn` (RoomController pushes to `frames` ahead of
+  /// its own `_reduce`, but `_reduce` itself runs synchronously inside
+  /// that same call, ahead of this broadcast listener's own microtask, so
+  /// every read below already sees it) and keeps `_lastKnownQueue` and
+  /// `_deadCandidate*` in step with it. Answers true exactly when
+  /// `cuesForFrame`'s `noMove` for this very `rolled` is actually K10's "a
+  /// 6 (or a bonus) that still owes another roll" rather than a dead end,
+  /// so `_onFrame` can drop that one cue before it plays.
+  bool _trackRollQueue(Frame frame) {
+    final TurnState? liveTurn = widget.controller.room?.turn;
+
+    switch (frame.type) {
+      case 'turn':
+        final int? seat = _intAt(frame.data, 'seat');
+        if (seat != null && liveTurn != null && liveTurn.seat == seat) {
+          _rememberQueue(seat, liveTurn.queue);
+        }
+        _dropDeadCandidate();
+        return false;
+
+      case 'rolled':
+        final int? seat = _intAt(frame.data, 'seat');
+        if (seat == null || liveTurn == null || liveTurn.seat != seat) {
+          return false;
+        }
+        if (liveTurn.phase != TurnPhase.awaitRoll) {
+          // A move is now pending: not a death.
+          _rememberQueue(seat, liveTurn.queue);
+          _dropDeadCandidate();
+          return false;
+        }
+        if (liveTurn.queue.isNotEmpty) {
+          // K10: a 6 (or a bonus roll) that still owes another roll.
+          _dropDeadCandidate();
+          _rememberQueue(seat, liveTurn.queue);
+          return true;
+        }
+        // The queue-mode placeholder for a roll that voided or passed
+        // the turn (21.3.3: `queue` arrives as `[]` on the wire itself).
+        // `turn_passed`'s own `reason` is the only thing that says
+        // which; bank the pieces K9's D needs until it names it.
+        _deadCandidateSeat = seat;
+        _deadCandidateQueueBefore = List<int>.from(
+          _lastKnownQueue[seat] ?? const <int>[],
+        );
+        _deadCandidateFace = _intAt(frame.data, 'value');
+        _deadCandidateFromMove = false;
+        return false;
+
+      case 'moved':
+        final int? seat = _intAt(frame.data, 'seat');
+        final int? face = _intAt(frame.data, 'face');
+        final bool extraRoll = frame.data['extra_roll'] == true;
+        if (seat == null || face == null || extraRoll) {
+          _dropDeadCandidate();
+          return false;
+        }
+        // K9's third case: the face just spent might leave only dead
+        // faces. Only `turn_passed no_legal_move` landing next confirms
+        // it; anything else means the move did not kill the turn.
+        _deadCandidateSeat = seat;
+        _deadCandidateQueueBefore = List<int>.from(
+          _lastKnownQueue[seat] ?? const <int>[],
+        );
+        _deadCandidateFace = face;
+        _deadCandidateFromMove = true;
+        return false;
+
+      case 'turn_passed':
+        _resolveDeadCandidate(frame);
+        return false;
+
+      default:
+        return false;
+    }
+  }
+
+  /// K9: resolves a banked `rolled`- or `moved`-dead candidate against the
+  /// `turn_passed` that names why the turn actually died, into D, and
+  /// shows it. Drops the candidate silently when `turn_passed` names a
+  /// seat this screen was not tracking one for -- a frame this screen
+  /// missed is not a case to guess at.
+  void _resolveDeadCandidate(Frame frame) {
+    final int? seat = _intAt(frame.data, 'seat');
+    final String? reason = _stringAt(frame.data, 'reason');
+    final int? candidateSeat = _deadCandidateSeat;
+    if (seat == null ||
+        reason == null ||
+        candidateSeat == null ||
+        candidateSeat != seat) {
+      _dropDeadCandidate();
+      return;
+    }
+    final List<int> before = _deadCandidateQueueBefore ?? const <int>[];
+    final int? face = _deadCandidateFace;
+    final bool fromMove = _deadCandidateFromMove;
+    _dropDeadCandidate();
+
+    List<int>? dead;
+    if (reason == 'three_sixes') {
+      // 10q/K9: the third six is never queued; D is the two already
+      // queued, never the voided third.
+      dead = List<int>.from(before);
+    } else if (reason == 'no_legal_move' && face != null) {
+      if (fromMove) {
+        dead = List<int>.from(before);
+        final int at = dead.indexOf(face);
+        if (at != -1) {
+          dead.removeAt(at);
+        }
+      } else {
+        dead = List<int>.from(before)..add(face);
+      }
+    }
+    if (dead == null || dead.isEmpty) {
+      return;
+    }
+
+    // K1c/K9: every viewer sees the dead faces in the tray, whoever's
+    // turn it was.
+    if (dead.length >= 2) {
+      _armTrayDead(seat, dead);
+    }
+
+    // The big die's own red-X-and-haptic hold stays the seat-gated
+    // mechanism it already was (C-236 rule 4): a `rolled`-triggered dead
+    // end already armed it correctly, for my own seat, through the
+    // ordinary cuesForFrame path in `_onFrame`, for both reasons above.
+    // Only the `moved`-triggered path needs a manual arm here (nothing
+    // else ever drives it), and, matching that same gating, only for my
+    // own seat.
+    if (fromMove &&
+        reason == 'no_legal_move' &&
+        seat == widget.controller.seat) {
+      _armNoMoveHold(dead.last);
+      if (mounted) {
+        _playCue(FeedbackScope.of(context), FeedbackCue.noMove);
+      }
+    }
+  }
+
+  void _armTrayDead(int seat, List<int> faces) {
+    _trayDeadTimer?.cancel();
+    _trayDeadTimer = Timer(_noMoveHold, _dropTrayDead);
+    if (_trayDeadSeat == seat && _sameFaces(_trayDeadFaces, faces)) {
+      return;
+    }
+    setState(() {
+      _trayDeadSeat = seat;
+      _trayDeadFaces = faces;
+    });
+  }
+
+  void _dropTrayDead() {
+    _trayDeadTimer?.cancel();
+    _trayDeadTimer = null;
+    if (!mounted || _trayDeadFaces == null) {
+      return;
+    }
+    setState(() {
+      _trayDeadSeat = null;
+      _trayDeadFaces = null;
+    });
+  }
+
+  /// K4, amended by the master mid-order: the selected face starts as
+  /// `legalByFace.first.face`, not `turn.value`. ENGINE_API.md 10.1 names
+  /// that `defaultFace` -- the first-queued face with a legal token, and
+  /// `legal_by_face` is already in that order and lists only live faces
+  /// (21.1). After a pushed `turn` frame the two agree; after a `rolled`
+  /// that leaves a move pending (no `turn` follows it, 21.3's own frame
+  /// table) the model's `turn.value` is the face just rolled, which is
+  /// wrong for the default whenever that roll was not the first-queued
+  /// one still alive. Resets on every reduced turn frame whose `k` or
+  /// `queue` differs from the last one this screen reset against -- not
+  /// on every rebuild, so a manual tray tap (K5) is not undone by the
+  /// next frame that merely repeats the same (k, queue), like a countdown
+  /// tick.
+  void _syncSelectedFace() {
+    final TurnState? turn = widget.controller.room?.turn;
+    final List<FaceLegal>? legalByFace = turn?.legalByFace;
+    if (turn == null ||
+        turn.phase != TurnPhase.awaitMove ||
+        legalByFace == null ||
+        legalByFace.isEmpty) {
+      _selectedFace = null;
+      _selectedFaceSeenK = null;
+      _selectedFaceSeenQueue = null;
+      return;
+    }
+    final bool changed =
+        _selectedFaceSeenK != turn.k ||
+        !_sameFaces(_selectedFaceSeenQueue, turn.queue);
+    if (changed) {
+      _selectedFace = legalByFace.first.face;
+      _selectedFaceSeenK = turn.k;
+      _selectedFaceSeenQueue = List<int>.from(turn.queue);
+    }
+  }
+
   void _onControllerChanged() {
     final RoomController controller = widget.controller;
     if (controller.phase == RoomPhase.failed ||
@@ -632,6 +929,7 @@ class _GameScreenState extends State<GameScreen> {
     }
     setState(() {
       _syncCountdown();
+      _syncSelectedFace();
       _syncAutoMove();
       _syncRollWait();
     });
@@ -763,19 +1061,29 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   /// True when this seat is awaiting a move and the server named exactly
-  /// one legal token. The hold is a screen convenience on top of that
-  /// already-authoritative list, not a second legality check.
+  /// one legal token to spend. The hold is a screen convenience on top of
+  /// that already-authoritative list, not a second legality check.
+  ///
+  /// K8 (order 365, C-362 Part B): under the roll queue (`legalByFace`
+  /// non-null) the test is on `legalByFace` instead -- exactly one queued
+  /// face with a legal move, and that face legal for exactly one token.
+  /// Without the queue (`legalByFace` null), today's rule is unchanged.
   bool _isUniqueLegalAwaitMove() {
     final RoomController controller = widget.controller;
     final RoomSnapshot? room = controller.room;
     final TurnState? turn = room?.turn;
-    return room != null &&
-        room.state == RoomState.playing &&
-        turn != null &&
-        turn.seat == controller.seat &&
-        turn.phase == TurnPhase.awaitMove &&
-        turn.legal != null &&
-        turn.legal!.length == 1;
+    if (room == null ||
+        room.state != RoomState.playing ||
+        turn == null ||
+        turn.seat != controller.seat ||
+        turn.phase != TurnPhase.awaitMove) {
+      return false;
+    }
+    final List<FaceLegal>? legalByFace = turn.legalByFace;
+    if (legalByFace != null) {
+      return legalByFace.length == 1 && legalByFace.single.tokens.length == 1;
+    }
+    return turn.legal != null && turn.legal!.length == 1;
   }
 
   /// Arms the 1.5s unique-legal hold once per `turn.k`, or drops a pending
@@ -792,7 +1100,14 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
     _autoMoveHandledK = turn.k;
-    _pendingAutoMoveToken = turn.legal!.single;
+    final List<FaceLegal>? legalByFace = turn.legalByFace;
+    if (legalByFace != null) {
+      _pendingAutoMoveToken = legalByFace.single.tokens.single;
+      _pendingAutoMoveFace = legalByFace.single.face;
+    } else {
+      _pendingAutoMoveToken = turn.legal!.single;
+      _pendingAutoMoveFace = null;
+    }
     _autoMoveTimer?.cancel();
     _autoMoveTimer = Timer(_autoMoveHold, _commitPendingAutoMove);
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -803,6 +1118,7 @@ class _GameScreenState extends State<GameScreen> {
     _autoMoveTimer?.cancel();
     _autoMoveTimer = null;
     _pendingAutoMoveToken = null;
+    _pendingAutoMoveFace = null;
   }
 
   void _commitPendingAutoMove() {
@@ -810,27 +1126,35 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
     final int? token = _pendingAutoMoveToken;
+    final int? face = _pendingAutoMoveFace;
     final int? k = _autoMoveHandledK;
     if (token == null || k == null) {
       return;
     }
     _autoMoveTimer = null;
     _pendingAutoMoveToken = null;
+    _pendingAutoMoveFace = null;
     final AppLocalizations loc = AppLocalizations.of(context);
     _announceAutoMove(loc.gameTokenButton(token + 1));
     setState(() {});
-    _sendMove(token, k);
+    _sendMove(token, k, face: face);
   }
 
   /// The one path that actually calls `controller.move`: a tap on the board
   /// and the hold's own timer both end up here, and whichever reaches a
   /// given `turn.k` first is the only one that sends anything for it.
-  void _sendMove(int token, int k) {
+  ///
+  /// K6 (order 365, C-362 Part B): `face` goes out only when the caller
+  /// read it off a non-null `legalByFace`; `RoomController.move` itself
+  /// only puts it on the wire when non-null (C-362 A6), so a server
+  /// without the roll queue, where `face` is always null here, sends the
+  /// byte-identical frame it always did.
+  void _sendMove(int token, int k, {int? face}) {
     if (_moveSentForK == k) {
       return;
     }
     _moveSentForK = k;
-    widget.controller.move(token);
+    widget.controller.move(token, face: face);
   }
 
   /// A token tap is an explicit move: drop the hold silently, then let the
@@ -1426,6 +1750,90 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
+  /// K7: `face`'s own tokens out of `legalByFace`, or none when `face` is
+  /// null or not (no longer) one of the queued, alive faces.
+  Set<int> _legalTokensForFace(List<FaceLegal> legalByFace, int? face) {
+    if (face == null) {
+      return const <int>{};
+    }
+    for (final FaceLegal entry in legalByFace) {
+      if (entry.face == face) {
+        return entry.tokens.toSet();
+      }
+    }
+    return const <int>{};
+  }
+
+  bool _faceIsAlive(List<FaceLegal> legalByFace, int face) {
+    for (final FaceLegal entry in legalByFace) {
+      if (entry.face == face) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// K1/K3/K9: what `RollTray` draws, for any `turn` (every viewer reads
+  /// the same shared state here, K1's own closing line). The tray's own
+  /// dead-faces hold (`_trayDeadFaces`, armed only by `_resolveDeadCandidate`,
+  /// K9) wins over a live `turn` while it is up, exactly the way the die's
+  /// own `_noMoveVisible` already wins over `turn.value` above.
+  (List<int>?, List<TrayDieState>?, Color) _rollTrayData(
+    TurnState? turn,
+    int? mySeat,
+  ) {
+    if (_trayDeadFaces != null && _trayDeadFaces!.length >= 2) {
+      final List<int> faces = _trayDeadFaces!;
+      return (
+        faces,
+        List<TrayDieState>.filled(faces.length, TrayDieState.dead),
+        LudoColors.seats[(_trayDeadSeat ?? 0).clamp(0, 3)],
+      );
+    }
+    if (turn == null) {
+      return (null, null, LudoColors.seats[0]);
+    }
+    final bool showByCount = turn.queue.length >= 2;
+    final bool showByAwaitRoll =
+        turn.phase == TurnPhase.awaitRoll && turn.queue.isNotEmpty;
+    if (!showByCount && !showByAwaitRoll) {
+      return (null, null, LudoColors.seats[0]);
+    }
+    final List<int> faces = turn.queue;
+    final Color color = LudoColors.seats[turn.seat.clamp(0, 3)];
+    if (turn.phase == TurnPhase.awaitRoll) {
+      // K3: no die is selected or dead while the seat is still owed a
+      // roll.
+      return (
+        faces,
+        List<TrayDieState>.filled(faces.length, TrayDieState.plain),
+        color,
+      );
+    }
+    final List<FaceLegal>? legalByFace = turn.legalByFace;
+    final List<TrayDieState> states = <TrayDieState>[
+      for (final int face in faces)
+        face == _selectedFace
+            ? TrayDieState.selected
+            : (legalByFace != null && _faceIsAlive(legalByFace, face)
+                  ? TrayDieState.plain
+                  : TrayDieState.dead),
+    ];
+    return (faces, states, color);
+  }
+
+  /// K5: a tap on an alive, unselected tray die. `RollTray` itself already
+  /// guards every other case (not interactive, the selected die, a dead
+  /// die), so reaching this at all means the tap is live.
+  void _onTraySelect(int face) {
+    if (_selectedFace == face) {
+      return;
+    }
+    setState(() {
+      _selectedFace = face;
+    });
+  }
+
   /// H6.3: the room is playing and has at least two seated players. Board,
   /// turn banner, and the die under it. Play itself happens on the board
   /// objects: the die is tapped to roll, a token is tapped to move it.
@@ -1447,13 +1855,18 @@ class _GameScreenState extends State<GameScreen> {
         turn.phase == TurnPhase.awaitRoll &&
         _rollWaitK == null;
 
-    final Set<int> legalTokens =
-        (!_isEndHeld &&
-            turn != null &&
-            turn.seat == seat &&
-            turn.phase == TurnPhase.awaitMove &&
-            turn.legal != null)
-        ? turn.legal!.toSet()
+    // K7 (order 365, C-362 Part B): the rings are the selected face's own
+    // tokens from `legalByFace` whenever the roll queue sends one; without
+    // it, `turn.legal` exactly as before.
+    final bool myAwaitMove =
+        !_isEndHeld &&
+        turn != null &&
+        turn.seat == seat &&
+        turn.phase == TurnPhase.awaitMove;
+    final Set<int> legalTokens = myAwaitMove
+        ? (turn.legalByFace != null
+              ? _legalTokensForFace(turn.legalByFace!, _selectedFace)
+              : (turn.legal?.toSet() ?? const <int>{}))
         : const <int>{};
 
     // Rule 4a: for the whole hold the die keeps showing the face and the
@@ -1463,7 +1876,23 @@ class _GameScreenState extends State<GameScreen> {
     final Color dieSeatColor = _noMoveVisible
         ? LudoColors.seats[(seat ?? 0).clamp(0, 3)]
         : LudoColors.seats[(turn?.seat ?? seat ?? 0).clamp(0, 3)];
-    final int? dieFace = _noMoveVisible ? _noMoveFace : turn?.value;
+    // K4: under the roll queue, in awaitMove, the big die shows the
+    // selected face, not necessarily `turn.value`.
+    final int? dieFace = _noMoveVisible
+        ? _noMoveFace
+        : (myAwaitMove && turn.legalByFace != null
+              ? _selectedFace
+              : turn?.value);
+
+    final (
+      List<int>? trayFaces,
+      List<TrayDieState>? trayStates,
+      Color trayColor,
+    ) = _rollTrayData(
+      turn,
+      seat,
+    );
+    final bool trayInteractive = myAwaitMove && turn.legalByFace != null;
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -1499,7 +1928,13 @@ class _GameScreenState extends State<GameScreen> {
                 if (k == null) {
                   return;
                 }
-                _sendMove(index, k);
+                // K6: a server without the roll queue (`legalByFace` null)
+                // sends the byte-identical frame it always did.
+                _sendMove(
+                  index,
+                  k,
+                  face: turn!.legalByFace != null ? _selectedFace : null,
+                );
               },
               onIllegalTokenTap: (int index) {
                 FeedbackScope.of(context).play(FeedbackCue.invalidTap);
@@ -1507,22 +1942,47 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
           const SizedBox(height: kSpace4),
+          // K1: the tray sits on the die's own row, after it in reading
+          // order -- a plain Row under the ambient Directionality already
+          // mirrors that for Arabic, nothing here flips it by hand.
           Center(
-            child: _diceValueWrap(
-              loc,
-              turn,
-              GameDie(
-                face: dieFace,
-                seatColor: dieSeatColor,
-                enabled: rollEnabled,
-                tumbling: _rollWaitK != null,
-                noAnswer: _rollNoAnswer,
-                noMove: _noMoveVisible,
-                onTap: rollEnabled ? _onDieTap : null,
-                onInvalidTap: () {
-                  FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-                },
-              ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                _diceValueWrap(
+                  loc,
+                  turn,
+                  GameDie(
+                    face: dieFace,
+                    seatColor: dieSeatColor,
+                    enabled: rollEnabled,
+                    tumbling: _rollWaitK != null,
+                    noAnswer: _rollNoAnswer,
+                    noMove: _noMoveVisible,
+                    onTap: rollEnabled ? _onDieTap : null,
+                    onInvalidTap: () {
+                      FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+                    },
+                  ),
+                ),
+                if (trayFaces != null) ...[
+                  const SizedBox(width: kSpace2),
+                  Flexible(
+                    child: RollTray(
+                      key: const Key('game-roll-tray'),
+                      faces: trayFaces,
+                      states: trayStates!,
+                      seatColor: trayColor,
+                      interactive: trayInteractive,
+                      onSelect: (int index) => _onTraySelect(trayFaces[index]),
+                      onInvalidTap: () {
+                        FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+                      },
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           const SizedBox(height: kSpace2),
