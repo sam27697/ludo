@@ -3,6 +3,8 @@
 //
 // Usage:
 //   dart run tool/generate_corpus.dart --games 40 --out /tmp/corpus.jsonl
+//   dart run tool/generate_corpus.dart --games 24 --roll-queue \
+//       --out /tmp/corpus-queue.jsonl
 //
 // --out is required and has no default, deliberately. Write it somewhere
 // outside the repository. test/golden/corpus.jsonl is the one path this tool
@@ -12,6 +14,14 @@
 // from an unreviewed engine turns the golden gate into a photograph of
 // whatever the code currently does, including its bugs, which is the one
 // failure mode the gate exists to prevent.
+//
+// --roll-queue is off unless named. With it, every record is a server-room
+// game (docs/ENGINE_API.md section 10.5): blocks false, rollQueue true,
+// homeBonus true, captureBonus alternating true/false with the game index,
+// seats cycling through [0, 2], [0, 1, 2] and [0, 1, 2, 3]. Each move spends
+// the face and token one seeded draw picks among legalByFace, and the move
+// intention records that face. Without the flag the records are the legacy
+// corpus: no rollQueue key, no homeBonus key, no face on a move.
 //
 // Rule 38 (docs/RULES.md): the engine draws no randomness at all, so this
 // tool draws the faces itself. Each game holds its own SplitMix64 state,
@@ -25,7 +35,9 @@
 // seed-derived (a second, independent SplitMix64 stream kept apart from the
 // dice stream above), not Dart's Random() and not always the first legal
 // token, so the corpus actually exercises captures, blocks and multi-token
-// turns instead of playing the same degenerate line every time.
+// turns instead of playing the same degenerate line every time. Under
+// --roll-queue that same stream picks one (face, token) pair from
+// legalByFace instead of one token from legalTokens.
 
 import 'dart:convert';
 import 'dart:io';
@@ -64,6 +76,12 @@ class GameRecord {
     required this.captures,
     required this.blockRejections,
     required this.threeSixForfeits,
+    this.rollQueue = false,
+    this.queuesAtLeastTwo = 0,
+    this.capturesWhileQueued = 0,
+    this.homeArrivalsEarningRoll = 0,
+    this.droppedDeadFaces = 0,
+    this.nonFirstFaceSpends = 0,
   });
 
   final String name;
@@ -78,34 +96,75 @@ class GameRecord {
   final int blockRejections;
   final int threeSixForfeits;
 
-  Map<String, Object?> toJson() => <String, Object?>{
-        'name': name,
-        'seed': seed,
-        'seats': seats,
-        'rules': <String, Object?>{
-          'blocks': blocks,
-          'captureBonus': captureBonus
-        },
-        'intentions': intentions,
-        'finalHash': finalHash,
-        'finalSeq': finalSeq,
-      };
+  /// True only for a --roll-queue record. Legacy records leave it false so
+  /// [toJson] writes the two-key rules object the frozen corpus has.
+  final bool rollQueue;
+
+  /// Post-intention states whose queue length is at least 2.
+  final int queuesAtLeastTwo;
+
+  /// Captures whose move started with at least one other face still queued.
+  final int capturesWhileQueued;
+
+  /// Non-winning home arrivals that were followed by an extra roll.
+  final int homeArrivalsEarningRoll;
+
+  /// Faces discarded because no queued face could move (rule 13q). A roll
+  /// that passes drops the queue it just appended to; a move that passes
+  /// drops whatever remains after the spent face.
+  final int droppedDeadFaces;
+
+  /// Moves whose spent face was not the first face in the queue.
+  final int nonFirstFaceSpends;
+
+  Map<String, Object?> toJson() {
+    final rules = <String, Object?>{
+      'blocks': blocks,
+      'captureBonus': captureBonus,
+    };
+    if (rollQueue) {
+      rules['rollQueue'] = true;
+      rules['homeBonus'] = true;
+    }
+    return <String, Object?>{
+      'name': name,
+      'seed': seed,
+      'seats': seats,
+      'rules': rules,
+      'intentions': intentions,
+      'finalHash': finalHash,
+      'finalSeq': finalSeq,
+    };
+  }
 }
 
 /// Plays one complete game from [seed] to a terminal state. Throws if the
 /// game does not terminate within [maxIntentions], naming the seed, rather
 /// than looping forever or truncating the recording.
+///
+/// [rollQueue] false is the legacy game: the move intention has no face.
+/// [rollQueue] true plays blocks, captureBonus and homeBonus as passed
+/// (the caller sets the server-room combination) and records the face each
+/// move spends.
 GameRecord simulateGame({
   required String name,
   required int seed,
   required List<int> seats,
   required bool blocks,
   required bool captureBonus,
+  bool rollQueue = false,
   int maxIntentions = 5000,
 }) {
   final config = GameConfig(
     seats: seats,
-    rules: RulesConfig(blocks: blocks, captureBonus: captureBonus),
+    rules: rollQueue
+        ? RulesConfig(
+            blocks: blocks,
+            captureBonus: captureBonus,
+            rollQueue: true,
+            homeBonus: true,
+          )
+        : RulesConfig(blocks: blocks, captureBonus: captureBonus),
     seed: seed,
   );
   var state = newGame(config);
@@ -113,6 +172,11 @@ GameRecord simulateGame({
   var captures = 0;
   var blockRejections = 0;
   var threeSixForfeits = 0;
+  var queuesAtLeastTwo = 0;
+  var capturesWhileQueued = 0;
+  var homeArrivalsEarningRoll = 0;
+  var droppedDeadFaces = 0;
+  var nonFirstFaceSpends = 0;
   var choiceState = _choiceSeedFor(seed);
   // Seeded exactly as newGame used to seed GameState.rngState, before the
   // engine stopped drawing its own dice.
@@ -126,6 +190,9 @@ GameRecord simulateGame({
       );
     }
 
+    final phaseBefore = state.phase;
+    final queueBefore = state.queue.length;
+    var spentNonFirstFace = false;
     late final ApplyResult result;
     if (state.phase == GamePhase.awaitRoll) {
       final seat = state.currentSeat;
@@ -149,35 +216,111 @@ GameRecord simulateGame({
       }
     } else if (state.phase == GamePhase.awaitMove) {
       final seat = state.currentSeat;
-      final legal = legalTokens(state);
-      final (nextChoiceState, z) = _choiceStreamNext(choiceState);
-      choiceState = nextChoiceState;
-      final token = legal[(z >>> 1) % legal.length];
-      intentions.add(<String, Object?>{
-        't': 'move',
-        'seat': seat,
-        'token': token,
-      });
-      result = apply(state, MoveIntention(seat, token));
+      if (rollQueue) {
+        final options = _legalFaceTokenOptions(state);
+        if (options.isEmpty) {
+          throw StateError(
+            'game "$name" (seed=$seed), intention ${intentions.length}: '
+            'awaitMove with rollQueue but legalByFace is empty',
+          );
+        }
+        if (state.queue.isEmpty) {
+          throw StateError(
+            'game "$name" (seed=$seed), intention ${intentions.length}: '
+            'awaitMove with rollQueue but the queue is empty',
+          );
+        }
+        final (nextChoiceState, z) = _choiceStreamNext(choiceState);
+        choiceState = nextChoiceState;
+        final chosen = options[(z >>> 1) % options.length];
+        final face = chosen.$1;
+        final token = chosen.$2;
+        spentNonFirstFace = face != state.queue.first;
+        intentions.add(<String, Object?>{
+          't': 'move',
+          'seat': seat,
+          'token': token,
+          'face': face,
+        });
+        result = apply(state, MoveIntention(seat, token, face: face));
+      } else {
+        final legal = legalTokens(state);
+        final (nextChoiceState, z) = _choiceStreamNext(choiceState);
+        choiceState = nextChoiceState;
+        final token = legal[(z >>> 1) % legal.length];
+        intentions.add(<String, Object?>{
+          't': 'move',
+          'seat': seat,
+          'token': token,
+        });
+        result = apply(state, MoveIntention(seat, token));
+      }
       if (result is! Applied) {
         throw StateError(
-          'game "$name" (seed=$seed): unexpected rejection on move: '
-          '${(result as Rejected).error}',
+          'game "$name" (seed=$seed), intention ${intentions.length - 1}: '
+          'unexpected rejection on move: ${(result as Rejected).error}',
         );
       }
     } else {
       break;
     }
 
+    var capturedThis = false;
+    var tokenHomeThis = false;
+    var extraRollThis = false;
+    var gameWonThis = false;
+    var noLegalMoveThis = false;
     for (final event in result.events) {
       if (event is Captured) {
         captures++;
+        capturedThis = true;
       } else if (event is TurnEnded &&
           event.reason == TurnEndReason.threeSixes) {
         threeSixForfeits++;
+      } else if (event is TokenHome) {
+        tokenHomeThis = true;
+      } else if (event is ExtraRoll) {
+        extraRollThis = true;
+      } else if (event is GameWon) {
+        gameWonThis = true;
+      } else if (event is TurnEnded &&
+          event.reason == TurnEndReason.noLegalMove) {
+        noLegalMoveThis = true;
+      }
+    }
+    if (rollQueue) {
+      if (result.state.queue.length >= 2) {
+        queuesAtLeastTwo++;
+      }
+      if (capturedThis && queueBefore >= 2) {
+        capturesWhileQueued++;
+      }
+      if (tokenHomeThis && extraRollThis && !gameWonThis) {
+        homeArrivalsEarningRoll++;
+      }
+      if (noLegalMoveThis) {
+        if (phaseBefore == GamePhase.awaitRoll) {
+          droppedDeadFaces += queueBefore + 1;
+        } else if (queueBefore >= 2) {
+          droppedDeadFaces += queueBefore - 1;
+        } else {
+          throw StateError(
+            'game "$name" (seed=$seed), intention ${intentions.length - 1}: '
+            'noLegalMove on a move with queue length $queueBefore',
+          );
+        }
+      }
+      if (spentNonFirstFace) {
+        nonFirstFaceSpends++;
       }
     }
     state = result.state;
+  }
+
+  if (rollQueue && !isTerminal(state)) {
+    throw StateError(
+      'game "$name" (seed=$seed) ended in ${state.phase}, not finished',
+    );
   }
 
   return GameRecord(
@@ -192,7 +335,25 @@ GameRecord simulateGame({
     captures: captures,
     blockRejections: blockRejections,
     threeSixForfeits: threeSixForfeits,
+    rollQueue: rollQueue,
+    queuesAtLeastTwo: queuesAtLeastTwo,
+    capturesWhileQueued: capturesWhileQueued,
+    homeArrivalsEarningRoll: homeArrivalsEarningRoll,
+    droppedDeadFaces: droppedDeadFaces,
+    nonFirstFaceSpends: nonFirstFaceSpends,
   );
+}
+
+/// (face, token) pairs from [legalByFace], first-queued face order, tokens
+/// ascending within a face. One seeded draw picks among this list.
+List<(int, int)> _legalFaceTokenOptions(GameState state) {
+  final options = <(int, int)>[];
+  for (final entry in legalByFace(state).entries) {
+    for (final token in entry.value) {
+      options.add((entry.key, token));
+    }
+  }
+  return options;
 }
 
 /// Rule 22: a block excludes a token that would otherwise be legal. Counted
@@ -281,12 +442,15 @@ GameRecord _findStressGame({
 void main(List<String> args) {
   int? gameCount;
   String? outPath;
+  var rollQueue = false;
   for (var i = 0; i < args.length; i++) {
     switch (args[i]) {
       case '--games':
         gameCount = int.parse(args[++i]);
       case '--out':
         outPath = args[++i];
+      case '--roll-queue':
+        rollQueue = true;
       default:
         stderr.writeln('unknown argument: ${args[i]}');
         exit(64);
@@ -294,7 +458,8 @@ void main(List<String> args) {
   }
   if (gameCount == null || outPath == null) {
     stderr.writeln(
-      'usage: dart run tool/generate_corpus.dart --games N --out PATH',
+      'usage: dart run tool/generate_corpus.dart '
+      '--games N --out PATH [--roll-queue]',
     );
     exit(64);
   }
@@ -307,32 +472,59 @@ void main(List<String> args) {
   final combos = _buildCombos();
   final records = <GameRecord>[];
 
-  for (var i = 0; i < gameCount; i++) {
-    // The last game is reserved for the guaranteed-coverage stress game.
-    if (i == gameCount - 1) {
+  if (rollQueue) {
+    // Server-room rules, seats mixed across the three legal layouts.
+    // captureBonus follows the game index: even true, odd false.
+    // No stress game: that search forces blocks on and four seats, which
+    // these records are not allowed to be.
+    const seatLayouts = <int>[2, 3, 4];
+    for (var i = 0; i < gameCount; i++) {
+      final players = seatLayouts[i % seatLayouts.length];
+      final captureBonus = i % 2 == 0;
+      final seed = baseSeed + i * 97;
+      final seats = _seatsForPlayerCount(players);
+      final name = 'game $i: ${players}p blocks=false '
+          'captureBonus=$captureBonus rollQueue=true homeBonus=true '
+          'seed=$seed';
       records.add(
-        _findStressGame(
-          name: 'game $i: stress (4p, blocks on, captureBonus on)',
-          searchStart: 9000000,
-          maxAttempts: 20000,
+        simulateGame(
+          name: name,
+          seed: seed,
+          seats: seats,
+          blocks: false,
+          captureBonus: captureBonus,
+          rollQueue: true,
         ),
       );
-      continue;
     }
-    final combo = combos[i % combos.length];
-    final seed = baseSeed + i * 97;
-    final seats = _seatsForPlayerCount(combo.players);
-    final name = 'game $i: ${combo.players}p blocks=${combo.blocks} '
-        'captureBonus=${combo.captureBonus} seed=$seed';
-    records.add(
-      simulateGame(
-        name: name,
-        seed: seed,
-        seats: seats,
-        blocks: combo.blocks,
-        captureBonus: combo.captureBonus,
-      ),
-    );
+  } else {
+    for (var i = 0; i < gameCount; i++) {
+      // The last game is reserved for the guaranteed-coverage stress game.
+      if (i == gameCount - 1) {
+        records.add(
+          _findStressGame(
+            name: 'game $i: stress (4p, blocks on, captureBonus on)',
+            searchStart: 9000000,
+            maxAttempts: 20000,
+          ),
+        );
+        continue;
+      }
+      final combo = combos[i % combos.length];
+      final seed = baseSeed + i * 97;
+      final seats = _seatsForPlayerCount(combo.players);
+      final name = 'game $i: ${combo.players}p blocks=${combo.blocks} '
+          'captureBonus=${combo.captureBonus} seed=$seed';
+      records.add(
+        simulateGame(
+          name: name,
+          seed: seed,
+          seats: seats,
+          blocks: combo.blocks,
+          captureBonus: combo.captureBonus,
+        ),
+      );
+    }
   }
 
   final buffer = StringBuffer();
@@ -376,4 +568,46 @@ void main(List<String> args) {
   print('shortest game: $shortest intentions');
   // ignore: avoid_print
   print('longest game: $longest intentions');
+
+  if (rollQueue) {
+    final queuesAtLeastTwo = records.fold<int>(
+      0,
+      (sum, r) => sum + r.queuesAtLeastTwo,
+    );
+    final capturesWhileQueued = records.fold<int>(
+      0,
+      (sum, r) => sum + r.capturesWhileQueued,
+    );
+    final homeArrivalsEarningRoll = records.fold<int>(
+      0,
+      (sum, r) => sum + r.homeArrivalsEarningRoll,
+    );
+    final droppedDeadFaces = records.fold<int>(
+      0,
+      (sum, r) => sum + r.droppedDeadFaces,
+    );
+    final nonFirstFaceSpends = records.fold<int>(
+      0,
+      (sum, r) => sum + r.nonFirstFaceSpends,
+    );
+    // ignore: avoid_print
+    print('queues of length 2 or more: $queuesAtLeastTwo');
+    // ignore: avoid_print
+    print(
+      'third consecutive six voiding the turn: $totalThreeSixForfeits',
+    );
+    // ignore: avoid_print
+    print(
+      'capture made while faces were still queued: $capturesWhileQueued',
+    );
+    // ignore: avoid_print
+    print('home arrival earning a roll: $homeArrivalsEarningRoll');
+    // ignore: avoid_print
+    print('dropped dead face: $droppedDeadFaces');
+    // ignore: avoid_print
+    print(
+      'move that spent a face other than the first in the queue: '
+      '$nonFirstFaceSpends',
+    );
+  }
 }

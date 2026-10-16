@@ -27,6 +27,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
+import 'die_cube.dart';
 import 'die_mark.dart';
 import 'end_card.dart';
 import 'feedback.dart';
@@ -85,14 +86,18 @@ class _GameScreenState extends State<GameScreen> {
   int? _countdownK;
   int _countdownRemainingSeconds = 0;
 
-  // Client-side unique-legal hold. Armed once per turn.k when legal has
-  // exactly one token; cancelled by a manual token press, or the turn
-  // leaving that unique-legal awaitMove. controller.move is not called
-  // until the hold elapses without cancel.
+  // Client-side unique-legal hold. Armed once per await_move decision
+  // (this seat, turn.k, and the queue) when exactly one token is legal.
+  // Several spends of one roll queue share a k; a new queue arms again.
+  // With no roll queue the queue is empty, so this is once per turn.k.
+  // Cancelled by a manual token press, or the turn leaving that
+  // unique-legal awaitMove. controller.move is not called until the hold
+  // elapses without cancel.
   static const Duration _autoMoveHold = Duration(milliseconds: 1500);
   Timer? _autoMoveTimer;
   int? _pendingAutoMoveToken;
   int? _autoMoveHandledK;
+  List<int>? _autoMoveHandledQueue;
 
   // K8 (order 365, C-362 Part B): the face the auto-move hold's single
   // legal entry would spend, alongside the token above. Null under the
@@ -138,10 +143,18 @@ class _GameScreenState extends State<GameScreen> {
   List<int>? _selectedFaceSeenQueue;
 
   // The one guard both move paths (the hold's own timer and a token tap)
-  // share: once a move has gone out for a turn.k, nothing sends a second
-  // one for that same k, however it is reached. A tap landing just after
-  // the hold already committed is exactly the race this exists for.
+  // share. At most one move is sent for the current decision: this seat,
+  // await_move, this turn.k, and this queue. A tap landing just after the
+  // hold already committed is the race this still blocks. Cleared once
+  // the server has answered that decision, when the snapshot is no longer
+  // it. A `moved` for my seat does that (the reducer leaves await_move),
+  // and so does any frame that ends or changes the decision: a new queue,
+  // a new phase, or another seat's turn. The next decision may then send
+  // once, from a tap or from the one-legal-move hold, even when turn.k is
+  // unchanged. With no roll queue the queue is empty, so a single
+  // await_move of that k stays blocked until the decision ends.
   int? _moveSentForK;
+  List<int>? _moveSentForQueue;
 
   // The die's "waiting for my roll result" state. Set together with the
   // turn.k a rolling tap was sent under; cleared when the snapshot shows my
@@ -153,6 +166,20 @@ class _GameScreenState extends State<GameScreen> {
   Timer? _rollNoAnswerTimer;
   bool _rollNoAnswer = false;
   static const Duration _rollNoAnswerDelay = Duration(seconds: 4);
+
+  // C-377: throws queued off `recentRolls` after this screen is up. The
+  // baseline is whatever the room already held at mount, so the first
+  // build never throws for a roll it did not see arrive. A list that is
+  // not an append (a resync, a new game) replaces the baseline and throws
+  // nothing.
+  List<(int k, int face)> _seenRolls = const <(int k, int face)>[];
+  _QueuedThrow? _activeThrow;
+  final List<_QueuedThrow> _throwQueue = <_QueuedThrow>[];
+  bool _throwHurry = false;
+
+  /// True while the active throw is still travelling, so the die under the
+  /// board shows the idle cube instead of the face (C-377 D2).
+  bool _throwConcealsFace = false;
 
   // C-236 rule 2: one subscription to controller.frames for the life of
   // this screen, feeding every frame's cues to the one FeedbackService
@@ -235,6 +262,9 @@ class _GameScreenState extends State<GameScreen> {
     super.initState();
     _currentGameId = widget.controller.room?.gameId;
     _mountTurnFrame = _lastTurnFrame(widget.controller.gameTranscript);
+    _seenRolls = List<(int k, int face)>.of(
+      widget.controller.room?.recentRolls ?? const <(int k, int face)>[],
+    );
     widget.controller.addListener(_onControllerChanged);
     _frameSub = widget.controller.frames.listen(_onFrame);
     // K9: this screen can mount straight into a turn already mid-queue
@@ -258,6 +288,7 @@ class _GameScreenState extends State<GameScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _checkMountTurnCue();
+    _releaseMoveGuard();
     _syncSelectedFace();
     _syncAutoMove();
     _syncConnectionLostAnnouncement();
@@ -377,6 +408,11 @@ class _GameScreenState extends State<GameScreen> {
       for (final FeedbackCue cue in cues) {
         _playCue(feedback, cue);
       }
+    }
+    // C-377 D5: a move or a passed turn while a throw is travelling
+    // shortens that throw. It does not play a cue of its own (D9).
+    if (frame.type == 'moved' || frame.type == 'turn_passed') {
+      _hurryActiveThrow();
     }
     if (frame.type == 'rolled') {
       if (cues.contains(FeedbackCue.noMove)) {
@@ -649,11 +685,14 @@ class _GameScreenState extends State<GameScreen> {
     _pendingAutoMoveToken = null;
     _pendingAutoMoveFace = null;
     _autoMoveHandledK = null;
+    _autoMoveHandledQueue = null;
     _moveSentForK = null;
+    _moveSentForQueue = null;
     _rollNoAnswerTimer?.cancel();
     _rollNoAnswerTimer = null;
     _rollWaitK = null;
     _rollNoAnswer = false;
+    _clearThrows();
     _lastKnownQueue.clear();
     _dropDeadCandidate();
     _trayDeadTimer?.cancel();
@@ -729,6 +768,34 @@ class _GameScreenState extends State<GameScreen> {
       }
     }
     return true;
+  }
+
+  /// True when [turn] is this seat in await_move at [k] with [queue].
+  bool _sameMoveDecision(TurnState? turn, int? k, List<int>? queue) {
+    if (turn == null || k == null) {
+      return false;
+    }
+    return turn.seat == widget.controller.seat &&
+        turn.phase == TurnPhase.awaitMove &&
+        turn.k == k &&
+        _sameFaces(turn.queue, queue);
+  }
+
+  /// Drops the move guard once the live turn is no longer the decision a
+  /// move was sent for. See [_moveSentForK].
+  void _releaseMoveGuard() {
+    if (_moveSentForK == null) {
+      return;
+    }
+    if (_sameMoveDecision(
+      widget.controller.room?.turn,
+      _moveSentForK,
+      _moveSentForQueue,
+    )) {
+      return;
+    }
+    _moveSentForK = null;
+    _moveSentForQueue = null;
   }
 
   /// Reads whatever `frame` just did to `widget.controller.room`'s
@@ -938,14 +1005,150 @@ class _GameScreenState extends State<GameScreen> {
         controller.phase == RoomPhase.closed) {
       _travelCount = 0;
     }
+    _syncOpponentThrows();
     setState(() {
       _syncCountdown();
+      _releaseMoveGuard();
       _syncSelectedFace();
       _syncAutoMove();
       _syncRollWait();
     });
     _syncConnectionLostAnnouncement();
     _maybeFetchGameLog();
+  }
+
+  /// C-377 D3: a throw for every `(k, face)` appended to `recentRolls`
+  /// since the last snapshot this screen saw, when that roll belongs to
+  /// another seat. The list the screen mounted with is the baseline, so
+  /// it never throws. A list that is not an append (resync, new game)
+  /// replaces the baseline and drops anything still in flight (A6).
+  void _syncOpponentThrows() {
+    final RoomSnapshot? room = widget.controller.room;
+    final List<(int k, int face)> next = List<(int k, int face)>.of(
+      room?.recentRolls ?? const <(int k, int face)>[],
+    );
+    final List<(int k, int face)>? added = _appendedRolls(_seenRolls, next);
+    if (added == null) {
+      _activeThrow = null;
+      _throwQueue.clear();
+      _throwHurry = false;
+      _throwConcealsFace = false;
+      _seenRolls = next;
+      return;
+    }
+    _seenRolls = next;
+    if (added.isEmpty) {
+      return;
+    }
+    final int? turnSeat = room?.turn?.seat;
+    final int? mySeat = widget.controller.seat;
+    if (turnSeat == null || turnSeat == mySeat) {
+      return;
+    }
+    for (final (int k, int face) in added) {
+      _throwQueue.add(_QueuedThrow(k: k, seat: turnSeat, face: face));
+    }
+    _startNextThrow();
+  }
+
+  /// Starts the head of the queue when nothing is in flight. A throw
+  /// already running is left to finish; a non-empty queue behind it is
+  /// the D5 hurry.
+  void _startNextThrow() {
+    if (_activeThrow != null) {
+      if (_throwQueue.isNotEmpty) {
+        _throwHurry = true;
+      }
+      return;
+    }
+    if (_throwQueue.isEmpty) {
+      _throwHurry = false;
+      _throwConcealsFace = false;
+      return;
+    }
+    _activeThrow = _throwQueue.removeAt(0);
+    _throwHurry = _throwQueue.isNotEmpty;
+    // D8 lands on the first frame, so the die under the board shows the
+    // face in that same frame (D2). With motion on, the face stays hidden
+    // until the tumble ends.
+    _throwConcealsFace = !MediaQuery.disableAnimationsOf(context);
+  }
+
+  /// C-377 D5: `moved` or `turn_passed` while a throw is up. The widget
+  /// shortens whatever is left of the tumble, and the rest, to [kThrowFast].
+  void _hurryActiveThrow() {
+    if (_activeThrow == null || _throwHurry) {
+      return;
+    }
+    _throwHurry = true;
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _clearThrows() {
+    _activeThrow = null;
+    _throwQueue.clear();
+    _throwHurry = false;
+    _throwConcealsFace = false;
+    _seenRolls = List<(int k, int face)>.of(
+      widget.controller.room?.recentRolls ?? const <(int k, int face)>[],
+    );
+  }
+
+  void _onThrowPhase(ThrownDiePhase phase) {
+    final bool conceal = phase == ThrownDiePhase.tumble;
+    if (conceal == _throwConcealsFace || !mounted) {
+      return;
+    }
+    setState(() {
+      _throwConcealsFace = conceal;
+    });
+  }
+
+  void _onThrowDone() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _activeThrow = null;
+      _throwConcealsFace = false;
+      _throwHurry = false;
+      _startNextThrow();
+    });
+  }
+
+  /// The face under the board (C-377 D2). While a throw is still
+  /// travelling, none: the idle cube, so the result is not given away.
+  /// From the moment that throw lands, its own face, including when a
+  /// later roll has already replaced `turn.value`. With no throw up, the
+  /// caller's face (turn value, selected tray face, or the no-move hold).
+  int? _boardDieFace(int? dieFace) {
+    final _QueuedThrow? active = _activeThrow;
+    if (active == null) {
+      return dieFace;
+    }
+    if (_throwConcealsFace) {
+      return null;
+    }
+    return active.face;
+  }
+
+  Widget? _thrownDieOverlay(int? mySeat) {
+    final _QueuedThrow? active = _activeThrow;
+    if (active == null) {
+      return null;
+    }
+    return BoardThrownDie(
+      key: ValueKey<int>(active.k),
+      seat: active.seat,
+      face: active.face,
+      mySeat: mySeat,
+      hurry: _throwHurry,
+      successorWaiting: _throwQueue.isNotEmpty,
+      onPhase: _onThrowPhase,
+      onDone: _onThrowDone,
+    );
   }
 
   /// C-337 rule 3: announces [AppLocalizations.lobbyConnectionLost] once
@@ -1097,20 +1300,33 @@ class _GameScreenState extends State<GameScreen> {
     return turn.legal != null && turn.legal!.length == 1;
   }
 
-  /// Arms the 1.5s unique-legal hold once per `turn.k`, or drops a pending
-  /// hold when the turn is no longer that unique-legal awaitMove. The
-  /// board draws the held token's glow itself from `autoMoveToken`; there
-  /// is no Undo to announce alongside it any more.
+  /// Arms the 1.5s unique-legal hold once per await_move decision (this
+  /// seat, `turn.k`, and the queue), or drops a pending hold when the turn
+  /// is no longer that unique-legal awaitMove. A new queue under the same
+  /// k is a new decision and arms again. The board draws the held token's
+  /// glow itself from `autoMoveToken`; there is no Undo to announce
+  /// alongside it any more.
   void _syncAutoMove() {
+    final TurnState? turnNow = widget.controller.room?.turn;
+    final bool stillArmed = _sameMoveDecision(
+      turnNow,
+      _autoMoveHandledK,
+      _autoMoveHandledQueue,
+    );
+    if (!stillArmed) {
+      _autoMoveHandledK = null;
+      _autoMoveHandledQueue = null;
+    }
     if (_isEndHeld || !_isUniqueLegalAwaitMove()) {
       _clearPendingHold();
       return;
     }
-    final TurnState turn = widget.controller.room!.turn!;
-    if (_autoMoveHandledK == turn.k) {
+    final TurnState turn = turnNow!;
+    if (stillArmed) {
       return;
     }
     _autoMoveHandledK = turn.k;
+    _autoMoveHandledQueue = List<int>.from(turn.queue);
     final List<FaceLegal>? legalByFace = turn.legalByFace;
     if (legalByFace != null) {
       _pendingAutoMoveToken = legalByFace.single.tokens.single;
@@ -1139,12 +1355,18 @@ class _GameScreenState extends State<GameScreen> {
     final int? token = _pendingAutoMoveToken;
     final int? face = _pendingAutoMoveFace;
     final int? k = _autoMoveHandledK;
+    final List<int>? armedQueue = _autoMoveHandledQueue;
     if (token == null || k == null) {
       return;
     }
     _autoMoveTimer = null;
     _pendingAutoMoveToken = null;
     _pendingAutoMoveFace = null;
+    final TurnState? turn = widget.controller.room?.turn;
+    if (!_sameMoveDecision(turn, k, armedQueue)) {
+      setState(() {});
+      return;
+    }
     final AppLocalizations loc = AppLocalizations.of(context);
     _announceAutoMove(loc.gameTokenButton(token + 1));
     setState(() {});
@@ -1152,8 +1374,8 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   /// The one path that actually calls `controller.move`: a tap on the board
-  /// and the hold's own timer both end up here, and whichever reaches a
-  /// given `turn.k` first is the only one that sends anything for it.
+  /// and the hold's own timer both end up here, and whichever reaches the
+  /// current decision first is the only one that sends anything for it.
   ///
   /// K6 (order 365, C-362 Part B): `face` goes out only when the caller
   /// read it off a non-null `legalByFace`; `RoomController.move` itself
@@ -1161,10 +1383,18 @@ class _GameScreenState extends State<GameScreen> {
   /// without the roll queue, where `face` is always null here, sends the
   /// byte-identical frame it always did.
   void _sendMove(int token, int k, {int? face}) {
-    if (_moveSentForK == k) {
+    final TurnState? turn = widget.controller.room?.turn;
+    if (turn == null ||
+        turn.seat != widget.controller.seat ||
+        turn.phase != TurnPhase.awaitMove ||
+        turn.k != k) {
+      return;
+    }
+    if (_moveSentForK == k && _sameFaces(_moveSentForQueue, turn.queue)) {
       return;
     }
     _moveSentForK = k;
+    _moveSentForQueue = List<int>.from(turn.queue);
     widget.controller.move(token, face: face);
   }
 
@@ -1959,6 +2189,7 @@ class _GameScreenState extends State<GameScreen> {
               onIllegalTokenTap: (int index) {
                 FeedbackScope.of(context).play(FeedbackCue.invalidTap);
               },
+              overlay: _thrownDieOverlay(seat),
             ),
           ),
           const SizedBox(height: kSpace4),
@@ -1970,11 +2201,11 @@ class _GameScreenState extends State<GameScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                _diceValueWrap(
+                _boardDieSlot(
                   loc,
                   turn,
                   GameDie(
-                    face: dieFace,
+                    face: _boardDieFace(dieFace),
                     seatColor: dieSeatColor,
                     enabled: rollEnabled,
                     tumbling: _rollWaitK != null,
@@ -2254,6 +2485,24 @@ class _GameScreenState extends State<GameScreen> {
     return Semantics(
       key: const Key('game-screen-dice-value'),
       label: loc.gameDieValue(turn.value!),
+      child: die,
+    );
+  }
+
+  /// With no throw up, [_diceValueWrap] exactly as before. While one is
+  /// travelling the value is left unannounced (D2). Once it has landed,
+  /// the announcement is that throw's face, which is what the die shows.
+  Widget _boardDieSlot(AppLocalizations loc, TurnState? turn, Widget die) {
+    final _QueuedThrow? active = _activeThrow;
+    if (active == null) {
+      return _diceValueWrap(loc, turn, die);
+    }
+    if (_throwConcealsFace) {
+      return die;
+    }
+    return Semantics(
+      key: const Key('game-screen-dice-value'),
+      label: loc.gameDieValue(active.face),
       child: die,
     );
   }
@@ -2851,6 +3100,46 @@ int? _intAt(Map<String, Object?> data, String key) {
 String? _stringAt(Map<String, Object?> data, String key) {
   final Object? value = data[key];
   return value is String ? value : null;
+}
+
+/// One opponent roll waiting to be thrown, or the one currently in flight.
+class _QueuedThrow {
+  const _QueuedThrow({required this.k, required this.seat, required this.face});
+
+  final int k;
+  final int seat;
+  final int face;
+}
+
+/// Pairs in [next] that were appended to [prev], or null when [next] is
+/// not an append (the ring was replaced). The ring keeps three and drops
+/// from the front, so an append shares a suffix of [prev] with a prefix
+/// of [next]. The empty suffix only counts when [prev] itself is empty.
+List<(int k, int face)>? _appendedRolls(
+  List<(int k, int face)> prev,
+  List<(int k, int face)> next,
+) {
+  for (int drop = 0; drop <= prev.length; drop++) {
+    final int keep = prev.length - drop;
+    if (keep > next.length) {
+      continue;
+    }
+    bool match = true;
+    for (int i = 0; i < keep; i++) {
+      if (prev[drop + i] != next[i]) {
+        match = false;
+        break;
+      }
+    }
+    if (!match) {
+      continue;
+    }
+    if (drop == prev.length && prev.isNotEmpty) {
+      return null;
+    }
+    return next.sublist(keep);
+  }
+  return null;
 }
 
 /// C-268 rules 3 to 5: landing cues held for mover (seat, token).
