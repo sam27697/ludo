@@ -516,8 +516,11 @@ class RoomConnection {
     return request('roll', const <String, Object?>{});
   }
 
-  Future<Frame> move(int token) {
-    return request('move', <String, Object?>{'token': token});
+  /// docs/PROTOCOL.md section 21.1: `face` is the queued face this move
+  /// spends, carried on the wire only when given. Absent, the server spends
+  /// `defaultFace`.
+  Future<Frame> move(int token, {int? face}) {
+    return request('move', <String, Object?>{'token': token, 'face': ?face});
   }
 
   Future<Frame> leaveRoom() {
