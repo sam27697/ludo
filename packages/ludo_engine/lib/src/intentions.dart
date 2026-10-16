@@ -32,17 +32,27 @@ class RollIntention extends Intention {
 
 /// Wire: "move" { "token": 0..3 }.
 class MoveIntention extends Intention {
-  const MoveIntention(super.seat, this.token);
+  const MoveIntention(super.seat, this.token, {this.face});
 
   final int token;
 
+  /// docs/ENGINE_API.md section 10.1: the queued face this move spends, when
+  /// `rules.rollQueue` is on. Null means "the default face" -- see
+  /// `defaultFace`. With `rollQueue` off this is ignored entirely: section 5's
+  /// `MoveIntention` never read a face, and a field it never reads cannot
+  /// change what it does.
+  final int? face;
+
   @override
   bool operator ==(Object other) =>
-      other is MoveIntention && other.seat == seat && other.token == token;
+      other is MoveIntention &&
+      other.seat == seat &&
+      other.token == token &&
+      other.face == face;
 
   @override
-  int get hashCode => Object.hash(MoveIntention, seat, token);
+  int get hashCode => Object.hash(MoveIntention, seat, token, face);
 
   @override
-  String toString() => 'MoveIntention(seat: $seat, token: $token)';
+  String toString() => 'MoveIntention(seat: $seat, token: $token, face: $face)';
 }

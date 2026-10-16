@@ -83,26 +83,86 @@ Map<String, Object?> _seatSnapshot(Room room, Seat seat) {
   };
 }
 
-/// `docs/PROTOCOL.md` section 6: `value`, `legal` and `sixes` are absent
-/// when `phase` is `await_roll`; `deadline_ms` and `k` are present in every
-/// phase. Before `start_game`, `room.game` is null and there is no turn yet.
+/// `docs/PROTOCOL.md` section 6 and section 21.3 rule 2: `value`, `legal`,
+/// `sixes` and `legal_by_face` are absent when `phase` is `await_roll`;
+/// `deadline_ms`, `k` and `queue` are present in every phase (`queue` is
+/// `[]` in `finished`, never omitted there). Before `start_game`,
+/// `room.game` is null and there is no turn yet.
 Map<String, Object?>? _turnSnapshot(Room room, DateTime now) {
   final engine.GameState? game = room.game;
   if (game == null) {
     return null;
   }
+  final TurnQueueFields queueFields = turnQueueFields(game);
   final Map<String, Object?> turn = <String, Object?>{
     'seat': game.currentSeat,
-    'phase': _wirePhase(game.phase),
+    'phase': queueFields.phase,
+    'queue': queueFields.queue,
   };
   if (game.phase == engine.GamePhase.awaitMove) {
-    turn['value'] = game.roll;
-    turn['legal'] = engine.legalTokens(game);
+    // docs/PROTOCOL.md section 21.3 rule 2: `value` is `defaultFace`, not
+    // `game.roll` -- `game.roll` is always null under the queue
+    // (ENGINE_API.md section 10.1) and `defaultFace` is the one thing that
+    // decides which queued face an omitted `move.face` would spend.
+    turn['value'] = queueFields.value;
+    turn['legal'] = queueFields.legal;
     turn['sixes'] = game.sixes;
+    turn['legal_by_face'] = queueFields.legalByFace;
   }
   turn['deadline_ms'] = _deadlineMs(room, now);
   turn['k'] = room.rollCount;
   return turn;
+}
+
+/// `docs/PROTOCOL.md` section 21.1 and 21.3: the fields every `turn` --
+/// pushed or snapshotted -- carries about the roll queue, computed once
+/// from the engine state the moment that specific frame is fixed, never
+/// re-derived from any legality rule of this file's own. `phase` and
+/// `queue` are always set; `value`, `legal` and `legalByFace` are set only
+/// when [game]'s phase is `awaitMove`, where `value` is
+/// `engine.defaultFace` (the engine's own `roll` is always null under the
+/// queue) and `legal` is that face's own legal tokens, ascending.
+class TurnQueueFields {
+  TurnQueueFields({
+    required this.phase,
+    required this.queue,
+    this.value,
+    this.legal,
+    this.legalByFace,
+  });
+
+  final String phase;
+  final List<int> queue;
+  final int? value;
+  final List<int>? legal;
+  final List<Map<String, Object?>>? legalByFace;
+}
+
+TurnQueueFields turnQueueFields(engine.GameState game) {
+  final String phase = _wirePhase(game.phase);
+  final List<int> queue = List<int>.of(game.queue);
+  if (game.phase != engine.GamePhase.awaitMove) {
+    return TurnQueueFields(phase: phase, queue: queue);
+  }
+  return TurnQueueFields(
+    phase: phase,
+    queue: queue,
+    value: engine.defaultFace(game),
+    legal: engine.legalTokens(game),
+    legalByFace: _wireLegalByFace(game),
+  );
+}
+
+/// `docs/ENGINE_API.md` section 10.1's `legalByFace`, in the wire shape
+/// section 21.1 fixes: `[{"face": int, "tokens": [int]}]`, in first-queued
+/// order (the map's own iteration order, which `engine.legalByFace` already
+/// builds in that order and this file does not re-sort).
+List<Map<String, Object?>> _wireLegalByFace(engine.GameState game) {
+  final Map<int, List<int>> byFace = engine.legalByFace(game);
+  return <Map<String, Object?>>[
+    for (final entry in byFace.entries)
+      <String, Object?>{'face': entry.key, 'tokens': entry.value},
+  ];
 }
 
 /// `docs/PROTOCOL.md` section 6's `deadline_ms` formula, read against [now]
@@ -221,11 +281,13 @@ Map<String, Object?> buildSeatSeed({
   };
 }
 
-/// `rolled`, section 5 and section 11.2/11.3: `value`, `legal`,
-/// `deadline_ms`, `k` and `reveal` are exactly what the registry's `roll()`
-/// call decided -- this never recomputes a face, a chain link or a `seq`,
-/// it only lays out the fields that were already fixed by the one code path
-/// allowed to read `chain.reveal(k)` and publish it.
+/// `rolled`, section 5, section 11.2/11.3 and section 21.1/21.3: `value`,
+/// `legal`, `deadline_ms`, `k` and `reveal` are exactly what the registry's
+/// `roll()` call decided -- this never recomputes a face, a chain link or a
+/// `seq`, it only lays out the fields that were already fixed by the one
+/// code path allowed to read `chain.reveal(k)` and publish it. `queue` is
+/// the queue after the roll (section 21.3 rule 3), and `legalByFace` is
+/// given, and only given, when the phase after the roll is `await_move`.
 Map<String, Object?> buildRolled({
   required int seat,
   required int value,
@@ -234,6 +296,8 @@ Map<String, Object?> buildRolled({
   required int k,
   required String reveal,
   required int seq,
+  List<int>? queue,
+  List<Map<String, Object?>>? legalByFace,
 }) {
   return <String, Object?>{
     'seat': seat,
@@ -243,6 +307,8 @@ Map<String, Object?> buildRolled({
     'k': k,
     'reveal': reveal,
     'seq': seq,
+    if (queue != null) 'queue': queue,
+    if (legalByFace != null) 'legal_by_face': legalByFace,
   };
 }
 
@@ -256,20 +322,40 @@ Map<String, Object?> buildTurnPassed({
   return <String, Object?>{'seat': seat, 'reason': reason, 'seq': seq};
 }
 
-/// `turn`, section 5: sent for the seat that now holds the turn, whether
-/// because the turn passed or because that seat was granted an extra roll.
+/// `turn`, section 5 and section 21.3 rule 1: sent for the seat that now
+/// holds the turn, whether because the turn passed, because that seat was
+/// granted an extra roll, or because that seat still has faces left to
+/// spend. `phase` and `queue` are given on every call since every room
+/// plays the queue (section 21.3 rule 5); `value`, `legal` and
+/// `legalByFace` are given, and only given, when `phase` is `await_move`.
 Map<String, Object?> buildTurn({
   required int seat,
   required int deadlineMs,
   required int seq,
+  String? phase,
+  List<int>? queue,
+  int? value,
+  List<int>? legal,
+  List<Map<String, Object?>>? legalByFace,
 }) {
-  return <String, Object?>{'seat': seat, 'deadline_ms': deadlineMs, 'seq': seq};
+  return <String, Object?>{
+    'seat': seat,
+    'deadline_ms': deadlineMs,
+    'seq': seq,
+    if (phase != null) 'phase': phase,
+    if (queue != null) 'queue': queue,
+    if (value != null) 'value': value,
+    if (legal != null) 'legal': legal,
+    if (legalByFace != null) 'legal_by_face': legalByFace,
+  };
 }
 
-/// `moved`, section 5 and section 12.2: built from the engine's own `Moved`
-/// and `Captured` events and from nothing else. `captured` is the list of
-/// `{seat, token}` the engine reported captured by this move, in the order
-/// it reported them, empty when there were none.
+/// `moved`, section 5, section 12.2 and section 21.1: built from the
+/// engine's own `Moved` and `Captured` events and from nothing else, plus
+/// the face this move spent, which the registry fixed at `move()` time
+/// because the engine's own `Moved` event carries none. `captured` is the
+/// list of `{seat, token}` the engine reported captured by this move, in
+/// the order it reported them, empty when there were none.
 Map<String, Object?> buildMoved({
   required int seat,
   required int token,
@@ -278,6 +364,7 @@ Map<String, Object?> buildMoved({
   required List<Map<String, Object?>> captured,
   required bool extraRoll,
   required int seq,
+  int? face,
 }) {
   return <String, Object?>{
     'seat': seat,
@@ -287,6 +374,7 @@ Map<String, Object?> buildMoved({
     'captured': captured,
     'extra_roll': extraRoll,
     'seq': seq,
+    if (face != null) 'face': face,
   };
 }
 
@@ -329,17 +417,23 @@ String wireTurnEndReason(engine.TurnEndReason reason) {
   }
 }
 
-/// Every frame a timer-played turn publishes, in section 12's own order:
-/// for a roll, `rolled` and then `turn_passed` + `turn` exactly when the roll
-/// ended the turn (section 12.1); for a move, `moved` and then exactly one of
-/// `game_over` or `turn` (section 12.2). None of them carries `re`: no client
-/// request is being answered, so there is no id to answer.
+/// Every frame a timer-played turn publishes, in section 21.3 rule 4's own
+/// order, which replaces section 12 for every room since every room plays
+/// the queue: for a roll, `rolled` and then whichever of `turn_passed` +
+/// `turn` or a bare `turn` applies, exactly as the client-driven path in
+/// `connection.dart` decides it (`rolled.turnPassedSeq`/`rolled.turnSeq`);
+/// for a move, `moved` and then `game_over`, or whichever of `turn_passed` +
+/// `turn` or a bare `turn` applies (`moved.turnPassedSeq`/`moved.turnSeq`).
+/// None of them carries `re`: no client request is being answered, so there
+/// is no id to answer.
 List<OutFrame> buildExpiryFrames(ExpiredTurn expired) {
   final List<OutFrame> frames = <OutFrame>[];
 
   final RollOk? rolled = expired.roll;
   if (rolled != null) {
     final engine.Rolled event = rolled.events.whereType<engine.Rolled>().single;
+    final engine.GameState afterRoll = rolled.room.game!;
+    final TurnQueueFields afterRollFields = turnQueueFields(afterRoll);
     frames.add(
       OutFrame(
         'rolled',
@@ -351,29 +445,38 @@ List<OutFrame> buildExpiryFrames(ExpiredTurn expired) {
           k: rolled.k,
           reveal: rolled.reveal,
           seq: rolled.rolledSeq,
+          queue: afterRollFields.queue,
+          legalByFace: afterRollFields.legalByFace,
         ),
       ),
     );
-    final List<engine.TurnEnded> ended =
-        rolled.events.whereType<engine.TurnEnded>().toList();
-    if (ended.isNotEmpty) {
+    if (rolled.turnPassedSeq != null) {
+      final engine.TurnEnded ended =
+          rolled.events.whereType<engine.TurnEnded>().single;
       frames.add(
         OutFrame(
           'turn_passed',
           buildTurnPassed(
-            seat: ended.single.seat,
-            reason: wireTurnEndReason(ended.single.reason),
+            seat: ended.seat,
+            reason: wireTurnEndReason(ended.reason),
             seq: rolled.turnPassedSeq!,
           ),
         ),
       );
+    }
+    if (rolled.turnSeq != null) {
       frames.add(
         OutFrame(
           'turn',
           buildTurn(
-            seat: rolled.room.game!.currentSeat,
+            seat: afterRoll.currentSeat,
             deadlineMs: rolled.nextDeadlineMs!,
             seq: rolled.turnSeq!,
+            phase: afterRollFields.phase,
+            queue: afterRollFields.queue,
+            value: afterRollFields.value,
+            legal: afterRollFields.legal,
+            legalByFace: afterRollFields.legalByFace,
           ),
         ),
       );
@@ -398,6 +501,7 @@ List<OutFrame> buildExpiryFrames(ExpiredTurn expired) {
         ],
         extraRoll: moved.events.whereType<engine.ExtraRoll>().isNotEmpty,
         seq: moved.movedSeq,
+        face: moved.face,
       ),
     ),
   );
@@ -416,13 +520,34 @@ List<OutFrame> buildExpiryFrames(ExpiredTurn expired) {
     );
     return frames;
   }
+  final engine.GameState afterMove = moved.room.game!;
+  final TurnQueueFields afterMoveFields = turnQueueFields(afterMove);
+  if (moved.turnPassedSeq != null) {
+    final engine.TurnEnded ended =
+        moved.events.whereType<engine.TurnEnded>().single;
+    frames.add(
+      OutFrame(
+        'turn_passed',
+        buildTurnPassed(
+          seat: ended.seat,
+          reason: wireTurnEndReason(ended.reason),
+          seq: moved.turnPassedSeq!,
+        ),
+      ),
+    );
+  }
   frames.add(
     OutFrame(
       'turn',
       buildTurn(
-        seat: moved.room.game!.currentSeat,
+        seat: afterMove.currentSeat,
         deadlineMs: moved.nextDeadlineMs!,
         seq: moved.turnSeq!,
+        phase: afterMoveFields.phase,
+        queue: afterMoveFields.queue,
+        value: afterMoveFields.value,
+        legal: afterMoveFields.legal,
+        legalByFace: afterMoveFields.legalByFace,
       ),
     ),
   );

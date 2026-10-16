@@ -150,6 +150,16 @@ class SeatState {
   }
 }
 
+/// docs/PROTOCOL.md section 21.1, `legal_by_face`: a queued face with at
+/// least one legal token, and the tokens it is legal for. Order is the
+/// wire's order (first-queued).
+class FaceLegal {
+  const FaceLegal({required this.face, required this.tokens});
+
+  final int face;
+  final List<int> tokens;
+}
+
 class TurnState {
   const TurnState({
     required this.seat,
@@ -159,6 +169,8 @@ class TurnState {
     this.value,
     this.legal,
     this.sixes,
+    this.queue = const <int>[],
+    this.legalByFace,
   });
 
   final int seat;
@@ -168,6 +180,15 @@ class TurnState {
   final int? value;
   final List<int>? legal;
   final int? sixes;
+
+  /// docs/PROTOCOL.md section 21.1: the unspent faces in roll order. `[]`
+  /// when the wire sends none, which is every server built before the roll
+  /// queue and a finished game under one that has it.
+  final List<int> queue;
+
+  /// docs/PROTOCOL.md section 21.1: present only in `await_move` under the
+  /// roll queue. Null when the wire sends none.
+  final List<FaceLegal>? legalByFace;
 
   factory TurnState.fromJson(Map<String, Object?> json) {
     final int seat = _reqInt(json, 'seat');
@@ -180,6 +201,11 @@ class TurnState {
     final int? value = _optInt(json, 'value');
     final List<int>? legal = _optIntList(json, 'legal');
     final int? sixes = _optInt(json, 'sixes');
+    final List<int> queue = _optIntList(json, 'queue') ?? const <int>[];
+    final List<FaceLegal>? legalByFace = _optFaceLegalList(
+      json,
+      'legal_by_face',
+    );
 
     return TurnState(
       seat: seat,
@@ -189,6 +215,8 @@ class TurnState {
       value: value,
       legal: legal,
       sixes: sixes,
+      queue: queue,
+      legalByFace: legalByFace,
     );
   }
 }
@@ -235,6 +263,7 @@ class RoomSnapshot {
     this.verifyUrl,
     this.recentRolls = const <(int k, int face)>[],
     this.rematch,
+    this.lastSpentFace,
     required this.seq,
   });
 
@@ -269,6 +298,14 @@ class RoomSnapshot {
   /// an explicit `null` both read as null, and only a key present with the
   /// wrong shape throws. Non-null only in a rematch LOBBY.
   final RematchState? rematch;
+
+  /// Client-only. docs/PROTOCOL.md section 21.1, A4: the face spent by the
+  /// most recent `moved` that carried one. Null until that first arrives,
+  /// and reset to null by the next `rolled` -- set by
+  /// `RoomController._reduceMoved` and `RoomController._reduceRolled`, never
+  /// by this decoder. Not a snapshot wire field; [fromJson] always starts
+  /// this null, the same rule [recentRolls] follows.
+  final int? lastSpentFace;
 
   final int seq;
 
@@ -366,6 +403,11 @@ class RoomSnapshot {
   /// needs to -- every reducer that needs `rematch` to actually change
   /// (become non-null, change its `ready`, or go back to null) replaces the
   /// whole snapshot with a fresh [RoomSnapshot.fromJson] instead of copying.
+  ///
+  /// [lastSpentFace] is the one exception: `_reduceRolled` (A3) has to put
+  /// it back to null on every roll, so omitting it and passing it as `null`
+  /// are different calls here. Passing nothing at all keeps the current
+  /// value; passing `null` explicitly sets it to null.
   RoomSnapshot copyWith({
     String? code,
     RoomState? state,
@@ -382,6 +424,7 @@ class RoomSnapshot {
     String? verifyUrl,
     List<(int k, int face)>? recentRolls,
     RematchState? rematch,
+    Object? lastSpentFace = _unset,
     int? seq,
   }) {
     return RoomSnapshot(
@@ -400,10 +443,17 @@ class RoomSnapshot {
       verifyUrl: verifyUrl ?? this.verifyUrl,
       recentRolls: recentRolls ?? this.recentRolls,
       rematch: rematch ?? this.rematch,
+      lastSpentFace: identical(lastSpentFace, _unset)
+          ? this.lastSpentFace
+          : lastSpentFace as int?,
       seq: seq ?? this.seq,
     );
   }
 }
+
+/// Sentinel distinguishing "omitted" from "explicitly null" for
+/// [RoomSnapshot.copyWith]'s [RoomSnapshot.lastSpentFace] parameter.
+const Object _unset = Object();
 
 // --- decoding helpers -------------------------------------------------
 //
@@ -502,6 +552,29 @@ List<int>? _optIntList(Map<String, Object?> json, String key) {
     return null;
   }
   return _reqIntList(json, key);
+}
+
+/// docs/PROTOCOL.md section 21.1, `legal_by_face`: `[{"face": int, "tokens":
+/// [int]}]`. Missing or explicit null decodes to null; present with the
+/// wrong shape throws, same as every other `_opt*` helper here.
+List<FaceLegal>? _optFaceLegalList(Map<String, Object?> json, String key) {
+  final Object? value = json[key];
+  if (value == null) {
+    return null;
+  }
+  if (value is! List) {
+    throw SnapshotFormatException(key);
+  }
+  final List<FaceLegal> result = <FaceLegal>[];
+  for (final Object? element in value) {
+    if (element is! Map<String, Object?>) {
+      throw SnapshotFormatException(key);
+    }
+    final int face = _reqInt(element, 'face');
+    final List<int> tokens = _reqIntList(element, 'tokens');
+    result.add(FaceLegal(face: face, tokens: tokens));
+  }
+  return result;
 }
 
 RoomState _reqRoomState(Map<String, Object?> json, String key) {

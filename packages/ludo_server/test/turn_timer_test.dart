@@ -8,17 +8,30 @@
 // those claims decidable without 45 real seconds passing anywhere, or a
 // periodic timer having to fire on schedule inside a test.
 //
-// Nothing below steers the dice. The suite drives a table where NOBODY ever
-// acts and asserts the properties that must hold whatever the faces are:
-// every expiry advances `seq`, the segment always restarts, an
-// `await_move` expiry always plays the lowest legal token index, and a game
-// left entirely to the timer keeps rotating the turn instead of stopping.
-// That is exactly the failure this order exists to end.
+// The groups above the frame-order group do not steer the dice. They drive
+// a table where nobody ever acts and assert the properties that must hold
+// whatever the faces are: every expiry advances `seq`, the segment always
+// restarts, an `await_move` expiry always plays the lowest legal token
+// index, and a game left entirely to the timer keeps rotating the turn
+// instead of stopping. That is exactly the failure this order exists to end.
+//
+// The frame-order group does steer, through the chain seam
+// `test/dice_steering_test.dart` proves. Section 21.3 rule 4 gives a roll
+// three frame orders, and the first face of a fresh game is a 6 often
+// enough that asserting only one of them fails. Each order is reached on
+// purpose. Which order an expiry published is read off the frames:
+// `rolled.queue`, `rolled.legal`, and the following `turn`'s `seat` and
+// `phase`.
 import 'dart:math';
 
+import 'package:fair_dice/fair_dice.dart' show hexEncode;
 import 'package:ludo_engine/ludo_engine.dart' as engine;
 import 'package:ludo_server/ludo_server.dart';
 import 'package:test/test.dart';
+
+import 'support/dice_oracle.dart';
+import 'support/engine_search.dart';
+import 'support/scripted_bytes.dart';
 
 /// The default room rules, whose `turnSeconds` is the 45 of rule 14.
 const RulesConfig _rules = RulesConfig();
@@ -48,6 +61,235 @@ _Table _startedGame() {
 }
 
 Duration _budget(Room room) => Duration(seconds: room.rules.turnSeconds);
+
+/// Section 21.3 rule 4's three roll rows.
+enum _RollRow { turnEnded, movePending, owesRoll }
+
+/// Fixed 2-player seats (`_seatIndicesFor(2)` is `[0, 2]`, host then guest)
+/// and the client seeds those seats will carry, so `client_seeds` is known
+/// before the room exists. Same seam `dice_steering_test.dart` uses.
+const List<int> _steeredSeats = <int>[0, 2];
+const String _hostSteerSeed = 'turn-timer-host-seed';
+const String _guestSteerSeed = 'turn-timer-guest-seed';
+const String _steerClientSeeds = '0:$_hostSteerSeed|2:$_guestSteerSeed';
+
+String _predictedGameId() {
+  final List<int> probe = buildScript(
+    secret: List<int>.filled(serverSecretDraws, 0),
+  );
+  return hexEncode(probe.sublist(gameIdOffset, gameIdOffset + gameIdDraws));
+}
+
+/// A started 2-seat game whose first [wanted] die faces are fixed by the
+/// chain, not by `Random.secure`. Both seats set a client seed before
+/// `startGame`, so that call draws no server seed and [gameIdOffset] still
+/// names `game_id`.
+_Table _steeredTable(List<int> wanted) {
+  final String gameId = _predictedGameId();
+  final SteeredSecret steered = findSecretForFaces(
+    wanted: wanted,
+    gameId: gameId,
+    clientSeeds: _steerClientSeeds,
+  );
+  final FakeClock clock = FakeClock(DateTime.utc(2026, 1, 1));
+  final RoomRegistry registry = RoomRegistry(
+    clock: clock,
+    secure: ScriptedBytesRandom(buildScript(secret: steered.secret)),
+  );
+
+  final CreateResult created =
+      registry.createRoom(name: 'Host', players: 2, rules: _rules);
+  expect(created, isA<CreateOk>(),
+      reason: 'test setup: a 2-seat room must be creatable');
+  final CreateOk host = created as CreateOk;
+  final JoinResult joined =
+      registry.joinRoom(code: host.room.code, name: 'Guest');
+  expect(joined, isA<JoinOk>(),
+      reason: 'test setup: the second seat must be joinable');
+  final JoinOk guest = joined as JoinOk;
+  expect(<int>[host.seat.seat, guest.seat.seat], _steeredSeats,
+      reason: 'steering assumes host seat 0 and guest seat 2; got '
+          'host=${host.seat.seat} guest=${guest.seat.seat}');
+
+  expect(
+    registry.setSeed(
+      code: host.room.code,
+      seatToken: host.seat.seatToken,
+      clientSeed: _hostSteerSeed,
+    ),
+    isA<SetSeedOk>(),
+    reason: 'test setup: the host seed must be accepted before start',
+  );
+  expect(
+    registry.setSeed(
+      code: host.room.code,
+      seatToken: guest.seat.seatToken,
+      clientSeed: _guestSteerSeed,
+    ),
+    isA<SetSeedOk>(),
+    reason: 'test setup: the guest seed must be accepted before start',
+  );
+  final StartResult started = registry.startGame(
+    code: host.room.code,
+    seatToken: host.seat.seatToken,
+  );
+  expect(started, isA<StartOk>(),
+      reason: 'test setup: a full 2-seat room must start');
+  expect((started as StartOk).serverSeeded, isEmpty,
+      reason: 'both seats already hold a client seed, so startGame must '
+          'not draw server seeds; a draw there shifts game_id off the '
+          'script this table was steered with');
+
+  final Room room = registry.lookup(host.room.code)!;
+  expect(room.gameId, gameId,
+      reason: 'predicted game_id did not match the room; the draw-order '
+          'picture in scripted_bytes.dart no longer matches registry.dart');
+  expect(room.clientSeeds, _steerClientSeeds,
+      reason: 'predicted client_seeds did not match the room');
+
+  return (registry: registry, clock: clock, code: host.room.code);
+}
+
+List<int> _asInts(Object? value, String field) {
+  expect(value, isA<List<int>>(),
+      reason: '$field must be the int list section 21.3 puts on this frame');
+  return value! as List<int>;
+}
+
+/// The row [step] is, from the engine's own `legal` and `TurnEnded`. A 6
+/// that owes another roll is the remaining case: `legal` empty and no
+/// `TurnEnded` (ENGINE_API.md 10.3).
+_RollRow _rowOfStep(EngineRollStep step) {
+  if (step.legal.isNotEmpty) {
+    return _RollRow.movePending;
+  }
+  if (step.turnEndReason != null) {
+    return _RollRow.turnEnded;
+  }
+  return _RollRow.owesRoll;
+}
+
+String _turnPassedReason(engine.TurnEndReason reason) {
+  switch (reason) {
+    case engine.TurnEndReason.noLegalMove:
+      return 'no_legal_move';
+    case engine.TurnEndReason.threeSixes:
+      return 'three_sixes';
+  }
+}
+
+/// Section 21.3 rule 4 for one timer roll. The row comes from `queue` and
+/// `legal` on `rolled`; `seat` and `phase` on the following `turn` have to
+/// be the ones that row names. The type list is then that row's order.
+_RollRow _assertExpiryRoll(ExpiredTurn acted, {required int face}) {
+  expect(acted.roll, isNotNull);
+  expect(acted.move, isNull,
+      reason: 'this helper is the roll rows; a move is a different step');
+
+  final List<OutFrame> frames = buildExpiryFrames(acted);
+  final List<String> types =
+      frames.map((OutFrame f) => f.type).toList(growable: false);
+  expect(types, isNotEmpty);
+  expect(types.first, 'rolled');
+  for (final OutFrame frame in frames) {
+    expect(frame.data.containsKey('re'), isFalse,
+        reason: 'section 12.3: `re` answers a request, and no client '
+            'request produced these frames');
+  }
+  final Map<String, Object?> rolled = frames.first.data;
+  expect(rolled['value'], face,
+      reason: 'steering must produce the wanted face; wanted $face, '
+          'got ${rolled['value']}');
+  expect(rolled['k'], acted.roll!.k);
+  expect(rolled['seq'], acted.roll!.rolledSeq);
+
+  final List<int> queue = _asInts(rolled['queue'], 'rolled.queue');
+  final List<int> legal = _asInts(rolled['legal'], 'rolled.legal');
+  final int seat = rolled['seat']! as int;
+
+  if (legal.isNotEmpty) {
+    expect(queue, isNotEmpty,
+        reason: 'a pending move is faces still sitting in the queue');
+    expect(queue, contains(face),
+        reason: 'the face just rolled is one of the unspent faces');
+    expect(types, <String>['rolled'],
+        reason: 'section 21.3: a roll that leaves a move pending publishes '
+            'rolled alone');
+    return _RollRow.movePending;
+  }
+
+  if (queue.isEmpty) {
+    expect(types, <String>['rolled', 'turn_passed', 'turn'],
+        reason: 'section 21.3: a roll that voided or passed the turn '
+            'publishes rolled, then turn_passed, then turn');
+    final Map<String, Object?> turn =
+        frames.firstWhere((OutFrame f) => f.type == 'turn').data;
+    expect(turn['seat'], isNot(seat),
+        reason: 'a passed or voided turn hands the next seat the turn');
+    expect(turn['phase'], 'await_roll');
+    expect(_asInts(turn['queue'], 'turn.queue'), isEmpty);
+    return _RollRow.turnEnded;
+  }
+
+  expect(types, <String>['rolled', 'turn'],
+      reason: 'section 21.3: a 6 that owes another roll publishes rolled, '
+          'then turn for the same seat, and no turn_passed');
+  expect(queue, contains(face), reason: 'the owed face stays in the queue');
+  final Map<String, Object?> turn =
+      frames.firstWhere((OutFrame f) => f.type == 'turn').data;
+  expect(turn['seat'], seat, reason: 'the same seat still holds the turn');
+  expect(turn['phase'], 'await_roll');
+  expect(_asInts(turn['queue'], 'turn.queue'), queue);
+  return _RollRow.owesRoll;
+}
+
+/// Plays [accepts]'s shortest face sequence through the timer, one expiry
+/// per face. Every expiry's frames must name the same row the engine step
+/// names, and the last row must be [want].
+void _driveRollRow(
+  bool Function(EngineRollStep step, engine.GameState state) accepts,
+  _RollRow want,
+  String because,
+) {
+  final List<int>? faces = findFaceSequence(
+    seats: _steeredSeats,
+    rules: serverRoomRules,
+    accepts: accepts,
+  );
+  expect(faces, isNotNull,
+      reason: 'engine search found no face sequence that is $because');
+  final List<EngineRollStep> steps = simulateFaces(
+    seats: _steeredSeats,
+    faces: faces!,
+    rules: serverRoomRules,
+  ).steps;
+  final _Table table = _steeredTable(faces);
+  final Room room = table.registry.lookup(table.code)!;
+
+  for (int i = 0; i < faces.length; i++) {
+    expect(room.game!.phase, engine.GamePhase.awaitRoll,
+        reason: 'roll ${i + 1} of $faces ($because) is taken by the timer '
+            'only while the seat still owes a roll');
+    table.clock.advance(_budget(room));
+    final List<ExpiredTurn> acted = table.registry.expireTurns();
+    expect(acted, hasLength(1),
+        reason: 'roll ${i + 1} of $faces ($because): one expired segment');
+    final _RollRow row = _assertExpiryRoll(acted.single, face: faces[i]);
+    expect(row, _rowOfStep(steps[i]),
+        reason: 'roll ${i + 1} of $faces ($because): the frames and the '
+            'engine step name different section 21.3 rows');
+    final engine.TurnEndReason? end = steps[i].turnEndReason;
+    if (end != null) {
+      final OutFrame passed = buildExpiryFrames(acted.single)
+          .firstWhere((OutFrame f) => f.type == 'turn_passed');
+      expect(passed.data['reason'], _turnPassedReason(end),
+          reason: 'turn_passed.reason is the engine TurnEndReason');
+    }
+  }
+  expect(_rowOfStep(steps.last), want,
+      reason: 'the sequence $faces found for "$because" does not end on '
+          'that row');
+}
 
 void main() {
   group('an unexpired segment, rule 14', () {
@@ -227,35 +469,38 @@ void main() {
     });
   });
 
-  group('the frames a timer-played turn publishes, PROTOCOL section 12', () {
+  group('the frames a timer-played turn publishes, PROTOCOL section 21.3', () {
     test(
         'a roll publishes rolled, then turn_passed and turn together '
         'exactly when the roll ended the turn', () {
-      final _Table t = _startedGame();
-      final Room room = t.registry.lookup(t.code)!;
-      t.clock.advance(_budget(room));
-      final ExpiredTurn acted = t.registry.expireTurns().single;
-
-      final List<OutFrame> frames = buildExpiryFrames(acted);
-      final List<String> types =
-          frames.map((OutFrame f) => f.type).toList(growable: false);
-
-      expect(types.first, 'rolled');
-      final bool turnEnded = acted.roll!.turnSeq != null;
-      expect(
-        types,
-        turnEnded
-            ? <String>['rolled', 'turn_passed', 'turn']
-            : <String>['rolled'],
-        reason: 'section 12.1 fixes both the set and the order',
+      _driveRollRow(
+        (EngineRollStep step, engine.GameState _) =>
+            step.turnEndReason == engine.TurnEndReason.noLegalMove,
+        _RollRow.turnEnded,
+        'a roll that passes the turn',
       );
-      for (final OutFrame frame in frames) {
-        expect(frame.data.containsKey('re'), isFalse,
-            reason: 'section 12.3: `re` answers a request, and no client '
-                'request produced these frames');
-      }
-      expect(frames.first.data['k'], acted.roll!.k);
-      expect(frames.first.data['seq'], acted.roll!.rolledSeq);
+    });
+
+    test(
+        'a 6 that owes another roll publishes rolled, then turn for the '
+        'same seat in await_roll', () {
+      _driveRollRow(
+        (EngineRollStep step, engine.GameState state) =>
+            step.legal.isEmpty &&
+            step.turnEndReason == null &&
+            state.phase == engine.GamePhase.awaitRoll &&
+            state.queue.isNotEmpty,
+        _RollRow.owesRoll,
+        'a 6 that owes another roll',
+      );
+    });
+
+    test('a roll that leaves a move pending publishes rolled alone', () {
+      _driveRollRow(
+        (EngineRollStep step, engine.GameState _) => step.legal.isNotEmpty,
+        _RollRow.movePending,
+        'a roll that leaves a move pending',
+      );
     });
 
     test('a move publishes moved, then turn', () {

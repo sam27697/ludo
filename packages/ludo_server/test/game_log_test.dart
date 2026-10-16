@@ -281,11 +281,12 @@ void _armWinningToken(Room room, int seat, int face) {
     tokens: tokens,
     currentSeat: game.currentSeat,
     phase: game.phase,
-    roll: game.roll,
+    roll: null,
     sixes: game.sixes,
     winner: game.winner,
     seq: game.seq,
     rngState: game.rngState,
+    queue: game.queue,
   );
 }
 
@@ -607,12 +608,26 @@ void main() {
       for (final Object? token in rawLegal) token! as int,
     ];
     if (legal.isEmpty) {
-      final Map<String, Object?> passed =
+      final Map<String, Object?> next =
           await readBroadcast(lobby, actorSeat, record);
-      if (passed['t'] != 'turn_passed') {
+      if (next['t'] == 'turn') {
+        final Map<String, Object?> turnData = _data(next);
+        if (turnData['phase'] != 'await_roll') {
+          fail(
+            'an empty legal list followed by turn must be a 6 owing '
+            'another roll (phase await_roll); got $turnData',
+          );
+        }
+        final Object? same = turnData['seat'];
+        if (same is! int) {
+          fail('turn.seat must be an int, got $same');
+        }
+        return _Ply(gameOver: false, nextSeat: same);
+      }
+      if (next['t'] != 'turn_passed') {
         fail(
-          'an empty legal list must be followed by turn_passed, got '
-          '"${passed['t']}": ${passed['d']}',
+          'an empty legal list must be followed by turn (a queued 6) or '
+          'turn_passed, got "${next['t']}": ${next['d']}',
         );
       }
       final Map<String, Object?> turn =
@@ -623,37 +638,64 @@ void main() {
           '${turn['d']}',
         );
       }
-      final Object? next = _data(turn)['seat'];
-      if (next is! int) {
-        fail('turn.seat must be an int, got $next');
+      final Object? nextSeat = _data(turn)['seat'];
+      if (nextSeat is! int) {
+        fail('turn.seat must be an int, got $nextSeat');
       }
-      return _Ply(gameOver: false, nextSeat: next);
+      return _Ply(gameOver: false, nextSeat: nextSeat);
     }
 
-    seatFor(lobby, actorSeat).client.send('move', <String, Object?>{
-      'token': legal.first,
-    });
-    final Map<String, Object?> moved =
-        await readBroadcast(lobby, actorSeat, record);
-    if (moved['t'] != 'moved') {
-      fail('expected moved, got "${moved['t']}": ${moved['d']}');
+    List<int> pending = legal;
+    while (true) {
+      seatFor(lobby, actorSeat).client.send('move', <String, Object?>{
+        'token': pending.first,
+      });
+      final Map<String, Object?> moved =
+          await readBroadcast(lobby, actorSeat, record);
+      if (moved['t'] != 'moved') {
+        fail('expected moved, got "${moved['t']}": ${moved['d']}');
+      }
+      final Map<String, Object?> after =
+          await readBroadcast(lobby, actorSeat, record);
+      if (after['t'] == 'game_over') {
+        return const _Ply(gameOver: true);
+      }
+      if (after['t'] == 'turn_passed') {
+        final Map<String, Object?> turn =
+            await readBroadcast(lobby, actorSeat, record);
+        if (turn['t'] != 'turn') {
+          fail(
+            'turn_passed after a move must be followed by turn, got '
+            '"${turn['t']}": ${turn['d']}',
+          );
+        }
+        final Object? passedTo = _data(turn)['seat'];
+        if (passedTo is! int) {
+          fail('turn.seat must be an int, got $passedTo');
+        }
+        return _Ply(gameOver: false, nextSeat: passedTo);
+      }
+      if (after['t'] != 'turn') {
+        fail(
+          'moved must be followed by game_over, turn_passed or turn, got '
+          '"${after['t']}": ${after['d']}',
+        );
+      }
+      final Map<String, Object?> turnData = _data(after);
+      if (turnData['phase'] == 'await_move') {
+        final Object? rawLegal = turnData['legal'];
+        if (rawLegal is! List<Object?> || rawLegal.isEmpty) {
+          fail('await_move must name a legal token, got $turnData');
+        }
+        pending = <int>[for (final Object? token in rawLegal) token! as int];
+        continue;
+      }
+      final Object? nextSeat = turnData['seat'];
+      if (nextSeat is! int) {
+        fail('turn.seat must be an int, got $nextSeat');
+      }
+      return _Ply(gameOver: false, nextSeat: nextSeat);
     }
-    final Map<String, Object?> after =
-        await readBroadcast(lobby, actorSeat, record);
-    if (after['t'] == 'game_over') {
-      return const _Ply(gameOver: true);
-    }
-    if (after['t'] != 'turn') {
-      fail(
-        'moved must be followed by game_over or turn, got '
-        '"${after['t']}": ${after['d']}',
-      );
-    }
-    final Object? next = _data(after)['seat'];
-    if (next is! int) {
-      fail('turn.seat must be an int, got $next');
-    }
-    return _Ply(gameOver: false, nextSeat: next);
   }
 
   Future<void> finish(
@@ -662,7 +704,7 @@ void main() {
     List<Map<String, Object?>> record,
   ) async {
     var current = seat;
-    for (var attempt = 0; attempt < 4; attempt++) {
+    for (var attempt = 0; attempt < 12; attempt++) {
       final Room? found = harness.registry.lookup(lobby.code);
       if (found == null || found.game == null) {
         fail('room ${lobby.code} has no game to finish');
@@ -677,12 +719,13 @@ void main() {
         );
       }
       final int face = _serverFace(room);
-      // Rule 10: a third six in a row is not played. Do not arm a win
-      // onto a roll the engine is about to forfeit.
-      if (game.sixes == 2 && face == 6) {
+      // Rule 10q: a 6 is queued and not spent. Arming a win onto it would
+      // not win, and a third 6 forfeits the turn instead. Roll every 6
+      // through and arm only a closing non-6.
+      if (face == 6) {
         final _Ply passed = await ply(lobby, current, record);
         if (passed.gameOver || passed.nextSeat == null) {
-          fail('a third six forfeits the turn; it does not end the game');
+          fail('a six is queued or forfeited; it does not end the game');
         }
         current = passed.nextSeat!;
         continue;
@@ -697,7 +740,7 @@ void main() {
       }
       return;
     }
-    fail('the next server face kept forfeiting before a winning roll');
+    fail('the next server face kept coming up six before a winning roll');
   }
 
   Future<({_Lobby lobby, String gameId, List<Map<String, Object?>> record})>

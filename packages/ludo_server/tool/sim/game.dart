@@ -394,10 +394,7 @@ Future<PlayResult> playGame({
         ));
         final List<int> legal = requireIntList(d, 'legal', frame: 'rolled');
         if (legal.isNotEmpty) {
-          final int token = legal.first;
-          await _seatFor(seats, seat)
-              .socket
-              .send('move', <String, Object?>{'token': token});
+          await _sendQueueAwareMove(seats, seat, d, 'rolled');
         }
         break;
       case 'turn':
@@ -405,7 +402,16 @@ Future<PlayResult> playGame({
         if (onTurnFrame != null) {
           await onTurnFrame(seat, fairness.rollsVerified);
         }
-        if (rollInFlightForSeat != seat) {
+        // docs/PROTOCOL.md 21.3 rule 1: the pushed turn frame gains phase
+        // on every frame, and in await_move it carries value, legal and
+        // legal_by_face too -- this seat has a move pending, not a roll
+        // due, and sending roll for it would get WRONG_PHASE. A server
+        // that never sends phase at all (today's production) leaves this
+        // comparison false and falls straight through to the pre-queue
+        // roll-in-flight check below, unchanged.
+        if (d['phase'] == 'await_move') {
+          await _sendQueueAwareMove(seats, seat, d, 'turn');
+        } else if (rollInFlightForSeat != seat) {
           await _seatFor(seats, seat).socket.send('roll', <String, Object?>{});
           rollInFlightForSeat = seat;
         }
@@ -453,6 +459,79 @@ Future<PlayResult> playGame({
     verifyUrl: verifyUrl!,
     rolls: rollsSeen,
   );
+}
+
+/// Picks a face and a token to spend from a `rolled` or `turn` frame's own
+/// data for [seat] and sends `move`, for a room playing the roll queue
+/// (`docs/PROTOCOL.md` section 21). Prefers section 21.1's `legal_by_face`
+/// -- first-queued order, each face's own tokens ascending -- taking its
+/// first entry's face and first token, and sends that face explicitly on
+/// `move` (section 21.1: "`move` gains optional `face`"), exercising the
+/// field end to end rather than always leaning on the server's own default.
+/// When [frameData] also carries `queue` (it always does, in `await_move`),
+/// the chosen face is checked against it: a face `legal_by_face` offered
+/// that is not in the room's own queue is this simulator catching a server
+/// bug, not a reason to send a malformed move.
+///
+/// A server that never sends `legal_by_face` at all -- today's production,
+/// or any room the queue is not on for -- falls back to exactly the
+/// pre-queue behaviour this function replaces: the first token in `legal`,
+/// no `face` key on the wire at all. That is what keeps this simulator
+/// playing an unchanged game against a server that carries none of section
+/// 21's fields.
+Future<void> _sendQueueAwareMove(
+  Map<int, Seat> seats,
+  int seat,
+  Map<String, Object?> frameData,
+  String frameName,
+) async {
+  final Object? rawLegalByFace = frameData['legal_by_face'];
+  if (rawLegalByFace == null) {
+    final List<int> legal =
+        requireIntList(frameData, 'legal', frame: frameName);
+    if (legal.isEmpty) {
+      throw ScenarioFailure(
+        '$frameName frame for seat $seat: expected a non-empty legal list '
+        'when a move is due',
+      );
+    }
+    await _seatFor(seats, seat)
+        .socket
+        .send('move', <String, Object?>{'token': legal.first});
+    return;
+  }
+  final List<Map<String, Object?>> legalByFace =
+      requireMapList(frameData, 'legal_by_face', frame: frameName);
+  if (legalByFace.isEmpty) {
+    throw ScenarioFailure(
+      '$frameName frame for seat $seat carries an empty legal_by_face '
+      'while a move is supposedly pending',
+    );
+  }
+  final Map<String, Object?> firstEntry = legalByFace.first;
+  final int face = requireInt(firstEntry, 'face', frame: frameName);
+  final List<int> tokens =
+      requireIntList(firstEntry, 'tokens', frame: frameName);
+  if (tokens.isEmpty) {
+    throw ScenarioFailure(
+      '$frameName frame for seat $seat: legal_by_face\'s first entry '
+      '(face $face) carries no tokens',
+    );
+  }
+  if (frameData.containsKey('queue')) {
+    final List<int> queue =
+        requireIntList(frameData, 'queue', frame: frameName);
+    if (!queue.contains(face)) {
+      throw ScenarioFailure(
+        '$frameName frame for seat $seat: legal_by_face offered face '
+        '$face but it is not in the room\'s own queue $queue',
+      );
+    }
+  }
+  await _seatFor(seats, seat).socket.send('move', <String, Object?>{
+    'token': tokens.first,
+    'face': face,
+  });
 }
 
 Seat _seatFor(Map<int, Seat> seats, int index) {

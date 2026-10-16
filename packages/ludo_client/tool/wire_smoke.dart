@@ -438,21 +438,27 @@ class Paced {
 // --- the shared turn-taking agent --------------------------------------
 
 /// Listens on [connection]'s own frame stream and, whenever the wire says
-/// it is this connection's own seat's turn, acts on it: `roll` when a
-/// `turn` frame names this seat, `move` with the first entry of `legal`
-/// when a `rolled` frame names this seat and left a legal move pending.
+/// it is this connection's own seat's turn, acts on it. A `turn` naming
+/// this seat is a `roll` when `phase` is absent or `"await_roll"`, and a
+/// `move` of that frame's own `legal.first` when `phase` is `"await_move"`.
+/// docs/PROTOCOL.md section 21.3: every pushed `turn` carries `phase`, and
+/// a same-seat `turn` in `await_move` follows a `moved` that left faces to
+/// spend. Rolling there is `WRONG_PHASE`. Any other `phase` value is
+/// reported through [reportError] and not acted on. A `rolled` naming this
+/// seat is a `move` of `legal.first` only when that list is non-empty, the
+/// same as before: section 5's `legal` is the tokens the server itself says
+/// are legal, and an empty list means the turn is about to pass on its own.
+///
 /// Both sends go through [paced], which must be the same [Paced] instance
 /// every other message on [connection] (join_room, resume, start_game) is
 /// sent through, so the D1 pacing interval is enforced against this
 /// connection's whole message history and not just the agent's own sends.
 ///
-/// This reads exactly the fields docs/PROTOCOL.md section 5 puts on
-/// `rolled` -- `legal` is the list of token indices the server itself says
-/// are legal for this roll -- and nothing here computes legality, a
-/// capture or a winner on its own. Which entry of `legal` gets played is
-/// arbitrary; the first one is picked only so the choice is deterministic
-/// and reproducible, never because it is believed to be a better move than
-/// any other legal one.
+/// Nothing here computes legality, a capture or a winner on its own. Which
+/// entry of `legal` gets played, on a `rolled` or on an `await_move`
+/// `turn`, is arbitrary; the first one is picked only so the choice is
+/// deterministic and reproducible, never because it is believed to be a
+/// better move than any other legal one.
 ///
 /// [seatOverride], measured against today's code: [RoomConnection.seat] is
 /// set by `RoomConnection._handleIncomingText` from any inbound
@@ -490,7 +496,11 @@ void attachAgent(
     }
     switch (frame.type) {
       case 'turn':
-        if (frame.data['seat'] == seat) {
+        if (frame.data['seat'] != seat) {
+          break;
+        }
+        final Object? phase = frame.data['phase'];
+        if (phase == null || phase == 'await_roll') {
           paced
               .send(connection.roll)
               .then<void>(
@@ -499,7 +509,45 @@ void attachAgent(
                   reportError(error);
                 },
               );
+          break;
         }
+        if (phase == 'await_move') {
+          final Object? legalRaw = frame.data['legal'];
+          if (legalRaw is! List) {
+            reportError(
+              StateError(
+                'turn frame for our own seat $seat in await_move carried '
+                'no legal list: ${frame.data}',
+              ),
+            );
+            break;
+          }
+          final List<int> legal = legalRaw.whereType<int>().toList();
+          if (legal.isEmpty) {
+            reportError(
+              StateError(
+                'turn frame for our own seat $seat in await_move carried '
+                'an empty legal list: ${frame.data}',
+              ),
+            );
+            break;
+          }
+          paced
+              .send(() => connection.move(legal.first))
+              .then<void>(
+                (Frame reply) {},
+                onError: (Object error) {
+                  reportError(error);
+                },
+              );
+          break;
+        }
+        reportError(
+          StateError(
+            'turn frame for our own seat $seat carried phase $phase, '
+            'expected absent, "await_roll" or "await_move": ${frame.data}',
+          ),
+        );
         break;
       case 'rolled':
         if (frame.data['seat'] != seat) {

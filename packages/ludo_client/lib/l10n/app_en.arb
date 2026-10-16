@@ -268,6 +268,46 @@
       }
     }
   },
+  "trayDieSelected": "Die {face}, selected",
+  "@trayDieSelected": {
+    "description": "Semantics label for a roll-tray die the player has selected to spend next (order 365, C-362 Part B K4/K11).",
+    "placeholders": {
+      "face": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "trayDieCanMove": "Die {face}, can move",
+  "@trayDieCanMove": {
+    "description": "Semantics label for a roll-tray die with a legal move that is not yet selected (order 365).",
+    "placeholders": {
+      "face": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "trayDieNoMove": "Die {face}, no move",
+  "@trayDieNoMove": {
+    "description": "Semantics label for a dead roll-tray die, one with no legal move (order 365).",
+    "placeholders": {
+      "face": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "trayDie": "Die {face}",
+  "@trayDie": {
+    "description": "Semantics label for a roll-tray die with no selected/can-move/no-move state to report: a seat still owed another roll, or another seat's own tray (order 365).",
+    "placeholders": {
+      "face": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
   "gameTurnCountdown": "{seconds}s left",
   "@gameTurnCountdown": {
     "description": "Shown on the game screen next to the turn banner whenever the current turn carries a deadline, counting down the whole seconds remaining before the server takes the turn. Never negative: it clamps at 0 and holds there until the next turn frame arrives.",

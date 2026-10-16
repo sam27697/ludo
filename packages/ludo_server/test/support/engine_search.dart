@@ -11,14 +11,53 @@
 // which token to move when a roll leaves more than one legal. Every roll
 // that leaves a legal move is followed here by moving
 // `legalTokens(state).first` -- docs/ENGINE_API.md section 4, rule 15's own
-// definition of "the first legal move" -- and that is also the exact policy
-// every steered test in `turn_loop_test.dart` drives once these faces reach
-// the wire (see that file's own `driveToSteeredRoll` and
-// `driveSteeredRollSeries`). Fixing that policy is what turns "search over
+// definition of "the first legal move" -- and, while the phase stays
+// `awaitMove`, by moving the new `legalTokens(state).first` again. With
+// the roll queue off that loop is one move: playing the single face always
+// leaves `awaitRoll` or `finished`. With it on, a closing non-6 can leave
+// several faces, and the next roll is legal only after all of them are
+// spent. That is also the policy every steered test drives once these
+// faces reach the wire (see `turn_loop_test.dart`'s `driveToSteeredRoll`
+// and `driveSteeredRollSeries`). Fixing it is what turns "search over
 // faces and moves" into "search over faces alone": a plain breadth-first
 // search with a branching factor of 6 per roll, not 6 times however many
 // tokens happen to be legal.
 import 'package:ludo_engine/ludo_engine.dart';
+
+/// The engine rules `lib/src/registry.dart` gives every room at
+/// `start_game`: blocks off, homeBonus on, rollQueue on, and captureBonus
+/// at its default true unless `create_room` said otherwise. The search
+/// functions below still default to `RulesConfig()` so a caller that is
+/// not driving a server room keeps the engine's own defaults. A wire test
+/// whose steered faces have to match the room passes this.
+const RulesConfig serverRoomRules = RulesConfig(
+  blocks: false,
+  captureBonus: true,
+  rollQueue: true,
+  homeBonus: true,
+);
+
+/// Spends `legalTokens(state).first` for as long as [state] stays in
+/// `awaitMove`. Returns null when a forced move is rejected, which a
+/// search treats as "this face is not a usable continuation" and
+/// [simulateFaces] treats as a broken sequence. A roll whose own `legal`
+/// was empty is not passed here: nothing is movable yet.
+GameState? spendQueuedMoves(GameState state) {
+  GameState current = state;
+  while (!isTerminal(current) && current.phase == GamePhase.awaitMove) {
+    final List<int> legal = legalTokens(current);
+    if (legal.isEmpty) {
+      return current;
+    }
+    final ApplyResult moveResult =
+        apply(current, MoveIntention(current.currentSeat, legal.first));
+    if (moveResult is! Applied) {
+      return null;
+    }
+    current = moveResult.state;
+  }
+  return current;
+}
 
 /// One roll played out against the pure engine: the face rolled, the legal
 /// list it left -- exactly what a `rolled` frame's own `legal` field would
@@ -42,10 +81,10 @@ class EngineRollStep {
 }
 
 /// Replays [faces] against a fresh game of [seats] under [rules], one
-/// `RollIntention` per face, moving `legalTokens(state).first` immediately
-/// whenever a roll leaves a legal move -- see this file's header for why
-/// that is the only move policy a caller here ever needs. Returns one
-/// [EngineRollStep] per face, in order, and the state the last one left.
+/// `RollIntention` per face, then [spendQueuedMoves] whenever a roll leaves
+/// a legal move -- see this file's header for why that is the only move
+/// policy a caller here ever needs. Returns one [EngineRollStep] per face,
+/// in order, and the state the last one left.
 ///
 /// Throws [StateError], naming the face and its 1-based position in
 /// [faces], if a roll or its forced follow-up move is ever rejected --
@@ -80,17 +119,15 @@ class EngineRollStep {
       turnEndReason: ended.isEmpty ? null : ended.single.reason,
     ));
     if (rolled.legal.isNotEmpty) {
-      final ApplyResult moveResult =
-          apply(state, MoveIntention(seat, rolled.legal.first));
-      if (moveResult is! Applied) {
+      final GameState? spent = spendQueuedMoves(state);
+      if (spent == null) {
         throw StateError(
-          'simulateFaces: the forced first-legal-move token '
-          '${rolled.legal.first} for seat $seat after roll ${i + 1}/'
-          '${faces.length} (face $face) was rejected: '
-          '${(moveResult as Rejected).error.name}; state before it: $state',
+          'simulateFaces: a forced first-legal-move for seat $seat after '
+          'roll ${i + 1}/${faces.length} (face $face) was rejected; '
+          'state before the spends: $state',
         );
       }
-      state = moveResult.state;
+      state = spent;
     }
   }
   return (steps: steps, state: state);
@@ -164,12 +201,11 @@ List<int>? findFaceSequence({
         }
         GameState afterPly = afterRoll;
         if (rolled.legal.isNotEmpty) {
-          final ApplyResult moveResult =
-              apply(afterRoll, MoveIntention(seat, rolled.legal.first));
-          if (moveResult is! Applied) {
+          final GameState? spent = spendQueuedMoves(afterRoll);
+          if (spent == null) {
             continue;
           }
-          afterPly = moveResult.state;
+          afterPly = spent;
         }
         if (visited.add(afterPly)) {
           next.add((afterPly, faces));
@@ -227,12 +263,11 @@ List<int>? findRollBudgetFaces({
       GameState afterPly = rollResult.state;
       final Rolled rolled = rollResult.events.whereType<Rolled>().single;
       if (rolled.legal.isNotEmpty) {
-        final ApplyResult moveResult =
-            apply(afterPly, MoveIntention(seat, rolled.legal.first));
-        if (moveResult is! Applied) {
+        final GameState? spent = spendQueuedMoves(afterPly);
+        if (spent == null) {
           continue;
         }
-        afterPly = moveResult.state;
+        afterPly = spent;
       }
       final List<int>? found =
           search(afterPly, remaining - 1, <int>[...facesSoFar, face]);
