@@ -41,15 +41,14 @@
 //
 // The two scenarios below share one steered die-face sequence, found by
 // `test/support/engine_search.dart`'s offline search rather than
-// hand-asserted (the same seam `turn_loop_test.dart` uses): the host's
-// first roll of a fresh game leaves no legal move and hands the turn to the
-// non-host seat automatically (docs/RULES.md rule 17: only a 6 leaves a
-// legal move on a token still in the yard), and the non-host seat's own
-// first roll leaves one. Both tests drive the identical first roll the
-// identical way; they differ only in exactly where the non-host seat's
-// socket is closed -- before its own roll (`await_roll`) or after it, before
-// the move (`await_move`) -- so the drop's timing is the only variable
-// between them.
+// hand-asserted (the same seam `turn_loop_test.dart` uses), under the
+// server's roll queue (docs/RULES.md 3.2a). A lone non-6 on a fresh yard
+// passes the turn (rule 11q, nothing queued can move). A 6 is queued and
+// the same seat rolls again before any move is offered (rule 10q), so the
+// non-host seat reaches `await_move` only on the closing non-6 after that
+// 6. Both tests drive the handoff the same way; they differ only in where
+// the non-host socket is closed -- before its own rolls (`await_roll`) or
+// after the closing roll, before the move (`await_move`).
 import 'package:fair_dice/fair_dice.dart' show hexEncode;
 import 'package:ludo_engine/ludo_engine.dart' show GameState;
 import 'package:test/test.dart';
@@ -79,18 +78,18 @@ String _predictedGameId() {
   return hexEncode(probe.sublist(gameIdOffset, gameIdOffset + gameIdDraws));
 }
 
-/// The shortest face sequence, found offline against the pure engine, whose
-/// first roll leaves no legal move (handing the turn to the non-host seat
-/// automatically, rule 7) and whose second roll -- the non-host seat's own
-/// first roll -- leaves at least one. Two faces is the expected answer:
-/// depth 0 needs a non-6 (empty legal, rule 17) and depth 1 needs a 6 (a
-/// legal move, same rule, now for the seat that just received the turn).
-/// Not hand-asserted as `[<non-6>, 6]`: a future rule change that made this
-/// untrue would fail this search, naming the mismatch, instead of silently
-/// steering a face nobody asked for.
+/// The shortest face sequence, found offline against the pure engine under
+/// [serverRoomRules], whose last roll leaves a legal move for a seat other
+/// than the one that opened the game. Under the queue that is a passing
+/// non-6 (the handoff), then a 6 (queued, still `await_roll`), then a
+/// closing non-6 (rule 11q: the queued 6 can leave the yard). Not
+/// hand-asserted: a future rule change that made this untrue would fail
+/// this search, naming the mismatch, instead of silently steering a face
+/// nobody asked for.
 List<int> _findHandoffThenLegalRollFaces() {
   final List<int>? faces = findFaceSequence(
     seats: _steeredSeats,
+    rules: serverRoomRules,
     accepts: (EngineRollStep step, GameState stateAfterRoll) =>
         step.legal.isNotEmpty &&
         stateAfterRoll.currentSeat != _steeredSeats.first,
@@ -248,21 +247,42 @@ void main() {
     return readAndDrain(actingClient, otherClient, because: because);
   }
 
-  /// Drains the `turn_passed` then `turn` pair a `rolled` frame with an
-  /// empty `legal` list queues behind it (docs/PROTOCOL.md section 12.1),
-  /// off both sockets, and returns the `turn` frame's own `d`.
+  /// Drains what an empty-legal `rolled` queues behind it, off both
+  /// sockets, and returns the `turn` frame's own `d`. Under the queue that
+  /// is one `turn` for the same seat still in `await_roll` (a 6, section
+  /// 21.3) or `turn_passed` then `turn` (section 12.1).
   Future<Map<String, Object?>> consumeNoLegalMove(
     WireTestClient actingClient,
     WireTestClient otherClient, {
     required String because,
   }) async {
-    final Map<String, Object?> passed =
+    final Map<String, Object?> next =
         await readAndDrain(actingClient, otherClient, because: because);
+    if (next['t'] == 'turn') {
+      final Map<String, Object?> turnData =
+          next['d']! as Map<String, Object?>;
+      expect(
+        turnData['phase'],
+        'await_roll',
+        reason: '$because: an empty-legal rolled followed by turn is the '
+            'extra roll a 6 owes, which stays await_roll; got $turnData',
+      );
+      return turnData;
+    }
     expect(
-      passed['t'],
+      next['t'],
       'turn_passed',
       reason: '$because: a rolled frame with an empty legal list must be '
-          'followed by turn_passed; got "${passed['t']}": ${passed['d']}',
+          'followed by turn (a queued 6) or turn_passed; got '
+          '"${next['t']}": ${next['d']}',
+    );
+    final Map<String, Object?> passedData =
+        next['d']! as Map<String, Object?>;
+    expect(
+      passedData['reason'],
+      anyOf('no_legal_move', 'three_sixes'),
+      reason: '$because: turn_passed after an empty-legal roll must say '
+          'why; got ${passedData['reason']}',
     );
     final Map<String, Object?> turn =
         await readAndDrain(actingClient, otherClient, because: because);
@@ -273,6 +293,88 @@ void main() {
           'seat; got "${turn['t']}": ${turn['d']}',
     );
     return turn['d']! as Map<String, Object?>;
+  }
+
+  /// Rolls [faces] from [start] for [seat] until a roll leaves a legal
+  /// move, draining each queued 6's follow-up `turn`. Returns that closing
+  /// roll's `d`. The search that produced [faces] puts the accepting roll
+  /// last, so an earlier legal move is a steering bug, not a pass.
+  Future<Map<String, Object?>> rollUntilAwaitMove(
+    WireTestClient actor,
+    WireTestClient other,
+    List<int> faces,
+    int start, {
+    required int seat,
+    required String because,
+  }) async {
+    if (start >= faces.length) {
+      fail('$because: no steered roll left to reach await_move');
+    }
+    for (int i = start; i < faces.length; i++) {
+      final Map<String, Object?> rolled = await sendAndRead(
+        actor,
+        other,
+        'roll',
+        <String, Object?>{},
+        because: '$because, steered face ${faces[i]}',
+      );
+      expect(
+        rolled['t'],
+        'rolled',
+        reason: '$because: expected rolled for face ${faces[i]}, got '
+            '"${rolled['t']}": ${rolled['d']}',
+      );
+      final Map<String, Object?> data =
+          rolled['d']! as Map<String, Object?>;
+      expect(data['seat'], seat);
+      expect(
+        data['value'],
+        faces[i],
+        reason: '$because: steering must still produce ${faces[i]}, got '
+            '${data['value']}',
+      );
+      final List<Object?> legal = data['legal']! as List<Object?>;
+      if (legal.isEmpty) {
+        final Map<String, Object?> turnData = await consumeNoLegalMove(
+          actor,
+          other,
+          because: '$because: face ${faces[i]} left nothing to move yet',
+        );
+        expect(
+          turnData['seat'],
+          seat,
+          reason: '$because: a queued 6 keeps seat $seat on turn; got '
+              'seat=${turnData['seat']}',
+        );
+        continue;
+      }
+      expect(
+        i,
+        faces.length - 1,
+        reason: '$because: a legal move arrived on face ${faces[i]} before '
+            'the last steered roll ${faces.last}',
+      );
+      return data;
+    }
+    fail('$because: steered rolls $faces ended without a legal move');
+  }
+
+  /// The face an `await_move` frame names as `value`: the first entry of
+  /// `legal_by_face` (docs/PROTOCOL.md 21.3, `defaultFace`).
+  int defaultFaceOf(Map<String, Object?> data, {required String because}) {
+    final Object? raw = data['legal_by_face'];
+    if (raw is! List<Object?> || raw.isEmpty) {
+      fail('$because: await_move must carry legal_by_face, got $data');
+    }
+    final Object? first = raw.first;
+    if (first is! Map<String, Object?>) {
+      fail('$because: legal_by_face entries must be objects, got $first');
+    }
+    final Object? face = first['face'];
+    if (face is! int) {
+      fail('$because: legal_by_face.face must be an int, got $face');
+    }
+    return face;
   }
 
   /// Drains the one frame section 12.2 sends after `moved`: `game_over`, or
@@ -342,60 +444,64 @@ void main() {
     );
   }
 
-  /// Drives the host through the one steered roll every scenario below
-  /// shares: it leaves no legal move, so the turn passes automatically to
-  /// the non-host seat, in `await_roll`, with a freshly restarted segment.
-  /// Returns that seat's own opening `turn` payload.
-  Future<Map<String, Object?>> driveHandoffToNonHost(
+  /// Plays steered rolls until the non-host seat holds an unrolled turn:
+  /// `await_roll`, and the roll that got it there was not its own (so
+  /// nothing of its queue has started). Returns the index of the next
+  /// unplayed face, which is that seat's first roll.
+  Future<int> driveHandoffToNonHost(
     WireTestLobby lobby,
     List<int> faces,
   ) async {
-    final Map<String, Object?> rolled = await sendAndRead(
-      lobby.host.client,
-      lobby.guest.client,
-      'roll',
-      <String, Object?>{},
-      because: 'the host\'s own steered roll',
+    var index = 0;
+    while (index < faces.length) {
+      final Map<String, Object?> rolled = await sendAndRead(
+        lobby.host.client,
+        lobby.guest.client,
+        'roll',
+        <String, Object?>{},
+        because: 'steered handoff roll ${index + 1}',
+      );
+      expect(
+        rolled['t'],
+        'rolled',
+        reason: 'expected a rolled frame from the host in room '
+            '${lobby.code}, got "${rolled['t']}": ${rolled['d']}',
+      );
+      final Map<String, Object?> rolledData =
+          rolled['d']! as Map<String, Object?>;
+      expect(
+        rolledData['value'],
+        faces[index],
+        reason: 'steering must produce face ${faces[index]} at roll '
+            '${index + 1}; got ${rolledData['value']}',
+      );
+      expect(
+        rolledData['legal'],
+        isEmpty,
+        reason: 'the handoff must not reach await_move before the non-host '
+            'seat is the one on turn; got legal=${rolledData['legal']}',
+      );
+      final int played = index;
+      index++;
+      final Map<String, Object?> turnData = await consumeNoLegalMove(
+        lobby.host.client,
+        lobby.guest.client,
+        because: 'handoff roll ${played + 1} left nothing to move',
+      );
+      if (turnData['seat'] == lobby.guest.seat &&
+          rolledData['seat'] != lobby.guest.seat) {
+        expect(
+          turnData['phase'],
+          'await_roll',
+          reason: 'the handed turn must be an unrolled one; got $turnData',
+        );
+        return index;
+      }
+    }
+    fail(
+      'steered faces $faces never handed an unrolled turn to seat '
+      '${lobby.guest.seat}',
     );
-    expect(
-      rolled['t'],
-      'rolled',
-      reason: 'expected a rolled frame from the host\'s first roll in room '
-          '${lobby.code}, got "${rolled['t']}": ${rolled['d']}',
-    );
-    final Map<String, Object?> rolledData =
-        rolled['d']! as Map<String, Object?>;
-    expect(
-      rolledData['value'],
-      faces[0],
-      reason: 'steering must produce the wanted first face; wanted '
-          '${faces[0]}, got ${rolledData['value']}',
-    );
-    expect(
-      rolledData['legal'],
-      isEmpty,
-      reason: 'setup requires the host\'s steered roll to leave no legal '
-          'move, so the turn passes to the non-host seat automatically; '
-          'got legal=${rolledData['legal']}',
-    );
-    final Map<String, Object?> turnData = await consumeNoLegalMove(
-      lobby.host.client,
-      lobby.guest.client,
-      because: 'the host\'s empty-legal roll handing the turn off',
-    );
-    expect(
-      turnData['seat'],
-      lobby.guest.seat,
-      reason: 'setup requires the turn to land on the non-host seat '
-          '(seat ${lobby.guest.seat}); got seat=${turnData['seat']}',
-    );
-    // The standalone `turn` push (`buildTurn`, snapshot.dart:235-241)
-    // carries only `seat`, `deadline_ms` and `seq` -- never `phase`; that
-    // field only exists on the `turn` object inside a `room` snapshot
-    // (`_turnSnapshot`), which is what the resume assertions below read.
-    // A fresh turn is always `await_roll` by construction: nothing between
-    // `turn_passed` and this push could have rolled for the new holder.
-    return turnData;
   }
 
   group(
@@ -408,7 +514,7 @@ void main() {
       final List<int> faces = _findHandoffThenLegalRollFaces();
       final (WireTestLobby lobby, _) = await buildSteeredLobby(faces);
 
-      await driveHandoffToNonHost(lobby, faces);
+      final int nextFace = await driveHandoffToNonHost(lobby, faces);
 
       // -- The moment under test: the non-host seat drops while it holds
       // an unrolled turn. Nothing has been sent from its socket since the
@@ -489,45 +595,18 @@ void main() {
       );
 
       // -- The assertion that matters: the resumed seat actually acts.
-      final Map<String, Object?> acted = await sendAndRead(
+      // Under the queue it rolls until the closing non-6 leaves a move
+      // (rule 10q queues each 6 first). The first of those rolls is the
+      // finding: a seat that just reconnected must be allowed to roll.
+      final Map<String, Object?> actedData = await rollUntilAwaitMove(
         freshGuest,
         lobby.host.client,
-        'roll',
-        <String, Object?>{},
-        because: 'the resumed seat\'s own roll',
-      );
-      expect(
-        acted['t'],
-        'rolled',
-        reason: 'THE FINDING: seat ${lobby.guest.seat} resumed on a fresh '
-            'socket while holding an unrolled turn (room ${lobby.code}), '
-            'and its own roll came back as "${acted['t']}" '
-            '(${acted['d']}) instead of "rolled" -- a seat that has just '
-            'reconnected cannot take the turn the room still says is its '
-            'own',
-      );
-      final Map<String, Object?> actedData =
-          acted['d']! as Map<String, Object?>;
-      expect(
-        actedData['seat'],
-        lobby.guest.seat,
-        reason: 'the accepted roll must be recorded for seat '
-            '${lobby.guest.seat}; got seat=${actedData['seat']}',
-      );
-      expect(
-        actedData['value'],
-        faces[1],
-        reason: 'the resumed seat\'s roll is k=2 of the same steered '
-            'chain the room was armed with before the drop; steering '
-            'must still produce ${faces[1]}, got ${actedData['value']}',
-      );
-      expect(
-        actedData['legal'],
-        isNotEmpty,
-        reason: 'setup requires the resumed seat\'s own steered roll to '
-            'leave a legal move, so the loop below can prove the game '
-            'keeps advancing past a roll, not just accepts one; got '
-            'legal=${actedData['legal']}',
+        faces,
+        nextFace,
+        seat: lobby.guest.seat,
+        because: 'THE FINDING: seat ${lobby.guest.seat} resumed on a fresh '
+            'socket while holding an unrolled turn (room ${lobby.code}) '
+            'and must be able to roll',
       );
       final int legalToken =
           (actedData['legal']! as List<Object?>).cast<int>().first;
@@ -561,39 +640,20 @@ void main() {
       final List<int> faces = _findHandoffThenLegalRollFaces();
       final (WireTestLobby lobby, _) = await buildSteeredLobby(faces);
 
-      await driveHandoffToNonHost(lobby, faces);
+      final int nextFace = await driveHandoffToNonHost(lobby, faces);
 
-      // The non-host seat now rolls, on its own still-open socket, before
-      // it drops -- this is the "phone died after I saw the dice, before I
-      // could tap a token" scenario, not a fresh unrolled turn.
-      final Map<String, Object?> rolled = await sendAndRead(
+      // The non-host seat rolls through to await_move, on its own
+      // still-open socket, before it drops. A 6 is queued and does not
+      // itself leave a move (rule 10q); the closing non-6 does. This is
+      // the "phone died after I saw the dice, before I could tap a token"
+      // scenario, not a fresh unrolled turn.
+      final Map<String, Object?> rolledData = await rollUntilAwaitMove(
         lobby.guest.client,
         lobby.host.client,
-        'roll',
-        <String, Object?>{},
-        because: 'the non-host seat\'s own roll, before it drops',
-      );
-      expect(
-        rolled['t'],
-        'rolled',
-        reason: 'expected a rolled frame from seat ${lobby.guest.seat} in '
-            'room ${lobby.code}, got "${rolled['t']}": ${rolled['d']}',
-      );
-      final Map<String, Object?> rolledData =
-          rolled['d']! as Map<String, Object?>;
-      expect(
-        rolledData['value'],
-        faces[1],
-        reason: 'steering must produce the wanted second face; wanted '
-            '${faces[1]}, got ${rolledData['value']}',
-      );
-      expect(
-        rolledData['legal'],
-        isNotEmpty,
-        reason: 'setup requires this roll to leave a legal move, so the '
-            'seat is genuinely in await_move (a pending decision) when it '
-            'drops, not bounced onward automatically; got legal='
-            '${rolledData['legal']}',
+        faces,
+        nextFace,
+        seat: lobby.guest.seat,
+        because: 'the non-host seat\'s own rolls, before it drops',
       );
 
       // -- The moment under test: the non-host seat drops holding a
@@ -652,11 +712,22 @@ void main() {
       );
       expect(
         resumedTurn['value'],
-        faces[1],
-        reason: 'the resumed turn object must carry the same pending roll '
-            'value the seat rolled before it dropped (snapshot.dart\'s '
-            '_turnSnapshot: value is present in await_move); got '
-            '${resumedTurn['value']}',
+        defaultFaceOf(
+          rolledData,
+          because: 'the closing roll that left the pending move',
+        ),
+        reason: 'the resumed turn object\'s value is defaultFace '
+            '(docs/PROTOCOL.md 21.3), the face an omitted move.face would '
+            'spend, not the closing roll\'s own value; got '
+            '${resumedTurn['value']}, rolled said ${rolledData['value']} '
+            'with legal_by_face=${rolledData['legal_by_face']}',
+      );
+      expect(
+        resumedTurn['queue'],
+        rolledData['queue'],
+        reason: 'the resumed turn must still hold the queue the seat saw '
+            'before it dropped; got ${resumedTurn['queue']}, had '
+            '${rolledData['queue']}',
       );
       expect(
         resumedTurn['legal'],
@@ -664,6 +735,13 @@ void main() {
         reason: 'the resumed turn object\'s legal list must match the one '
             'the seat already saw before it dropped; got '
             '${resumedTurn['legal']}, had ${rolledData['legal']}',
+      );
+      expect(
+        resumedTurn['legal_by_face'],
+        rolledData['legal_by_face'],
+        reason: 'the resumed legal_by_face must match the closing roll; '
+            'got ${resumedTurn['legal_by_face']}, had '
+            '${rolledData['legal_by_face']}',
       );
       final Object? rawDeadline = resumedTurn['deadline_ms'];
       expect(
@@ -718,9 +796,9 @@ void main() {
       await consumeAfterMove(
         freshGuest,
         lobby.host.client,
-        because: 'the resumed seat\'s move must still hand the turn '
-            'onward (or end the game), proving the game genuinely '
-            'advances past the resume, not just accepts one message',
+        because: 'the resumed seat\'s move must still be followed by turn '
+            'or game_over, proving the game genuinely advances past the '
+            'resume, not just accepts one message',
       );
     });
   });

@@ -224,11 +224,11 @@ Future<_SteeredGame> _buildSteeredGame(
 typedef _Observed = ({List<String> types, Map<String, Object?> lastData});
 
 /// Reads the frames one expired `await_roll` segment publishes off [client]:
-/// always `rolled` first (PROTOCOL section 12.1); followed by `turn_passed`
-/// and `turn` if and only if the roll left no legal move -- read from the
-/// `legal` field the wire itself reports on the `rolled` frame, not assumed
-/// in advance, so this reader is correct regardless of which face was
-/// steered.
+/// always `rolled` first. An empty `legal` is either a 6 that owes another
+/// roll, followed by one `turn` for the same seat in `await_roll` (section
+/// 21.3), or a turn that passed, followed by `turn_passed` then `turn`
+/// (section 12.1). Which one is read off the wire, not assumed from the
+/// face.
 Future<_Observed> _readRollBranch(WireTestClient client) async {
   final Map<String, Object?> rolled = await client.next(
     timeout: const Duration(seconds: 8),
@@ -245,15 +245,29 @@ Future<_Observed> _readRollBranch(WireTestClient client) async {
   final List<String> types = <String>['rolled'];
   Map<String, Object?> lastData = rolledData;
   if (legal.isEmpty) {
-    final Map<String, Object?> turnPassed = await client.next(
+    final Map<String, Object?> next = await client.next(
       timeout: const Duration(seconds: 3),
     );
+    if (next['t'] == 'turn') {
+      final Map<String, Object?> turnData =
+          next['d']! as Map<String, Object?>;
+      expect(
+        turnData['phase'],
+        'await_roll',
+        reason: 'an empty legal list followed by turn is a 6 owing another '
+            'roll (section 21.3); the same seat stays in await_roll. got '
+            '$turnData',
+      );
+      types.add('turn');
+      lastData = turnData;
+      return (types: types, lastData: lastData);
+    }
     expect(
-      turnPassed['t'],
+      next['t'],
       'turn_passed',
       reason: 'a forced roll that leaves no legal move must be followed by '
-          'turn_passed (PROTOCOL section 12.1); got "${turnPassed['t']}": '
-          '${turnPassed['d']}',
+          'turn (a queued 6) or turn_passed (PROTOCOL section 12.1 and '
+          '21.3); got "${next['t']}": ${next['d']}',
     );
     types.add('turn_passed');
     final Map<String, Object?> turn = await client.next(
@@ -330,10 +344,9 @@ void main() {
 
       await runZoned(
         () async {
-          // Face 6: docs/RULES.md rule 17 -- on the first roll of a fresh
-          // game every token is in the yard, so a 6 is the only face that
-          // leaves a legal move. This steers the single-frame branch: the
-          // forced roll must not end the turn.
+          // Face 6: rule 10q queues it and the same seat rolls again, so
+          // the forced roll does not end the turn. The frames are rolled
+          // then turn (section 21.3), not a single rolled frame.
           game = await _buildSteeredGame(clients, <int>[6]);
           game.harness.clock.advance(const Duration(seconds: 15));
           observed = await _readRollBranch(
@@ -353,15 +366,20 @@ void main() {
         await game.harness.close();
       });
 
-      if (observed.types.length != 1) {
+      if (observed.types.length != 2 ||
+          observed.types.first != 'rolled' ||
+          observed.types.last != 'turn') {
         fail(
-          'L1 setup expected the steered six to leave a legal move so '
-          'the forced roll alone would not end the turn; instead the '
-          'client received ${observed.types.length} frame(s): '
-          '${observed.types}. Scenario to reproduce: wanted faces [6], '
+          'L1 setup expected the steered six to be queued (rule 10q) so '
+          'the forced roll would not end the turn: frames rolled+turn, '
+          'not turn_passed. The client received ${observed.types}. '
+          'Scenario to reproduce: wanted faces [6], '
           'client_seeds=$_clientSeeds, room ${game.lobby.code}.',
         );
       }
+      expect(observed.lastData['seat'], game.onTurn);
+      expect(observed.lastData['phase'], 'await_roll');
+      expect(observed.lastData['queue'], <int>[6]);
 
       final List<String> applied = _appliedLines(lines);
       expect(
@@ -468,31 +486,55 @@ void main() {
 
       await runZoned(
         () async {
-          // Face 6 again, but this time the seat actually rolls (a real
-          // client message, not the timer), reaching await_move; the timer
-          // is left to expire that segment and play the lowest legal token
-          // (docs/RULES.md rule 15) without anyone ever sending `move`.
-          game = await _buildSteeredGame(clients, <int>[6]);
+          // A 6 is queued and does not leave a move (rule 10q). The
+          // closing 1 does: the queued 6 can leave the yard, so the phase
+          // is await_move and the timer plays that default face on its
+          // first legal token (rule 15q) without anyone sending `move`.
+          game = await _buildSteeredGame(clients, <int>[6, 1]);
           final WireTestSeat onTurnSeat = _seatFor(game.lobby, game.onTurn);
+          onTurnSeat.client.send('roll', <String, Object?>{});
+          final Map<String, Object?> six = await onTurnSeat.client.next();
+          expect(
+            six['t'],
+            'rolled',
+            reason: 'setup: the manual six from seat ${game.onTurn} in '
+                'room ${game.lobby.code} must be accepted; got '
+                '"${six['t']}": ${six['d']}',
+          );
+          final Map<String, Object?> sixData =
+              six['d']! as Map<String, Object?>;
+          expect(sixData['value'], 6);
+          expect(
+            sixData['legal'],
+            isEmpty,
+            reason: 'a queued 6 leaves no move yet; got ${sixData['legal']}',
+          );
+          final Map<String, Object?> sixTurn = await onTurnSeat.client.next();
+          expect(sixTurn['t'], 'turn');
+          expect(
+            (sixTurn['d']! as Map<String, Object?>)['phase'],
+            'await_roll',
+          );
           onTurnSeat.client.send('roll', <String, Object?>{});
           final Map<String, Object?> rolled = await onTurnSeat.client.next();
           expect(
             rolled['t'],
             'rolled',
-            reason: 'setup: the manual roll from seat ${game.onTurn} in '
+            reason: 'setup: the closing roll from seat ${game.onTurn} in '
                 'room ${game.lobby.code} must be accepted; got '
                 '"${rolled['t']}": ${rolled['d']}',
           );
           final Map<String, Object?> rolledData =
               rolled['d']! as Map<String, Object?>;
+          expect(rolledData['value'], 1);
           final List<Object?> legal = rolledData['legal']! as List<Object?>;
           if (legal.isEmpty) {
             fail(
-              'L3 setup expected the steered six to leave at least one '
-              'legal move on the fresh board (docs/RULES.md rule 17) so '
-              'the game would reach await_move; got an empty legal list '
-              'instead off the wire. Scenario to reproduce: wanted faces '
-              '[6], client_seeds=$_clientSeeds, room ${game.lobby.code}.',
+              'L3 setup expected the closing non-6, after a queued 6, to '
+              'leave a legal move so the game would reach await_move; got '
+              'an empty legal list instead. Scenario to reproduce: wanted '
+              'faces [6, 1], client_seeds=$_clientSeeds, room '
+              '${game.lobby.code}.',
             );
           }
           game.harness.clock.advance(const Duration(seconds: 15));

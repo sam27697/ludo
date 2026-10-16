@@ -37,10 +37,11 @@
 // production code -- do with it.
 //
 // Wherever a fixture depends on the actual face the room's real dice chain
-// draws (the `await_roll` cases), the position is built so the outcome does
-// not depend on which of the six faces comes up, and that independence is
-// argued in the comment next to it. No test in this file needs to steer the
-// dice to a chosen face, and none does.
+// draws (the `await_roll` cases), the position is built so every non-6 has
+// the same outcome, and that is argued in the comment next to it. A 6 is
+// not a closing roll under rule 10q (it is queued, and the same seat rolls
+// again, before any legality check), so those fixtures walk fixed seeds
+// until the first face is not a 6. They do not steer to one chosen face.
 //
 // Two fixed, non-cryptographic `Random` seeds are used for the two
 // multi-turn simulations at the bottom of this file (20260905 and 20260906),
@@ -171,6 +172,10 @@ void _forceGame(
   bool? blocks,
 }) {
   final GameState base = room.game!;
+  // The engine ignores `roll` while rollQueue is on and reads `queue`.
+  // A single pending face is that queue. `roll` stays null (ENGINE_API
+  // section 10.1).
+  final List<int> faces = roll == null ? const <int>[] : <int>[roll];
   room.game = GameState(
     config: blocks == null
         ? base.config
@@ -179,6 +184,7 @@ void _forceGame(
             rules: engine.RulesConfig(
               blocks: blocks,
               captureBonus: base.config.rules.captureBonus,
+              rollQueue: base.config.rules.rollQueue,
               homeBonus: base.config.rules.homeBonus,
             ),
             seed: base.config.seed,
@@ -186,12 +192,46 @@ void _forceGame(
     tokens: _boardFor(tokens),
     currentSeat: currentSeat,
     phase: phase,
-    roll: roll,
+    roll: null,
     sixes: sixes,
     winner: winner,
     seq: base.seq + 1,
     rngState: base.rngState,
+    queue: faces,
   );
+}
+
+/// The face `k = 1` will draw. `HashChain.reveal` does not consume the link.
+int _firstFace(Room room) {
+  return drawDie(
+    room.chain.reveal(1),
+    room.gameId!,
+    room.clientSeeds!,
+    1,
+    0,
+  );
+}
+
+/// A started 2-seat room whose first face satisfies [accept]. Seeds are
+/// the integers 0, 1, 2, ... so a failure names the seed that was used.
+({RoomRegistry registry, FakeClock clock, _Table table, int face, int seed})
+    _openedTable(bool Function(int face) accept) {
+  for (int seed = 0; seed < 48; seed++) {
+    final ({RoomRegistry registry, FakeClock clock}) harness =
+        _harness(secure: Random(seed));
+    final _Table table = _newTable(harness.registry, players: 2);
+    final int face = _firstFace(table.room);
+    if (accept(face)) {
+      return (
+        registry: harness.registry,
+        clock: harness.clock,
+        table: table,
+        face: face,
+        seed: seed,
+      );
+    }
+  }
+  fail('no seed in 0..47 drew a first face this fixture can use');
 }
 
 /// Asserts that [frames] -- one expiry's worth of `OutFrame`s, in order --
@@ -515,24 +555,26 @@ void main() {
         'a timer roll that leaves no legal move (rule 7) publishes rolled, '
         'then turn_passed, then turn, with strictly increasing seq and no '
         're on any of the three frames', () {
-      final harness = _harness();
-      final _Table table = _newTable(harness.registry, players: 2);
-      // Seat 0 has all four tokens in the yard; a yard token only ever
-      // leaves on a 6 (RULES.md rule 17). Seat 2's entry offset is 26
+      // Rule 10q queues a 6 before any legality check, so a 6 does not end
+      // the turn no matter what is blocking the entry square. This fixture
+      // takes a room whose first face is a non-6. Seat 0's tokens are all
+      // in the yard, and a yard token leaves only on a 6 (rule 17), so that
+      // non-6 has no legal move. The block on seat 0's entry square is the
+      // position this test was written against; it is not what makes the
+      // non-6 illegal.
+      final ({
+        RoomRegistry registry,
+        FakeClock clock,
+        _Table table,
+        int face,
+        int seed,
+      }) opened = _openedTable((int face) => face != 6);
+      final harness = (registry: opened.registry, clock: opened.clock);
+      final _Table table = opened.table;
+      // Seat 0 has all four tokens in the yard. Seat 2's entry offset is 26
       // (RULES.md 1.1 table), so two of its tokens sitting at progress 26
-      // occupy absolute square (26 + 26) mod 52 == 0 -- seat 0's own entry
-      // square -- and form a block there (rule 21). Rule 22 says a block
-      // cannot be landed on by another seat's token, and rule 26 says a
-      // block on a safe square is still a block; rule 23 says a yard exit's
-      // whole path is its entry square. So even a 6 cannot get seat 0 out
-      // of the yard, and every other face already has no legal move
-      // because nothing of seat 0's has left the yard. Every one of the six
-      // possible faces therefore leaves seat 0 with no legal move; this
-      // does not depend on which face the room's real dice chain draws.
-      // Since the 2026-10-15 ruling a server room plays blocks off, where a
-      // pair is a shelter and no position leaves every face illegal, so
-      // this fixture turns the engine's blocks rule back on for its own
-      // game: what is under test is the timer's frames, not rule 21.
+      // occupy absolute square (26 + 26) mod 52 == 0, seat 0's own entry
+      // square, and form a block there (rule 21).
       _forceGame(
         table.room,
         blocks: true,
@@ -552,10 +594,17 @@ void main() {
       final RollOk rolled = acted.single.roll!;
       final Rolled rolledEvent = rolled.events.whereType<Rolled>().single;
       expect(
+        rolledEvent.value,
+        opened.face,
+        reason: 'seed ${opened.seed}: the timer must have drawn the face '
+            'read off the chain before the sweep',
+      );
+      expect(
         rolledEvent.legal,
         isEmpty,
-        reason: 'setup requires no legal move for seat 0 whatever face was '
-            'drawn (${rolledEvent.value}); got legal=${rolledEvent.legal}',
+        reason: 'setup requires no legal move for seat 0 on face '
+            '${rolledEvent.value} (seed ${opened.seed}); got '
+            'legal=${rolledEvent.legal}',
       );
 
       final List<OutFrame> frames = buildExpiryFrames(acted.single);
@@ -580,14 +629,23 @@ void main() {
         'a timer roll that leaves a legal move pending publishes rolled '
         'only, and the immediately following sweep does not also play the '
         'move', () {
-      final harness = _harness();
-      final _Table table = _newTable(harness.registry, players: 2);
+      // A 6 is queued and does not leave a move (rule 10q). Every other
+      // face does, on the board below, so the fixture rejects a first face
+      // of 6 and keeps whichever non-6 the seed drew.
+      final ({
+        RoomRegistry registry,
+        FakeClock clock,
+        _Table table,
+        int face,
+        int seed,
+      }) opened = _openedTable((int face) => face != 6);
+      final harness = (registry: opened.registry, clock: opened.clock);
+      final _Table table = opened.table;
       // Seat 0 has one token already on the track at its own entry square
       // (progress 0) and the rest in the yard; seat 2 has no tokens placed
-      // anywhere near it. For every face 1..6 that on-track token has a
-      // legal destination (progress 1..6, all well short of the exact-57
-      // rule, and nothing is present to block or capture), so this does
-      // not depend on which face the room's real dice chain draws.
+      // anywhere near it. For every face 1..5 that on-track token has a
+      // legal destination (progress 1..5, all well short of the exact-57
+      // rule, and nothing is present to block or capture).
       _forceGame(
         table.room,
         currentSeat: 0,
@@ -604,11 +662,15 @@ void main() {
       expect(acted, hasLength(1));
       final RollOk rolled = acted.single.roll!;
       final Rolled rolledEvent = rolled.events.whereType<Rolled>().single;
+      expect(rolledEvent.value, opened.face,
+          reason: 'seed ${opened.seed}: the timer drew a different face '
+              'from the one read off the chain');
       expect(
         rolledEvent.legal,
         isNotEmpty,
-        reason: 'setup requires a legal move for seat 0 whatever face was '
-            'drawn (${rolledEvent.value}); got legal=${rolledEvent.legal}',
+        reason: 'setup requires a legal move for seat 0 on face '
+            '${rolledEvent.value} (seed ${opened.seed}); got '
+            'legal=${rolledEvent.legal}',
       );
       final List<OutFrame> frames = buildExpiryFrames(acted.single);
       expect(
@@ -759,20 +821,22 @@ void main() {
     });
 
     test(
-        'a move that grants an extra roll for a six publishes moved then '
-        'turn for the same seat', () {
+        'a move that grants an extra roll on a non-winning home arrival '
+        'publishes moved then turn for the same seat', () {
       final harness = _harness();
       final _Table table = _newTable(harness.registry, players: 2);
-      // Token 0 at progress 5 moves to 11 on a roll of 6, with nothing to
-      // capture. Tokens 1-3 are already home. Not all four home (token 0
-      // is at 11, not 57), so this is not also a win.
+      // Token 0 at progress 55 needs a 2 to reach home (progress 57). The
+      // other three of seat 0 are still in the yard, so this is not a win.
+      // Rule 12q: a non-winning home arrival (homeBonus) owes one roll. A
+      // 6 spent on a move grants nothing; the old "roll of 6" fixture was
+      // that case, which the queue no longer grants.
       _forceGame(
         table.room,
         currentSeat: 0,
         phase: GamePhase.awaitMove,
-        roll: 6,
+        roll: 2,
         tokens: <int, List<int>>{
-          0: <int>[5, 57, 57, 57],
+          0: <int>[55, -1, -1, -1],
           2: <int>[-1, -1, -1, -1],
         },
       );
@@ -785,8 +849,12 @@ void main() {
       expect(
         moved.events.whereType<ExtraRoll>().isNotEmpty,
         isTrue,
-        reason: 'RULES.md rule 9: rolling a 6 grants another roll',
+        reason: 'RULES.md rule 11a and 12q: a token reaching home without '
+            'winning owes another roll',
       );
+      expect(table.room.game!.tokens[0][0], 57);
+      expect(table.room.game!.phase, GamePhase.awaitRoll);
+      expect(table.room.game!.currentSeat, 0);
       final List<OutFrame> frames = buildExpiryFrames(acted.single);
       expect(frames.map((OutFrame f) => f.type).toList(),
           <String>['moved', 'turn']);
