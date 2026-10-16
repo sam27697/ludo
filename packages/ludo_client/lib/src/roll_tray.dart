@@ -491,13 +491,20 @@ class _TrayDiePainter extends CustomPainter {
       Rect.fromLTWH(s * 0.04, s * 0.04, s * 0.92, s * 0.92),
       Radius.circular(s * 0.18),
     );
+    // A dead die still has to read its face at a glance (K3, doctrine
+    // P3/P9): the body stays close to the plain die colour (only a light
+    // wash, not a grey fill that swallows the pips) and the pips are the
+    // real ink at reduced alpha, so they stay clearly darker than the
+    // body. The X on top is the "no" signal, not the missing pips.
     final Color faceColor = dimmed
         ? Color.alphaBlend(
-            LudoColors.ink.withValues(alpha: 0.35),
+            LudoColors.ink.withValues(alpha: 0.08),
             LudoColors.dieFace,
           )
         : LudoColors.dieFace;
-    final Color pipColor = dimmed ? LudoColors.inkMuted : LudoColors.ink;
+    final Color pipColor = dimmed
+        ? LudoColors.ink.withValues(alpha: 0.55)
+        : LudoColors.ink;
     final Color edge = dimmed ? LudoColors.inkMuted : edgeColor;
 
     canvas.drawRRect(faceRect, Paint()..color = faceColor);
@@ -542,9 +549,12 @@ class _TrayDeadMarkPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final double inset = size.shortestSide * 0.24;
+    // Thinner and semi-transparent (doctrine P9: a shape, not a colour,
+    // carries the "no" meaning) so the X reads as a mark over the face
+    // rather than a block that hides the pips underneath it.
     final Paint paint = Paint()
-      ..color = LudoColors.error
-      ..strokeWidth = math.max(2, size.shortestSide * 0.1)
+      ..color = LudoColors.error.withValues(alpha: 0.82)
+      ..strokeWidth = math.max(1.5, size.shortestSide * 0.055)
       ..strokeCap = StrokeCap.round;
     canvas.drawLine(
       Offset(inset, inset),
