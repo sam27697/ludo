@@ -216,6 +216,7 @@ class LudoBoard extends StatefulWidget {
     this.onTokenStep,
     this.onMoveLanded,
     this.onTravelReset,
+    this.overlay,
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -299,6 +300,11 @@ class LudoBoard extends StatefulWidget {
   /// Called every time [_snapToTruth] runs, contract C-268 rule 2. Null by
   /// default.
   final VoidCallback? onTravelReset;
+
+  /// Drawn above the tokens, inside the board square. Null draws nothing.
+  /// The thrown die (C-377) lives here so it sits in the board's rect and
+  /// never changes the board's own size. The caller owns its motion.
+  final Widget? overlay;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -1141,6 +1147,8 @@ class _LudoBoardState extends State<LudoBoard> {
                         tokenIndex: tokenIndex,
                         cellSize: cellSize,
                       ),
+                  if (widget.overlay != null)
+                    Positioned.fill(child: widget.overlay!),
                 ],
               ),
             ),
