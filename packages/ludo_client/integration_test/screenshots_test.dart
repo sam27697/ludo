@@ -6046,6 +6046,44 @@ void main() {
     // case ends -- not only in the addTearDown registered above.
     tester.platformDispatcher.clearTextScaleFactorTestValue();
   });
+
+  // ==========================================================================
+  // 41-44: order 369. Emulator frames of the roll tray. Same route as
+  // captures 15 and 16, over FakeTransport. Queue frames are copied from
+  // test/roll_tray_test.dart; this file cannot import test/. Bodies live
+  // at the bottom of the file. No pumpAndSettle once GameScreen is up.
+  // ==========================================================================
+  testWidgets('capture 41-game-tray-en', (tester) async {
+    await _shootLiveTray(
+      tester,
+      binding,
+      shotName: '41-game-tray-en',
+      locale: const Locale('en'),
+      roomCode: 'SHOT41',
+      gameId: 's' * 16,
+      seatToken: 'tok-shot-41',
+    );
+  });
+
+  testWidgets('capture 42-game-tray-ar', (tester) async {
+    await _shootLiveTray(
+      tester,
+      binding,
+      shotName: '42-game-tray-ar',
+      locale: const Locale('ar'),
+      roomCode: 'SHOT42',
+      gameId: 't' * 16,
+      seatToken: 'tok-shot-42',
+    );
+  });
+
+  testWidgets('capture 43-game-tray-pick-en', (tester) async {
+    await _shootPickedTray(tester, binding);
+  });
+
+  testWidgets('capture 44-game-tray-dead-ar', (tester) async {
+    await _shootDeadTray(tester, binding);
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -8349,4 +8387,1076 @@ void _expectHomeRemovedState(
         'homeRemovedNotice ("${loc.homeRemovedNotice}"), got '
         '"${noticeText.data}"',
   );
+}
+
+// --- order 369: captures 41-44 ---------------------------------------------
+//
+// After GameScreen mounts, each pushed frame is followed by two pumps so
+// the screen's frame listener sees that frame's reduced turn before the
+// next push (the listener runs as a microtask, the reducer runs first).
+// A new tray die starts at opacity 0 and fades for 220ms, so the shot
+// waits [_trayShotFrames] real frames after the photographed state is in
+// the tree: 12 x 32ms is past that fade and past a two-square token step
+// (140ms a step), and still inside the 1500ms no-move hold capture 44
+// keeps on screen. pumpAndSettle is not used here. GameScreen's countdown
+// ticker never settles.
+
+const int _trayDeadlineMs = 45000;
+
+const int _trayShotFrames = 12;
+
+const String _trayReveal =
+    'abcdef0123456789abcdef0123456789'
+    'abcdef0123456789abcdef0123456789';
+
+const List<Map<String, Object?>> _traySixAndThreeLegal = <Map<String, Object?>>[
+  <String, Object?>{
+    'face': 6,
+    'tokens': <int>[0, 1, 2, 3],
+  },
+  <String, Object?>{
+    'face': 3,
+    'tokens': <int>[0],
+  },
+];
+
+class _OpenedTrayGame {
+  _OpenedTrayGame({
+    required this.controller,
+    required this.transport,
+    required this.seq,
+  });
+
+  final RoomController controller;
+  final FakeTransport transport;
+  final int seq;
+}
+
+Future<void> _releaseTrayGame(
+  WidgetTester tester,
+  RoomController? controller,
+) async {
+  if (controller == null) {
+    return;
+  }
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump();
+  controller.dispose();
+}
+
+/// Home, lobby, start, GameScreen. Returns with room seq at 3, seat 0's
+/// turn, every token still in its yard. Caller disposes [controller].
+Future<_OpenedTrayGame> _openHostGame(
+  WidgetTester tester, {
+  required String capture,
+  required String roomCode,
+  required Locale locale,
+  required String gameId,
+  required String seatToken,
+}) async {
+  final _ScreenshotControllerFactory trayFactory =
+      _ScreenshotControllerFactory();
+  try {
+    final Widget home;
+    if (locale.languageCode == 'ar') {
+      home = _reconnectingCaptureHarness(
+        HomeScreen(
+          controllerFactory: trayFactory.call,
+          onToggleLocale: () {},
+        ),
+        locale: locale,
+      );
+    } else {
+      home = _ScreenshotHarness(controllerFactory: trayFactory.call);
+    }
+    await tester.pumpWidget(home);
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+    const String hostName = 'Priya';
+    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
+    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+
+    expect(
+      trayFactory.controllers,
+      hasLength(1),
+      reason:
+          'capture $capture: tapping Create Room must build exactly one '
+          'controller',
+    );
+    final RoomController controller = trayFactory.controllers.single;
+    final FakeTransport transport = trayFactory.transports.single;
+
+    final List<String> createMessages = transport.sentRaw
+        .where((s) => _typeOf(s) == 'create_room')
+        .toList();
+    expect(
+      createMessages,
+      hasLength(1),
+      reason:
+          'capture $capture: expected one create_room, sent '
+          '${transport.sentRaw.map(_typeOf).toList()}',
+    );
+    final String createId = _idOf(createMessages.single);
+
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: roomCode,
+          players: 2,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      'capture $capture: LobbyScreen after the create_room reply carrying '
+      'code "$roomCode"',
+    );
+
+    transport.pushText(
+      _frame(
+        type: 'player_joined',
+        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+      ),
+    );
+    await tester.pump();
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: locale.languageCode,
+      code: roomCode,
+      expectedSeatCount: 2,
+    );
+
+    final Finder startButton = find.byKey(const Key('lobby-start-button'));
+    expect(
+      startButton,
+      findsOneWidget,
+      reason:
+          'capture $capture: the host, seat 0, must see a Start button '
+          'once seated',
+    );
+    await tester.tap(startButton);
+    await tester.pump();
+    final List<String> startMessages = transport.sentRaw
+        .where((s) => _typeOf(s) == 'start_game')
+        .toList();
+    expect(
+      startMessages,
+      hasLength(1),
+      reason: 'capture $capture: tapping Start must send one start_game',
+    );
+    final String startId = _idOf(startMessages.single);
+
+    transport.pushText(
+      _frame(
+        type: 'game_started',
+        re: startId,
+        data: <String, Object?>{
+          'turn': 0,
+          'game_id': gameId,
+          'client_seeds': '0:seed',
+          'seq': 3,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(GameScreen),
+      'capture $capture: GameScreen after game_started',
+    );
+    expect(
+      find.byType(LobbyScreen),
+      findsNothing,
+      reason:
+          'capture $capture: RoomRoute must latch onto GameScreen and '
+          'never go back',
+    );
+    expect(
+      controller.room!.seq,
+      3,
+      reason: 'capture $capture: game_started must land at seq 3',
+    );
+    expect(
+      controller.seat,
+      0,
+      reason: 'capture $capture: this device is seat 0',
+    );
+
+    return _OpenedTrayGame(
+      controller: controller,
+      transport: transport,
+      seq: 3,
+    );
+  } catch (_) {
+    for (final RoomController created in trayFactory.controllers) {
+      await _releaseTrayGame(tester, created);
+    }
+    rethrow;
+  }
+}
+
+Future<int> _pushTraySeq(
+  WidgetTester tester,
+  FakeTransport transport,
+  int seq, {
+  required String type,
+  required Map<String, Object?> data,
+}) async {
+  final int next = seq + 1;
+  transport.pushText(
+    _frame(
+      type: type,
+      data: <String, Object?>{...data, 'seq': next},
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  return next;
+}
+
+Future<int> _pushMyMoved(
+  WidgetTester tester,
+  FakeTransport transport,
+  int seq, {
+  required int from,
+  required int to,
+  int? face,
+}) {
+  return _pushTraySeq(
+    tester,
+    transport,
+    seq,
+    type: 'moved',
+    data: <String, Object?>{
+      'seat': 0,
+      'token': 0,
+      'from': from,
+      'to': to,
+      'captured': <Object?>[],
+      'extra_roll': false,
+      'face': ?face,
+    },
+  );
+}
+
+/// Case 1's rolls: 6, then 6, then [finalValue]. The last `rolled` is the
+/// move-pending frame (no `turn` after it) and carries [finalQueue].
+Future<int> _pushSixSixThen(
+  WidgetTester tester,
+  FakeTransport transport,
+  int seq, {
+  required int finalValue,
+  required List<int> finalQueue,
+  required List<Map<String, Object?>> legalByFace,
+}) async {
+  seq = await _pushTraySeq(
+    tester,
+    transport,
+    seq,
+    type: 'rolled',
+    data: <String, Object?>{
+      'seat': 0,
+      'value': 6,
+      'legal': <int>[],
+      'deadline_ms': _trayDeadlineMs,
+      'k': 1,
+      'reveal': _trayReveal,
+      'queue': <int>[6],
+    },
+  );
+  seq = await _pushTraySeq(
+    tester,
+    transport,
+    seq,
+    type: 'turn',
+    data: <String, Object?>{
+      'seat': 0,
+      'phase': 'await_roll',
+      'deadline_ms': _trayDeadlineMs,
+      'queue': <int>[6],
+    },
+  );
+  seq = await _pushTraySeq(
+    tester,
+    transport,
+    seq,
+    type: 'rolled',
+    data: <String, Object?>{
+      'seat': 0,
+      'value': 6,
+      'legal': <int>[],
+      'deadline_ms': _trayDeadlineMs,
+      'k': 2,
+      'reveal': _trayReveal,
+      'queue': <int>[6, 6],
+    },
+  );
+  seq = await _pushTraySeq(
+    tester,
+    transport,
+    seq,
+    type: 'turn',
+    data: <String, Object?>{
+      'seat': 0,
+      'phase': 'await_roll',
+      'deadline_ms': _trayDeadlineMs,
+      'queue': <int>[6, 6],
+    },
+  );
+  seq = await _pushTraySeq(
+    tester,
+    transport,
+    seq,
+    type: 'rolled',
+    data: <String, Object?>{
+      'seat': 0,
+      'value': finalValue,
+      'legal': <int>[0, 1, 2, 3],
+      'deadline_ms': _trayDeadlineMs,
+      'k': 3,
+      'reveal': _trayReveal,
+      'queue': finalQueue,
+      'legal_by_face': legalByFace,
+    },
+  );
+  return seq;
+}
+
+void _expectKey(
+  WidgetTester tester,
+  Key key, {
+  required bool present,
+  required String reason,
+}) {
+  expect(
+    find.byKey(key),
+    present ? findsOneWidget : findsNothing,
+    reason: reason,
+  );
+}
+
+void _expectChildKey(
+  WidgetTester tester,
+  Key parent,
+  Key child,
+  String reason,
+) {
+  expect(
+    find.descendant(of: find.byKey(parent), matching: find.byKey(child)),
+    findsOneWidget,
+    reason: reason,
+  );
+}
+
+void _expectTrayBesideDie(
+  WidgetTester tester, {
+  required bool onTheRight,
+  required String reason,
+}) {
+  final Rect die = tester.getRect(find.byKey(const Key('game-die')));
+  final Rect tray = tester.getRect(find.byKey(const Key('game-roll-tray')));
+  expect(
+    tray.center.dx,
+    onTheRight ? greaterThan(die.center.dx) : lessThan(die.center.dx),
+    reason: reason,
+  );
+  expect(
+    (tray.center.dy - die.center.dy).abs(),
+    lessThan(36),
+    reason: '$reason, on the big die\'s row',
+  );
+}
+
+int _progressOf(RoomController controller, int seat, int token) {
+  for (final SeatState seatState in controller.room!.seats) {
+    if (seatState.seat == seat) {
+      return seatState.tokens[token];
+    }
+  }
+  throw TestFailure('seat $seat is not in the room');
+}
+
+/// Captures 41 and 42. My turn, queue [6, 6, 3] after the third roll,
+/// token 0 on square 0 so both the 6 and the 3 are live, die 0 selected,
+/// rings on all four of my tokens.
+Future<void> _shootLiveTray(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    int seq = await _pushMyMoved(
+      tester,
+      opened.transport,
+      opened.seq,
+      from: -1,
+      to: 0,
+    );
+    expect(
+      _progressOf(controller, 0, 0),
+      0,
+      reason: 'capture $shotName: token 0 must sit on square 0 before the rolls',
+    );
+    seq = await _pushSixSixThen(
+      tester,
+      opened.transport,
+      seq,
+      finalValue: 3,
+      finalQueue: const <int>[6, 6, 3],
+      legalByFace: _traySixAndThreeLegal,
+    );
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(turn.seat, 0, reason: 'capture $shotName: the turn stays mine');
+    expect(
+      turn.phaseName,
+      'awaitMove',
+      reason: 'capture $shotName: the third roll leaves a move pending',
+    );
+    expect(
+      turn.queue,
+      <int>[6, 6, 3],
+      reason: 'capture $shotName: the queue after the third roll is [6, 6, 3]',
+    );
+    expect(
+      _progressOf(controller, 0, 0),
+      0,
+      reason: 'capture $shotName: token 0 is still on square 0',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    _expectKey(
+      tester,
+      const Key('game-roll-tray'),
+      present: true,
+      reason: 'capture $shotName: K1 game-roll-tray',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-0'),
+      const Key('game-roll-tray-face-0-6'),
+      'capture $shotName: K2 die 0 draws 6',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-0'),
+      const Key('game-roll-tray-selected-0'),
+      'capture $shotName: K3 die 0 is the selected default face',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-dead-0'),
+      present: false,
+      reason: 'capture $shotName: K3 die 0 is not dead',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-1'),
+      const Key('game-roll-tray-face-1-6'),
+      'capture $shotName: K2 die 1 draws the other 6',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-selected-1'),
+      present: false,
+      reason: 'capture $shotName: K3 only the first 6 is selected',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-dead-1'),
+      present: false,
+      reason: 'capture $shotName: K3 die 1 is live',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-2'),
+      const Key('game-roll-tray-face-2-3'),
+      'capture $shotName: K2 die 2 draws 3',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-selected-2'),
+      present: false,
+      reason: 'capture $shotName: K3 the 3 is not the default face',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-dead-2'),
+      present: false,
+      reason: 'capture $shotName: K3 the 3 is live',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-die-3'),
+      present: false,
+      reason: 'capture $shotName: the tray holds three dice',
+    );
+    _expectKey(
+      tester,
+      const Key('game-die-face-6'),
+      present: true,
+      reason: 'capture $shotName: K4 the big die shows the default face 6',
+    );
+    _expectKey(
+      tester,
+      const Key('game-die-face-3'),
+      present: false,
+      reason: 'capture $shotName: the big die is not showing the rolled 3',
+    );
+    for (final int token in <int>[0, 1, 2, 3]) {
+      _expectKey(
+        tester,
+        Key('board-legal-ring-0-$token'),
+        present: true,
+        reason:
+            'capture $shotName: K7 the default 6 rings token $token',
+      );
+    }
+    _expectTrayBesideDie(
+      tester,
+      onTheRight: locale.languageCode == 'en',
+      reason:
+          'capture $shotName: K1 the tray sits after the big die in '
+          'reading order',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Capture 43. Same three rolls as 41, plus a dead 2 on the end of the
+/// queue (cases 4 and 12 leave a 2 out of legal_by_face), then a tap on
+/// the die showing 3. The rings move from the 6's four tokens to token 0.
+Future<void> _shootPickedTray(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding,
+) async {
+  const String shotName = '43-game-tray-pick-en';
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: 'SHOT43',
+      locale: const Locale('en'),
+      gameId: 'u' * 16,
+      seatToken: 'tok-shot-43',
+    );
+    controller = opened.controller;
+    int seq = await _pushMyMoved(
+      tester,
+      opened.transport,
+      opened.seq,
+      from: -1,
+      to: 0,
+    );
+    seq = await _pushSixSixThen(
+      tester,
+      opened.transport,
+      seq,
+      finalValue: 3,
+      finalQueue: const <int>[6, 6, 3, 2],
+      legalByFace: _traySixAndThreeLegal,
+    );
+
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-selected-0'),
+      present: true,
+      reason: 'capture $shotName: the default 6 is selected before the tap',
+    );
+    _expectKey(
+      tester,
+      const Key('board-legal-ring-0-1'),
+      present: true,
+      reason: 'capture $shotName: the 6 rings token 1 before the tap',
+    );
+
+    final Finder pickedDie = find.byKey(const Key('game-roll-tray-die-2'));
+    expect(
+      pickedDie,
+      findsOneWidget,
+      reason: 'capture $shotName: game-roll-tray-die-2 is the live 3',
+    );
+    final int sentBefore = opened.transport.sentRaw.length;
+    await tester.ensureVisible(pickedDie);
+    await tester.pump();
+    await tester.tap(pickedDie);
+    await tester.pump();
+    expect(
+      opened.transport.sentRaw.length,
+      sentBefore,
+      reason: 'capture $shotName: tapping the 3 sends nothing',
+    );
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(turn.seat, 0, reason: 'capture $shotName: the turn stays mine');
+    expect(
+      turn.phaseName,
+      'awaitMove',
+      reason: 'capture $shotName: the pick does not leave awaitMove',
+    );
+    expect(
+      turn.queue,
+      <int>[6, 6, 3, 2],
+      reason: 'capture $shotName: the queue is [6, 6, 3, 2]',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      'en',
+      reason: 'capture $shotName: expected locale en, got ${loc.localeName}',
+    );
+
+    _expectKey(
+      tester,
+      const Key('game-roll-tray'),
+      present: true,
+      reason: 'capture $shotName: K1 game-roll-tray',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-0'),
+      const Key('game-roll-tray-face-0-6'),
+      'capture $shotName: K2 die 0 still draws 6',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-selected-0'),
+      present: false,
+      reason: 'capture $shotName: K3 the tap moved the mark off die 0',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-dead-0'),
+      present: false,
+      reason: 'capture $shotName: K3 die 0 is live',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-1'),
+      const Key('game-roll-tray-face-1-6'),
+      'capture $shotName: K2 die 1 still draws 6',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-selected-1'),
+      present: false,
+      reason: 'capture $shotName: K3 die 1 is not selected',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-dead-1'),
+      present: false,
+      reason: 'capture $shotName: K3 die 1 is live',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-2'),
+      const Key('game-roll-tray-face-2-3'),
+      'capture $shotName: K2 die 2 draws the picked 3',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-2'),
+      const Key('game-roll-tray-selected-2'),
+      'capture $shotName: K3 the 3 is selected',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-dead-2'),
+      present: false,
+      reason: 'capture $shotName: K3 the picked 3 is not dead',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-3'),
+      const Key('game-roll-tray-face-3-2'),
+      'capture $shotName: K2 die 3 draws the dead 2',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-3'),
+      const Key('game-roll-tray-dead-3'),
+      'capture $shotName: K3 game-roll-tray-dead-3 marks the 2',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-selected-3'),
+      present: false,
+      reason: 'capture $shotName: K3 the dead 2 is not selected',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-die-4'),
+      present: false,
+      reason: 'capture $shotName: the tray holds four dice',
+    );
+    _expectKey(
+      tester,
+      const Key('game-die-face-3'),
+      present: true,
+      reason: 'capture $shotName: K4 the big die shows the picked 3',
+    );
+    _expectKey(
+      tester,
+      const Key('game-die-face-6'),
+      present: false,
+      reason: 'capture $shotName: the big die left the default 6',
+    );
+    _expectKey(
+      tester,
+      const Key('board-legal-ring-0-0'),
+      present: true,
+      reason: 'capture $shotName: K7 the 3 rings token 0',
+    );
+    for (final int token in <int>[1, 2, 3]) {
+      _expectKey(
+        tester,
+        Key('board-legal-ring-0-$token'),
+        present: false,
+        reason:
+            'capture $shotName: K7 the rings left token $token when the '
+            '3 was picked',
+      );
+    }
+    _expectTrayBesideDie(
+      tester,
+      onTheRight: true,
+      reason: 'capture $shotName: K1 the tray sits to the right of the big die',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Capture 44. Case 6, Arabic, my own seat. Queue [3, 2, 1] with only the
+/// 2 live, then moved face 2, turn_passed no_legal_move, turn to seat 1.
+/// The tray keeps the unspent 3 and 1, both dead. The big die holds the
+/// last of those, face 1, under the red X, with the no-move line.
+Future<void> _shootDeadTray(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding,
+) async {
+  const String shotName = '44-game-tray-dead-ar';
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: 'SHOT44',
+      locale: const Locale('ar'),
+      gameId: 'v' * 16,
+      seatToken: 'tok-shot-44',
+    );
+    controller = opened.controller;
+
+    // -1 to 10 is not a step the board animates, so the token snaps onto
+    // square 10. The killing moved then walks 10 to 12, matching case 6.
+    int seq = await _pushMyMoved(
+      tester,
+      opened.transport,
+      opened.seq,
+      from: -1,
+      to: 10,
+    );
+    expect(
+      _progressOf(controller, 0, 0),
+      10,
+      reason: 'capture $shotName: token 0 must sit on square 10 before the move',
+    );
+
+    // One live face and one token would auto-move after 1500ms. The
+    // killing moved follows on the next pumps, before that hold fires.
+    // A turn frame carries k forward; it does not read k. After
+    // game_started, k stays 0. Case 6's dead faces do not depend on k.
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn',
+      data: <String, Object?>{
+        'seat': 0,
+        'phase': 'await_move',
+        'deadline_ms': _trayDeadlineMs,
+        'queue': <int>[3, 2, 1],
+        'value': 2,
+        'legal': <int>[0],
+        'legal_by_face': <Map<String, Object?>>[
+          <String, Object?>{
+            'face': 2,
+            'tokens': <int>[0],
+          },
+        ],
+      },
+    );
+    seq = await _pushMyMoved(
+      tester,
+      opened.transport,
+      seq,
+      from: 10,
+      to: 12,
+      face: 2,
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn_passed',
+      data: <String, Object?>{'seat': 0, 'reason': 'no_legal_move'},
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn',
+      data: <String, Object?>{
+        'seat': 1,
+        'phase': 'await_roll',
+        'deadline_ms': _trayDeadlineMs,
+        'queue': <int>[],
+      },
+    );
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      controller.seat,
+      0,
+      reason: 'capture $shotName: this device is still my seat',
+    );
+    expect(
+      turn.seat,
+      1,
+      reason: 'capture $shotName: the turn has passed to seat 1',
+    );
+    expect(
+      turn.phaseName,
+      'awaitRoll',
+      reason: 'capture $shotName: seat 1 is waiting to roll',
+    );
+    expect(
+      turn.queue,
+      <int>[],
+      reason: 'capture $shotName: the live turn queue is empty',
+    );
+    expect(
+      _progressOf(controller, 0, 0),
+      12,
+      reason: 'capture $shotName: the spent 2 landed token 0 on square 12',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      'ar',
+      reason: 'capture $shotName: expected locale ar, got ${loc.localeName}',
+    );
+
+    _expectKey(
+      tester,
+      const Key('game-die-no-move-mark'),
+      present: true,
+      reason: 'capture $shotName: K9 the red X is on the big die',
+    );
+    final Finder notice = find.byKey(const Key('game-no-move-notice'));
+    expect(
+      notice,
+      findsOneWidget,
+      reason: 'capture $shotName: K9 game-no-move-notice',
+    );
+    expect(
+      tester.widget<Text>(notice).data,
+      loc.gameNoMove,
+      reason:
+          'capture $shotName: K9 the no-move line reads gameNoMove '
+          '("${loc.gameNoMove}"), got '
+          '"${tester.widget<Text>(notice).data}"',
+    );
+    _expectKey(
+      tester,
+      const Key('game-die-face-1'),
+      present: true,
+      reason: 'capture $shotName: K9 the big die shows the last dead face, 1',
+    );
+    _expectKey(
+      tester,
+      const Key('game-die-face-2'),
+      present: false,
+      reason: 'capture $shotName: the big die is not still showing the spent 2',
+    );
+    _expectKey(
+      tester,
+      const Key('game-die-face-3'),
+      present: false,
+      reason: 'capture $shotName: the big die is not showing the first dead 3',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray'),
+      present: true,
+      reason: 'capture $shotName: K9 the tray of dead faces is up',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-0'),
+      const Key('game-roll-tray-face-0-3'),
+      'capture $shotName: K9 die 0 draws the unspent 3',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-0'),
+      const Key('game-roll-tray-dead-0'),
+      'capture $shotName: K9 game-roll-tray-dead-0 marks the 3',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-1'),
+      const Key('game-roll-tray-face-1-1'),
+      'capture $shotName: K9 die 1 draws the unspent 1',
+    );
+    _expectChildKey(
+      tester,
+      const Key('game-roll-tray-die-1'),
+      const Key('game-roll-tray-dead-1'),
+      'capture $shotName: K9 game-roll-tray-dead-1 marks the 1',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-die-2'),
+      present: false,
+      reason: 'capture $shotName: K9 the spent 2 is gone from the tray',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-selected-0'),
+      present: false,
+      reason: 'capture $shotName: K9 no die is selected',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray-selected-1'),
+      present: false,
+      reason: 'capture $shotName: K9 die 1 is dead, not selected',
+    );
+    _expectTrayBesideDie(
+      tester,
+      onTheRight: false,
+      reason:
+          'capture $shotName: K1 in Arabic the tray sits to the left of '
+          'the big die',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// The bits of [TurnState] these captures assert, without importing the
+/// enum. `phase.name` is `awaitMove` or `awaitRoll`.
+class TurnStateSnapshot {
+  TurnStateSnapshot(this.seat, this.phaseName, this.queue);
+
+  final int seat;
+  final String phaseName;
+  final List<int> queue;
+}
+
+TurnStateSnapshot _turnOf(RoomController controller) {
+  final turn = controller.room!.turn!;
+  return TurnStateSnapshot(turn.seat, turn.phase.name, turn.queue);
 }
