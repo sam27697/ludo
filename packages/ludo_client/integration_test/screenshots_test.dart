@@ -6084,6 +6084,65 @@ void main() {
   testWidgets('capture 44-game-tray-dead-ar', (tester) async {
     await _shootDeadTray(tester, binding);
   });
+
+  // ==========================================================================
+  // 45-48: order 375. One 2-player room, seats [0, 2], from each seat, in
+  // each locale. Seat 0 to roll. Each seat's token 0 is in its yard and
+  // its token 1 is on the track. The yard quarters are asserted immediately
+  // before the shot. Bodies live at the bottom of the file. No
+  // pumpAndSettle once GameScreen is up.
+  // ==========================================================================
+  testWidgets('capture 45-view-seat0-en', (tester) async {
+    await _shootViewerBoard(
+      tester,
+      binding,
+      shotName: '45-view-seat0-en',
+      locale: const Locale('en'),
+      mySeat: 0,
+      roomCode: 'SHOT45',
+      gameId: 'w' * 16,
+      seatToken: 'tok-shot-45',
+    );
+  });
+
+  testWidgets('capture 46-view-seat2-en', (tester) async {
+    await _shootViewerBoard(
+      tester,
+      binding,
+      shotName: '46-view-seat2-en',
+      locale: const Locale('en'),
+      mySeat: 2,
+      roomCode: 'VW46EN',
+      gameId: 'x' * 16,
+      seatToken: 'tok-shot-46',
+    );
+  });
+
+  testWidgets('capture 47-view-seat0-ar', (tester) async {
+    await _shootViewerBoard(
+      tester,
+      binding,
+      shotName: '47-view-seat0-ar',
+      locale: const Locale('ar'),
+      mySeat: 0,
+      roomCode: 'SHOT47',
+      gameId: 'y' * 16,
+      seatToken: 'tok-shot-47',
+    );
+  });
+
+  testWidgets('capture 48-view-seat2-ar', (tester) async {
+    await _shootViewerBoard(
+      tester,
+      binding,
+      shotName: '48-view-seat2-ar',
+      locale: const Locale('ar'),
+      mySeat: 2,
+      roomCode: 'VW48AR',
+      gameId: 'z' * 16,
+      seatToken: 'tok-shot-48',
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -8391,6 +8450,10 @@ void _expectHomeRemovedState(
 
 // --- order 369: captures 41-44 ---------------------------------------------
 //
+// The 2-player room is seated [0, 2], the seats the server gives two
+// players (ludo_server registry _seatIndicesFor). My seat stays 0. The
+// opponent is seat 2.
+//
 // After GameScreen mounts, each pushed frame is followed by two pumps so
 // the screen's frame listener sees that frame's reduced turn before the
 // next push (the listener runs as a microtask, the reducer runs first).
@@ -8444,8 +8507,9 @@ Future<void> _releaseTrayGame(
   controller.dispose();
 }
 
-/// Home, lobby, start, GameScreen. Returns with room seq at 3, seat 0's
-/// turn, every token still in its yard. Caller disposes [controller].
+/// Home, lobby, start, GameScreen. Returns with room seq at 3, seats
+/// [0, 2], seat 0's turn, every token still in its yard. Caller disposes
+/// [controller].
 Future<_OpenedTrayGame> _openHostGame(
   WidgetTester tester, {
   required String capture,
@@ -8528,7 +8592,7 @@ Future<_OpenedTrayGame> _openHostGame(
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
       ),
     );
     await tester.pump();
@@ -8538,6 +8602,13 @@ Future<_OpenedTrayGame> _openHostGame(
       localeName: locale.languageCode,
       code: roomCode,
       expectedSeatCount: 2,
+    );
+    expect(
+      controller.room!.seats.map((SeatState s) => s.seat).toList(),
+      <int>[0, 2],
+      reason:
+          'capture $capture: a 2-player room is seated at [0, 2], got '
+          '${controller.room!.seats.map((SeatState s) => s.seat).toList()}',
     );
 
     final Finder startButton = find.byKey(const Key('lobby-start-button'));
@@ -9204,7 +9275,7 @@ Future<void> _shootPickedTray(
 }
 
 /// Capture 44. Case 6, Arabic, my own seat. Queue [3, 2, 1] with only the
-/// 2 live, then moved face 2, turn_passed no_legal_move, turn to seat 1.
+/// 2 live, then moved face 2, turn_passed no_legal_move, turn to seat 2.
 /// The tray keeps the unspent 3 and 1, both dead. The big die holds the
 /// last of those, face 1, under the red X, with the no-move line.
 Future<void> _shootDeadTray(
@@ -9291,7 +9362,7 @@ Future<void> _shootDeadTray(
       seq,
       type: 'turn',
       data: <String, Object?>{
-        'seat': 1,
+        'seat': 2,
         'phase': 'await_roll',
         'deadline_ms': _trayDeadlineMs,
         'queue': <int>[],
@@ -9315,13 +9386,13 @@ Future<void> _shootDeadTray(
     );
     expect(
       turn.seat,
-      1,
-      reason: 'capture $shotName: the turn has passed to seat 1',
+      2,
+      reason: 'capture $shotName: the turn has passed to seat 2',
     );
     expect(
       turn.phaseName,
       'awaitRoll',
-      reason: 'capture $shotName: seat 1 is waiting to roll',
+      reason: 'capture $shotName: seat 2 is waiting to roll',
     );
     expect(
       turn.queue,
@@ -9455,4 +9526,422 @@ class TurnStateSnapshot {
 TurnStateSnapshot _turnOf(RoomController controller) {
   final turn = controller.room!.turn!;
   return TurnStateSnapshot(turn.seat, turn.phase.name, turn.queue);
+}
+
+// --- order 375: captures 45-48 ---------------------------------------------
+//
+// One room, two seats. The server seats a 2-player room at [0, 2]. Each
+// capture replays that room: token 0 of each seat in the yard, token 1 of
+// each seat on the main track, seat 0 to roll. 45 and 47 sit at seat 0,
+// 46 and 48 at seat 2. The quarter check is copied from
+// test/board_view_rotation_test.dart (hit key, then token key; quarters of
+// Key('ludo-board')). This file cannot import test/. pumpAndSettle is not
+// used once GameScreen is up.
+
+/// Main-track progress (0..51) of token 1 in captures 45-48. Leaving the
+/// yard for square 0 is the one step the board animates; any other square
+/// from -1 snaps, so the shot shows the token already on the track.
+const int _viewerTrackProgress = 8;
+
+Finder _tokenFinder(int seat, int tokenIndex) {
+  final Finder hit = find.byKey(Key('board-token-hit-$seat-$tokenIndex'));
+  if (hit.evaluate().isNotEmpty) {
+    return hit;
+  }
+  return find.byKey(Key('token-$seat-$tokenIndex'));
+}
+
+bool _inBottomLeftQuarter(Offset point, Rect board) =>
+    point.dx >= board.left &&
+    point.dx < board.center.dx &&
+    point.dy > board.center.dy &&
+    point.dy <= board.bottom;
+
+bool _inTopRightQuarter(Offset point, Rect board) =>
+    point.dx > board.center.dx &&
+    point.dx <= board.right &&
+    point.dy >= board.top &&
+    point.dy < board.center.dy;
+
+String _offsetText(Offset point) =>
+    '(dx: ${point.dx.toStringAsFixed(1)}, dy: ${point.dy.toStringAsFixed(1)})';
+
+String _rectText(Rect rect) =>
+    '(left: ${rect.left.toStringAsFixed(1)}, '
+    'top: ${rect.top.toStringAsFixed(1)}, '
+    'right: ${rect.right.toStringAsFixed(1)}, '
+    'bottom: ${rect.bottom.toStringAsFixed(1)})';
+
+/// A `moved` for any seat. [_pushMyMoved] is seat 0 token 0, which captures
+/// 41-44 still use. Token placement here is not a spent face.
+Future<int> _pushSeatMoved(
+  WidgetTester tester,
+  FakeTransport transport,
+  int seq, {
+  required int seat,
+  required int token,
+  required int from,
+  required int to,
+}) {
+  return _pushTraySeq(
+    tester,
+    transport,
+    seq,
+    type: 'moved',
+    data: <String, Object?>{
+      'seat': seat,
+      'token': token,
+      'from': from,
+      'to': to,
+      'captured': <Object?>[],
+      'extra_roll': false,
+    },
+  );
+}
+
+/// Join Priya's room as Karim, seat 2. The room reply already holds both
+/// seats, so there is no player_joined. Returns at seq 2, seat 0 to roll,
+/// every token still in its yard. Caller disposes [controller].
+Future<_OpenedTrayGame> _openGuestSeat(
+  WidgetTester tester, {
+  required String capture,
+  required String roomCode,
+  required Locale locale,
+  required String gameId,
+  required String seatToken,
+}) async {
+  expect(
+    isValidRoomCode(normalizeRoomCode(roomCode)),
+    isTrue,
+    reason:
+        'capture $capture fixture is broken: "$roomCode" must be a '
+        'syntactically valid room code (room_code.dart\'s '
+        'roomCodeAlphabet) or HomeScreen._joinRoom sets '
+        'homeRoomCodeInvalid and returns before building a controller',
+  );
+
+  final _ScreenshotControllerFactory viewerFactory =
+      _ScreenshotControllerFactory();
+  try {
+    final Widget home;
+    if (locale.languageCode == 'ar') {
+      home = _reconnectingCaptureHarness(
+        HomeScreen(
+          controllerFactory: viewerFactory.call,
+          onToggleLocale: () {},
+        ),
+        locale: locale,
+      );
+    } else {
+      home = _ScreenshotHarness(controllerFactory: viewerFactory.call);
+    }
+    await tester.pumpWidget(home);
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+    const String hostName = 'Priya';
+    const String guestName = 'Karim';
+    await tester.enterText(find.byKey(const Key('home-name-field')), guestName);
+    await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
+
+    expect(
+      viewerFactory.controllers,
+      hasLength(1),
+      reason:
+          'capture $capture: tapping Join Room must build exactly one '
+          'controller',
+    );
+    final RoomController controller = viewerFactory.controllers.single;
+    final FakeTransport transport = viewerFactory.transports.single;
+
+    final List<String> joinMessages = transport.sentRaw
+        .where((s) => _typeOf(s) == 'join_room')
+        .toList();
+    expect(
+      joinMessages,
+      hasLength(1),
+      reason:
+          'capture $capture: expected one join_room, sent '
+          '${transport.sentRaw.map(_typeOf).toList()}',
+    );
+    final String joinId = _idOf(joinMessages.single);
+
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 2, 'seat_token': seatToken},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: joinId,
+        data: _roomJson(
+          code: roomCode,
+          players: 2,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: hostName),
+            _seatJson(2, name: guestName),
+          ],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      'capture $capture: LobbyScreen after the join_room reply carrying '
+      'code "$roomCode"',
+    );
+    await _expectLobbyScreen(
+      tester,
+      localeName: locale.languageCode,
+      code: roomCode,
+      expectedSeatCount: 2,
+    );
+    expect(
+      controller.room!.seats.map((SeatState s) => s.seat).toList(),
+      <int>[0, 2],
+      reason:
+          'capture $capture: a 2-player room is seated at [0, 2], got '
+          '${controller.room!.seats.map((SeatState s) => s.seat).toList()}',
+    );
+    expect(
+      controller.seat,
+      2,
+      reason: 'capture $capture: this device is seat 2',
+    );
+
+    transport.pushText(
+      _frame(
+        type: 'game_started',
+        data: <String, Object?>{
+          'turn': 0,
+          'game_id': gameId,
+          'client_seeds': '0:seed',
+          'seq': 2,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(GameScreen),
+      'capture $capture: GameScreen after game_started',
+    );
+    expect(
+      find.byType(LobbyScreen),
+      findsNothing,
+      reason:
+          'capture $capture: RoomRoute must latch onto GameScreen and '
+          'never go back',
+    );
+    expect(
+      controller.room!.seq,
+      2,
+      reason: 'capture $capture: game_started must land at seq 2',
+    );
+
+    return _OpenedTrayGame(
+      controller: controller,
+      transport: transport,
+      seq: 2,
+    );
+  } catch (_) {
+    for (final RoomController created in viewerFactory.controllers) {
+      await _releaseTrayGame(tester, created);
+    }
+    rethrow;
+  }
+}
+
+/// Captures 45-48. Same room from [mySeat]: seats [0, 2], token 0 of each
+/// seat in the yard, token 1 of each seat at [_viewerTrackProgress], seat 0
+/// awaiting a roll.
+Future<void> _shootViewerBoard(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required int mySeat,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  expect(
+    mySeat == 0 || mySeat == 2,
+    isTrue,
+    reason: 'capture $shotName: mySeat must be 0 or 2, got $mySeat',
+  );
+
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = mySeat == 0
+        ? await _openHostGame(
+            tester,
+            capture: shotName,
+            roomCode: roomCode,
+            locale: locale,
+            gameId: gameId,
+            seatToken: seatToken,
+          )
+        : await _openGuestSeat(
+            tester,
+            capture: shotName,
+            roomCode: roomCode,
+            locale: locale,
+            gameId: gameId,
+            seatToken: seatToken,
+          );
+    controller = opened.controller;
+    int seq = await _pushSeatMoved(
+      tester,
+      opened.transport,
+      opened.seq,
+      seat: 0,
+      token: 1,
+      from: -1,
+      to: _viewerTrackProgress,
+    );
+    seq = await _pushSeatMoved(
+      tester,
+      opened.transport,
+      seq,
+      seat: 2,
+      token: 1,
+      from: -1,
+      to: _viewerTrackProgress,
+    );
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      controller.room!.seats.map((SeatState s) => s.seat).toList(),
+      <int>[0, 2],
+      reason:
+          'capture $shotName: the photographed room is seated at [0, 2], '
+          'got '
+          '${controller.room!.seats.map((SeatState s) => s.seat).toList()}',
+    );
+    expect(
+      controller.seat,
+      mySeat,
+      reason: 'capture $shotName: this device is seat $mySeat',
+    );
+    expect(
+      <int>[
+        _progressOf(controller, 0, 0),
+        _progressOf(controller, 0, 1),
+        _progressOf(controller, 0, 2),
+        _progressOf(controller, 0, 3),
+      ],
+      <int>[-1, _viewerTrackProgress, -1, -1],
+      reason:
+          'capture $shotName: seat 0 keeps token 0 in the yard and token '
+          '1 on the track',
+    );
+    expect(
+      <int>[
+        _progressOf(controller, 2, 0),
+        _progressOf(controller, 2, 1),
+        _progressOf(controller, 2, 2),
+        _progressOf(controller, 2, 3),
+      ],
+      <int>[-1, _viewerTrackProgress, -1, -1],
+      reason:
+          'capture $shotName: seat 2 keeps token 0 in the yard and token '
+          '1 on the track',
+    );
+    expect(turn.seat, 0, reason: 'capture $shotName: it is seat 0\'s turn');
+    expect(
+      turn.phaseName,
+      'awaitRoll',
+      reason: 'capture $shotName: seat 0 is waiting to roll',
+    );
+    expect(
+      turn.queue,
+      <int>[],
+      reason: 'capture $shotName: awaiting a roll, the queue is empty',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    final Finder boardFinder = find.byKey(const Key('ludo-board'));
+    expect(
+      boardFinder,
+      findsOneWidget,
+      reason: 'capture $shotName: ludo-board must be on screen',
+    );
+    final Rect boardRect = tester.getRect(boardFinder);
+    final int opponentSeat = mySeat == 0 ? 2 : 0;
+
+    final Finder viewerToken = _tokenFinder(mySeat, 0);
+    expect(
+      viewerToken,
+      findsOneWidget,
+      reason:
+          'capture $shotName: viewer seat $mySeat token 0 must be in '
+          'the tree',
+    );
+    final Offset viewerCenter = tester.getCenter(viewerToken);
+    expect(
+      _inBottomLeftQuarter(viewerCenter, boardRect),
+      isTrue,
+      reason:
+          'capture $shotName: viewer seat $mySeat token 0 centre '
+          '${_offsetText(viewerCenter)} must lie in the bottom-left '
+          'quarter of ludo-board ${_rectText(boardRect)}',
+    );
+
+    final Finder opponentToken = _tokenFinder(opponentSeat, 0);
+    expect(
+      opponentToken,
+      findsOneWidget,
+      reason:
+          'capture $shotName: opponent seat $opponentSeat token 0 must '
+          'be in the tree',
+    );
+    final Offset opponentCenter = tester.getCenter(opponentToken);
+    expect(
+      _inTopRightQuarter(opponentCenter, boardRect),
+      isTrue,
+      reason:
+          'capture $shotName: opponent seat $opponentSeat token 0 centre '
+          '${_offsetText(opponentCenter)} must lie in the top-right '
+          'quarter of ludo-board ${_rectText(boardRect)}',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
 }
