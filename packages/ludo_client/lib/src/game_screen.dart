@@ -2974,6 +2974,8 @@ class _GameScreenState extends State<GameScreen> {
                 seatNames: _seatNamesOf(finished),
                 youLabel: loc.seatYou,
                 turnSeat: null,
+                mySeat: mySeat,
+                interactive: false,
                 onTokenStep: (int stepSeat, int token) =>
                     _onBoardTokenStep(controller, stepSeat),
                 onMoveLanded: _onBoardMoveLanded,

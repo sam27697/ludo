@@ -391,6 +391,7 @@ class LudoBoard extends StatefulWidget {
     required this.tokens,
     this.seatsInPlay = const [0, 1, 2, 3],
     this.mySeat,
+    this.interactive = true,
     this.legal = const <int>{},
     this.autoMoveToken,
     this.onTokenTap,
@@ -435,6 +436,15 @@ class LudoBoard extends StatefulWidget {
   /// The seat this board is tappable for. Null is the spectator view:
   /// nothing on the board responds to a tap.
   final int? mySeat;
+
+  /// Whether the board is a play surface at all. True, the default, draws
+  /// and behaves exactly as it always has for [mySeat]: hit targets, tap
+  /// handling, the legal ring, the shake. False draws the same board (same
+  /// [mySeat], same rotation, same "You" tag) with none of that: no
+  /// `board-token-hit-*` widget for any token, [_handleTapUp] a no-op, and
+  /// nothing ever shakes. The finished board uses this -- a game that is
+  /// over has nothing to tap.
+  final bool interactive;
 
   /// Token indices of [mySeat] that may move right now. Ignored for any
   /// other seat's tokens, which are never tappable regardless.
@@ -812,6 +822,9 @@ class _LudoBoardState extends State<LudoBoard> {
   }
 
   void _handleTapUp(TapUpDetails details, double cellSize, double tokenSize) {
+    if (!widget.interactive) {
+      return;
+    }
     final int? mySeat = widget.mySeat;
     if (mySeat == null) {
       return;
@@ -1420,7 +1433,7 @@ class _LudoBoardState extends State<LudoBoard> {
 
     final List<Widget> layer = <Widget>[];
 
-    if (isMine) {
+    if (isMine && widget.interactive) {
       final Rect hitRect = _tokenHitRect(
         seat: seat,
         tokenIndex: tokenIndex,
