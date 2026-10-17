@@ -22,6 +22,7 @@ import 'package:flutter/widgets.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board_geometry.dart';
+import 'safe_cue.dart';
 import 'seat_mark.dart';
 import 'theme.dart';
 
@@ -217,6 +218,7 @@ class LudoBoard extends StatefulWidget {
     this.onMoveLanded,
     this.onTravelReset,
     this.overlay,
+    this.safeCue,
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -305,6 +307,11 @@ class LudoBoard extends StatefulWidget {
   /// The thrown die (C-377) lives here so it sits in the board's rect and
   /// never changes the board's own size. The caller owns its motion.
   final Widget? overlay;
+
+  /// The safe-landing pill, or null when none is showing. Placed on the
+  /// mover's destination cell. The screen owns when it appears and when
+  /// it leaves; this widget only anchors it. C-384.
+  final SafeCue? safeCue;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -1149,6 +1156,14 @@ class _LudoBoardState extends State<LudoBoard> {
                       ),
                   if (widget.overlay != null)
                     Positioned.fill(child: widget.overlay!),
+                  if (widget.safeCue != null)
+                    Positioned.fill(
+                      child: _AnchoredSafeCue(
+                        cue: widget.safeCue!,
+                        cellSize: cellSize,
+                        mySeat: widget.mySeat,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -1402,6 +1417,86 @@ class _LudoBoardState extends State<LudoBoard> {
     }
     return side;
   }
+}
+
+/// Puts [SafeCuePill] on the destination cell: centred above the cell,
+/// below it when that cell is in the top row of the viewed board, then
+/// shifted back inside the board square. C-384 S3.
+class _AnchoredSafeCue extends StatelessWidget {
+  const _AnchoredSafeCue({
+    required this.cue,
+    required this.cellSize,
+    required this.mySeat,
+  });
+
+  final SafeCue cue;
+  final double cellSize;
+  final int? mySeat;
+
+  @override
+  Widget build(BuildContext context) {
+    final BoardCell viewed = toView(
+      cellFor(seat: cue.seat, progress: cue.progress),
+      viewQuarters(mySeat),
+    );
+    return CustomSingleChildLayout(
+      delegate: _SafeCueAnchorDelegate(cell: viewed, cellSize: cellSize),
+      child: SafeCuePill(cue: cue),
+    );
+  }
+}
+
+class _SafeCueAnchorDelegate extends SingleChildLayoutDelegate {
+  _SafeCueAnchorDelegate({required this.cell, required this.cellSize});
+
+  final BoardCell cell;
+  final double cellSize;
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
+    return BoxConstraints(
+      maxWidth: constraints.maxWidth,
+      maxHeight: constraints.maxHeight,
+    );
+  }
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) {
+    final double gap = math.max(1.0, cellSize * 0.08);
+    final double centerX = (cell.col + 0.5) * cellSize;
+    final double rawLeft = centerX - childSize.width / 2;
+    final double rawTop = cell.row == 0
+        ? (cell.row + 1) * cellSize + gap
+        : cell.row * cellSize - childSize.height - gap;
+    return Offset(
+      _clampOrigin(rawLeft, childSize.width, size.width),
+      _clampOrigin(rawTop, childSize.height, size.height),
+    );
+  }
+
+  @override
+  bool shouldRelayout(covariant _SafeCueAnchorDelegate oldDelegate) {
+    return oldDelegate.cell != cell || oldDelegate.cellSize != cellSize;
+  }
+}
+
+/// Keeps a child of [childExtent] inside 0..[boardExtent]. A child that
+/// is itself wider or taller than the board is pinned to the origin;
+/// the pill scales down before that happens.
+double _clampOrigin(double origin, double childExtent, double boardExtent) {
+  final double room = boardExtent - childExtent;
+  if (room <= 0) {
+    return 0;
+  }
+  final double inset = math.min(1.0, room / 2);
+  final double maxOrigin = boardExtent - childExtent - inset;
+  if (origin < inset) {
+    return inset;
+  }
+  if (origin > maxOrigin) {
+    return maxOrigin;
+  }
+  return origin;
 }
 
 /// The star mark on each of the eight safe squares (RULES.md 1.3, contract

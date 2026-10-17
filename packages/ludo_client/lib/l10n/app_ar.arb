@@ -108,5 +108,13 @@
   "settingsHaptics": "الاهتزاز",
   "settingsSound": "الصوت",
   "lobbyShareButton": "ادعُ أصدقاءك",
-  "lobbyShareText": "تعال نلعب لودو! ادخل غرفتي من هذا الرابط: {link} أو اكتب الرمز {code} في Ludo RNG."
+  "lobbyShareText": "تعال نلعب لودو! ادخل غرفتي من هذا الرابط: {link} أو اكتب الرمز {code} في Ludo RNG.",
+  "boardSafeSquareCue": "مربع آمن",
+  "@boardSafeSquareCue": {
+    "description": "Pill on the board when a move lands on a safe square that already holds another seat's token and captures nothing."
+  },
+  "boardSafePairCue": "قطعتان آمنتان",
+  "@boardSafePairCue": {
+    "description": "Pill on the board when a move lands on another seat's pair, captures nothing, and the square is not a safe square. A pair on a safe square uses boardSafeSquareCue instead."
+  }
 }

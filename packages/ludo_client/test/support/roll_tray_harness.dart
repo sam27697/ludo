@@ -270,6 +270,7 @@ Widget rollTrayHarness(
   Widget child, {
   Locale locale = const Locale('en'),
   double textScale = 1.0,
+  bool disableAnimations = false,
 }) {
   return MaterialApp(
     theme: buildAppTheme(),
@@ -284,7 +285,10 @@ Widget rollTrayHarness(
     builder: (BuildContext context, Widget? screen) {
       final MediaQueryData data = MediaQuery.of(context);
       return MediaQuery(
-        data: data.copyWith(textScaler: TextScaler.linear(textScale)),
+        data: data.copyWith(
+          textScaler: TextScaler.linear(textScale),
+          disableAnimations: disableAnimations,
+        ),
         child: screen!,
       );
     },
@@ -297,6 +301,7 @@ Future<void> mountGame(
   RollTrayDrive drive, {
   Locale locale = const Locale('en'),
   double textScale = 1.0,
+  bool disableAnimations = false,
 }) async {
   await tester.pumpWidget(
     rollTrayHarness(
@@ -307,6 +312,7 @@ Future<void> mountGame(
       ),
       locale: locale,
       textScale: textScale,
+      disableAnimations: disableAnimations,
     ),
   );
   await tester.pump();
