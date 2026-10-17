@@ -73,6 +73,8 @@ import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart'
+    show RenderBox, RenderFlex, RenderObject, RenderParagraph;
 import 'package:flutter/services.dart' show MethodCall, MethodChannel;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5462,6 +5464,7 @@ void main() {
             'shot',
       );
 
+      _printBudgetProbe(tester, '37-game-large-en');
       await binding.takeScreenshot('37-game-large-en');
     } finally {
       controller37?.dispose();
@@ -5680,6 +5683,7 @@ void main() {
             'the shot, got "${bannerText38.data}"',
       );
 
+      _printBudgetProbe(tester, '38-game-large-ar');
       await binding.takeScreenshot('38-game-large-ar');
     } finally {
       controller38?.dispose();
@@ -6143,6 +6147,435 @@ void main() {
       seatToken: 'tok-shot-48',
     );
   });
+}
+
+/// Order 388 (X53): prints where the game screen's vertical space goes,
+/// immediately before captures 37 and 38 take their shot. Run 89's own
+/// probe (order 348, `_printChipRigProbe`, since removed along with
+/// capture 41's own fix) measured the symptom on the CI emulator -- at
+/// system text scale 2.0 the board is 284dp, 60dp under C-339 decision
+/// 4's 324 floor, and the own-seat chip's name sits at its 10px floor --
+/// but never said which row ate the height, and the game screen has
+/// changed since (the roll tray, the thrown-die overlay and the viewer
+/// board all landed after run 89). This prints only, asserts nothing:
+/// every line starts `CASE BUDGET <capture>` so the master can grep the
+/// CI log for them without a fixture standing in for the device. A
+/// failure anywhere in here is caught and reported as its own
+/// `CASE BUDGET <capture> probe-error <error>` line rather than failing
+/// the capture -- the capture must still take its screenshot after this
+/// returns, so nothing outside this function is allowed to catch in its
+/// place. This function pumps nothing and changes no state: every read
+/// below is of a tree the pumps above it already settled.
+///
+/// Printed, in order:
+///  1. the view itself (`tester.view.physicalSize`, `devicePixelRatio`,
+///     the logical size, `padding` and `viewPadding` converted to
+///     logical) and `MediaQuery.textScalerOf` read from the board's own
+///     context, scaled against 10.
+///  2. the Scaffold body's outer `Column` (the direct child of
+///     `SafeArea` in game_screen.dart -- `FeltEdge`, the 48 strip row,
+///     the optional desync banner, `Expanded(body)`): its own size, and
+///     each child render box's index, `runtimeType` and size.
+///  3. the play `Column` that holds `Key('game-screen-board')` as its
+///     `Expanded` child, found by walking up from the board's own
+///     render box to the nearest ancestor `RenderFlex` whose
+///     `direction` is `Axis.vertical` (never by widget type: the
+///     dynamic body nests more than one `Column`, and a type search
+///     cannot tell them apart): its own size, and each child render
+///     box's index, `runtimeType`, size, and every one of the six known
+///     keys (`game-header-chip`, `game-screen-board`, `game-roll-tray`,
+///     `game-no-move-notice`, `game-screen-turn-banner`,
+///     `game-header-countdown-ring`) that lives inside it.
+///  4. the `LudoBoard` render size (whatever its parent handed it) next
+///     to the square side it actually paints (`_squareSide`, which can
+///     be smaller than what it was handed) -- side / 15 is the cell.
+///  5. the own-seat chip (`board-seat-name-<seat>`, found from
+///     `board-seat-you`'s own ancestor rather than a seat number this
+///     function is never given): its size; the name paragraph's size,
+///     `didExceedMaxLines`, `getMaxIntrinsicWidth`, and fontSize after
+///     its own scaler; `board-seat-you`'s paragraph size and fontSize
+///     after its own scaler.
+///  6. the header chip (`game-header-chip`) and the turn banner
+///     (`game-screen-turn-banner`): size, and for every
+///     `RenderParagraph` underneath each, the first 40 characters of
+///     its text, its size, `didExceedMaxLines`, and the number of lines
+///     it laid out.
+///
+/// Item 6's line count is not a direct `paragraph.computeLineMetrics()`
+/// call: `RenderParagraph` carries no `computeLineMetrics` of its own on
+/// this SDK (confirmed against the bundled flutter framework source --
+/// src/rendering/paragraph.dart calls it only on its own private
+/// `_textPainter`; test/end_card_labels_fit_test.dart and
+/// test/home_screen_players_fit_test.dart already hit the same gap and
+/// record it in their own file-header comments). `_lineCountOf` below
+/// is the same workaround those two files already use: a fresh
+/// `TextPainter` built from the live paragraph's own resolved span,
+/// scaler, maxLines and the width it actually laid out at, laid out
+/// once, asked for `computeLineMetrics().length` on itself instead.
+void _printBudgetProbe(WidgetTester tester, String capture) {
+  try {
+    final Size physicalSize = tester.view.physicalSize;
+    final double devicePixelRatio = tester.view.devicePixelRatio;
+    final Size logicalSize = physicalSize / devicePixelRatio;
+    // Size.toString() is one of the dart:ui overrides the device's
+    // profile build strips (see _expectRectInsideView's own doc comment
+    // on Rect.toString, run 61, order 207's RETURN 1); every Size below
+    // prints its own width and height instead, never through its own
+    // toString.
+    // ignore: avoid_print
+    print('CASE BUDGET $capture view.physicalSize.width=${physicalSize.width}');
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture view.physicalSize.height=${physicalSize.height}',
+    );
+    // ignore: avoid_print
+    print('CASE BUDGET $capture view.devicePixelRatio=$devicePixelRatio');
+    // ignore: avoid_print
+    print('CASE BUDGET $capture view.logicalSize.width=${logicalSize.width}');
+    // ignore: avoid_print
+    print('CASE BUDGET $capture view.logicalSize.height=${logicalSize.height}');
+
+    final physicalPadding = tester.view.padding;
+    final physicalViewPadding = tester.view.viewPadding;
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture view.padding(logical)='
+      'left=${physicalPadding.left / devicePixelRatio},'
+      'top=${physicalPadding.top / devicePixelRatio},'
+      'right=${physicalPadding.right / devicePixelRatio},'
+      'bottom=${physicalPadding.bottom / devicePixelRatio}',
+    );
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture view.viewPadding(logical)='
+      'left=${physicalViewPadding.left / devicePixelRatio},'
+      'top=${physicalViewPadding.top / devicePixelRatio},'
+      'right=${physicalViewPadding.right / devicePixelRatio},'
+      'bottom=${physicalViewPadding.bottom / devicePixelRatio}',
+    );
+
+    final Finder boardFinder = find.byKey(const Key('game-screen-board'));
+    final BuildContext boardContext = tester.element(boardFinder);
+    final double scaledTen = MediaQuery.textScalerOf(boardContext).scale(10);
+    // ignore: avoid_print
+    print('CASE BUDGET $capture board.context.textScalerOf.scale10=$scaledTen');
+
+    // --- 2: the Scaffold body's outer Column, direct child of SafeArea.
+    final RenderFlex outerColumn = tester.renderObject<RenderFlex>(
+      find
+          .descendant(of: find.byType(SafeArea), matching: find.byType(Column))
+          .first,
+    );
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture outerColumn.size.width=${outerColumn.size.width}',
+    );
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture outerColumn.size.height='
+      '${outerColumn.size.height}',
+    );
+    RenderBox? outerChild = outerColumn.firstChild;
+    int outerIndex = 0;
+    while (outerChild != null) {
+      // ignore: avoid_print
+      print(
+        'CASE BUDGET $capture outerColumn.child[$outerIndex].runtimeType='
+        '${outerChild.runtimeType}',
+      );
+      // ignore: avoid_print
+      print(
+        'CASE BUDGET $capture outerColumn.child[$outerIndex].size.width='
+        '${outerChild.size.width}',
+      );
+      // ignore: avoid_print
+      print(
+        'CASE BUDGET $capture outerColumn.child[$outerIndex].size.height='
+        '${outerChild.size.height}',
+      );
+      outerChild = outerColumn.childAfter(outerChild);
+      outerIndex++;
+    }
+
+    // --- 3: the play Column, the nearest vertical RenderFlex ancestor
+    // of the board's own render box.
+    final RenderBox boardBox = tester.renderObject<RenderBox>(boardFinder);
+    RenderObject? ancestor = boardBox.parent;
+    RenderFlex? playColumn;
+    while (ancestor != null) {
+      if (ancestor is RenderFlex && ancestor.direction == Axis.vertical) {
+        playColumn = ancestor;
+        break;
+      }
+      ancestor = ancestor.parent;
+    }
+    if (playColumn == null) {
+      throw StateError(
+        'no ancestor RenderFlex with direction Axis.vertical found above '
+        'the game-screen-board render box',
+      );
+    }
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture playColumn.size.width=${playColumn.size.width}',
+    );
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture playColumn.size.height=${playColumn.size.height}',
+    );
+
+    const List<String> knownKeyNames = <String>[
+      'game-header-chip',
+      'game-screen-board',
+      'game-roll-tray',
+      'game-no-move-notice',
+      'game-screen-turn-banner',
+      'game-header-countdown-ring',
+    ];
+    bool keyLivesIn(RenderBox child, String keyName) {
+      final Finder keyFinder = find.byKey(Key(keyName));
+      if (keyFinder.evaluate().isEmpty) {
+        return false;
+      }
+      RenderObject? node = tester.renderObject(keyFinder);
+      while (node != null) {
+        if (node == child) {
+          return true;
+        }
+        node = node.parent;
+      }
+      return false;
+    }
+
+    RenderBox? playChild = playColumn.firstChild;
+    int playIndex = 0;
+    while (playChild != null) {
+      // ignore: avoid_print
+      print(
+        'CASE BUDGET $capture playColumn.child[$playIndex].runtimeType='
+        '${playChild.runtimeType}',
+      );
+      // ignore: avoid_print
+      print(
+        'CASE BUDGET $capture playColumn.child[$playIndex].size.width='
+        '${playChild.size.width}',
+      );
+      // ignore: avoid_print
+      print(
+        'CASE BUDGET $capture playColumn.child[$playIndex].size.height='
+        '${playChild.size.height}',
+      );
+      final List<String> childKeys = <String>[
+        for (final String keyName in knownKeyNames)
+          if (keyLivesIn(playChild, keyName)) keyName,
+      ];
+      // ignore: avoid_print
+      print(
+        'CASE BUDGET $capture playColumn.child[$playIndex].keys='
+        '${childKeys.isEmpty ? 'none' : childKeys.join(',')}',
+      );
+      playChild = playColumn.childAfter(playChild);
+      playIndex++;
+    }
+
+    // --- 4: the board's own render size against the square it paints.
+    // ignore: avoid_print
+    print('CASE BUDGET $capture board.size.width=${boardBox.size.width}');
+    // ignore: avoid_print
+    print('CASE BUDGET $capture board.size.height=${boardBox.size.height}');
+    final RenderBox squareBox = tester
+        .renderObjectList<RenderBox>(
+          find.descendant(
+            of: find.byKey(const Key('ludo-board')),
+            matching: find.byType(SizedBox),
+          ),
+        )
+        .first;
+    final double side = squareBox.size.width;
+    // ignore: avoid_print
+    print('CASE BUDGET $capture board.square.side=$side');
+    // ignore: avoid_print
+    print('CASE BUDGET $capture board.square.cell=${side / 15}');
+
+    // --- 5: the own-seat chip, found from board-seat-you's own
+    // ancestor, never a seat number (this function is never given one).
+    final Finder youFinder = find.byKey(const Key('board-seat-you'));
+    final Finder chipFinder = find
+        .ancestor(
+          of: youFinder,
+          matching: find.byWidgetPredicate(
+            (Widget widget) =>
+                widget.key is ValueKey<String> &&
+                (widget.key! as ValueKey<String>).value.startsWith(
+                  'board-seat-name-',
+                ),
+          ),
+        )
+        .first;
+    final RenderBox chipBox = tester.renderObject<RenderBox>(chipFinder);
+    // ignore: avoid_print
+    print('CASE BUDGET $capture chip.size.width=${chipBox.size.width}');
+    // ignore: avoid_print
+    print('CASE BUDGET $capture chip.size.height=${chipBox.size.height}');
+
+    final RenderParagraph nameParagraph = tester.renderObject<RenderParagraph>(
+      find.descendant(of: chipFinder, matching: find.byType(RichText)).first,
+    );
+    final TextSpan nameSpan = nameParagraph.text as TextSpan;
+    final TextStyle? nameStyle = nameSpan.style;
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture chip.name.size.width=${nameParagraph.size.width}',
+    );
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture chip.name.size.height='
+      '${nameParagraph.size.height}',
+    );
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture chip.name.didExceedMaxLines='
+      '${nameParagraph.didExceedMaxLines}',
+    );
+    final double? nameFontSizeAfterScaler = nameStyle?.fontSize == null
+        ? null
+        : nameParagraph.textScaler.scale(nameStyle!.fontSize!);
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture chip.name.fontSize.afterScaler='
+      '$nameFontSizeAfterScaler',
+    );
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture chip.name.getMaxIntrinsicWidth='
+      '${nameParagraph.getMaxIntrinsicWidth(double.infinity)}',
+    );
+
+    final RenderParagraph youParagraph = tester.renderObject<RenderParagraph>(
+      find.descendant(of: youFinder, matching: find.byType(RichText)).first,
+    );
+    final TextSpan youSpan = youParagraph.text as TextSpan;
+    final TextStyle? youStyle = youSpan.style;
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture chip.you.size.width=${youParagraph.size.width}',
+    );
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture chip.you.size.height=${youParagraph.size.height}',
+    );
+    final double? youFontSizeAfterScaler = youStyle?.fontSize == null
+        ? null
+        : youParagraph.textScaler.scale(youStyle!.fontSize!);
+    // ignore: avoid_print
+    print(
+      'CASE BUDGET $capture chip.you.fontSize.afterScaler='
+      '$youFontSizeAfterScaler',
+    );
+
+    // --- 6: the header chip and the turn banner, every RenderParagraph
+    // underneath each.
+    void printParagraphsUnder(Finder containerFinder, String label) {
+      final RenderBox containerBox = tester.renderObject<RenderBox>(
+        containerFinder,
+      );
+      // ignore: avoid_print
+      print(
+        'CASE BUDGET $capture $label.size.width=${containerBox.size.width}',
+      );
+      // ignore: avoid_print
+      print(
+        'CASE BUDGET $capture $label.size.height=${containerBox.size.height}',
+      );
+      final List<RenderParagraph> paragraphs = tester
+          .renderObjectList<RenderParagraph>(
+            find.descendant(
+              of: containerFinder,
+              matching: find.byType(RichText),
+            ),
+          )
+          .toList();
+      for (var i = 0; i < paragraphs.length; i++) {
+        final RenderParagraph paragraph = paragraphs[i];
+        final TextSpan span = paragraph.text as TextSpan;
+        final String text = span.toPlainText();
+        final String snippet = text.length > 40 ? text.substring(0, 40) : text;
+        // ignore: avoid_print
+        print('CASE BUDGET $capture $label.paragraph[$i].text=$snippet');
+        // ignore: avoid_print
+        print(
+          'CASE BUDGET $capture $label.paragraph[$i].size.width='
+          '${paragraph.size.width}',
+        );
+        // ignore: avoid_print
+        print(
+          'CASE BUDGET $capture $label.paragraph[$i].size.height='
+          '${paragraph.size.height}',
+        );
+        // ignore: avoid_print
+        print(
+          'CASE BUDGET $capture $label.paragraph[$i].didExceedMaxLines='
+          '${paragraph.didExceedMaxLines}',
+        );
+        // ignore: avoid_print
+        print(
+          'CASE BUDGET $capture $label.paragraph[$i].lines='
+          '${_lineCountOf(paragraph)}',
+        );
+      }
+    }
+
+    printParagraphsUnder(
+      find.byKey(const Key('game-header-chip')),
+      'headerChip',
+    );
+    printParagraphsUnder(
+      find.byKey(const Key('game-screen-turn-banner')),
+      'turnBanner',
+    );
+  } catch (error) {
+    // ignore: avoid_print
+    print('CASE BUDGET $capture probe-error $error');
+  }
+}
+
+/// Order 388: `RenderParagraph` carries no `computeLineMetrics` of its
+/// own on this SDK (src/rendering/paragraph.dart calls it only on its
+/// own private `_textPainter`; test/end_card_labels_fit_test.dart and
+/// test/home_screen_players_fit_test.dart already found and worked
+/// around the same gap). This reconstructs a `TextPainter` from the
+/// live paragraph's own resolved span, scaler, maxLines and the width
+/// it actually laid out at (unbounded only when the paragraph itself
+/// never wraps or ellipsizes, `RenderParagraph`'s own rule), lays it
+/// out once, and reads `computeLineMetrics().length` off that painter
+/// instead.
+int _lineCountOf(RenderParagraph paragraph) {
+  final bool wraps =
+      paragraph.softWrap || paragraph.overflow == TextOverflow.ellipsis;
+  final double maxWidth = wraps
+      ? paragraph.constraints.maxWidth
+      : double.infinity;
+  final TextPainter painter = TextPainter(
+    text: paragraph.text,
+    textAlign: paragraph.textAlign,
+    textDirection: paragraph.textDirection,
+    textScaler: paragraph.textScaler,
+    maxLines: paragraph.maxLines,
+    locale: paragraph.locale,
+    strutStyle: paragraph.strutStyle,
+    textWidthBasis: paragraph.textWidthBasis,
+    textHeightBehavior: paragraph.textHeightBehavior,
+    ellipsis: paragraph.overflow == TextOverflow.ellipsis ? '…' : null,
+  );
+  try {
+    painter.layout(
+      minWidth: paragraph.constraints.minWidth,
+      maxWidth: maxWidth,
+    );
+    return painter.computeLineMetrics().length;
+  } finally {
+    painter.dispose();
+  }
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
