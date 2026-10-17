@@ -2591,21 +2591,40 @@ class _GameScreenState extends State<GameScreen> {
   /// C-391 decision 5: the play column's own vertical gaps (the four
   /// `SizedBox`es between the header, the board, the die row and the
   /// below-die notice) give back only as much as decisions 1-3 still leave
-  /// the board short of C-391's 324 floor on the contract's own 360x616
-  /// phone, 24 top inset -- never more, and never at scale 1.0 or below
-  /// (the formula already answers exactly [nominal] there; see the report
-  /// for the arithmetic). Above that it shrinks smoothly toward a shared
-  /// floor of 4 as the clamped scale rises toward
-  /// [_playColumnTextScaleClamp], the same clamp decision 2 already put on
-  /// the header and the notice, so nothing here ever reacts to scale past
-  /// where those two have themselves stopped growing. Every one of the
-  /// four calls shares the same `keep` fraction of [nominal] above its own
-  /// floor, so the four gaps shrink together, not independently.
+  /// the board short of C-391's 324 floor, never at scale 1.0, never below
+  /// a floor of 4 each.
+  ///
+  /// On the contract's own 360x616 phone, 24 top inset, decisions 1-3
+  /// alone already hold the floor up to clamped scale 1.3
+  /// ([_playColumnGapShrinkStartScale]) -- every gap stays exactly
+  /// [nominal] there. Past it the header and the notice (decision 2) are
+  /// still growing, so this ramps every gap down at the same rate, in
+  /// lock step, reaching the shared floor of 4 at
+  /// [_playColumnGapShrinkFloorScale] (1.7, past the header/notice clamp
+  /// at 1.5, so in practice the ramp never actually reaches it: at clamped
+  /// scale 1.5 it has given back exactly half of each gap's own room above
+  /// 4 -- on this phone that is 12 of the 40 nominal total, which is what
+  /// measurement found the board still needed at system scale 2.0).
   double _playColumnGap(BuildContext context, double nominal) {
     final double s = _playColumnScaleFactor(context);
-    final double keep = ((102.0 - 60.0 * s) / 24.0).clamp(0.0, 1.0);
+    final double keep =
+        ((_playColumnGapShrinkFloorScale - s) /
+                (_playColumnGapShrinkFloorScale -
+                    _playColumnGapShrinkStartScale))
+            .clamp(0.0, 1.0);
     return 4.0 + (nominal - 4.0) * keep;
   }
+
+  /// The clamped scale at and below which [_playColumnGap] gives back
+  /// nothing: decisions 1-3 alone already hold C-391's floor there.
+  static const double _playColumnGapShrinkStartScale = 1.3;
+
+  /// The clamped scale at which [_playColumnGap] would reach every gap's
+  /// shared floor of 4, if the header and the notice kept growing past
+  /// their own 1.5 clamp. They do not, so the ramp never actually gets
+  /// there; it only sets how fast the gaps shrink between
+  /// [_playColumnGapShrinkStartScale] and 1.5.
+  static const double _playColumnGapShrinkFloorScale = 1.7;
 
   Widget _playHeaderRow(
     AppLocalizations loc,
