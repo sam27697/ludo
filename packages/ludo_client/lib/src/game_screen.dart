@@ -2975,13 +2975,11 @@ class _GameScreenState extends State<GameScreen> {
                 youLabel: loc.seatYou,
                 turnSeat: null,
                 mySeat: mySeat,
+                interactive: false,
                 onTokenStep: (int stepSeat, int token) =>
                     _onBoardTokenStep(controller, stepSeat),
                 onMoveLanded: _onBoardMoveLanded,
                 onTravelReset: _onBoardTravelReset,
-                onIllegalTokenTap: (int index) {
-                  FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-                },
               ),
             ),
           ],
