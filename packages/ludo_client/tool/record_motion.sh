@@ -21,14 +21,15 @@ case "$MOTION_LOCALE" in
 esac
 echo "MOTION_LOCALE=${MOTION_LOCALE}"
 
-# 0 or 1, which seat the device plays. Default 0 when unset. Same shape
+# 0 or 2, which seat the device plays. Default 0 when unset. A two-player
+# room is seated 0 and 2; seat 1 is not a seat in that room. Same shape
 # as the MOTION_LOCALE check above: refused before the emulator is
 # touched.
 MOTION_SEAT="${MOTION_SEAT-0}"
 case "$MOTION_SEAT" in
-  0|1) ;;
+  0|2) ;;
   *)
-    echo "MOTION_SEAT must be 0 or 1, got: ${MOTION_SEAT}" >&2
+    echo "MOTION_SEAT must be 0 or 2, got: ${MOTION_SEAT}" >&2
     exit 2
     ;;
 esac
@@ -167,6 +168,13 @@ done
 if [ "$drive_exit" -ne 0 ]; then
   echo "flutter drive failed with exit code $drive_exit" >&2
   exit "$drive_exit"
+fi
+
+# One game, one segment. A second chunk means the script outgrew the 170s
+# screenrecord limit and the video now has a gap at the seam.
+if [ "${#mp4_files[@]}" -gt 1 ]; then
+  echo "Recording split into ${#mp4_files[@]} segments; the game must fit one 170s chunk" >&2
+  exit 1
 fi
 
 if [ "$has_large_mp4" = false ]; then
