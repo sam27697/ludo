@@ -176,12 +176,17 @@ class RollTrayDrive {
     required this.transport,
     required this.feedback,
     required this.lastSeq,
+    required this.enqueueTransport,
   });
 
   final RoomController controller;
   final FakeTransport transport;
   final RecordingFeedback feedback;
   int lastSeq;
+
+  /// Queues the transport the controller's next connect() returns, for a
+  /// reconnect after [transport] is gone.
+  final void Function(FakeTransport transport) enqueueTransport;
 
   Future<void> push(
     WidgetTester tester,
@@ -234,8 +239,32 @@ Future<RollTrayDrive> connectPlaying(
     transport: transport,
     feedback: RecordingFeedback(),
     lastSeq: controller.room!.seq,
+    enqueueTransport: connector.enqueue,
   );
 }
+
+/// The id of a request frame this client sent, for building its reply.
+String requestIdOf(String text) => _idOf(text);
+
+/// The server's `error` reply to the request [re] (docs/PROTOCOL.md
+/// section 3).
+String errorReplyFrame({required String re, required String code}) => _frame(
+  type: 'error',
+  re: re,
+  data: <String, Object?>{'code': code, 'message': code},
+);
+
+/// The server's `room` reply to the request [re], a resume most often.
+String roomReplyFrame({
+  required String re,
+  required List<Map<String, Object?>> seats,
+  Map<String, Object?>? turn,
+  int seq = 1,
+}) => _frame(
+  type: 'room',
+  re: re,
+  data: _roomJson(seats: seats, turn: turn, seq: seq),
+);
 
 Widget rollTrayHarness(
   Widget child, {
