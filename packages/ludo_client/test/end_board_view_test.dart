@@ -637,9 +637,9 @@ void main() {
   // ===========================================================================
   group('end board view: a tap on the finished board (order 390)', () {
     testWidgets(
-      'seat 2 of 4, en: a tap on my own token plays exactly one invalidTap '
-      'and sends no move; a tap on an opponent token resolves to nothing, '
-      'the same as the playing board',
+      'seat 2 of 4, en: the finished board has no token controls; a tap '
+      'on my own token plays nothing and sends no move; a tap on an '
+      'opponent token resolves to nothing',
       (tester) async {
         final List<Map<String, Object?>> seats = <Map<String, Object?>>[
           _seatJson(0, name: 'Ann', tokens: const <int>[20, -1, -1, -1]),
@@ -697,14 +697,20 @@ void main() {
         await tester.pump();
 
         expect(
+          find.byKey(const Key('board-token-hit-2-0')),
+          findsNothing,
+          reason:
+              'at game over my tokens are not controls (H7.19-21: token '
+              'buttons absent, not merely disabled), even though the '
+              'finished board is drawn from my seat',
+        );
+        expect(
           fake.recorded,
-          equals(<FeedbackCue>[...baseline, FeedbackCue.invalidTap]),
+          equals(baseline),
           reason:
               'a tap on my own token (token-2-0) on the finished board '
-              'must add exactly one invalidTap on top of the baseline '
-              '$baseline, the same cue an illegal tap gets during play '
-              '(doctrine P2: one meaning per event, same across screens); '
-              'recorded ${fake.recorded}',
+              'must play nothing on top of the baseline $baseline: it is '
+              'not a control there; recorded ${fake.recorded}',
         );
         expect(
           transport.sentRaw.length,
