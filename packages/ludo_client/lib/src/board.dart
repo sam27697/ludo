@@ -51,64 +51,248 @@ const Set<int> _entrySquares = <int>{0, 13, 26, 39};
 /// below can never disagree about where a token is actually tappable.
 double _tokenHitSize(double tokenSize) => math.max(48.0, tokenSize);
 
-/// The pixel rect [tokenIndex] of [seat] at [progress] actually gets as its
-/// tap target: the same cell, fan offset (see the comment on the fan in
-/// `_tokenLayer`) and [_tokenHitSize] math that widget uses to place that
-/// Positioned, factored out so nothing else that needs to know where a hit
-/// box really sits -- the C-248 name-chip placement check below is the
-/// first -- can drift from it by recomputing the fan separately.
+/// Rank of [seat] relative to the viewer. My seat is 0, then the seats
+/// after it around the table. A spectator (`mySeat` null) ranks a seat as
+/// itself. Same expression the token Semantics sort key uses.
+int _seatRank(int seat, int? mySeat) =>
+    mySeat == null ? seat : (seat - mySeat) % 4;
+
+/// One token standing on a cell, truth progress included so a shared-track
+/// check can tell a main-track square from a yard, home or finished one.
+class _TokenOccupant {
+  const _TokenOccupant({
+    required this.seat,
+    required this.tokenIndex,
+    required this.progress,
+  });
+
+  final int seat;
+  final int tokenIndex;
+  final int progress;
+}
+
+/// Centre and diameter of one drawn token, in view pixels.
+class _TokenLayout {
+  const _TokenLayout({required this.center, required this.size});
+
+  final Offset center;
+  final double size;
+}
+
+/// The four centres used when a shared cell holds four tokens or fewer,
+/// in occupant order: top-left, top-right, bottom-left, bottom-right, in
+/// view space. Multiplied by `cellSize * 0.22` and added to the cell centre.
+const List<(int, int)> _sharedQuad = <(int, int)>[
+  (-1, -1),
+  (1, -1),
+  (-1, 1),
+  (1, 1),
+];
+
+/// Occupants of [cell] (board space) from the truth in [tokens]. Other
+/// seats first, by [_seatRank] ascending, then the viewer's seat; within
+/// a seat by token index ascending. A spectator has no seat of their own,
+/// so the whole list is rank order.
+List<_TokenOccupant> _occupantsOnCell({
+  required BoardCell cell,
+  required Map<int, List<int>> tokens,
+  required List<int> seatsInPlay,
+  required int? mySeat,
+}) {
+  final List<_TokenOccupant> occupants = <_TokenOccupant>[];
+  for (final int seat in seatsInPlay) {
+    final List<int> progresses = tokens[seat]!;
+    for (var tokenIndex = 0; tokenIndex < progresses.length; tokenIndex++) {
+      final int progress = progresses[tokenIndex];
+      if (cellFor(seat: seat, progress: progress, tokenIndex: tokenIndex) !=
+          cell) {
+        continue;
+      }
+      occupants.add(
+        _TokenOccupant(seat: seat, tokenIndex: tokenIndex, progress: progress),
+      );
+    }
+  }
+  occupants.sort((_TokenOccupant a, _TokenOccupant b) {
+    final bool aMine = mySeat != null && a.seat == mySeat;
+    final bool bMine = mySeat != null && b.seat == mySeat;
+    if (aMine != bMine) {
+      return aMine ? 1 : -1;
+    }
+    final int rank = _seatRank(
+      a.seat,
+      mySeat,
+    ).compareTo(_seatRank(b.seat, mySeat));
+    if (rank != 0) {
+      return rank;
+    }
+    return a.tokenIndex.compareTo(b.tokenIndex);
+  });
+  return occupants;
+}
+
+/// A main-track cell with tokens of two or more seats. Yard, home-column
+/// and finished cells are not this, even where two seats happen to share
+/// a coordinate: C-386's slots are only for the shared track.
+bool _isSharedTrack(List<_TokenOccupant> occupants) {
+  if (occupants.length < 2) {
+    return false;
+  }
+  final Set<int> seats = <int>{};
+  for (final _TokenOccupant occupant in occupants) {
+    if (occupant.progress < 0 || occupant.progress > 51) {
+      return false;
+    }
+    seats.add(occupant.seat);
+  }
+  return seats.length >= 2;
+}
+
+/// Centre and diameter of token [tokenIndex] of [seat] drawn at [progress].
+///
+/// One seat on the cell keeps the old fan: diameter `cellSize * 0.7`,
+/// offset `cellSize * 0.12`, x by even or odd index, y by index below 2.
+/// That is every yard slot, every finished slot, a home-column cell, and
+/// any main-track cell a single seat occupies.
+///
+/// Two or more seats on a main-track cell use the shared slots. Four or
+/// fewer occupants: diameter `cellSize * 0.5`, centre at the cell centre
+/// plus `(dx, dy) * cellSize * 0.22` for [_sharedQuad] in occupant order.
+/// Five or more: diameter `cellSize * 0.36` on a 3 by 3 grid of step
+/// `cellSize * 0.3`, row by row from the top-left of the grid. The grid is
+/// centred on the cell, so slot 4 sits on the cell centre and the outer
+/// slots stay inside the cell. Past nine occupants the count starts again
+/// at slot 0, and two tokens may share a centre.
+///
+/// The offsets are applied after [toView], in view axes, so they do not
+/// turn with the board and they do not mirror.
+///
+/// [tokens] is truth. A token drawn at a [progress] it does not occupy
+/// (mid-step, or held on its old square before the flight home) is not an
+/// occupant of that cell, so it keeps the fan there.
+_TokenLayout _tokenLayout({
+  required int seat,
+  required int tokenIndex,
+  required int progress,
+  required double cellSize,
+  required int? mySeat,
+  required Map<int, List<int>> tokens,
+  required List<int> seatsInPlay,
+}) {
+  final BoardCell cell = cellFor(
+    seat: seat,
+    progress: progress,
+    tokenIndex: tokenIndex,
+  );
+  final BoardCell viewCell = toView(cell, viewQuarters(mySeat));
+  final List<_TokenOccupant> occupants = _occupantsOnCell(
+    cell: cell,
+    tokens: tokens,
+    seatsInPlay: seatsInPlay,
+    mySeat: mySeat,
+  );
+
+  var slot = -1;
+  for (var i = 0; i < occupants.length; i++) {
+    final _TokenOccupant occupant = occupants[i];
+    if (occupant.seat == seat && occupant.tokenIndex == tokenIndex) {
+      slot = i;
+      break;
+    }
+  }
+
+  if (slot < 0 || !_isSharedTrack(occupants)) {
+    final double fan = cellSize * 0.12;
+    final double fanDx = tokenIndex.isEven ? -fan : fan;
+    final double fanDy = tokenIndex < 2 ? -fan : fan;
+    return _TokenLayout(
+      center: Offset(
+        viewCell.col * cellSize + cellSize / 2 + fanDx,
+        viewCell.row * cellSize + cellSize / 2 + fanDy,
+      ),
+      size: cellSize * 0.7,
+    );
+  }
+
+  final Offset cellCenter = Offset(
+    viewCell.col * cellSize + cellSize / 2,
+    viewCell.row * cellSize + cellSize / 2,
+  );
+  if (occupants.length <= 4) {
+    final (int sx, int sy) = _sharedQuad[slot];
+    return _TokenLayout(
+      center: Offset(
+        cellCenter.dx + sx * cellSize * 0.22,
+        cellCenter.dy + sy * cellSize * 0.22,
+      ),
+      size: cellSize * 0.5,
+    );
+  }
+
+  final int gridSlot = slot % 9;
+  final int col = gridSlot % 3;
+  final int row = gridSlot ~/ 3;
+  final double step = cellSize * 0.3;
+  return _TokenLayout(
+    center: Offset(
+      cellCenter.dx + (col - 1) * step,
+      cellCenter.dy + (row - 1) * step,
+    ),
+    size: cellSize * 0.36,
+  );
+}
+
+/// The pixel rect [tokenIndex] of [seat] at [progress] gets as its tap
+/// target. Same centre as the drawn disc, side [_tokenHitSize] of that
+/// disc. Both come from [_tokenLayout], so the Semantics hit box and the
+/// paint cannot land on different points.
 Rect _tokenHitRect({
   required int seat,
   required int tokenIndex,
   required int progress,
   required double cellSize,
   required int? mySeat,
+  required Map<int, List<int>> tokens,
+  required List<int> seatsInPlay,
 }) {
-  final BoardCell cell = toView(
-    cellFor(seat: seat, progress: progress, tokenIndex: tokenIndex),
-    viewQuarters(mySeat),
+  final _TokenLayout layout = _tokenLayout(
+    seat: seat,
+    tokenIndex: tokenIndex,
+    progress: progress,
+    cellSize: cellSize,
+    mySeat: mySeat,
+    tokens: tokens,
+    seatsInPlay: seatsInPlay,
   );
-  final double fan = cellSize * 0.12;
-  final double fanDx = tokenIndex.isEven ? -fan : fan;
-  final double fanDy = tokenIndex < 2 ? -fan : fan;
-  final double tokenSize = cellSize * 0.7;
-  final double hitSize = _tokenHitSize(tokenSize);
-  final double centerX = cell.col * cellSize + cellSize / 2 + fanDx;
-  final double centerY = cell.row * cellSize + cellSize / 2 + fanDy;
-  return Rect.fromCenter(
-    center: Offset(centerX, centerY),
-    width: hitSize,
-    height: hitSize,
-  );
+  final double hit = _tokenHitSize(layout.size);
+  return Rect.fromCenter(center: layout.center, width: hit, height: hit);
 }
 
-/// The pixel rect [tokenIndex] of [seat] at [progress] actually paints as
-/// its circle -- not the enlarged 48dp [_tokenHitRect] above, the token's
-/// own drawn size. Same cell and fan math as [_tokenHitRect], since the
-/// disc and its hit box share one centre; only the size differs. Contract
-/// C-264 rule A1's name-chip placement check below reads this one, not the
-/// hit rect, for what a chip must stay clear of.
+/// The pixel rect [tokenIndex] of [seat] at [progress] paints as its
+/// circle: the disc itself, not the enlarged [_tokenHitRect]. Same centre,
+/// from [_tokenLayout]. The name-chip placement check reads this one.
 Rect _tokenDrawnRect({
   required int seat,
   required int tokenIndex,
   required int progress,
   required double cellSize,
   required int? mySeat,
+  required Map<int, List<int>> tokens,
+  required List<int> seatsInPlay,
 }) {
-  final BoardCell cell = toView(
-    cellFor(seat: seat, progress: progress, tokenIndex: tokenIndex),
-    viewQuarters(mySeat),
+  final _TokenLayout layout = _tokenLayout(
+    seat: seat,
+    tokenIndex: tokenIndex,
+    progress: progress,
+    cellSize: cellSize,
+    mySeat: mySeat,
+    tokens: tokens,
+    seatsInPlay: seatsInPlay,
   );
-  final double fan = cellSize * 0.12;
-  final double fanDx = tokenIndex.isEven ? -fan : fan;
-  final double fanDy = tokenIndex < 2 ? -fan : fan;
-  final double tokenSize = cellSize * 0.7;
-  final double centerX = cell.col * cellSize + cellSize / 2 + fanDx;
-  final double centerY = cell.row * cellSize + cellSize / 2 + fanDy;
   return Rect.fromCenter(
-    center: Offset(centerX, centerY),
-    width: tokenSize,
-    height: tokenSize,
+    center: layout.center,
+    width: layout.size,
+    height: layout.size,
   );
 }
 
@@ -963,6 +1147,8 @@ class _LudoBoardState extends State<LudoBoard> {
         progress: -1,
         cellSize: cellSize,
         mySeat: widget.mySeat,
+        tokens: widget.tokens,
+        seatsInPlay: widget.seatsInPlay,
       );
       if (discRect.bottom <= rowTop || discRect.top >= rowBottom) {
         continue;
@@ -1147,7 +1333,7 @@ class _LudoBoardState extends State<LudoBoard> {
                   ..._safeSquareMarks(cellSize, widget.mySeat),
                   for (final seat in widget.seatsInPlay)
                     ..._seatIdentityLayer(seat: seat, cellSize: cellSize),
-                  for (final seat in widget.seatsInPlay)
+                  for (final int seat in _tokenPaintSeats())
                     for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++)
                       ..._tokenLayer(
                         seat: seat,
@@ -1173,6 +1359,23 @@ class _LudoBoardState extends State<LudoBoard> {
     );
   }
 
+  /// [LudoBoard.seatsInPlay], with [LudoBoard.mySeat] moved to the end so
+  /// that seat's tokens paint after every other seat. The identity layer
+  /// does not use this. A spectator view, or a viewer who is not in the
+  /// list, keeps [seatsInPlay] order.
+  List<int> _tokenPaintSeats() {
+    final int? mine = widget.mySeat;
+    final List<int> seats = widget.seatsInPlay;
+    if (mine == null || !seats.contains(mine)) {
+      return seats;
+    }
+    return <int>[
+      for (final int seat in seats)
+        if (seat != mine) seat,
+      mine,
+    ];
+  }
+
   /// Every widget one (seat, tokenIndex) pair contributes to the stack, in
   /// paint order: the hit-target marker (mine only), the ring or glow
   /// behind the token (mine only, when it applies), then the token itself,
@@ -1188,29 +1391,29 @@ class _LudoBoardState extends State<LudoBoard> {
       progress: progress,
       tokenIndex: tokenIndex,
     );
-    final BoardCell viewCell = toView(cell, viewQuarters(widget.mySeat));
 
-    // Two tokens of one seat can land on the same cell on purpose (see
-    // board_geometry.dart). Fan them out a little by token index rather
-    // than stacking them exactly on top of each other; this is
-    // presentation only and does not change the cell cellFor returned.
-    final double fan = cellSize * 0.12;
-    final double fanDx = tokenIndex.isEven ? -fan : fan;
-    final double fanDy = tokenIndex < 2 ? -fan : fan;
+    // Hit target and ring follow truth. The disc follows [_drawnProgress],
+    // which differs only mid-travel or mid-capture-hold. Both positions
+    // come from [_tokenLayout].
+    _TokenLayout layoutAt(int atProgress) {
+      return _tokenLayout(
+        seat: seat,
+        tokenIndex: tokenIndex,
+        progress: atProgress,
+        cellSize: cellSize,
+        mySeat: widget.mySeat,
+        tokens: widget.tokens,
+        seatsInPlay: widget.seatsInPlay,
+      );
+    }
 
-    final double tokenSize = cellSize * 0.7;
-    final double left =
-        viewCell.col * cellSize + (cellSize - tokenSize) / 2 + fanDx;
-    final double top =
-        viewCell.row * cellSize + (cellSize - tokenSize) / 2 + fanDy;
+    final _TokenLayout atTruth = layoutAt(progress);
 
     final bool isMine = seat == widget.mySeat;
     final bool legalHere = isMine && widget.legal.contains(tokenIndex);
     final bool autoMoveHere = isMine && widget.autoMoveToken == tokenIndex;
     final bool shakingHere = isMine && _shakingToken == tokenIndex;
-    final int seatRank = widget.mySeat == null
-        ? seat
-        : (seat - widget.mySeat!) % 4;
+    final int seatRank = _seatRank(seat, widget.mySeat);
     final OrdinalSortKey tokenSortKey = OrdinalSortKey(
       seatRank * 4.0 + tokenIndex,
     );
@@ -1224,6 +1427,8 @@ class _LudoBoardState extends State<LudoBoard> {
         progress: progress,
         cellSize: cellSize,
         mySeat: widget.mySeat,
+        tokens: widget.tokens,
+        seatsInPlay: widget.seatsInPlay,
       );
       final AppLocalizations loc = AppLocalizations.of(context);
       layer.add(
@@ -1260,11 +1465,12 @@ class _LudoBoardState extends State<LudoBoard> {
     }
 
     if (legalHere) {
-      final double ringSize = tokenSize * 1.7;
+      final double ringSize = atTruth.size * 1.7;
       // C-223 clarification 2: the legal ring key is present for every
       // legal token, the unique-legal token included; the faster glow key
       // nests around that same ring rather than drawing a second one on
-      // top of it.
+      // top of it. The ring is centred on the token's own centre and
+      // scales with the disc it marks.
       Widget ring = _PulsingRing(
         period: autoMoveHere
             ? const Duration(milliseconds: 450)
@@ -1279,14 +1485,28 @@ class _LudoBoardState extends State<LudoBoard> {
       layer.add(
         Positioned(
           key: Key('board-legal-ring-$seat-$tokenIndex'),
-          left: left + tokenSize / 2 - ringSize / 2,
-          top: top + tokenSize / 2 - ringSize / 2,
+          left: atTruth.center.dx - ringSize / 2,
+          top: atTruth.center.dy - ringSize / 2,
           width: ringSize,
           height: ringSize,
           child: ring,
         ),
       );
     }
+
+    // Contract C-252 rule 1: `cell` (board space) still feeds the
+    // Semantics identifier. The hit target and the ring read [atTruth].
+    // Only the drawn circle below reads `_drawnProgress`, which is truth
+    // too except mid-travel or mid-capture-hold. A step along the path is
+    // not an occupant of the cell it is crossing, so it keeps the fan;
+    // the square it has actually landed on takes the shared slot.
+    final int drawnProgress = _drawnProgress(seat, tokenIndex);
+    final _TokenLayout drawn = drawnProgress == progress
+        ? atTruth
+        : layoutAt(drawnProgress);
+    final double drawnSize = drawn.size;
+    final double drawnLeft = drawn.center.dx - drawnSize / 2;
+    final double drawnTop = drawn.center.dy - drawnSize / 2;
 
     final Widget token = Semantics(
       key: Key('token-$seat-$tokenIndex'),
@@ -1298,7 +1518,7 @@ class _LudoBoardState extends State<LudoBoard> {
           color: LudoColors.seats[seat],
           border: Border.all(
             color: LudoColors.ink.withValues(alpha: 0.55),
-            width: math.max(1, tokenSize * 0.06),
+            width: math.max(1, drawnSize * 0.06),
           ),
         ),
         // Rule 2: every token carries its seat's shape, centred, at half the
@@ -1306,34 +1526,10 @@ class _LudoBoardState extends State<LudoBoard> {
         // -- yard, track, home column, finished, mid-travel, mid-capture --
         // since all of those share this one `token` widget.
         child: Center(
-          child: SeatMark(seat: seat, size: tokenSize * 0.5),
+          child: SeatMark(seat: seat, size: drawnSize * 0.5),
         ),
       ),
     );
-
-    // Contract C-252 rule 1: `cell` (board space) still feeds the
-    // Semantics identifier; `left` and `top` are that cell in view space,
-    // feeding the hit target and the ring. Only the drawn circle below
-    // reads `_drawnProgress`, which is truth too except mid-travel or
-    // mid-capture-hold.
-    final int drawnProgress = _drawnProgress(seat, tokenIndex);
-    final bool isDrawnAtTruth = drawnProgress == progress;
-    final BoardCell drawnCell = isDrawnAtTruth
-        ? viewCell
-        : toView(
-            cellFor(
-              seat: seat,
-              progress: drawnProgress,
-              tokenIndex: tokenIndex,
-            ),
-            viewQuarters(widget.mySeat),
-          );
-    final double drawnLeft = isDrawnAtTruth
-        ? left
-        : drawnCell.col * cellSize + (cellSize - tokenSize) / 2 + fanDx;
-    final double drawnTop = isDrawnAtTruth
-        ? top
-        : drawnCell.row * cellSize + (cellSize - tokenSize) / 2 + fanDy;
 
     final _FlyingCapture? flying = _flying;
     if (flying != null && flying.seat == seat && flying.token == tokenIndex) {
@@ -1342,24 +1538,17 @@ class _LudoBoardState extends State<LudoBoard> {
       // `drawnLeft`/`drawnTop` here are truth's yard slot -- the capture
       // already cleared this pair's override in `_onMoveArrived`, so
       // `_drawnProgress` fell back to truth, which is already -1.
-      final BoardCell fromCell = toView(
-        cellFor(
-          seat: seat,
-          progress: flying.fromProgress,
-          tokenIndex: tokenIndex,
-        ),
-        viewQuarters(widget.mySeat),
-      );
-      final double fromLeft =
-          fromCell.col * cellSize + (cellSize - tokenSize) / 2 + fanDx;
-      final double fromTop =
-          fromCell.row * cellSize + (cellSize - tokenSize) / 2 + fanDy;
+      // The flight starts at the centre [_tokenLayout] gives the old
+      // square, in a box the size of the disc that is flying.
+      final _TokenLayout fromLayout = layoutAt(flying.fromProgress);
+      final double fromLeft = fromLayout.center.dx - drawnSize / 2;
+      final double fromTop = fromLayout.center.dy - drawnSize / 2;
       layer.add(
         _CaptureFlight(
           key: Key('board-capture-flight-$seat-$tokenIndex'),
           from: Offset(fromLeft, fromTop),
           to: Offset(drawnLeft, drawnTop),
-          size: tokenSize,
+          size: drawnSize,
           duration: kCaptureFlightDuration,
           reducedDuration: kCaptureFlightDurationReduced,
           onArrived: () => _handleCaptureArrived(seat, tokenIndex),
@@ -1371,11 +1560,11 @@ class _LudoBoardState extends State<LudoBoard> {
         Positioned(
           left: drawnLeft,
           top: drawnTop,
-          width: tokenSize,
-          height: tokenSize,
+          width: drawnSize,
+          height: drawnSize,
           child: _ShakeOnce(
             key: Key('board-token-shake-$seat-$tokenIndex'),
-            size: tokenSize,
+            size: drawnSize,
             child: token,
           ),
         ),
@@ -1385,8 +1574,8 @@ class _LudoBoardState extends State<LudoBoard> {
         Positioned(
           left: drawnLeft,
           top: drawnTop,
-          width: tokenSize,
-          height: tokenSize,
+          width: drawnSize,
+          height: drawnSize,
           child: token,
         ),
       );
