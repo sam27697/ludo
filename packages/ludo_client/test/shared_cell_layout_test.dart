@@ -90,10 +90,7 @@ Future<void> _unmount(WidgetTester tester) async {
 /// keys appear when walking `tester.allElements`. `Stack` visits its children
 /// in list order during element traversal, so this matches the board's
 /// bottom-to-top paint order.
-List<(int, int)> _paintOrder(
-  WidgetTester tester,
-  Iterable<(int, int)> tokens,
-) {
+List<(int, int)> _paintOrder(WidgetTester tester, Iterable<(int, int)> tokens) {
   final Map<Key, (int, int)> byKey = <Key, (int, int)>{
     for (final (int seat, int index) in tokens)
       _tokenKey(seat, index): (seat, index),
@@ -313,11 +310,7 @@ void main() {
       await tester.pumpWidget(_harness(tokens: tokens, mySeat: 0));
       await tester.pump();
       try {
-        const List<(int, int)> occupants = <(int, int)>[
-          (1, 0),
-          (1, 1),
-          (0, 0),
-        ];
+        const List<(int, int)> occupants = <(int, int)>[(1, 0), (1, 1), (0, 0)];
         _expectVisible(tester, occupants);
 
         final List<(int, int)> order = _paintOrder(tester, occupants);
@@ -699,117 +692,111 @@ void main() {
     },
   );
 
-  testWidgets(
-    'B7: with mySeat 1 the B1 shared cell paints seat 1 token last',
-    (WidgetTester tester) async {
-      _pinViewportToBoard(tester);
-      final BoardCell cell0 = cellFor(seat: 0, progress: 16, tokenIndex: 0);
-      final BoardCell cell1 = cellFor(seat: 1, progress: 3, tokenIndex: 0);
+  testWidgets('B7: with mySeat 1 the B1 shared cell paints seat 1 token last', (
+    WidgetTester tester,
+  ) async {
+    _pinViewportToBoard(tester);
+    final BoardCell cell0 = cellFor(seat: 0, progress: 16, tokenIndex: 0);
+    final BoardCell cell1 = cellFor(seat: 1, progress: 3, tokenIndex: 0);
+    expect(
+      cell0,
+      cell1,
+      reason:
+          'fixture: seat 0 progress 16 and seat 1 progress 3 must share '
+          'one cell',
+    );
+
+    final Map<int, List<int>> tokens = _allInYard();
+    tokens[0] = <int>[16, -1, -1, -1];
+    tokens[1] = <int>[3, -1, -1, -1];
+
+    await tester.pumpWidget(
+      _harness(tokens: tokens, seatsInPlay: const <int>[0, 1, 2, 3], mySeat: 1),
+    );
+    await tester.pump();
+    try {
+      const List<(int, int)> shared = <(int, int)>[(0, 0), (1, 0)];
+      _expectVisible(tester, shared);
+
+      final List<(int, int)> cellOrder = _paintOrder(tester, shared);
       expect(
-        cell0,
-        cell1,
+        cellOrder,
+        const <(int, int)>[(0, 0), (1, 0)],
         reason:
-            'fixture: seat 0 progress 16 and seat 1 progress 3 must share '
-            'one cell',
+            'with mySeat 1, seat 1 token (1, 0) must be painted after '
+            'seat 0 token (0, 0) on the B1 cell; got $cellOrder',
       );
 
-      final Map<int, List<int>> tokens = _allInYard();
-      tokens[0] = <int>[16, -1, -1, -1];
-      tokens[1] = <int>[3, -1, -1, -1];
-
-      await tester.pumpWidget(
-        _harness(
-          tokens: tokens,
-          seatsInPlay: const <int>[0, 1, 2, 3],
-          mySeat: 1,
-        ),
-      );
-      await tester.pump();
-      try {
-        const List<(int, int)> shared = <(int, int)>[(0, 0), (1, 0)];
-        _expectVisible(tester, shared);
-
-        final List<(int, int)> cellOrder = _paintOrder(tester, shared);
-        expect(
-          cellOrder,
-          const <(int, int)>[(0, 0), (1, 0)],
-          reason:
-              'with mySeat 1, seat 1 token (1, 0) must be painted after '
-              'seat 0 token (0, 0) on the B1 cell; got $cellOrder',
-        );
-
-        final List<(int, int)> allTokenZeroOrder = _paintOrder(
-          tester,
-          const <(int, int)>[(0, 0), (1, 0), (2, 0), (3, 0)],
-        );
-        expect(
-          allTokenZeroOrder.last,
-          (1, 0),
-          reason:
-              'with mySeat 1, seat 1 must be moved to the end of the token '
-              'paint loop across the board; got $allTokenZeroOrder',
-        );
-      } finally {
-        await _unmount(tester);
-      }
-    },
-  );
-
-  testWidgets(
-    'B8: tap on the cell in B2 moves my legal token via onTokenTap',
-    (WidgetTester tester) async {
-      _pinViewportToBoard(tester);
-      final BoardCell cell0 = cellFor(seat: 0, progress: 16, tokenIndex: 0);
-      final BoardCell cell1a = cellFor(seat: 1, progress: 3, tokenIndex: 0);
-      final BoardCell cell1b = cellFor(seat: 1, progress: 3, tokenIndex: 1);
-      expect(
-        cell0,
-        cell1a,
-        reason: 'fixture: B2 seat 0 #0 and seat 1 #0 must share one cell',
+      final List<(int, int)> allTokenZeroOrder = _paintOrder(
+        tester,
+        const <(int, int)>[(0, 0), (1, 0), (2, 0), (3, 0)],
       );
       expect(
-        cell0,
-        cell1b,
-        reason: 'fixture: B2 seat 0 #0 and seat 1 #1 must share one cell',
+        allTokenZeroOrder.last,
+        (1, 0),
+        reason:
+            'with mySeat 1, seat 1 must be moved to the end of the token '
+            'paint loop across the board; got $allTokenZeroOrder',
       );
+    } finally {
+      await _unmount(tester);
+    }
+  });
 
-      final List<int> tapped = <int>[];
-      final List<int> shaken = <int>[];
-      final Map<int, List<int>> tokens = _allInYard();
-      tokens[0] = <int>[16, -1, -1, -1];
-      tokens[1] = <int>[3, 3, -1, -1];
+  testWidgets('B8: tap on the cell in B2 moves my legal token via onTokenTap', (
+    WidgetTester tester,
+  ) async {
+    _pinViewportToBoard(tester);
+    final BoardCell cell0 = cellFor(seat: 0, progress: 16, tokenIndex: 0);
+    final BoardCell cell1a = cellFor(seat: 1, progress: 3, tokenIndex: 0);
+    final BoardCell cell1b = cellFor(seat: 1, progress: 3, tokenIndex: 1);
+    expect(
+      cell0,
+      cell1a,
+      reason: 'fixture: B2 seat 0 #0 and seat 1 #0 must share one cell',
+    );
+    expect(
+      cell0,
+      cell1b,
+      reason: 'fixture: B2 seat 0 #0 and seat 1 #1 must share one cell',
+    );
 
-      await tester.pumpWidget(
-        _harness(
-          tokens: tokens,
-          mySeat: 0,
-          legal: const <int>{0},
-          onTokenTap: tapped.add,
-          onIllegalTokenTap: shaken.add,
-        ),
-      );
+    final List<int> tapped = <int>[];
+    final List<int> shaken = <int>[];
+    final Map<int, List<int>> tokens = _allInYard();
+    tokens[0] = <int>[16, -1, -1, -1];
+    tokens[1] = <int>[3, 3, -1, -1];
+
+    await tester.pumpWidget(
+      _harness(
+        tokens: tokens,
+        mySeat: 0,
+        legal: const <int>{0},
+        onTokenTap: tapped.add,
+        onIllegalTokenTap: shaken.add,
+      ),
+    );
+    await tester.pump();
+    try {
+      await tester.tap(find.byKey(_hitKey(0, 0)));
       await tester.pump();
-      try {
-        await tester.tap(find.byKey(_hitKey(0, 0)));
-        await tester.pump();
 
-        expect(
-          tapped,
-          <int>[0],
-          reason:
-              'tapping my token hit target on the B2 shared cell must call '
-              'onTokenTap with token 0; got $tapped',
-        );
-        expect(
-          shaken,
-          isEmpty,
-          reason:
-              'a legal tap on the B2 shared cell must not trigger '
-              'onIllegalTokenTap; got $shaken',
-        );
-      } finally {
-        await _unmount(tester);
-      }
-    },
-  );
+      expect(
+        tapped,
+        <int>[0],
+        reason:
+            'tapping my token hit target on the B2 shared cell must call '
+            'onTokenTap with token 0; got $tapped',
+      );
+      expect(
+        shaken,
+        isEmpty,
+        reason:
+            'a legal tap on the B2 shared cell must not trigger '
+            'onIllegalTokenTap; got $shaken',
+      );
+    } finally {
+      await _unmount(tester);
+    }
+  });
 }
