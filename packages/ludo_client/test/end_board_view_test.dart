@@ -151,11 +151,23 @@ class _Connector {
   }
 }
 
-/// A feedback service that records nothing and plays nothing: this file
-/// never asserts on cues, only on the board itself.
+/// A feedback service that records nothing and plays nothing: the first
+/// group below never asserts on cues, only on the board itself.
 class _NoopFeedbackService implements FeedbackService {
   @override
   void play(FeedbackCue cue) {}
+}
+
+/// Records every cue played, in call order -- copied by hand from
+/// test/end_hold_test.dart's own `_FakeFeedbackService`. Used by the tap
+/// group below, which does assert on cues.
+class _FakeFeedbackService implements FeedbackService {
+  final List<FeedbackCue> recorded = <FeedbackCue>[];
+
+  @override
+  void play(FeedbackCue cue) {
+    recorded.add(cue);
+  }
 }
 
 /// Connects a fresh controller to a room seating [mySeat] as the local
@@ -224,6 +236,7 @@ Future<(RoomController, FakeTransport)> _connectAndMount(
   required int mySeat,
   required int players,
   required Locale locale,
+  FeedbackService? service,
 }) async {
   final (RoomController controller, FakeTransport transport) = await _connectTo(
     tester,
@@ -236,7 +249,7 @@ Future<(RoomController, FakeTransport)> _connectAndMount(
     _harness(
       FeedbackScope(
         settings: FeedbackSettings.forTest(),
-        service: _NoopFeedbackService(),
+        service: service ?? _NoopFeedbackService(),
         child: GameScreen(controller: controller),
       ),
       locale,
@@ -603,5 +616,150 @@ void main() {
         players: 2,
       );
     });
+  });
+
+  // ===========================================================================
+  // A tap on the finished board must carry the same one-meaning-per-event
+  // cue a tap during play does (doctrine P2). The implementer has been told
+  // to wire a tap on my own token on the finished board to exactly one
+  // FeedbackCue.invalidTap, the same cue lib/src/game_screen.dart's
+  // _playingBody already gives an illegal tap during play
+  // (onIllegalTokenTap: (int index) =>
+  // FeedbackScope.of(context).play(FeedbackCue.invalidTap)). Today,
+  // lib/src/game_screen.dart's _gameOverBody gives its LudoBoard neither
+  // mySeat nor onTokenTap/onIllegalTokenTap/legal at all, and
+  // lib/src/board.dart's own _handleTapUp returns at once whenever
+  // widget.mySeat is null, so a tap anywhere on the finished board resolves
+  // to nothing: this case's first assertion is RED on today's code for that
+  // reason, not a missing widget or a setup error -- `token-2-0` (the drawn
+  // disc, board.dart's _tokenLayer, not gated on `isMine`) exists and is
+  // tapped successfully; it is the resulting cue list that is wrong.
+  // ===========================================================================
+  group('end board view: a tap on the finished board (order 390)', () {
+    testWidgets(
+      'seat 2 of 4, en: a tap on my own token plays exactly one invalidTap '
+      'and sends no move; a tap on an opponent token resolves to nothing, '
+      'the same as the playing board',
+      (tester) async {
+        final List<Map<String, Object?>> seats = <Map<String, Object?>>[
+          _seatJson(0, name: 'Ann', tokens: const <int>[20, -1, -1, -1]),
+          _seatJson(1, name: 'Bob'),
+          _seatJson(2, name: 'Priya', tokens: const <int>[10, -1, -1, -1]),
+          _seatJson(3, name: 'Omar'),
+        ];
+        final _FakeFeedbackService fake = _FakeFeedbackService();
+
+        final (
+          RoomController _,
+          FakeTransport transport,
+        ) = await _connectAndMount(
+          tester,
+          seats: seats,
+          mySeat: 2,
+          players: 4,
+          locale: const Locale('en'),
+          service: fake,
+        );
+
+        await _pushGameOver(tester, transport, winner: 0, seq: 2);
+        expect(
+          _endCardShown(tester),
+          isTrue,
+          reason:
+              'fixture check: the finished body must be up before either '
+              'tap below (game-screen-winner must be found)',
+        );
+
+        // C-270 rule 5/6 (end_hold_test.dart): with no travel in flight,
+        // the loss cue plays in the same pump game_over is flushed
+        // through, seat 0 (not me) being named winner. This is the
+        // baseline every assertion below is read against, not a magic
+        // "must be empty" literal.
+        final List<FeedbackCue> baseline = List<FeedbackCue>.of(fake.recorded);
+        expect(
+          baseline,
+          equals(<FeedbackCue>[FeedbackCue.gameOver]),
+          reason:
+              'fixture check: reaching the finished body as the loser, '
+              'with no travel in flight, must already have played exactly '
+              'one gameOver cue before either tap below; recorded $baseline',
+        );
+
+        // The board sits inside _gameOverBody's own SingleChildScrollView;
+        // at the default 800x600 test surface its tokens can render below
+        // the visible viewport, where WidgetController.tap's hit test
+        // cannot reach them (a real app would have the user scroll first).
+        // tester.ensureVisible is test/end_card_test.dart's own idiom for
+        // the same scroll view.
+        final int sentBefore = transport.sentRaw.length;
+        await tester.ensureVisible(find.byKey(const Key('token-2-0')));
+        await tester.tap(find.byKey(const Key('token-2-0')));
+        await tester.pump();
+
+        expect(
+          fake.recorded,
+          equals(<FeedbackCue>[...baseline, FeedbackCue.invalidTap]),
+          reason:
+              'a tap on my own token (token-2-0) on the finished board '
+              'must add exactly one invalidTap on top of the baseline '
+              '$baseline, the same cue an illegal tap gets during play '
+              '(doctrine P2: one meaning per event, same across screens); '
+              'recorded ${fake.recorded}',
+        );
+        expect(
+          transport.sentRaw.length,
+          sentBefore,
+          reason:
+              'a tap on my own token on the finished board must send no '
+              'move; the wire grew by '
+              '${transport.sentRaw.length - sentBefore} message(s)',
+        );
+
+        final List<FeedbackCue> afterMyTap = List<FeedbackCue>.of(
+          fake.recorded,
+        );
+
+        // board.dart's own _tokenLayer only ever builds a
+        // board-token-hit-<seat>-<index> target `if (isMine)` (seat ==
+        // widget.mySeat): seat 0 is not mySeat (2), so it never gets one,
+        // on the playing board exactly as much as here -- this is a
+        // pre-existing, unrelated invariant, not part of order 389/390's
+        // own defect.
+        expect(
+          find.byKey(const Key('board-token-hit-0-0')),
+          findsNothing,
+          reason:
+              'seat 0 is not mySeat (2); board.dart\'s own isMine gate in '
+              '_tokenLayer must never give it a board-token-hit-0-0 '
+              'target, on the finished board exactly as on the playing '
+              'board',
+        );
+
+        await tester.ensureVisible(find.byKey(const Key('token-0-0')));
+        await tester.tap(find.byKey(const Key('token-0-0')));
+        await tester.pump();
+
+        expect(
+          fake.recorded,
+          equals(afterMyTap),
+          reason:
+              'a tap on an opponent token (token-0-0) must add nothing to '
+              'what the tap on my own token already recorded ($afterMyTap): '
+              'board.dart\'s _handleTapUp only ever matches mySeat\'s own '
+              'cell groups (_cellGroups reads widget.tokens[mySeat] alone), '
+              'so a point over seat 0\'s token can never resolve to a '
+              'callback, the same way a tap on an opponent\'s token '
+              'during play resolves to nothing; recorded ${fake.recorded}',
+        );
+        expect(
+          transport.sentRaw.length,
+          sentBefore,
+          reason:
+              'a tap on an opponent token on the finished board must send '
+              'no move either; the wire grew by '
+              '${transport.sentRaw.length - sentBefore} message(s)',
+        );
+      },
+    );
   });
 }
