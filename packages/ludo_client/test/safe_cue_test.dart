@@ -257,11 +257,12 @@ void main() {
           17,
           reason: 'fixture: my token 0 starts at progress 17',
         );
-        expect(
-          drive.controller.room!.seats[1].tokens,
-          const <int>[8, -1, -1, -1],
-          reason: 'fixture: seat 1 has one token at progress 8',
-        );
+        expect(drive.controller.room!.seats[1].tokens, const <int>[
+          8,
+          -1,
+          -1,
+          -1,
+        ], reason: 'fixture: seat 1 has one token at progress 8');
         expect(
           cellFor(seat: 0, progress: 21),
           cellFor(seat: 1, progress: 8),
@@ -343,8 +344,7 @@ void main() {
         expect(
           cellFor(seat: 1, progress: 3),
           cellFor(seat: 0, progress: 16),
-          reason:
-              'fixture: seat 1 progress 3 lands on my pair at absolute 16',
+          reason: 'fixture: seat 1 progress 3 lands on my pair at absolute 16',
         );
         expect(
           safeTrackSquares.contains(16),
@@ -500,16 +500,18 @@ void main() {
       );
       try {
         await mountGame(tester, drive);
-        expect(
-          drive.controller.room!.seats[0].tokens,
-          const <int>[10, 20, -1, -1],
-          reason: 'fixture: my tokens 0 and 1 start at 10 and 20',
-        );
-        expect(
-          drive.controller.room!.seats[1].tokens,
-          const <int>[30, -1, -1, -1],
-          reason: 'fixture: seat 1 only sits at progress 30 (absolute 43)',
-        );
+        expect(drive.controller.room!.seats[0].tokens, const <int>[
+          10,
+          20,
+          -1,
+          -1,
+        ], reason: 'fixture: my tokens 0 and 1 start at 10 and 20');
+        expect(drive.controller.room!.seats[1].tokens, const <int>[
+          30,
+          -1,
+          -1,
+          -1,
+        ], reason: 'fixture: seat 1 only sits at progress 30 (absolute 43)');
 
         // Move 1: 10 -> 14 onto an empty square.
         await drive.push(tester, 'moved', <String, Object?>{
@@ -627,11 +629,12 @@ void main() {
           const <int>[50, 54],
           reason: 'fixture: my tokens 0 and 1 start at 50 and 54',
         );
-        expect(
-          drive.controller.room!.seats[1].tokens,
-          const <int>[41, 44, 54, 57],
-          reason: 'fixture: seat 1 tokens sit at 41, 44, 54 and 57',
-        );
+        expect(drive.controller.room!.seats[1].tokens, const <int>[
+          41,
+          44,
+          54,
+          57,
+        ], reason: 'fixture: seat 1 tokens sit at 41, 44, 54 and 57');
 
         // Move 1: 50 -> 54 into the home column (52..56).
         await drive.push(tester, 'moved', <String, Object?>{
@@ -768,11 +771,12 @@ void main() {
       );
       try {
         await mountGame(tester, emptyDrive);
-        expect(
-          emptyDrive.controller.room!.seats[1].tokens,
-          const <int>[-1, -1, -1, -1],
-          reason: 'fixture: comparison run has destination square 16 empty',
-        );
+        expect(emptyDrive.controller.room!.seats[1].tokens, const <int>[
+          -1,
+          -1,
+          -1,
+          -1,
+        ], reason: 'fixture: comparison run has destination square 16 empty');
         emptyDrive.feedback.recorded.clear();
 
         await _pushMovedAndNextTurn(
