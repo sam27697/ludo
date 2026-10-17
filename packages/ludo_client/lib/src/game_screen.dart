@@ -143,18 +143,35 @@ class _GameScreenState extends State<GameScreen> {
   List<int>? _selectedFaceSeenQueue;
 
   // The one guard both move paths (the hold's own timer and a token tap)
-  // share. At most one move is sent for the current decision: this seat,
-  // await_move, this turn.k, and this queue. A tap landing just after the
-  // hold already committed is the race this still blocks. Cleared once
-  // the server has answered that decision, when the snapshot is no longer
-  // it. A `moved` for my seat does that (the reducer leaves await_move),
-  // and so does any frame that ends or changes the decision: a new queue,
-  // a new phase, or another seat's turn. The next decision may then send
-  // once, from a tap or from the one-legal-move hold, even when turn.k is
-  // unchanged. With no roll queue the queue is empty, so a single
-  // await_move of that k stays blocked until the decision ends.
+  // share. At most one move is in flight for one decision: this seat,
+  // await_move, this turn.k, and this queue. A second tap before that
+  // request has finished sends nothing. The same holds after a refusal:
+  // the next two taps, before the new request finishes, still send one.
+  //
+  // The guard belongs to the `controller.move` call that set it. When
+  // that call finishes, the guard drops, whichever way the call ended:
+  // the reply came back, the server refused and the refusal was
+  // swallowed, or the socket died under the request. The finish drops
+  // the guard only when `_moveGuardSerial` is still that call's number.
+  // An accepted move's `moved` and `turn` can arrive before its reply,
+  // and the next spend may already be in flight; a late finish of the
+  // older call must leave the newer guard in place.
+  //
+  // The guard also drops when the live turn stops being the decision the
+  // move was sent for. A `moved` for my seat does that (the reducer
+  // leaves await_move), and so does a new queue, a new phase, or another
+  // seat's turn. The next decision may then send once, from a tap or
+  // from the one-legal-move hold, even when turn.k is unchanged. With no
+  // roll queue the queue is empty, so one await_move of that k stays
+  // blocked until the request finishes or the decision ends.
+  //
+  // The hold's own latch (`_autoMoveHandledK`) is separate. A refusal
+  // does not clear it, so the hold does not send that decision again.
+  // A tap still can.
   int? _moveSentForK;
   List<int>? _moveSentForQueue;
+  int _moveSendSerial = 0;
+  int? _moveGuardSerial;
 
   // The die's "waiting for my roll result" state. Set together with the
   // turn.k a rolling tap was sent under; cleared when the snapshot shows my
@@ -688,6 +705,7 @@ class _GameScreenState extends State<GameScreen> {
     _autoMoveHandledQueue = null;
     _moveSentForK = null;
     _moveSentForQueue = null;
+    _moveGuardSerial = null;
     _rollNoAnswerTimer?.cancel();
     _rollNoAnswerTimer = null;
     _rollWaitK = null;
@@ -782,7 +800,9 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   /// Drops the move guard once the live turn is no longer the decision a
-  /// move was sent for. See [_moveSentForK].
+  /// move was sent for. The call that set the guard may still be in
+  /// flight; forgetting its serial here means that call's later finish
+  /// cannot drop a guard a newer send has set. See [_moveSentForK].
   void _releaseMoveGuard() {
     if (_moveSentForK == null) {
       return;
@@ -796,6 +816,18 @@ class _GameScreenState extends State<GameScreen> {
     }
     _moveSentForK = null;
     _moveSentForQueue = null;
+    _moveGuardSerial = null;
+  }
+
+  /// Drops the guard when the `controller.move` call numbered [serial]
+  /// finishes, if that call still owns the guard.
+  void _dropMoveGuardFor(int serial) {
+    if (_moveGuardSerial != serial) {
+      return;
+    }
+    _moveSentForK = null;
+    _moveSentForQueue = null;
+    _moveGuardSerial = null;
   }
 
   /// Reads whatever `frame` just did to `widget.controller.room`'s
@@ -1303,9 +1335,11 @@ class _GameScreenState extends State<GameScreen> {
   /// Arms the 1.5s unique-legal hold once per await_move decision (this
   /// seat, `turn.k`, and the queue), or drops a pending hold when the turn
   /// is no longer that unique-legal awaitMove. A new queue under the same
-  /// k is a new decision and arms again. The board draws the held token's
-  /// glow itself from `autoMoveToken`; there is no Undo to announce
-  /// alongside it any more.
+  /// k is a new decision and arms again. Once armed, the decision stays
+  /// handled, so a move the server refused is not sent again by the hold.
+  /// A tap still goes through [_sendMove]. The board draws the held
+  /// token's glow itself from `autoMoveToken`; there is no Undo to
+  /// announce alongside it any more.
   void _syncAutoMove() {
     final TurnState? turnNow = widget.controller.room?.turn;
     final bool stillArmed = _sameMoveDecision(
@@ -1375,7 +1409,8 @@ class _GameScreenState extends State<GameScreen> {
 
   /// The one path that actually calls `controller.move`: a tap on the board
   /// and the hold's own timer both end up here, and whichever reaches the
-  /// current decision first is the only one that sends anything for it.
+  /// current decision first is the only one that sends anything until that
+  /// call finishes or the decision changes.
   ///
   /// K6 (order 365, C-362 Part B): `face` goes out only when the caller
   /// read it off a non-null `legalByFace`; `RoomController.move` itself
@@ -1393,9 +1428,15 @@ class _GameScreenState extends State<GameScreen> {
     if (_moveSentForK == k && _sameFaces(_moveSentForQueue, turn.queue)) {
       return;
     }
+    final int serial = ++_moveSendSerial;
     _moveSentForK = k;
     _moveSentForQueue = List<int>.from(turn.queue);
-    widget.controller.move(token, face: face);
+    _moveGuardSerial = serial;
+    unawaited(
+      widget.controller.move(token, face: face).whenComplete(() {
+        _dropMoveGuardFor(serial);
+      }),
+    );
   }
 
   /// A token tap is an explicit move: drop the hold silently, then let the
