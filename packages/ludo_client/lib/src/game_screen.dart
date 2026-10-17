@@ -2426,7 +2426,7 @@ class _GameScreenState extends State<GameScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _playHeaderRow(loc, room, seat, turn, offlineTurnSeat, stale: stale),
-          const SizedBox(height: kSpace2),
+          SizedBox(height: _playColumnGap(context, kSpace2)),
           Expanded(
             child: LudoBoard(
               key: const Key('game-screen-board'),
@@ -2466,7 +2466,7 @@ class _GameScreenState extends State<GameScreen> {
               overlay: _thrownDieOverlay(seat),
             ),
           ),
-          const SizedBox(height: kSpace4),
+          SizedBox(height: _playColumnGap(context, kSpace4)),
           // K1: the tray sits on the die's own row, after it in reading
           // order -- a plain Row under the ambient Directionality already
           // mirrors that for Arabic, nothing here flips it by hand.
@@ -2510,9 +2510,9 @@ class _GameScreenState extends State<GameScreen> {
               ],
             ),
           ),
-          const SizedBox(height: kSpace2),
+          SizedBox(height: _playColumnGap(context, kSpace2)),
           _belowDieNoticeSlot(loc, offlineTurnSeat),
-          const SizedBox(height: kSpace2),
+          SizedBox(height: _playColumnGap(context, kSpace2)),
         ],
       ),
     );
@@ -2542,11 +2542,30 @@ class _GameScreenState extends State<GameScreen> {
   /// every state alike. The countdown ring itself is untouched by any of
   /// this (the measurement found it "fine at every scale"); it keeps the
   /// old fixed 44 box under its own name, `_countdownRingSize`, below.
+  ///
+  /// C-391 decision 2: past this scale the banner and the below-die notice
+  /// stop growing -- both are laid out at this clamped scale, never the
+  /// raw system one, so a system scale past it no longer costs the board
+  /// anything more than it already has. `_playColumnClampedScaler` and
+  /// `_playColumnScaleFactor` are the one clamp every reader of the system
+  /// scale on this row and on the notice goes through, so the row's own
+  /// height and the banner's own painted size can never disagree about
+  /// what scale either was laid out at.
   static const double _headerRowHeightAtRest = 44;
   static const double _countdownRingSize = 44;
+  static const double _playColumnTextScaleClamp = 1.5;
+
+  TextScaler _playColumnClampedScaler(BuildContext context) {
+    return MediaQuery.textScalerOf(context)
+        .clamp(maxScaleFactor: _playColumnTextScaleClamp);
+  }
+
+  double _playColumnScaleFactor(BuildContext context) {
+    return _playColumnClampedScaler(context).scale(100.0) / 100.0;
+  }
 
   double _headerRowHeightFor(BuildContext context) {
-    final TextScaler scaler = MediaQuery.textScalerOf(context);
+    final TextScaler scaler = _playColumnClampedScaler(context);
     final double scaleFactor = scaler.scale(100.0) / 100.0;
     if (scaleFactor <= 1.0) {
       return _headerRowHeightAtRest;
@@ -2567,6 +2586,25 @@ class _GameScreenState extends State<GameScreen> {
     template.dispose();
     final double contentHeight = math.max(kSpace2, oneLine * 2);
     return contentHeight + kSpace1 * 2;
+  }
+
+  /// C-391 decision 5: the play column's own vertical gaps (the four
+  /// `SizedBox`es between the header, the board, the die row and the
+  /// below-die notice) give back only as much as decisions 1-3 still leave
+  /// the board short of C-391's 324 floor on the contract's own 360x616
+  /// phone, 24 top inset -- never more, and never at scale 1.0 or below
+  /// (the formula already answers exactly [nominal] there; see the report
+  /// for the arithmetic). Above that it shrinks smoothly toward a shared
+  /// floor of 4 as the clamped scale rises toward
+  /// [_playColumnTextScaleClamp], the same clamp decision 2 already put on
+  /// the header and the notice, so nothing here ever reacts to scale past
+  /// where those two have themselves stopped growing. Every one of the
+  /// four calls shares the same `keep` fraction of [nominal] above its own
+  /// floor, so the four gaps shrink together, not independently.
+  double _playColumnGap(BuildContext context, double nominal) {
+    final double s = _playColumnScaleFactor(context);
+    final double keep = ((102.0 - 60.0 * s) / 24.0).clamp(0.0, 1.0);
+    return 4.0 + (nominal - 4.0) * keep;
   }
 
   Widget _playHeaderRow(
@@ -2629,6 +2667,12 @@ class _GameScreenState extends State<GameScreen> {
                         key: const Key('game-screen-turn-banner'),
                         maxLines: bannerMaxLines,
                         overflow: TextOverflow.ellipsis,
+                        // C-391 decision 2: the banner's own text is laid
+                        // out at the clamped scale, not the ring's or the
+                        // board's ambient one, so it never asks this row
+                        // for more than `_headerRowHeightFor` already
+                        // measured it at.
+                        textScaler: _playColumnClampedScaler(context),
                         style: TextStyle(
                           fontWeight: myTurn
                               ? FontWeight.w700
@@ -2712,19 +2756,35 @@ class _GameScreenState extends State<GameScreen> {
   /// would otherwise show, the no-move notice wins and the offline line
   /// waits for the hold to end, exactly as the rule's own wording asks.
   Widget _belowDieNoticeSlot(AppLocalizations loc, SeatState? offlineTurnSeat) {
+    // C-391 decision 2: this slot's own two texts (the live notice and the
+    // two placeholders reserving its space) are laid out at the same
+    // clamped scale as the header banner -- past
+    // `_playColumnTextScaleClamp` the slot stops growing with the system
+    // scale, and the text inside it is capped to match, so the reserved
+    // space this Stack settles on from its invisible children always
+    // covers whichever one is actually shown.
+    final TextScaler scaler = _playColumnClampedScaler(context);
     return Stack(
       alignment: Alignment.topCenter,
       children: [
         ExcludeSemantics(
           child: Opacity(
             opacity: 0,
-            child: Text(loc.gameNoMove, textAlign: TextAlign.center),
+            child: Text(
+              loc.gameNoMove,
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+            ),
           ),
         ),
         ExcludeSemantics(
           child: Opacity(
             opacity: 0,
-            child: Text(loc.gameSeatOffline(''), textAlign: TextAlign.center),
+            child: Text(
+              loc.gameSeatOffline(''),
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+            ),
           ),
         ),
         if (_noMoveVisible)
@@ -2733,6 +2793,7 @@ class _GameScreenState extends State<GameScreen> {
               loc.gameNoMove,
               key: const Key('game-no-move-notice'),
               textAlign: TextAlign.center,
+              textScaler: scaler,
             ),
           )
         else if (offlineTurnSeat != null)
@@ -2741,6 +2802,7 @@ class _GameScreenState extends State<GameScreen> {
               loc.gameSeatOffline(offlineTurnSeat.name),
               key: const Key('game-screen-turn-seat-offline'),
               textAlign: TextAlign.center,
+              textScaler: scaler,
             ),
           ),
       ],
