@@ -170,6 +170,13 @@ if [ "$drive_exit" -ne 0 ]; then
   exit "$drive_exit"
 fi
 
+# One game, one segment. A second chunk means the script outgrew the 170s
+# screenrecord limit and the video now has a gap at the seam.
+if [ "${#mp4_files[@]}" -gt 1 ]; then
+  echo "Recording split into ${#mp4_files[@]} segments; the game must fit one 170s chunk" >&2
+  exit 1
+fi
+
 if [ "$has_large_mp4" = false ]; then
   echo "No MP4 file in motion/ is larger than 200 KB" >&2
   exit 1

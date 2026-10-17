@@ -2206,14 +2206,17 @@ Future<void> _runHostSeat0(
   _motion('7 done');
 
   debugPrint('motion elapsed ${elapsed.elapsed.inMilliseconds}ms');
-  // 120s stays under record_motion.sh's 170s screenrecord chunk. The
-  // platform caps one chunk at 180s, so the game fits a single segment.
+  // record_motion.sh records in 170s screenrecord chunks and fails the job
+  // when the game spills into a second one. The recorder starts when the
+  // app process appears, 6 to 10s before this stopwatch on the CI emulator
+  // (run 38972919163: 140.4s of video for 131.3s of script), so 150s keeps
+  // the game inside the first chunk with room to spare.
   expect(
     elapsed.elapsed,
-    lessThan(const Duration(seconds: 120)),
+    lessThan(const Duration(seconds: 150)),
     reason:
         'the script took ${elapsed.elapsed.inMilliseconds}ms after the '
-        'app was up; the limit is 120s',
+        'app was up; the limit is 150s',
   );
 }
 
@@ -2434,14 +2437,17 @@ Future<void> _runJoinerSeat2(
   _motion('7 done');
 
   debugPrint('motion elapsed ${elapsed.elapsed.inMilliseconds}ms');
-  // 120s stays under record_motion.sh's 170s screenrecord chunk. The
-  // platform caps one chunk at 180s, so the game fits a single segment.
+  // record_motion.sh records in 170s screenrecord chunks and fails the job
+  // when the game spills into a second one. The recorder starts when the
+  // app process appears, 6 to 10s before this stopwatch on the CI emulator
+  // (run 38972919163: 140.4s of video for 131.3s of script), so 150s keeps
+  // the game inside the first chunk with room to spare.
   expect(
     elapsed.elapsed,
-    lessThan(const Duration(seconds: 120)),
+    lessThan(const Duration(seconds: 150)),
     reason:
         'the script took ${elapsed.elapsed.inMilliseconds}ms after the '
-        'app was up; the limit is 120s',
+        'app was up; the limit is 150s',
   );
 }
 
