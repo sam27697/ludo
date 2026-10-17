@@ -39,6 +39,7 @@ import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'roll_tray.dart';
+import 'safe_cue.dart';
 import 'theme.dart';
 
 /// Distinct [Navigator.pop] result from the finished-board next-table
@@ -49,6 +50,13 @@ enum GameScreenResult { newTable, removed }
 
 /// Safety-net fallback duration for held landing cues, contract C-268 rule 4e.
 const Duration kLandingCueFallback = Duration(milliseconds: 2000);
+
+/// How long the safe-landing pill stays fully up, contract C-384 S5.
+const Duration kSafeCueHold = Duration(milliseconds: 1400);
+
+/// Fade after [kSafeCueHold] before the pill leaves the tree, contract
+/// C-384 S5. Skipped when animations are disabled.
+const Duration kSafeCueFade = Duration(milliseconds: 200);
 
 /// Dwell time after winning move lands before end card, contract C-270 rule 4a.
 const Duration kEndCardDwell = Duration(milliseconds: 600);
@@ -248,6 +256,22 @@ class _GameScreenState extends State<GameScreen> {
   // dispose and _resetForNewGame.
   final List<_PendingLandingCues> _pendingLandingCues = <_PendingLandingCues>[];
 
+  // C-384: at most one safe-landing pill. Held like a landing cue until
+  // the mover's onMoveLanded (or kLandingCueFallback, or a travel snap),
+  // except under reduced motion, where it shows on the moved frame.
+  // A newer qualifying move drops the one still waiting and, once it
+  // shows, replaces the pill that is up. [_safeCueLandingsToIgnore]
+  // counts landings of moves we already replaced, so an earlier move
+  // cannot reveal the newer cue. [_safeCueEpoch] drops a snap-reveal
+  // that a later clear or a newer move has superseded.
+  _PendingSafeCue? _pendingSafeCue;
+  int _safeCueLandingsToIgnore = 0;
+  int _safeCueEpoch = 0;
+  int _safeCueGeneration = 0;
+  SafeCue? _safeCue;
+  Timer? _safeCueHoldTimer;
+  Timer? _safeCueFadeTimer;
+
   // C-270: moves currently in travel, and the end-card hold entered when
   // game_over arrives while travel is still in flight.
   int _travelCount = 0;
@@ -320,6 +344,7 @@ class _GameScreenState extends State<GameScreen> {
     _noMoveTimer?.cancel();
     _trayDeadTimer?.cancel();
     _dropPendingLandingCues();
+    _clearSafeCue();
     _endHoldDwellTimer?.cancel();
     _endHoldLimitTimer?.cancel();
     _heldGameOverCues.clear();
@@ -448,6 +473,12 @@ class _GameScreenState extends State<GameScreen> {
       if (seatValue != null && seatValue == widget.controller.seat) {
         Navigator.of(context).pop(GameScreenResult.removed);
       }
+    }
+
+    if (frame.type == 'game_over') {
+      _clearSafeCue();
+    } else {
+      _considerSafeCue(frame);
     }
   }
 
@@ -614,11 +645,14 @@ class _GameScreenState extends State<GameScreen> {
     if (_isEndHeld && _travelCount == 0 && _endHoldDwellTimer == null) {
       _endHoldDwellTimer = Timer(kEndCardDwell, _releaseEndHold);
     }
+    _onSafeCueLanded(seat, token);
   }
 
   void _onBoardTravelReset() {
     _travelCount = 0;
+    _safeCueLandingsToIgnore = 0;
     if (_isEndHeld) {
+      _dropPendingSafeCue();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_isEndHeld) {
           return;
@@ -627,6 +661,7 @@ class _GameScreenState extends State<GameScreen> {
       });
     } else {
       _flushPendingLandingCues();
+      _revealPendingSafeCueAfterFrame();
     }
   }
 
@@ -670,6 +705,201 @@ class _GameScreenState extends State<GameScreen> {
       entry.fallbackTimer = null;
     }
     _pendingLandingCues.clear();
+  }
+
+  /// C-384 S1 and S2. A `moved` frame with an empty `captured`, a
+  /// main-track `to`, and at least one other seat's token already on
+  /// that absolute square. Safe square wins over a pair.
+  void _considerSafeCue(Frame frame) {
+    if (frame.type != 'moved') {
+      return;
+    }
+    final int? seat = _intAt(frame.data, 'seat');
+    final int? token = _intAt(frame.data, 'token');
+    final int? to = _intAt(frame.data, 'to');
+    if (seat == null ||
+        token == null ||
+        to == null ||
+        seat < 0 ||
+        seat > 3 ||
+        to < 0 ||
+        to > 51) {
+      return;
+    }
+    final Object? captured = frame.data['captured'];
+    if (captured is! List || captured.isNotEmpty) {
+      return;
+    }
+    final RoomSnapshot? room = widget.controller.room;
+    if (room == null || !_otherSeatOnSquare(room, seat, to)) {
+      return;
+    }
+    _armSafeCue(
+      seat: seat,
+      token: token,
+      progress: to,
+      star: _cellIsSafe(cellFor(seat: seat, progress: to)),
+    );
+  }
+
+  void _armSafeCue({
+    required int seat,
+    required int token,
+    required int progress,
+    required bool star,
+  }) {
+    final _PendingSafeCue pending = _PendingSafeCue(
+      seat: seat,
+      token: token,
+      progress: progress,
+      star: star,
+    );
+    _safeCueEpoch++;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _dropPendingSafeCue();
+      _safeCueLandingsToIgnore = 0;
+      _revealSafeCue(pending);
+      return;
+    }
+    if (_pendingSafeCue != null) {
+      _safeCueLandingsToIgnore++;
+      _pendingSafeCue!.fallbackTimer?.cancel();
+      _pendingSafeCue!.fallbackTimer = null;
+    }
+    _pendingSafeCue = pending;
+    pending.fallbackTimer = Timer(kLandingCueFallback, () {
+      if (!identical(_pendingSafeCue, pending)) {
+        return;
+      }
+      _pendingSafeCue = null;
+      pending.fallbackTimer = null;
+      _revealSafeCue(pending);
+    });
+  }
+
+  void _onSafeCueLanded(int seat, int token) {
+    if (_safeCueLandingsToIgnore > 0) {
+      _safeCueLandingsToIgnore--;
+      return;
+    }
+    final _PendingSafeCue? pending = _pendingSafeCue;
+    if (pending == null || pending.seat != seat || pending.token != token) {
+      return;
+    }
+    pending.fallbackTimer?.cancel();
+    pending.fallbackTimer = null;
+    _pendingSafeCue = null;
+    _revealSafeCue(pending);
+  }
+
+  /// A snap drops the in-flight move, the same moment landing cues flush.
+  /// Show the pill then, unless a newer move or a clear already won.
+  void _revealPendingSafeCueAfterFrame() {
+    final _PendingSafeCue? pending = _pendingSafeCue;
+    if (pending == null) {
+      return;
+    }
+    pending.fallbackTimer?.cancel();
+    pending.fallbackTimer = null;
+    _pendingSafeCue = null;
+    final int epoch = _safeCueEpoch;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _screenDisposed || epoch != _safeCueEpoch) {
+        return;
+      }
+      _revealSafeCue(pending);
+    });
+  }
+
+  void _dropPendingSafeCue() {
+    _pendingSafeCue?.fallbackTimer?.cancel();
+    _pendingSafeCue?.fallbackTimer = null;
+    _pendingSafeCue = null;
+  }
+
+  void _revealSafeCue(_PendingSafeCue pending) {
+    pending.fallbackTimer?.cancel();
+    pending.fallbackTimer = null;
+    _safeCueHoldTimer?.cancel();
+    _safeCueFadeTimer?.cancel();
+    _safeCueFadeTimer = null;
+    _safeCueGeneration++;
+    final int generation = _safeCueGeneration;
+    final SafeCue cue = SafeCue(
+      reason: pending.star ? SafeCueReason.star : SafeCueReason.pair,
+      seat: pending.seat,
+      progress: pending.progress,
+      generation: generation,
+      fade: kSafeCueFade,
+    );
+    if (!mounted || _screenDisposed) {
+      _safeCue = cue;
+      return;
+    }
+    setState(() {
+      _safeCue = cue;
+    });
+    _safeCueHoldTimer = Timer(kSafeCueHold, () {
+      _onSafeCueHoldEnded(generation);
+    });
+  }
+
+  void _onSafeCueHoldEnded(int generation) {
+    _safeCueHoldTimer = null;
+    if (!mounted || _screenDisposed) {
+      return;
+    }
+    final SafeCue? cue = _safeCue;
+    if (cue == null || cue.generation != generation) {
+      return;
+    }
+    if (MediaQuery.disableAnimationsOf(context)) {
+      setState(() {
+        _safeCue = null;
+      });
+      return;
+    }
+    setState(() {
+      _safeCue = SafeCue(
+        reason: cue.reason,
+        seat: cue.seat,
+        progress: cue.progress,
+        generation: cue.generation,
+        fade: cue.fade,
+        fading: true,
+      );
+    });
+    _safeCueFadeTimer = Timer(kSafeCueFade, () {
+      _safeCueFadeTimer = null;
+      if (!mounted || _screenDisposed) {
+        return;
+      }
+      if (_safeCue?.generation != generation) {
+        return;
+      }
+      setState(() {
+        _safeCue = null;
+      });
+    });
+  }
+
+  /// New game, leaving the table, game over. Cancels a pill that has not
+  /// been shown yet as well as one that is up.
+  void _clearSafeCue() {
+    _safeCueEpoch++;
+    _safeCueLandingsToIgnore = 0;
+    _dropPendingSafeCue();
+    _safeCueHoldTimer?.cancel();
+    _safeCueHoldTimer = null;
+    _safeCueFadeTimer?.cancel();
+    _safeCueFadeTimer = null;
+    if (_safeCue == null) {
+      return;
+    }
+    _safeCue = null;
+    if (mounted && !_screenDisposed) {
+      setState(() {});
+    }
   }
 
   /// C-259 rule 2: the board's own `onTokenStep`, fired once as the drawn
@@ -721,6 +951,7 @@ class _GameScreenState extends State<GameScreen> {
     _selectedFaceSeenK = null;
     _selectedFaceSeenQueue = null;
     _dropPendingLandingCues();
+    _clearSafeCue();
     _endHoldDwellTimer?.cancel();
     _endHoldDwellTimer = null;
     _endHoldLimitTimer?.cancel();
@@ -1571,6 +1802,7 @@ class _GameScreenState extends State<GameScreen> {
   /// [GameScreenResult.newTable] so HomeScreen can open a fresh table
   /// after that same leave()/dispose() sequence.
   void _leave() {
+    _clearSafeCue();
     Navigator.of(context).pop();
   }
 
@@ -2210,6 +2442,7 @@ class _GameScreenState extends State<GameScreen> {
                   _onBoardTokenStep(controller, stepSeat),
               onMoveLanded: _onBoardMoveLanded,
               onTravelReset: _onBoardTravelReset,
+              safeCue: _safeCue,
               onTokenTap: (int index) {
                 if (_isEndHeld) {
                   return;
@@ -3181,6 +3414,51 @@ List<(int k, int face)>? _appendedRolls(
     return next.sublist(keep);
   }
   return null;
+}
+
+/// Another seat already stands on the mover's destination. Progress
+/// outside the main track is not an absolute square, so it does not count.
+bool _otherSeatOnSquare(RoomSnapshot room, int moverSeat, int to) {
+  final BoardCell dest = cellFor(seat: moverSeat, progress: to);
+  for (final SeatState seatState in room.seats) {
+    if (seatState.seat == moverSeat) {
+      continue;
+    }
+    for (final int progress in seatState.tokens) {
+      if (progress < 0 || progress > 51) {
+        continue;
+      }
+      if (cellFor(seat: seatState.seat, progress: progress) == dest) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool _cellIsSafe(BoardCell cell) {
+  for (final int absolute in safeTrackSquares) {
+    if (safeSquareCell(absolute) == cell) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// C-384: one qualifying move waiting for its landing.
+class _PendingSafeCue {
+  _PendingSafeCue({
+    required this.seat,
+    required this.token,
+    required this.progress,
+    required this.star,
+  });
+
+  final int seat;
+  final int token;
+  final int progress;
+  final bool star;
+  Timer? fallbackTimer;
 }
 
 /// C-268 rules 3 to 5: landing cues held for mover (seat, token).
