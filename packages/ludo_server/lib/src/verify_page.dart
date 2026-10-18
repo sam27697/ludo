@@ -412,6 +412,12 @@ $_sharedNotFoundStyle
 /// depends on text direction except `text-align: start`, which already
 /// means "left in `ltr`, right in `rtl`" without a per-language rule --
 /// `docs/VERIFY.md`'s "table cells aligned to the start side" for free.
+///
+/// A chain commitment or a seed is one long hex run, not a word, so it has
+/// to be allowed to break anywhere. `anywhere` (not `break-word`) is the
+/// value that also counts those breaks in a table's min-content width:
+/// with `break-word` the seeds table still grows to the unbreakable seed
+/// and sticks out past the phone.
 const String _sharedStyle = '''
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -421,6 +427,7 @@ body {
   padding: 1.5em;
   line-height: 1.5;
   color: #1a1a1a;
+  overflow-wrap: anywhere;
 }
 h1 {
   font-size: 1.3em;
