@@ -164,25 +164,40 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = { drawDie: drawDie, verifyRecord: verifyRecord };
 } else {
   (function () {
+    // decision 5 (C-396): the words this branch writes come from the page's
+    // own data attributes when it carries them, so this file stays the
+    // same for every language the page renders in. #rolls-table's
+    // data-match/data-mismatch cover the chain and die check cells;
+    // #summary's data-ok/data-fail cover the summary line, with "{n}" and
+    // "{reason}" as the one substitution each template makes. A page (or a
+    // cached copy of one) that carries none of these gets exactly the
+    // English this file always wrote.
     const el = document.getElementById('record');
     const record = JSON.parse(el.textContent);
+    const rollsTable = document.getElementById('rolls-table');
+    const rollsTableData = (rollsTable && rollsTable.dataset) || {};
+    const matchText = rollsTableData.match || 'checked: matches';
+    const mismatchText = rollsTableData.mismatch || 'checked: does not match';
     verifyRecord(record).then(function (result) {
       for (let i = 0; i < result.rolls.length; i++) {
         const row = result.rolls[i];
         const chainCell = document.getElementById('chain-' + row.k);
         const dieCell = document.getElementById('die-' + row.k);
         if (chainCell) {
-          chainCell.textContent = row.chainOk ? 'checked: matches' : 'checked: does not match';
+          chainCell.textContent = row.chainOk ? matchText : mismatchText;
         }
         if (dieCell) {
-          dieCell.textContent = row.dieOk ? 'checked: matches' : 'checked: does not match';
+          dieCell.textContent = row.dieOk ? matchText : mismatchText;
         }
       }
       const summary = document.getElementById('summary');
       if (summary) {
+        const summaryData = summary.dataset || {};
+        const okTemplate = summaryData.ok || 'checked: all {n} rolls verified';
+        const failTemplate = summaryData.fail || 'checked: failed ({reason})';
         summary.textContent = result.ok
-          ? 'checked: all ' + result.rolls.length + ' rolls verified'
-          : 'checked: failed (' + (result.error || 'a roll did not match') + ')';
+          ? okTemplate.replace('{n}', result.rolls.length)
+          : failTemplate.replace('{reason}', result.error || 'a roll did not match');
       }
     });
   })();

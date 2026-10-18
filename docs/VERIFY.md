@@ -242,5 +242,13 @@ What would tell us it broke: a finished game whose `verify_url` does not answer
 
 ## 9. Not in this order
 
-A landing page at `provefair.app/`; an Arabic page; records for games
-abandoned mid-play; the client showing anything new. Each is its own order.
+A landing page at `provefair.app/`; records for games abandoned mid-play;
+the client showing anything new. Each is its own order.
+
+The page's language (C-396): an explicit `?lang=ar` or `?lang=en` query
+parameter wins outright; otherwise the highest-`q` tag of the request's
+`Accept-Language` header whose primary subtag is `ar` or `en` wins; absent
+both, English. The not-found page follows the same rule. Both answers carry
+`vary: accept-language`. The Arabic page is a full mirror -- same record,
+same checks, same `verify.js` -- with its game id, hashes, seeds and the
+`curl` command kept left-to-right inside the right-to-left page.
