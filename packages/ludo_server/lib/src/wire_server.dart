@@ -510,7 +510,7 @@ class WireServer {
           : '';
       return _verifyJsonResponse(id: id, isHead: isHead);
     }
-    return _verifyPageResponse(id: rest, isHead: isHead);
+    return _verifyPageResponse(request: request, id: rest, isHead: isHead);
   }
 
   /// `verify.js` and `verify.py` never change once this process is running
@@ -565,26 +565,38 @@ class WireServer {
   /// failed [isWellFormedGameId] outright or was well-formed but has no
   /// record -- `docs/VERIFY.md` section 4 does not distinguish the two, and
   /// [buildVerifyNotFoundHtml] does not need to know which one happened.
+  /// C-396: the page's language is resolved once here, from [request]'s own
+  /// query and `Accept-Language` header, straight through to
+  /// [resolveVerifyLanguage] -- this method does no language logic of its
+  /// own beyond that handoff and the `vary` header every response here now
+  /// carries, since the body depends on that header.
   shelf.Response _verifyPageResponse(
-      {required String id, required bool isHead}) {
+      {required shelf.Request request,
+      required String id,
+      required bool isHead}) {
     final String? stored =
         isWellFormedGameId(id) ? registry.verifyStore.load(id) : null;
+    final String language = resolveVerifyLanguage(
+      query: request.url.queryParameters,
+      acceptLanguageHeader: request.headers['accept-language'],
+    );
     final Map<String, String> shared = <String, String>{
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
       'content-type': 'text/html; charset=utf-8',
+      'vary': 'accept-language',
       'content-security-policy': "default-src 'none'; script-src 'self'; "
           "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; "
           "frame-ancestors 'none'",
     };
     if (stored == null) {
       return shelf.Response.notFound(
-        isHead ? '' : buildVerifyNotFoundHtml(),
+        isHead ? '' : buildVerifyNotFoundHtml(language: language),
         headers: <String, String>{...shared, 'cache-control': 'no-store'},
       );
     }
     return shelf.Response.ok(
-      isHead ? '' : buildVerifyPageHtml(stored),
+      isHead ? '' : buildVerifyPageHtml(stored, language: language),
       headers: <String, String>{
         ...shared,
         'cache-control': 'public, max-age=300',
