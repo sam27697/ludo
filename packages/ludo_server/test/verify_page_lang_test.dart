@@ -748,7 +748,7 @@ void main() {
       // from there on so a data-match/data-mismatch pair on the seeds
       // table (if one were ever added there by mistake) cannot satisfy
       // this by accident.
-      final int rollsHeading = body.indexOf('Rolls');
+      final int rollsHeading = body.indexOf('<h2>Rolls</h2>');
       expect(rollsHeading, isNot(-1),
           reason: 'decision 5: expected a "Rolls" heading before the '
               'rolls table; body: $body');
@@ -810,7 +810,9 @@ void main() {
       );
       final String body = await _bodyOf(response);
 
-      final int rollsHeading = body.indexOf('الرميات');
+      // The bare word also sits in #summary's data-ok, which decision 4
+      // places above every table; anchor on the heading itself.
+      final int rollsHeading = body.indexOf('<h2>الرميات</h2>');
       expect(rollsHeading, isNot(-1),
           reason: 'decision 5: expected the "الرميات" heading before the '
               'rolls table on the ar page; body: $body');
