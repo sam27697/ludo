@@ -134,6 +134,10 @@ class _HomeScreenState extends State<HomeScreen>
   // disclosure's onPressed the same way, without disturbing
   // Key('create-room-button').
   final GlobalKey _createButtonScrollKey = GlobalKey();
+  // C-398: focusing the code field brings join-room-button up with it,
+  // the same pair the room-link scroll already moves together.
+  final FocusNode _codeFocusNode = FocusNode();
+  double _codeFocusInset = -1;
   // Set as the first line of dispose(), before anything else runs.
   // _retireOwnedController's own setState guard reads this alongside
   // `mounted`, synchronously true from the top of dispose() rather than
@@ -145,6 +149,7 @@ class _HomeScreenState extends State<HomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _codeController.addListener(_clearErrorOnEdit);
+    _codeFocusNode.addListener(_onCodeFieldFocus);
     unawaited(_restoreSessionMemory());
     // Duration and reduced-motion short-circuit need Theme / MediaQuery, which
     // are not available until [didChangeDependencies].
@@ -360,6 +365,36 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  void _onCodeFieldFocus() {
+    if (!_codeFocusNode.hasFocus) {
+      return;
+    }
+    _scrollJoinIntoViewWithField();
+  }
+
+  /// Brings join-room-button fully into the viewport when the code field
+  /// has focus, including after the keyboard shrinks that viewport. Leaves
+  /// a button that is already visible where it is, so a tap in the field
+  /// on a roomy screen does not jump the scroll.
+  void _scrollJoinIntoViewWithField() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_codeFocusNode.hasFocus) {
+        return;
+      }
+      final BuildContext? targetContext = _joinButtonScrollKey.currentContext;
+      if (targetContext == null) {
+        return;
+      }
+      final bool reducedMotion = MediaQuery.disableAnimationsOf(context);
+      Scrollable.ensureVisible(
+        targetContext,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        duration: reducedMotion ? Duration.zero : kLinkScrollDuration,
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
   /// Scrolls create-room-button back into the home scroll view's viewport
   /// when opening the players/rules disclosure has pushed it below the
   /// bottom edge (order 209). keepVisibleAtEnd only moves the scroll
@@ -486,6 +521,14 @@ class _HomeScreenState extends State<HomeScreen>
     }
     _nameLocaleDefault = nextDefault;
     _armEnterMotion();
+    final double inset = MediaQuery.viewInsetsOf(context).bottom;
+    if (inset != _codeFocusInset) {
+      final bool grew = inset > _codeFocusInset;
+      _codeFocusInset = inset;
+      if (grew && _codeFocusNode.hasFocus) {
+        _scrollJoinIntoViewWithField();
+      }
+    }
   }
 
   /// Wires [_enter] to [LudoBrand.motionLong] once, and jumps to completed
@@ -514,6 +557,8 @@ class _HomeScreenState extends State<HomeScreen>
     _linkSubscription?.cancel();
     _linkHoldTimer?.cancel();
     _codeController.removeListener(_clearErrorOnEdit);
+    _codeFocusNode.removeListener(_onCodeFieldFocus);
+    _codeFocusNode.dispose();
     _codeController.dispose();
     _nameController.dispose();
     _enter.dispose();
@@ -979,10 +1024,18 @@ class _HomeScreenState extends State<HomeScreen>
     );
     final SeatRecord? seatRecord = _seatRecord;
     final TextTheme textTheme = Theme.of(context).textTheme;
-    final double viewHeight = MediaQuery.sizeOf(context).height;
-    // Default widget-test surface is 800x600; keep create/join on-screen
-    // there. Real phones are taller and get the stacked brand + die hero.
-    final bool compact = viewHeight < 640;
+    final MediaQueryData media = MediaQuery.of(context);
+    // C-398: compact is the height inside the safe area, not the raw screen
+    // height. The 800x600 widget-test surface stays compact (600 < 640).
+    // A 640-tall phone with a status bar and a nav bar is short once those
+    // insets are subtracted. The threshold stays 640.
+    final double safeHeight =
+        media.size.height - media.padding.top - media.padding.bottom;
+    // Die size flips at 640 (C-398). The stacked hero needs more than that
+    // before the join step still fits at text scale 1.3, so a safe height
+    // under 800 keeps the side-by-side hero and only the die grows.
+    final bool compact = safeHeight < 640;
+    final bool stackedHero = safeHeight >= 800;
     final double dieSize = dieMarkSize(compact);
     final double afterBrand = compact ? kSpace3 : kSpace6;
     final double afterDie = compact ? kSpace4 : kSpace7;
@@ -1128,7 +1181,7 @@ class _HomeScreenState extends State<HomeScreen>
                                 opacity: dieOpacity,
                                 child: ScaleTransition(
                                   scale: dieScale,
-                                  child: compact
+                                  child: !stackedHero
                                       ? Row(
                                           crossAxisAlignment:
                                               CrossAxisAlignment.center,
@@ -1476,6 +1529,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       label: loc.homeRoomCodeFieldLabel,
                                       child: TextField(
                                         key: const Key('room-code-field'),
+                                        focusNode: _codeFocusNode,
                                         controller: _codeController,
                                         textAlign: TextAlign.center,
                                         textCapitalization:

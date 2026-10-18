@@ -3010,40 +3010,40 @@ class _GameScreenState extends State<GameScreen> {
 
     // The card alone, win or lose, already carries more content than the
     // pre-C-243 single line of text did (a celebration or nudge, up to
-    // four stat tiles, the fairness line and two buttons), so this body is
-    // scrollable rather than forced into one unscrollable screen the way
-    // the playing body is: nothing here is time-pressured the way a turn
-    // is, and a RenderFlex overflow would hide content rather than merely
-    // look cramped. The board keeps its own square shape via AspectRatio
-    // instead of Expanded, which needs a bounded height a scroll view does
-    // not give its children.
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(kSpace4),
-      child: Column(
+    // four stat tiles, the fairness line and two buttons), so this body
+    // scrolls rather than being forced into one unscrollable screen the
+    // way the playing body is: nothing here is time-pressured the way a
+    // turn is, and a RenderFlex overflow would hide content rather than
+    // merely look cramped. C-398 pulls the action area out of that scroll
+    // and pins it to the bottom of the safe area. The board keeps its own
+    // square shape via AspectRatio instead of Expanded, which needs a
+    // bounded height a scroll view does not give its children.
+    return EndCardFrame(
+      card: EndCard(
+        mySeat: mySeat,
+        winnerSeat: winnerSeat,
+        winnerName: winnerName,
+        seatColors: LudoColors.seats,
+        stats: stats,
+        stepsLeft: stepsLeft,
+        verifyUrl: finished.verifyUrl,
+        onVerify: _openVerifyUrl,
+        onNewTable: _requestNewTable,
+        rematch: rematch,
+        rematchByName: rematchByName,
+        occupiedSeats: _seatsInPlayOf(room),
+        isHost: controller.isHost,
+        rematchGone: rematchGone,
+        departedNames: departedNames,
+        everyoneLeft: everyoneLeft,
+        rematchByDeparted: rematchByDeparted,
+        isOffline: isOffline,
+        onRematch: _rematchInFlight ? null : () => _onRematchTap(),
+        onStartReady: controller.isHost ? controller.startGame : null,
+      ),
+      trailing: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          EndCard(
-            mySeat: mySeat,
-            winnerSeat: winnerSeat,
-            winnerName: winnerName,
-            seatColors: LudoColors.seats,
-            stats: stats,
-            stepsLeft: stepsLeft,
-            verifyUrl: finished.verifyUrl,
-            onVerify: _openVerifyUrl,
-            onNewTable: _requestNewTable,
-            rematch: rematch,
-            rematchByName: rematchByName,
-            occupiedSeats: _seatsInPlayOf(room),
-            isHost: controller.isHost,
-            rematchGone: rematchGone,
-            departedNames: departedNames,
-            everyoneLeft: everyoneLeft,
-            rematchByDeparted: rematchByDeparted,
-            isOffline: isOffline,
-            onRematch: _rematchInFlight ? null : () => _onRematchTap(),
-            onStartReady: controller.isHost ? controller.startGame : null,
-          ),
           if (hasBoard) ...[
             const SizedBox(height: kSpace4),
             AspectRatio(
