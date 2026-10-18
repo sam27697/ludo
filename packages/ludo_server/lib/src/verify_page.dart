@@ -224,6 +224,9 @@ String buildVerifyPageHtml(
         'لا تأخذ كلام هذه الصفحة على أي مما سبق. شغّل الفحوص نفسها على '
         'جهازك، من الكود المنشور، دون الاعتماد على أي شيء من هذه الصفحة:';
 
+    // `{time} UTC` is one ltr span. In this RTL paragraph the bidi
+    // algorithm otherwise reorders the ISO timestamp, so the clock time
+    // shows before the date. C-396 decision 2 names the UTC time for this.
     return '''
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -241,7 +244,7 @@ $_sharedStyle
 <p>$leadLine</p>
 <p id="summary" data-ok="$dataOk" data-fail="$dataFail">$notCheckedSummary</p>
 
-<p>انتهت في ${_esc(finishedAt)} UTC. الفائز: المقعد ${_esc(winner)}.</p>
+<p>انتهت في <span dir="ltr">${_esc(finishedAt)} UTC</span>. الفائز: المقعد ${_esc(winner)}.</p>
 
 <h2>ما الذي تثبته هذه الصفحة</h2>
 <ul>
