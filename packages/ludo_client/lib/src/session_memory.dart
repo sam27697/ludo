@@ -100,7 +100,8 @@ class LastGame {
 ///
 /// [load], [recordSuccessfulCreate] and [recordSuccessfulJoin] are the
 /// writers and readers. A later [load] on a fresh instance returns the
-/// name and seats the previous [recordSuccessfulCreate] wrote, and the
+/// name and seats the previous [recordSuccessfulCreate] wrote, the name
+/// a previous [recordSuccessfulJoin] wrote when it was given one, and the
 /// recent codes [recordSuccessfulJoin] wrote (newest first, at most 3).
 /// [recordSeat] and [clearSeat] write and remove the seat record that a
 /// later [load] returns as [seatRecord]. [recordLastGame] writes the one
@@ -122,7 +123,8 @@ class SessionMemory {
   static const String _lastGameKey = 'session.lastGame';
   static const int _maxRecentCodes = 3;
 
-  /// Name sent on the last successful create. Null when nothing is stored.
+  /// Name sent on the last successful create, or on the last successful
+  /// join that was given a name. Null when nothing is stored.
   final String? lastName;
 
   /// Seat count sent on the last successful create. Null when nothing is
@@ -318,7 +320,10 @@ class SessionMemory {
 
   /// Writes [code] to the front of the recent list so a later [load]
   /// restores it newest-first, unique, and at most [_maxRecentCodes].
-  static Future<void> recordSuccessfulJoin(String code) async {
+  /// When [name] is given, also stores it as [lastName]. Never writes or
+  /// clears the stored seat count. Callers that omit [name] leave whatever
+  /// name is already stored untouched.
+  static Future<void> recordSuccessfulJoin(String code, {String? name}) async {
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
       final List<String> next = prependRecentCode(
@@ -326,6 +331,9 @@ class SessionMemory {
         code,
       );
       await prefs.setStringList(_codesKey, next);
+      if (name != null) {
+        await prefs.setString(_nameKey, name);
+      }
     } on Object {
       return;
     }
