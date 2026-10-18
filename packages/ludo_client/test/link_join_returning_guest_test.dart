@@ -1071,6 +1071,10 @@ void main() {
 
       mount.reader.complete(null);
       await tester.pump();
+      // The observer counts Home's own initial route as a push, so the
+      // guard is measured as a delta, the way every other link case here
+      // measures it.
+      final int pushesBefore = mount.observer.pushCount;
 
       mount.opener.add(_validLink(_linkCode));
       // Deliberately no pump between the two links: the second must land
@@ -1094,11 +1098,11 @@ void main() {
       );
       expect(
         mount.observer.pushCount,
-        1,
+        pushesBefore + 1,
         reason:
             'decision 5: exactly one route must have been pushed despite '
             'two links landing back to back; pushCount '
-            '${mount.observer.pushCount}',
+            '${mount.observer.pushCount}, before $pushesBefore',
       );
       await _disposeControllers(tester, mount.factory);
     },
