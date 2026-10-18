@@ -82,6 +82,9 @@ class _HomeScreenState extends State<HomeScreen>
   late final AnimationController _enter;
   bool _enterMotionArmed = false;
   bool _hasLastTable = false;
+  // A stored non-empty name, with or without a seat count. The link gate
+  // reads this. The last-table chip still reads [_hasLastTable].
+  bool _hasStoredName = false;
   String? _lastTableName;
   int? _lastTableSeats;
   List<String> _recentCodes = const <String>[];
@@ -188,18 +191,16 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   /// Applies a room code found in an incoming link to the code field, and
-  /// joins or rejoins the room when the player is known and Home is the
-  /// current route (order 296).
+  /// joins or rejoins the room when Home is the current route (order 296,
+  /// C-394).
   ///
-  /// A returning player whose session memory held a name from an earlier
-  /// table navigates straight into the room: [LobbyAction.join] with the
-  /// pre-filled code, or [LobbyAction.resume] when the memory holds a seat
-  /// record for that same code.
+  /// A stored seat for that same code resumes, whether or not a name is
+  /// stored. Otherwise a stored, non-empty name joins with that name.
   ///
   /// Navigation does not happen and the code is only pre-filled when the
-  /// player is first-time (their name is still needed, so Join remains
-  /// their tap), when another route (a lobby, a game) is currently pushed
-  /// above Home (rule B5), or when the code is invalid.
+  /// player is first-time (no stored name and no matching seat, so Join
+  /// remains their tap), when another route (a lobby, a game) is currently
+  /// pushed above Home (rule B5), or when the code is invalid.
   void _handleLink(Uri uri) {
     if (!mounted) {
       return;
@@ -252,24 +253,29 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   /// Evaluates whether an incoming link with valid [code] can push into the
-  /// room or should leave the code filled in place (order 296).
+  /// room or should leave the code filled in place (order 296, C-394).
+  ///
+  /// The seat-record check stands on its own, ahead of the stored-name
+  /// check: resume needs no name, and neither check is the last-table chip.
   void _decideLinkAction(String code) {
     if (!mounted) {
       return;
     }
     final bool isCurrent = ModalRoute.of(context)?.isCurrent ?? false;
-    if (isCurrent && !_linkJoinInFlight && _hasLastTable) {
+    if (isCurrent && !_linkJoinInFlight) {
       final SeatRecord? record = _seatRecord;
       if (record != null && record.code == code) {
         unawaited(_joinFromLink(rejoin: true, seatRecord: record));
-      } else {
-        unawaited(_joinFromLink(rejoin: false));
+        return;
       }
-      return;
+      if (_hasStoredName) {
+        unawaited(_joinFromLink(rejoin: false));
+        return;
+      }
     }
     // Run 57: first-time player (rule 2) or home screen sitting underneath
     // an existing route (rule 3) scrolls the target into view rather than
-    // navigating.
+    // navigating. A join already in flight takes this path too (rule 6).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
@@ -392,15 +398,16 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
-  /// Restores last successful-create name and seats, the last-table chip,
-  /// recent join codes, a seat record held across a process kill (H3), and
-  /// the last finished game's verify link (C-322 rule 3) from
-  /// [SessionMemory]. An empty or unreadable store leaves the localised
-  /// name default, the four-seat disclosure, no recent chips, no rejoin
-  /// button and no home-last-game entry as they are. The load itself
-  /// returns empty on failure, so nothing is caught here. Completing the
-  /// load marks session memory as loaded and drains any pending room link
-  /// (order 296).
+  /// Restores a stored name (from a create or a join), last successful-create
+  /// seats, the last-table chip, recent join codes, a seat record held
+  /// across a process kill (H3), and the last finished game's verify link
+  /// (C-322 rule 3) from [SessionMemory]. An empty or unreadable store
+  /// leaves the localised name default, the four-seat disclosure, no recent
+  /// chips, no rejoin button and no home-last-game entry as they are. The
+  /// load itself returns empty on failure, so nothing is caught here.
+  /// Completing the load marks session memory as loaded and drains any
+  /// pending room link (order 296). A stored name fills the name field on
+  /// its own; the last-table chip still requires a seat count too.
   Future<void> _restoreSessionMemory() async {
     try {
       final SessionMemory memory = await SessionMemory.load();
@@ -411,16 +418,26 @@ class _HomeScreenState extends State<HomeScreen>
       final bool hasCodes = memory.recentCodes.isNotEmpty;
       final SeatRecord? seatRecord = memory.seatRecord;
       final LastGame? lastGame = memory.lastGame;
+      final String? storedName = memory.lastName;
+      final bool hasStoredName = storedName != null && storedName.isNotEmpty;
       if (lastGame != null) {
         // C-322 rule 2's dedupe is per screen life, not per load: seed it
         // here so a controller later observing this same already-recorded
         // game never overwrites its true finishedAt with a later one.
         _lastGameWrittenId = lastGame.gameId;
       }
-      if (hasTable || hasCodes || seatRecord != null || lastGame != null) {
+      if (hasTable ||
+          hasCodes ||
+          seatRecord != null ||
+          lastGame != null ||
+          hasStoredName) {
         setState(() {
           if (hasCodes) {
             _recentCodes = List<String>.from(memory.recentCodes);
+          }
+          if (storedName != null && storedName.isNotEmpty) {
+            _hasStoredName = true;
+            _nameController.text = storedName;
           }
           if (hasTable) {
             final String name = memory.lastName!;
@@ -747,6 +764,7 @@ class _HomeScreenState extends State<HomeScreen>
       );
       if (mounted) {
         setState(() {
+          _hasStoredName = true;
           _hasLastTable = true;
           _lastTableName = name;
           _lastTableSeats = players;
@@ -829,9 +847,10 @@ class _HomeScreenState extends State<HomeScreen>
         return;
       }
       recordedJoin = true;
-      unawaited(SessionMemory.recordSuccessfulJoin(normalized));
+      unawaited(SessionMemory.recordSuccessfulJoin(normalized, name: name));
       if (mounted) {
         setState(() {
+          _hasStoredName = true;
           _recentCodes = SessionMemory.prependRecentCode(
             _recentCodes,
             normalized,
