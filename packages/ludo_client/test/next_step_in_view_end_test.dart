@@ -1,10 +1,14 @@
 // C-398. End card, won and lost: Play again stays inside the safe area on
 // the probe's phone shapes. Visibility is the keyed widget's global rect,
 // wholly inside [padding.top, height - padding.bottom] and [0, width],
-// read with the scroll at its start. The mount, the shapes, the insets,
-// the text scale and the font load are copied from the order 393 probe
-// (probe_shapes_end_test.dart), not imported. One mount per case.
+// read with the scroll at its start. The shapes, the insets, the text
+// scale and the font load are copied from the order 393 probe
+// (probe_shapes_end_test.dart), not imported. The finished game is the
+// real GameScreen over a RoomController and FakeTransport, copied by hand
+// from test/end_board_view_test.dart: connect on PLAYING with turn null,
+// one mount, then one game_over frame. One mount per case.
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -15,9 +19,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/end_card.dart';
-import 'package:ludo_client/src/game_stats.dart';
-import 'package:ludo_client/src/theme.dart'
-    show LudoColors, buildAppTheme, kSpace4;
+import 'package:ludo_client/src/feedback.dart';
+import 'package:ludo_client/src/game_screen.dart';
+import 'package:ludo_client/src/net/room_controller.dart';
+import 'package:ludo_client/src/net/transport.dart';
+import 'package:ludo_client/src/theme.dart' show buildAppTheme;
+
+import 'net/fake_transport.dart';
 
 const String _mySeatName = 'Karim12345';
 const String _otherSeatName = 'Samantha12';
@@ -33,15 +41,6 @@ const double _tapFloor = 48;
 const Key _rematchKey = Key('end-card-rematch');
 const Key _verifyKey = Key('game-screen-verify-button');
 const Key _newTableKey = Key('game-screen-new-room-button');
-
-const GameStats _completeStats = GameStats(
-  rolls: 50,
-  sixes: 32,
-  capturesMade: 1,
-  timesCaptured: 0,
-  tokensHome: 4,
-  complete: true,
-);
 
 class _Shape {
   const _Shape({
@@ -122,8 +121,112 @@ enum _Card { win, lose }
 
 String _cardState(_Card card) => card == _Card.win ? 'end-win' : 'end-lose';
 
-Widget _harness({required Locale locale, required _Card card}) {
-  final int winnerSeat = card == _Card.win ? 0 : 1;
+const String _testUrl = 'wss://next-step-end.invalid/ws';
+
+int _serverIdSeq = 0;
+String _nextServerId() {
+  _serverIdSeq += 1;
+  return 'next-step-end-id-${_serverIdSeq.toString().padLeft(6, '0')}';
+}
+
+Map<String, Object?> _decode(String text) =>
+    jsonDecode(text) as Map<String, Object?>;
+
+String _idOf(String sentText) => _decode(sentText)['id']! as String;
+
+String _frame({
+  required String type,
+  String? re,
+  Map<String, Object?> data = const <String, Object?>{},
+  String? id,
+}) => jsonEncode(<String, Object?>{
+  'v': 1,
+  't': type,
+  'id': id ?? _nextServerId(),
+  're': ?re,
+  'd': data,
+});
+
+Map<String, Object?> _seatJson(int seat, {required String name}) =>
+    <String, Object?>{
+      'seat': seat,
+      'name': name,
+      'connected': true,
+      'tokens': const <int>[-1, -1, -1, -1],
+      'client_seed': null,
+      'seed_origin': null,
+    };
+
+Map<String, Object?> _playingRoomJson() => <String, Object?>{
+  'code': 'E8RDVW',
+  'state': 'PLAYING',
+  'host_seat': 0,
+  'players': 2,
+  'rules': <String, Object?>{
+    'blocks': true,
+    'capture_bonus': true,
+    'turn_seconds': 45,
+  },
+  'chain_commit': 'a' * 64,
+  'chain_index': 0,
+  'game_id': null,
+  'client_seeds': null,
+  'seats': <Map<String, Object?>>[
+    _seatJson(0, name: _mySeatName),
+    _seatJson(1, name: _otherSeatName),
+  ],
+  'turn': null,
+  'winner': null,
+  'seq': 1,
+};
+
+class _Connector {
+  final List<FakeTransport> _queue = <FakeTransport>[];
+
+  void enqueue(FakeTransport transport) => _queue.add(transport);
+
+  Future<WireTransport> call(Uri url) async {
+    if (_queue.isEmpty) {
+      throw StateError(
+        '_Connector: connect() has no transport queued for $url',
+      );
+    }
+    return _queue.removeAt(0);
+  }
+}
+
+/// Connects a fresh controller to a two-seat PLAYING room, local seat 0,
+/// turn null. Copied by hand from test/end_board_view_test.dart's own
+/// `_connectTo`.
+Future<(RoomController, FakeTransport)> _connectTo(WidgetTester tester) async {
+  final _Connector connector = _Connector();
+  final FakeTransport transport = FakeTransport();
+  connector.enqueue(transport);
+  final RoomController controller = RoomController(
+    serverUrl: Uri.parse(_testUrl),
+    connect: connector.call,
+  );
+  addTearDown(controller.dispose);
+
+  final Future<void> future = controller.createRoom(
+    name: _mySeatName,
+    players: 2,
+  );
+  await tester.runAsync(() => pumpEventQueue());
+  await tester.pump();
+  final String id = _idOf(transport.sentRaw.last);
+  transport.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: <String, Object?>{'seat': 0, 'seat_token': 'tok-0'},
+    ),
+  );
+  transport.pushText(_frame(type: 'room', re: id, data: _playingRoomJson()));
+  await future;
+  return (controller, transport);
+}
+
+Widget _app({required Locale locale, required Widget home}) {
   return MaterialApp(
     debugShowCheckedModeBanner: false,
     theme: buildAppTheme(),
@@ -135,23 +238,57 @@ Widget _harness({required Locale locale, required _Card card}) {
       GlobalWidgetsLocalizations.delegate,
       GlobalCupertinoLocalizations.delegate,
     ],
-    home: Scaffold(
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(kSpace4),
-        child: EndCard(
-          mySeat: 0,
-          winnerSeat: winnerSeat,
-          winnerName: winnerSeat == 0 ? _mySeatName : _otherSeatName,
-          seatColors: LudoColors.seats,
-          stats: _completeStats,
-          verifyUrl: 'https://end-card-large-text.invalid/verify',
-          onVerify: () {},
-          onNewTable: () {},
-          onRematch: () {},
-        ),
+    home: home,
+  );
+}
+
+/// Mounts GameScreen over the connected controller. One mount per case.
+Future<(RoomController, FakeTransport)> _connectAndMount(
+  WidgetTester tester, {
+  required Locale locale,
+}) async {
+  final (RoomController controller, FakeTransport transport) = await _connectTo(
+    tester,
+  );
+  final FeedbackSettings settings = FeedbackSettings.forTest();
+  addTearDown(settings.dispose);
+  await tester.pumpWidget(
+    _app(
+      locale: locale,
+      home: FeedbackScope(
+        settings: settings,
+        service: const NoopFeedbackService(),
+        child: GameScreen(controller: controller),
       ),
     ),
   );
+  await tester.pump();
+  return (controller, transport);
+}
+
+/// Pushes one `game_over` frame and flushes it with the two-pump idiom
+/// test/end_board_view_test.dart uses, then runs out the win card's 1200ms
+/// celebration in bounded steps. Not pumpAndSettle.
+Future<void> _showFinished(
+  WidgetTester tester,
+  FakeTransport transport, {
+  required int winner,
+}) async {
+  transport.pushText(
+    _frame(
+      type: 'game_over',
+      data: <String, Object?>{
+        'winner': winner,
+        'verify_url': 'https://next-step-end.invalid/verify/$winner',
+        'seq': 2,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  for (int i = 0; i < 6; i++) {
+    await tester.pump(const Duration(milliseconds: 200));
+  }
 }
 
 Future<void> _surface(
@@ -206,14 +343,6 @@ Future<void> _loadAppFonts() async {
     notoSansArabic.addFont(rootBundle.load(asset));
   }
   await notoSansArabic.load();
-}
-
-Future<void> _pumpCard(WidgetTester tester, Widget harness) async {
-  await tester.pumpWidget(harness);
-  await tester.pump();
-  // _Celebration's burst is 1200ms. One bounded pump runs it out.
-  await tester.pump(const Duration(milliseconds: 1200));
-  await tester.pump();
 }
 
 String _scaleLabel(double scale) => scale.toStringAsFixed(1);
@@ -371,13 +500,33 @@ Future<void> _runCard(
   final String where = _where(shape, scale, locale);
   final String state = _cardState(card);
   final bool checkVis = shape.checksVisibility;
-  await _pumpCard(tester, _harness(locale: locale, card: card));
+  final (RoomController controller, FakeTransport transport) =
+      await _connectAndMount(tester, locale: locale);
+  expect(
+    controller.phase,
+    RoomPhase.connected,
+    reason:
+        'decision 2, $where: GameScreen is on the connected room before '
+        'game_over. Catches a connect the screen ignores, so the finished '
+        'card never appears.',
+  );
+  await _showFinished(tester, transport, winner: card == _Card.win ? 0 : 1);
+  expect(
+    find.byType(GameScreen),
+    findsOneWidget,
+    reason:
+        'decision 2, $where: the finished game is GameScreen. Catches a '
+        'harness that mounts EndCard inside its own scroll view, so '
+        'docking the action area in the game screen cannot put '
+        'end-card-rematch on screen.',
+  );
   expect(
     find.byType(EndCard),
     findsOneWidget,
     reason:
-        'decision 2, $where: EndCard is the mounted card. Catches a mount '
-        'that painted a different screen.',
+        'decision 2, $where: EndCard is the card GameScreen shows once '
+        'the game is over. Catches a finished room that stays on the '
+        'playing body.',
   );
   expect(
     find.byKey(

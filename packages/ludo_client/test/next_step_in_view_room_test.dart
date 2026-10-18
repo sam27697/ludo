@@ -4,6 +4,10 @@
 // read with the scroll at its start. The mount, the shapes, the insets,
 // the text scale and the font load are copied from the order 393 probe
 // (probe_shapes_room_test.dart), not imported. One mount per case.
+//
+// The s1 scale 2.0 focus case is the exception. It focuses room-code-field
+// with showKeyboard, then sets a 260 dp bottom viewInset and reads
+// join-room-button against height - max(padding.bottom, that inset).
 
 import 'dart:convert';
 import 'dart:io';
@@ -331,15 +335,19 @@ String _box(Rect rect) =>
     '${rect.left.toStringAsFixed(1)},${rect.top.toStringAsFixed(1)} '
     '${rect.right.toStringAsFixed(1)},${rect.bottom.toStringAsFixed(1)}';
 
-String _safe(_Shape shape) =>
-    '0,${shape.topInset.toStringAsFixed(0)} '
-    '${shape.width.toStringAsFixed(0)},${shape.safeBottom.toStringAsFixed(0)}';
+double _bottomEdge(_Shape shape, double? bottomInset) =>
+    shape.height - (bottomInset ?? shape.bottomInset);
 
-bool _whollyInside(Rect rect, _Shape shape) {
+String _safe(_Shape shape, {double? bottomInset}) =>
+    '0,${shape.topInset.toStringAsFixed(0)} '
+    '${shape.width.toStringAsFixed(0)},'
+    '${_bottomEdge(shape, bottomInset).toStringAsFixed(0)}';
+
+bool _whollyInside(Rect rect, _Shape shape, {double? bottomInset}) {
   return rect.left >= -_fitSlop &&
       rect.top >= shape.topInset - _fitSlop &&
       rect.right <= shape.width + _fitSlop &&
-      rect.bottom <= shape.safeBottom + _fitSlop;
+      rect.bottom <= _bottomEdge(shape, bottomInset) + _fitSlop;
 }
 
 String? _scrollNotAtStart(WidgetTester tester) {
@@ -376,6 +384,7 @@ String? _visibilityProblem(
   required Key key,
   required _Shape shape,
   required String why,
+  double? bottomInset,
 }) {
   final Finder finder = find.byKey(key);
   final int count = finder.evaluate().length;
@@ -384,10 +393,11 @@ String? _visibilityProblem(
     return '$why $name was found $count times, not once, so it is not on screen.';
   }
   final Rect rect = tester.getRect(finder);
-  if (_whollyInside(rect, shape)) {
+  if (_whollyInside(rect, shape, bottomInset: bottomInset)) {
     return null;
   }
-  return '$why $name rect ${_box(rect)} is outside the safe rect ${_safe(shape)}.';
+  return '$why $name rect ${_box(rect)} is outside the safe rect '
+      '${_safe(shape, bottomInset: bottomInset)}.';
 }
 
 String? _hitProblem(
@@ -797,44 +807,57 @@ Future<void> _runHomeFocus(
 }) async {
   final String where = _where(shape, scale, locale);
   await _mountHome(tester, locale: locale, where: where);
-  final Finder field = find.byKey(_codeKey);
-  final Rect fieldRect = tester.getRect(field);
-  final bool centerOnScreen =
-      fieldRect.center.dx >= 0 &&
-      fieldRect.center.dy >= 0 &&
-      fieldRect.center.dx <= shape.width &&
-      fieldRect.center.dy <= shape.height;
-  if (centerOnScreen) {
-    await tester.tap(field);
-  } else {
-    // On s1 at 2.0 the field center is below the root, so tap() does not
-    // hit it. Focus the field that tap would have focused.
-    tester
-        .state<EditableTextState>(
-          find.descendant(of: field, matching: find.byType(EditableText)),
-        )
-        .requestKeyboard();
-  }
-  // The room-link scroll runs for 300ms, and the first pump after a
-  // post-frame ensureVisible starts at elapsed zero. Six 100ms pumps
-  // cover that animation. Bounded on purpose: not pumpAndSettle.
-  await tester.pump();
-  for (int i = 0; i < 6; i++) {
-    await tester.pump(const Duration(milliseconds: 100));
-  }
-  final List<String> visProblems = <String>[];
-  final String? problem = _visibilityProblem(
-    tester,
-    key: _joinKey,
-    shape: shape,
-    why:
-        'decision 3, $where: focusing room-code-field must bring '
-        'join-room-button wholly inside the safe area with it, the way a '
-        'room link already scrolls that button on screen. Catches a focus '
-        'handler that leaves Join below the fold at text scale 2.0.',
+  // showKeyboard focuses the field even when its center sits below the
+  // root. A tap at that offset misses, so the field never takes focus.
+  await tester.showKeyboard(find.byKey(const Key('room-code-field')));
+  final EditableTextState fieldState = tester.state<EditableTextState>(
+    find.descendant(
+      of: find.byKey(_codeKey),
+      matching: find.byType(EditableText),
+    ),
   );
-  if (problem != null) {
-    visProblems.add(problem);
+  expect(
+    fieldState.widget.focusNode.hasFocus,
+    isTrue,
+    reason:
+        'decision 3, $where: room-code-field takes focus from '
+        'showKeyboard. Catches a focus request that never lands, so '
+        'join-room-button would be checked while the field is still '
+        'unfocused.',
+  );
+  // 260 logical dp, in physical pixels like the other view insets. The
+  // phone's keyboard. The join button has to clear that, not only the
+  // nav-bar padding.
+  const double keyboardInset = 260;
+  final double bottomInset = shape.bottomInset > keyboardInset
+      ? shape.bottomInset
+      : keyboardInset;
+  tester.view.viewInsets = FakeViewPadding(bottom: keyboardInset * shape.dpr);
+  final List<String> visProblems = <String>[];
+  try {
+    // The room-link scroll runs for 300ms. Six 100ms pumps cover it.
+    // Bounded on purpose: not pumpAndSettle.
+    await tester.pump();
+    for (int i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    final String? problem = _visibilityProblem(
+      tester,
+      key: _joinKey,
+      shape: shape,
+      bottomInset: bottomInset,
+      why:
+          'decision 3, $where: after room-code-field takes focus, a 260 dp '
+          'keyboard inset must leave join-room-button wholly inside '
+          '[padding.top, height - max(padding.bottom, 260)] and [0, width]. '
+          'Catches a code field that takes focus without bringing Join up '
+          'with it, so Join sits under the keyboard at text scale 2.0.',
+    );
+    if (problem != null) {
+      visProblems.add(problem);
+    }
+  } finally {
+    tester.view.viewInsets = FakeViewPadding();
   }
   final List<String> errProblems = <String>[];
   if (errors.isNotEmpty) {
@@ -858,10 +881,11 @@ Future<void> _runHomeFocus(
     visProblems,
     isEmpty,
     reason:
-        'decision 3, $where: after room-code-field takes focus and six '
-        'bounded 100ms frames, join-room-button is wholly inside the safe '
-        'area. Catches a code field that takes focus without bringing '
-        'Join with it. ${visProblems.join(' ')}',
+        'decision 3, $where: after showKeyboard on room-code-field, a '
+        '260 dp bottom viewInset and six bounded 100ms frames, '
+        'join-room-button lies inside [padding.top, height - '
+        'max(padding.bottom, 260)]. Catches a code field that takes '
+        'focus without bringing Join with it. ${visProblems.join(' ')}',
   );
   expect(
     errProblems,
