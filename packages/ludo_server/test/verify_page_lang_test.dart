@@ -529,9 +529,20 @@ void main() {
         harness.uri('/v/$_foundId', query: <String, String>{'lang': 'ar'}),
       );
       final String body = await _bodyOf(response);
+      // Decision 2 wraps values such as the UTC time in inline ltr spans,
+      // which split a sentence's raw HTML; compare the sentences on the
+      // text with those inline tags taken out, and check the span itself.
+      final String text = body.replaceAll(RegExp(r'</?span[^>]*>'), '');
+      expect(
+        RegExp(r'<span dir="ltr">[0-9T:.\-]+Z UTC</span>').hasMatch(body),
+        isTrue,
+        reason: 'decision 2: the finish time and "UTC" must sit in one '
+            'dir="ltr" span on the ar page, or the bidi algorithm puts the '
+            'clock before the date; body: $body',
+      );
 
       for (final String arabic in _arabicOnFoundPage(_foundId)) {
-        expect(body.contains(arabic), isTrue,
+        expect(text.contains(arabic), isTrue,
             reason: 'decision 2: expected the Arabic text "$arabic" '
                 '(C-396, "The Arabic text" table) somewhere on the ar '
                 'page; a mutation that drops or mistranslates one row of '
