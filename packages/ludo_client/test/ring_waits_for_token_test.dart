@@ -23,9 +23,13 @@
 // restating it, but to confirm which specific instants are unambiguously
 // "mid-travel" by the override/truth mismatch the contract itself defines,
 // since C-408 does not touch that bookkeeping and this file must not
-// invent a disagreement with it. Case 5's own comment says exactly what
-// that printing found and the one instant this file deliberately does not
-// assert about, and why.
+// invent a disagreement with it. That printing is what turned into
+// decision 6 (added after this file's first pass): the disc must never
+// draw ahead of the square it is travelling through, so a hurried queue
+// of the same token holds the first leg's landing square until the second
+// leg's own first step, rather than flashing the final truth early and
+// then stepping backward. Case 10 pins that directly; case 5 is tightened
+// to assume it.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -175,6 +179,50 @@ void _expectNoGlow(
         '$because: board-automove-glow-$seat-$token must be absent from '
         'the tree (seed: seat=$seat, token=$token)',
   );
+}
+
+/// Reads token-[seat]-[tokenIndex]'s current drawn centre and reports
+/// which of [candidates] (a single-seat, single-occupant fan position
+/// each) it matches within 0.5 logical pixels. Fails loudly, naming the
+/// actual centre and the full candidate list, if the drawn position does
+/// not land on exactly one of them -- a case 10 sample that cannot be
+/// mapped to a known square is itself a finding, not something to guess
+/// past.
+int _progressFromCenter(
+  WidgetTester tester, {
+  required int seat,
+  required int tokenIndex,
+  required List<int> candidates,
+  int? mySeat,
+  required String because,
+}) {
+  final Offset actual =
+      tester.getCenter(find.byKey(Key('token-$seat-$tokenIndex'))) -
+      _boardOrigin(tester);
+  int? matched;
+  double bestDistance = double.infinity;
+  for (final int progress in candidates) {
+    final Offset expected = _expectedFanCenter(
+      seat: seat,
+      tokenIndex: tokenIndex,
+      progress: progress,
+      mySeat: mySeat,
+    );
+    final double distance = (actual - expected).distance;
+    if (distance <= 0.5 && distance < bestDistance) {
+      matched = progress;
+      bestDistance = distance;
+    }
+  }
+  expect(
+    matched,
+    isNotNull,
+    reason:
+        '$because: token-$seat-$tokenIndex\'s drawn centre $actual does '
+        'not match any of the candidate progresses $candidates within '
+        '0.5px (seed: seat=$seat, tokenIndex=$tokenIndex)',
+  );
+  return matched!;
 }
 
 /// Holds one [LudoBoard]'s `tokens` across rebuilds so a case can call
@@ -501,23 +549,15 @@ void main() {
   group('Case 5 (decision 2 and 5, hurried queue): no ring until the whole '
       'queued travel ends', () {
     // A diagnostic print pass against this exact fixture (not committed)
-    // showed the drawn centre at each boundary below. Between the moment
-    // the first leg's last step timer fires and the moment the second
-    // leg's own first step timer fires, board.dart's `_onMoveArrived`
-    // clears the travel override for this (seat, token) key -- unwrapped
-    // in any setState of its own -- while the second leg is still only
-    // sitting in the queue; the very next frame therefore briefly reads
-    // the disc's drawn position as truth's final value (progress 7)
-    // before the second leg has played a single one of its own steps,
-    // then the following step pulls it back to progress 5. That one
-    // frame is a genuine mismatch between this contract's plain-English
-    // "no ring until the second travel ends" and the letter of decision 2
-    // ("the ring appears ... the frame the disc reaches its truth"), both
-    // of which are satisfied by an implementation that gates strictly on
-    // override-absence -- decision 2 would say the ring is allowed to
-    // show for that one frame, the summary says it should not. This file
-    // does not assert either way about that one frame; every other
-    // boundary below is unambiguous and is asserted.
+    // first showed the drawn centre jumping to the final truth (progress
+    // 7) for one frame between the two legs, then stepping backward to
+    // progress 5 -- the exact bug decision 6 was added to name and
+    // forbid. With decision 6 in force (the disc holds the first leg's
+    // landing square, progress 4, until the second leg's own first step),
+    // that frame reads 4, not 7, so the ring rule is unambiguous
+    // throughout: no ring at any sampled frame until the disc truly
+    // lands on 7. Case 10 pins the position side of decision 6 directly;
+    // this case only pins the ring.
     testWidgets(
       'token 0 of seat 0: progress 2 -> 4 (first leg), then 4 -> 7 queued '
       'before the first leg finishes: no ring until the combined travel '
@@ -580,9 +620,20 @@ void main() {
               'which has not yet landed',
         );
 
-        // The first leg's last step lands here; this is the one frame
-        // this file does not assert about (see the group comment above).
+        // The first leg's last step lands here. Decision 6 says the disc
+        // now holds progress 4 (not truth's 7) until the second leg's own
+        // first step, so this frame is just as unambiguously mid-travel
+        // as every other one in this test.
         await tester.pump(kTokenStepDuration);
+        _expectNoRing(
+          tester,
+          seat: 0,
+          token: 0,
+          because:
+              'first leg has landed on progress 4; decision 6 holds the '
+              'disc there until the second leg\'s own first step, truth '
+              'is 7',
+        );
 
         await tester.pump(kTokenStepDuration);
         _expectNoRing(
@@ -1107,5 +1158,149 @@ void main() {
         );
       },
     );
+  });
+
+  group('Case 10 (decision 6): the disc never draws ahead of the square it is '
+      'travelling through', () {
+    testWidgets('token 0 of seat 0: progress 2 -> 4 (first leg), then 4 -> 7 '
+        'queued before the first leg finishes: sampled every 16ms, the '
+        'drawn progress never decreases, never exceeds the step '
+        'currently playing, and holds 4 between the legs until the '
+        'second leg\'s own first step', (tester) async {
+      final GlobalKey<_HostState> hostKey = GlobalKey<_HostState>();
+      final Map<int, List<int>> before = <int, List<int>>{
+        0: <int>[2, -1, -1, -1],
+        1: <int>[-1, -1, -1, -1],
+        2: <int>[-1, -1, -1, -1],
+        3: <int>[-1, -1, -1, -1],
+      };
+      await tester.pumpWidget(
+        _harness(
+          hostKey: hostKey,
+          tokens: before,
+          mySeat: 0,
+          legal: const <int>{0},
+        ),
+      );
+      await tester.pump();
+
+      const Duration sample = Duration(milliseconds: 16);
+      const List<int> candidates = <int>[2, 3, 4, 5, 6, 7];
+
+      int? previous;
+      int? firstFourSeenAt;
+      int? firstFiveSeenAt;
+      var tick = 0;
+      final List<int> history = <int>[];
+
+      void sampleOnce(String because) {
+        final int progress = _progressFromCenter(
+          tester,
+          seat: 0,
+          tokenIndex: 0,
+          candidates: candidates,
+          mySeat: 0,
+          because: because,
+        );
+        history.add(progress);
+        if (previous != null) {
+          final int delta = progress - previous!;
+          expect(
+            delta == 0 || delta == 1,
+            isTrue,
+            reason:
+                '$because: drawn progress moved from $previous to '
+                '$progress (delta $delta); decision 6 forbids a '
+                'decrease and forbids drawing ahead of the square '
+                'currently being travelled through (history so far: '
+                '$history)',
+          );
+        }
+        if (progress == 4 && firstFourSeenAt == null) {
+          firstFourSeenAt = tick;
+        }
+        if (progress == 5 && firstFiveSeenAt == null) {
+          firstFiveSeenAt = tick;
+        }
+        previous = progress;
+      }
+
+      hostKey.currentState!.setTokens(<int, List<int>>{
+        0: <int>[4, -1, -1, -1],
+        1: <int>[-1, -1, -1, -1],
+        2: <int>[-1, -1, -1, -1],
+        3: <int>[-1, -1, -1, -1],
+      });
+      await tester.pump();
+      sampleOnce('first leg (2 -> 4) just started, before its first step');
+
+      // The first leg's first step is 140ms; 9 ticks of 16ms (144ms)
+      // comfortably crosses that boundary, sampling every frame.
+      for (var i = 0; i < 9; i++) {
+        await tester.pump(sample);
+        tick++;
+        sampleOnce('first leg, first step, tick $tick (${tick * 16}ms in)');
+      }
+
+      // The second leg is queued while the first leg's last step is
+      // still pending -- "before the first finishes", the same
+      // moment case 5 uses. pump() with no duration advances the
+      // fake clock by zero, so none of the pending step's 140ms is
+      // consumed by this rebuild.
+      hostKey.currentState!.setTokens(<int, List<int>>{
+        0: <int>[7, -1, -1, -1],
+        1: <int>[-1, -1, -1, -1],
+        2: <int>[-1, -1, -1, -1],
+        3: <int>[-1, -1, -1, -1],
+      });
+      await tester.pump();
+      sampleOnce('second leg (4 -> 7) just queued, first leg not landed');
+
+      // Four more 140ms steps remain (the first leg's last step,
+      // then the second leg's three): 560ms total. 36 ticks of 16ms
+      // (576ms) covers that with margin, sampled every frame.
+      for (var i = 0; i < 36; i++) {
+        await tester.pump(sample);
+        tick++;
+        sampleOnce(
+          'remainder of the queued travel, tick $tick (${tick * 16}ms '
+          'since the second leg was queued)',
+        );
+      }
+
+      expect(
+        history.last,
+        7,
+        reason:
+            'the combined queued travel must truly land on progress '
+            '7; observed history: $history',
+      );
+      expect(
+        firstFourSeenAt,
+        isNotNull,
+        reason:
+            'the disc must be observed drawn at progress 4 at some '
+            'point (the first leg\'s own landing square); observed '
+            'history: $history',
+      );
+      expect(
+        firstFiveSeenAt,
+        isNotNull,
+        reason:
+            'the disc must be observed drawn at progress 5 at some '
+            'point (the second leg\'s first step); observed history: '
+            '$history',
+      );
+      expect(
+        firstFiveSeenAt! > firstFourSeenAt!,
+        isTrue,
+        reason:
+            'progress 5 must be seen strictly after progress 4 '
+            '(decision 6\'s hold must span at least one sampled '
+            'frame, not a coincidence of sampling); '
+            'firstFourSeenAt=$firstFourSeenAt, '
+            'firstFiveSeenAt=$firstFiveSeenAt, history: $history',
+      );
+    });
   });
 }
