@@ -112,6 +112,24 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// so a second tap on [lobby-rematch-accept] sends nothing.
   bool _rematchInFlight = false;
 
+  /// True while the lobby scroll still has content below the viewport, so
+  /// the docked action can show a soft top shadow (C-398). False when the
+  /// column fits or the scroll is at its end.
+  bool _contentUnderAction = false;
+
+  void _noteContentUnderAction(ScrollMetrics metrics) {
+    final bool under = metrics.maxScrollExtent > metrics.pixels + 0.5;
+    if (under == _contentUnderAction) {
+      return;
+    }
+    _contentUnderAction = under;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
   StreamSubscription<Frame>? _framesSubscription;
 
   @override
@@ -577,200 +595,277 @@ class _LobbyScreenState extends State<LobbyScreen> {
         controller.seat != null &&
         rematch.ready.contains(controller.seat);
     final TextTheme textTheme = Theme.of(context).textTheme;
-    final double viewHeight = MediaQuery.sizeOf(context).height;
-    // Same compact rule as home: widget-test surfaces are 800x600; real
-    // phones are taller and get the larger shoutable die.
-    final bool compact = viewHeight < 640;
+    // C-398: compact is the height inside the safe area, not the raw screen
+    // height. A 640-tall phone with a status bar and a nav bar is short
+    // once those insets are subtracted. The threshold stays 640.
+    final MediaQueryData media = MediaQuery.of(context);
+    final double safeHeight =
+        media.size.height - media.padding.top - media.padding.bottom;
+    final bool compact = safeHeight < 640;
     final double dieSize = dieMarkSize(compact);
-    return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(
-        kSpace6,
-        // C-262 rule 5: the 48dp lobby-leave-button row above this scroll
-        // area already claims the height the old, shorter pip-strip row
-        // did not, so every optional compact gap below is trimmed to the
-        // smallest spacing unit to keep host, start and start-with-present
-        // inside 360x616 and 800x600 in both locales.
-        compact ? kSpace1 : kSpace6,
-        kSpace6,
-        compact ? kSpace4 : kSpace6,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            loc.lobbyRoomCodeLabel,
-            textAlign: TextAlign.center,
-            style: textTheme.labelLarge?.copyWith(color: LudoColors.inkMuted),
-          ),
-          SizedBox(height: compact ? kSpace1 : kSpace3),
-          Center(
-            child: DieMark(
-              size: dieSize,
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  room.code,
-                  key: const Key('lobby-room-code'),
-                  textAlign: TextAlign.center,
-                  style: textTheme.headlineMedium?.copyWith(
-                    color: LudoColors.ink,
-                    fontWeight: FontWeight.w700,
-                    height: 1.0,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          SizedBox(height: compact ? kSpace1 : kSpace4),
-          ElevatedButton.icon(
-            key: const Key('lobby-share-button'),
-            style: ElevatedButton.styleFrom(
-              minimumSize: const Size.fromHeight(48),
-            ),
-            onPressed: () => _shareInvite(room, loc),
-            icon: const Icon(Icons.share),
-            label: Text(loc.lobbyShareButton),
-          ),
-          SizedBox(height: compact ? kSpace1 : kSpace3),
-          Row(
-            children: [
-              Expanded(
-                // C-340 rule 1-2: an outlined pill, quieter than the filled
-                // Invite friends button above it -- a visible border and a
-                // leading icon so the label reads as tappable (doctrine P3,
-                // P8), never a bare caption. Rule 6: two of these side by
-                // side at 360dp leaves little room for icon plus label, so
-                // the pill's own padding is trimmed (never the label's
-                // text) and the label sits in a FittedBox that shrinks
-                // before it would ever wrap or ellipsize.
-                child: OutlinedButton.icon(
-                  key: const Key('lobby-copy-link-button'),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(48, 48),
-                    padding: const EdgeInsetsDirectional.symmetric(
-                      horizontal: kSpace2,
-                      vertical: kSpace3,
-                    ),
-                  ),
-                  onPressed: () =>
-                      _copyToClipboard(kRoomLinkBase + room.code, loc),
-                  icon: const Icon(Icons.link, size: 18),
-                  label: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(loc.lobbyCopyLinkButton, maxLines: 1),
-                  ),
-                ),
-              ),
-              const SizedBox(width: kSpace3),
-              Expanded(
-                child: OutlinedButton.icon(
-                  key: const Key('lobby-copy-code-button'),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(48, 48),
-                    padding: const EdgeInsetsDirectional.symmetric(
-                      horizontal: kSpace2,
-                      vertical: kSpace3,
-                    ),
-                  ),
-                  onPressed: () => _copyToClipboard(room.code, loc),
-                  icon: const Icon(Icons.content_copy, size: 18),
-                  label: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(loc.lobbyCopyCodeButton, maxLines: 1),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: compact ? kSpace1 : kSpace6),
-          _seatGrid(loc, room, controller),
-          SizedBox(height: compact ? kSpace1 : kSpace3),
-          Wrap(
-            alignment: WrapAlignment.center,
-            spacing: kSpace2,
-            runSpacing: kSpace2,
-            children: [
-              _ruleChip(
-                chipKey: const Key('lobby-rule-capture-bonus-chip'),
-                icon: Icons.replay_rounded,
-                on: room.rules.captureBonus,
-                textKey: const Key('lobby-rule-capture-bonus'),
-                text: room.rules.captureBonus
-                    ? loc.lobbyRuleCaptureBonusOn
-                    : loc.lobbyRuleCaptureBonusOff,
-              ),
-            ],
-          ),
-          SizedBox(height: compact ? kSpace1 : kSpace2),
-          Text(
-            loc.houseRulesLine,
-            key: const Key('lobby-house-rules'),
-            textAlign: TextAlign.center,
-            style: textTheme.bodySmall?.copyWith(color: LudoColors.inkMuted),
-          ),
-          if (inRematchLobby && !amReadyForRematch) ...[
-            const SizedBox(height: kSpace4),
-            ElevatedButton(
-              key: const Key('lobby-rematch-accept'),
-              onPressed: _rematchInFlight ? null : () => _onRematchAccept(),
-              child: Text(loc.endRematch),
-            ),
-          ] else if (inRematchLobby && amReadyForRematch) ...[
-            const SizedBox(height: kSpace4),
-            Text(
-              loc.endRematchWaiting,
-              key: const Key('lobby-rematch-waiting'),
-              textAlign: TextAlign.center,
-            ),
-          ],
-          if (!inRematchLobby && !controller.isHost) ...[
-            const SizedBox(height: kSpace4),
-            Text(
-              roomFull
-                  ? loc.lobbyWaitingForHost
-                  : loc.lobbyWaitingForPlayers(room.seats.length, room.players),
-              key: const Key('lobby-waiting'),
-              textAlign: TextAlign.center,
-            ),
-          ],
-          if (!inRematchLobby && controller.isHost) ...[
-            // C-274 rules 1-2: a full room enables the start button; a room
-            // short of full shows the waiting line, with no disabled start
-            // button.
-            if (roomFull) ...[
-              SizedBox(height: compact ? kSpace1 : kSpace6),
-              ElevatedButton(
-                key: const Key('lobby-start-button'),
-                onPressed: controller.startGame,
-                child: Text(loc.lobbyStartButton, textAlign: TextAlign.center),
-              ),
-            ] else ...[
-              const SizedBox(height: kSpace4),
-              Text(
-                loc.lobbyWaitingForPlayers(room.seats.length, room.players),
-                key: const Key('lobby-waiting'),
-                textAlign: TextAlign.center,
-              ),
-              if (room.state == RoomState.lobby &&
-                  !roomFull &&
-                  room.seats.length >= 2) ...[
-                SizedBox(height: compact ? kSpace1 : kSpace2),
-                ElevatedButton(
-                  key: const Key('lobby-start-with-present-button'),
-                  onPressed: _startWithPresentInFlight
-                      ? null
-                      : () => _startWithPresent(room.seats.length),
-                  child: Text(
-                    loc.lobbyStartWithPresent(room.seats.length),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ],
-            ],
-          ],
-        ],
-      ),
+    final List<Widget> action = _lobbyAction(
+      loc,
+      controller,
+      room,
+      compact: compact,
+      roomFull: roomFull,
+      inRematchLobby: inRematchLobby,
+      amReadyForRematch: amReadyForRematch,
     );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: NotificationListener<ScrollMetricsNotification>(
+            onNotification: (ScrollMetricsNotification notification) {
+              _noteContentUnderAction(notification.metrics);
+              return false;
+            },
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                kSpace6,
+                // C-262 rule 5: the 48dp lobby-leave-button row above this scroll
+                // area already claims the height the old, shorter pip-strip row
+                // did not, so every optional compact gap below is trimmed to the
+                // smallest spacing unit. The start and waiting block is docked
+                // below the scroll (C-398), not kept in by these gaps.
+                compact ? kSpace1 : kSpace6,
+                kSpace6,
+                compact ? kSpace4 : kSpace6,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    loc.lobbyRoomCodeLabel,
+                    textAlign: TextAlign.center,
+                    style: textTheme.labelLarge?.copyWith(
+                      color: LudoColors.inkMuted,
+                    ),
+                  ),
+                  SizedBox(height: compact ? kSpace1 : kSpace3),
+                  Center(
+                    child: DieMark(
+                      size: dieSize,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          room.code,
+                          key: const Key('lobby-room-code'),
+                          textAlign: TextAlign.center,
+                          style: textTheme.headlineMedium?.copyWith(
+                            color: LudoColors.ink,
+                            fontWeight: FontWeight.w700,
+                            height: 1.0,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: compact ? kSpace1 : kSpace4),
+                  ElevatedButton.icon(
+                    key: const Key('lobby-share-button'),
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    onPressed: () => _shareInvite(room, loc),
+                    icon: const Icon(Icons.share),
+                    label: Text(loc.lobbyShareButton),
+                  ),
+                  SizedBox(height: compact ? kSpace1 : kSpace3),
+                  Row(
+                    children: [
+                      Expanded(
+                        // C-340 rule 1-2: an outlined pill, quieter than the filled
+                        // Invite friends button above it -- a visible border and a
+                        // leading icon so the label reads as tappable (doctrine P3,
+                        // P8), never a bare caption. Rule 6: two of these side by
+                        // side at 360dp leaves little room for icon plus label, so
+                        // the pill's own padding is trimmed (never the label's
+                        // text) and the label sits in a FittedBox that shrinks
+                        // before it would ever wrap or ellipsize.
+                        child: OutlinedButton.icon(
+                          key: const Key('lobby-copy-link-button'),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                            padding: const EdgeInsetsDirectional.symmetric(
+                              horizontal: kSpace2,
+                              vertical: kSpace3,
+                            ),
+                          ),
+                          onPressed: () =>
+                              _copyToClipboard(kRoomLinkBase + room.code, loc),
+                          icon: const Icon(Icons.link, size: 18),
+                          label: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(loc.lobbyCopyLinkButton, maxLines: 1),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: kSpace3),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          key: const Key('lobby-copy-code-button'),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                            padding: const EdgeInsetsDirectional.symmetric(
+                              horizontal: kSpace2,
+                              vertical: kSpace3,
+                            ),
+                          ),
+                          onPressed: () => _copyToClipboard(room.code, loc),
+                          icon: const Icon(Icons.content_copy, size: 18),
+                          label: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(loc.lobbyCopyCodeButton, maxLines: 1),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: compact ? kSpace1 : kSpace6),
+                  _seatGrid(loc, room, controller),
+                  SizedBox(height: compact ? kSpace1 : kSpace3),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: kSpace2,
+                    runSpacing: kSpace2,
+                    children: [
+                      _ruleChip(
+                        chipKey: const Key('lobby-rule-capture-bonus-chip'),
+                        icon: Icons.replay_rounded,
+                        on: room.rules.captureBonus,
+                        textKey: const Key('lobby-rule-capture-bonus'),
+                        text: room.rules.captureBonus
+                            ? loc.lobbyRuleCaptureBonusOn
+                            : loc.lobbyRuleCaptureBonusOff,
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: compact ? kSpace1 : kSpace2),
+                  Text(
+                    loc.houseRulesLine,
+                    key: const Key('lobby-house-rules'),
+                    textAlign: TextAlign.center,
+                    style: textTheme.bodySmall?.copyWith(
+                      color: LudoColors.inkMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (action.isNotEmpty)
+          DecoratedBox(
+            decoration: BoxDecoration(
+              boxShadow: _contentUnderAction
+                  ? <BoxShadow>[
+                      BoxShadow(
+                        color: LudoColors.ink.withValues(alpha: 0.12),
+                        blurRadius: 8,
+                        offset: const Offset(0, -2),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                kSpace6,
+                kSpace2,
+                kSpace6,
+                compact ? kSpace4 : kSpace6,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: action,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// C-398: the host's start, the short-room start, and the waiting line
+  /// (and the rematch accept that replaces them) sit outside the scroll.
+  List<Widget> _lobbyAction(
+    AppLocalizations loc,
+    RoomController controller,
+    RoomSnapshot room, {
+    required bool compact,
+    required bool roomFull,
+    required bool inRematchLobby,
+    required bool amReadyForRematch,
+  }) {
+    if (inRematchLobby && !amReadyForRematch) {
+      return <Widget>[
+        ElevatedButton(
+          key: const Key('lobby-rematch-accept'),
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+          ),
+          onPressed: _rematchInFlight ? null : () => _onRematchAccept(),
+          child: Text(loc.endRematch),
+        ),
+      ];
+    }
+    if (inRematchLobby && amReadyForRematch) {
+      return <Widget>[
+        Text(
+          loc.endRematchWaiting,
+          key: const Key('lobby-rematch-waiting'),
+          textAlign: TextAlign.center,
+        ),
+      ];
+    }
+    if (!controller.isHost) {
+      return <Widget>[
+        Text(
+          roomFull
+              ? loc.lobbyWaitingForHost
+              : loc.lobbyWaitingForPlayers(room.seats.length, room.players),
+          key: const Key('lobby-waiting'),
+          textAlign: TextAlign.center,
+        ),
+      ];
+    }
+    // C-274 rules 1-2: a full room enables the start button; a room short
+    // of full shows the waiting line, with no disabled start button.
+    if (roomFull) {
+      return <Widget>[
+        ElevatedButton(
+          key: const Key('lobby-start-button'),
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+          ),
+          onPressed: controller.startGame,
+          child: Text(loc.lobbyStartButton, textAlign: TextAlign.center),
+        ),
+      ];
+    }
+    return <Widget>[
+      Text(
+        loc.lobbyWaitingForPlayers(room.seats.length, room.players),
+        key: const Key('lobby-waiting'),
+        textAlign: TextAlign.center,
+      ),
+      if (room.state == RoomState.lobby && room.seats.length >= 2) ...[
+        SizedBox(height: compact ? kSpace1 : kSpace2),
+        ElevatedButton(
+          key: const Key('lobby-start-with-present-button'),
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+          ),
+          onPressed: _startWithPresentInFlight
+              ? null
+              : () => _startWithPresent(room.seats.length),
+          child: Text(
+            loc.lobbyStartWithPresent(room.seats.length),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ],
+    ];
   }
 
   /// C-254 rules 1-3, C-347 decisions 1-3: the occupied seats (in

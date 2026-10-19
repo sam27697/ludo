@@ -30,6 +30,35 @@ import 'verify_rolls_button.dart';
 /// style) is never pushed up to it (rule 3: scale 1.0 does not move).
 const double kEndCardTitleMinFontSize = 20;
 
+/// Hosts [EndCard] in the finished body. The action area sits at the bottom
+/// of the safe area, on the screen background, outside the scroll. The card
+/// (title, stats, fairness line), [trailing] (the board and the roll
+/// history) scroll above it.
+class EndCardFrame extends StatelessWidget {
+  const EndCardFrame({super.key, required this.card, required this.trailing});
+
+  final EndCard card;
+  final Widget trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return _EndCardFrameScope(trailing: trailing, child: card);
+  }
+}
+
+class _EndCardFrameScope extends InheritedWidget {
+  const _EndCardFrameScope({required this.trailing, required super.child});
+
+  final Widget trailing;
+
+  static _EndCardFrameScope? maybeOf(BuildContext context) {
+    return context.getInheritedWidgetOfExactType<_EndCardFrameScope>();
+  }
+
+  @override
+  bool updateShouldNotify(_EndCardFrameScope oldWidget) => false;
+}
+
 /// Built by `GameScreen._gameOverBody`; never constructed from a
 /// `RoomController` or a `RoomSnapshot` directly. [winnerSeat] and
 /// [winnerName] are already resolved against `room.seats` by the caller: a
@@ -157,28 +186,110 @@ class EndCard extends StatefulWidget {
 }
 
 class _EndCardState extends State<EndCard> {
+  /// True while the finished scroll still has content below the viewport,
+  /// so the dock can show a soft top shadow. False when the scroll is at
+  /// its end or the column fits, which keeps a short card from growing a
+  /// footer line (C-398).
+  bool _contentUnderAction = false;
+
+  void _noteContentUnderAction(ScrollMetrics metrics) {
+    final bool under = metrics.maxScrollExtent > metrics.pixels + 0.5;
+    if (under == _contentUnderAction) {
+      return;
+    }
+    _contentUnderAction = under;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
     final bool isWinner =
         widget.winnerSeat != null && widget.winnerSeat == widget.mySeat;
     final bool isLoser = widget.winnerSeat != null && !isWinner;
+    final Key panelKey = isWinner
+        ? const Key('end-card-win')
+        : isLoser
+        ? const Key('end-card-lose')
+        : const Key('end-card-ended');
+    final _EndCardFrameScope? frame = _EndCardFrameScope.maybeOf(context);
+    final Widget upper = isWinner
+        ? _winnerBody(context, loc, includeAction: frame == null)
+        : isLoser
+        ? _loserBody(context, loc, includeAction: frame == null)
+        : _endedBody(context, loc, includeAction: frame == null);
+    // Without a frame (a card mounted on its own, inside someone else's
+    // scroll) the action stays in the panel, where those callers measured it.
+    if (frame == null) {
+      return _panel(key: panelKey, child: upper);
+    }
+    // C-398 defect 1's lever: the dock holds Play again (or whichever
+    // control is the one next step -- the waiting line, the ask, the gone
+    // state) and nothing else. New table, when it is only ever the
+    // secondary control here, rides up into the scroll with the rest of
+    // the card instead of adding its own row to the dock. That keeps the
+    // dock down to one button's height, so on a short phone at 1.0 the
+    // fairness line and its verify button are still inside the scroll
+    // viewport rather than clipped off behind the dock (P7). When New
+    // table is the only action left (rematchGone, everyoneLeft) it is
+    // already the one next step and stays in the dock, primary, same as
+    // before.
+    final Widget? scrolledNewTable = widget.rematchGone || widget.everyoneLeft
+        ? null
+        : _newTableButton(loc, primary: false);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Expanded(
+          child: NotificationListener<ScrollMetricsNotification>(
+            onNotification: (ScrollMetricsNotification notification) {
+              _noteContentUnderAction(notification.metrics);
+              return false;
+            },
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(kSpace4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  _panel(key: panelKey, child: upper),
+                  if (scrolledNewTable != null) ...<Widget>[
+                    const SizedBox(height: kSpace3),
+                    scrolledNewTable,
+                  ],
+                  frame.trailing,
+                ],
+              ),
+            ),
+          ),
+        ),
+        _actionDock(_actionArea(context, loc, includeSecondaryNewTable: false)),
+      ],
+    );
+  }
 
-    if (isWinner) {
-      return _panel(
-        key: const Key('end-card-win'),
-        child: _winnerBody(context, loc),
-      );
-    }
-    if (isLoser) {
-      return _panel(
-        key: const Key('end-card-lose'),
-        child: _loserBody(context, loc),
-      );
-    }
-    return _panel(
-      key: const Key('end-card-ended'),
-      child: _endedBody(context, loc),
+  /// C-398: the action block on the screen's own background. A shadow only
+  /// while scrolled content is still cut off at this edge; no divider.
+  Widget _actionDock(Widget action) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        boxShadow: _contentUnderAction
+            ? <BoxShadow>[
+                BoxShadow(
+                  color: LudoColors.ink.withValues(alpha: 0.12),
+                  blurRadius: 8,
+                  offset: const Offset(0, -2),
+                ),
+              ]
+            : null,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(kSpace4, kSpace3, kSpace4, kSpace4),
+        child: action,
+      ),
     );
   }
 
@@ -206,7 +317,11 @@ class _EndCardState extends State<EndCard> {
   Color _seatColor(int seat) =>
       widget.seatColors[seat.clamp(0, widget.seatColors.length - 1)];
 
-  Widget _winnerBody(BuildContext context, AppLocalizations loc) {
+  Widget _winnerBody(
+    BuildContext context,
+    AppLocalizations loc, {
+    required bool includeAction,
+  }) {
     final Color seatColor = _seatColor(widget.mySeat ?? widget.winnerSeat!);
     final TextStyle? titleStyle = Theme.of(context).textTheme.headlineLarge
         ?.copyWith(color: LudoColors.gold);
@@ -236,13 +351,19 @@ class _EndCardState extends State<EndCard> {
         ],
         const SizedBox(height: kSpace4),
         _fairness(context, loc),
-        const SizedBox(height: kSpace3),
-        _actionArea(context, loc),
+        if (includeAction) ...<Widget>[
+          const SizedBox(height: kSpace3),
+          _actionArea(context, loc),
+        ],
       ],
     );
   }
 
-  Widget _loserBody(BuildContext context, AppLocalizations loc) {
+  Widget _loserBody(
+    BuildContext context,
+    AppLocalizations loc, {
+    required bool includeAction,
+  }) {
     final String name = widget.winnerName!;
     final Color seatColor = _seatColor(widget.winnerSeat!);
     final TextStyle? titleStyle = Theme.of(context).textTheme.headlineLarge;
@@ -291,13 +412,19 @@ class _EndCardState extends State<EndCard> {
         ],
         const SizedBox(height: kSpace4),
         _fairness(context, loc),
-        const SizedBox(height: kSpace3),
-        _actionArea(context, loc),
+        if (includeAction) ...<Widget>[
+          const SizedBox(height: kSpace3),
+          _actionArea(context, loc),
+        ],
       ],
     );
   }
 
-  Widget _endedBody(BuildContext context, AppLocalizations loc) {
+  Widget _endedBody(
+    BuildContext context,
+    AppLocalizations loc, {
+    required bool includeAction,
+  }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -310,8 +437,10 @@ class _EndCardState extends State<EndCard> {
         ),
         const SizedBox(height: kSpace4),
         _fairness(context, loc),
-        const SizedBox(height: kSpace3),
-        _actionArea(context, loc),
+        if (includeAction) ...<Widget>[
+          const SizedBox(height: kSpace3),
+          _actionArea(context, loc),
+        ],
       ],
     );
   }
@@ -475,8 +604,15 @@ class _EndCardState extends State<EndCard> {
   ///    offered fresh (rule 4's first bullet).
   ///
   /// New table (rule 3) stays present, secondary, in every branch except
-  /// the first.
-  Widget _actionArea(BuildContext context, AppLocalizations loc) {
+  /// the first. [includeSecondaryNewTable] is C-398 defect 1's lever: the
+  /// frame-hosted dock calls this with it false and renders New table in
+  /// the scroll instead (see `build`); every other caller -- a bare card
+  /// with no frame -- leaves it true and gets New table here, as before.
+  Widget _actionArea(
+    BuildContext context,
+    AppLocalizations loc, {
+    bool includeSecondaryNewTable = true,
+  }) {
     if (widget.rematchGone) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -533,8 +669,10 @@ class _EndCardState extends State<EndCard> {
           ),
           const SizedBox(height: kSpace3),
           _rematchButton(loc),
-          const SizedBox(height: kSpace2),
-          _newTableButton(loc, primary: false),
+          if (includeSecondaryNewTable) ...<Widget>[
+            const SizedBox(height: kSpace2),
+            _newTableButton(loc, primary: false),
+          ],
         ],
       );
     }
@@ -567,8 +705,10 @@ class _EndCardState extends State<EndCard> {
             const SizedBox(height: kSpace3),
             _startReadyButton(loc, rematch.ready.length),
           ],
-          const SizedBox(height: kSpace3),
-          _newTableButton(loc, primary: false),
+          if (includeSecondaryNewTable) ...<Widget>[
+            const SizedBox(height: kSpace3),
+            _newTableButton(loc, primary: false),
+          ],
         ],
       );
     }
@@ -585,8 +725,10 @@ class _EndCardState extends State<EndCard> {
               const SizedBox(height: kSpace3),
             ],
             _rematchButton(loc),
-            const SizedBox(height: kSpace2),
-            _newTableButton(loc, primary: false),
+            if (includeSecondaryNewTable) ...<Widget>[
+              const SizedBox(height: kSpace2),
+              _newTableButton(loc, primary: false),
+            ],
           ],
         );
       }
@@ -626,8 +768,10 @@ class _EndCardState extends State<EndCard> {
           ),
           const SizedBox(height: kSpace3),
           _rematchButton(loc),
-          const SizedBox(height: kSpace2),
-          _newTableButton(loc, primary: false),
+          if (includeSecondaryNewTable) ...<Widget>[
+            const SizedBox(height: kSpace2),
+            _newTableButton(loc, primary: false),
+          ],
         ],
       );
     }
@@ -641,8 +785,10 @@ class _EndCardState extends State<EndCard> {
           const SizedBox(height: kSpace3),
         ],
         _rematchButton(loc),
-        const SizedBox(height: kSpace2),
-        _newTableButton(loc, primary: false),
+        if (includeSecondaryNewTable) ...<Widget>[
+          const SizedBox(height: kSpace2),
+          _newTableButton(loc, primary: false),
+        ],
       ],
     );
   }
@@ -847,7 +993,7 @@ class _Celebration extends StatefulWidget {
 class _CelebrationState extends State<_Celebration>
     with SingleTickerProviderStateMixin {
   static const Duration _burstDuration = Duration(milliseconds: 1200);
-  static const double _diameter = 220;
+  static const double _diameter = 196;
 
   late final AnimationController _controller;
   bool _started = false;
