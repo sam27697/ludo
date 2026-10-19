@@ -2422,98 +2422,128 @@ class _GameScreenState extends State<GameScreen> {
         horizontal: kSpace2,
         vertical: kSpace2,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _playHeaderRow(loc, room, seat, turn, offlineTurnSeat, stale: stale),
-          SizedBox(height: _playColumnGap(context, kSpace2)),
-          Expanded(
-            child: LudoBoard(
-              key: const Key('game-screen-board'),
-              tokens: _tokensOf(room),
-              seatsInPlay: _seatsInPlayOf(room),
-              seatNames: _seatNamesOf(room),
-              youLabel: loc.seatYou,
-              turnSeat: turn?.seat,
-              mySeat: seat,
-              legal: legalTokens,
-              autoMoveToken: _isEndHeld ? null : _pendingAutoMoveToken,
-              onTokenStep: (int stepSeat, int token) =>
-                  _onBoardTokenStep(controller, stepSeat),
-              onMoveLanded: _onBoardMoveLanded,
-              onTravelReset: _onBoardTravelReset,
-              safeCue: _safeCue,
-              onTokenTap: (int index) {
-                if (_isEndHeld) {
-                  return;
-                }
-                _cancelPendingHoldForManualMove();
-                final int? k = turn?.k;
-                if (k == null) {
-                  return;
-                }
-                // K6: a server without the roll queue (`legalByFace` null)
-                // sends the byte-identical frame it always did.
-                _sendMove(
-                  index,
-                  k,
-                  face: turn!.legalByFace != null ? _selectedFace : null,
-                );
-              },
-              onIllegalTokenTap: (int index) {
-                FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-              },
-              overlay: _thrownDieOverlay(seat),
-            ),
-          ),
-          SizedBox(height: _playColumnGap(context, kSpace4)),
-          // K1: the tray sits on the die's own row, after it in reading
-          // order -- a plain Row under the ambient Directionality already
-          // mirrors that for Arabic, nothing here flips it by hand.
-          Center(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                _boardDieSlot(
-                  loc,
-                  turn,
-                  GameDie(
-                    face: _boardDieFace(dieFace),
-                    seatColor: dieSeatColor,
-                    enabled: rollEnabled,
-                    tumbling: _rollWaitK != null,
-                    noAnswer: _rollNoAnswer,
-                    noMove: _noMoveVisible,
-                    onTap: rollEnabled ? _onDieTap : null,
-                    onInvalidTap: () {
-                      FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-                    },
-                  ),
+      // C-402 decision 2: the column measures its own shortfall from
+      // whatever height it actually has -- this `LayoutBuilder` sits under
+      // `SafeArea` already, so both system insets are already out of
+      // `constraints` by the time `_resolvePlayColumnMetrics` sees it.
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final _PlayColumnMetrics metrics = _resolvePlayColumnMetrics(
+            context,
+            loc,
+            constraints.maxWidth,
+            constraints.maxHeight,
+          );
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _playHeaderRow(
+                loc,
+                room,
+                seat,
+                turn,
+                offlineTurnSeat,
+                clampScale: metrics.textScaleClamp,
+                stale: stale,
+              ),
+              SizedBox(height: metrics.headerGap),
+              Expanded(
+                child: LudoBoard(
+                  key: const Key('game-screen-board'),
+                  tokens: _tokensOf(room),
+                  seatsInPlay: _seatsInPlayOf(room),
+                  seatNames: _seatNamesOf(room),
+                  youLabel: loc.seatYou,
+                  turnSeat: turn?.seat,
+                  mySeat: seat,
+                  legal: legalTokens,
+                  autoMoveToken: _isEndHeld ? null : _pendingAutoMoveToken,
+                  onTokenStep: (int stepSeat, int token) =>
+                      _onBoardTokenStep(controller, stepSeat),
+                  onMoveLanded: _onBoardMoveLanded,
+                  onTravelReset: _onBoardTravelReset,
+                  safeCue: _safeCue,
+                  onTokenTap: (int index) {
+                    if (_isEndHeld) {
+                      return;
+                    }
+                    _cancelPendingHoldForManualMove();
+                    final int? k = turn?.k;
+                    if (k == null) {
+                      return;
+                    }
+                    // K6: a server without the roll queue (`legalByFace`
+                    // null) sends the byte-identical frame it always did.
+                    _sendMove(
+                      index,
+                      k,
+                      face: turn!.legalByFace != null ? _selectedFace : null,
+                    );
+                  },
+                  onIllegalTokenTap: (int index) {
+                    FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+                  },
+                  overlay: _thrownDieOverlay(seat),
                 ),
-                if (trayFaces != null) ...[
-                  const SizedBox(width: kSpace2),
-                  Flexible(
-                    child: RollTray(
-                      key: const Key('game-roll-tray'),
-                      faces: trayFaces,
-                      states: trayStates!,
-                      seatColor: trayColor,
-                      interactive: trayInteractive,
-                      onSelect: (int index) => _onTraySelect(trayFaces[index]),
-                      onInvalidTap: () {
-                        FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-                      },
+              ),
+              SizedBox(height: metrics.boardGap),
+              // K1: the tray sits on the die's own row, after it in reading
+              // order -- a plain Row under the ambient Directionality
+              // already mirrors that for Arabic, nothing here flips it by
+              // hand.
+              Center(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    _boardDieSlot(
+                      loc,
+                      turn,
+                      GameDie(
+                        face: _boardDieFace(dieFace),
+                        seatColor: dieSeatColor,
+                        enabled: rollEnabled,
+                        tumbling: _rollWaitK != null,
+                        noAnswer: _rollNoAnswer,
+                        noMove: _noMoveVisible,
+                        onTap: rollEnabled ? _onDieTap : null,
+                        onInvalidTap: () {
+                          FeedbackScope.of(context)
+                              .play(FeedbackCue.invalidTap);
+                        },
+                      ),
                     ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          SizedBox(height: _playColumnGap(context, kSpace2)),
-          _belowDieNoticeSlot(loc, offlineTurnSeat),
-          SizedBox(height: _playColumnGap(context, kSpace2)),
-        ],
+                    if (trayFaces != null) ...[
+                      const SizedBox(width: kSpace2),
+                      Flexible(
+                        child: RollTray(
+                          key: const Key('game-roll-tray'),
+                          faces: trayFaces,
+                          states: trayStates!,
+                          seatColor: trayColor,
+                          interactive: trayInteractive,
+                          onSelect: (int index) =>
+                              _onTraySelect(trayFaces[index]),
+                          onInvalidTap: () {
+                            FeedbackScope.of(context)
+                                .play(FeedbackCue.invalidTap);
+                          },
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              SizedBox(height: metrics.dieGap),
+              _belowDieNoticeSlot(
+                loc,
+                offlineTurnSeat,
+                clampScale: metrics.textScaleClamp,
+              ),
+              SizedBox(height: metrics.noticeGap),
+            ],
+          );
+        },
       ),
     );
   }
@@ -2543,29 +2573,46 @@ class _GameScreenState extends State<GameScreen> {
   /// this (the measurement found it "fine at every scale"); it keeps the
   /// old fixed 44 box under its own name, `_countdownRingSize`, below.
   ///
-  /// C-391 decision 2: past this scale the banner and the below-die notice
-  /// stop growing -- both are laid out at this clamped scale, never the
-  /// raw system one, so a system scale past it no longer costs the board
-  /// anything more than it already has. `_playColumnClampedScaler` and
-  /// `_playColumnScaleFactor` are the one clamp every reader of the system
-  /// scale on this row and on the notice goes through, so the row's own
-  /// height and the banner's own painted size can never disagree about
-  /// what scale either was laid out at.
+  /// C-391 decision 2: past the clamp the banner and the below-die notice
+  /// stop growing -- both are laid out at the clamped scale
+  /// [_PlayColumnMetrics.textScaleClamp] resolves to, never the raw system
+  /// one, so a system scale past it no longer costs the board anything
+  /// more than it already has. Every reader of the system scale on this
+  /// row and on the notice is handed that same resolved clamp, so the
+  /// row's own height and the banner's own painted size can never disagree
+  /// about what scale either was laid out at.
   static const double _headerRowHeightAtRest = 44;
   static const double _countdownRingSize = 44;
+
+  /// C-391's own clamp: the ceiling [_resolvePlayColumnMetrics] starts
+  /// from and only comes down from under C-402 decision 3.
   static const double _playColumnTextScaleClamp = 1.5;
 
-  TextScaler _playColumnClampedScaler(BuildContext context) {
-    return MediaQuery.textScalerOf(context)
-        .clamp(maxScaleFactor: _playColumnTextScaleClamp);
+  /// C-402 decision 3: how far down from [_playColumnTextScaleClamp] the
+  /// header and notice clamp is allowed to come, and no further, once the
+  /// gaps alone (down to their own floor of 4 each) still leave the board
+  /// short.
+  static const double _playColumnTextScaleClampFloor = 1.3;
+
+  /// The die row's own height never moves with the clamp or the shape:
+  /// `GameDie` paints at a fixed 72dp regardless of text scale, and the
+  /// tray's own dice are smaller still, so the `Row` around them always
+  /// settles on the die's height. [_resolvePlayColumnMetrics] needs that
+  /// number to know what the header, the gaps and the notice leave the
+  /// board.
+  static const double _dieRowHeight = 72;
+
+  /// C-391's own floor, carried forward by C-402 decision 1.
+  static const double _boardFloor = 324;
+
+  /// The one clamp every reader of the system scale on the header row and
+  /// the notice goes through, at whatever `clampScale`
+  /// [_resolvePlayColumnMetrics] settled this build on.
+  TextScaler _clampedScaler(BuildContext context, double clampScale) {
+    return MediaQuery.textScalerOf(context).clamp(maxScaleFactor: clampScale);
   }
 
-  double _playColumnScaleFactor(BuildContext context) {
-    return _playColumnClampedScaler(context).scale(100.0) / 100.0;
-  }
-
-  double _headerRowHeightFor(BuildContext context) {
-    final TextScaler scaler = _playColumnClampedScaler(context);
+  double _headerRowHeightFor(BuildContext context, TextScaler scaler) {
     final double scaleFactor = scaler.scale(100.0) / 100.0;
     if (scaleFactor <= 1.0) {
       return _headerRowHeightAtRest;
@@ -2588,43 +2635,134 @@ class _GameScreenState extends State<GameScreen> {
     return contentHeight + kSpace1 * 2;
   }
 
-  /// C-391 decision 5: the play column's own vertical gaps (the four
-  /// `SizedBox`es between the header, the board, the die row and the
-  /// below-die notice) give back only as much as decisions 1-3 still leave
-  /// the board short of C-391's 324 floor, never at scale 1.0, never below
-  /// a floor of 4 each.
-  ///
-  /// On the contract's own 360x616 phone, 24 top inset, decisions 1-3
-  /// alone already hold the floor up to clamped scale 1.3
-  /// ([_playColumnGapShrinkStartScale]) -- every gap stays exactly
-  /// [nominal] there. Past it the header and the notice (decision 2) are
-  /// still growing, so this ramps every gap down at the same rate, in
-  /// lock step, reaching the shared floor of 4 at
-  /// [_playColumnGapShrinkFloorScale] (1.7, past the header/notice clamp
-  /// at 1.5, so in practice the ramp never actually reaches it: at clamped
-  /// scale 1.5 it has given back exactly half of each gap's own room above
-  /// 4 -- on this phone that is 12 of the 40 nominal total, which is what
-  /// measurement found the board still needed at system scale 2.0).
-  double _playColumnGap(BuildContext context, double nominal) {
-    final double s = _playColumnScaleFactor(context);
-    final double keep =
-        ((_playColumnGapShrinkFloorScale - s) /
-                (_playColumnGapShrinkFloorScale -
-                    _playColumnGapShrinkStartScale))
-            .clamp(0.0, 1.0);
-    return 4.0 + (nominal - 4.0) * keep;
+  /// The below-die notice slot reserves whichever of its two placeholder
+  /// strings (C-250 rule 4) paints taller at the given scale and width --
+  /// the same two strings and the same style `_belowDieNoticeSlot` lays
+  /// them out with, so this never guesses a height Flutter would not
+  /// itself have settled the real `Stack` on.
+  double _noticeHeightFor(
+    BuildContext context,
+    TextScaler scaler,
+    double maxWidth,
+    AppLocalizations loc,
+  ) {
+    final TextStyle style = Theme.of(context).textTheme.bodyMedium!;
+    final TextDirection direction = Directionality.of(context);
+    double heightOf(String text) {
+      final TextPainter painter = TextPainter(
+        text: TextSpan(text: text, style: style),
+        textAlign: TextAlign.center,
+        textDirection: direction,
+        textScaler: scaler,
+      );
+      painter.layout(maxWidth: maxWidth);
+      final double height = painter.height;
+      painter.dispose();
+      return height;
+    }
+
+    return math.max(
+      heightOf(loc.gameNoMove),
+      heightOf(loc.gameSeatOffline('')),
+    );
   }
 
-  /// The clamped scale at and below which [_playColumnGap] gives back
-  /// nothing: decisions 1-3 alone already hold C-391's floor there.
-  static const double _playColumnGapShrinkStartScale = 1.3;
+  /// C-402 decision 2 replaces the scale-keyed ramp the old
+  /// `_playColumnGap` used (tuned on one phone, so it gave back nothing on
+  /// a short one and too little on a tall one) with a measured one: how
+  /// much height the header, the die row and the notice leave out of what
+  /// the column's own `LayoutBuilder` constraint actually has is compared
+  /// against the 324 floor, and the four gaps give back exactly that
+  /// shortfall -- shared in proportion to each gap's own room above the
+  /// shared floor of 4, never below it. At or over the floor with every
+  /// gap nominal, nothing shrinks (decision 6).
+  ///
+  /// C-402 decision 3: if the gaps at 4 each still leave the board short,
+  /// the clamp itself is walked down from [_playColumnTextScaleClamp]
+  /// toward [_playColumnTextScaleClampFloor] -- never further, and only as
+  /// far as the floor needs -- which shrinks the header and the notice
+  /// (both growers under C-391 decision 2) and gives the board back the
+  /// rest. Both quantities only grow with the clamp, never shrink it, so
+  /// a bisection against the one shortfall equation finds the highest
+  /// clamp (the smallest shrink) that still reaches 324.
+  _PlayColumnMetrics _resolvePlayColumnMetrics(
+    BuildContext context,
+    AppLocalizations loc,
+    double maxWidth,
+    double maxHeight,
+  ) {
+    const double headerGap = kSpace2;
+    const double boardGap = kSpace4;
+    const double dieGap = kSpace2;
+    const double noticeGap = kSpace2;
+    const double nominalSum = headerGap + boardGap + dieGap + noticeGap;
+    const double gapFloorEach = 4.0;
+    const double gapFloorSum = gapFloorEach * 4;
 
-  /// The clamped scale at which [_playColumnGap] would reach every gap's
-  /// shared floor of 4, if the header and the notice kept growing past
-  /// their own 1.5 clamp. They do not, so the ramp never actually gets
-  /// there; it only sets how fast the gaps shrink between
-  /// [_playColumnGapShrinkStartScale] and 1.5.
-  static const double _playColumnGapShrinkFloorScale = 1.7;
+    if (!maxHeight.isFinite || !maxWidth.isFinite) {
+      // Unbounded height (a test harness or a scrolling parent): nothing
+      // to measure against, so nominal gaps at the ceiling clamp.
+      return const _PlayColumnMetrics(
+        textScaleClamp: _playColumnTextScaleClamp,
+        headerGap: headerGap,
+        boardGap: boardGap,
+        dieGap: dieGap,
+        noticeGap: noticeGap,
+      );
+    }
+
+    final TextScaler systemScaler = MediaQuery.textScalerOf(context);
+    double fixedCostAt(double clamp) {
+      final TextScaler scaler = systemScaler.clamp(maxScaleFactor: clamp);
+      return _headerRowHeightFor(context, scaler) +
+          _dieRowHeight +
+          _noticeHeightFor(context, scaler, maxWidth, loc);
+    }
+
+    final double neededForFloor = maxHeight - _boardFloor - gapFloorSum;
+    double clamp = _playColumnTextScaleClamp;
+    if (fixedCostAt(clamp) > neededForFloor) {
+      double lo = _playColumnTextScaleClampFloor;
+      double hi = clamp;
+      if (fixedCostAt(lo) > neededForFloor) {
+        // Even at the clamp's floor, with every gap at 4, this shape
+        // cannot reach 324 (s6, width-bound anyway). Stop at 1.3.
+        clamp = lo;
+      } else {
+        for (int i = 0; i < 32; i++) {
+          final double mid = (lo + hi) / 2;
+          if (fixedCostAt(mid) <= neededForFloor) {
+            lo = mid;
+          } else {
+            hi = mid;
+          }
+        }
+        clamp = lo;
+      }
+    }
+
+    final double fixedCost = fixedCostAt(clamp);
+    final double gapSum = (maxHeight - fixedCost - _boardFloor).clamp(
+      gapFloorSum,
+      nominalSum,
+    );
+    final double give = nominalSum - gapSum;
+    const double room = nominalSum - gapFloorSum;
+    double gapFor(double nominal) {
+      if (give <= 0) {
+        return nominal;
+      }
+      return nominal - give * ((nominal - gapFloorEach) / room);
+    }
+
+    return _PlayColumnMetrics(
+      textScaleClamp: clamp,
+      headerGap: gapFor(headerGap),
+      boardGap: gapFor(boardGap),
+      dieGap: gapFor(dieGap),
+      noticeGap: gapFor(noticeGap),
+    );
+  }
 
   Widget _playHeaderRow(
     AppLocalizations loc,
@@ -2632,6 +2770,7 @@ class _GameScreenState extends State<GameScreen> {
     int? seat,
     TurnState? turn,
     SeatState? offlineTurnSeat, {
+    required double clampScale,
     bool stale = false,
   }) {
     final String bannerText = _turnBannerText(loc, room, seat, stale: stale);
@@ -2639,7 +2778,8 @@ class _GameScreenState extends State<GameScreen> {
     final Color seatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
     final bool myTurn = turn != null && turn.seat == seat;
     final bool offline = offlineTurnSeat != null;
-    final double headerRowHeight = _headerRowHeightFor(context);
+    final TextScaler scaler = _clampedScaler(context, clampScale);
+    final double headerRowHeight = _headerRowHeightFor(context, scaler);
     final int bannerMaxLines = headerRowHeight > _headerRowHeightAtRest ? 2 : 1;
 
     return SizedBox(
@@ -2691,7 +2831,7 @@ class _GameScreenState extends State<GameScreen> {
                         // board's ambient one, so it never asks this row
                         // for more than `_headerRowHeightFor` already
                         // measured it at.
-                        textScaler: _playColumnClampedScaler(context),
+                        textScaler: scaler,
                         style: TextStyle(
                           fontWeight: myTurn
                               ? FontWeight.w700
@@ -2774,15 +2914,18 @@ class _GameScreenState extends State<GameScreen> {
   /// switching between them never resizes anything underneath; when both
   /// would otherwise show, the no-move notice wins and the offline line
   /// waits for the hold to end, exactly as the rule's own wording asks.
-  Widget _belowDieNoticeSlot(AppLocalizations loc, SeatState? offlineTurnSeat) {
+  Widget _belowDieNoticeSlot(
+    AppLocalizations loc,
+    SeatState? offlineTurnSeat, {
+    required double clampScale,
+  }) {
     // C-391 decision 2: this slot's own two texts (the live notice and the
     // two placeholders reserving its space) are laid out at the same
-    // clamped scale as the header banner -- past
-    // `_playColumnTextScaleClamp` the slot stops growing with the system
-    // scale, and the text inside it is capped to match, so the reserved
-    // space this Stack settles on from its invisible children always
-    // covers whichever one is actually shown.
-    final TextScaler scaler = _playColumnClampedScaler(context);
+    // clamped scale as the header banner -- past the clamp the slot stops
+    // growing with the system scale, and the text inside it is capped to
+    // match, so the reserved space this Stack settles on from its
+    // invisible children always covers whichever one is actually shown.
+    final TextScaler scaler = _clampedScaler(context, clampScale);
     return Stack(
       alignment: Alignment.topCenter,
       children: [
@@ -3457,6 +3600,27 @@ int? _intAt(Map<String, Object?> data, String key) {
 String? _stringAt(Map<String, Object?> data, String key) {
   final Object? value = data[key];
   return value is String ? value : null;
+}
+
+/// What `_resolvePlayColumnMetrics` settled this build on: the clamp the
+/// header and the notice are laid out at (C-402 decision 3), and the four
+/// play-column gaps (C-402 decision 2), in the same order they appear in
+/// the column -- after the header, after the board, after the die row,
+/// after the notice.
+class _PlayColumnMetrics {
+  const _PlayColumnMetrics({
+    required this.textScaleClamp,
+    required this.headerGap,
+    required this.boardGap,
+    required this.dieGap,
+    required this.noticeGap,
+  });
+
+  final double textScaleClamp;
+  final double headerGap;
+  final double boardGap;
+  final double dieGap;
+  final double noticeGap;
 }
 
 /// One opponent roll waiting to be thrown, or the one currently in flight.
