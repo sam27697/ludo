@@ -30,6 +30,7 @@
 // its own shortfall without rereading this file.
 
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -659,55 +660,56 @@ void _checkMark(
         'board must fail this.',
   );
 
-  // Decision 3: at rest (scale 1.0) the board die's badge is still exactly
-  // where deadBadgeRect puts it today, unmoved by this contract.
+  // Decisions 2 and 3: the board die's badge sits where deadBadgeRect puts
+  // it, moved straight down by exactly the shortfall between its overhang
+  // above the die and the gap between the board and the die, and by
+  // nothing when the gap already covers the overhang. At rest (1.0) the gap
+  // covers it on every shape, so this is today's rect there.
   if (mark.isBoardDie) {
-    final Rect expectedRel = deadBadgeRect(Size.square(dieRect.width));
+    final Rect restRel = deadBadgeRect(Size.square(dieRect.width));
+    final double gap = dieRect.top - boardRect.bottom;
+    final double shortfall = math.max(0.0, -restRel.top - gap);
+    final Rect expectedRel = restRel.translate(0, shortfall);
     final Rect actualRel = Rect.fromLTRB(
       markRect.left - dieRect.left,
       markRect.top - dieRect.top,
       markRect.right - dieRect.left,
       markRect.bottom - dieRect.top,
     );
+    final String why =
+        '$where ${mark.label}: gap above the die ${_dp(gap)}, overhang '
+        '${_dp(-restRel.top)}, so the badge comes down ${_dp(shortfall)}. '
+        'A fix armed with no shortfall to clear, one that moves the badge '
+        'further than the shortfall, or one that moves it sideways must '
+        'fail this.';
     expect(
       actualRel.left,
       closeTo(expectedRel.left, _markSlop),
       reason:
-          'decision 3: $where ${mark.label}\'s mark rect left relative to '
-          'the die, ${_dp(actualRel.left)}, must equal '
-          'deadBadgeRect(Size.square(dieSide)).left ${_dp(expectedRel.left)} '
-          'at scale 1.0. A fix armed even at rest, with no shortfall to '
-          'clear, must fail this.',
+          'decision 2: left relative to the die ${_dp(actualRel.left)}, '
+          'expected ${_dp(expectedRel.left)}. $why',
     );
     expect(
       actualRel.top,
       closeTo(expectedRel.top, _markSlop),
       reason:
-          'decision 3: $where ${mark.label}\'s mark rect top relative to '
-          'the die, ${_dp(actualRel.top)}, must equal '
-          'deadBadgeRect(Size.square(dieSide)).top ${_dp(expectedRel.top)} '
-          'at scale 1.0. A fix armed even at rest, with no shortfall to '
-          'clear, must fail this.',
+          'decisions 2 and 3: top relative to the die '
+          '${_dp(actualRel.top)}, expected ${_dp(expectedRel.top)}. $why',
     );
     expect(
       actualRel.right,
       closeTo(expectedRel.right, _markSlop),
       reason:
-          'decision 3: $where ${mark.label}\'s mark rect right relative to '
-          'the die, ${_dp(actualRel.right)}, must equal '
-          'deadBadgeRect(Size.square(dieSide)).right '
-          '${_dp(expectedRel.right)} at scale 1.0. A fix armed even at '
-          'rest, with no shortfall to clear, must fail this.',
+          'decision 2: right relative to the die '
+          '${_dp(actualRel.right)}, expected ${_dp(expectedRel.right)}. $why',
     );
     expect(
       actualRel.bottom,
       closeTo(expectedRel.bottom, _markSlop),
       reason:
-          'decision 3: $where ${mark.label}\'s mark rect bottom relative '
-          'to the die, ${_dp(actualRel.bottom)}, must equal '
-          'deadBadgeRect(Size.square(dieSide)).bottom '
-          '${_dp(expectedRel.bottom)} at scale 1.0. A fix armed even at '
-          'rest, with no shortfall to clear, must fail this.',
+          'decisions 2 and 3: bottom relative to the die '
+          '${_dp(actualRel.bottom)}, expected ${_dp(expectedRel.bottom)}. '
+          '$why',
     );
   }
 }
