@@ -1,8 +1,10 @@
 // C-398. Lobby and home: the next step stays inside the safe area on the
-// probe's phone shapes. Visibility is the keyed widget's global rect,
+// probe's phone shapes. A keyed widget is visible when its global rect is
 // wholly inside [padding.top, height - padding.bottom] and [0, width],
-// read with the scroll at its start. The mount, the shapes, the insets,
-// the text scale and the font load are copied from the order 393 probe
+// wholly inside its Scrollable ancestor's render box when it has one, and
+// a hit test at the rect's centre reaches that widget, read with the
+// scroll at its start. The mount, the shapes, the insets, the text scale
+// and the font load are copied from the order 393 probe
 // (probe_shapes_room_test.dart), not imported. One mount per case.
 //
 // The s1 scale 2.0 focus case is the exception. It focuses room-code-field
@@ -13,6 +15,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart'
+    show HitTestEntry, HitTestResult, HitTestTarget;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -379,6 +383,79 @@ String? _scrollNotAtStart(WidgetTester tester) {
   return moved.join(',');
 }
 
+ScrollableState? _scrollableAncestor(Element element) {
+  ScrollableState? found;
+  element.visitAncestorElements((Element ancestor) {
+    if (ancestor.widget is Scrollable && ancestor is StatefulElement) {
+      final State<StatefulWidget> state = ancestor.state;
+      if (state is ScrollableState) {
+        found = state;
+        return false;
+      }
+    }
+    return true;
+  });
+  return found;
+}
+
+Rect? _renderRect(RenderObject? object) {
+  if (object is! RenderBox || !object.hasSize || !object.attached) {
+    return null;
+  }
+  final Offset topLeft = object.localToGlobal(Offset.zero);
+  final Offset bottomRight = object.localToGlobal(
+    object.size.bottomRight(Offset.zero),
+  );
+  return Rect.fromPoints(topLeft, bottomRight);
+}
+
+bool _whollyInsideRect(Rect rect, Rect outer) {
+  return rect.left >= outer.left - _fitSlop &&
+      rect.top >= outer.top - _fitSlop &&
+      rect.right <= outer.right + _fitSlop &&
+      rect.bottom <= outer.bottom + _fitSlop;
+}
+
+bool _pathReaches(HitTestResult hits, RenderObject own) {
+  for (final HitTestEntry<HitTestTarget> entry in hits.path) {
+    final HitTestTarget target = entry.target;
+    if (target == own) {
+      return true;
+    }
+    if (target is RenderObject) {
+      RenderObject? current = target.parent;
+      while (current != null) {
+        if (current == own) {
+          return true;
+        }
+        current = current.parent;
+      }
+    }
+  }
+  return false;
+}
+
+String _hitClause(HitTestResult hits, Offset centre) {
+  final String at =
+      '${centre.dx.toStringAsFixed(1)},${centre.dy.toStringAsFixed(1)}';
+  for (final HitTestEntry<HitTestTarget> entry in hits.path) {
+    final HitTestTarget target = entry.target;
+    if (target is RenderObject) {
+      final Rect? hitRect = _renderRect(target);
+      if (hitRect != null) {
+        return '(c) centre $at hit ${_box(hitRect)}';
+      }
+    }
+  }
+  return '(c) centre $at hit nothing';
+}
+
+// Visible when all three hold. (a) wholly inside the safe rect. (b) wholly
+// inside the Scrollable ancestor's own render box, when there is one: that
+// box is the viewport, and a docked block outside the scroll is not part of
+// it. (c) the hit test at the rect's centre reaches this widget's render
+// object or a descendant. The failure names every one of (a), (b), (c)
+// that missed, with the rects.
 String? _visibilityProblem(
   WidgetTester tester, {
   required Key key,
@@ -392,12 +469,33 @@ String? _visibilityProblem(
   if (count != 1) {
     return '$why $name was found $count times, not once, so it is not on screen.';
   }
+  final Element element = finder.evaluate().single;
   final Rect rect = tester.getRect(finder);
-  if (_whollyInside(rect, shape, bottomInset: bottomInset)) {
+  final List<String> failed = <String>[];
+  if (!_whollyInside(rect, shape, bottomInset: bottomInset)) {
+    failed.add(
+      '(a) outside safe rect ${_safe(shape, bottomInset: bottomInset)}',
+    );
+  }
+  final ScrollableState? scrollable = _scrollableAncestor(element);
+  if (scrollable != null) {
+    final Rect? viewport = _renderRect(scrollable.context.findRenderObject());
+    if (viewport == null) {
+      failed.add('(b) scroll ancestor has no render box');
+    } else if (!_whollyInsideRect(rect, viewport)) {
+      failed.add('(b) outside scroll viewport ${_box(viewport)}');
+    }
+  }
+  final RenderObject? own = element.renderObject;
+  final Offset centre = rect.center;
+  final HitTestResult hits = tester.hitTestOnBinding(centre);
+  if (own == null || !_pathReaches(hits, own)) {
+    failed.add(_hitClause(hits, centre));
+  }
+  if (failed.isEmpty) {
     return null;
   }
-  return '$why $name rect ${_box(rect)} is outside the safe rect '
-      '${_safe(shape, bottomInset: bottomInset)}.';
+  return '$why $name rect ${_box(rect)} failed ${failed.join('; ')}.';
 }
 
 String? _hitProblem(

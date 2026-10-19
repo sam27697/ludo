@@ -1,8 +1,10 @@
 // C-398. End card, won and lost: Play again stays inside the safe area on
-// the probe's phone shapes. Visibility is the keyed widget's global rect,
-// wholly inside [padding.top, height - padding.bottom] and [0, width],
-// read with the scroll at its start. The shapes, the insets, the text
-// scale and the font load are copied from the order 393 probe
+// the probe's phone shapes. A keyed widget is visible when its global rect
+// is wholly inside [padding.top, height - padding.bottom] and [0, width],
+// wholly inside its Scrollable ancestor's render box when it has one, and
+// a hit test at the rect's centre reaches that widget, read with the
+// scroll at its start. The shapes, the insets, the text scale and the
+// font load are copied from the order 393 probe
 // (probe_shapes_end_test.dart), not imported. The finished game is the
 // real GameScreen over a RoomController and FakeTransport, copied by hand
 // from test/end_board_view_test.dart: connect on PLAYING, one mount, then
@@ -15,6 +17,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart'
+    show HitTestEntry, HitTestResult, HitTestTarget;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -582,6 +586,79 @@ String? _scrollNotAtStart(WidgetTester tester) {
   return moved.join(',');
 }
 
+ScrollableState? _scrollableAncestor(Element element) {
+  ScrollableState? found;
+  element.visitAncestorElements((Element ancestor) {
+    if (ancestor.widget is Scrollable && ancestor is StatefulElement) {
+      final State<StatefulWidget> state = ancestor.state;
+      if (state is ScrollableState) {
+        found = state;
+        return false;
+      }
+    }
+    return true;
+  });
+  return found;
+}
+
+Rect? _renderRect(RenderObject? object) {
+  if (object is! RenderBox || !object.hasSize || !object.attached) {
+    return null;
+  }
+  final Offset topLeft = object.localToGlobal(Offset.zero);
+  final Offset bottomRight = object.localToGlobal(
+    object.size.bottomRight(Offset.zero),
+  );
+  return Rect.fromPoints(topLeft, bottomRight);
+}
+
+bool _whollyInsideRect(Rect rect, Rect outer) {
+  return rect.left >= outer.left - _fitSlop &&
+      rect.top >= outer.top - _fitSlop &&
+      rect.right <= outer.right + _fitSlop &&
+      rect.bottom <= outer.bottom + _fitSlop;
+}
+
+bool _pathReaches(HitTestResult hits, RenderObject own) {
+  for (final HitTestEntry<HitTestTarget> entry in hits.path) {
+    final HitTestTarget target = entry.target;
+    if (target == own) {
+      return true;
+    }
+    if (target is RenderObject) {
+      RenderObject? current = target.parent;
+      while (current != null) {
+        if (current == own) {
+          return true;
+        }
+        current = current.parent;
+      }
+    }
+  }
+  return false;
+}
+
+String _hitClause(HitTestResult hits, Offset centre) {
+  final String at =
+      '${centre.dx.toStringAsFixed(1)},${centre.dy.toStringAsFixed(1)}';
+  for (final HitTestEntry<HitTestTarget> entry in hits.path) {
+    final HitTestTarget target = entry.target;
+    if (target is RenderObject) {
+      final Rect? hitRect = _renderRect(target);
+      if (hitRect != null) {
+        return '(c) centre $at hit ${_box(hitRect)}';
+      }
+    }
+  }
+  return '(c) centre $at hit nothing';
+}
+
+// Visible when all three hold. (a) wholly inside the safe rect. (b) wholly
+// inside the Scrollable ancestor's own render box, when there is one: that
+// box is the viewport, and a docked block outside the scroll is not part of
+// it. (c) the hit test at the rect's centre reaches this widget's render
+// object or a descendant. The failure names every one of (a), (b), (c)
+// that missed, with the rects.
 String? _visibilityProblem(
   WidgetTester tester, {
   required Key key,
@@ -594,11 +671,31 @@ String? _visibilityProblem(
   if (count != 1) {
     return '$why $name was found $count times, not once, so it is not on screen.';
   }
+  final Element element = finder.evaluate().single;
   final Rect rect = tester.getRect(finder);
-  if (_whollyInside(rect, shape)) {
+  final List<String> failed = <String>[];
+  if (!_whollyInside(rect, shape)) {
+    failed.add('(a) outside safe rect ${_safe(shape)}');
+  }
+  final ScrollableState? scrollable = _scrollableAncestor(element);
+  if (scrollable != null) {
+    final Rect? viewport = _renderRect(scrollable.context.findRenderObject());
+    if (viewport == null) {
+      failed.add('(b) scroll ancestor has no render box');
+    } else if (!_whollyInsideRect(rect, viewport)) {
+      failed.add('(b) outside scroll viewport ${_box(viewport)}');
+    }
+  }
+  final RenderObject? own = element.renderObject;
+  final Offset centre = rect.center;
+  final HitTestResult hits = tester.hitTestOnBinding(centre);
+  if (own == null || !_pathReaches(hits, own)) {
+    failed.add(_hitClause(hits, centre));
+  }
+  if (failed.isEmpty) {
     return null;
   }
-  return '$why $name rect ${_box(rect)} is outside the safe rect ${_safe(shape)}.';
+  return '$why $name rect ${_box(rect)} failed ${failed.join('; ')}.';
 }
 
 String? _hitProblem(
@@ -674,8 +771,8 @@ String _firstError(List<FlutterErrorDetails> errors) {
   return line;
 }
 
-bool _checksVerify(_Shape shape, double scale, Locale locale) =>
-    shape.id == 's1' && scale == 1.0 && locale.languageCode == 'en';
+bool _checksVerify(_Shape shape, double scale) =>
+    shape.id == 's1' && scale == 1.0;
 
 Future<void> _runCard(
   WidgetTester tester, {
@@ -777,7 +874,7 @@ Future<void> _runCard(
     if (rematch != null) {
       visProblems.add(rematch);
     }
-    if (_checksVerify(shape, scale, locale)) {
+    if (_checksVerify(shape, scale)) {
       final String? verify = _visibilityProblem(
         tester,
         key: _verifyKey,
@@ -785,8 +882,9 @@ Future<void> _runCard(
         shape: shape,
         why:
             'decision 2, $where: the verify button is on screen without '
-            'scrolling at 1.0 on s1, as it is today. Catches a fairness '
-            'line pushed below the fold on that shape.',
+            'scrolling at 1.0 on s1, en and ar, win and lose. Catches a '
+            'fairness line pushed below the fold, or covered by the '
+            'docked action block.',
       );
       if (verify != null) {
         visProblems.add(verify);
@@ -842,7 +940,7 @@ Future<void> _runCard(
       reason:
           'decision 2, $where: end-card-rematch must lie wholly inside the '
           'safe area at scroll start'
-          '${_checksVerify(shape, scale, locale) ? ', and game-screen-verify-button with it at s1 1.0 en' : ''}. '
+          '${_checksVerify(shape, scale) ? ', and game-screen-verify-button with it at s1 1.0' : ''}. '
           'Catches an end card that keeps Play again in the scrolling '
           'column, so on a short phone it sits below the fold. '
           '${visProblems.join(' ')}',
