@@ -112,6 +112,25 @@ class _GameScreenState extends State<GameScreen> {
   // `legal.length == 1` fallback for a server with no roll queue.
   int? _pendingAutoMoveFace;
 
+  // C-408 D7 (run 98): how many travelling legs this screen has taken off
+  // a `moved` frame (seat, token) and not yet seen land, through either
+  // `_onBoardMoveLanded` or the snap path `_onBoardTravelReset`. Keyed the
+  // same way board.dart keys its own override map, `'$seat-$token'`. A
+  // token whose count is back at zero is drawn at its truth, board.dart's
+  // own D1/D2; this screen never reads the board's drawn position
+  // directly, only this count built from the frames it already handed
+  // the board.
+  final Map<String, int> _travellingLegs = <String, int>{};
+
+  // C-408 D7: true from the moment `_syncAutoMove` would have started the
+  // 1500 ms hold while the held token's own walk was still travelling
+  // (per `_travellingLegs`), until that walk lands or is snapped away.
+  // The decision stays latched in `_autoMoveHandledK`/
+  // `_autoMoveHandledQueue` the whole time; only the timer's own start is
+  // delayed, so the glow is on screen for the full 1500 ms before the
+  // move is sent.
+  bool _autoMoveAwaitingWalk = false;
+
   // docs/PROTOCOL.md section 21 (C-362 Part B), order 365, K9/K10: the
   // roll queue's own bookkeeping, kept here because the model clears
   // `TurnState.queue` back to its placeholder `[]` on `moved` and
@@ -409,6 +428,7 @@ class _GameScreenState extends State<GameScreen> {
         from != to;
     if (isTravellingMove) {
       _travelCount++;
+      _markLegTravelling(moverSeat, moverToken);
     }
 
     final bool zeroTravel =
@@ -630,6 +650,8 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   void _onBoardMoveLanded(int seat, int token) {
+    _markLegLanded(seat, token);
+    _maybeStartAutoMoveAfterWalk(seat, token);
     if (_travelCount > 0) {
       _travelCount--;
     }
@@ -651,6 +673,14 @@ class _GameScreenState extends State<GameScreen> {
   void _onBoardTravelReset() {
     _travelCount = 0;
     _safeCueLandingsToIgnore = 0;
+    // C-408 D7: a snap draws every token at truth at once (C-252 rule 2),
+    // so every leg this screen was still waiting on has, in effect,
+    // landed. Drop the bookkeeping and let a hold still waiting on one of
+    // them start now.
+    _travellingLegs.clear();
+    if (_autoMoveAwaitingWalk) {
+      _startAutoMoveTimer();
+    }
     if (_isEndHeld) {
       _dropPendingSafeCue();
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -933,6 +963,8 @@ class _GameScreenState extends State<GameScreen> {
     _pendingAutoMoveFace = null;
     _autoMoveHandledK = null;
     _autoMoveHandledQueue = null;
+    _autoMoveAwaitingWalk = false;
+    _travellingLegs.clear();
     _moveSentForK = null;
     _moveSentForQueue = null;
     _moveGuardSerial = null;
@@ -1600,10 +1632,69 @@ class _GameScreenState extends State<GameScreen> {
       _pendingAutoMoveToken = turn.legal!.single;
       _pendingAutoMoveFace = null;
     }
-    _autoMoveTimer?.cancel();
-    _autoMoveTimer = Timer(_autoMoveHold, _commitPendingAutoMove);
     final AppLocalizations loc = AppLocalizations.of(context);
     _announceAutoMove(loc.gameTokenButton(_pendingAutoMoveToken! + 1));
+    // C-408 D7: the glow this hold counts down is board.dart's own D2,
+    // which the board does not draw until the held token's disc reaches
+    // its truth. A `moved` frame already in hand for this very token may
+    // still be travelling there (this very `turn` frame is often the one
+    // right after that `moved`); if so, the clock starts only once that
+    // walk lands or is snapped away, in `_onBoardMoveLanded` or
+    // `_onBoardTravelReset`, not here. Not walking: start now, as before
+    // D7 ever existed.
+    if (_isTravelling(turn.seat, _pendingAutoMoveToken!)) {
+      _autoMoveTimer?.cancel();
+      _autoMoveTimer = null;
+      _autoMoveAwaitingWalk = true;
+    } else {
+      _startAutoMoveTimer();
+    }
+  }
+
+  static String _travelKey(int seat, int token) => '$seat-$token';
+
+  /// True while a `moved` frame's travel for (seat, token) has reached
+  /// this screen but not yet been seen to land or snap. C-408 D7's only
+  /// source for "is the held token still walking".
+  bool _isTravelling(int seat, int token) =>
+      (_travellingLegs[_travelKey(seat, token)] ?? 0) > 0;
+
+  void _markLegTravelling(int seat, int token) {
+    final String key = _travelKey(seat, token);
+    _travellingLegs[key] = (_travellingLegs[key] ?? 0) + 1;
+  }
+
+  /// One queued leg of (seat, token) has landed. Contract C-408 D6: a
+  /// second leg queued behind the first keeps the disc travelling past
+  /// this same landing, so the count only reaches zero -- "not walking"
+  /// again -- once every leg this screen has seen for that token has.
+  void _markLegLanded(int seat, int token) {
+    final String key = _travelKey(seat, token);
+    final int count = _travellingLegs[key] ?? 0;
+    if (count <= 1) {
+      _travellingLegs.remove(key);
+    } else {
+      _travellingLegs[key] = count - 1;
+    }
+  }
+
+  /// C-408 D7: a leg of (seat, token) has just landed; if the held hold
+  /// was waiting on exactly this token's walk, and no further leg of it
+  /// is still travelling, start the 1500 ms clock now.
+  void _maybeStartAutoMoveAfterWalk(int seat, int token) {
+    if (!_autoMoveAwaitingWalk ||
+        seat != widget.controller.seat ||
+        token != _pendingAutoMoveToken ||
+        _isTravelling(seat, token)) {
+      return;
+    }
+    _startAutoMoveTimer();
+  }
+
+  void _startAutoMoveTimer() {
+    _autoMoveAwaitingWalk = false;
+    _autoMoveTimer?.cancel();
+    _autoMoveTimer = Timer(_autoMoveHold, _commitPendingAutoMove);
   }
 
   void _clearPendingHold() {
@@ -1611,6 +1702,7 @@ class _GameScreenState extends State<GameScreen> {
     _autoMoveTimer = null;
     _pendingAutoMoveToken = null;
     _pendingAutoMoveFace = null;
+    _autoMoveAwaitingWalk = false;
   }
 
   void _commitPendingAutoMove() {
