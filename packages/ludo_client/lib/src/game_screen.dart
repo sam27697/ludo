@@ -2506,6 +2506,15 @@ class _GameScreenState extends State<GameScreen> {
                         tumbling: _rollWaitK != null,
                         noAnswer: _rollNoAnswer,
                         noMove: _noMoveVisible,
+                        // C-404: the die's top sits exactly at the row's own
+                        // top (it is the tallest thing in the row), which
+                        // sits `metrics.boardGap` below the board -- the
+                        // same number board_floor_nav_inset_test.dart
+                        // measures as die.top - board.bottom. Handing that
+                        // straight to the die is what lets its badge clamp
+                        // itself without this column's gaps, clamp or floor
+                        // changing at all.
+                        badgeHeadroom: metrics.boardGap,
                         onTap: rollEnabled ? _onDieTap : null,
                         onInvalidTap: () {
                           FeedbackScope.of(context)

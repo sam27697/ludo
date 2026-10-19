@@ -37,6 +37,7 @@ class GameDie extends StatefulWidget {
     required this.noMove,
     this.onTap,
     this.onInvalidTap,
+    this.badgeHeadroom = double.infinity,
   });
 
   /// The last known roll, straight from `turn.value`. Null when none is
@@ -67,6 +68,17 @@ class GameDie extends StatefulWidget {
   /// The mark is not delayed or hidden by the next seat's turn landing
   /// underneath it. The face under it stays whole, pips at 0.45 (C-380).
   final bool noMove;
+
+  /// C-404: the space between the board's painted bottom edge and this
+  /// die's own top, the way the caller's column has it laid out this
+  /// build (`_PlayColumnMetrics.boardGap`). The no-move badge hangs
+  /// [deadBadgeRect] above the die by 0.21 of its side; where this is at
+  /// least that much the badge sits exactly where [deadBadgeRect] puts
+  /// it (today's rect, unmoved). Where it is shorter, [_noMoveBadge]
+  /// brings the badge down by exactly the shortfall, never more, so it
+  /// never paints over the board. The default leaves it alone: a die
+  /// mounted outside the play column gets today's placement.
+  final double badgeHeadroom;
 
   /// Fires on a tap while [enabled]. The widget itself still guards this:
   /// a tap while disabled never calls it, even if a caller passes one.
@@ -298,10 +310,20 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
   /// C-380 D4: `game-die-no-move-mark` sits on the badge, not on the face.
   /// Physical top-right, not [PositionedDirectional], so Arabic does not
   /// mirror it.
+  ///
+  /// C-404 decision 2: the badge overhangs the die's top edge by
+  /// `-badge.top`. Where [badgeHeadroom] already covers that, the badge
+  /// stays exactly where [deadBadgeRect] put it (decision 3: nothing
+  /// moves at rest). Where it falls short, the badge comes straight down
+  /// by that shortfall and no more -- its size and its centre's x on the
+  /// die's right edge are untouched, only the y moves.
   Widget _noMoveBadge() {
     final Rect badge = deadBadgeRect(const Size.square(_kDieSize));
+    final double overhang = -badge.top;
+    final double shortfall = math.max(0, overhang - widget.badgeHeadroom);
+    final Rect rect = shortfall == 0 ? badge : badge.translate(0, shortfall);
     return Positioned.fromRect(
-      rect: badge,
+      rect: rect,
       child: const IgnorePointer(
         child: CustomPaint(
           key: Key('game-die-no-move-mark'),
