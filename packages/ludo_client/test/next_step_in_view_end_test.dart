@@ -5,8 +5,11 @@
 // scale and the font load are copied from the order 393 probe
 // (probe_shapes_end_test.dart), not imported. The finished game is the
 // real GameScreen over a RoomController and FakeTransport, copied by hand
-// from test/end_board_view_test.dart: connect on PLAYING with turn null,
-// one mount, then one game_over frame. One mount per case.
+// from test/end_board_view_test.dart: connect on PLAYING, one mount, then
+// one game_over frame. The frames before that game_over are the host
+// script copied from test/end_card_game_log_test.dart, so the transcript
+// is complete and the card shows rolls, sixes, captures and tokens home.
+// One mount per case.
 
 import 'dart:convert';
 import 'dart:io';
@@ -41,6 +44,10 @@ const double _tapFloor = 48;
 const Key _rematchKey = Key('end-card-rematch');
 const Key _verifyKey = Key('game-screen-verify-button');
 const Key _newTableKey = Key('game-screen-new-room-button');
+const Key _rollsKey = Key('end-card-stat-rolls');
+const Key _sixesKey = Key('end-card-stat-sixes');
+const Key _capturesKey = Key('end-card-stat-captures');
+const Key _homeKey = Key('end-card-stat-home');
 
 class _Shape {
   const _Shape({
@@ -177,7 +184,9 @@ Map<String, Object?> _playingRoomJson() => <String, Object?>{
   ],
   'turn': null,
   'winner': null,
-  'seq': 1,
+  // The host script copied below opens at seq 3, the same numbers as
+  // test/end_card_game_log_test.dart, whose lobby is already at seq 2.
+  'seq': 2,
 };
 
 class _Connector {
@@ -226,6 +235,184 @@ Future<(RoomController, FakeTransport)> _connectTo(WidgetTester tester) async {
   return (controller, transport);
 }
 
+/// 16 lowercase hex characters, the same id the copied script uses.
+const String _gameId = 'aaaaaaaaaaaaaaaa';
+
+Future<void> _flushFrame(
+  WidgetTester tester,
+  FakeTransport transport,
+  String text,
+) async {
+  transport.pushText(text);
+  await tester.pump();
+  await tester.pump();
+}
+
+/// Seat 0's game, copied from test/end_card_game_log_test.dart's
+/// `_hostEntries`. Pushed before GameScreen mounts, so none of these
+/// moves is travel on the board.
+///
+/// Counted from the frames below, not from the card:
+///   rolled 6 (seq 5), rolled 4 (seq 7): rolls 2, sixes 1
+///   one captured entry on the move at seq 8: captures 1
+///   four tokens at 57 when the game ends: home 4
+Future<void> _pushHostScript(
+  WidgetTester tester,
+  FakeTransport transport,
+) async {
+  await _flushFrame(
+    tester,
+    transport,
+    _frame(
+      type: 'game_started',
+      data: <String, Object?>{
+        'turn': 0,
+        'game_id': _gameId,
+        'client_seeds': '0:seed',
+        'seq': 3,
+      },
+    ),
+  );
+  await _flushFrame(
+    tester,
+    transport,
+    _frame(
+      type: 'turn',
+      data: <String, Object?>{'seat': 0, 'deadline_ms': 45000, 'seq': 4},
+    ),
+  );
+  await _flushFrame(
+    tester,
+    transport,
+    _frame(
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 0,
+        'value': 6,
+        'legal': <int>[0, 1, 2],
+        'deadline_ms': 45000,
+        'k': 1,
+        'reveal': 'a' * 64,
+        'seq': 5,
+      },
+    ),
+  );
+  await _flushFrame(
+    tester,
+    transport,
+    _frame(
+      type: 'moved',
+      data: <String, Object?>{
+        'seat': 0,
+        'token': 0,
+        'from': -1,
+        'to': 0,
+        'captured': <Map<String, Object?>>[],
+        'extra_roll': false,
+        'seq': 6,
+      },
+    ),
+  );
+  await _flushFrame(
+    tester,
+    transport,
+    _frame(
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 0,
+        'value': 4,
+        'legal': <int>[0, 1, 2],
+        'deadline_ms': 45000,
+        'k': 2,
+        'reveal': 'a' * 64,
+        'seq': 7,
+      },
+    ),
+  );
+  await _flushFrame(
+    tester,
+    transport,
+    _frame(
+      type: 'moved',
+      data: <String, Object?>{
+        'seat': 0,
+        'token': 0,
+        'from': 0,
+        'to': 4,
+        'captured': <Map<String, Object?>>[
+          <String, Object?>{'seat': 1, 'token': 0},
+        ],
+        'extra_roll': false,
+        'seq': 8,
+      },
+    ),
+  );
+  await _flushFrame(
+    tester,
+    transport,
+    _frame(
+      type: 'moved',
+      data: <String, Object?>{
+        'seat': 0,
+        'token': 1,
+        'from': -1,
+        'to': 57,
+        'captured': <Map<String, Object?>>[],
+        'extra_roll': false,
+        'seq': 9,
+      },
+    ),
+  );
+  await _flushFrame(
+    tester,
+    transport,
+    _frame(
+      type: 'moved',
+      data: <String, Object?>{
+        'seat': 0,
+        'token': 2,
+        'from': -1,
+        'to': 57,
+        'captured': <Map<String, Object?>>[],
+        'extra_roll': false,
+        'seq': 10,
+      },
+    ),
+  );
+  await _flushFrame(
+    tester,
+    transport,
+    _frame(
+      type: 'moved',
+      data: <String, Object?>{
+        'seat': 0,
+        'token': 3,
+        'from': -1,
+        'to': 57,
+        'captured': <Map<String, Object?>>[],
+        'extra_roll': false,
+        'seq': 11,
+      },
+    ),
+  );
+  await _flushFrame(
+    tester,
+    transport,
+    _frame(
+      type: 'moved',
+      data: <String, Object?>{
+        'seat': 0,
+        'token': 0,
+        'from': 4,
+        'to': 57,
+        'captured': <Map<String, Object?>>[],
+        'extra_roll': false,
+        'seq': 12,
+      },
+    ),
+  );
+}
+
 Widget _app({required Locale locale, required Widget home}) {
   return MaterialApp(
     debugShowCheckedModeBanner: false,
@@ -243,13 +430,14 @@ Widget _app({required Locale locale, required Widget home}) {
 }
 
 /// Mounts GameScreen over the connected controller. One mount per case.
-Future<(RoomController, FakeTransport)> _connectAndMount(
+/// The host script has already been pushed, so the room is still PLAYING
+/// and the transcript already holds the rolls, the capture and the
+/// tokens that finish at home.
+Future<void> _mountGame(
   WidgetTester tester, {
+  required RoomController controller,
   required Locale locale,
 }) async {
-  final (RoomController controller, FakeTransport transport) = await _connectTo(
-    tester,
-  );
   final FeedbackSettings settings = FeedbackSettings.forTest();
   addTearDown(settings.dispose);
   await tester.pumpWidget(
@@ -263,12 +451,12 @@ Future<(RoomController, FakeTransport)> _connectAndMount(
     ),
   );
   await tester.pump();
-  return (controller, transport);
 }
 
 /// Pushes one `game_over` frame and flushes it with the two-pump idiom
 /// test/end_board_view_test.dart uses, then runs out the win card's 1200ms
-/// celebration in bounded steps. Not pumpAndSettle.
+/// celebration in bounded steps. Not pumpAndSettle. Seq 13 is the frame
+/// after the host script's last move.
 Future<void> _showFinished(
   WidgetTester tester,
   FakeTransport transport, {
@@ -280,7 +468,7 @@ Future<void> _showFinished(
       data: <String, Object?>{
         'winner': winner,
         'verify_url': 'https://next-step-end.invalid/verify/$winner',
-        'seq': 2,
+        'seq': 13,
       },
     ),
   );
@@ -500,8 +688,11 @@ Future<void> _runCard(
   final String where = _where(shape, scale, locale);
   final String state = _cardState(card);
   final bool checkVis = shape.checksVisibility;
-  final (RoomController controller, FakeTransport transport) =
-      await _connectAndMount(tester, locale: locale);
+  final (RoomController controller, FakeTransport transport) = await _connectTo(
+    tester,
+  );
+  await _pushHostScript(tester, transport);
+  await _mountGame(tester, controller: controller, locale: locale);
   expect(
     controller.phase,
     RoomPhase.connected,
@@ -546,6 +737,21 @@ Future<void> _runCard(
         'decision 2, $where: end-card-rematch is in the tree. Catches an '
         'end card that drops Play again.',
   );
+  for (final (Key, String) tile in <(Key, String)>[
+    (_rollsKey, 'end-card-stat-rolls'),
+    (_sixesKey, 'end-card-stat-sixes'),
+    (_capturesKey, 'end-card-stat-captures'),
+    (_homeKey, 'end-card-stat-home'),
+  ]) {
+    expect(
+      find.byKey(tile.$1),
+      findsOneWidget,
+      reason:
+          'decision 2, $where: ${tile.$2} is on the card. Catches a '
+          'transcript that never completed, so the card keeps the home '
+          'tile alone and is shorter than a played game.',
+    );
+  }
 
   final List<String> visProblems = <String>[];
   if (checkVis) {
