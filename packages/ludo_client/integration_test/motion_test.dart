@@ -2627,14 +2627,50 @@ class _Playback {
     return const <int>[];
   }
 
-  void _expectRings(int seat, List<int> tokens) {
+  void _expectRings(int seat, List<int> tokens, {String? note}) {
     for (var token = 0; token < 4; token++) {
+      final String reason = note == null
+          ? 'seat $seat token $token'
+          : 'seat $seat token $token, $note';
       expect(
         find.byKey(Key('board-legal-ring-$seat-$token')),
         tokens.contains(token) ? findsOneWidget : findsNothing,
-        reason: 'seat $seat token $token',
+        reason: reason,
       );
     }
+  }
+
+  Set<int> _ringTokens(int seat) {
+    return <int>{
+      for (var token = 0; token < 4; token++)
+        if (find
+            .byKey(Key('board-legal-ring-$seat-$token'))
+            .evaluate()
+            .isNotEmpty)
+          token,
+    };
+  }
+
+  /// Waits for seat's rings to settle on [tokens]. A token I just moved
+  /// carries no ring until its disc reaches its truth (C-408 rule 2), so
+  /// the frame right after the move still shows the set from before the
+  /// move. Polls every 50ms on the live binding clock (`pump` here runs
+  /// real time, the same clock that drives the disc's travel) and gives
+  /// up after 4s with the usual ring failure plus the last set seen.
+  Future<void> _expectRingsAfterWalk(int seat, List<int> tokens) async {
+    const Duration timeout = Duration(seconds: 4);
+    const Duration poll = Duration(milliseconds: 50);
+    final Set<int> want = tokens.toSet();
+    final Stopwatch clock = Stopwatch()..start();
+    Set<int> last = _ringTokens(seat);
+    while (last.length != want.length || !last.containsAll(want)) {
+      if (clock.elapsed >= timeout) {
+        break;
+      }
+      await tester.pump(poll);
+      last = _ringTokens(seat);
+    }
+    _expectRings(seat, tokens, note: 'last set seen $last');
   }
 
   void _expectChild(Key parent, Key child, {required bool present}) {
@@ -2645,15 +2681,19 @@ class _Playback {
   }
 
   /// Tray, selected die and dead die, from the queue the wire just set.
-  /// [selectedFace] overrides the default after a tray tap.
-  void _expectTray({
+  /// [selectedFace] overrides the default after a tray tap. Set
+  /// [ringsAfterWalk] when the push behind this check just moved one of
+  /// seat's own tokens: the ring check then waits for the walk to land
+  /// (C-408 rule 2) instead of asserting on the frame the push arrived.
+  Future<void> _expectTray({
     required int seat,
     required List<int> queue,
     required bool awaitRoll,
     required bool mine,
     List<Map<String, Object?>>? legalByFace,
     int? selectedFace,
-  }) {
+    bool ringsAfterWalk = false,
+  }) async {
     final bool show = _showsTray(queue: queue, awaitRoll: awaitRoll);
     expect(
       find.byKey(const Key('game-roll-tray')),
@@ -2689,10 +2729,13 @@ class _Playback {
       );
     }
     if (mine) {
-      if (!awaitRoll && face != null && legalByFace != null) {
-        _expectRings(seat, _tokensForFace(legalByFace, face));
+      final List<int> tokens = !awaitRoll && face != null && legalByFace != null
+          ? _tokensForFace(legalByFace, face)
+          : const <int>[];
+      if (ringsAfterWalk) {
+        await _expectRingsAfterWalk(seat, tokens);
       } else {
-        _expectRings(seat, const <int>[]);
+        _expectRings(seat, tokens);
       }
     }
   }
@@ -2799,7 +2842,7 @@ class _Playback {
       value: step.face,
       legalByFace: step.legalByFace,
     );
-    _expectTray(
+    await _expectTray(
       seat: seat,
       queue: step.queue,
       awaitRoll: awaitRoll,
@@ -2848,7 +2891,12 @@ class _Playback {
         queue: step.queue,
         value: null,
       );
-      _expectTray(seat: seat, queue: step.queue, awaitRoll: true, mine: mine);
+      await _expectTray(
+        seat: seat,
+        queue: step.queue,
+        awaitRoll: true,
+        mine: mine,
+      );
       return;
     }
     if (act) {
@@ -2884,7 +2932,7 @@ class _Playback {
         before,
         reason: 'picking a tray die sends nothing',
       );
-      _expectTray(
+      await _expectTray(
         seat: seat,
         queue: controller.room!.turn!.queue,
         awaitRoll: false,
@@ -2967,7 +3015,7 @@ class _Playback {
         queue: queue,
         value: null,
       );
-      _expectTray(seat: seat, queue: queue, awaitRoll: true, mine: mine);
+      await _expectTray(seat: seat, queue: queue, awaitRoll: true, mine: mine);
     } else if (step.deadPass) {
       await _push('turn_passed', <String, Object?>{
         'seat': seat,
@@ -3002,12 +3050,17 @@ class _Playback {
         value: step.stayValue,
         legalByFace: step.stayLegalByFace,
       );
-      _expectTray(
+      // The push above may still be mid-walk for the token that just
+      // moved (C-408 rule 2 via run 98's queued-leg rule): the ring it
+      // keeps or gains for the next queued face only lands once the
+      // disc does.
+      await _expectTray(
         seat: seat,
         queue: step.stayQueue!,
         awaitRoll: false,
         mine: mine,
         legalByFace: step.stayLegalByFace,
+        ringsAfterWalk: true,
       );
     } else {
       await _push(
