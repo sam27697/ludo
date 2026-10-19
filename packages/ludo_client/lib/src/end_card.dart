@@ -227,6 +227,20 @@ class _EndCardState extends State<EndCard> {
     if (frame == null) {
       return _panel(key: panelKey, child: upper);
     }
+    // C-398 defect 1's lever: the dock holds Play again (or whichever
+    // control is the one next step -- the waiting line, the ask, the gone
+    // state) and nothing else. New table, when it is only ever the
+    // secondary control here, rides up into the scroll with the rest of
+    // the card instead of adding its own row to the dock. That keeps the
+    // dock down to one button's height, so on a short phone at 1.0 the
+    // fairness line and its verify button are still inside the scroll
+    // viewport rather than clipped off behind the dock (P7). When New
+    // table is the only action left (rematchGone, everyoneLeft) it is
+    // already the one next step and stays in the dock, primary, same as
+    // before.
+    final Widget? scrolledNewTable = widget.rematchGone || widget.everyoneLeft
+        ? null
+        : _newTableButton(loc, primary: false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -242,13 +256,17 @@ class _EndCardState extends State<EndCard> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   _panel(key: panelKey, child: upper),
+                  if (scrolledNewTable != null) ...<Widget>[
+                    const SizedBox(height: kSpace3),
+                    scrolledNewTable,
+                  ],
                   frame.trailing,
                 ],
               ),
             ),
           ),
         ),
-        _actionDock(_actionArea(context, loc)),
+        _actionDock(_actionArea(context, loc, includeSecondaryNewTable: false)),
       ],
     );
   }
@@ -586,8 +604,15 @@ class _EndCardState extends State<EndCard> {
   ///    offered fresh (rule 4's first bullet).
   ///
   /// New table (rule 3) stays present, secondary, in every branch except
-  /// the first.
-  Widget _actionArea(BuildContext context, AppLocalizations loc) {
+  /// the first. [includeSecondaryNewTable] is C-398 defect 1's lever: the
+  /// frame-hosted dock calls this with it false and renders New table in
+  /// the scroll instead (see `build`); every other caller -- a bare card
+  /// with no frame -- leaves it true and gets New table here, as before.
+  Widget _actionArea(
+    BuildContext context,
+    AppLocalizations loc, {
+    bool includeSecondaryNewTable = true,
+  }) {
     if (widget.rematchGone) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -644,8 +669,10 @@ class _EndCardState extends State<EndCard> {
           ),
           const SizedBox(height: kSpace3),
           _rematchButton(loc),
-          const SizedBox(height: kSpace2),
-          _newTableButton(loc, primary: false),
+          if (includeSecondaryNewTable) ...<Widget>[
+            const SizedBox(height: kSpace2),
+            _newTableButton(loc, primary: false),
+          ],
         ],
       );
     }
@@ -678,8 +705,10 @@ class _EndCardState extends State<EndCard> {
             const SizedBox(height: kSpace3),
             _startReadyButton(loc, rematch.ready.length),
           ],
-          const SizedBox(height: kSpace3),
-          _newTableButton(loc, primary: false),
+          if (includeSecondaryNewTable) ...<Widget>[
+            const SizedBox(height: kSpace3),
+            _newTableButton(loc, primary: false),
+          ],
         ],
       );
     }
@@ -696,8 +725,10 @@ class _EndCardState extends State<EndCard> {
               const SizedBox(height: kSpace3),
             ],
             _rematchButton(loc),
-            const SizedBox(height: kSpace2),
-            _newTableButton(loc, primary: false),
+            if (includeSecondaryNewTable) ...<Widget>[
+              const SizedBox(height: kSpace2),
+              _newTableButton(loc, primary: false),
+            ],
           ],
         );
       }
@@ -737,8 +768,10 @@ class _EndCardState extends State<EndCard> {
           ),
           const SizedBox(height: kSpace3),
           _rematchButton(loc),
-          const SizedBox(height: kSpace2),
-          _newTableButton(loc, primary: false),
+          if (includeSecondaryNewTable) ...<Widget>[
+            const SizedBox(height: kSpace2),
+            _newTableButton(loc, primary: false),
+          ],
         ],
       );
     }
@@ -752,8 +785,10 @@ class _EndCardState extends State<EndCard> {
           const SizedBox(height: kSpace3),
         ],
         _rematchButton(loc),
-        const SizedBox(height: kSpace2),
-        _newTableButton(loc, primary: false),
+        if (includeSecondaryNewTable) ...<Widget>[
+          const SizedBox(height: kSpace2),
+          _newTableButton(loc, primary: false),
+        ],
       ],
     );
   }
@@ -958,7 +993,7 @@ class _Celebration extends StatefulWidget {
 class _CelebrationState extends State<_Celebration>
     with SingleTickerProviderStateMixin {
   static const Duration _burstDuration = Duration(milliseconds: 1200);
-  static const double _diameter = 220;
+  static const double _diameter = 196;
 
   late final AnimationController _controller;
   bool _started = false;
