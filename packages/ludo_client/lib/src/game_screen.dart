@@ -2700,9 +2700,8 @@ class _GameScreenState extends State<GameScreen> {
     const double gapFloorSum = gapFloorEach * 4;
 
     if (!maxHeight.isFinite || !maxWidth.isFinite) {
-      // No real screen to measure against -- nominal spacing at the
-      // ceiling clamp is the honest fallback, not a guess dressed up as a
-      // measurement.
+      // Unbounded height (a test harness or a scrolling parent): nothing
+      // to measure against, so nominal gaps at the ceiling clamp.
       return const _PlayColumnMetrics(
         textScaleClamp: _playColumnTextScaleClamp,
         headerGap: headerGap,
@@ -2726,9 +2725,8 @@ class _GameScreenState extends State<GameScreen> {
       double lo = _playColumnTextScaleClampFloor;
       double hi = clamp;
       if (fixedCostAt(lo) > neededForFloor) {
-        // Even at the lowest the clamp is allowed to go, with every gap
-        // at 4, this shape cannot reach 324. Decision 3 goes no further
-        // than its own floor; this is the honest best the column has.
+        // Even at the clamp's floor, with every gap at 4, this shape
+        // cannot reach 324 (s6, width-bound anyway). Stop at 1.3.
         clamp = lo;
       } else {
         for (int i = 0; i < 32; i++) {
