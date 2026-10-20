@@ -480,8 +480,33 @@ void main() {
   });
 
   // ==========================================================================
-  // Case 2: a long walk (longer than 1500ms).
-  // ==========================================================================
+  // Case 2: a long walk (longer than 1500ms), built from what the board
+  // really animates: three queued legs of the held token (C-408 D6), each
+  // within C-252 rule 2's own per-leg cap (`1 <= new - old <= 6`; a single
+  // jump bigger than that is a snap, not a walk -- the defect in the
+  // previous attempt here), with the hurry rule (C-252 rule 6) applied
+  // exactly as board.dart schedules it.
+  //
+  // Why three legs, not two: a step already ticking keeps the duration it
+  // was given when scheduled (board.dart's `_scheduleNextStep`); only a
+  // step scheduled while something else waits in `_queue` runs at half
+  // duration. Pushing all three `moved` legs back to back, with zero
+  // fake-clock time elapsed before any of leg 1's steps fire (the same
+  // "most extreme, clearest case" pattern `_startWalkAndArm` already uses
+  // for a single leg), gives:
+  //   - leg 1 step 1: scheduled the instant leg 1 starts, before leg 2 or
+  //     3 are even pushed -- full duration. Leg 1's remaining 5 steps:
+  //     scheduled with leg 2 (and leg 3) already queued -- half duration.
+  //   - leg 2: dequeued once leg 1 lands; leg 3 is still queued behind it,
+  //     so all 6 of leg 2's own steps schedule at half duration.
+  //   - leg 3: dequeued once leg 2 lands; nothing is left queued, so all 6
+  //     of leg 3's steps schedule at full duration -- this is also the
+  //     walk's real landing, the first moment the token is drawn at its
+  //     truth again.
+  // With two legs only, the same arithmetic gives leg 1 (full + 5 half) +
+  // leg 2 (6 full, nothing left to hurry it) = 490ms + 840ms = 1330ms,
+  // short of 1500ms -- so two legs cannot reach it; three (6 squares each,
+  // the most C-252 rule 2 allows a single leg) do.
   group('case 2 (D7): a long walk, longer than 1500ms', () {
     testWidgets('nothing is sent while the glow has never been visible', (
       tester,
@@ -490,97 +515,239 @@ void main() {
       await _mount(tester, controller);
       final _Seq seq = _Seq(1);
 
-      // 13 squares at kTokenStepDuration (140ms) is 1820ms, comfortably
-      // longer than the 1500ms hold.
-      const int squares = 13;
-      final Duration landing = kTokenStepDuration * squares;
-      expect(
-        landing > const Duration(milliseconds: 1500),
-        isTrue,
-        reason:
-            'fixture is broken: this case requires a walk longer than '
-            '1500ms; $squares squares at ${kTokenStepDuration.inMilliseconds}ms '
-            'is only ${landing.inMilliseconds}ms',
+      const int squaresPerLeg = 6;
+      const int legFace = 6;
+      const int armedFace = 7;
+      final Duration half = Duration(
+        microseconds: kTokenStepDuration.inMicroseconds ~/ 2,
       );
-
-      final int sentAtArm = transport.sentRaw.length;
-      await _startWalkAndArm(
-        tester,
-        transport,
-        seq,
-        fromProgress: 2,
-        toProgress: 2 + squares,
-        movedFace: 4,
-        armedFace: 7,
-      );
-
+      final Duration leg1Duration =
+          kTokenStepDuration + half * (squaresPerLeg - 1);
+      final Duration leg2Duration = half * squaresPerLeg;
+      final Duration leg3Duration = kTokenStepDuration * squaresPerLeg;
+      final Duration leg1Landing = leg1Duration;
+      final Duration leg2Landing = leg1Landing + leg2Duration;
+      final Duration landing = leg2Landing + leg3Duration;
       const Duration hold = Duration(milliseconds: 1500);
       const Duration frame = Duration(milliseconds: 16);
 
-      // At 1500ms after arming: the walk is still going (landing is at
-      // 1820ms), so the glow has never been visible, and nothing must
-      // have been sent.
-      await tester.pump(hold);
+      expect(
+        landing > hold,
+        isTrue,
+        reason:
+            'fixture is broken: this case requires a walk longer than '
+            '${hold.inMilliseconds}ms; three queued legs of '
+            '$squaresPerLeg squares (face $legFace each) give leg 1 '
+            '${leg1Duration.inMilliseconds}ms + leg 2 '
+            '${leg2Duration.inMilliseconds}ms + leg 3 '
+            '${leg3Duration.inMilliseconds}ms = '
+            '${landing.inMilliseconds}ms total',
+      );
+
+      // Tracks fake-clock time actually elapsed since the arm (t = 0,
+      // below), so every `pump` below advances by exactly the delta to
+      // its named target and nothing drifts from a stale running total.
+      Duration elapsed = Duration.zero;
+      Future<void> advanceTo(Duration target) async {
+        final Duration delta = target - elapsed;
+        await tester.pump(delta);
+        elapsed = target;
+      }
+
+      final int sentAtArm = transport.sentRaw.length;
+      int fromProgress = 2;
+      for (var leg = 0; leg < 3; leg++) {
+        final int toProgress = fromProgress + squaresPerLeg;
+        transport.pushText(
+          _frame(
+            type: 'moved',
+            data: <String, Object?>{
+              'seat': 0,
+              'token': 0,
+              'from': fromProgress,
+              'to': toProgress,
+              'captured': const <Object?>[],
+              'extra_roll': false,
+              'face': legFace,
+              'seq': seq.next(),
+            },
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+        fromProgress = toProgress;
+      }
+      final int finalProgress = fromProgress;
+
+      // The same two-frame-zero-wait push `_startWalkAndArm` uses for its
+      // own `turn` frame: this is the decision under test, naming token 0
+      // the unique legal token for the one face left (armedFace) once all
+      // three already-spent legs above have queued on the board.
+      transport.pushText(
+        _frame(
+          type: 'turn',
+          data: <String, Object?>{
+            'seat': 0,
+            'phase': 'await_move',
+            'deadline_ms': 45000,
+            'queue': <int>[armedFace],
+            'value': armedFace,
+            'legal': const <int>[0],
+            'legal_by_face': <Map<String, Object?>>[
+              _faceLegal(armedFace, const <int>[0]),
+            ],
+            'seq': seq.next(),
+          },
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      // Just before leg 1 lands: mid-walk, no glow, nothing sent.
+      await advanceTo(leg1Landing - frame);
       expect(
         find.byKey(_glowKey(0, 0)),
         findsNothing,
         reason:
-            'scenario: token 0 walks progress 2 -> ${2 + squares} '
-            '(landing at ${landing.inMilliseconds}ms); at '
-            '${hold.inMilliseconds}ms, board-automove-glow-0-0 must still '
-            'be absent, the walk not having landed yet',
+            'scenario: token 0 walks progress 2 -> $finalProgress in 3 '
+            'queued legs of $squaresPerLeg (leg 1 lands at '
+            '${leg1Landing.inMilliseconds}ms); at ${elapsed.inMilliseconds}ms, '
+            'before even leg 1 lands, board-automove-glow-0-0 must not '
+            'exist (C-408 D1)',
+      );
+      expect(
+        _movesSince(transport, sentAtArm),
+        isEmpty,
+        reason:
+            'scenario: 3 queued legs, leg 1 landing at '
+            '${leg1Landing.inMilliseconds}ms; at ${elapsed.inMilliseconds}ms '
+            'no move must have been sent yet',
+      );
+
+      // Just past leg 1's landing: still no glow -- a second leg is
+      // already queued behind it (C-408 D6: no ring until the last
+      // queued leg ends), the walk's own truth is already at
+      // $finalProgress, far ahead of where leg 1 only lands.
+      await advanceTo(leg1Landing + frame);
+      expect(
+        find.byKey(_glowKey(0, 0)),
+        findsNothing,
+        reason:
+            'scenario: 3 queued legs; at ${elapsed.inMilliseconds}ms leg '
+            '1 has landed but legs 2 and 3 are still queued behind it -- '
+            'board-automove-glow-0-0 must still be absent (C-408 D6: no '
+            'ring until the last queued leg ends)',
+      );
+
+      // Just before leg 2 lands: still mid-walk.
+      await advanceTo(leg2Landing - frame);
+      expect(
+        find.byKey(_glowKey(0, 0)),
+        findsNothing,
+        reason:
+            'scenario: 3 queued legs, leg 2 landing at '
+            '${leg2Landing.inMilliseconds}ms; at ${elapsed.inMilliseconds}ms, '
+            'before leg 2 lands, board-automove-glow-0-0 must not exist',
+      );
+
+      // Just past leg 2's landing: still no glow -- leg 3 is the last
+      // queued leg and has not landed yet.
+      await advanceTo(leg2Landing + frame);
+      expect(
+        find.byKey(_glowKey(0, 0)),
+        findsNothing,
+        reason:
+            'scenario: 3 queued legs; at ${elapsed.inMilliseconds}ms leg '
+            '2 has landed but leg 3 (the last queued leg) has not -- '
+            'board-automove-glow-0-0 must still be absent',
+      );
+
+      // At 1500ms after the turn state armed the hold: the walk is still
+      // going (leg 3 lands at ${landing.inMilliseconds}ms), so the glow
+      // has never been visible, and nothing must have been sent.
+      await advanceTo(hold);
+      expect(
+        find.byKey(_glowKey(0, 0)),
+        findsNothing,
+        reason:
+            'scenario: 3 queued legs, walk landing (leg 3) at '
+            '${landing.inMilliseconds}ms; at ${elapsed.inMilliseconds}ms, '
+            'board-automove-glow-0-0 must still be absent, the walk not '
+            'having landed yet',
       );
       expect(
         _movesSince(transport, sentAtArm),
         isEmpty,
         reason:
             'C-408 D7: nothing must be sent while the glow has never '
-            'been visible; scenario: progress 2 -> ${2 + squares}, '
-            'landing at ${landing.inMilliseconds}ms, checked at '
-            '${hold.inMilliseconds}ms (1500ms after the turn state '
+            'been visible; scenario: 3 queued legs, walk landing at '
+            '${landing.inMilliseconds}ms, checked at '
+            '${elapsed.inMilliseconds}ms (1500ms after the turn state '
             'armed the hold). Red on cd75a15 means a move for token 0 '
             'already went out before the walk ever landed -- exactly '
             'the P3 violation C-408 D7 names ("the token moved by '
             'itself without warning").',
       );
 
-      // Just past the actual landing: the glow is now visible.
-      await tester.pump(landing - hold + frame * 2);
+      // Just before the walk's real landing (leg 3): still nothing.
+      await advanceTo(landing - frame);
+      expect(
+        find.byKey(_glowKey(0, 0)),
+        findsNothing,
+        reason:
+            'scenario: 3 queued legs, walk landing at '
+            '${landing.inMilliseconds}ms; at ${elapsed.inMilliseconds}ms, '
+            'one frame short of landing, board-automove-glow-0-0 must '
+            'not exist',
+      );
+
+      // Just past the walk's real landing: the glow is now visible.
+      await advanceTo(landing + frame);
       expect(
         find.byKey(_glowKey(0, 0)),
         findsOneWidget,
         reason:
-            'scenario: progress 2 -> ${2 + squares}; at '
-            '${(landing + frame * 2).inMilliseconds}ms the walk has '
-            'landed and board-automove-glow-0-0 must be on screen',
+            'scenario: 3 queued legs; at ${elapsed.inMilliseconds}ms the '
+            'walk has fully landed (all 3 queued legs played) and '
+            'board-automove-glow-0-0 must be on screen',
       );
 
       // Just before landing + 1500ms: still nothing sent.
-      final Duration target = landing + hold - frame;
-      await tester.pump(target - (landing + frame * 2));
+      await advanceTo(landing + hold - frame);
       expect(
         _movesSince(transport, sentAtArm),
         isEmpty,
         reason:
-            'scenario: progress 2 -> ${2 + squares}, landing at '
-            '${landing.inMilliseconds}ms; at '
-            '${target.inMilliseconds}ms (one frame before landing + '
-            '1500ms), no move must have been sent yet',
+            'scenario: 3 queued legs, landing at '
+            '${landing.inMilliseconds}ms; at ${elapsed.inMilliseconds}ms '
+            '(one frame before landing + 1500ms), no move must have '
+            'been sent yet',
       );
 
       // Just after landing + 1500ms: exactly one move, the right face.
-      await tester.pump(frame * 2);
+      await advanceTo(landing + hold + frame);
       final List<String> moves = _movesSince(transport, sentAtArm);
       expect(
         moves,
         hasLength(1),
         reason:
-            'scenario: progress 2 -> ${2 + squares}, landing at '
-            '${landing.inMilliseconds}ms; at '
-            '${(landing + hold + frame).inMilliseconds}ms exactly one '
-            'move must have been sent; sentRaw carries ${moves.length}',
+            'scenario: 3 queued legs, landing at '
+            '${landing.inMilliseconds}ms; at ${elapsed.inMilliseconds}ms '
+            '(one frame after landing + 1500ms), exactly one move must '
+            'have been sent; sentRaw carries ${moves.length}',
       );
-      expect(_dataOf(moves.single), <String, Object?>{'token': 0, 'face': 7});
+      expect(_dataOf(moves.single), <String, Object?>{
+        'token': 0,
+        'face': armedFace,
+      });
+
+      // Nothing further arrives afterward.
+      await advanceTo(elapsed + const Duration(milliseconds: 500));
+      expect(
+        _movesSince(transport, sentAtArm),
+        hasLength(1),
+        reason: 'no second move must follow the one the hold already sent',
+      );
 
       await _completeMoveZeroTravel(
         tester,
@@ -588,7 +755,7 @@ void main() {
         seq,
         moves.single,
         token: 0,
-        atProgress: 2 + squares,
+        atProgress: finalProgress,
       );
     });
   });
