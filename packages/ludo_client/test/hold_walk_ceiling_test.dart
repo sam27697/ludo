@@ -820,19 +820,27 @@ void main() {
         final Duration dueBy = ceiling + _hold + _frame;
         final Duration reportBound =
             ceiling + const Duration(milliseconds: 3000);
+        // Strictly before the due instant (ceiling + 1500ms), the way
+        // case 4 checks `landing + _hold - _frame`: `dueBy - _frame` is
+        // ceiling + 1500ms exactly, the instant the move is due, and
+        // fake time fires a timer due at that instant inside a pump that
+        // reaches it, so checking there (run 99's defect 1) finds the
+        // move already sent.
+        final Duration notBefore = ceiling + _hold - _frame;
 
-        await tester.pump(dueBy - _frame);
+        await tester.pump(notBefore);
         expect(
           _movesSince(transport, sentAtArm),
           isEmpty,
           reason:
               'C-408 D8: no move for token 0 must be sent before ceiling '
               '(${ceiling.inMilliseconds}ms, from 1 counted leg -- the '
-              'refused frame) + 1500ms + one frame = '
-              '${dueBy.inMilliseconds}ms after the turn state',
+              'refused frame) + 1500ms = '
+              '${(ceiling + _hold).inMilliseconds}ms after the turn '
+              'state; checked one frame short of that instant',
         );
 
-        await tester.pump(reportBound - (dueBy - _frame));
+        await tester.pump(reportBound - notBefore);
         final List<String> moves = _movesSince(transport, sentAtArm);
         expect(
           moves,
@@ -887,11 +895,16 @@ void main() {
         const int legFace1 = 1;
         const int legFace2 = 4;
         const int armedFace1 = 6;
-        // The first arm's own sentAtArm offset is not needed here: this
-        // case only asserts on what is sent after the *second* turn state
-        // below, never on the first (unresolved) decision's own send
-        // window, which case 1 already covers.
-        await _armAfterCoalescedLegs(
+        // This case's own assertions are only about what is sent after
+        // the *second* turn state below, never about the first
+        // (unresolved until here) decision's own send window, which case
+        // 1 already covers -- but that first move is still answered just
+        // below (the way case 1 answers it, `_completeMoveZeroTravel`),
+        // so its 10-second request-timeout timer
+        // (lib/src/net/connection.dart:430, keyed to `_requestTimeout`,
+        // default `Duration(seconds: 10)` at connection.dart:253) is not
+        // still pending when this test ends (run 99's defect 2).
+        final int sentAtFirstArm = await _armAfterCoalescedLegs(
           tester,
           transport,
           seq,
@@ -908,6 +921,22 @@ void main() {
         // gone out and the leg count should already have been zeroed.
         final Duration ceiling1 = _ceiling(2);
         await tester.pump(ceiling1 + _hold + _frame * 2);
+
+        // Answer the first hold's move, if one went out (on the fix it
+        // did, per case 1; on d59bf79 nothing is ever sent for it, so
+        // there is nothing here to answer and no timer it would have
+        // armed).
+        final List<String> firstMoves = _movesSince(transport, sentAtFirstArm);
+        if (firstMoves.isNotEmpty) {
+          await _completeMoveZeroTravel(
+            tester,
+            transport,
+            seq,
+            firstMoves.single,
+            token: 0,
+            atProgress: toProgress,
+          );
+        }
 
         // The turn state that makes token 0 the unique legal token again,
         // for a new decision (a new queue under the same k), while it is
@@ -984,6 +1013,14 @@ void main() {
             'token': 0,
             'face': armedFace2,
           });
+          await _completeMoveZeroTravel(
+            tester,
+            transport,
+            seq,
+            moves.single,
+            token: 0,
+            atProgress: toProgress,
+          );
         }
       },
     );
