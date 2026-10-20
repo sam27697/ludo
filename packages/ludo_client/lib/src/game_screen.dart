@@ -103,6 +103,17 @@ class _GameScreenState extends State<GameScreen> {
   // elapses without cancel.
   static const Duration _autoMoveHold = Duration(milliseconds: 1500);
   Timer? _autoMoveTimer;
+
+  // C-408 D8 (run 99): bounds D7's wait for a walk the board, for
+  // whatever reason, never lands or snaps away (two `moved` frames of one
+  // token coalesced into one build, or a refused `moved` whose resync
+  // leaves the token where it was). Armed in `_syncAutoMove` the same
+  // moment `_autoMoveAwaitingWalk` is set, from the legs `_travellingLegs`
+  // counts at that moment (D8's formula). Cancelled wherever the 1500 ms
+  // hold itself starts (`_startAutoMoveTimer`, the one path a landing or a
+  // snap also goes through) or the decision drops (`_clearPendingHold`,
+  // `_resetForNewGame`, dispose).
+  Timer? _autoMoveCeilingTimer;
   int? _pendingAutoMoveToken;
   int? _autoMoveHandledK;
   List<int>? _autoMoveHandledQueue;
@@ -359,6 +370,7 @@ class _GameScreenState extends State<GameScreen> {
     _screenDisposed = true;
     _countdownTimer?.cancel();
     _autoMoveTimer?.cancel();
+    _autoMoveCeilingTimer?.cancel();
     _rollNoAnswerTimer?.cancel();
     _noMoveTimer?.cancel();
     _trayDeadTimer?.cancel();
@@ -959,6 +971,8 @@ class _GameScreenState extends State<GameScreen> {
     _noMoveFace = null;
     _autoMoveTimer?.cancel();
     _autoMoveTimer = null;
+    _autoMoveCeilingTimer?.cancel();
+    _autoMoveCeilingTimer = null;
     _pendingAutoMoveToken = null;
     _pendingAutoMoveFace = null;
     _autoMoveHandledK = null;
@@ -1646,9 +1660,57 @@ class _GameScreenState extends State<GameScreen> {
       _autoMoveTimer?.cancel();
       _autoMoveTimer = null;
       _autoMoveAwaitingWalk = true;
+      _armAutoMoveCeiling(turn.seat, _pendingAutoMoveToken!);
     } else {
       _startAutoMoveTimer();
     }
+  }
+
+  /// C-408 D8: the ceiling on a wait for a walk that never lands or
+  /// snaps, computed once, the moment the wait starts, from every leg
+  /// this screen has counted so far, across every seat --
+  /// `_travellingLegs`'s own values summed. Each counted leg is charged
+  /// the worst a leg the board really plays can cost: six steps (the
+  /// longest a single face can walk) plus one capture flight, at the
+  /// step and flight durations in force (`MediaQuery.disableAnimationsOf`,
+  /// read the way board.dart reads it), plus a flat 250 ms. Every walk
+  /// the board really plays lands well inside that, so D7 is unchanged
+  /// for it; only a leg the board never lands or snaps ever reaches this
+  /// timer's fire.
+  void _armAutoMoveCeiling(int seat, int token) {
+    _autoMoveCeilingTimer?.cancel();
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    final Duration step = reduced
+        ? kTokenStepDurationReduced
+        : kTokenStepDuration;
+    final Duration flight = reduced
+        ? kCaptureFlightDurationReduced
+        : kCaptureFlightDuration;
+    final int legs = _travellingLegs.values.fold<int>(
+      0,
+      (int sum, int count) => sum + count,
+    );
+    final Duration perLeg = step * 6 + flight;
+    final Duration ceiling = perLeg * legs + const Duration(milliseconds: 250);
+    _autoMoveCeilingTimer = Timer(
+      ceiling,
+      () => _onAutoMoveCeiling(seat, token),
+    );
+  }
+
+  /// C-408 D8: the ceiling fired while the hold was still waiting for
+  /// this token's walk. Drop the bookkeeping for that one token (the
+  /// leg the board never landed or snapped) and start the 1500 ms hold
+  /// now, exactly as a real landing or snap would have.
+  void _onAutoMoveCeiling(int seat, int token) {
+    _autoMoveCeilingTimer = null;
+    if (!_autoMoveAwaitingWalk ||
+        seat != widget.controller.seat ||
+        token != _pendingAutoMoveToken) {
+      return;
+    }
+    _travellingLegs.remove(_travelKey(seat, token));
+    _startAutoMoveTimer();
   }
 
   static String _travelKey(int seat, int token) => '$seat-$token';
@@ -1693,6 +1755,8 @@ class _GameScreenState extends State<GameScreen> {
 
   void _startAutoMoveTimer() {
     _autoMoveAwaitingWalk = false;
+    _autoMoveCeilingTimer?.cancel();
+    _autoMoveCeilingTimer = null;
     _autoMoveTimer?.cancel();
     _autoMoveTimer = Timer(_autoMoveHold, _commitPendingAutoMove);
   }
@@ -1700,6 +1764,8 @@ class _GameScreenState extends State<GameScreen> {
   void _clearPendingHold() {
     _autoMoveTimer?.cancel();
     _autoMoveTimer = null;
+    _autoMoveCeilingTimer?.cancel();
+    _autoMoveCeilingTimer = null;
     _pendingAutoMoveToken = null;
     _pendingAutoMoveFace = null;
     _autoMoveAwaitingWalk = false;
