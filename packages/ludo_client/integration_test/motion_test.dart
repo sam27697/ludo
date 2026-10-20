@@ -2592,8 +2592,20 @@ class _Playback {
     return _idOf(found.single);
   }
 
-  Future<void> _holdTravel(_MoveStep step) async {
-    var milliseconds = step.steps * kTokenStepDuration.inMilliseconds + 120;
+  /// [walkAlreadyShown] is set by the caller when [_expectRingsAfterWalk]
+  /// already polled, in real time, until this exact token's disc reached
+  /// its truth (C-408 rule 2): that poll already held the viewer through
+  /// the whole `steps * kTokenStepDuration` walk once, live, so charging
+  /// it again here would hold on an animation that already finished and
+  /// show the recording nothing new. A capture flight or a home arrival
+  /// still starts only after that walk, so their holds stay.
+  Future<void> _holdTravel(
+    _MoveStep step, {
+    bool walkAlreadyShown = false,
+  }) async {
+    var milliseconds = walkAlreadyShown
+        ? 120
+        : step.steps * kTokenStepDuration.inMilliseconds + 120;
     if (step.captured.isNotEmpty) {
       // The flight starts after the mover's last step.
       milliseconds += kCaptureFlightDuration.inMilliseconds + 500;
@@ -3002,6 +3014,11 @@ class _Playback {
       'extra_roll': step.extraRoll,
       'face': step.face,
     }, re: re);
+    // Set only for the branch below, and only when mine: that is the one
+    // case _expectTray's ringsAfterWalk poll (not run otherwise) already
+    // held the viewer through this token's own walk, live, waiting for
+    // the disc to reach its truth.
+    var walkAlreadyShown = false;
     if (step.extraRoll) {
       final List<int> queue = step.stayQueue!;
       await _push(
@@ -3062,6 +3079,7 @@ class _Playback {
         legalByFace: step.stayLegalByFace,
         ringsAfterWalk: true,
       );
+      walkAlreadyShown = mine;
     } else {
       await _push(
         'turn',
@@ -3084,7 +3102,7 @@ class _Playback {
     if (step.to == 57) {
       _motion('6 home');
     }
-    await _holdTravel(step);
+    await _holdTravel(step, walkAlreadyShown: walkAlreadyShown);
   }
 
   List<Map<String, Object?>>? _legalByFaceRaw() {
