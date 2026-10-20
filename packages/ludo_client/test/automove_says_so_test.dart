@@ -423,7 +423,77 @@ List<String> _movesSince(FakeTransport transport, int sentBefore) {
 AppLocalizations _locOf(WidgetTester tester) =>
     AppLocalizations.of(tester.element(find.byType(GameScreen)));
 
+/// Resolves the pending `RoomConnection.move` request behind [moveText] with
+/// a zero-travel `moved` reply (`from == to`), copied by hand from
+/// test/hold_after_walk_test.dart's own `_completeMoveZeroTravel`: the hold
+/// firing (or a tap) sends a `move` frame through `RoomConnection.request`,
+/// which arms its own 10s request-timeout `Timer` (connection.dart:430) that
+/// only a matching reply (run 100's own verdict found this file's existing
+/// `addTearDown(controller.dispose)` does not reach in time to cancel)
+/// clears; left unanswered, that `Timer` is still pending when the test body
+/// ends -- run 100's own defect 1 against cases 1, 2, 3, 7 and 8 below.
+/// Every case that lets the hold (or a tap) actually send a move calls this
+/// once, at the very end of its own body, after every other expectation.
+Future<void> _completeMoveZeroTravel(
+  WidgetTester tester,
+  FakeTransport transport,
+  _Seq seq,
+  String moveText, {
+  required int seat,
+  required int token,
+  required int atProgress,
+}) async {
+  transport.pushText(
+    _frame(
+      type: 'moved',
+      re: _idOf(moveText),
+      data: <String, Object?>{
+        'seat': seat,
+        'token': token,
+        'from': atProgress,
+        'to': atProgress,
+        'captured': const <Object?>[],
+        'extra_roll': false,
+        'seq': seq.next(),
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+}
+
+/// Loads the app's own Poppins and Noto Sans Arabic font files, copied by
+/// hand from test/header_fits_test.dart:337-362's own `_loadAppFonts` (run
+/// 100's own defect 2: without this, case 6 measures the flutter_test
+/// default test font's square glyphs, not the app's own fonts, which is not
+/// a measurement of anything C-339 / C-391 would recognise).
+Future<void> _loadAppFonts() async {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  final FontLoader poppins = FontLoader('Poppins');
+  for (final String asset in const <String>[
+    'fonts/Poppins-Regular.ttf',
+    'fonts/Poppins-Medium.ttf',
+    'fonts/Poppins-SemiBold.ttf',
+    'fonts/Poppins-Bold.ttf',
+  ]) {
+    poppins.addFont(rootBundle.load(asset));
+  }
+  await poppins.load();
+
+  final FontLoader notoSansArabic = FontLoader('Noto Sans Arabic');
+  for (final String asset in const <String>[
+    'fonts/NotoSansArabic-Regular.ttf',
+    'fonts/NotoSansArabic-Bold.ttf',
+  ]) {
+    notoSansArabic.addFont(rootBundle.load(asset));
+  }
+  await notoSansArabic.load();
+}
+
 void main() {
+  setUpAll(_loadAppFonts);
+
   // ==========================================================================
   // Case 1 (D1): the countdown arc, shape and sweep.
   // ==========================================================================
@@ -439,6 +509,7 @@ void main() {
         await _mount(tester, controller);
         final _Seq seq = _Seq(1);
 
+        final int sentAtArm = transport.sentRaw.length;
         await _armLegal(tester, transport, seq, legal: const <int>[0]);
 
         expect(
@@ -496,9 +567,28 @@ void main() {
               'the send); got $at1400',
         );
 
-        // Drain the hold so the pending move request leaves no open timer
-        // behind when the test body ends.
+        // Drain the hold (750 + 650 + 200 = 1600ms since arming, past
+        // kAutoMoveHold) and answer the move it sends, so the pending
+        // request leaves no open Timer behind when the test body ends
+        // (run 100's own defect 1).
         await tester.pump(const Duration(milliseconds: 200));
+        final List<String> moves = _movesSince(transport, sentAtArm);
+        expect(
+          moves,
+          hasLength(1),
+          reason:
+              'fixture is broken: the hold must have sent exactly one move '
+              'by 1600ms after arming; sentRaw carries ${moves.length}',
+        );
+        await _completeMoveZeroTravel(
+          tester,
+          transport,
+          seq,
+          moves.single,
+          seat: 0,
+          token: 0,
+          atProgress: 2,
+        );
       },
     );
 
@@ -645,6 +735,19 @@ void main() {
             'D2: at the moment the move is sent, remaining must be at '
             'most 0.05, or the arc must already be gone; got $atSend',
       );
+
+      // Answer the sent move so its own 10s request-timeout Timer leaves
+      // no open Timer behind when the test body ends (run 100's own
+      // defect 1).
+      await _completeMoveZeroTravel(
+        tester,
+        transport,
+        seq,
+        moves.single,
+        seat: 0,
+        token: 0,
+        atProgress: 2,
+      );
     });
   });
 
@@ -695,6 +798,7 @@ void main() {
           );
         }
 
+        final int sentAtArm = transport.sentRaw.length;
         await _armLegal(tester, transport, seq, legal: const <int>[0], k: 1);
 
         await tester.pump(const Duration(milliseconds: 100));
@@ -715,8 +819,27 @@ void main() {
         await tester.pump(const Duration(milliseconds: 200));
         expectStep(arcRemainingAt(tester, _arcKey(0, 0)), oneThird, 1300);
 
-        // Drain the hold.
+        // Drain the hold (1600ms since arming) and answer the move it
+        // sends, so the pending request leaves no open Timer behind when
+        // the test body ends (run 100's own defect 1).
         await tester.pump(const Duration(milliseconds: 300));
+        final List<String> moves = _movesSince(transport, sentAtArm);
+        expect(
+          moves,
+          hasLength(1),
+          reason:
+              'fixture is broken: the hold must have sent exactly one move '
+              'by 1600ms after arming; sentRaw carries ${moves.length}',
+        );
+        await _completeMoveZeroTravel(
+          tester,
+          transport,
+          seq,
+          moves.single,
+          seat: 0,
+          token: 0,
+          atProgress: 2,
+        );
       },
     );
   });
@@ -972,12 +1095,45 @@ void main() {
                     matching: find.byType(RichText),
                   ),
                 );
+            // The natural (unwrapped) width of the same resolved span,
+            // style, direction and scaler the live paragraph carries, so a
+            // red case below reports how far over the available width the
+            // string actually sits, not only the bare true/false
+            // didExceedMaxLines flag -- copied by hand from
+            // test/large_text_fit_test.dart's own `_painterFor` /
+            // `_layoutMaxWidth` precedent, laid out unconstrained here
+            // since the natural single-line width is exactly what this
+            // measurement needs.
+            final TextPainter natural = TextPainter(
+              text: paragraph.text,
+              textAlign: paragraph.textAlign,
+              textDirection: paragraph.textDirection,
+              textScaler: paragraph.textScaler,
+              locale: paragraph.locale,
+              strutStyle: paragraph.strutStyle,
+              textWidthBasis: paragraph.textWidthBasis,
+              textHeightBehavior: paragraph.textHeightBehavior,
+            )..layout();
+            final double available = paragraph.constraints.maxWidth;
+            final double natW = natural.size.width;
+            natural.dispose();
+            // ignore: avoid_print
+            print(
+              'CASE $label banner="$shown" availableWidth='
+              '${available.toStringAsFixed(1)} naturalWidth='
+              '${natW.toStringAsFixed(1)} overflow='
+              '${(natW - available).toStringAsFixed(1)} '
+              'didExceedMaxLines=${paragraph.didExceedMaxLines}',
+            );
             expect(
               paragraph.didExceedMaxLines,
               isFalse,
               reason:
                   '$label: "$shown" exceeded one line '
-                  '(RenderParagraph.didExceedMaxLines=true)',
+                  '(RenderParagraph.didExceedMaxLines=true); natural single'
+                  '-line width ${natW.toStringAsFixed(1)} vs available '
+                  '${available.toStringAsFixed(1)} (over by '
+                  '${(natW - available).toStringAsFixed(1)}dp)',
             );
           });
         }
@@ -1074,6 +1230,19 @@ void main() {
                 'loc.gameTokenButton(1) ("${loc.gameTokenButton(1)}") '
                 'exactly once; announcements from the send: $afterSend',
           );
+
+          // Answer the sent move so its own 10s request-timeout Timer
+          // leaves no open Timer behind when the test body ends (run
+          // 100's own defect 1).
+          await _completeMoveZeroTravel(
+            tester,
+            transport,
+            seq,
+            moves.single,
+            seat: 0,
+            token: 0,
+            atProgress: 2,
+          );
         },
       );
     }
@@ -1124,6 +1293,19 @@ void main() {
           reason:
               'D8: the arc must be gone the very next frame after a tap '
               'sends the move',
+        );
+
+        // Answer the sent move so its own 10s request-timeout Timer
+        // leaves no open Timer behind when the test body ends (run 100's
+        // own defect 1).
+        await _completeMoveZeroTravel(
+          tester,
+          transport,
+          seq,
+          moves.single,
+          seat: 0,
+          token: 0,
+          atProgress: 2,
         );
       },
     );
