@@ -89,21 +89,28 @@ const List<(int, int)> _sharedQuad = <(int, int)>[
   (1, 1),
 ];
 
-/// Occupants of [cell] (board space) from the truth in [tokens]. Other
-/// seats first, by [_seatRank] ascending, then the viewer's seat; within
-/// a seat by token index ascending. A spectator has no seat of their own,
-/// so the whole list is rank order.
+/// Occupants of [cell] (board space), each token's position read through
+/// [progressOf] -- truth (`tokens[seat]![tokenIndex]`) by default, or
+/// contract C-408 decision 3's drawn position when the caller passes one:
+/// a token still travelling toward [cell] (its own [progressOf] not yet
+/// equal to the square it is crossing) is not an occupant of it yet, and a
+/// token already drawn there (even if truth has since moved it on) still
+/// is. Other seats first, by [_seatRank] ascending, then the viewer's seat;
+/// within a seat by token index ascending. A spectator has no seat of
+/// their own, so the whole list is rank order.
 List<_TokenOccupant> _occupantsOnCell({
   required BoardCell cell,
   required Map<int, List<int>> tokens,
   required List<int> seatsInPlay,
   required int? mySeat,
+  int Function(int seat, int tokenIndex)? progressOf,
 }) {
+  final int Function(int seat, int tokenIndex) resolvedProgressOf =
+      progressOf ?? ((int seat, int tokenIndex) => tokens[seat]![tokenIndex]);
   final List<_TokenOccupant> occupants = <_TokenOccupant>[];
   for (final int seat in seatsInPlay) {
-    final List<int> progresses = tokens[seat]!;
-    for (var tokenIndex = 0; tokenIndex < progresses.length; tokenIndex++) {
-      final int progress = progresses[tokenIndex];
+    for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++) {
+      final int progress = resolvedProgressOf(seat, tokenIndex);
       if (cellFor(seat: seat, progress: progress, tokenIndex: tokenIndex) !=
           cell) {
         continue;
@@ -167,9 +174,11 @@ bool _isSharedTrack(List<_TokenOccupant> occupants) {
 /// The offsets are applied after [toView], in view axes, so they do not
 /// turn with the board and they do not mirror.
 ///
-/// [tokens] is truth. A token drawn at a [progress] it does not occupy
-/// (mid-step, or held on its old square before the flight home) is not an
-/// occupant of that cell, so it keeps the fan there.
+/// [tokens] is truth, read for occupancy through [progressOf] when the
+/// caller passes one (contract C-408 decision 3; see [_occupantsOnCell]).
+/// A token drawn at a [progress] it does not occupy (mid-step, or held on
+/// its old square before the flight home) is not an occupant of that
+/// cell, so it keeps the fan there.
 _TokenLayout _tokenLayout({
   required int seat,
   required int tokenIndex,
@@ -178,6 +187,7 @@ _TokenLayout _tokenLayout({
   required int? mySeat,
   required Map<int, List<int>> tokens,
   required List<int> seatsInPlay,
+  int Function(int seat, int tokenIndex)? progressOf,
 }) {
   final BoardCell cell = cellFor(
     seat: seat,
@@ -190,6 +200,7 @@ _TokenLayout _tokenLayout({
     tokens: tokens,
     seatsInPlay: seatsInPlay,
     mySeat: mySeat,
+    progressOf: progressOf,
   );
 
   var slot = -1;
@@ -707,15 +718,24 @@ class _LudoBoardState extends State<LudoBoard> {
     }
   }
 
-  /// The mover's last step has landed. Its override already equals truth
-  /// (the final step set it to [_Move.newProgress], which is exactly what
-  /// `widget.tokens` already holds), so nothing there needs to change. A
-  /// captured token starts its flight home now, contract C-252 rule 4; a
-  /// move with no capture is simply done, and the queue (if anything is
-  /// waiting) moves on.
+  /// The mover's last step has landed. Its override already holds
+  /// [_Move.newProgress] (the final step's own `setState` put it there)
+  /// and is deliberately left alone rather than cleared: contract C-408
+  /// decision 6 -- when another move for the same token is already queued
+  /// (truth jumped straight to that move's own destination the moment it
+  /// was recognised, long before this leg's steps finished playing),
+  /// clearing the override here would uncover that further-ahead truth for
+  /// one frame before the queued move's first step pulls the disc back to
+  /// where it actually continues from. Leaving the entry in place costs
+  /// nothing when nothing is queued either: `widget.tokens` already holds
+  /// this same value, so the override and the fallback agree, and whatever
+  /// starts (or doesn't start) next either overwrites this entry on its own
+  /// terms or clears the whole map outright ([_snapToTruth]). A captured
+  /// token starts its flight home now, contract C-252 rule 4; a move with
+  /// no capture is simply done, and the queue (if anything is waiting)
+  /// moves on.
   void _onMoveArrived(_Move move) {
     widget.onMoveLanded?.call(move.seat, move.token);
-    _override.remove(_key(move.seat, move.token));
     final int? capturedSeat = move.capturedSeat;
     if (capturedSeat != null) {
       final int capturedToken = move.capturedToken!;
@@ -1420,6 +1440,23 @@ class _LudoBoardState extends State<LudoBoard> {
       );
     }
 
+    // Contract C-408 decision 3: the drawn disc's own shared-vs-fan slot
+    // reads every token's occupancy off its drawn position, not truth, so
+    // a token already standing on the mover's destination keeps its own
+    // layout until the mover's disc actually arrives there too.
+    _TokenLayout layoutAtDrawn(int atProgress) {
+      return _tokenLayout(
+        seat: seat,
+        tokenIndex: tokenIndex,
+        progress: atProgress,
+        cellSize: cellSize,
+        mySeat: widget.mySeat,
+        tokens: widget.tokens,
+        seatsInPlay: widget.seatsInPlay,
+        progressOf: _drawnProgress,
+      );
+    }
+
     final _TokenLayout atTruth = layoutAt(progress);
 
     final bool isMine = seat == widget.mySeat;
@@ -1430,6 +1467,15 @@ class _LudoBoardState extends State<LudoBoard> {
     final OrdinalSortKey tokenSortKey = OrdinalSortKey(
       seatRank * 4.0 + tokenIndex,
     );
+
+    // Contract C-408 decisions 1/2: a legal token carries no ring (and no
+    // auto-move glow, nested inside it below) while its disc is drawn
+    // anywhere other than its truth -- mid-travel, including the travel
+    // out of the yard, or mid-capture-hold. The ring starts its pulse the
+    // frame the disc actually reaches truth, driven by the very same
+    // travel playback that moves the disc (decision 5: no new timer).
+    final int drawnProgress = _drawnProgress(seat, tokenIndex);
+    final bool atRestAtTruth = drawnProgress == progress;
 
     final List<Widget> layer = <Widget>[];
 
@@ -1477,7 +1523,7 @@ class _LudoBoardState extends State<LudoBoard> {
       );
     }
 
-    if (legalHere) {
+    if (legalHere && atRestAtTruth) {
       final double ringSize = atTruth.size * 1.7;
       // C-223 clarification 2: the legal ring key is present for every
       // legal token, the unique-legal token included; the faster glow key
@@ -1509,14 +1555,14 @@ class _LudoBoardState extends State<LudoBoard> {
 
     // Contract C-252 rule 1: `cell` (board space) still feeds the
     // Semantics identifier. The hit target and the ring read [atTruth].
-    // Only the drawn circle below reads `_drawnProgress`, which is truth
-    // too except mid-travel or mid-capture-hold. A step along the path is
-    // not an occupant of the cell it is crossing, so it keeps the fan;
-    // the square it has actually landed on takes the shared slot.
-    final int drawnProgress = _drawnProgress(seat, tokenIndex);
-    final _TokenLayout drawn = drawnProgress == progress
-        ? atTruth
-        : layoutAt(drawnProgress);
+    // Only the drawn circle below reads `_drawnProgress` (already read
+    // above as `drawnProgress`), which is truth too except mid-travel or
+    // mid-capture-hold, through [layoutAtDrawn] so its own occupancy
+    // follows decision 3. A step along the path is not an occupant of the
+    // cell it is crossing, so it keeps the fan; the square it has actually
+    // landed on takes the shared slot once every occupant there has
+    // actually arrived.
+    final _TokenLayout drawn = layoutAtDrawn(drawnProgress);
     final double drawnSize = drawn.size;
     final double drawnLeft = drawn.center.dx - drawnSize / 2;
     final double drawnTop = drawn.center.dy - drawnSize / 2;
@@ -1552,8 +1598,12 @@ class _LudoBoardState extends State<LudoBoard> {
       // already cleared this pair's override in `_onMoveArrived`, so
       // `_drawnProgress` fell back to truth, which is already -1.
       // The flight starts at the centre [_tokenLayout] gives the old
-      // square, in a box the size of the disc that is flying.
-      final _TokenLayout fromLayout = layoutAt(flying.fromProgress);
+      // square, in a box the size of the disc that is flying. Through
+      // [layoutAtDrawn] for the same reason the disc itself reads it: by
+      // the time this flight starts, this token's own drawn position has
+      // already moved on (to -1 above), so it is never mistaken for still
+      // occupying the old square it is departing, shared slot or not.
+      final _TokenLayout fromLayout = layoutAtDrawn(flying.fromProgress);
       final double fromLeft = fromLayout.center.dx - drawnSize / 2;
       final double fromTop = fromLayout.center.dy - drawnSize / 2;
       layer.add(
