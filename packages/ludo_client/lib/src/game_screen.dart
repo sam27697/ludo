@@ -21,6 +21,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -1764,6 +1765,27 @@ class _GameScreenState extends State<GameScreen> {
     _autoMoveCeilingTimer = null;
     _autoMoveTimer?.cancel();
     _autoMoveTimer = Timer(kAutoMoveHold, _commitPendingAutoMove);
+    _rebuildForAutoMoveBanner();
+  }
+
+  /// C-417 D4: the banner reads `_autoMoveTimer`, and the hold can start
+  /// from a board callback (a walk landing, a snap, the C-408 ceiling)
+  /// that does not rebuild this screen. Rebuild now, or right after the
+  /// current frame when the callback arrives in the middle of one.
+  void _rebuildForAutoMoveBanner() {
+    if (!mounted) {
+      return;
+    }
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {});
+        }
+      });
+      return;
+    }
+    setState(() {});
   }
 
   void _clearPendingHold() {
