@@ -39,6 +39,13 @@ const Duration kTokenStepDurationReduced = Duration(milliseconds: 40);
 const Duration kCaptureFlightDuration = Duration(milliseconds: 360);
 const Duration kCaptureFlightDurationReduced = Duration(milliseconds: 120);
 
+/// Contract C-417 D2: the one constant the unique-legal hold counts from,
+/// shared by the countdown arc drawn here and by game_screen.dart's own
+/// hold timer, so the arc reaching empty and the held move actually being
+/// sent coincide within a frame rather than drifting apart as two
+/// separately-declared 1500s.
+const Duration kAutoMoveHold = Duration(milliseconds: 1500);
+
 /// The four entry squares among [safeTrackSquares], absolute indices, each
 /// one seat's own starting square (RULES.md 1.2, contract C-241 rule 2):
 /// seat 0 enters at 0, seat 1 at 13, seat 2 at 26, seat 3 at 39. These are
@@ -1530,24 +1537,44 @@ class _LudoBoardState extends State<LudoBoard> {
       // nests around that same ring rather than drawing a second one on
       // top of it. The ring is centred on the token's own centre and
       // scales with the disc it marks.
-      Widget ring = _PulsingRing(
-        period: autoMoveHere
-            ? const Duration(milliseconds: 450)
-            : const Duration(milliseconds: 900),
-      );
+      //
+      // C-417 D1: the glow's own rate difference is gone -- every legal
+      // ring, the unique-legal one included, breathes at the same 900ms
+      // now, since the countdown arc nested inside the glow key below is
+      // the hold's own signal.
+      Widget ring = _PulsingRing(period: const Duration(milliseconds: 900));
+      double markerSize = ringSize;
       if (autoMoveHere) {
+        // D1: the arc's own radius clears the ring's outer edge by at
+        // least 1.5x the ring's own peak stroke width (_PulsingRingState's
+        // own ceiling, 4.0 reached at full pulse), on each side, so its
+        // stroke and the ring's never touch.
+        const double ringMaxStrokeWidth = 4.0;
+        final double arcSize = ringSize + ringMaxStrokeWidth * 1.5 * 2;
+        markerSize = arcSize;
         ring = KeyedSubtree(
           key: Key('board-automove-glow-$seat-$tokenIndex'),
-          child: ring,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              SizedBox(
+                key: Key('board-automove-arc-$seat-$tokenIndex'),
+                width: arcSize,
+                height: arcSize,
+                child: const _AutoMoveArc(),
+              ),
+              SizedBox(width: ringSize, height: ringSize, child: ring),
+            ],
+          ),
         );
       }
       layer.add(
         Positioned(
           key: Key('board-legal-ring-$seat-$tokenIndex'),
-          left: atTruth.center.dx - ringSize / 2,
-          top: atTruth.center.dy - ringSize / 2,
-          width: ringSize,
-          height: ringSize,
+          left: atTruth.center.dx - markerSize / 2,
+          top: atTruth.center.dy - markerSize / 2,
+          width: markerSize,
+          height: markerSize,
           child: ring,
         ),
       );
@@ -2173,6 +2200,125 @@ class _RingPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _RingPainter oldDelegate) =>
       oldDelegate.strokeWidth != strokeWidth || oldDelegate.opacity != opacity;
+}
+
+/// The unique-legal hold's own countdown, contract C-417 D1: a stroke in
+/// [LudoColors.success], starting at 12 o'clock, whose sweep is
+/// `remaining * 360` degrees. [remaining] runs from 1.0 (the frame the
+/// glow first appears) to 0.0 (the frame the held move is actually sent),
+/// so a full circle depletes clockwise, always anchored at the top, down
+/// to nothing right as the send happens -- never on a clock of its own.
+/// Public with a public field because the acceptance tests for this
+/// contract read [remaining] straight off the painter.
+class AutoMoveArcPainter extends CustomPainter {
+  const AutoMoveArcPainter({required this.remaining, this.strokeWidth = 3.0});
+
+  final double remaining;
+  final double strokeWidth;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double clamped = remaining.clamp(0.0, 1.0);
+    if (clamped <= 0) {
+      return;
+    }
+    final Rect rect = (Offset.zero & size).deflate(strokeWidth / 2);
+    canvas.drawArc(
+      rect,
+      -math.pi / 2,
+      clamped * 2 * math.pi,
+      false,
+      Paint()
+        ..color = LudoColors.success
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant AutoMoveArcPainter oldDelegate) =>
+      oldDelegate.remaining != remaining ||
+      oldDelegate.strokeWidth != strokeWidth;
+}
+
+/// Hosts [AutoMoveArcPainter]'s own clock: one [AnimationController] of
+/// [kAutoMoveHold], started once on this element's first frame and never
+/// again -- a rebuild of the board, a new frame under the same decision, a
+/// locale or text-scale change all reuse this same State (it lives inside
+/// the `board-automove-glow-S-T` `KeyedSubtree`, which does not get torn
+/// down for any of those), so none of them restarts the arc. Only a new
+/// decision -- the glow key leaving the tree and a fresh one appearing --
+/// tears this element down and the next one starts fresh at 1.0, exactly
+/// contract C-417 D2's own "a new decision starts a new arc at 1.0".
+///
+/// D3: under `MediaQuery.disableAnimationsOf`, [remaining] does not track
+/// the controller's own interpolated value -- it holds at 1.0, 2/3 and
+/// 1/3 for the 500ms spans starting at 0, 500 and 1000ms after this
+/// widget's first frame, then 0.0 once the controller completes at
+/// [kAutoMoveHold], read off the controller's own elapsed duration in
+/// whole milliseconds rather than its fractional `value`, so the three
+/// held readings land on the exact fractions the contract names rather
+/// than whatever a `1/1500` division happens to round to.
+class _AutoMoveArc extends StatefulWidget {
+  const _AutoMoveArc();
+
+  @override
+  State<_AutoMoveArc> createState() => _AutoMoveArcState();
+}
+
+class _AutoMoveArcState extends State<_AutoMoveArc>
+    with SingleTickerProviderStateMixin {
+  static const List<double> _reducedSteps = <double>[1.0, 2 / 3, 1 / 3, 0.0];
+
+  late final AnimationController _controller;
+  bool _reduced = false;
+  bool _started = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: kAutoMoveHold);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduced = MediaQuery.disableAnimationsOf(context);
+    if (!_started) {
+      _started = true;
+      _controller.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  double get _remaining {
+    if (!_reduced) {
+      return 1.0 - _controller.value;
+    }
+    final int elapsedMs = _controller.lastElapsedDuration?.inMilliseconds ?? 0;
+    final int step = (elapsedMs ~/ 500).clamp(0, _reducedSteps.length - 1);
+    return _reducedSteps[step];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, _) {
+          return CustomPaint(
+            painter: AutoMoveArcPainter(remaining: _remaining),
+          );
+        },
+      ),
+    );
+  }
 }
 
 /// A plain five-point star, point up, filling a disc of radius
