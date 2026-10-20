@@ -50,8 +50,11 @@ const String defaultVerifyLanguage = 'en';
 /// been given at all, and the choice falls through to [acceptLanguageHeader]
 /// -- the highest-`q` tag whose primary subtag (the part before the first
 /// `-`, compared case-insensitively) is `ar` or `en`, ties broken by
-/// whichever such tag appeared first in the header. With no query match and
-/// no such tag in the header, English.
+/// whichever such tag appeared first in the header. A tag weighted `q=0`
+/// (RFC 9110 section 12.4.2), however it is written (`q=0`, `q=0.000`,
+/// `Q=0` -- the parameter name is matched case-insensitively), is "not
+/// acceptable" and is dropped before the highest-`q` tag is picked. With no
+/// query match and no acceptable tag left in the header, English.
 String resolveVerifyLanguage({
   required Map<String, String> query,
   required String? acceptLanguageHeader,
@@ -94,12 +97,23 @@ String _languageFromAcceptLanguage(String? header) {
     double q = 1.0;
     for (final String param in parts.skip(1)) {
       final String trimmed = param.trim();
-      if (trimmed.startsWith('q=')) {
-        final double? parsed = double.tryParse(trimmed.substring(2));
-        if (parsed != null) {
-          q = parsed;
-        }
+      final int eq = trimmed.indexOf('=');
+      if (eq == -1) {
+        continue;
       }
+      if (trimmed.substring(0, eq).trim().toLowerCase() != 'q') {
+        continue;
+      }
+      final double? parsed = double.tryParse(trimmed.substring(eq + 1).trim());
+      if (parsed != null) {
+        q = parsed;
+      }
+    }
+    if (q == 0) {
+      // RFC 9110 section 12.4.2: a weight of q=0 means "not acceptable",
+      // not merely the lowest-ranked candidate -- drop the tag entirely
+      // rather than let it win a tie-break or survive as a fallback.
+      continue;
     }
     accepted.add(_AcceptedTag(primary, q, order));
     order++;

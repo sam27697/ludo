@@ -397,6 +397,175 @@ void main() {
               'even though en is listed first; body: $body');
     });
 
+    // RFC 9110 section 12.4.2: a weight of q=0 means the tag is "not
+    // acceptable", not merely the lowest-ranked candidate, and the q
+    // parameter name is compared case-insensitively like every other
+    // parameter name in the grammar.
+    test('Accept-Language: ar;q=0 (no query): en, q=0 means not acceptable',
+        () async {
+      final _Harness harness = await harnessWithFixture();
+      final HttpClientResponse response = await _send(
+        client,
+        harness.uri('/v/$_foundId'),
+        headers: <String, String>{'Accept-Language': 'ar;q=0'},
+      );
+      final String body = await _bodyOf(response);
+
+      expect(body.contains('<html lang="en">'), isTrue,
+          reason: 'decision 1 / RFC 9110 12.4.2: "ar;q=0" marks ar as not '
+              'acceptable, so with no other tag present the page must '
+              'fall back to the default (<html lang="en">), not render '
+              'Arabic; body: $body');
+    });
+
+    test(
+        'Accept-Language: ar;q=0,en;q=0.1 (no query): en, the excluded '
+        'q=0 ar tag leaves only the weaker en tag', () async {
+      final _Harness harness = await harnessWithFixture();
+      final HttpClientResponse response = await _send(
+        client,
+        harness.uri('/v/$_foundId'),
+        headers: <String, String>{'Accept-Language': 'ar;q=0,en;q=0.1'},
+      );
+      final String body = await _bodyOf(response);
+
+      expect(body.contains('<html lang="en">'), isTrue,
+          reason: 'decision 1 / RFC 9110 12.4.2: "ar;q=0,en;q=0.1" must '
+              'exclude ar as not acceptable, leaving en (q=0.1) as the '
+              'only candidate, so the page must be English '
+              '(<html lang="en">); body: $body');
+    });
+
+    test(
+        'Accept-Language: ar;q=0,fr (no query): en, the excluded q=0 ar '
+        'tag leaves no ar/en candidate at all (fr is neither)', () async {
+      final _Harness harness = await harnessWithFixture();
+      final HttpClientResponse response = await _send(
+        client,
+        harness.uri('/v/$_foundId'),
+        headers: <String, String>{'Accept-Language': 'ar;q=0,fr'},
+      );
+      final String body = await _bodyOf(response);
+
+      expect(body.contains('<html lang="en">'), isTrue,
+          reason: 'decision 1 / RFC 9110 12.4.2: "ar;q=0,fr" must exclude '
+              'ar as not acceptable; fr has neither primary subtag ar nor '
+              'en, so no candidate remains and the page must default to '
+              'English (<html lang="en">); body: $body');
+    });
+
+    test(
+        'Accept-Language: ar;Q=0 (no query): en, the q parameter name is '
+        'case-insensitive', () async {
+      final _Harness harness = await harnessWithFixture();
+      final HttpClientResponse response = await _send(
+        client,
+        harness.uri('/v/$_foundId'),
+        headers: <String, String>{'Accept-Language': 'ar;Q=0'},
+      );
+      final String body = await _bodyOf(response);
+
+      expect(body.contains('<html lang="en">'), isTrue,
+          reason: 'decision 1 / RFC 9110 12.4.2: "ar;Q=0" must be read '
+              'the same as "ar;q=0" -- the parameter name is '
+              'case-insensitive, so this must mark ar as not acceptable '
+              'and fall back to the default (<html lang="en">), not read '
+              'the capitalised form as weight 1.0; body: $body');
+    });
+
+    test(
+        'Accept-Language: ar;q=0.000 (no query): en, a weight of exactly '
+        'zero is not acceptable no matter how it is written', () async {
+      final _Harness harness = await harnessWithFixture();
+      final HttpClientResponse response = await _send(
+        client,
+        harness.uri('/v/$_foundId'),
+        headers: <String, String>{'Accept-Language': 'ar;q=0.000'},
+      );
+      final String body = await _bodyOf(response);
+
+      expect(body.contains('<html lang="en">'), isTrue,
+          reason: 'decision 1 / RFC 9110 12.4.2: "ar;q=0.000" is a weight '
+              'of exactly zero, written with trailing zeros; it must '
+              'mark ar as not acceptable just like "ar;q=0" and fall '
+              'back to the default (<html lang="en">); body: $body');
+    });
+
+    test(
+        'Accept-Language: en;q=0,ar (no query): ar, the excluded q=0 en '
+        'tag leaves ar as the only candidate', () async {
+      final _Harness harness = await harnessWithFixture();
+      final HttpClientResponse response = await _send(
+        client,
+        harness.uri('/v/$_foundId'),
+        headers: <String, String>{'Accept-Language': 'en;q=0,ar'},
+      );
+      final String body = await _bodyOf(response);
+
+      expect(body.contains('<html lang="ar" dir="rtl">'), isTrue,
+          reason: 'decision 1 / RFC 9110 12.4.2: "en;q=0,ar" must exclude '
+              'en as not acceptable, leaving ar (q=1 implicit) as the '
+              'only candidate, so the page must be Arabic '
+              '(<html lang="ar" dir="rtl">); body: $body');
+    });
+
+    test(
+        'Accept-Language: ar;q=0.001 (no query): ar, a weight just above '
+        'zero is still acceptable', () async {
+      final _Harness harness = await harnessWithFixture();
+      final HttpClientResponse response = await _send(
+        client,
+        harness.uri('/v/$_foundId'),
+        headers: <String, String>{'Accept-Language': 'ar;q=0.001'},
+      );
+      final String body = await _bodyOf(response);
+
+      expect(body.contains('<html lang="ar" dir="rtl">'), isTrue,
+          reason: 'decision 1 / RFC 9110 12.4.2: "ar;q=0.001" is strictly '
+              'greater than zero, so ar is acceptable and must remain '
+              'the only candidate, rendering the Arabic page '
+              '(<html lang="ar" dir="rtl">); body: $body');
+    });
+
+    test(
+        'Accept-Language: en;q=0,ar;q=0 (no query): en, no tag is '
+        'acceptable at all so the page defaults', () async {
+      final _Harness harness = await harnessWithFixture();
+      final HttpClientResponse response = await _send(
+        client,
+        harness.uri('/v/$_foundId'),
+        headers: <String, String>{'Accept-Language': 'en;q=0,ar;q=0'},
+      );
+      final String body = await _bodyOf(response);
+
+      expect(body.contains('<html lang="en">'), isTrue,
+          reason: 'decision 1 / RFC 9110 12.4.2: "en;q=0,ar;q=0" marks '
+              'every tag not acceptable, so no candidate remains at all '
+              'and the page must default to English '
+              '(<html lang="en">); body: $body');
+    });
+
+    test(
+        'the not-found page excludes a q=0 tag the same way: '
+        'Accept-Language: ar;q=0 selects en', () async {
+      final _Harness harness = _Harness.build();
+      active = harness;
+      await harness.start();
+      final HttpClientResponse response = await _send(
+        client,
+        harness.uri('/v/$_unknownId'),
+        headers: <String, String>{'Accept-Language': 'ar;q=0'},
+      );
+      final String body = await _bodyOf(response);
+
+      expect(response.statusCode, 404);
+      expect(body.contains('<html lang="en">'), isTrue,
+          reason: 'decision 1 / RFC 9110 12.4.2: the not-found page picks '
+              'its language by the same rule as the found page, so '
+              '"ar;q=0" must mark ar as not acceptable here too and fall '
+              'back to the default (<html lang="en">); body: $body');
+    });
+
     test('?lang=xx (unrecognised) falls through to Accept-Language: ar',
         () async {
       final _Harness harness = await harnessWithFixture();

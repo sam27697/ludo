@@ -145,28 +145,46 @@ tool can fetch a record. Found records and the two scripts:
 
 ## 5. The page
 
-Server-rendered HTML, readable with JavaScript off, English. Everything taken
-from the record is HTML-escaped. It shows, in this order:
+Server-rendered HTML, readable with JavaScript off, in the language
+`resolveVerifyLanguage` picked (section 9) -- English or Arabic, each a full
+mirror of the other. Everything taken from the record is HTML-escaped. It
+shows, in this order:
 
-1. The game id, the finish time (UTC) and the winning seat, as "Seat N".
-2. What the checks prove and what they do not, in two short lists, from
+1. A link to the other language: `?lang=ar` reading "العربية" on the English
+   page, `?lang=en` reading "English" on the Arabic page.
+2. The game id, as the page's heading.
+3. A plain lead line: "Every roll of this game is verifiable: the server
+   committed to all of them before the game began, and this page checks each
+   one in your browser." (its Arabic mirror on the Arabic page).
+4. A summary line with id `summary`, "not checked" in the HTML, carrying
+   `data-ok` and `data-fail` attributes for `verify.js` to fill in --
+   `"checked: all {n} rolls verified"` and `"checked: failed ({reason})"` in
+   English, their Arabic equivalents on the Arabic page.
+5. The finish time (UTC) and the winning seat, as "Seat N".
+6. What the checks prove and what they do not, in two short lists, from
    FAIRNESS.md section 0: the server fixed every roll before the game and
    could not change them; the players' seeds were mixed into every roll after
    that commitment; no roll's secret was published before the roll. **Not**
    proven: that the server's secret itself came from a good random source.
    The words "provably fair", "absolutely random", "odds", "bet" and "wager"
-   do not appear.
-3. `chain_commit`, `chain_length`, and the seeds table: seat, seed, and origin
+   do not appear, in either language.
+7. `chain_commit`, `chain_length`, and the seeds table: seat, seed, and origin
    in words ("chosen by this player" / "drawn by the server: this seat added
    no randomness of its own").
-4. The rolls table: `k`, seat, die, reveal, and two check cells per row,
-   "chain" and "die", which read "not checked" in the HTML and are filled in
-   by `verify.js`.
-5. A summary line with id `summary`, "not checked" in the HTML.
-6. How to check it without trusting this page: the command
+8. The rolls table, carrying `data-match` and `data-mismatch` attributes for
+   `verify.js`: `k`, seat, die, reveal, and two check cells per row, "chain"
+   and "die", which read "not checked" in the HTML and are filled in by
+   `verify.js`.
+9. How to check it without trusting this page: the command
    `curl -sO https://provefair.app/v/verify.py && python3 verify.py <game_id>`
    and the link to the source, `https://github.com/sam27697/ludo`.
-7. "This record is kept for 90 days after the game ends."
+10. "This record is kept for 90 days after the game ends."
+
+On the Arabic page the game id, the chain commitment, the chain length, the
+`curl` command, the source link and each roll's reveal each sit inside an
+element carrying `dir="ltr"`, and the finish time sits with the literal "UTC"
+inside one `dir="ltr"` span, so none of them reorders inside the
+right-to-left page.
 
 The record itself is embedded as
 `<script type="application/json" id="record">` holding the stored JSON with
@@ -248,7 +266,12 @@ the client showing anything new. Each is its own order.
 The page's language (C-396): an explicit `?lang=ar` or `?lang=en` query
 parameter wins outright; otherwise the highest-`q` tag of the request's
 `Accept-Language` header whose primary subtag is `ar` or `en` wins; absent
-both, English. The not-found page follows the same rule. Both answers carry
-`vary: accept-language`. The Arabic page is a full mirror -- same record,
-same checks, same `verify.js` -- with its game id, hashes, seeds and the
-`curl` command kept left-to-right inside the right-to-left page.
+both, English. A tag weighted `q=0` (RFC 9110 section 12.4.2), however it is
+written -- `q=0`, `q=0.000`, or `Q=0`, since the `q` parameter name is
+matched case-insensitively -- is not acceptable and is dropped before the
+highest-`q` tag is picked; with no acceptable `ar` or `en` tag left, English,
+the same as if the header were absent. The not-found page follows the same
+rule. Both answers carry `vary: accept-language`. The Arabic page is a full
+mirror -- same record, same checks, same `verify.js` -- with its game id,
+hashes, seeds and the `curl` command kept left-to-right inside the
+right-to-left page.
