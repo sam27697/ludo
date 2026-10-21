@@ -542,14 +542,16 @@ void main() {
       FeedbackCue.win: 'win',
       FeedbackCue.gameOver: 'game_over',
       FeedbackCue.invalidTap: 'invalid_tap',
+      FeedbackCue.tap: 'tap',
     };
 
-    test('there are exactly ten values, matching C-225\'s enum', () {
+    test('there are exactly eleven values, matching C-225 plus C-422 D1', () {
       expect(
         FeedbackCue.values,
-        hasLength(10),
+        hasLength(11),
         reason:
-            'C-225 defines exactly ten FeedbackCue values; got '
+            'C-225 defines ten FeedbackCue values and C-422 D1 appends an '
+            'eleventh, tap, after invalidTap; got '
             '${FeedbackCue.values.length}: ${FeedbackCue.values}',
       );
     });

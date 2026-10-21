@@ -167,8 +167,9 @@ String _sizeLabel(Size size) => '${size.width.toInt()}x${size.height.toInt()}';
 String _rectLabel(Rect? rect) => rect == null ? 'MISSING' : rect.toString();
 
 /// D5's "count marks add up to the queue length" is read off the tile's
-/// own semantics label (D3), never off the pill's internal widget shape:
-/// the pill's rendering is the implementer's choice, the label's suffix
+/// own semantics label (D3), never off the count text's internal widget
+/// shape (C-420 D2' replaced the old pill with count text beside the die):
+/// that text's rendering is the implementer's choice, the label's suffix
 /// is the contract. A tile with no matching suffix is a count of one
 /// (D3: "a tile with count 1 reads exactly its old label").
 int _tileCount(WidgetTester tester, int index, Locale locale) {

@@ -412,6 +412,7 @@ class LudoBoard extends StatefulWidget {
     this.interactive = true,
     this.legal = const <int>{},
     this.autoMoveToken,
+    this.sentToken,
     this.onTokenTap,
     this.onIllegalTokenTap,
     this.seatNames,
@@ -471,6 +472,16 @@ class LudoBoard extends StatefulWidget {
   /// The token index (of [mySeat]) glowing for the unique-legal hold, or
   /// null when no hold is pending.
   final int? autoMoveToken;
+
+  /// C-422 D4: the token index (of [mySeat]) the screen just sent a move
+  /// for, or null when no move is in flight. While this is non-null and
+  /// [interactive] is true, that token's disc is drawn lifted (keyed
+  /// `board-token-lifted-<seat>-<token>`) and no `board-legal-ring-*`,
+  /// `board-automove-glow-*` or `board-automove-arc-*` is built for any of
+  /// [mySeat]'s tokens. The lift changes neither layout nor hit target:
+  /// `board-token-hit-*` stays the rect it always was. Null, the default,
+  /// draws exactly what the board drew before this contract.
+  final int? sentToken;
 
   /// A legal tap, already resolved for stacks: the lowest legal index on
   /// the cell tapped.
@@ -1470,6 +1481,11 @@ class _LudoBoardState extends State<LudoBoard> {
     final bool legalHere = isMine && widget.legal.contains(tokenIndex);
     final bool autoMoveHere = isMine && widget.autoMoveToken == tokenIndex;
     final bool shakingHere = isMine && _shakingToken == tokenIndex;
+    // C-422 D4: while a move is in flight for one of mine, every ring and
+    // auto-move mark of mine is hidden, not only the lifted token's own.
+    final bool liftActive =
+        isMine && widget.interactive && widget.sentToken != null;
+    final bool liftedHere = liftActive && widget.sentToken == tokenIndex;
     final int seatRank = _seatRank(seat, widget.mySeat);
     final OrdinalSortKey tokenSortKey = OrdinalSortKey(
       seatRank * 4.0 + tokenIndex,
@@ -1530,7 +1546,7 @@ class _LudoBoardState extends State<LudoBoard> {
       );
     }
 
-    if (legalHere && atRestAtTruth) {
+    if (legalHere && atRestAtTruth && !liftActive) {
       final double ringSize = atTruth.size * 1.7;
       // C-223 clarification 2: the legal ring key is present for every
       // legal token, the unique-legal token included; the faster glow key
@@ -1656,6 +1672,43 @@ class _LudoBoardState extends State<LudoBoard> {
             key: Key('board-token-shake-$seat-$tokenIndex'),
             size: drawnSize,
             child: token,
+          ),
+        ),
+      );
+    } else if (liftedHere) {
+      // C-422 D4/D5: a state, not a tween -- scaled 1.18x about its own
+      // centre with a soft drop shadow 2dp down, present at full strength
+      // from the very first frame the key exists, reduced motion or not
+      // (D5: "may ease in", never required to). The shadow's offset is a
+      // fixed logical `Offset`, not run through Directionality, so it
+      // reads the same in Arabic: light comes from above in both locales.
+      // `drawnLeft`/`drawnTop`/`drawnSize` are truth's own box, unchanged
+      // by the lift -- only the paint inside it scales, so neither layout
+      // nor the hit target above moves.
+      layer.add(
+        Positioned(
+          left: drawnLeft,
+          top: drawnTop,
+          width: drawnSize,
+          height: drawnSize,
+          child: KeyedSubtree(
+            key: Key('board-token-lifted-$seat-$tokenIndex'),
+            child: Transform.scale(
+              scale: 1.18,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: <BoxShadow>[
+                    BoxShadow(
+                      color: LudoColors.ink.withValues(alpha: 0.35),
+                      blurRadius: drawnSize * 0.18,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: token,
+              ),
+            ),
           ),
         ),
       );

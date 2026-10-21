@@ -673,11 +673,13 @@ void main() {
   // ==========================================================================
   group('rule 3: invalid tap', () {
     // Catches calling HapticFeedback directly instead of the service: the
-    // die's tap acknowledgement already calls HapticFeedback.lightImpact()
-    // on a rolling tap (rule 5, unchanged, its own test in
-    // game_juice_test.dart); a screen that reused that same raw call for an
-    // invalid tap, instead of routing through FeedbackScope.of(context),
-    // would send nothing to this fake and still "work" on a real device.
+    // die's tap acknowledgement itself now plays FeedbackCue.tap through
+    // FeedbackScope.of(context) on a rolling tap (C-422 D2, its own test in
+    // game_juice_test.dart, replacing rule 5's old raw
+    // HapticFeedback.lightImpact() call), so this fake would record a tap
+    // cue for that case too; a screen that instead called HapticFeedback
+    // directly for an invalid tap, bypassing the service, would send
+    // nothing to this fake and still "work" on a real device.
     testWidgets(
       'a tap on an illegal token of mine records exactly one invalid_tap '
       'and sends no move',
