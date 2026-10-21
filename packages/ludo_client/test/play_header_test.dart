@@ -320,11 +320,31 @@ const Key _ringKey = Key('game-header-countdown-ring');
 /// Amendment run 72, rule 9c's own key for the sentence-bearing wrapper.
 const Key _countdownSemanticsKey = Key('game-header-countdown-semantics');
 
+/// Amended for contract C-417 D4: an await-move turn with exactly one
+/// legal token arms GameScreen's own auto-move hold the instant it
+/// mounts (every fixture here starts at rest -- no travel for
+/// `_syncAutoMove`'s own wait on a walk to ever apply), so the glow D4
+/// gates the new banner line on is already visible by the time any test
+/// below reads the banner. Mirrors `_isUniqueLegalAwaitMove` in
+/// lib/src/game_screen.dart, specified by the contract text, not read
+/// off that file.
+bool _isUniqueLegalAwaitMove(TurnState turn) {
+  final List<FaceLegal>? legalByFace = turn.legalByFace;
+  if (legalByFace != null) {
+    return legalByFace.length == 1 && legalByFace.single.tokens.length == 1;
+  }
+  return turn.legal != null && turn.legal!.length == 1;
+}
+
 /// H2's own mapping, named by C-250 rule 2 itself ("the strings it shows
 /// today (`_turnBannerText`)") -- not read off the implementation, but
 /// specified by the contract text, and already the mapping
 /// test/game_screen_countdown_test.dart's P4/P5/P10 and
 /// test/no_move_beat_test.dart independently rely on for the same banner.
+/// Amendment C-417 D4: an awaitMove turn with exactly one legal token
+/// shows loc.gameAutoMoving instead of loc.gameYourTurnMove, since the
+/// hold's own glow is already visible by then (see
+/// [_isUniqueLegalAwaitMove]'s own comment).
 String _expectedBannerText(
   AppLocalizations loc,
   RoomSnapshot room,
@@ -339,7 +359,9 @@ String _expectedBannerText(
       return loc.gameYourTurnRoll;
     }
     if (turn.phase == TurnPhase.awaitMove) {
-      return loc.gameYourTurnMove;
+      return _isUniqueLegalAwaitMove(turn)
+          ? loc.gameAutoMoving
+          : loc.gameYourTurnMove;
     }
   }
   for (final SeatState seatState in room.seats) {
