@@ -25,10 +25,19 @@
 //
 // "Roll tap fires HapticFeedback.lightImpact before rolled" (original line
 // 488) is migrated below, driven by a tap on `game-die` instead of the
-// retired button: order 223 kept HapticFeedback.lightImpact() on the
-// rolling tap on purpose (master, run 66 verdict, defect 4), so the claim
-// still has a live control to prove it against even though C-223's own text
-// never names haptics.
+// retired button, then amended for C-422 D2 (run 102, order 422): the
+// rolling tap's acknowledgement is no longer a raw HapticFeedback call
+// outside the feedback service (C-236 rule 5, which C-422 D2 replaces); it
+// now plays FeedbackCue.tap through FeedbackScope.of(context), the same
+// seam every other game event uses, so it honours the in-app haptics
+// switch instead of always vibrating. The migrated test below is C-422's
+// own T4, in two halves: haptics on (a fake service records the tap cue),
+// and haptics off (a real PlatformFeedbackService, listened on both the
+// framework's own platform channel and app.fayad.ludo/feedback, makes no
+// platform haptic call of any kind). Order 423 builds D2 in a tree this
+// file's author has not read; on this order's base, origin/main bddc551,
+// `_onDieTap` still calls the raw HapticFeedback.lightImpact() C-236 rule 5
+// put there, unconditionally, so both halves below are expected to fail.
 //
 // The fourth original case, also kept and migrated below, is not about the
 // removed control's own look: it is about game-screen-dice-value, a key
@@ -61,6 +70,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart'
     show appSupportedLocales, buildAppTheme;
+import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
@@ -248,6 +258,59 @@ Future<void> _mount(
   await tester.pump();
 }
 
+/// Mounts GameScreen under a FeedbackScope carrying [service] and
+/// [settings] -- the one seam C-422 D2 says the die tap now plays `tap`
+/// through ("FeedbackScope.of(context).play(FeedbackCue.tap)"). Used only
+/// by the migrated T4 test below; `_mount` above is unchanged and still
+/// used by this file's other, unrelated test.
+Future<void> _mountWithFeedbackScope(
+  WidgetTester tester,
+  RoomController controller,
+  FeedbackService service,
+  FeedbackSettings settings,
+) async {
+  await tester.pumpWidget(
+    _harness(
+      FeedbackScope(
+        settings: settings,
+        service: service,
+        child: GameScreen(controller: controller),
+      ),
+    ),
+  );
+  await tester.pump();
+}
+
+/// Records every cue GameScreen asks the service to play, in call order.
+/// Copied from test/feedback_wiring_test.dart's own `_FakeFeedbackService`.
+class _RecordingFeedbackService implements FeedbackService {
+  final List<FeedbackCue> recorded = <FeedbackCue>[];
+
+  @override
+  void play(FeedbackCue cue) {
+    recorded.add(cue);
+  }
+}
+
+const MethodChannel _feedbackChannel = MethodChannel('app.fayad.ludo/feedback');
+
+/// Installs a recording mock handler on the real feedback channel, mirrored
+/// from test/feedback_service_test.dart's own `_recordCalls`, folded to
+/// this file's one caller shape (no `onCall` override needed here).
+List<MethodCall> _recordFeedbackChannelCalls(WidgetTester tester) {
+  final List<MethodCall> calls = <MethodCall>[];
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(_feedbackChannel, (MethodCall call) async {
+        calls.add(call);
+        return null;
+      });
+  addTearDown(
+    () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_feedbackChannel, null),
+  );
+  return calls;
+}
+
 AppLocalizations _locOf(WidgetTester tester) =>
     AppLocalizations.of(tester.element(find.byType(GameScreen)));
 
@@ -333,76 +396,122 @@ List<String> _dieFaceLabelsOnScreen(WidgetTester tester, AppLocalizations loc) {
 }
 
 void main() {
-  testWidgets('a tap on game-die fires HapticFeedback.lightImpact before '
-      'rolled', (WidgetTester tester) async {
-    final List<MethodCall> platformCalls = _listenPlatform(tester);
-    final (controller, transport) = await _connectAwaitingRoll(tester);
-    await _mount(tester, controller);
+  // C-422 T4, half 1: haptics on, a fake service -- exactly one tap cue
+  // recorded before any rolled frame, and the send-once and still-awaitRoll
+  // assertions of the original pinned test, kept.
+  testWidgets(
+    'T4a: a tap on game-die plays FeedbackCue.tap exactly once through the '
+    'feedback service before rolled, and still sends exactly one roll',
+    (WidgetTester tester) async {
+      final (controller, transport) = await _connectAwaitingRoll(tester);
+      final _RecordingFeedbackService fake = _RecordingFeedbackService();
+      await _mountWithFeedbackScope(
+        tester,
+        controller,
+        fake,
+        FeedbackSettings.forTest(),
+      );
 
-    expect(
-      controller.room!.turn!.value,
-      isNull,
-      reason: 'fixture is broken: await_roll must start with a null face',
-    );
-    expect(find.byKey(_dieKey), findsOneWidget);
+      expect(
+        controller.room!.turn!.value,
+        isNull,
+        reason: 'fixture is broken: await_roll must start with a null face',
+      );
+      expect(find.byKey(_dieKey), findsOneWidget);
 
-    final int sentBefore = transport.sentRaw.length;
-    await tester.tap(find.byKey(_dieKey));
-    await tester.pump();
+      final int sentBefore = transport.sentRaw.length;
+      await tester.tap(find.byKey(_dieKey));
+      await tester.pump();
 
-    final List<String> newMessages = transport.sentRaw
-        .skip(sentBefore)
-        .toList();
-    expect(
-      newMessages.where((String s) => _typeOf(s) == 'roll'),
-      hasLength(1),
-      reason:
-          'tapping game-die must still put exactly one roll on the wire; '
-          'juice must not block or delay that send',
-    );
+      final List<String> newMessages = transport.sentRaw
+          .skip(sentBefore)
+          .toList();
+      expect(
+        newMessages.where((String s) => _typeOf(s) == 'roll'),
+        hasLength(1),
+        reason:
+            'tapping game-die must still put exactly one roll on the wire; '
+            'juice must not block or delay that send',
+      );
 
-    final List<MethodCall> haptic = _hapticCalls(platformCalls);
-    expect(
-      haptic,
-      isNotEmpty,
-      reason:
-          'tapping game-die in my awaitRoll must invoke HapticFeedback '
-          'before any rolled frame arrives; got ${haptic.length} haptic '
-          'call(s) and platform methods '
-          '${platformCalls.map((MethodCall c) => c.method).toList()}',
-    );
-    expect(
-      haptic.first.arguments,
-      'HapticFeedbackType.lightImpact',
-      reason:
-          'the haptic must be HapticFeedback.lightImpact, not a looped '
-          'vibrate while waiting on rolled',
-    );
+      expect(
+        fake.recorded,
+        equals(<FeedbackCue>[FeedbackCue.tap]),
+        reason:
+            'C-422 D2: a die tap must play FeedbackCue.tap through the '
+            'feedback service, exactly once, before any rolled frame '
+            'lands; recorded ${fake.recorded}',
+      );
 
-    expect(
-      controller.room!.turn!.phase,
-      TurnPhase.awaitRoll,
-      reason:
-          'haptic must fire locally; the turn must still be awaitRoll '
-          'until rolled arrives',
-    );
-    expect(
-      controller.room!.turn!.value,
-      isNull,
-      reason: 'haptic must not invent a die face on the controller',
-    );
+      expect(
+        controller.room!.turn!.phase,
+        TurnPhase.awaitRoll,
+        reason:
+            'the tap cue must fire locally; the turn must still be '
+            'awaitRoll until rolled arrives',
+      );
+      expect(
+        controller.room!.turn!.value,
+        isNull,
+        reason: 'the tap cue must not invent a die face on the controller',
+      );
 
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(
-      _hapticCalls(platformCalls),
-      hasLength(1),
-      reason:
-          'waiting on rolled must not fire further haptic calls; got '
-          '${_hapticCalls(platformCalls).length}',
-    );
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(
+        fake.recorded,
+        equals(<FeedbackCue>[FeedbackCue.tap]),
+        reason:
+            'waiting on rolled must not play a second tap cue; recorded '
+            '${fake.recorded}',
+      );
 
-    await _completeRoll(tester, transport);
-  });
+      await _completeRoll(tester, transport);
+    },
+  );
+
+  // C-422 T4, half 2: haptics off, a real FeedbackScope over
+  // FeedbackSettings.forTest(haptics: false) -- no HapticFeedback.vibrate
+  // platform call and no haptic channel call, "no platform haptic call of
+  // any kind" (D2).
+  testWidgets(
+    'T4b: a tap on game-die with the in-app haptics switch off makes no '
+    'platform haptic call of any kind',
+    (WidgetTester tester) async {
+      final List<MethodCall> platformCalls = _listenPlatform(tester);
+      final List<MethodCall> feedbackChannelCalls = _recordFeedbackChannelCalls(
+        tester,
+      );
+      final (controller, transport) = await _connectAwaitingRoll(tester);
+      final FeedbackSettings settings = FeedbackSettings.forTest(
+        haptics: false,
+      );
+      final PlatformFeedbackService service = PlatformFeedbackService(settings);
+      await _mountWithFeedbackScope(tester, controller, service, settings);
+
+      await tester.tap(find.byKey(_dieKey));
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        _hapticCalls(platformCalls),
+        isEmpty,
+        reason:
+            'C-422 D2: with the in-app haptics switch off, a die tap must '
+            'make no HapticFeedback.vibrate platform call; got '
+            '${platformCalls.map((MethodCall c) => c.method).toList()}',
+      );
+      expect(
+        feedbackChannelCalls.where((MethodCall c) => c.method == 'haptic'),
+        isEmpty,
+        reason:
+            'C-422 D2: with the in-app haptics switch off, a die tap must '
+            'make no haptic call on app.fayad.ludo/feedback; got '
+            '$feedbackChannelCalls',
+      );
+
+      await _completeRoll(tester, transport);
+    },
+  );
 
   testWidgets(
     'game-screen-dice-value updates only from turn.value after rolled',
