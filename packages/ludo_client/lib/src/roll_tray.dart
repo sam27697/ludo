@@ -495,7 +495,7 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
             children: <Widget>[
               dieBox,
               const SizedBox(width: _kCountGap),
-              _countText(index, count),
+              _countText(loc, index, count),
             ],
           )
         : dieBox;
@@ -563,14 +563,14 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
   /// cap at a larger scale, never growing past it. Digits are always
   /// Western (U+00D7 then ASCII), the same ones the countdown ring draws
   /// in both locales, so `TextDirection.ltr` here is not a locale choice.
-  Widget _countText(int index, int count) {
+  Widget _countText(AppLocalizations loc, int index, int count) {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: _kCountTextMaxWidth),
       child: FittedBox(
         fit: BoxFit.scaleDown,
         child: ExcludeSemantics(
           child: Text(
-            '×$count',
+            loc.trayDieCountMark(count),
             key: Key('game-roll-tray-count-$index'),
             textDirection: TextDirection.ltr,
             style: TextStyle(
