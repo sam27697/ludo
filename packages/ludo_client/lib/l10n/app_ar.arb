@@ -62,6 +62,7 @@
   "trayDieCanMove": "النرد {face}، يمكن التحريك",
   "trayDieNoMove": "النرد {face}، لا حركة",
   "trayDie": "النرد {face}",
+  "trayDieCount": "العدد {count}",
   "gameTurnCountdown": "باقي {seconds} ثانية",
   "gameTurnCountdownDigits": "{seconds}",
   "gameSeatOffline": "انقطع اتصال {name}",

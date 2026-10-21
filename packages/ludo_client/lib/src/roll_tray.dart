@@ -37,6 +37,24 @@ const double _kTrayHitMin = 48;
 /// motion, per [MediaQuery.disableAnimations].
 const Duration _kTrayMotion = Duration(milliseconds: 220);
 
+/// C-420 D1: a queue of [n] tiles at natural width, the same formula the
+/// contract states (n * 48 + (n - 1) * 8). Used only to decide whether the
+/// row still fits one tile per face; natural mode, once chosen, renders
+/// through the untouched pre-C-420 code path so every case the old probe
+/// already measured green stays pixel-for-pixel as it was.
+double _naturalRowWidth(int n) =>
+    n <= 0 ? 0 : n * _kTrayHitMin + (n - 1) * kSpace2;
+
+/// C-420 D2: the count pill's fixed footprint, chosen so it (and its
+/// overhang past the 38dp art) never leaves the tile's 48dp hit box -- the
+/// hit box centres the 38dp art with a 5dp margin on every side, and the
+/// pill's 3dp overhang past the art's own bottom-end corner stays inside
+/// that margin.
+const double _kCountOverhang = 3;
+const double _kCountBoxWidth = 26;
+const double _kCountBoxHeight = 16;
+const double _kCountFontSize = 10;
+
 /// Beside the current seat's die (K1), one small die per queued face, in
 /// roll order. [faces] and [states] always carry the same length. Every
 /// tray die is `interactive` identically: when false, every tap on this
@@ -102,6 +120,20 @@ class _TraySlot {
   /// value to animate away from; a retiring slot starts `true` and is
   /// flipped to `false` the same way, then removed once the fade finishes.
   bool visible;
+}
+
+/// C-420 D2: one grouped tile -- every live slot sharing [slot.face],
+/// collapsed in order of first appearance. [index] is the queue index of
+/// the first (earliest) member, which is also the only member that ever
+/// carries the K2/K3 keys and the only one a tap can reach ([onSelect] is
+/// called with this same index, unchanged). [count] is how many queued
+/// faces this one tile stands for; 1 draws exactly as a natural-mode tile.
+class _TrayGroup {
+  _TrayGroup({required this.index, required this.slot, required this.count});
+
+  final int index;
+  final _TraySlot slot;
+  int count;
 }
 
 class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
@@ -250,49 +282,114 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
     final bool reduced = MediaQuery.disableAnimationsOf(context);
-    final List<Widget> children = <Widget>[];
-    for (int i = 0; i < _slots.length; i++) {
-      if (children.isNotEmpty) {
-        children.add(const SizedBox(width: kSpace2));
-      }
-      children.add(_liveTile(loc, _slots[i], i, reduced));
-    }
-    for (final _TraySlot ghost in _exiting) {
-      if (children.isNotEmpty) {
-        children.add(const SizedBox(width: kSpace2));
-      }
-      children.add(_ghostTile(ghost, reduced));
-    }
-    return Semantics(
-      container: true,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: children,
-      ),
+    // C-420 D1/D4: the tray reads its own width from its parent (the
+    // `Flexible` beside the board die in game_screen.dart) rather than
+    // assuming one; the fit check counts live tiles and the still-fading
+    // exiting ones alike, since both take width on this frame.
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final int totalTiles = _slots.length + _exiting.length;
+        final bool natural =
+            totalTiles <= 1 ||
+            _naturalRowWidth(totalTiles) <= constraints.maxWidth;
+        final List<Widget> children = <Widget>[];
+        if (natural) {
+          // D1: unchanged from before C-420, pixel-for-pixel.
+          for (int i = 0; i < _slots.length; i++) {
+            if (children.isNotEmpty) {
+              children.add(const SizedBox(width: kSpace2));
+            }
+            children.add(_liveTile(loc, _slots[i], i, reduced));
+          }
+        } else {
+          // D2: equal faces collapse into one tile, in order of first
+          // appearance.
+          for (final _TrayGroup group in _groupSlots()) {
+            if (children.isNotEmpty) {
+              children.add(const SizedBox(width: kSpace2));
+            }
+            children.add(
+              _liveTile(
+                loc,
+                group.slot,
+                group.index,
+                reduced,
+                count: group.count,
+              ),
+            );
+          }
+        }
+        for (final _TraySlot ghost in _exiting) {
+          if (children.isNotEmpty) {
+            children.add(const SizedBox(width: kSpace2));
+          }
+          children.add(_ghostTile(ghost, reduced));
+        }
+        return Semantics(
+          container: true,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: children,
+          ),
+        );
+      },
     );
+  }
+
+  /// C-420 D2: every live slot, grouped by face in order of first
+  /// appearance in the queue. A face seen before only grows the existing
+  /// group's [_TrayGroup.count]; it never starts a second tile.
+  List<_TrayGroup> _groupSlots() {
+    final List<_TrayGroup> groups = <_TrayGroup>[];
+    final Map<int, _TrayGroup> byFace = <int, _TrayGroup>{};
+    for (int i = 0; i < _slots.length; i++) {
+      final _TraySlot slot = _slots[i];
+      final _TrayGroup? existing = byFace[slot.face];
+      if (existing == null) {
+        final _TrayGroup group = _TrayGroup(index: i, slot: slot, count: 1);
+        byFace[slot.face] = group;
+        groups.add(group);
+      } else {
+        existing.count += 1;
+      }
+    }
+    return groups;
   }
 
   /// K2/K3/K11: one live, indexed tray die -- the only place the
   /// `game-roll-tray-die-<i>`, `game-roll-tray-face-<i>-<face>`,
   /// `game-roll-tray-selected-<i>` and `game-roll-tray-dead-<i>` keys are
   /// drawn, since the index they carry must always track the live queue.
+  /// [count] (C-420 D2) is how many queued faces this one tile stands for
+  /// under the grouped layout; 1 (the default, every natural-mode call)
+  /// draws and reads exactly as it did before C-420.
   Widget _liveTile(
     AppLocalizations loc,
     _TraySlot slot,
     int index,
-    bool reduced,
-  ) {
+    bool reduced, {
+    int count = 1,
+  }) {
     final bool alive = slot.state != TrayDieState.dead;
     final bool selected = slot.state == TrayDieState.selected;
     final bool exposesTapAction = widget.interactive && alive && !selected;
-    final String label = selected
+    String label = selected
         ? loc.trayDieSelected(slot.face)
         : !alive
         ? loc.trayDieNoMove(slot.face)
         : widget.interactive
         ? loc.trayDieCanMove(slot.face)
         : loc.trayDie(slot.face);
+    if (count > 1) {
+      // D3: the locale's own list comma joins the state label and the
+      // count, the same separator end_card.dart already uses to join a
+      // list of names for the same two locales.
+      final String comma = Localizations.localeOf(context).languageCode == 'ar'
+          ? '، '
+          : ', ';
+      label = '$label$comma${loc.trayDieCount(count)}';
+    }
 
     void handleTap() {
       if (!widget.interactive) {
@@ -335,6 +432,11 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
           ),
         face,
         if (!alive) _deadBadge(index),
+        // C-420 D2: the dead mark keeps the art's physical top corner;
+        // the count pill sits on the opposite, bottom-end corner (mirrored
+        // by Directionality, unlike the dead mark), so the two never
+        // collide on a dead grouped tile.
+        if (count > 1) _countBadge(index, count),
       ],
     );
 
@@ -399,6 +501,28 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
     );
   }
 
+  /// C-420 D2: `game-roll-tray-count-<i>` reads `×<count>` on a small pill
+  /// at the die art's bottom-end corner (end, so it mirrors with
+  /// Directionality, unlike the physical-corner dead mark). Positioned by
+  /// a negative end/bottom inset rather than a literal rect, so Flutter
+  /// mirrors it for Arabic without this file checking the direction
+  /// itself; the fixed inset keeps the pill's whole overhang inside the
+  /// 5dp margin the 48dp hit box leaves around the 38dp art, so the pill
+  /// never leaves the hit box, at any text scale (Ignore pointer: the
+  /// pill is not its own tap target, the whole tile already is one).
+  Widget _countBadge(int index, int count) {
+    return PositionedDirectional(
+      end: -_kCountOverhang,
+      bottom: -_kCountOverhang,
+      child: IgnorePointer(
+        child: KeyedSubtree(
+          key: Key('game-roll-tray-count-$index'),
+          child: _CountBadge(count: count, color: widget.seatColor),
+        ),
+      ),
+    );
+  }
+
   /// A retiring slot's last, fading frame: no K2/K3 key (it is no longer
   /// part of the live queue, so it must never claim an index another live
   /// die might now hold), not tappable, not announced.
@@ -420,6 +544,54 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
                     edgeColor: widget.seatColor,
                     dimmed: slot.state == TrayDieState.dead,
                   ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// C-420 D2: the `×<count>` pill a grouped tile carries when it stands for
+/// more than one queued face. A fixed-size capsule (never grown by the
+/// badge's own content) so it cannot push past the hit box: [FittedBox]
+/// shrinks the digits to fit that fixed size instead, which is what keeps
+/// the pill legible at text scale 1.0 (no shrink needed) and still inside
+/// the hit box at 2.0 (shrunk back to the same footprint). Digits are
+/// always Western (U+00D7 then ASCII), the same ones the countdown ring
+/// draws in both locales, so [TextDirection.ltr] here is not a locale
+/// choice.
+class _CountBadge extends StatelessWidget {
+  const _CountBadge({required this.count, required this.color});
+
+  final int count;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _kCountBoxWidth,
+      height: _kCountBoxHeight,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(_kCountBoxHeight),
+        ),
+        child: Center(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: kSpaceTight),
+              child: Text(
+                '×$count',
+                textDirection: TextDirection.ltr,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: _kCountFontSize,
+                  height: 1,
                 ),
               ),
             ),
