@@ -48,6 +48,11 @@ Future<void> _loadAppFonts() async {
 
 Key _countKey(int index) => Key('game-roll-tray-count-$index');
 
+void _print(String line) {
+  // ignore: avoid_print
+  print(line);
+}
+
 /// The grouped count pill's own displayed text, however the implementer
 /// chose to carry it: a bare `Text` at the key, or a `Text` nested under
 /// it. D2 only promises the key and the string; not the widget shape.
@@ -448,8 +453,9 @@ void main() {
   for (final Locale locale in const <Locale>[Locale('en'), Locale('ar')]) {
     for (final double scale in const <double>[1.0, 2.0]) {
       testWidgets(
-        'case 2e (D2 count placement ${locale.languageCode} x$scale): the '
-        'count pill sits inside the hit box at its bottom-end corner',
+        "case 2e (D2' count placement ${locale.languageCode} x$scale): "
+        'the count text sits on the end side of the art, clear of it, the '
+        'board die and the next tile',
         (tester) async {
           final List<FlutterErrorDetails> captured = <FlutterErrorDetails>[];
           final FlutterExceptionHandler? previous = FlutterError.onError;
@@ -475,40 +481,85 @@ void main() {
             await mountGame(tester, drive, locale: locale, textScale: scale);
             _expectNoOverflow(
               captured,
-              'D2 count placement ${locale.languageCode} x$scale',
+              "D2' count placement ${locale.languageCode} x$scale",
             );
 
+            expect(
+              find.byKey(bigDieKey),
+              findsOneWidget,
+              reason: 'fixture is broken: the board die must be on screen',
+            );
+            final Rect board = tester.getRect(find.byKey(bigDieKey));
             final Rect tile = tester.getRect(find.byKey(trayDieKey(0)));
-            final Rect pill = tester.getRect(find.byKey(_countKey(0)));
+            final Rect art = tester.getRect(find.byKey(trayFaceKey(0, 6)));
+            final Rect count = tester.getRect(find.byKey(_countKey(0)));
+            final Rect nextTile = tester.getRect(find.byKey(trayDieKey(4)));
 
-            expect(
-              pill.left >= tile.left &&
-                  pill.top >= tile.top &&
-                  pill.right <= tile.right &&
-                  pill.bottom <= tile.bottom,
-              isTrue,
-              reason:
-                  'D2: the count pill rect $pill must lie inside the '
-                  '48dp hit box $tile at text scale $scale',
+            _print(
+              "TRAY2E ${locale.languageCode} x${scale.toStringAsFixed(1)} "
+              'tile=$tile art=$art count=$count board=$board next=$nextTile',
             );
-            expect(
-              pill.center.dy,
-              greaterThan(tile.center.dy),
-              reason: 'D2: the count mark sits on the bottom edge',
-            );
+
             if (locale.languageCode == 'ar') {
               expect(
-                pill.center.dx,
-                lessThan(tile.center.dx),
-                reason: 'D2: ar puts the count mark at the bottom-left',
+                count.right,
+                lessThanOrEqualTo(art.left - 2),
+                reason:
+                    "D2': ar puts the count text on the end side (right "
+                    'to left), at least 2dp clear of the art $art, got '
+                    'count=$count',
               );
             } else {
               expect(
-                pill.center.dx,
-                greaterThan(tile.center.dx),
-                reason: 'D2: en puts the count mark at the bottom-right',
+                count.left,
+                greaterThanOrEqualTo(art.right + 2),
+                reason:
+                    "D2': en puts the count text on the end side (left "
+                    'to right), at least 2dp clear of the art $art, got '
+                    'count=$count',
               );
             }
+            expect(
+              count.overlaps(art),
+              isFalse,
+              reason:
+                  "D2': the count text $count must not overlap the art "
+                  '$art',
+            );
+            expect(
+              (count.center.dy - tile.center.dy).abs(),
+              lessThanOrEqualTo(2),
+              reason:
+                  "D2': the count's vertical centre must sit within 2dp "
+                  "of the die hit box's vertical centre, tile=$tile "
+                  'count=$count',
+            );
+            expect(
+              count.width,
+              lessThanOrEqualTo(32),
+              reason: "D2': the count text $count must be at most 32dp wide",
+            );
+            expect(
+              count.left >= 0 && count.right <= _groupedSize.width,
+              isTrue,
+              reason:
+                  "D2': the count text $count must lie inside the "
+                  'screen 0..${_groupedSize.width}',
+            );
+            expect(
+              count.overlaps(board),
+              isFalse,
+              reason:
+                  "D2': the count text $count must not overlap the "
+                  'board die $board',
+            );
+            expect(
+              count.overlaps(nextTile),
+              isFalse,
+              reason:
+                  "D2': the count text $count must not overlap the "
+                  'next tile $nextTile',
+            );
           } finally {
             FlutterError.onError = previous;
             await releaseGame(tester, drive);
@@ -571,6 +622,14 @@ void main() {
           'Die 2, selected',
           reason: 'D3: a count-1 tile reads exactly its old label',
         );
+        expect(
+          find.bySemanticsLabel(RegExp('×')),
+          findsNothing,
+          reason:
+              "D2': the ×4 text is one tap target and one semantics node "
+              "with the die, so it must not appear as its own semantics "
+              "label anywhere in the tree",
+        );
       } finally {
         semantics.dispose();
         FlutterError.onError = previous;
@@ -627,6 +686,14 @@ void main() {
           twoNode.label,
           'النرد 2، محدد',
           reason: 'D3: a count-1 tile reads exactly its old label',
+        );
+        expect(
+          find.bySemanticsLabel(RegExp('×')),
+          findsNothing,
+          reason:
+              "D2': the ×4 text is one tap target and one semantics node "
+              "with the die, so it must not appear as its own semantics "
+              "label anywhere in the tree",
         );
       } finally {
         semantics.dispose();
@@ -715,6 +782,85 @@ void main() {
         await tester.pump(const Duration(milliseconds: 20));
         checkFrame('t=${elapsed}ms');
       }
+    } finally {
+      FlutterError.onError = previous;
+      await releaseGame(tester, drive);
+      _resetSize(tester);
+    }
+  });
+
+  testWidgets("case 2h (D2' tap): tapping the count text of a grouped, alive, "
+      'unselected 6 selects face 6 exactly as tapping the die does', (
+    tester,
+  ) async {
+    final List<FlutterErrorDetails> captured = <FlutterErrorDetails>[];
+    final FlutterExceptionHandler? previous = FlutterError.onError;
+    FlutterError.onError = captured.add;
+    _setSize(tester, _groupedSize);
+    final RollTrayDrive drive = await connectPlaying(
+      tester,
+      seats: twoSeats(mine: const <int>[0, -1, -1, -1]),
+      turn: turnJson(
+        seat: 0,
+        phase: 'await_move',
+        k: 5,
+        value: 6,
+        legal: const <int>[0, 1, 2, 3],
+        queue: const <int>[6, 6, 6, 6, 2],
+        // Both faces alive, first-queued order (PROTOCOL.md section
+        // 21): the 6 is selected by default, same fixture as 2d.
+        legalByFace: <Map<String, Object?>>[
+          faceLegal(6, const <int>[0, 1, 2, 3]),
+          faceLegal(2, const <int>[0]),
+        ],
+      ),
+    );
+    try {
+      await mountGame(tester, drive);
+      _expectNoOverflow(captured, "D2' count tap, initial state");
+
+      expect(
+        find.descendant(
+          of: find.byKey(trayDieKey(0)),
+          matching: find.byKey(traySelectedKey(0)),
+        ),
+        findsOneWidget,
+        reason: 'fixture is broken: the 6 is selected by default',
+      );
+
+      // Move the selection off the 6, the same way case 2d does, so a
+      // later tap on the count text is an observable change.
+      await tester.tap(find.byKey(trayDieKey(4)));
+      await tester.pump();
+      expect(
+        find.descendant(
+          of: find.byKey(trayDieKey(4)),
+          matching: find.byKey(traySelectedKey(4)),
+        ),
+        findsOneWidget,
+        reason: 'fixture is broken: tapping the lone 2 must select it',
+      );
+      expect(find.byKey(traySelectedKey(0)), findsNothing);
+
+      await tester.tap(find.byKey(_countKey(0)));
+      await tester.pump();
+      expect(
+        find.descendant(
+          of: find.byKey(trayDieKey(0)),
+          matching: find.byKey(traySelectedKey(0)),
+        ),
+        findsOneWidget,
+        reason:
+            "D2': tapping the grouped 6's count text selects face 6, "
+            'exactly as tapping the die does',
+      );
+      expect(
+        find.byKey(traySelectedKey(4)),
+        findsNothing,
+        reason:
+            "D2': the 2 is no longer selected once the count text is "
+            'tapped',
+      );
     } finally {
       FlutterError.onError = previous;
       await releaseGame(tester, drive);
