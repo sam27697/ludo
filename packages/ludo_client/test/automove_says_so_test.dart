@@ -58,6 +58,7 @@ import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
+import 'package:ludo_client/src/theme.dart' show buildAppTheme;
 
 import 'net/fake_transport.dart';
 
@@ -233,6 +234,7 @@ Widget _harness(
   double textScale = 1.0,
 }) {
   return MaterialApp(
+    theme: buildAppTheme(),
     locale: locale,
     supportedLocales: appSupportedLocales,
     localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
@@ -463,10 +465,13 @@ Future<void> _completeMoveZeroTravel(
 }
 
 /// Loads the app's own Poppins and Noto Sans Arabic font files, copied by
-/// hand from test/header_fits_test.dart:337-362's own `_loadAppFonts` (run
-/// 100's own defect 2: without this, case 6 measures the flutter_test
-/// default test font's square glyphs, not the app's own fonts, which is not
-/// a measurement of anything C-339 / C-391 would recognise).
+/// hand from test/header_fits_test.dart:337-362's own `_loadAppFonts`.
+/// Loading the files is only half of what case 6 needs: a widget tree still
+/// renders in the flutter_test default test font's square glyphs unless its
+/// theme is the one that names Poppins and Noto Sans Arabic in the first
+/// place (run 101's own defect: `_harness` was missing `theme:
+/// buildAppTheme()`, so this loader alone measured nothing C-339 / C-391
+/// would recognise). `_harness` below now carries that theme too.
 Future<void> _loadAppFonts() async {
   TestWidgetsFlutterBinding.ensureInitialized();
 
