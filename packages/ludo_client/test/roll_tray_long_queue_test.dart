@@ -155,6 +155,13 @@ const _QueueCase _n6 = _QueueCase(
 
 const List<_QueueCase> _longQueues = <_QueueCase>[_n4, _n5, _n6, _n7];
 
+// Layout arithmetic lands a hit box a few ulps under 48.0 dp on some
+// sizes (run 101 verdict: 320x568 scale 2.0 en measured
+// 47.99999999999994); that is float rounding in a layout the contract
+// does not change, not a P9 violation, so the 48 dp minimum is checked
+// with this tolerance.
+const double _hitBoxTolerance = 1e-3;
+
 String _sizeLabel(Size size) => '${size.width.toInt()}x${size.height.toInt()}';
 
 String _rectLabel(Rect? rect) => rect == null ? 'MISSING' : rect.toString();
@@ -264,7 +271,8 @@ Future<void> _runCase(
           '0..${size.width} by ${rect.right > size.width ? rect.right - size.width : -rect.left}',
         );
       }
-      if (rect.width < 48 || rect.height < 48) {
+      if (rect.width < 48 - _hitBoxTolerance ||
+          rect.height < 48 - _hitBoxTolerance) {
         problems.add(
           'game-roll-tray-die-$i hit size ${rect.width}x${rect.height} '
           'is under the 48x48 minimum',
