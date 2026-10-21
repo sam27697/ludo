@@ -322,6 +322,26 @@
       }
     }
   },
+  "trayDieCount": "{count} of them",
+  "@trayDieCount": {
+    "description": "Appended to a grouped roll-tray tile's state label (trayDieSelected/trayDieCanMove/trayDieNoMove/trayDie), joined by the locale's list comma, when that one tile stands for more than one queued face of the same value (C-420 D3). count is always 2 or more.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "trayDieCountMark": "×{count}",
+  "@trayDieCountMark": {
+    "description": "The visible glyph beside a grouped roll-tray die's art, on its end side, naming how many queued faces that one tile stands for (C-420 D2'). Excluded from semantics: the tile's own Semantics.label already carries the count in words via trayDieCount. Always Western digits in both locales.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
   "gameTurnCountdown": "{seconds}s left",
   "@gameTurnCountdown": {
     "description": "Shown on the game screen next to the turn banner whenever the current turn carries a deadline, counting down the whole seconds remaining before the server takes the turn. Never negative: it clamps at 0 and holds there until the next turn frame arrives.",
