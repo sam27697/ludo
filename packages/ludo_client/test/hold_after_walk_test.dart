@@ -210,15 +210,19 @@ Future<void> _mount(
 }
 
 /// Connects seat 0 of a two-seat room straight into `await_roll` at k=0,
-/// seat 0's tokens set to [seat0Tokens]. No `rolled` frame is modelled here:
-/// every case below pushes its own `moved` / `turn` frames directly, which
-/// is all `RoomController`'s reducers (room_controller.dart:1408-1491,
+/// seat 0's tokens set to [seat0Tokens] and seat 1's (Bob's) tokens set to
+/// [seat1Tokens] -- the latter defaults to every token still in the yard,
+/// and only case 2 (D7) below gives Bob a lone token on the main track, the
+/// one its capture needs. No `rolled` frame is modelled here: every case
+/// below pushes its own `moved` / `turn` frames directly, which is all
+/// `RoomController`'s reducers (room_controller.dart:1408-1491,
 /// 1260-1315) actually require -- a `moved` only needs a non-null
 /// `room.turn` to reset, and a `turn` only needs the named seat to be
 /// seated.
 Future<(RoomController, FakeTransport)> _connectSeat0(
   WidgetTester tester, {
   List<int> seat0Tokens = const <int>[2, -1, -1, -1],
+  List<int> seat1Tokens = const <int>[-1, -1, -1, -1],
 }) async {
   final _Connector connector = _Connector();
   final FakeTransport transport = FakeTransport();
@@ -245,7 +249,7 @@ Future<(RoomController, FakeTransport)> _connectSeat0(
       data: _roomJson(
         seats: <Map<String, Object?>>[
           _seatJson(0, name: 'Sam', tokens: seat0Tokens),
-          _seatJson(1, name: 'Bob'),
+          _seatJson(1, name: 'Bob', tokens: seat1Tokens),
         ],
         turn: _turnJson(seat: 0, phase: 'await_roll', deadlineMs: 45000, k: 0),
         seq: 1,
@@ -362,10 +366,14 @@ void main() {
       await _mount(tester, controller);
       final _Seq seq = _Seq(1);
 
-      // Token 0 walks 4 squares (progress 2 -> 6: steps 3, 4, 5, 6), and
-      // the turn frame that makes it the unique legal token for face 7
-      // arrives with zero fake-clock time elapsed -- the walk has not
-      // taken even its first step when the hold arms.
+      // The roll queue held [6, 4] (rule 10q: the 6 rolls again at once;
+      // rule 11q: the 4 is non-six and ends the rolling); the player
+      // spends the 4 first (11q: spending order is the player's choice),
+      // so token 0 walks 4 squares (progress 2 -> 6: steps 3, 4, 5, 6) and
+      // the turn frame that follows makes it the unique legal token for
+      // the one face still queued, the 6, arriving with zero fake-clock
+      // time elapsed -- the walk has not taken even its first step when
+      // the hold arms.
       final int sentAtArm = transport.sentRaw.length;
       await _startWalkAndArm(
         tester,
@@ -374,7 +382,7 @@ void main() {
         fromProgress: 2,
         toProgress: 6,
         movedFace: 4,
-        armedFace: 7,
+        armedFace: 6,
       );
 
       final Duration landing = kTokenStepDuration * 4;
@@ -426,7 +434,7 @@ void main() {
             '1500ms after the turn state (armed with zero elapsed time '
             'before the walk\'s first step), no move for token 0 must '
             'have been sent yet -- scenario: progress 2 -> 6, armed face '
-            '7, landing at ${landing.inMilliseconds}ms. Red on cd75a15 '
+            '6, landing at ${landing.inMilliseconds}ms. Red on cd75a15 '
             'means _syncAutoMove armed the 1500ms timer at turn-arrival '
             'time instead of at the board\'s landing callback.',
       );
@@ -439,7 +447,7 @@ void main() {
         _movesSince(transport, sentAtArm),
         isEmpty,
         reason:
-            'scenario: progress 2 -> 6, armed face 7, landing at '
+            'scenario: progress 2 -> 6, armed face 6, landing at '
             '${landing.inMilliseconds}ms; at '
             '${target.inMilliseconds}ms (one frame before landing + '
             '1500ms), no move must have been sent yet',
@@ -452,13 +460,13 @@ void main() {
         moves,
         hasLength(1),
         reason:
-            'scenario: progress 2 -> 6, armed face 7, landing at '
+            'scenario: progress 2 -> 6, armed face 6, landing at '
             '${landing.inMilliseconds}ms; at '
             '${(landing + hold + frame).inMilliseconds}ms (one frame '
             'after landing + 1500ms), exactly one move must have been '
             'sent; sentRaw carries ${moves.length}',
       );
-      expect(_dataOf(moves.single), <String, Object?>{'token': 0, 'face': 7});
+      expect(_dataOf(moves.single), <String, Object?>{'token': 0, 'face': 6});
 
       // Nothing further arrives afterward.
       await tester.pump(const Duration(milliseconds: 500));
@@ -481,11 +489,35 @@ void main() {
 
   // ==========================================================================
   // Case 2: a long walk (longer than 1500ms), built from what the board
-  // really animates: three queued legs of the held token (C-408 D6), each
-  // within C-252 rule 2's own per-leg cap (`1 <= new - old <= 6`; a single
-  // jump bigger than that is a snap, not a walk -- the defect in the
-  // previous attempt here), with the hurry rule (C-252 rule 6) applied
-  // exactly as board.dart schedules it.
+  // really animates and from a queue a real game can hold.
+  //
+  // Rule 10q/11q cap what a roll queue can look like at the start of a
+  // turn's rolling: a 6 reappends and rolls again at once, a non-six ends
+  // the rolling, and three sixes in a row void the turn outright. So a
+  // queue of three legs, all spent before any bonus, can be at most two
+  // sixes and one non-six -- never three sixes. This scenario rolls 6, 6,
+  // 5 (two sixes, then the 5 that ends the rolling) and spends them in
+  // that order: leg 1 and leg 2 are both 6 squares (face 6, no capture,
+  // C-252 rule 2's own per-leg cap of `1 <= new - old <= 6`), and leg 3 is
+  // 5 squares (face 5) landing token 0 on Bob's (seat 1) lone token on the
+  // main track -- a capture, which rule 11/32 (replayed as 12q under the
+  // queue, `captureBonus` on, set in `_roomJson`'s own `rules`) grants a
+  // bonus roll for. That roll is a face in 1..6 (armedFace below); once
+  // rolled it is the one face left in the queue, and it is the face the
+  // hold arms for -- the only way this file can reach a long walk followed
+  // by an armed face without inventing a face or a queue shape rule 10q/11q
+  // forbid.
+  //
+  // The capturing leg's own capture-flight animation
+  // (`kCaptureFlightDuration`, board.dart) does not extend the walk this
+  // hold measures: board.dart's `_onMoveArrived` calls
+  // `widget.onMoveLanded` (this screen's `_onBoardMoveLanded`, C-408 D7's
+  // only source for "has this leg landed") before it starts the captured
+  // token's flight home, and only the flight's own completion, not this
+  // screen, advances the board's internal queue to whatever leg (if any)
+  // comes after. So the capture adds nothing to the timings below; they
+  // are pure step-duration arithmetic, exactly as a non-capturing leg 3
+  // would have given.
   //
   // Why three legs, not two: a step already ticking keeps the duration it
   // was given when scheduled (board.dart's `_scheduleNextStep`); only a
@@ -499,32 +531,42 @@ void main() {
   //     scheduled with leg 2 (and leg 3) already queued -- half duration.
   //   - leg 2: dequeued once leg 1 lands; leg 3 is still queued behind it,
   //     so all 6 of leg 2's own steps schedule at half duration.
-  //   - leg 3: dequeued once leg 2 lands; nothing is left queued, so all 6
-  //     of leg 3's steps schedule at full duration -- this is also the
-  //     walk's real landing, the first moment the token is drawn at its
-  //     truth again.
-  // With two legs only, the same arithmetic gives leg 1 (full + 5 half) +
-  // leg 2 (6 full, nothing left to hurry it) = 490ms + 840ms = 1330ms,
-  // short of 1500ms -- so two legs cannot reach it; three (6 squares each,
-  // the most C-252 rule 2 allows a single leg) do.
+  //   - leg 3: dequeued once leg 2 lands; nothing is left queued (the
+  //     bonus face is only an armed decision, not a travelling move, until
+  //     the hold or a tap sends it), so all 5 of leg 3's own steps
+  //     schedule at full duration -- this is also the walk's real landing,
+  //     the first moment the token is drawn at its truth again.
+  // leg 1 (full + 5 half) + leg 2 (6 half, still hurried by leg 3 behind
+  // it) + leg 3 (5 full, nothing left to hurry it) = 490ms + 420ms + 700ms
+  // = 1610ms, longer than the 1500ms hold.
   group('case 2 (D7): a long walk, longer than 1500ms', () {
     testWidgets('nothing is sent while the glow has never been visible', (
       tester,
     ) async {
-      final (controller, transport) = await _connectSeat0(tester);
+      final (controller, transport) = await _connectSeat0(
+        tester,
+        // Bob's lone token, at progress 6 (absolute square (13 + 6) mod 52
+        // = 19, not one of the eight safe squares rule 1.3 names), is
+        // exactly where leg 3 below lands token 0: progress 14 -> 19.
+        seat1Tokens: const <int>[6, -1, -1, -1],
+      );
       await _mount(tester, controller);
       final _Seq seq = _Seq(1);
 
-      const int squaresPerLeg = 6;
-      const int legFace = 6;
-      const int armedFace = 7;
+      const int leg1Squares = 6;
+      const int leg1Face = 6;
+      const int leg2Squares = 6;
+      const int leg2Face = 6;
+      const int leg3Squares = 5;
+      const int leg3Face = 5;
+      const int armedFace = 3;
       final Duration half = Duration(
         microseconds: kTokenStepDuration.inMicroseconds ~/ 2,
       );
       final Duration leg1Duration =
-          kTokenStepDuration + half * (squaresPerLeg - 1);
-      final Duration leg2Duration = half * squaresPerLeg;
-      final Duration leg3Duration = kTokenStepDuration * squaresPerLeg;
+          kTokenStepDuration + half * (leg1Squares - 1);
+      final Duration leg2Duration = half * leg2Squares;
+      final Duration leg3Duration = kTokenStepDuration * leg3Squares;
       final Duration leg1Landing = leg1Duration;
       final Duration leg2Landing = leg1Landing + leg2Duration;
       final Duration landing = leg2Landing + leg3Duration;
@@ -536,8 +578,9 @@ void main() {
         isTrue,
         reason:
             'fixture is broken: this case requires a walk longer than '
-            '${hold.inMilliseconds}ms; three queued legs of '
-            '$squaresPerLeg squares (face $legFace each) give leg 1 '
+            '${hold.inMilliseconds}ms; queued legs of $leg1Squares '
+            '(face $leg1Face), $leg2Squares (face $leg2Face) and '
+            '$leg3Squares (face $leg3Face, capturing) squares give leg 1 '
             '${leg1Duration.inMilliseconds}ms + leg 2 '
             '${leg2Duration.inMilliseconds}ms + leg 3 '
             '${leg3Duration.inMilliseconds}ms = '
@@ -555,44 +598,112 @@ void main() {
       }
 
       final int sentAtArm = transport.sentRaw.length;
-      int fromProgress = 2;
-      for (var leg = 0; leg < 3; leg++) {
-        final int toProgress = fromProgress + squaresPerLeg;
-        transport.pushText(
-          _frame(
-            type: 'moved',
-            data: <String, Object?>{
-              'seat': 0,
-              'token': 0,
-              'from': fromProgress,
-              'to': toProgress,
-              'captured': const <Object?>[],
-              'extra_roll': false,
-              'face': legFace,
-              'seq': seq.next(),
-            },
-          ),
-        );
-        await tester.pump();
-        await tester.pump();
-        fromProgress = toProgress;
-      }
-      final int finalProgress = fromProgress;
 
-      // The same two-frame-zero-wait push `_startWalkAndArm` uses for its
-      // own `turn` frame: this is the decision under test, naming token 0
-      // the unique legal token for the one face left (armedFace) once all
-      // three already-spent legs above have queued on the board.
+      // Leg 1: 6, no capture, the queue (6, 6, 5) still has two faces left.
+      const int leg1From = 2;
+      const int leg1To = leg1From + leg1Squares;
+      transport.pushText(
+        _frame(
+          type: 'moved',
+          data: <String, Object?>{
+            'seat': 0,
+            'token': 0,
+            'from': leg1From,
+            'to': leg1To,
+            'captured': const <Object?>[],
+            'extra_roll': false,
+            'face': leg1Face,
+            'seq': seq.next(),
+          },
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      // Leg 2: 6, no capture, the queue (6, 5) still has one face left.
+      const int leg2From = leg1To;
+      const int leg2To = leg2From + leg2Squares;
+      transport.pushText(
+        _frame(
+          type: 'moved',
+          data: <String, Object?>{
+            'seat': 0,
+            'token': 0,
+            'from': leg2From,
+            'to': leg2To,
+            'captured': const <Object?>[],
+            'extra_roll': false,
+            'face': leg2Face,
+            'seq': seq.next(),
+          },
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      // Leg 3: 5, captures Bob's lone token (progress 6 for seat 1, the
+      // same absolute square token 0 lands on), the last of the (6, 6, 5)
+      // queue, and grants the bonus roll rule 12q owes: `extra_roll: true`,
+      // `queue` is now empty on the engine side (docs/PROTOCOL.md 21.3
+      // rule 3), so the `turn` that follows is `await_roll`, not
+      // `await_move` -- section 21.3 rule 4's "move, a roll owed" row.
+      const int leg3From = leg2To;
+      const int leg3To = leg3From + leg3Squares;
+      final int finalProgress = leg3To;
+      transport.pushText(
+        _frame(
+          type: 'moved',
+          data: <String, Object?>{
+            'seat': 0,
+            'token': 0,
+            'from': leg3From,
+            'to': leg3To,
+            'captured': const <Object?>[
+              <String, Object?>{'seat': 1, 'token': 0},
+            ],
+            'extra_roll': true,
+            'face': leg3Face,
+            'seq': seq.next(),
+          },
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      // The roll owed by the capture: section 21.3 rule 4's "move, a roll
+      // owed" row, same seat, `await_roll`, the now-empty queue.
       transport.pushText(
         _frame(
           type: 'turn',
           data: <String, Object?>{
             'seat': 0,
-            'phase': 'await_move',
+            'phase': 'await_roll',
             'deadline_ms': 45000,
-            'queue': <int>[armedFace],
+            'queue': const <int>[],
+            'seq': seq.next(),
+          },
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      // The bonus roll itself: section 21.3 rule 4's "roll, a move
+      // pending" row sends only `rolled` (no further `turn`), carrying the
+      // queue (now just the bonus face) and `legal_by_face` -- this is the
+      // decision under test, naming token 0 the unique legal token for
+      // the one face the bonus roll gave, once all three already-spent
+      // legs above have queued on the board.
+      transport.pushText(
+        _frame(
+          type: 'rolled',
+          data: <String, Object?>{
+            'seat': 0,
             'value': armedFace,
             'legal': const <int>[0],
+            'deadline_ms': 45000,
+            'k': 4,
+            'reveal': 'e' * 64,
+            'queue': <int>[armedFace],
             'legal_by_face': <Map<String, Object?>>[
               _faceLegal(armedFace, const <int>[0]),
             ],
@@ -610,10 +721,10 @@ void main() {
         findsNothing,
         reason:
             'scenario: token 0 walks progress 2 -> $finalProgress in 3 '
-            'queued legs of $squaresPerLeg (leg 1 lands at '
-            '${leg1Landing.inMilliseconds}ms); at ${elapsed.inMilliseconds}ms, '
-            'before even leg 1 lands, board-automove-glow-0-0 must not '
-            'exist (C-408 D1)',
+            'queued legs ($leg1Squares, $leg2Squares, $leg3Squares squares; '
+            'leg 1 lands at ${leg1Landing.inMilliseconds}ms); at '
+            '${elapsed.inMilliseconds}ms, before even leg 1 lands, '
+            'board-automove-glow-0-0 must not exist (C-408 D1)',
       );
       expect(
         _movesSince(transport, sentAtArm),
@@ -852,7 +963,7 @@ void main() {
           fromProgress: 2,
           toProgress: 6,
           movedFace: 4,
-          armedFace: 7,
+          armedFace: 6,
         );
 
         // Mid-walk (landing is at 560ms): the glow is not up yet, but the
@@ -889,7 +1000,7 @@ void main() {
         );
         expect(_dataOf(movesRightAfterTap.single), <String, Object?>{
           'token': 0,
-          'face': 7,
+          'face': 6,
         });
 
         await _completeMoveZeroTravel(
@@ -933,7 +1044,7 @@ void main() {
           fromProgress: 2,
           toProgress: 6,
           movedFace: 4,
-          armedFace: 7,
+          armedFace: 6,
         );
 
         // Past landing (560ms) by a comfortable margin, well before
@@ -981,7 +1092,7 @@ void main() {
         );
         expect(_dataOf(movesRightAfterTap.single), <String, Object?>{
           'token': 0,
-          'face': 7,
+          'face': 6,
         });
 
         await _completeMoveZeroTravel(
@@ -1027,7 +1138,7 @@ void main() {
           fromProgress: 2,
           toProgress: 6,
           movedFace: 4,
-          armedFace: 7,
+          armedFace: 6,
         );
 
         // Mid-walk (landing is at 560ms), the decision is handed away to
@@ -1057,9 +1168,9 @@ void main() {
           isEmpty,
           reason:
               'scenario: token 0 walks progress 2 -> 6 (landing 560ms), '
-              'armed for face 7 at turn-arrival, then at 200ms the turn '
+              'armed for face 6 at turn-arrival, then at 200ms the turn '
               'moves to seat 1 before the walk lands; nothing must ever '
-              'be sent for the dropped decision (token 0, face 7), '
+              'be sent for the dropped decision (token 0, face 6), '
               'before or after the landing -- sentRaw carries '
               '${_movesSince(transport, sentAtArm).length} move frame(s)',
         );
@@ -1085,7 +1196,7 @@ void main() {
           fromProgress: 2,
           toProgress: 6,
           movedFace: 4,
-          armedFace: 7,
+          armedFace: 6,
         );
 
         // Mid-walk, the same seat gets a fresh queue naming a different
@@ -1129,9 +1240,9 @@ void main() {
             isNot(0),
             reason:
                 'scenario: token 0 walks progress 2 -> 6 (landing '
-                '560ms), armed for face 7 at turn-arrival; at 200ms a '
+                '560ms), armed for face 6 at turn-arrival; at 200ms a '
                 'new queue for the same seat (face 3, token 1) drops '
-                'that decision; a move for token 0 / face 7 must never '
+                'that decision; a move for token 0 / face 6 must never '
                 'be sent, before or after the landing, but sentRaw '
                 'carries one: $moveText',
           );
@@ -1178,7 +1289,7 @@ void main() {
         fromProgress: 2,
         toProgress: 6,
         movedFace: 4,
-        armedFace: 7,
+        armedFace: 6,
       );
 
       final Duration landing = kTokenStepDurationReduced * 4;
@@ -1222,7 +1333,7 @@ void main() {
             '${(landing + hold + frame).inMilliseconds}ms exactly one '
             'move must have been sent; sentRaw carries ${moves.length}',
       );
-      expect(_dataOf(moves.single), <String, Object?>{'token': 0, 'face': 7});
+      expect(_dataOf(moves.single), <String, Object?>{'token': 0, 'face': 6});
 
       await _completeMoveZeroTravel(
         tester,
