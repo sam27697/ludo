@@ -49,7 +49,14 @@ double _naturalRowWidth(int n) =>
 /// overhang past the 38dp art) never leaves the tile's 48dp hit box -- the
 /// hit box centres the 38dp art with a 5dp margin on every side, and the
 /// pill's 3dp overhang past the art's own bottom-end corner stays inside
-/// that margin.
+/// that margin. This only holds if the pill is positioned against the
+/// 38dp art's own footprint and nothing bigger: the selected glow is 50dp
+/// (`_SelectedGlow`, K3) and, left unpositioned in the `Stack`, used to
+/// grow the `Stack`'s own layout size to match it on a selected tile,
+/// which pushed the pill's `-3` inset 6dp further out than this margin
+/// allows. `_selectedGlow` below gives the glow an explicit `Positioned`
+/// rect instead, so it paints at its own 50dp size without ever changing
+/// what the `Stack` measures itself as.
 const double _kCountOverhang = 3;
 const double _kCountBoxWidth = 26;
 const double _kCountBoxHeight = 16;
@@ -250,6 +257,29 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
     });
   }
 
+  /// K3's glow (`_SelectedGlow`, 50dp) is bigger than the 38dp art it sits
+  /// over. An explicit [Positioned] rect, rather than leaving it
+  /// unpositioned in the tile's [Stack], keeps it from growing the
+  /// `Stack`'s own layout size to match it: the count pill (C-420 D2,
+  /// `_countBadge`) is positioned against that `Stack` size and must
+  /// always measure against the 38dp art's footprint, selected or not.
+  /// The glow still paints at its own 50dp size, centred the same place
+  /// it always was (`Clip.none` on the `Stack` lets it overhang).
+  Widget _selectedGlow(int index) {
+    const double glowSize = _kTrayDieArt + 12;
+    const double inset = (_kTrayDieArt - glowSize) / 2;
+    return Positioned(
+      left: inset,
+      top: inset,
+      width: glowSize,
+      height: glowSize,
+      child: KeyedSubtree(
+        key: Key('game-roll-tray-selected-$index'),
+        child: _SelectedGlow(color: widget.seatColor),
+      ),
+    );
+  }
+
   /// A slot whose face no longer appears in `widget.faces`: dropped at
   /// once under reduced motion, or faded out over [_kTrayMotion] and then
   /// dropped (K12: "it never vanishes between two frames").
@@ -425,11 +455,7 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
       alignment: Alignment.center,
       clipBehavior: Clip.none,
       children: <Widget>[
-        if (selected)
-          KeyedSubtree(
-            key: Key('game-roll-tray-selected-$index'),
-            child: _SelectedGlow(color: widget.seatColor),
-          ),
+        if (selected) _selectedGlow(index),
         face,
         if (!alive) _deadBadge(index),
         // C-420 D2: the dead mark keeps the art's physical top corner;
@@ -510,14 +536,20 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
   /// 5dp margin the 48dp hit box leaves around the 38dp art, so the pill
   /// never leaves the hit box, at any text scale (Ignore pointer: the
   /// pill is not its own tap target, the whole tile already is one).
+  /// D3: the tile's own `Semantics.label` already carries the count in
+  /// words (`trayDieCount`), so the pill's `×count` text is excluded from
+  /// the semantics tree -- without that, TalkBack read the count twice,
+  /// the glyph read a second time as "times count".
   Widget _countBadge(int index, int count) {
     return PositionedDirectional(
       end: -_kCountOverhang,
       bottom: -_kCountOverhang,
       child: IgnorePointer(
-        child: KeyedSubtree(
-          key: Key('game-roll-tray-count-$index'),
-          child: _CountBadge(count: count, color: widget.seatColor),
+        child: ExcludeSemantics(
+          child: KeyedSubtree(
+            key: Key('game-roll-tray-count-$index'),
+            child: _CountBadge(count: count, color: widget.seatColor),
+          ),
         ),
       ),
     );
