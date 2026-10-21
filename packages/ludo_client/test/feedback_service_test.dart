@@ -191,6 +191,51 @@ void main() {
     });
   });
 
+  group('tap never calls sound (C-422 D1)', () {
+    test('with both switches on, play(tap) invokes haptic only, never '
+        'sound', () async {
+      final calls = _recordCalls(null, _feedbackChannel);
+      final settings = FeedbackSettings.forTest();
+      final service = PlatformFeedbackService(settings, _feedbackChannel);
+
+      service.play(FeedbackCue.tap);
+      await pumpEventQueue();
+
+      expect(
+        calls.any((c) => c.method == 'sound'),
+        isFalse,
+        reason:
+            'C-422 D1: tap must never call sound, "like invalidTap", even '
+            'with settings.sound on; got $calls',
+      );
+      expect(
+        calls.where((c) => c.method == 'haptic').map(_idOf),
+        equals(<String?>['tap']),
+        reason:
+            'play(tap) with haptics on must still call haptic{id:tap} '
+            'exactly once; got $calls',
+      );
+    });
+
+    test('with haptics off, play(tap) invokes nothing', () async {
+      final calls = _recordCalls(null, _feedbackChannel);
+      final settings = FeedbackSettings.forTest(haptics: false, sound: true);
+      final service = PlatformFeedbackService(settings, _feedbackChannel);
+
+      service.play(FeedbackCue.tap);
+      await pumpEventQueue();
+
+      expect(
+        calls,
+        isEmpty,
+        reason:
+            'C-422 D1: with haptics off, play(tap) must invoke nothing at '
+            'all -- tap is haptic-only, so there is no sound fallback to '
+            'invoke either; got $calls',
+      );
+    });
+  });
+
   group('step throttle: at most one haptic and one sound per 60ms', () {
     test('ten play(step) within 10ms of fake time produce one haptic and one '
         'sound; after 60ms elapses, another is allowed', () {
