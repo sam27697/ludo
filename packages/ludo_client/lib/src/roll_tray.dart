@@ -37,6 +37,31 @@ const double _kTrayHitMin = 48;
 /// motion, per [MediaQuery.disableAnimations].
 const Duration _kTrayMotion = Duration(milliseconds: 220);
 
+/// C-420 D1: a queue of [n] tiles at natural width, the same formula the
+/// contract states (n * 48 + (n - 1) * 8). Used only to decide whether the
+/// row still fits one tile per face; natural mode, once chosen, renders
+/// through the untouched pre-C-420 code path so every case the old probe
+/// already measured green stays pixel-for-pixel as it was.
+double _naturalRowWidth(int n) =>
+    n <= 0 ? 0 : n * _kTrayHitMin + (n - 1) * kSpace2;
+
+/// C-420 D2' (RESPEC run 101: D2's pill covered a pip, replaced). A grouped
+/// tile's count is text beside the die, on its end side, never drawn over
+/// the art. `_kCountGap` is the clearance from the 48dp die hit box's own
+/// edge to the text (the contract's "at least 2dp clear of it" is measured
+/// from the art, and the hit box already leaves its own margin around the
+/// art, so a gap measured from the hit box only ever adds to that
+/// clearance). `_kCountTextMaxWidth` is the cap the text is never allowed
+/// to grow past (`_countText`'s `FittedBox` only ever shrinks into it, at
+/// text scale 1.0 the digits sit at their natural size with room to
+/// spare). Together with the 48dp die and the 8dp gap the tray already
+/// places between sibling tiles, a two-tile grouped row is at most
+/// 48 + _kCountGap + _kCountTextMaxWidth + 8 + 48 = 138dp, which the
+/// contract measured fits beside the board die at 320dp.
+const double _kCountGap = 2;
+const double _kCountTextMaxWidth = 32;
+const double _kCountFontSize = 15;
+
 /// Beside the current seat's die (K1), one small die per queued face, in
 /// roll order. [faces] and [states] always carry the same length. Every
 /// tray die is `interactive` identically: when false, every tap on this
@@ -102,6 +127,20 @@ class _TraySlot {
   /// value to animate away from; a retiring slot starts `true` and is
   /// flipped to `false` the same way, then removed once the fade finishes.
   bool visible;
+}
+
+/// C-420 D2: one grouped tile -- every live slot sharing [slot.face],
+/// collapsed in order of first appearance. [index] is the queue index of
+/// the first (earliest) member, which is also the only member that ever
+/// carries the K2/K3 keys and the only one a tap can reach ([onSelect] is
+/// called with this same index, unchanged). [count] is how many queued
+/// faces this one tile stands for; 1 draws exactly as a natural-mode tile.
+class _TrayGroup {
+  _TrayGroup({required this.index, required this.slot, required this.count});
+
+  final int index;
+  final _TraySlot slot;
+  int count;
 }
 
 class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
@@ -218,6 +257,30 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
     });
   }
 
+  /// K3's glow (`_SelectedGlow`, 50dp) is bigger than the 38dp art it sits
+  /// over. An explicit [Positioned] rect, rather than leaving it
+  /// unpositioned in the tile's [Stack], keeps it from growing the
+  /// `Stack`'s own layout size to match it, so the `Stack` -- and the die
+  /// box built from it -- always measures the same 48dp hit box, selected
+  /// or not (C-420 D2' puts the count text beside this box, not inside
+  /// this `Stack`, but the box's own size still must not drift). The glow
+  /// still paints at its own 50dp size, centred the same place it always
+  /// was (`Clip.none` on the `Stack` lets it overhang).
+  Widget _selectedGlow(int index) {
+    const double glowSize = _kTrayDieArt + 12;
+    const double inset = (_kTrayDieArt - glowSize) / 2;
+    return Positioned(
+      left: inset,
+      top: inset,
+      width: glowSize,
+      height: glowSize,
+      child: KeyedSubtree(
+        key: Key('game-roll-tray-selected-$index'),
+        child: _SelectedGlow(color: widget.seatColor),
+      ),
+    );
+  }
+
   /// A slot whose face no longer appears in `widget.faces`: dropped at
   /// once under reduced motion, or faded out over [_kTrayMotion] and then
   /// dropped (K12: "it never vanishes between two frames").
@@ -250,49 +313,114 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
     final bool reduced = MediaQuery.disableAnimationsOf(context);
-    final List<Widget> children = <Widget>[];
-    for (int i = 0; i < _slots.length; i++) {
-      if (children.isNotEmpty) {
-        children.add(const SizedBox(width: kSpace2));
-      }
-      children.add(_liveTile(loc, _slots[i], i, reduced));
-    }
-    for (final _TraySlot ghost in _exiting) {
-      if (children.isNotEmpty) {
-        children.add(const SizedBox(width: kSpace2));
-      }
-      children.add(_ghostTile(ghost, reduced));
-    }
-    return Semantics(
-      container: true,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: children,
-      ),
+    // C-420 D1/D4: the tray reads its own width from its parent (the
+    // `Flexible` beside the board die in game_screen.dart) rather than
+    // assuming one; the fit check counts live tiles and the still-fading
+    // exiting ones alike, since both take width on this frame.
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final int totalTiles = _slots.length + _exiting.length;
+        final bool natural =
+            totalTiles <= 1 ||
+            _naturalRowWidth(totalTiles) <= constraints.maxWidth;
+        final List<Widget> children = <Widget>[];
+        if (natural) {
+          // D1: unchanged from before C-420, pixel-for-pixel.
+          for (int i = 0; i < _slots.length; i++) {
+            if (children.isNotEmpty) {
+              children.add(const SizedBox(width: kSpace2));
+            }
+            children.add(_liveTile(loc, _slots[i], i, reduced));
+          }
+        } else {
+          // D2: equal faces collapse into one tile, in order of first
+          // appearance.
+          for (final _TrayGroup group in _groupSlots()) {
+            if (children.isNotEmpty) {
+              children.add(const SizedBox(width: kSpace2));
+            }
+            children.add(
+              _liveTile(
+                loc,
+                group.slot,
+                group.index,
+                reduced,
+                count: group.count,
+              ),
+            );
+          }
+        }
+        for (final _TraySlot ghost in _exiting) {
+          if (children.isNotEmpty) {
+            children.add(const SizedBox(width: kSpace2));
+          }
+          children.add(_ghostTile(ghost, reduced));
+        }
+        return Semantics(
+          container: true,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: children,
+          ),
+        );
+      },
     );
+  }
+
+  /// C-420 D2: every live slot, grouped by face in order of first
+  /// appearance in the queue. A face seen before only grows the existing
+  /// group's [_TrayGroup.count]; it never starts a second tile.
+  List<_TrayGroup> _groupSlots() {
+    final List<_TrayGroup> groups = <_TrayGroup>[];
+    final Map<int, _TrayGroup> byFace = <int, _TrayGroup>{};
+    for (int i = 0; i < _slots.length; i++) {
+      final _TraySlot slot = _slots[i];
+      final _TrayGroup? existing = byFace[slot.face];
+      if (existing == null) {
+        final _TrayGroup group = _TrayGroup(index: i, slot: slot, count: 1);
+        byFace[slot.face] = group;
+        groups.add(group);
+      } else {
+        existing.count += 1;
+      }
+    }
+    return groups;
   }
 
   /// K2/K3/K11: one live, indexed tray die -- the only place the
   /// `game-roll-tray-die-<i>`, `game-roll-tray-face-<i>-<face>`,
   /// `game-roll-tray-selected-<i>` and `game-roll-tray-dead-<i>` keys are
   /// drawn, since the index they carry must always track the live queue.
+  /// [count] (C-420 D2) is how many queued faces this one tile stands for
+  /// under the grouped layout; 1 (the default, every natural-mode call)
+  /// draws and reads exactly as it did before C-420.
   Widget _liveTile(
     AppLocalizations loc,
     _TraySlot slot,
     int index,
-    bool reduced,
-  ) {
+    bool reduced, {
+    int count = 1,
+  }) {
     final bool alive = slot.state != TrayDieState.dead;
     final bool selected = slot.state == TrayDieState.selected;
     final bool exposesTapAction = widget.interactive && alive && !selected;
-    final String label = selected
+    String label = selected
         ? loc.trayDieSelected(slot.face)
         : !alive
         ? loc.trayDieNoMove(slot.face)
         : widget.interactive
         ? loc.trayDieCanMove(slot.face)
         : loc.trayDie(slot.face);
+    if (count > 1) {
+      // D3: the locale's own list comma joins the state label and the
+      // count, the same separator end_card.dart already uses to join a
+      // list of names for the same two locales.
+      final String comma = Localizations.localeOf(context).languageCode == 'ar'
+          ? '، '
+          : ', ';
+      label = '$label$comma${loc.trayDieCount(count)}';
+    }
 
     void handleTap() {
       if (!widget.interactive) {
@@ -321,18 +449,15 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
       ),
     );
 
-    // The badge hangs off the corner (C-380 D1). Clip.none keeps that
-    // overhang. The badge is positioned, so the tray row does not grow
-    // or shift to make room for it.
+    // The dead badge hangs off the art's corner (C-380 D1). Clip.none keeps
+    // that overhang. D2' (RESPEC run 101) draws no count mark here any
+    // more: the count is text beside the die (`_countText`, below), never
+    // over the art, so nothing in this Stack competes with a pip.
     final Widget stacked = Stack(
       alignment: Alignment.center,
       clipBehavior: Clip.none,
       children: <Widget>[
-        if (selected)
-          KeyedSubtree(
-            key: Key('game-roll-tray-selected-$index'),
-            child: _SelectedGlow(color: widget.seatColor),
-          ),
+        if (selected) _selectedGlow(index),
         face,
         if (!alive) _deadBadge(index),
       ],
@@ -348,6 +473,33 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
       child: stacked,
     );
 
+    // The die itself: 48dp hit box, 38dp art, unchanged by D2'.
+    final Widget dieBox = ConstrainedBox(
+      constraints: const BoxConstraints(
+        minWidth: _kTrayHitMin,
+        minHeight: _kTrayHitMin,
+      ),
+      child: Center(child: shaking),
+    );
+
+    // C-420 D2': a grouped tile (count > 1) is the die followed, on its
+    // end side, by the `×<count>` text -- a plain `Row`'s children mirror
+    // for free under an ambient RTL `Directionality`, the same as every
+    // other end-anchored layout in this screen, so this file never tests
+    // the direction itself. A count-1 tile is exactly `dieBox`, pixel for
+    // pixel the natural tile.
+    final Widget tileContent = count > 1
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              dieBox,
+              const SizedBox(width: _kCountGap),
+              _countText(loc, index, count),
+            ],
+          )
+        : dieBox;
+
     return KeyedSubtree(
       key: ValueKey<int>(slot.id),
       child: AnimatedOpacity(
@@ -361,7 +513,10 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
           // K2/K11: a boundary of its own -- without it, two adjacent
           // dice with their own tap action and label collapse into one
           // merged node, which hid die 1 and 2's own reading behind
-          // die 0's whenever a queue held more than one die.
+          // die 0's whenever a queue held more than one die. D2': on a
+          // grouped tile this node and the tap target below both cover
+          // the die and its count text together -- one node, one target,
+          // a tap on either reaches the same `handleTap`.
           container: true,
           button: true,
           label: label,
@@ -371,13 +526,7 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
             excludeFromSemantics: true,
             behavior: HitTestBehavior.opaque,
             onTap: handleTap,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                minWidth: _kTrayHitMin,
-                minHeight: _kTrayHitMin,
-              ),
-              child: Center(child: shaking),
-            ),
+            child: tileContent,
           ),
         ),
       ),
@@ -394,6 +543,43 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
         child: CustomPaint(
           key: Key('game-roll-tray-dead-$index'),
           painter: const DeadMarkPainter(),
+        ),
+      ),
+    );
+  }
+
+  /// C-420 D2' (RESPEC run 101: D2's pill covered a pip, replaced):
+  /// `game-roll-tray-count-<i>` reads `×<count>` beside the die, on its
+  /// end side -- never drawn over the art, and never its own tap target
+  /// or semantics node (the enclosing tile's `GestureDetector` and
+  /// `Semantics` already cover it; `ExcludeSemantics` here keeps the
+  /// glyph itself out of the tree, since the tile's own `Semantics.label`
+  /// already carries the count in words, `trayDieCount` -- without this,
+  /// TalkBack read the count twice, the second time as "times count").
+  /// `ConstrainedBox` caps the width at `_kCountTextMaxWidth`; `FittedBox`
+  /// only ever shrinks a child that wants to be wider than the box it is
+  /// offered (`BoxFit.scaleDown`), so the digits sit at their natural
+  /// size at text scale 1.0 and shrink only once they would cross the
+  /// cap at a larger scale, never growing past it. Digits are always
+  /// Western (U+00D7 then ASCII), the same ones the countdown ring draws
+  /// in both locales, so `TextDirection.ltr` here is not a locale choice.
+  Widget _countText(AppLocalizations loc, int index, int count) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: _kCountTextMaxWidth),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: ExcludeSemantics(
+          child: Text(
+            loc.trayDieCountMark(count),
+            key: Key('game-roll-tray-count-$index'),
+            textDirection: TextDirection.ltr,
+            style: TextStyle(
+              color: widget.seatColor,
+              fontWeight: FontWeight.bold,
+              fontSize: _kCountFontSize,
+              height: 1,
+            ),
+          ),
         ),
       ),
     );
