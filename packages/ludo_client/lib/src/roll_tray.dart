@@ -45,22 +45,22 @@ const Duration _kTrayMotion = Duration(milliseconds: 220);
 double _naturalRowWidth(int n) =>
     n <= 0 ? 0 : n * _kTrayHitMin + (n - 1) * kSpace2;
 
-/// C-420 D2: the count pill's fixed footprint, chosen so it (and its
-/// overhang past the 38dp art) never leaves the tile's 48dp hit box -- the
-/// hit box centres the 38dp art with a 5dp margin on every side, and the
-/// pill's 3dp overhang past the art's own bottom-end corner stays inside
-/// that margin. This only holds if the pill is positioned against the
-/// 38dp art's own footprint and nothing bigger: the selected glow is 50dp
-/// (`_SelectedGlow`, K3) and, left unpositioned in the `Stack`, used to
-/// grow the `Stack`'s own layout size to match it on a selected tile,
-/// which pushed the pill's `-3` inset 6dp further out than this margin
-/// allows. `_selectedGlow` below gives the glow an explicit `Positioned`
-/// rect instead, so it paints at its own 50dp size without ever changing
-/// what the `Stack` measures itself as.
-const double _kCountOverhang = 3;
-const double _kCountBoxWidth = 26;
-const double _kCountBoxHeight = 16;
-const double _kCountFontSize = 10;
+/// C-420 D2' (RESPEC run 101: D2's pill covered a pip, replaced). A grouped
+/// tile's count is text beside the die, on its end side, never drawn over
+/// the art. `_kCountGap` is the clearance from the 48dp die hit box's own
+/// edge to the text (the contract's "at least 2dp clear of it" is measured
+/// from the art, and the hit box already leaves its own margin around the
+/// art, so a gap measured from the hit box only ever adds to that
+/// clearance). `_kCountTextMaxWidth` is the cap the text is never allowed
+/// to grow past (`_countText`'s `FittedBox` only ever shrinks into it, at
+/// text scale 1.0 the digits sit at their natural size with room to
+/// spare). Together with the 48dp die and the 8dp gap the tray already
+/// places between sibling tiles, a two-tile grouped row is at most
+/// 48 + _kCountGap + _kCountTextMaxWidth + 8 + 48 = 138dp, which the
+/// contract measured fits beside the board die at 320dp.
+const double _kCountGap = 2;
+const double _kCountTextMaxWidth = 32;
+const double _kCountFontSize = 15;
 
 /// Beside the current seat's die (K1), one small die per queued face, in
 /// roll order. [faces] and [states] always carry the same length. Every
@@ -260,11 +260,12 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
   /// K3's glow (`_SelectedGlow`, 50dp) is bigger than the 38dp art it sits
   /// over. An explicit [Positioned] rect, rather than leaving it
   /// unpositioned in the tile's [Stack], keeps it from growing the
-  /// `Stack`'s own layout size to match it: the count pill (C-420 D2,
-  /// `_countBadge`) is positioned against that `Stack` size and must
-  /// always measure against the 38dp art's footprint, selected or not.
-  /// The glow still paints at its own 50dp size, centred the same place
-  /// it always was (`Clip.none` on the `Stack` lets it overhang).
+  /// `Stack`'s own layout size to match it, so the `Stack` -- and the die
+  /// box built from it -- always measures the same 48dp hit box, selected
+  /// or not (C-420 D2' puts the count text beside this box, not inside
+  /// this `Stack`, but the box's own size still must not drift). The glow
+  /// still paints at its own 50dp size, centred the same place it always
+  /// was (`Clip.none` on the `Stack` lets it overhang).
   Widget _selectedGlow(int index) {
     const double glowSize = _kTrayDieArt + 12;
     const double inset = (_kTrayDieArt - glowSize) / 2;
@@ -448,9 +449,10 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
       ),
     );
 
-    // The badge hangs off the corner (C-380 D1). Clip.none keeps that
-    // overhang. The badge is positioned, so the tray row does not grow
-    // or shift to make room for it.
+    // The dead badge hangs off the art's corner (C-380 D1). Clip.none keeps
+    // that overhang. D2' (RESPEC run 101) draws no count mark here any
+    // more: the count is text beside the die (`_countText`, below), never
+    // over the art, so nothing in this Stack competes with a pip.
     final Widget stacked = Stack(
       alignment: Alignment.center,
       clipBehavior: Clip.none,
@@ -458,11 +460,6 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
         if (selected) _selectedGlow(index),
         face,
         if (!alive) _deadBadge(index),
-        // C-420 D2: the dead mark keeps the art's physical top corner;
-        // the count pill sits on the opposite, bottom-end corner (mirrored
-        // by Directionality, unlike the dead mark), so the two never
-        // collide on a dead grouped tile.
-        if (count > 1) _countBadge(index, count),
       ],
     );
 
@@ -475,6 +472,33 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
       },
       child: stacked,
     );
+
+    // The die itself: 48dp hit box, 38dp art, unchanged by D2'.
+    final Widget dieBox = ConstrainedBox(
+      constraints: const BoxConstraints(
+        minWidth: _kTrayHitMin,
+        minHeight: _kTrayHitMin,
+      ),
+      child: Center(child: shaking),
+    );
+
+    // C-420 D2': a grouped tile (count > 1) is the die followed, on its
+    // end side, by the `×<count>` text -- a plain `Row`'s children mirror
+    // for free under an ambient RTL `Directionality`, the same as every
+    // other end-anchored layout in this screen, so this file never tests
+    // the direction itself. A count-1 tile is exactly `dieBox`, pixel for
+    // pixel the natural tile.
+    final Widget tileContent = count > 1
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              dieBox,
+              const SizedBox(width: _kCountGap),
+              _countText(index, count),
+            ],
+          )
+        : dieBox;
 
     return KeyedSubtree(
       key: ValueKey<int>(slot.id),
@@ -489,7 +513,10 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
           // K2/K11: a boundary of its own -- without it, two adjacent
           // dice with their own tap action and label collapse into one
           // merged node, which hid die 1 and 2's own reading behind
-          // die 0's whenever a queue held more than one die.
+          // die 0's whenever a queue held more than one die. D2': on a
+          // grouped tile this node and the tap target below both cover
+          // the die and its count text together -- one node, one target,
+          // a tap on either reaches the same `handleTap`.
           container: true,
           button: true,
           label: label,
@@ -499,13 +526,7 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
             excludeFromSemantics: true,
             behavior: HitTestBehavior.opaque,
             onTap: handleTap,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                minWidth: _kTrayHitMin,
-                minHeight: _kTrayHitMin,
-              ),
-              child: Center(child: shaking),
-            ),
+            child: tileContent,
           ),
         ),
       ),
@@ -527,28 +548,37 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
     );
   }
 
-  /// C-420 D2: `game-roll-tray-count-<i>` reads `×<count>` on a small pill
-  /// at the die art's bottom-end corner (end, so it mirrors with
-  /// Directionality, unlike the physical-corner dead mark). Positioned by
-  /// a negative end/bottom inset rather than a literal rect, so Flutter
-  /// mirrors it for Arabic without this file checking the direction
-  /// itself; the fixed inset keeps the pill's whole overhang inside the
-  /// 5dp margin the 48dp hit box leaves around the 38dp art, so the pill
-  /// never leaves the hit box, at any text scale (Ignore pointer: the
-  /// pill is not its own tap target, the whole tile already is one).
-  /// D3: the tile's own `Semantics.label` already carries the count in
-  /// words (`trayDieCount`), so the pill's `×count` text is excluded from
-  /// the semantics tree -- without that, TalkBack read the count twice,
-  /// the glyph read a second time as "times count".
-  Widget _countBadge(int index, int count) {
-    return PositionedDirectional(
-      end: -_kCountOverhang,
-      bottom: -_kCountOverhang,
-      child: IgnorePointer(
+  /// C-420 D2' (RESPEC run 101: D2's pill covered a pip, replaced):
+  /// `game-roll-tray-count-<i>` reads `×<count>` beside the die, on its
+  /// end side -- never drawn over the art, and never its own tap target
+  /// or semantics node (the enclosing tile's `GestureDetector` and
+  /// `Semantics` already cover it; `ExcludeSemantics` here keeps the
+  /// glyph itself out of the tree, since the tile's own `Semantics.label`
+  /// already carries the count in words, `trayDieCount` -- without this,
+  /// TalkBack read the count twice, the second time as "times count").
+  /// `ConstrainedBox` caps the width at `_kCountTextMaxWidth`; `FittedBox`
+  /// only ever shrinks a child that wants to be wider than the box it is
+  /// offered (`BoxFit.scaleDown`), so the digits sit at their natural
+  /// size at text scale 1.0 and shrink only once they would cross the
+  /// cap at a larger scale, never growing past it. Digits are always
+  /// Western (U+00D7 then ASCII), the same ones the countdown ring draws
+  /// in both locales, so `TextDirection.ltr` here is not a locale choice.
+  Widget _countText(int index, int count) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: _kCountTextMaxWidth),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
         child: ExcludeSemantics(
-          child: KeyedSubtree(
+          child: Text(
+            '×$count',
             key: Key('game-roll-tray-count-$index'),
-            child: _CountBadge(count: count, color: widget.seatColor),
+            textDirection: TextDirection.ltr,
+            style: TextStyle(
+              color: widget.seatColor,
+              fontWeight: FontWeight.bold,
+              fontSize: _kCountFontSize,
+              height: 1,
+            ),
           ),
         ),
       ),
@@ -576,54 +606,6 @@ class _RollTrayState extends State<RollTray> with TickerProviderStateMixin {
                     edgeColor: widget.seatColor,
                     dimmed: slot.state == TrayDieState.dead,
                   ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// C-420 D2: the `×<count>` pill a grouped tile carries when it stands for
-/// more than one queued face. A fixed-size capsule (never grown by the
-/// badge's own content) so it cannot push past the hit box: [FittedBox]
-/// shrinks the digits to fit that fixed size instead, which is what keeps
-/// the pill legible at text scale 1.0 (no shrink needed) and still inside
-/// the hit box at 2.0 (shrunk back to the same footprint). Digits are
-/// always Western (U+00D7 then ASCII), the same ones the countdown ring
-/// draws in both locales, so [TextDirection.ltr] here is not a locale
-/// choice.
-class _CountBadge extends StatelessWidget {
-  const _CountBadge({required this.count, required this.color});
-
-  final int count;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: _kCountBoxWidth,
-      height: _kCountBoxHeight,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(_kCountBoxHeight),
-        ),
-        child: Center(
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: kSpaceTight),
-              child: Text(
-                '×$count',
-                textDirection: TextDirection.ltr,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: _kCountFontSize,
-                  height: 1,
                 ),
               ),
             ),
