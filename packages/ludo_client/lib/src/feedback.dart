@@ -38,6 +38,7 @@ enum FeedbackCue {
   win,
   gameOver,
   invalidTap,
+  tap,
 }
 
 /// C-225's wire ids, one per [FeedbackCue], exactly as the Kotlin side and
@@ -55,6 +56,7 @@ const Map<FeedbackCue, String> _cueIds = <FeedbackCue, String>{
   FeedbackCue.win: 'win',
   FeedbackCue.gameOver: 'game_over',
   FeedbackCue.invalidTap: 'invalid_tap',
+  FeedbackCue.tap: 'tap',
 };
 
 extension FeedbackCueId on FeedbackCue {
@@ -275,8 +277,9 @@ class FeedbackSettings extends ChangeNotifier {
 /// C-225's platform-backed [FeedbackService]: a `play` turns into up to two
 /// invocations (`haptic`, `sound`) of the `app.fayad.ludo/feedback` method
 /// channel that MainActivity.kt answers, each gated on the matching
-/// in-app switch in [settings]. `invalidTap` has no sound (doctrine
-/// section 3's table: none). `step` is throttled independently per channel
+/// in-app switch in [settings]. `invalidTap` and `tap` have no sound
+/// (doctrine section 3's table: none, and C-422 D1). `step` is throttled
+/// independently per channel
 /// to at most one call per [_stepThrottle]; a `step` inside the window is
 /// dropped, not queued, so a fast run of squares does not pile up buzzes
 /// behind the animation.
@@ -319,6 +322,7 @@ class PlatformFeedbackService implements FeedbackService {
     }
     if (settings.sound &&
         cue != FeedbackCue.invalidTap &&
+        cue != FeedbackCue.tap &&
         _admitStep(cue, isHaptic: false)) {
       unawaited(_invoke('sound', cue));
     }

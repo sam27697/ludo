@@ -214,6 +214,13 @@ class _GameScreenState extends State<GameScreen> {
   int _moveSendSerial = 0;
   int? _moveGuardSerial;
 
+  // C-422 D4: the token index `_sendMove` last put on the wire, tap path
+  // and hold path alike; drawn lifted on the board (`Board.sentToken`)
+  // until the guard above drops, by the same three routes. Never set or
+  // cleared on its own -- it rides on the guard, it does not add a new
+  // one.
+  int? _moveSentToken;
+
   // The die's "waiting for my roll result" state. Set together with the
   // turn.k a rolling tap was sent under; cleared when the snapshot shows my
   // seat with a later k and a non-null value (the roll landed), when the
@@ -548,11 +555,14 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
-  /// Rule 1's table. Rule 2: `canMove`, `step` and `invalidTap` are not
-  /// felt-event words for a screen reader -- the die and the legal tokens
-  /// already carry labels -- and answer null here, which [_playCue] takes
-  /// as "nothing to announce", never an empty string sent to
-  /// [SemanticsService].
+  /// Rule 1's table. Rule 2: `canMove`, `step`, `invalidTap` and `tap` are
+  /// not felt-event words for a screen reader -- the die and the legal
+  /// tokens already carry labels -- and answer null here, which [_playCue]
+  /// takes as "nothing to announce", never an empty string sent to
+  /// [SemanticsService]. `tap` itself is never played through [_playCue]
+  /// (C-422 D2/D3 play it straight off the die and token tap handlers, in
+  /// the tap's own frame, not through the frame-driven table rule 1
+  /// covers); the case below exists only so this switch stays exhaustive.
   String? _announcementFor(FeedbackCue cue) {
     final AppLocalizations loc = AppLocalizations.of(context);
     switch (cue) {
@@ -573,6 +583,7 @@ class _GameScreenState extends State<GameScreen> {
       case FeedbackCue.canMove:
       case FeedbackCue.step:
       case FeedbackCue.invalidTap:
+      case FeedbackCue.tap:
         return null;
     }
   }
@@ -985,6 +996,7 @@ class _GameScreenState extends State<GameScreen> {
     _moveSentForK = null;
     _moveSentForQueue = null;
     _moveGuardSerial = null;
+    _moveSentToken = null;
     _rollNoAnswerTimer?.cancel();
     _rollNoAnswerTimer = null;
     _rollWaitK = null;
@@ -1083,6 +1095,10 @@ class _GameScreenState extends State<GameScreen> {
   /// move was sent for. The call that set the guard may still be in
   /// flight; forgetting its serial here means that call's later finish
   /// cannot drop a guard a newer send has set. See [_moveSentForK].
+  ///
+  /// C-422 D4: also drops the lift (`_moveSentToken`), on the same route a
+  /// `moved` for my seat takes -- this is called from `_onControllerChanged`,
+  /// already inside its own `setState`, so no further call is needed here.
   void _releaseMoveGuard() {
     if (_moveSentForK == null) {
       return;
@@ -1097,17 +1113,35 @@ class _GameScreenState extends State<GameScreen> {
     _moveSentForK = null;
     _moveSentForQueue = null;
     _moveGuardSerial = null;
+    _moveSentToken = null;
   }
 
   /// Drops the guard when the `controller.move` call numbered [serial]
   /// finishes, if that call still owns the guard.
+  ///
+  /// C-422 D4: this is the route a refusal or a dead socket takes -- the
+  /// call ends with no `moved` ever changing `widget.controller.room`, so
+  /// nothing else schedules a rebuild for the lift this guard was carrying.
+  /// `setState` here is this route's only one, called only when the guard
+  /// (and so the lift) actually drops, and only while the screen is still
+  /// mounted (the call may finish well after this screen is gone).
   void _dropMoveGuardFor(int serial) {
     if (_moveGuardSerial != serial) {
       return;
     }
-    _moveSentForK = null;
-    _moveSentForQueue = null;
-    _moveGuardSerial = null;
+    if (!mounted) {
+      _moveSentForK = null;
+      _moveSentForQueue = null;
+      _moveGuardSerial = null;
+      _moveSentToken = null;
+      return;
+    }
+    setState(() {
+      _moveSentForK = null;
+      _moveSentForQueue = null;
+      _moveGuardSerial = null;
+      _moveSentToken = null;
+    });
   }
 
   /// Reads whatever `frame` just did to `widget.controller.room`'s
@@ -1521,12 +1555,13 @@ class _GameScreenState extends State<GameScreen> {
     return false;
   }
 
-  /// Tapping the die while it would roll: haptic now, start the tumble,
-  /// send the intention. C-236 rule 5: this `HapticFeedback.lightImpact()`
-  /// is a tap acknowledgement, not a game event, and stays alongside the
-  /// feedback service rather than being folded into it; `yourTurn` and
-  /// `canMove`/`noMove` for the roll that follows are played separately,
-  /// from `_onFrame`, once the server's own `rolled` frame lands.
+  /// Tapping the die while it would roll: the `tap` cue now, start the
+  /// tumble, send the intention. C-422 D2: the tap's acknowledgement plays
+  /// through the feedback service, not a raw platform call outside it
+  /// (C-236 rule 5's old contract), so the in-app haptics switch governs
+  /// it; `yourTurn` and `canMove`/`noMove` for the roll that follows are
+  /// played separately, from `_onFrame`, once the server's own `rolled`
+  /// frame lands.
   void _onDieTap() {
     if (_isEndHeld) {
       return;
@@ -1535,7 +1570,7 @@ class _GameScreenState extends State<GameScreen> {
     if (turn == null) {
       return;
     }
-    HapticFeedback.lightImpact();
+    FeedbackScope.of(context).play(FeedbackCue.tap);
     _rollNoAnswerTimer?.cancel();
     setState(() {
       _rollWaitK = turn.k;
@@ -1833,26 +1868,36 @@ class _GameScreenState extends State<GameScreen> {
   /// only puts it on the wire when non-null (C-362 A6), so a server
   /// without the roll queue, where `face` is always null here, sends the
   /// byte-identical frame it always did.
-  void _sendMove(int token, int k, {int? face}) {
+  ///
+  /// C-422 D3/D4: returns true exactly when this call put a move on the
+  /// wire (passed every guard above), false otherwise. The caller on the
+  /// tap path plays `FeedbackCue.tap` only on true; the hold's own commit
+  /// never looks at the return value, since the player did not tap. Either
+  /// way, a true return also set `_moveSentToken` to [token], which is
+  /// what draws the lift -- the return value and the lift always agree on
+  /// whether this call sent anything.
+  bool _sendMove(int token, int k, {int? face}) {
     final TurnState? turn = widget.controller.room?.turn;
     if (turn == null ||
         turn.seat != widget.controller.seat ||
         turn.phase != TurnPhase.awaitMove ||
         turn.k != k) {
-      return;
+      return false;
     }
     if (_moveSentForK == k && _sameFaces(_moveSentForQueue, turn.queue)) {
-      return;
+      return false;
     }
     final int serial = ++_moveSendSerial;
     _moveSentForK = k;
     _moveSentForQueue = List<int>.from(turn.queue);
     _moveGuardSerial = serial;
+    _moveSentToken = token;
     unawaited(
       widget.controller.move(token, face: face).whenComplete(() {
         _dropMoveGuardFor(serial);
       }),
     );
+    return true;
   }
 
   /// A token tap is an explicit move: drop the hold silently, then let the
@@ -2643,6 +2688,7 @@ class _GameScreenState extends State<GameScreen> {
                   mySeat: seat,
                   legal: legalTokens,
                   autoMoveToken: _isEndHeld ? null : _pendingAutoMoveToken,
+                  sentToken: _moveSentToken,
                   onTokenStep: (int stepSeat, int token) =>
                       _onBoardTokenStep(controller, stepSeat),
                   onMoveLanded: _onBoardMoveLanded,
@@ -2659,11 +2705,22 @@ class _GameScreenState extends State<GameScreen> {
                     }
                     // K6: a server without the roll queue (`legalByFace`
                     // null) sends the byte-identical frame it always did.
-                    _sendMove(
-                      index,
-                      k,
-                      face: turn!.legalByFace != null ? _selectedFace : null,
-                    );
+                    //
+                    // C-422 D3: the tap answers in its own frame -- the
+                    // guard, the lift and the cue all happen synchronously
+                    // here, in the tap's own gesture callback, not on a
+                    // later frame or after any reply from the server.
+                    bool sent = false;
+                    setState(() {
+                      sent = _sendMove(
+                        index,
+                        k,
+                        face: turn!.legalByFace != null ? _selectedFace : null,
+                      );
+                    });
+                    if (sent) {
+                      FeedbackScope.of(context).play(FeedbackCue.tap);
+                    }
                   },
                   onIllegalTokenTap: (int index) {
                     FeedbackScope.of(context).play(FeedbackCue.invalidTap);
