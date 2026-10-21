@@ -240,6 +240,10 @@
   "@gameYourTurnMove": {
     "description": "Turn banner shown on the game screen when it is this player's own turn and the server is waiting on a token choice."
   },
+  "gameAutoMoving": "Only one move. Playing it for you.",
+  "@gameAutoMoving": {
+    "description": "Turn banner shown in place of gameYourTurnMove while a roll has left exactly one legal move and the client-side hold is counting down to playing it automatically (contract C-417)."
+  },
   "gameYourTurnStale": "Your turn",
   "@gameYourTurnStale": {
     "description": "Turn banner shown on the game screen when it is this player's own turn while the connection is stale or reconnecting."
@@ -251,6 +255,16 @@
   "gameTokenButton": "Token {number}",
   "@gameTokenButton": {
     "description": "Label of one of the four token buttons on the game screen. The number shown to the player runs 1 to 4 while the protocol token index underneath runs 0 to 3.",
+    "placeholders": {
+      "number": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
+  "announceAutoMoveArmed": "Only one move. Token {number} moves by itself.",
+  "@announceAutoMoveArmed": {
+    "description": "TalkBack announcement when the unique-legal auto-move hold arms, naming the token that will move by itself (contract C-417 D5). Replaces gameTokenButton for this one announcement; the commit announcement still uses gameTokenButton.",
     "placeholders": {
       "number": {
         "type": "int",
@@ -385,10 +399,6 @@
   "gameNewRoomButton": "New table",
   "@gameNewRoomButton": {
     "description": "Button on the finished game screen that leaves this room and opens a new table. Distinct from the AppBar Leave control; it does not rematch the same room."
-  },
-  "gameUndoButton": "Undo",
-  "@gameUndoButton": {
-    "description": "Label of the outlined control on the game screen that cancels a pending unique-legal auto-move during the three-second hold. Cancels the local hold only; it does not reverse a move on the server."
   },
   "gameVerifyButton": "Verify rolls",
   "@gameVerifyButton": {
