@@ -450,7 +450,15 @@ void main() {
     );
 
     testWidgets(
-      'H2 branch 3: my turn awaiting a move shows loc.gameYourTurnMove',
+      // Amended for contract C-417 D4: this fixture's `legal: [0]` is the
+      // unique-legal case, and GameScreen arms the auto-move hold for it
+      // the moment it mounts (the token starts already at rest, so
+      // `_syncAutoMove`'s own wait for a walk never applies) -- the glow
+      // D4 gates the new banner line on is therefore already visible at
+      // the very assertion below, so the banner this fixture now shows is
+      // loc.gameAutoMoving, not loc.gameYourTurnMove.
+      'H2 branch 3 (amended by C-417 D4): my turn awaiting a move with a '
+      'unique legal token shows loc.gameAutoMoving',
       (tester) async {
         final (controller, _) = await _connectPlaying(
           tester,
@@ -474,10 +482,11 @@ void main() {
         final banner = tester.widget<Text>(find.byKey(_bannerKey));
         expect(
           banner.data,
-          loc.gameYourTurnMove,
+          loc.gameAutoMoving,
           reason:
-              'H2 item 3: my seat on turn, phase awaitMove, must show '
-              'loc.gameYourTurnMove ("${loc.gameYourTurnMove}"); got '
+              'C-417 D4: my seat on turn, phase awaitMove, with the '
+              'unique-legal hold already visible, must show '
+              'loc.gameAutoMoving ("${loc.gameAutoMoving}"); got '
               '"${banner.data}"',
         );
       },

@@ -21,6 +21,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -100,8 +101,10 @@ class _GameScreenState extends State<GameScreen> {
   // With no roll queue the queue is empty, so this is once per turn.k.
   // Cancelled by a manual token press, or the turn leaving that
   // unique-legal awaitMove. controller.move is not called until the hold
-  // elapses without cancel.
-  static const Duration _autoMoveHold = Duration(milliseconds: 1500);
+  // elapses without cancel. The duration itself is board.dart's own public
+  // `kAutoMoveHold` (C-417 D2): the board's countdown arc and this timer
+  // count from the same constant, so the arc reaching empty and the move
+  // actually being sent coincide within a frame.
   Timer? _autoMoveTimer;
 
   // C-408 D8 (run 99): bounds D7's wait for a walk the board, for
@@ -1647,7 +1650,10 @@ class _GameScreenState extends State<GameScreen> {
       _pendingAutoMoveFace = null;
     }
     final AppLocalizations loc = AppLocalizations.of(context);
-    _announceAutoMove(loc.gameTokenButton(_pendingAutoMoveToken! + 1));
+    // C-417 D5: arming says the token will move by itself, not merely
+    // which token it is -- the commit announcement below still names the
+    // token alone, since by then it already has.
+    _announceAutoMove(loc.announceAutoMoveArmed(_pendingAutoMoveToken! + 1));
     // C-408 D7: the glow this hold counts down is board.dart's own D2,
     // which the board does not draw until the held token's disc reaches
     // its truth. A `moved` frame already in hand for this very token may
@@ -1758,7 +1764,28 @@ class _GameScreenState extends State<GameScreen> {
     _autoMoveCeilingTimer?.cancel();
     _autoMoveCeilingTimer = null;
     _autoMoveTimer?.cancel();
-    _autoMoveTimer = Timer(_autoMoveHold, _commitPendingAutoMove);
+    _autoMoveTimer = Timer(kAutoMoveHold, _commitPendingAutoMove);
+    _rebuildForAutoMoveBanner();
+  }
+
+  /// C-417 D4: the banner reads `_autoMoveTimer`, and the hold can start
+  /// from a board callback (a walk landing, a snap, the C-408 ceiling)
+  /// that does not rebuild this screen. Rebuild now, or right after the
+  /// current frame when the callback arrives in the middle of one.
+  void _rebuildForAutoMoveBanner() {
+    if (!mounted) {
+      return;
+    }
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {});
+        }
+      });
+      return;
+    }
+    setState(() {});
   }
 
   void _clearPendingHold() {
@@ -2940,7 +2967,19 @@ class _GameScreenState extends State<GameScreen> {
     required double clampScale,
     bool stale = false,
   }) {
-    final String bannerText = _turnBannerText(loc, room, seat, stale: stale);
+    // C-417 D4: the glow is visible exactly while `_autoMoveTimer` is the
+    // real 1500ms countdown -- it is only armed (`_startAutoMoveTimer`)
+    // once C-408's own wait for the held token's walk has let it start,
+    // the same frame board.dart's own `atRestAtTruth` lets the glow (and
+    // the arc nested inside it) actually draw.
+    final bool autoMoveVisible = !_isEndHeld && _autoMoveTimer != null;
+    final String bannerText = _turnBannerText(
+      loc,
+      room,
+      seat,
+      stale: stale,
+      autoMoveVisible: autoMoveVisible,
+    );
     final int turnSeat = turn?.seat ?? seat ?? 0;
     final Color seatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
     final bool myTurn = turn != null && turn.seat == seat;
@@ -3689,11 +3728,16 @@ Map<int, String> _seatNamesOf(RoomSnapshot room) {
 
 /// H2, decided in the order given there, first match wins.
 /// C-290 rule 2: finished beats every other case, including stale.
+/// C-417 D4: inside the awaitMove branch, stale still beats the auto-move
+/// line (stale is a connection problem, C-290's own order over it is
+/// unchanged), but once the unique-legal hold's glow is actually visible
+/// [autoMoveVisible] beats the plain move line under it.
 String _turnBannerText(
   AppLocalizations loc,
   RoomSnapshot room,
   int? seat, {
   bool stale = false,
+  bool autoMoveVisible = false,
 }) {
   if (room.state == RoomState.finished ||
       room.turn?.phase == TurnPhase.finished) {
@@ -3708,7 +3752,13 @@ String _turnBannerText(
       return stale ? loc.gameYourTurnStale : loc.gameYourTurnRoll;
     }
     if (turn.phase == TurnPhase.awaitMove) {
-      return stale ? loc.gameYourTurnStale : loc.gameYourTurnMove;
+      if (stale) {
+        return loc.gameYourTurnStale;
+      }
+      if (autoMoveVisible) {
+        return loc.gameAutoMoving;
+      }
+      return loc.gameYourTurnMove;
     }
   }
   return _waitingForSeatText(loc, room, turn.seat);
