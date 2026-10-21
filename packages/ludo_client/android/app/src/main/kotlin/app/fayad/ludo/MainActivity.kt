@@ -45,6 +45,7 @@ class MainActivity : FlutterActivity() {
         "win" to longArrayOf(0, 60, 60, 80, 60, 120, 60, 260),
         "game_over" to longArrayOf(0, 90),
         "invalid_tap" to longArrayOf(0, 10),
+        "tap" to longArrayOf(0, 14),
     )
 
     // Same ids, 0..255 amplitude per segment of hapticTimings, used only
@@ -60,11 +61,13 @@ class MainActivity : FlutterActivity() {
         "win" to intArrayOf(0, 80, 0, 130, 0, 190, 0, 255),
         "game_over" to intArrayOf(0, 70),
         "invalid_tap" to intArrayOf(0, 50),
+        "tap" to intArrayOf(0, 80),
     )
 
-    // Every id except invalid_tap (doctrine section 3's table: none) has a
-    // clip; tool/gen_feedback_sounds.py writes it to res/raw as fb_<id>.wav,
-    // and aapt2 generates the matching R.raw entry read here.
+    // Every id except invalid_tap and tap (doctrine section 3's table:
+    // none, and C-422 D1) has a clip; tool/gen_feedback_sounds.py writes it
+    // to res/raw as fb_<id>.wav, and aapt2 generates the matching R.raw
+    // entry read here.
     private val soundResources: Map<String, Int> = mapOf(
         "your_turn" to R.raw.fb_your_turn,
         "can_move" to R.raw.fb_can_move,
