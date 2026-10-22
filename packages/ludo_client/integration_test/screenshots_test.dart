@@ -10089,7 +10089,10 @@ Future<void> _shootTimerPlayedMine(
       data: <String, Object?>{'seat': 2, 'deadline_ms': _trayDeadlineMs},
     );
 
-    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+    // The timer's roll had no legal move, so the no-move line holds the
+    // slot first (C-426 D5 priority) for `_noMoveHold`, 1500 ms; the
+    // timer-played line is due once it ends. 60 frames of 32 ms clear it.
+    await _pumpRealDurationFrames(tester, frameCount: 60);
 
     final TurnStateSnapshot turn = _turnOf(controller);
     expect(
