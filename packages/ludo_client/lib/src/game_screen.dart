@@ -3041,12 +3041,14 @@ class _GameScreenState extends State<GameScreen> {
   ) {
     final TextStyle style = Theme.of(context).textTheme.bodyMedium!;
     final TextDirection direction = Directionality.of(context);
-    double heightOf(String text) {
+    double heightOf(String text, {int? maxLines}) {
       final TextPainter painter = TextPainter(
         text: TextSpan(text: text, style: style),
         textAlign: TextAlign.center,
         textDirection: direction,
         textScaler: scaler,
+        maxLines: maxLines,
+        ellipsis: maxLines != null ? '…' : null,
       );
       painter.layout(maxWidth: maxWidth);
       final double height = painter.height;
@@ -3056,9 +3058,12 @@ class _GameScreenState extends State<GameScreen> {
 
     return math.max(
       math.max(heightOf(loc.gameNoMove), heightOf(loc.gameSeatOffline(''))),
+      // C-426 D5 (order 428): these two measure at `maxLines: 1`, matching
+      // the live Text widgets below -- the slot's own rest height must
+      // never be able to grow from either one wrapping to a second line.
       math.max(
-        heightOf(loc.gameTimerPlayedMine),
-        heightOf(loc.gameTimerPlayedOther('')),
+        heightOf(loc.gameTimerPlayedMine, maxLines: 1),
+        heightOf(loc.gameTimerPlayedOther(''), maxLines: 1),
       ),
     );
   }
@@ -3326,6 +3331,11 @@ class _GameScreenState extends State<GameScreen> {
   /// live state on every build rather than latching a choice. The slot is
   /// sized for the tallest of its placeholder strings (`_noticeHeightFor`)
   /// so switching between any of them never resizes anything underneath.
+  /// D5's "each line is one line": the two timer-played lines (and their
+  /// own placeholders, measured the same way in `_noticeHeightFor`) carry
+  /// `maxLines: 1` and an ellipsis, so neither can ever claim a second
+  /// line at rest and move the board underneath -- the two pre-existing
+  /// lines are untouched.
   Widget _belowDieNoticeSlot(
     AppLocalizations loc,
     SeatState? offlineTurnSeat, {
@@ -3369,6 +3379,8 @@ class _GameScreenState extends State<GameScreen> {
               loc.gameTimerPlayedMine,
               textAlign: TextAlign.center,
               textScaler: scaler,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ),
@@ -3379,6 +3391,8 @@ class _GameScreenState extends State<GameScreen> {
               loc.gameTimerPlayedOther(''),
               textAlign: TextAlign.center,
               textScaler: scaler,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ),
@@ -3398,6 +3412,8 @@ class _GameScreenState extends State<GameScreen> {
               key: const Key('game-timer-played-other-notice'),
               textAlign: TextAlign.center,
               textScaler: scaler,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           )
         else if (offlineTurnSeat != null)
@@ -3416,6 +3432,8 @@ class _GameScreenState extends State<GameScreen> {
               key: const Key('game-timer-played-notice'),
               textAlign: TextAlign.center,
               textScaler: scaler,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
       ],
