@@ -1254,3 +1254,22 @@ per `k`, in order, whoever spends them later.
    the timer spends the default face. So the queue server goes to
    production only with a client release that reads these fields. Staging
    may run it earlier.
+
+## 22. A step the turn timer takes says so, 2026-10-22
+
+Section 21.3 rule 4 has the timer's step publish exactly the frames of the
+same step taken by a player. That left a client unable to tell a player
+who looked away that the game played for them. One field is added; rule 4
+holds for every other field and for the frame order.
+
+1. **`by`.** `rolled` and `moved` gain an optional field `"by": "timer"`.
+   It is present exactly on the frames a turn expiry produces (rules 15,
+   15q and 16a) and absent, the key not present at all, on every frame a
+   client's `roll` or `move` produced. `"timer"` is its only value; a
+   client treats any other value as absent.
+2. **Nothing else changes.** `turn_passed`, `turn` and `game_over` carry no
+   `by`, whoever caused them. Snapshots (`room` and the answer to
+   `resume`) carry no `by`. The verify record is unchanged.
+3. **`game_log`.** Section 17 serves each push's data as it was broadcast,
+   so a timer step's entry carries `by` and a client step's does not.
+4. **Old clients** ignore the field and see the frames they always saw.
