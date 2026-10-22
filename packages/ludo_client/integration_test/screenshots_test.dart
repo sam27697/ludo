@@ -6143,6 +6143,62 @@ void main() {
       seatToken: 'tok-shot-48',
     );
   });
+
+  // ==========================================================================
+  // 49-52: order 431. Emulator frames of C-426's two timer-played notices
+  // (work/ludo/orders/C-426-timer-played-says-so.md, D3-D5, D9). Same route
+  // as captures 41-42: a GameScreen over FakeTransport, no server, no
+  // pumpAndSettle once GameScreen is up. Frame shapes are copied by hand
+  // from test/timer_played_notice_test.dart (read-only). Bodies live at the
+  // bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 49-timer-played-mine-en', (tester) async {
+    await _shootTimerPlayedMine(
+      tester,
+      binding,
+      shotName: '49-timer-played-mine-en',
+      locale: const Locale('en'),
+      roomCode: 'SHOT49',
+      gameId: 'k' * 16,
+      seatToken: 'tok-shot-49',
+    );
+  });
+
+  testWidgets('capture 50-timer-played-mine-ar', (tester) async {
+    await _shootTimerPlayedMine(
+      tester,
+      binding,
+      shotName: '50-timer-played-mine-ar',
+      locale: const Locale('ar'),
+      roomCode: 'SHOT50',
+      gameId: 'l' * 16,
+      seatToken: 'tok-shot-50',
+    );
+  });
+
+  testWidgets('capture 51-timer-played-other-en', (tester) async {
+    await _shootTimerPlayedOther(
+      tester,
+      binding,
+      shotName: '51-timer-played-other-en',
+      locale: const Locale('en'),
+      roomCode: 'SHOT51',
+      gameId: 'm' * 16,
+      seatToken: 'tok-shot-51',
+    );
+  });
+
+  testWidgets('capture 52-timer-played-other-ar', (tester) async {
+    await _shootTimerPlayedOther(
+      tester,
+      binding,
+      shotName: '52-timer-played-other-ar',
+      locale: const Locale('ar'),
+      roomCode: 'SHOT52',
+      gameId: 'n' * 16,
+      seatToken: 'tok-shot-52',
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -9938,6 +9994,471 @@ Future<void> _shootViewerBoard(
           'capture $shotName: opponent seat $opponentSeat token 0 centre '
           '${_offsetText(opponentCenter)} must lie in the top-right '
           'quarter of ludo-board ${_rectText(boardRect)}',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+// --- order 431: captures 49-52 ---------------------------------------------
+//
+// C-426's two timer-played notices (work/ludo/orders/
+// C-426-timer-played-says-so.md, D3-D5, D9): `game-timer-played-notice`
+// (D3, my own seat) and `game-timer-played-other-notice` (D4, another
+// present and connected seat). Every pushed `rolled` / `moved` / `turn` /
+// `turn_passed` shape below is copied by hand from
+// test/timer_played_notice_test.dart (read-only, not imported -- this file
+// cannot import test/), the same C2/C5/C6 fixtures that prove D3/D4/D5 there.
+//
+// The order's own prose names the opponent "seat 1" throughout this section.
+// A real 2-player room is never seated that way: `_seatIndicesFor` (ludo_
+// server/lib/src/registry.dart:1701) returns `[0, 2]` for `players: 2`, the
+// same pair every other 2-seat capture in this file already uses (see the
+// order-369 and order-375 header comments above, and `_openHostGame` /
+// `_openGuestSeat`'s own hardcoded seat 2). Seat 1 only exists in a 3- or
+// 4-player room. Since the order's own Goal section requires "frames must
+// be ones the server could send," and a `players: 2` room naming seat 1
+// would not be, every capture below reads the order's "seat 1" as "the
+// other seat" and uses the real seat index, 2.
+
+/// Captures 49 and 50. Host-only flow (opponent's name does not matter for
+/// D3): [_openHostGame], seats [0, 2], my seat 0. My own `rolled` carries
+/// `by: timer` with an empty `legal` ("a face with no legal move is fine",
+/// the order's own words); `turn_passed` (no_legal_move) and `turn` (seat 2)
+/// then hand the turn to the opponent. `game-timer-played-notice` must still
+/// be on screen -- D3's "does NOT clear when my next turn begins" reads a
+/// fortiori onto another seat's turn beginning, since nothing in D3 names
+/// that as a clearing event either.
+Future<void> _shootTimerPlayedMine(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    int seq = opened.seq;
+
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 0,
+        'value': 6,
+        'legal': <int>[],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 1,
+        'reveal': _trayReveal,
+        'by': 'timer',
+      },
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn_passed',
+      data: <String, Object?>{'seat': 0, 'reason': 'no_legal_move'},
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn',
+      data: <String, Object?>{'seat': 2, 'deadline_ms': _trayDeadlineMs},
+    );
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      turn.seat,
+      2,
+      reason:
+          'capture $shotName: the turn must have passed to seat 2 (the '
+          'only other seat a real 2-player room seats), so seat 2\'s turn '
+          'is what the shot shows',
+    );
+    expect(
+      turn.phaseName,
+      'awaitRoll',
+      reason: 'capture $shotName: seat 2 is waiting to roll',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    _expectKey(
+      tester,
+      const Key('game-timer-played-notice'),
+      present: true,
+      reason:
+          'capture $shotName: C-426 D3, game-timer-played-notice must be '
+          'on screen -- the timer played my own seat\'s rolled, and the '
+          'notice stays up once the turn has passed to seat 2',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Host flow with the opponent's name fixed to "Rana" (D4's notice names
+/// the other seat, so the name matters here, unlike [_shootTimerPlayedMine]).
+/// A full copy of [_openHostGame]'s own steps rather than a shared call,
+/// since that function's own `player_joined` name ("Karim") is not a
+/// parameter and this order's files list allows only additions to this
+/// file, never a changed line in an existing one. Returns with room seq at
+/// 3, seats [0, 2], seat 0's turn, every token still in its yard, the same
+/// state [_openHostGame] returns.
+Future<_OpenedTrayGame> _openHostGameNamedOpponent(
+  WidgetTester tester, {
+  required String capture,
+  required String roomCode,
+  required Locale locale,
+  required String gameId,
+  required String seatToken,
+  required String opponentName,
+}) async {
+  final _ScreenshotControllerFactory trayFactory =
+      _ScreenshotControllerFactory();
+  try {
+    final Widget home;
+    if (locale.languageCode == 'ar') {
+      home = _reconnectingCaptureHarness(
+        HomeScreen(controllerFactory: trayFactory.call, onToggleLocale: () {}),
+        locale: locale,
+      );
+    } else {
+      home = _ScreenshotHarness(controllerFactory: trayFactory.call);
+    }
+    await tester.pumpWidget(home);
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+    const String hostName = 'Priya';
+    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
+    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+
+    expect(
+      trayFactory.controllers,
+      hasLength(1),
+      reason:
+          'capture $capture: tapping Create Room must build exactly one '
+          'controller',
+    );
+    final RoomController controller = trayFactory.controllers.single;
+    final FakeTransport transport = trayFactory.transports.single;
+
+    final List<String> createMessages = transport.sentRaw
+        .where((s) => _typeOf(s) == 'create_room')
+        .toList();
+    expect(
+      createMessages,
+      hasLength(1),
+      reason:
+          'capture $capture: expected one create_room, sent '
+          '${transport.sentRaw.map(_typeOf).toList()}',
+    );
+    final String createId = _idOf(createMessages.single);
+
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: roomCode,
+          players: 2,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      'capture $capture: LobbyScreen after the create_room reply carrying '
+      'code "$roomCode"',
+    );
+
+    transport.pushText(
+      _frame(
+        type: 'player_joined',
+        data: <String, Object?>{'seat': 2, 'name': opponentName, 'seq': 2},
+      ),
+    );
+    await tester.pump();
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: locale.languageCode,
+      code: roomCode,
+      expectedSeatCount: 2,
+    );
+    expect(
+      controller.room!.seats.map((SeatState s) => s.seat).toList(),
+      <int>[0, 2],
+      reason:
+          'capture $capture: a 2-player room is seated at [0, 2], got '
+          '${controller.room!.seats.map((SeatState s) => s.seat).toList()}',
+    );
+
+    final Finder startButton = find.byKey(const Key('lobby-start-button'));
+    expect(
+      startButton,
+      findsOneWidget,
+      reason:
+          'capture $capture: the host, seat 0, must see a Start button '
+          'once seated',
+    );
+    await tester.tap(startButton);
+    await tester.pump();
+    final List<String> startMessages = transport.sentRaw
+        .where((s) => _typeOf(s) == 'start_game')
+        .toList();
+    expect(
+      startMessages,
+      hasLength(1),
+      reason: 'capture $capture: tapping Start must send one start_game',
+    );
+    final String startId = _idOf(startMessages.single);
+
+    transport.pushText(
+      _frame(
+        type: 'game_started',
+        re: startId,
+        data: <String, Object?>{
+          'turn': 0,
+          'game_id': gameId,
+          'client_seeds': '0:seed',
+          'seq': 3,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(GameScreen),
+      'capture $capture: GameScreen after game_started',
+    );
+    expect(
+      find.byType(LobbyScreen),
+      findsNothing,
+      reason:
+          'capture $capture: RoomRoute must latch onto GameScreen and '
+          'never go back',
+    );
+    expect(
+      controller.room!.seq,
+      3,
+      reason: 'capture $capture: game_started must land at seq 3',
+    );
+    expect(
+      controller.seat,
+      0,
+      reason: 'capture $capture: this device is seat 0',
+    );
+
+    return _OpenedTrayGame(
+      controller: controller,
+      transport: transport,
+      seq: 3,
+    );
+  } catch (_) {
+    for (final RoomController created in trayFactory.controllers) {
+      await _releaseTrayGame(tester, created);
+    }
+    rethrow;
+  }
+}
+
+/// Captures 51 and 52. [_openHostGameNamedOpponent] with the opponent named
+/// Rana, present and connected (`player_joined` always arrives with
+/// `connected: true`, `room_controller.dart:1057`). Seat 0's own empty-legal
+/// roll hands the turn to seat 2 (the same no-legal-move hand-off
+/// [_shootTimerPlayedMine] uses, carrying no `by` here -- it is an ordinary
+/// roll, not the timer's), then Rana's own `rolled` carries `by: timer` with
+/// a legal move still pending ("whatever frames the rules require next":
+/// a legal roll needs no further frame to reach a stable, photographable
+/// state). `game-timer-played-other-notice` is shot inside its 2500ms hold
+/// (D4), well within the dozen bounded pumps every other live capture here
+/// already uses.
+Future<void> _shootTimerPlayedOther(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  const String opponentName = 'Rana';
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGameNamedOpponent(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+      opponentName: opponentName,
+    );
+    controller = opened.controller;
+    int seq = opened.seq;
+
+    // Seat 0's own turn ends with no legal move (no `by`: this is my own
+    // ordinary roll, not a timer step), handing the turn to seat 2.
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 0,
+        'value': 1,
+        'legal': <int>[],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 1,
+        'reveal': _trayReveal,
+      },
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn_passed',
+      data: <String, Object?>{'seat': 0, 'reason': 'no_legal_move'},
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn',
+      data: <String, Object?>{'seat': 2, 'deadline_ms': _trayDeadlineMs},
+    );
+
+    // Rana's (seat 2) own rolled carries by: timer, with a legal move
+    // still pending -- the move itself is out of scope for this capture.
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 2,
+        'value': 4,
+        'legal': <int>[0],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 1,
+        'reveal': _trayReveal,
+        'by': 'timer',
+      },
+    );
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      turn.seat,
+      2,
+      reason: 'capture $shotName: it is seat 2 (Rana)\'s turn',
+    );
+    expect(
+      turn.phaseName,
+      'awaitMove',
+      reason: 'capture $shotName: Rana\'s timer roll leaves a move pending',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    final Finder otherNotice = find.byKey(
+      const Key('game-timer-played-other-notice'),
+    );
+    expect(
+      otherNotice,
+      findsOneWidget,
+      reason:
+          'capture $shotName: C-426 D4, game-timer-played-other-notice '
+          'must be on screen -- Rana (seat 2), present and connected, had '
+          'her roll played by the timer',
+    );
+    final Text otherNoticeText = tester.widget<Text>(otherNotice);
+    expect(
+      otherNoticeText.data,
+      contains(opponentName),
+      reason:
+          'capture $shotName: D4, the other-seat notice must name the '
+          'seat ("$opponentName"); read "${otherNoticeText.data}"',
     );
 
     await binding.takeScreenshot(shotName);
