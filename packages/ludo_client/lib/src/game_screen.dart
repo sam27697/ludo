@@ -264,6 +264,18 @@ class _GameScreenState extends State<GameScreen> {
   bool _noMoveVisible = false;
   int? _noMoveFace;
 
+  // C-426 (order 428, docs/PROTOCOL.md section 22): a `rolled` or `moved`
+  // whose raw data carries `by == "timer"` exactly. Mine
+  // (`_timerPlayedMineVisible`) has no timer of its own -- D3's three
+  // clearing events (my own play tap that sends, game over, this screen
+  // leaving) are each handled at their own call site, not by a hold here.
+  // Another seat's (`_timerPlayedOtherName`) is a plain 2500ms hold,
+  // re-armed by the next qualifying frame naming that seat.
+  bool _timerPlayedMineVisible = false;
+  String? _timerPlayedOtherName;
+  Timer? _timerPlayedOtherTimer;
+  static const Duration _timerPlayedOtherHold = Duration(milliseconds: 2500);
+
   // C-293 rule 3: the last `turn` frame in gameTranscript when this screen
   // mounted, if any. Tied to mount time so the initial your_turn cue cannot
   // play a second time through _onFrame.
@@ -383,6 +395,7 @@ class _GameScreenState extends State<GameScreen> {
     _autoMoveCeilingTimer?.cancel();
     _rollNoAnswerTimer?.cancel();
     _noMoveTimer?.cancel();
+    _timerPlayedOtherTimer?.cancel();
     _trayDeadTimer?.cancel();
     _dropPendingLandingCues();
     _clearSafeCue();
@@ -455,6 +468,20 @@ class _GameScreenState extends State<GameScreen> {
 
     final bool zeroTravel =
         frame.type == 'moved' && from != null && to != null && from == to;
+
+    // C-426 D3/D4 (order 428, docs/PROTOCOL.md section 22): the raw
+    // `rolled` / `moved` data this screen already switches on above
+    // carries `by: "timer"` exactly on a frame the turn expiry produced.
+    // D6: no cue, no haptic, no sound changes for this -- every cue this
+    // frame derived above already played (or will play, below) exactly
+    // as it would have without `by`.
+    if ((frame.type == 'rolled' || frame.type == 'moved') &&
+        _stringAt(frame.data, 'by') == 'timer') {
+      _onTimerPlayedFrame(moverSeat);
+    }
+    if (frame.type == 'game_over') {
+      _dropTimerPlayedNoticesOnGameOver();
+    }
 
     if (frame.type == 'game_over' && _travelCount > 0) {
       _isEndHeld = true;
@@ -973,16 +1000,24 @@ class _GameScreenState extends State<GameScreen> {
   /// C-246 rule 5: drops every per-game thing this screen holds -- the
   /// frame list feeding `computeGameStats`, the no-move hold and its held
   /// face, the pending auto-move and the k it was armed for, the move-sent
-  /// guard, and the roll-wait tumble and its no-answer line. The countdown
-  /// memo is untouched on purpose (rule 5's own text, "not simplified"):
-  /// `_syncCountdown` already restarts it on its own the moment the room
-  /// stops showing a playing board (FINISHED, then the rematch LOBBY in
-  /// between), which a new game always passes through first.
+  /// guard, the roll-wait tumble and its no-answer line, and (C-426, order
+  /// 428) both timer-played notices -- a new game's first turn starts this
+  /// screen fresh, which is distinct from D3's own "does NOT clear when my
+  /// next turn begins" (that rule is about the next turn of the same game).
+  /// The countdown memo is untouched on purpose (rule 5's own text, "not
+  /// simplified"): `_syncCountdown` already restarts it on its own the
+  /// moment the room stops showing a playing board (FINISHED, then the
+  /// rematch LOBBY in between), which a new game always passes through
+  /// first.
   void _resetForNewGame() {
     _noMoveTimer?.cancel();
     _noMoveTimer = null;
     _noMoveVisible = false;
     _noMoveFace = null;
+    _timerPlayedOtherTimer?.cancel();
+    _timerPlayedOtherTimer = null;
+    _timerPlayedMineVisible = false;
+    _timerPlayedOtherName = null;
     _autoMoveTimer?.cancel();
     _autoMoveTimer = null;
     _autoMoveCeilingTimer?.cancel();
@@ -1048,6 +1083,95 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {
       _noMoveVisible = false;
       _noMoveFace = null;
+    });
+  }
+
+  /// C-426 D3/D4 (order 428, docs/PROTOCOL.md section 22): called from
+  /// [_onFrame] for every `rolled` or `moved` whose raw data carries
+  /// `by == "timer"` exactly -- D7 means any other value, including
+  /// absent, never reaches here at all.
+  ///
+  /// My own seat arms [_timerPlayedMineVisible] and announces once to
+  /// TalkBack, but only while it was hidden: D3's "a later timer step for
+  /// my seat keeps it up (re-armed, same text)" means a seat already
+  /// shown gets no second announcement and no other change. Clearing it
+  /// happens at each of D3's own three call sites (a sent die tap, a sent
+  /// token tap, game over) and in [_resetForNewGame], never here.
+  ///
+  /// Another seat arms [_timerPlayedOtherName] for [_timerPlayedOtherHold]
+  /// and announces every time (D4 carries no "from hidden" qualifier,
+  /// unlike D3) -- but only when that seat still has an entry in
+  /// `room.seats` (present, not departed) with `connected == true`
+  /// (online); a departed or an offline seat already has its own mark and
+  /// gets nothing new here.
+  void _onTimerPlayedFrame(int? seat) {
+    if (seat == null || !mounted) {
+      return;
+    }
+    final int? mySeat = widget.controller.seat;
+    if (mySeat != null && seat == mySeat) {
+      if (_timerPlayedMineVisible) {
+        return;
+      }
+      setState(() {
+        _timerPlayedMineVisible = true;
+      });
+      _announce(AppLocalizations.of(context).gameTimerPlayedMine);
+      return;
+    }
+    final RoomSnapshot? room = widget.controller.room;
+    SeatState? seatState;
+    if (room != null) {
+      for (final SeatState candidate in room.seats) {
+        if (candidate.seat == seat) {
+          seatState = candidate;
+          break;
+        }
+      }
+    }
+    if (seatState == null || !seatState.connected) {
+      return;
+    }
+    final String name = seatState.name;
+    _timerPlayedOtherTimer?.cancel();
+    _timerPlayedOtherTimer = Timer(
+      _timerPlayedOtherHold,
+      _dropTimerPlayedOther,
+    );
+    setState(() {
+      _timerPlayedOtherName = name;
+    });
+    _announce(AppLocalizations.of(context).gameTimerPlayedOther(name));
+  }
+
+  void _dropTimerPlayedOther() {
+    _timerPlayedOtherTimer = null;
+    if (!mounted || _timerPlayedOtherName == null) {
+      return;
+    }
+    setState(() {
+      _timerPlayedOtherName = null;
+    });
+  }
+
+  /// C-426 D3: game over is one of the notice's three clearing events for
+  /// my own seat. D4 names no such event for another seat's 2500ms hold,
+  /// but the game has ended either way, so the same frame drops both --
+  /// no later frame for this game is coming to re-arm either one.
+  void _dropTimerPlayedNoticesOnGameOver() {
+    _timerPlayedOtherTimer?.cancel();
+    _timerPlayedOtherTimer = null;
+    if (!_timerPlayedMineVisible && _timerPlayedOtherName == null) {
+      return;
+    }
+    if (!mounted) {
+      _timerPlayedMineVisible = false;
+      _timerPlayedOtherName = null;
+      return;
+    }
+    setState(() {
+      _timerPlayedMineVisible = false;
+      _timerPlayedOtherName = null;
     });
   }
 
@@ -1561,7 +1685,10 @@ class _GameScreenState extends State<GameScreen> {
   /// (C-236 rule 5's old contract), so the in-app haptics switch governs
   /// it; `yourTurn` and `canMove`/`noMove` for the roll that follows are
   /// played separately, from `_onFrame`, once the server's own `rolled`
-  /// frame lands.
+  /// frame lands. C-426 D3: a die tap always reaches this point exactly
+  /// when it is going to send `roll` (the caller only wires `onTap` here
+  /// while `rollEnabled`), so this is one of the notice's own three
+  /// clearing events for my own seat.
   void _onDieTap() {
     if (_isEndHeld) {
       return;
@@ -1575,6 +1702,7 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {
       _rollWaitK = turn.k;
       _rollNoAnswer = false;
+      _timerPlayedMineVisible = false;
     });
     _rollNoAnswerTimer = Timer(_rollNoAnswerDelay, _onRollNoAnswer);
     widget.controller.roll();
@@ -2717,6 +2845,19 @@ class _GameScreenState extends State<GameScreen> {
                         k,
                         face: turn!.legalByFace != null ? _selectedFace : null,
                       );
+                      if (sent) {
+                        // C-426 D3: a token tap that actually sends `move`
+                        // (and the same for a tray face pick that this tap
+                        // follows, since `_selectedFace` is what threads
+                        // the picked face into `_sendMove` above) is one
+                        // of the notice's own three clearing events for my
+                        // own seat. [_commitPendingAutoMove]'s own call to
+                        // `_sendMove` (the C-417 hold committing on its
+                        // own, with no tap) deliberately does not reach
+                        // here -- D7 and the order's own out-of-scope line
+                        // both leave that path untouched.
+                        _timerPlayedMineVisible = false;
+                      }
                     });
                     if (sent) {
                       FeedbackScope.of(context).play(FeedbackCue.tap);
@@ -2886,11 +3027,12 @@ class _GameScreenState extends State<GameScreen> {
     return contentHeight + kSpace1 * 2;
   }
 
-  /// The below-die notice slot reserves whichever of its two placeholder
-  /// strings (C-250 rule 4) paints taller at the given scale and width --
-  /// the same two strings and the same style `_belowDieNoticeSlot` lays
-  /// them out with, so this never guesses a height Flutter would not
-  /// itself have settled the real `Stack` on.
+  /// The below-die notice slot reserves whichever of its placeholder
+  /// strings (C-250 rule 4; C-426 D5 adds the two timer-played lines)
+  /// paints taller at the given scale and width -- the same strings and
+  /// the same style `_belowDieNoticeSlot` lays them out with, so this
+  /// never guesses a height Flutter would not itself have settled the
+  /// real `Stack` on.
   double _noticeHeightFor(
     BuildContext context,
     TextScaler scaler,
@@ -2913,8 +3055,11 @@ class _GameScreenState extends State<GameScreen> {
     }
 
     return math.max(
-      heightOf(loc.gameNoMove),
-      heightOf(loc.gameSeatOffline('')),
+      math.max(heightOf(loc.gameNoMove), heightOf(loc.gameSeatOffline(''))),
+      math.max(
+        heightOf(loc.gameTimerPlayedMine),
+        heightOf(loc.gameTimerPlayedOther('')),
+      ),
     );
   }
 
@@ -3173,22 +3318,27 @@ class _GameScreenState extends State<GameScreen> {
   /// C-250 rule 4: the fixed notice slot below the die, shared by the
   /// no-move notice and the seat-offline line rather than giving each its
   /// own reserved space above the board the way the pre-C-250 shape did.
-  /// The slot is sized for the taller of the two placeholder strings so
-  /// switching between them never resizes anything underneath; when both
-  /// would otherwise show, the no-move notice wins and the offline line
-  /// waits for the hold to end, exactly as the rule's own wording asks.
+  /// C-426 D5 (order 428) adds the two timer-played lines to the same
+  /// slot, at a fixed priority, highest first: `game-no-move-notice`,
+  /// `game-timer-played-other-notice`, `game-screen-turn-seat-offline`,
+  /// `game-timer-played-notice`. A lower one comes back on its own the
+  /// moment a higher one's own condition ends, since this method reads
+  /// live state on every build rather than latching a choice. The slot is
+  /// sized for the tallest of its placeholder strings (`_noticeHeightFor`)
+  /// so switching between any of them never resizes anything underneath.
   Widget _belowDieNoticeSlot(
     AppLocalizations loc,
     SeatState? offlineTurnSeat, {
     required double clampScale,
   }) {
-    // C-391 decision 2: this slot's own two texts (the live notice and the
-    // two placeholders reserving its space) are laid out at the same
-    // clamped scale as the header banner -- past the clamp the slot stops
-    // growing with the system scale, and the text inside it is capped to
-    // match, so the reserved space this Stack settles on from its
-    // invisible children always covers whichever one is actually shown.
+    // C-391 decision 2: this slot's own texts (the live notice and the
+    // placeholders reserving its space) are laid out at the same clamped
+    // scale as the header banner -- past the clamp the slot stops growing
+    // with the system scale, and the text inside it is capped to match,
+    // so the reserved space this Stack settles on from its invisible
+    // children always covers whichever one is actually shown.
     final TextScaler scaler = _clampedScaler(context, clampScale);
+    final String? timerPlayedOtherName = _timerPlayedOtherName;
     return Stack(
       alignment: Alignment.topCenter,
       children: [
@@ -3212,6 +3362,26 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
         ),
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(
+              loc.gameTimerPlayedMine,
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+            ),
+          ),
+        ),
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(
+              loc.gameTimerPlayedOther(''),
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+            ),
+          ),
+        ),
         if (_noMoveVisible)
           Positioned.fill(
             child: Text(
@@ -3221,11 +3391,29 @@ class _GameScreenState extends State<GameScreen> {
               textScaler: scaler,
             ),
           )
+        else if (timerPlayedOtherName != null)
+          Positioned.fill(
+            child: Text(
+              loc.gameTimerPlayedOther(timerPlayedOtherName),
+              key: const Key('game-timer-played-other-notice'),
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+            ),
+          )
         else if (offlineTurnSeat != null)
           Positioned.fill(
             child: Text(
               loc.gameSeatOffline(offlineTurnSeat.name),
               key: const Key('game-screen-turn-seat-offline'),
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+            ),
+          )
+        else if (_timerPlayedMineVisible)
+          Positioned.fill(
+            child: Text(
+              loc.gameTimerPlayedMine,
+              key: const Key('game-timer-played-notice'),
               textAlign: TextAlign.center,
               textScaler: scaler,
             ),

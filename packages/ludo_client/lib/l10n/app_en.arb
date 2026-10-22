@@ -372,6 +372,20 @@
       }
     }
   },
+  "gameTimerPlayedMine": "Time ran out. Played for you.",
+  "@gameTimerPlayedMine": {
+    "description": "Shown in the below-die notice slot when this player's own turn expired and the server rolled or moved for them (docs/PROTOCOL.md section 22). Stays up until this player's own next play tap sends, game over, or this screen is left, so it is still there when they look back."
+  },
+  "gameTimerPlayedOther": "{name} ran out of time.",
+  "@gameTimerPlayedOther": {
+    "description": "Shown in the below-die notice slot for 2500ms when another present, online seat's turn expired and the server rolled or moved for them (docs/PROTOCOL.md section 22).",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
   "gameOverYouWin": "You win",
   "@gameOverYouWin": {
     "description": "Shown on the game screen when the game has finished and the winning seat is this player's own."
