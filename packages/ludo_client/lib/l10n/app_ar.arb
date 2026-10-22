@@ -69,6 +69,8 @@
   "gameTurnCountdown": "باقي {seconds} ثانية",
   "gameTurnCountdownDigits": "{seconds}",
   "gameSeatOffline": "انقطع اتصال {name}",
+  "gameTimerPlayedMine": "انتهى الوقت. لعبنا عنك.",
+  "gameTimerPlayedOther": "انتهى وقت {name}.",
   "gameOverYouWin": "لقد فزت",
   "gameOverPlayerWins": "فاز {name}",
   "gameOverEnded": "انتهت اللعبة",
