@@ -1,8 +1,28 @@
-// Order 425. Probe, not a fix: does the end card's fairness line
-// (`loc.endFairLine`), its one-tap Check-the-rolls button
-// (`game-screen-verify-button`) and `end-card-fair-hint` sit wholly on
+// Order 425, amended by order 429 for C-429. Probe, not a fix: does the end
+// card's fairness line (`loc.endFairLine`), its one-tap Check-the-rolls
+// button (`game-screen-verify-button`) and `end-card-fair-hint` sit wholly on
 // screen, with the scroll at its start, in every end-card variant, on
 // shapes s1/s2/s3? A red case here is the finding; it stays red.
+//
+// C-429 D3's verdict set: every s1/s2/s3 x en/ar variant at scale 1.0 (order
+// 425's own table), plus `win` and `lose` on s2 at scale 1.3, en and ar, are
+// asserted. Every other s2 1.3 case (every other variant, at 1.3) stays
+// report-only and keeps printing its own ENDVERIFY line, unasserted, exactly
+// as order 425 left it; those are X74's own open residue, not this file's
+// concern to close.
+//
+// C-429 D4: on the win card, `end-card-celebration` stays present, its
+// painted child (the `CustomPaint` the animated burst builds, or the
+// `Container` the reduced-motion branch builds in its place, found as a
+// descendant of the keyed widget) measures 196 x 196 within 0.5, and that
+// child's own centre sits within 1 px of `game-screen-winner`'s centre. This
+// file asserts D4 on `win`, s2, scale 1.0, en and ar (inside the verdict
+// matrix below, measured after the same bounded celebration pumps every
+// other celebrating case already runs past), and once more under one extra
+// reduced-motion mount (`win`, s2, scale 1.0, `MediaQuery.disableAnimations`
+// true, the `MaterialApp.builder` + `MediaQuery(...).copyWith` idiom
+// test/home_motion_test.dart's own `_harness` uses, not imported, copied by
+// hand the same way the rest of this file's harness is).
 //
 // The shapes, the insets, the devicePixelRatio, the font load, the theme,
 // the host harness and the `_visibilityProblem` / hit-test logic are copied
@@ -77,6 +97,24 @@
 //      `ended` in the first place (losing the "winner's own seat was never
 //      known to this device" shape above), so it is the one variant this
 //      file reaches alone, with no combination.
+//
+// Ambiguities hit while amending this file for order 429 / C-429 D3-D4,
+// reported rather than invented around:
+//
+//   4. Order 429 names the D4 centre target as `game-screen-winner`; C-429's
+//      own D4 text names it "the title's centre". `end_card.dart` keys the
+//      win-card title `game-screen-winner` (also confirmed by
+//      test/end_card_test.dart's own `_titleText` comment, "The title key
+//      (`game-screen-winner`)"), so these two wordings name the same
+//      widget; this file reads them as one requirement, not two.
+//   5. Neither order 429 nor C-429 names which locale carries the "one
+//      extra reduced-motion mount" D4 asks for. This file mounts it at
+//      `en`; the en and ar win mounts already in the verdict matrix at s2
+//      1.0 cover D4 under full motion in both locales, and D4's own
+//      geometry (a fixed-size painted circle centred on a title, locale
+//      only changing the title's own text) gives no reason to expect the
+//      reduced-motion branch to differ by locale the animated branch
+//      doesn't already rule out.
 
 import 'dart:convert';
 import 'dart:io';
@@ -156,6 +194,8 @@ const double _fitSlop = 0.5;
 
 const Key _verifyKey = Key('game-screen-verify-button');
 const Key _fairHintKey = Key('end-card-fair-hint');
+const Key _celebrationKey = Key('end-card-celebration');
+const Key _winnerTitleKey = Key('game-screen-winner');
 const Key _winKey = Key('end-card-win');
 const Key _loseKey = Key('end-card-lose');
 const Key _endedKey = Key('end-card-ended');
@@ -445,7 +485,16 @@ class _Connector {
 // --- widget harness, copied by hand from test/next_step_in_view_end_test
 // --- .dart's own _app/_mountGame/_loadAppFonts/_surface --------------------
 
-Widget _app({required Locale locale, required Widget home}) {
+// `disableAnimations` wraps `home` in the same `MaterialApp.builder` +
+// `MediaQuery(...).copyWith(disableAnimations: true)` idiom
+// test/home_motion_test.dart's own `_harness` uses, copied by hand (see
+// this file's header note 5): this file imports nothing from another test
+// file except test/net/fake_transport.dart.
+Widget _app({
+  required Locale locale,
+  required Widget home,
+  bool disableAnimations = false,
+}) {
   return MaterialApp(
     debugShowCheckedModeBanner: false,
     theme: buildAppTheme(),
@@ -457,6 +506,15 @@ Widget _app({required Locale locale, required Widget home}) {
       GlobalWidgetsLocalizations.delegate,
       GlobalCupertinoLocalizations.delegate,
     ],
+    builder: !disableAnimations
+        ? null
+        : (BuildContext context, Widget? child) {
+            final MediaQueryData data = MediaQuery.of(context);
+            return MediaQuery(
+              data: data.copyWith(disableAnimations: true),
+              child: child!,
+            );
+          },
     home: home,
   );
 }
@@ -465,12 +523,14 @@ Future<void> _mountGame(
   WidgetTester tester, {
   required RoomController controller,
   required Locale locale,
+  bool disableAnimations = false,
 }) async {
   final FeedbackSettings settings = FeedbackSettings.forTest();
   addTearDown(settings.dispose);
   await tester.pumpWidget(
     _app(
       locale: locale,
+      disableAnimations: disableAnimations,
       home: FeedbackScope(
         settings: settings,
         service: const NoopFeedbackService(),
@@ -540,8 +600,15 @@ Future<void> _surface(
 
 String _scaleLabel(double scale) => scale.toStringAsFixed(1);
 
-String _where(_Variant v, _Shape shape, double scale, Locale locale) =>
-    '${_variantLabel(v)}, ${shape.id}, scale ${_scaleLabel(scale)}, ${locale.languageCode}';
+String _where(
+  _Variant v,
+  _Shape shape,
+  double scale,
+  Locale locale, {
+  bool disableAnimations = false,
+}) =>
+    '${_variantLabel(v)}, ${shape.id}, scale ${_scaleLabel(scale)}, '
+    '${locale.languageCode}${disableAnimations ? ', reduced-motion' : ''}';
 
 String _box(Rect rect) =>
     '${rect.left.toStringAsFixed(1)},${rect.top.toStringAsFixed(1)} '
@@ -589,6 +656,71 @@ bool _whollyInsideRect(Rect rect, Rect outer) {
       rect.top >= outer.top - _fitSlop &&
       rect.right <= outer.right + _fitSlop &&
       rect.bottom <= outer.bottom + _fitSlop;
+}
+
+const double _celebrationSlop = 0.5;
+const double _celebrationCentreSlop = 1.0;
+const double _celebrationDiameter = 196;
+
+/// C-429 D4: `end-card-celebration` is present, its painted child (the
+/// `CustomPaint` the animated burst builds, or the `Container` the
+/// reduced-motion branch builds instead -- read live off
+/// `MediaQuery.disableAnimationsOf`, not off a flag this file passed in, so
+/// a mutation that picks the wrong branch for the current MediaQuery is
+/// still caught) measures 196 x 196 within 0.5, and that child's own centre
+/// sits within 1 px of `game-screen-winner`'s own centre.
+void _assertCelebrationGeometry(WidgetTester tester, {required String where}) {
+  final Finder celebration = find.byKey(_celebrationKey);
+  expect(
+    celebration,
+    findsOneWidget,
+    reason: '$where: end-card-celebration must be present on the win card.',
+  );
+  final bool reducedMotion = MediaQuery.disableAnimationsOf(
+    tester.element(celebration),
+  );
+  final Type wantType = reducedMotion ? Container : CustomPaint;
+  final Finder painted = find.descendant(
+    of: celebration,
+    matching: find.byType(wantType),
+  );
+  final int paintedCount = painted.evaluate().length;
+  expect(
+    paintedCount,
+    1,
+    reason:
+        '$where: end-card-celebration must have exactly one $wantType '
+        'descendant (the ${reducedMotion ? 'reduced-motion glow' : 'animated burst'}); '
+        'found $paintedCount.',
+  );
+  final Size size = tester.getSize(painted);
+  final bool sizeOk =
+      (size.width - _celebrationDiameter).abs() <= _celebrationSlop &&
+      (size.height - _celebrationDiameter).abs() <= _celebrationSlop;
+  expect(
+    sizeOk,
+    isTrue,
+    reason:
+        '$where: celebration painted size '
+        '${size.width.toStringAsFixed(1)}x${size.height.toStringAsFixed(1)} '
+        'must be 196x196 within 0.5.',
+  );
+  final Offset paintedCentre = tester.getCenter(painted);
+  final Offset titleCentre = tester.getCenter(find.byKey(_winnerTitleKey));
+  final double dx = (paintedCentre.dx - titleCentre.dx).abs();
+  final double dy = (paintedCentre.dy - titleCentre.dy).abs();
+  final bool centreOk =
+      dx <= _celebrationCentreSlop && dy <= _celebrationCentreSlop;
+  expect(
+    centreOk,
+    isTrue,
+    reason:
+        '$where: celebration centre '
+        '${paintedCentre.dx.toStringAsFixed(1)},${paintedCentre.dy.toStringAsFixed(1)} '
+        'must be within 1px of game-screen-winner centre '
+        '${titleCentre.dx.toStringAsFixed(1)},${titleCentre.dy.toStringAsFixed(1)} '
+        '(dx=${dx.toStringAsFixed(2)} dy=${dy.toStringAsFixed(2)}).',
+  );
 }
 
 bool _pathReaches(HitTestResult hits, RenderObject own) {
@@ -848,6 +980,7 @@ Future<(RoomController, FakeTransport)> _reachViaBroadcast(
   required String gameId,
   required Future<void> Function(WidgetTester, FakeTransport, RoomController)
   extra,
+  bool disableAnimations = false,
 }) async {
   final _Connector connector = _Connector();
   final FakeTransport transport = FakeTransport();
@@ -893,7 +1026,12 @@ Future<(RoomController, FakeTransport)> _reachViaBroadcast(
   );
   await future;
 
-  await _mountGame(tester, controller: controller, locale: locale);
+  await _mountGame(
+    tester,
+    controller: controller,
+    locale: locale,
+    disableAnimations: disableAnimations,
+  );
 
   transport.pushText(
     _frame(
@@ -1116,6 +1254,7 @@ Future<(RoomController, FakeTransport)> _reach(
   _Variant v,
   WidgetTester tester, {
   required Locale locale,
+  bool disableAnimations = false,
 }) {
   switch (v) {
     case _Variant.win:
@@ -1127,6 +1266,7 @@ Future<(RoomController, FakeTransport)> _reach(
         winner: 0,
         gameId: 'end-verify-probe-win',
         extra: _extraNone,
+        disableAnimations: disableAnimations,
       );
     case _Variant.lose:
       return _reachViaBroadcast(
@@ -1232,17 +1372,26 @@ Future<void> _runCase(
   required double scale,
   required Locale locale,
   required bool reportOnly,
+  bool checkCelebration = false,
+  bool disableAnimations = false,
 }) async {
   final List<FlutterErrorDetails> errors = <FlutterErrorDetails>[];
   final FlutterExceptionHandler? previous = FlutterError.onError;
   FlutterError.onError = errors.add;
   try {
     await _surface(tester, shape, scale, () async {
-      final String where = _where(v, shape, scale, locale);
+      final String where = _where(
+        v,
+        shape,
+        scale,
+        locale,
+        disableAnimations: disableAnimations,
+      );
       final (RoomController _, FakeTransport _) = await _reach(
         v,
         tester,
         locale: locale,
+        disableAnimations: disableAnimations,
       );
 
       if (_triggersCelebration(v)) {
@@ -1256,6 +1405,12 @@ Future<void> _runCase(
       }
 
       _assertIdentity(tester, v: v, where: where);
+
+      if (checkCelebration) {
+        // C-429 D4, measured after the same bounded celebration pumps
+        // above, same as every other check this case runs.
+        _assertCelebrationGeometry(tester, where: where);
+      }
 
       final AppLocalizations loc = AppLocalizations.of(
         tester.element(find.byType(GameScreen)),
@@ -1334,10 +1489,12 @@ void main() {
     await _loadAppFonts();
   });
 
-  // Verdict matrix: s1/s2/s3 x en/ar x every variant, scale 1.0.
+  // Verdict matrix: s1/s2/s3 x en/ar x every variant, scale 1.0. C-429 D4
+  // rides along on `win` at s2: checkCelebration is true only there.
   for (final _Shape shape in _shapes) {
     for (final Locale locale in _locales) {
       for (final _Variant v in _Variant.values) {
+        final bool checkCelebration = shape == _s2 && v == _Variant.win;
         testWidgets(
           '${_variantLabel(v)} ${shape.id} 1.0 ${locale.languageCode}',
           (WidgetTester tester) async {
@@ -1348,6 +1505,7 @@ void main() {
               scale: 1.0,
               locale: locale,
               reportOnly: false,
+              checkCelebration: checkCelebration,
             );
           },
         );
@@ -1355,10 +1513,51 @@ void main() {
     }
   }
 
-  // Report-only: s2 only, scale 1.3, en/ar, every variant. Printed but
-  // never asserted (order's own "make them pass whatever they measure").
+  // C-429 D4's one extra reduced-motion mount: `win`, s2, scale 1.0,
+  // `MediaQuery.disableAnimations` true. Locale `en` -- see this file's
+  // header note 5 on why no second locale is mounted here.
+  testWidgets('${_variantLabel(_Variant.win)} s2 1.0 en reduced-motion', (
+    WidgetTester tester,
+  ) async {
+    await _runCase(
+      tester,
+      v: _Variant.win,
+      shape: _s2,
+      scale: 1.0,
+      locale: const Locale('en'),
+      reportOnly: false,
+      checkCelebration: true,
+      disableAnimations: true,
+    );
+  });
+
+  // C-429 D3: on s2 at scale 1.3, `win` and `lose`, en and ar, are promoted
+  // out of report-only into the verdict set.
+  for (final Locale locale in _locales) {
+    for (final _Variant v in <_Variant>[_Variant.win, _Variant.lose]) {
+      testWidgets('${_variantLabel(v)} s2 1.3 ${locale.languageCode}', (
+        WidgetTester tester,
+      ) async {
+        await _runCase(
+          tester,
+          v: v,
+          shape: _s2,
+          scale: 1.3,
+          locale: locale,
+          reportOnly: false,
+        );
+      });
+    }
+  }
+
+  // Report-only: s2 only, scale 1.3, en/ar, every variant except `win` and
+  // `lose` (promoted above by C-429 D3). Printed but never asserted
+  // (order's own "make them pass whatever they measure").
   for (final Locale locale in _locales) {
     for (final _Variant v in _Variant.values) {
+      if (v == _Variant.win || v == _Variant.lose) {
+        continue;
+      }
       testWidgets(
         '${_variantLabel(v)} s2 1.3 ${locale.languageCode} report-only',
         (WidgetTester tester) async {
