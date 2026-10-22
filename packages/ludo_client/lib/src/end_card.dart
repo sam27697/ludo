@@ -329,19 +329,42 @@ class _EndCardState extends State<EndCard> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
+        // C-429 D1: the celebration no longer sets the Stack's layout size.
+        // The title (plus kSpace4 above and below) is the only non-positioned
+        // child, so the Stack is only as tall as the title needs. The burst
+        // stays a full 196 x 196, painted unclipped (`Clip.none`) through a
+        // `Positioned.fill` + `OverflowBox` that gives it room to overflow
+        // the title's own box without being measured for it, centred on the
+        // title by the same `Alignment.center` either way. It is still the
+        // first child here, so it still paints behind the title text, same
+        // as before; being earlier than the stats row and the fairness block
+        // in this column, it paints behind those too.
         Stack(
           alignment: Alignment.center,
+          clipBehavior: Clip.none,
           children: <Widget>[
-            _Celebration(
-              key: const Key('end-card-celebration'),
-              goldColor: LudoColors.gold,
-              seatColor: seatColor,
+            Positioned.fill(
+              child: OverflowBox(
+                minWidth: 0,
+                minHeight: 0,
+                maxWidth: double.infinity,
+                maxHeight: double.infinity,
+                alignment: Alignment.center,
+                child: _Celebration(
+                  key: const Key('end-card-celebration'),
+                  goldColor: LudoColors.gold,
+                  seatColor: seatColor,
+                ),
+              ),
             ),
-            Text(
-              loc.endWinTitle,
-              key: const Key('game-screen-winner'),
-              textAlign: TextAlign.center,
-              style: titleStyle,
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: kSpace4),
+              child: Text(
+                loc.endWinTitle,
+                key: const Key('game-screen-winner'),
+                textAlign: TextAlign.center,
+                style: titleStyle,
+              ),
             ),
           ],
         ),
