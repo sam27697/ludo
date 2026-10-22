@@ -288,6 +288,9 @@ Map<String, Object?> buildSeatSeed({
 /// code path allowed to read `chain.reveal(k)` and publish it. `queue` is
 /// the queue after the roll (section 21.3 rule 3), and `legalByFace` is
 /// given, and only given, when the phase after the roll is `await_move`.
+/// `by`, section 22: given, and only given, as `"timer"` when a turn
+/// expiry produced this roll; absent (the key not present at all) for
+/// every roll a client's own `roll` produced.
 Map<String, Object?> buildRolled({
   required int seat,
   required int value,
@@ -298,6 +301,7 @@ Map<String, Object?> buildRolled({
   required int seq,
   List<int>? queue,
   List<Map<String, Object?>>? legalByFace,
+  String? by,
 }) {
   return <String, Object?>{
     'seat': seat,
@@ -309,6 +313,7 @@ Map<String, Object?> buildRolled({
     'seq': seq,
     if (queue != null) 'queue': queue,
     if (legalByFace != null) 'legal_by_face': legalByFace,
+    if (by != null) 'by': by,
   };
 }
 
@@ -355,7 +360,10 @@ Map<String, Object?> buildTurn({
 /// the face this move spent, which the registry fixed at `move()` time
 /// because the engine's own `Moved` event carries none. `captured` is the
 /// list of `{seat, token}` the engine reported captured by this move, in
-/// the order it reported them, empty when there were none.
+/// the order it reported them, empty when there were none. `by`, section
+/// 22: given, and only given, as `"timer"` when a turn expiry produced
+/// this move; absent (the key not present at all) for every move a
+/// client's own `move` produced.
 Map<String, Object?> buildMoved({
   required int seat,
   required int token,
@@ -365,6 +373,7 @@ Map<String, Object?> buildMoved({
   required bool extraRoll,
   required int seq,
   int? face,
+  String? by,
 }) {
   return <String, Object?>{
     'seat': seat,
@@ -375,6 +384,7 @@ Map<String, Object?> buildMoved({
     'extra_roll': extraRoll,
     'seq': seq,
     if (face != null) 'face': face,
+    if (by != null) 'by': by,
   };
 }
 
@@ -425,7 +435,9 @@ String wireTurnEndReason(engine.TurnEndReason reason) {
 /// for a move, `moved` and then `game_over`, or whichever of `turn_passed` +
 /// `turn` or a bare `turn` applies (`moved.turnPassedSeq`/`moved.turnSeq`).
 /// None of them carries `re`: no client request is being answered, so there
-/// is no id to answer.
+/// is no id to answer. Section 22: the `rolled` or `moved` this produces
+/// carries `by: "timer"`; `turn_passed`, `turn` and `game_over` never do,
+/// whoever caused them.
 List<OutFrame> buildExpiryFrames(ExpiredTurn expired) {
   final List<OutFrame> frames = <OutFrame>[];
 
@@ -447,6 +459,7 @@ List<OutFrame> buildExpiryFrames(ExpiredTurn expired) {
           seq: rolled.rolledSeq,
           queue: afterRollFields.queue,
           legalByFace: afterRollFields.legalByFace,
+          by: 'timer',
         ),
       ),
     );
@@ -502,6 +515,7 @@ List<OutFrame> buildExpiryFrames(ExpiredTurn expired) {
         extraRoll: moved.events.whereType<engine.ExtraRoll>().isNotEmpty,
         seq: moved.movedSeq,
         face: moved.face,
+        by: 'timer',
       ),
     ),
   );
