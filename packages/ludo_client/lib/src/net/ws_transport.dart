@@ -10,10 +10,24 @@
 // already carries.
 
 import 'dart:async';
+import 'dart:io' show HttpClient;
 
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'transport.dart';
+
+/// How often the socket this file opens pings the server, and how long it
+/// then waits for the pong. docs/PROTOCOL.md section 24 rules 1 to 3: a link
+/// that goes dead is closed from this side within twice this interval, with
+/// no error frame first, which the controller treats as any other lost
+/// connection.
+const Duration kKeepaliveInterval = Duration(seconds: 10);
+
+/// How long one attempt to open a socket (TCP, TLS and the HTTP upgrade
+/// together) may take before it is abandoned. docs/PROTOCOL.md section 24
+/// rule 4.
+const Duration kConnectTimeout = Duration(seconds: 10);
 
 /// Opens a [WsTransport] to [url] and completes once the socket is actually
 /// connected.
@@ -23,9 +37,49 @@ import 'transport.dart';
 /// completes this future with an error, and a [WsTransport] is only ever
 /// constructed once the handshake has actually succeeded, so there is no path
 /// that hands the caller a transport that is quietly dead on arrival.
-Future<WireTransport> connectWsTransport(Uri url) async {
-  final channel = WebSocketChannel.connect(url);
-  await channel.ready;
+///
+/// [pingInterval] is handed to the `dart:io` socket: it sends a ping every
+/// interval, and a ping whose pong has not arrived within one interval closes
+/// the socket with code 1001. That close reaches [WsTransport.done] like any
+/// other end of the link.
+///
+/// [connectTimeout] bounds the attempt. `IOWebSocketChannel.connect` has a
+/// `connectTimeout` of its own, but it is only `Future.timeout` on the
+/// underlying `WebSocket.connect`: when it fires the connect carries on, a
+/// socket that completes afterwards is never closed by anyone, and a connect
+/// to a peer that never answers the upgrade keeps its TCP connection open
+/// indefinitely. So the timeout is applied here instead, on a private
+/// [HttpClient] that is force-closed when it fires. That tears down the
+/// pending connection, and closing the sink first makes a socket that
+/// completes in the same instant close itself as soon as it is wired up.
+Future<WireTransport> connectWsTransport(
+  Uri url, {
+  Duration pingInterval = kKeepaliveInterval,
+  Duration connectTimeout = kConnectTimeout,
+}) async {
+  final client = HttpClient();
+  final IOWebSocketChannel channel;
+  try {
+    channel = IOWebSocketChannel.connect(
+      url,
+      pingInterval: pingInterval,
+      customClient: client,
+    );
+  } catch (_) {
+    client.close(force: true);
+    rethrow;
+  }
+  try {
+    await channel.ready.timeout(connectTimeout);
+  } catch (_) {
+    // Timed out or failed: nothing may stay open behind the error.
+    unawaited(channel.sink.close().catchError((Object _) {}));
+    client.close(force: true);
+    rethrow;
+  }
+  // Connected. The socket was detached from the client, which has nothing
+  // else to do.
+  client.close();
   return WsTransport._(channel);
 }
 
