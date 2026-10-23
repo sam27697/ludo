@@ -295,13 +295,6 @@ class _GameScreenState extends State<GameScreen> {
   Frame? _mountTurnFrame;
   bool _checkedMountTurnCue = false;
 
-  // C-442 D4: true when the transcript at mount already held the frame that
-  // opens a game. Such a screen is mounted by a live game start, and the
-  // `turn` frame that names the first seat is still on its way, so the room
-  // alone is not the screen's only witness to that turn; a screen mounted
-  // with no transcript at all (a relaunch) has no other witness.
-  bool _mountedInLiveGame = false;
-
   // C-442 D4: the `turn.k` this screen last played `yourTurn` for, from a
   // live `turn` frame, the mount check, or a snapshot. A snapshot of my
   // `await_roll` plays the cue only for a k that is not this one, so a turn
@@ -395,9 +388,14 @@ class _GameScreenState extends State<GameScreen> {
       _announceMountTimerPlayed = true;
     }
     _mountTurnFrame = _lastTurnFrame(widget.controller.gameTranscript);
-    _mountedInLiveGame = widget.controller.gameTranscript.any(
-      (Frame frame) => frame.type == 'game_started',
-    );
+    // C-442 D4': the turn the screen mounts onto counts as shown, so a
+    // later snapshot of the same `k` plays nothing.
+    final TurnState? shownTurn = mountRoom?.turn;
+    if (shownTurn != null &&
+        shownTurn.seat == widget.controller.seat &&
+        shownTurn.phase == TurnPhase.awaitRoll) {
+      _yourTurnPlayedK = shownTurn.k;
+    }
     _seenRolls = List<(int k, int face)>.of(
       widget.controller.room?.recentRolls ?? const <(int k, int face)>[],
     );
@@ -723,24 +721,15 @@ class _GameScreenState extends State<GameScreen> {
     }
     _checkedMountTurnCue = true;
     final Frame? mountTurn = _mountTurnFrame;
+    if (mountTurn == null) {
+      return;
+    }
     final int? mySeat = widget.controller.seat;
-    if (mySeat == null) {
+    if (mySeat == null || _intAt(mountTurn.data, 'seat') != mySeat) {
       return;
     }
-    // C-442 D4: a relaunch holds no `turn` frame at all, only the room it
-    // resumed into. With none to name a seat, the room itself is the
-    // witness; with one, it must still name mine, as before.
-    if (mountTurn != null && _intAt(mountTurn.data, 'seat') != mySeat) {
-      return;
-    }
-    if (mountTurn == null && _mountedInLiveGame) {
-      return;
-    }
-    final RoomSnapshot? room = widget.controller.room;
-    final TurnState? turn = room?.turn;
-    if (room == null ||
-        room.state != RoomState.playing ||
-        turn == null ||
+    final TurnState? turn = widget.controller.room?.turn;
+    if (turn == null ||
         turn.seat != mySeat ||
         turn.phase != TurnPhase.awaitRoll) {
       return;
