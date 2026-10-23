@@ -295,6 +295,26 @@ class _GameScreenState extends State<GameScreen> {
   Frame? _mountTurnFrame;
   bool _checkedMountTurnCue = false;
 
+  // C-442 D4: true when the transcript at mount already held the frame that
+  // opens a game. Such a screen is mounted by a live game start, and the
+  // `turn` frame that names the first seat is still on its way, so the room
+  // alone is not the screen's only witness to that turn; a screen mounted
+  // with no transcript at all (a relaunch) has no other witness.
+  bool _mountedInLiveGame = false;
+
+  // C-442 D4: the `turn.k` this screen last played `yourTurn` for, from a
+  // live `turn` frame, the mount check, or a snapshot. A snapshot of my
+  // `await_roll` plays the cue only for a k that is not this one, so a turn
+  // is announced once however many times the room is replaced under it.
+  int? _yourTurnPlayedK;
+
+  // C-442 D5: the `game_id` of the last room this screen saw PLAYING and
+  // whose `game_over` it has not received. A FINISHED snapshot naming this
+  // same game is a game that ended while the screen was not listening.
+  // Cleared by the `game_over` this screen does receive, and once the
+  // snapshot's own cue has been played.
+  String? _playingGameId;
+
   // C-246 rule 5: the `game_id` every per-game thing below is currently
   // reckoned against. Set from whatever the controller already held at
   // mount (a resume straight into a playing or finished room carries one),
@@ -367,6 +387,7 @@ class _GameScreenState extends State<GameScreen> {
   void initState() {
     super.initState();
     _currentGameId = widget.controller.room?.gameId;
+    _notePlayingGame();
     final RoomSnapshot? mountRoom = widget.controller.room;
     if (mountRoom != null &&
         _timerStepsAction(mountRoom) == _TimerStepsAction.arm) {
@@ -374,6 +395,9 @@ class _GameScreenState extends State<GameScreen> {
       _announceMountTimerPlayed = true;
     }
     _mountTurnFrame = _lastTurnFrame(widget.controller.gameTranscript);
+    _mountedInLiveGame = widget.controller.gameTranscript.any(
+      (Frame frame) => frame.type == 'game_started',
+    );
     _seenRolls = List<(int k, int face)>.of(
       widget.controller.room?.recentRolls ?? const <(int k, int face)>[],
     );
@@ -471,6 +495,15 @@ class _GameScreenState extends State<GameScreen> {
       cues = cues
           .where((FeedbackCue cue) => cue != FeedbackCue.noMove)
           .toList();
+    }
+    if (frame.type == 'turn' && cues.contains(FeedbackCue.yourTurn)) {
+      final TurnState? liveTurn = widget.controller.room?.turn;
+      if (liveTurn != null && liveTurn.seat == widget.controller.seat) {
+        _yourTurnPlayedK = liveTurn.k;
+      }
+    }
+    if (frame.type == 'game_over') {
+      _playingGameId = null;
     }
     final FeedbackService feedback = FeedbackScope.of(context);
     final int? from = _intAt(frame.data, 'from');
@@ -600,9 +633,13 @@ class _GameScreenState extends State<GameScreen> {
   /// mount-time `yourTurn` in [_checkMountTurnCue] -- calls this and only
   /// this, so rule 1 holds by construction rather than by each site
   /// remembering to add its own announcement.
-  void _playCue(FeedbackService feedback, FeedbackCue cue) {
+  void _playCue(
+    FeedbackService feedback,
+    FeedbackCue cue, {
+    RoomSnapshot? snapshot,
+  }) {
     feedback.play(cue);
-    final String? message = _announcementFor(cue);
+    final String? message = _announcementFor(cue, snapshot: snapshot);
     if (message != null) {
       _announce(message);
     }
@@ -616,7 +653,7 @@ class _GameScreenState extends State<GameScreen> {
   /// (C-422 D2/D3 play it straight off the die and token tap handlers, in
   /// the tap's own frame, not through the frame-driven table rule 1
   /// covers); the case below exists only so this switch stays exhaustive.
-  String? _announcementFor(FeedbackCue cue) {
+  String? _announcementFor(FeedbackCue cue, {RoomSnapshot? snapshot}) {
     final AppLocalizations loc = AppLocalizations.of(context);
     switch (cue) {
       case FeedbackCue.yourTurn:
@@ -632,7 +669,7 @@ class _GameScreenState extends State<GameScreen> {
       case FeedbackCue.win:
         return loc.gameOverYouWin;
       case FeedbackCue.gameOver:
-        return _gameOverAnnouncement(loc);
+        return _gameOverAnnouncement(loc, snapshot: snapshot);
       case FeedbackCue.canMove:
       case FeedbackCue.step:
       case FeedbackCue.invalidTap:
@@ -645,8 +682,12 @@ class _GameScreenState extends State<GameScreen> {
   /// way [_gameOverBody] itself resolves it, or [AppLocalizations.gameOverEnded]
   /// when the winning seat cannot be named (no winner sent, or a winner
   /// naming a seat no longer in the room).
-  String _gameOverAnnouncement(AppLocalizations loc) {
-    final RoomSnapshot? room = widget.controller.room;
+  ///
+  /// C-442 D5: a snapshot that is being played for is not yet the room the
+  /// controller holds when its frame reaches this screen, so the caller
+  /// hands it in and the winner is read off it.
+  String _gameOverAnnouncement(AppLocalizations loc, {RoomSnapshot? snapshot}) {
+    final RoomSnapshot? room = snapshot ?? widget.controller.room;
     final int? winner = room?.winner;
     if (room != null && winner != null) {
       for (final SeatState seatState in room.seats) {
@@ -682,19 +723,29 @@ class _GameScreenState extends State<GameScreen> {
     }
     _checkedMountTurnCue = true;
     final Frame? mountTurn = _mountTurnFrame;
-    if (mountTurn == null) {
-      return;
-    }
     final int? mySeat = widget.controller.seat;
-    if (mySeat == null || _intAt(mountTurn.data, 'seat') != mySeat) {
+    if (mySeat == null) {
       return;
     }
-    final TurnState? turn = widget.controller.room?.turn;
-    if (turn == null ||
+    // C-442 D4: a relaunch holds no `turn` frame at all, only the room it
+    // resumed into. With none to name a seat, the room itself is the
+    // witness; with one, it must still name mine, as before.
+    if (mountTurn != null && _intAt(mountTurn.data, 'seat') != mySeat) {
+      return;
+    }
+    if (mountTurn == null && _mountedInLiveGame) {
+      return;
+    }
+    final RoomSnapshot? room = widget.controller.room;
+    final TurnState? turn = room?.turn;
+    if (room == null ||
+        room.state != RoomState.playing ||
+        turn == null ||
         turn.seat != mySeat ||
         turn.phase != TurnPhase.awaitRoll) {
       return;
     }
+    _yourTurnPlayedK = turn.k;
     _playCue(FeedbackScope.of(context), FeedbackCue.yourTurn);
   }
 
@@ -1064,6 +1115,7 @@ class _GameScreenState extends State<GameScreen> {
     _rollNoAnswer = false;
     _clearThrows();
     _lastKnownQueue.clear();
+    _yourTurnPlayedK = null;
     _dropDeadCandidate();
     _trayDeadTimer?.cancel();
     _trayDeadTimer = null;
@@ -1229,6 +1281,76 @@ class _GameScreenState extends State<GameScreen> {
         }
       case _TimerStepsAction.none:
         break;
+    }
+    _rebaseFromSnapshot(room);
+  }
+
+  /// C-442: remembers the game this screen is showing as PLAYING, so a
+  /// FINISHED snapshot of that same game can tell a game that ended while
+  /// the screen was away from an end card the player opened the app onto.
+  void _notePlayingGame() {
+    final RoomSnapshot? room = widget.controller.room;
+    if (room != null && room.state == RoomState.playing) {
+      final String? gameId = room.gameId;
+      if (gameId != null) {
+        _playingGameId = gameId;
+      }
+    }
+  }
+
+  /// C-442 D2, D4, D5: what a snapshot of the room does to the per-turn
+  /// memory this screen keeps. A snapshot replaces the room underneath
+  /// frames this screen never saw, so each thing a live frame would have
+  /// set is set again from the snapshot itself.
+  ///
+  /// The queue the screen remembers for the snapshot's turn seat is the
+  /// snapshot's own, exactly as the mount seeds it (K9); a dead-end
+  /// candidate banked from frames before the replacement is dropped, since
+  /// the `turn_passed` that would resolve it can no longer follow.
+  ///
+  /// `yourTurn` plays once for my `await_roll`, unless this screen already
+  /// played it for that same `k`. A FINISHED snapshot of the game this
+  /// screen was showing as PLAYING, whose `game_over` never reached it,
+  /// plays the cue that `game_over` would have. No other cue comes from a
+  /// snapshot of a PLAYING room (PROTOCOL section 8 rule 4, C-293 rule 3).
+  void _rebaseFromSnapshot(RoomSnapshot room) {
+    _dropDeadCandidate();
+    final TurnState? turn = room.turn;
+    if (turn != null) {
+      _rememberQueue(turn.seat, turn.queue);
+    }
+    if (!mounted) {
+      return;
+    }
+    final int? mySeat = widget.controller.seat;
+    if (mySeat == null) {
+      return;
+    }
+    if (room.state == RoomState.playing) {
+      if (turn != null &&
+          turn.seat == mySeat &&
+          turn.phase == TurnPhase.awaitRoll &&
+          _yourTurnPlayedK != turn.k) {
+        _yourTurnPlayedK = turn.k;
+        _playCue(FeedbackScope.of(context), FeedbackCue.yourTurn);
+      }
+      return;
+    }
+    if (room.state == RoomState.finished) {
+      final String? gameId = room.gameId;
+      final int? winner = room.winner;
+      if (gameId == null || gameId != _playingGameId) {
+        return;
+      }
+      _playingGameId = null;
+      if (winner == null) {
+        return;
+      }
+      _playCue(
+        FeedbackScope.of(context),
+        winner == mySeat ? FeedbackCue.win : FeedbackCue.gameOver,
+        snapshot: room,
+      );
     }
   }
 
@@ -1563,6 +1685,10 @@ class _GameScreenState extends State<GameScreen> {
         controller.phase == RoomPhase.closed) {
       _travelCount = 0;
     }
+    _notePlayingGame();
+    if (controller.phase != RoomPhase.connected) {
+      _dropWhatTheLinkArmed();
+    }
     _syncOpponentThrows();
     setState(() {
       _syncCountdown();
@@ -1573,6 +1699,24 @@ class _GameScreenState extends State<GameScreen> {
     });
     _syncConnectionLostAnnouncement();
     _maybeFetchGameLog();
+  }
+
+  /// C-442 D6: the connection is no longer `connected`, so nothing this
+  /// screen armed from a frame under it may fire after it. Every landing
+  /// cue still waiting for a token to land, the safe-landing pill still
+  /// waiting for the same, and the bookkeeping of walks still in flight are
+  /// dropped; the snapshot that follows draws every token at truth (C-252
+  /// rule 2) and the gap is neither replayed nor felt (C-293 rule 3). A cue
+  /// already played stays played, and a pill already up runs out as it
+  /// always did. The held `game_over` cues are not dropped: the screen did
+  /// receive that frame.
+  void _dropWhatTheLinkArmed() {
+    _dropPendingLandingCues();
+    _safeCueEpoch++;
+    _safeCueLandingsToIgnore = 0;
+    _dropPendingSafeCue();
+    _travelCount = 0;
+    _travellingLegs.clear();
   }
 
   /// C-377 D3: a throw for every `(k, face)` appended to `recentRolls`
@@ -1801,11 +1945,26 @@ class _GameScreenState extends State<GameScreen> {
   /// new snapshot. The 4s no-answer route clears it itself, in
   /// [_onRollNoAnswer], since nothing about the snapshot changes there.
   void _syncRollWait() {
+    final RoomController controller = widget.controller;
+    // C-442 D1: the 4 s timer and the tumble were armed under a connection
+    // that has since left `connected`; the reconnecting card owns that
+    // state. The no-answer line itself is shown only while the room shows
+    // my seat's turn in await_roll over a live link, so it goes the moment
+    // anything else is true, however it got there.
+    if (controller.phase != RoomPhase.connected) {
+      _rollNoAnswerTimer?.cancel();
+      _rollNoAnswerTimer = null;
+      _rollWaitK = null;
+      _rollNoAnswer = false;
+      return;
+    }
+    if (_rollNoAnswer && !_myRollIsAwaited()) {
+      _rollNoAnswer = false;
+    }
     final int? waitK = _rollWaitK;
     if (waitK == null) {
       return;
     }
-    final RoomController controller = widget.controller;
     final TurnState? turn = controller.room?.turn;
     final bool stillMine = turn != null && turn.seat == controller.seat;
     final bool resultArrived =
@@ -1817,6 +1976,21 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
+  /// C-442 D1: true when the room shows my seat's turn in await_roll and the
+  /// connection is `connected`: the only state in which "Tap the die again"
+  /// is something the player can do.
+  bool _myRollIsAwaited() {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    final TurnState? turn = room?.turn;
+    return controller.phase == RoomPhase.connected &&
+        room != null &&
+        room.state == RoomState.playing &&
+        turn != null &&
+        turn.seat == controller.seat &&
+        turn.phase == TurnPhase.awaitRoll;
+  }
+
   /// 4 seconds after a rolling tap with no new roll result: stop the
   /// tumble, show the last known face, and show the no-answer line until
   /// the next tap. A dropped connection is handled by rule 1 in [build]
@@ -1824,6 +1998,13 @@ class _GameScreenState extends State<GameScreen> {
   /// that has already moved past the playing body.
   void _onRollNoAnswer() {
     if (!mounted) {
+      return;
+    }
+    if (!_myRollIsAwaited()) {
+      setState(() {
+        _rollWaitK = null;
+        _rollNoAnswer = false;
+      });
       return;
     }
     setState(() {
@@ -1872,6 +2053,17 @@ class _GameScreenState extends State<GameScreen> {
   /// token's glow itself from `autoMoveToken`; there is no Undo to
   /// announce alongside it any more.
   void _syncAutoMove() {
+    // C-442 D3: the game does not move by itself while the link is down.
+    // The pending hold goes, and the latch for this decision is released
+    // with it: the only way back to `connected` is a snapshot, and the
+    // decision is then taken afresh from the turn that snapshot shows. A
+    // decision the server refused over a live link stays latched below.
+    if (widget.controller.phase != RoomPhase.connected) {
+      _autoMoveHandledK = null;
+      _autoMoveHandledQueue = null;
+      _clearPendingHold();
+      return;
+    }
     final TurnState? turnNow = widget.controller.room?.turn;
     final bool stillArmed = _sameMoveDecision(
       turnNow,
