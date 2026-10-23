@@ -46,6 +46,13 @@ const Duration housekeepingInterval = Duration(minutes: 1);
 /// budget, and the sweep itself only walks the room map.
 const Duration turnExpiryInterval = Duration(seconds: 1);
 
+/// How often a WebSocket ping control frame is sent on every accepted socket
+/// (`docs/PROTOCOL.md` section 24). A ping not answered by a pong within one
+/// further interval closes the socket with code 1001, which runs the same
+/// disconnect handling as any other close, so a link that has silently died
+/// is noticed within twice this interval.
+const Duration defaultKeepaliveInterval = Duration(seconds: 10);
+
 /// The header a reverse proxy is expected to set with the real client
 /// address. Only trusted when the immediate peer address is in the
 /// configured proxy list.
@@ -132,7 +139,9 @@ class WireServer {
     String? privacyContactEmail,
     String? appSigningSha256,
     this.automaticTurnExpiry = true,
-  })  : _random = random ?? Random.secure(),
+    Duration? keepaliveInterval,
+  })  : keepaliveInterval = keepaliveInterval ?? defaultKeepaliveInterval,
+        _random = random ?? Random.secure(),
         _trustedProxies = trustedProxies,
         _hub = _ConnectionHub(registry),
         _privacyHtml = buildPrivacyPageHtml(contactEmail: privacyContactEmail),
@@ -162,6 +171,11 @@ class WireServer {
   /// Always true in production: `bin/server.dart` never passes it, and a
   /// server built without this timer never ends a turn on its own.
   final bool automaticTurnExpiry;
+
+  /// The WebSocket ping interval applied to every accepted socket, passed as
+  /// `pingInterval` to `webSocketHandler`. Defaults to
+  /// [defaultKeepaliveInterval]; a test passes a shorter one.
+  final Duration keepaliveInterval;
 
   /// The build identifier reported by `GET /health`. Not otherwise used;
   /// this server does not act differently for one version than another.
@@ -220,12 +234,15 @@ class WireServer {
         return _handleVerify(request, verifyMatch.group(1)!);
       }
       final String ip = _clientIp(request);
-      final shelf.Handler upgrade = webSocketHandler((
-        WebSocketChannel channel,
-        String? protocol,
-      ) {
-        _accept(channel, ip);
-      });
+      final shelf.Handler upgrade = webSocketHandler(
+        (
+          WebSocketChannel channel,
+          String? protocol,
+        ) {
+          _accept(channel, ip);
+        },
+        pingInterval: keepaliveInterval,
+      );
       return upgrade(request);
     };
 

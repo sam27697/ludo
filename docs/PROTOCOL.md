@@ -1308,3 +1308,44 @@ carries a count.
    own seat; on one with `timer_steps == 0` it drops that notice; when
    the field is absent (an older server) it changes nothing. No notice for
    another seat comes from a snapshot.
+
+## 24. A dead link is noticed, 2026-10-23
+
+Section 8 says the server marks a seat not connected "on any disconnect".
+Until now neither end ever probed the socket, so a disconnect was
+noticed only when TCP gave up. A phone that walks out of Wi-Fi, switches
+to mobile data or loses signal in a lift leaves a half-open socket: its
+own screen shows a live table and an enabled die, and the rest of the
+room sees it connected, for as long as the operating system takes to time
+the connection out (minutes). This section bounds that.
+
+1. **Both ends ping.** The server and the client each send a WebSocket
+   ping control frame (RFC 6455 section 5.5.2) every **10 seconds** on
+   every open socket, and answer every ping with a pong, which every
+   conforming WebSocket implementation already does. These are control
+   frames: they are not protocol messages, carry no `v`, `t` or `seq`,
+   and do not count toward the section 7 rate limit. The `ping`/`pong`
+   messages of sections 4 and 5 are unchanged and unrelated.
+2. **A missed pong closes the socket.** A ping not answered by a pong
+   within 10 seconds means the peer is gone, and that end closes the
+   socket. The peer is presumed unreachable, so no error frame precedes
+   this close, and its code is **1001** (going away), the code the
+   WebSocket libraries on both ends use for exactly this. It is the one
+   exception to section 7.1's "no other code is used": 7.1 governs closes
+   for cause, and this is a close for absence.
+3. **The bound.** A link that goes dead is closed by each end that is
+   still running within 20 seconds (one interval to the next ping, one to
+   miss its pong). On the server that close is a disconnect under section
+   8 rule 2: the seat is marked not connected and `presence` is pushed to
+   the others. On the client it is a lost connection like any other: it
+   resumes under section 8 rule 3.
+4. **Connecting is bounded too.** A client's attempt to open a socket
+   (TCP, TLS and the HTTP upgrade together) that has not completed within
+   **10 seconds** is abandoned and counts as a failed attempt; the
+   client's retry schedule carries on from there. Without it, a retry
+   made while the network is down can wait minutes on one attempt and
+   miss the network coming back.
+5. **What does not change.** No message, field, error or close code
+   other than the 1001 above. A live socket whose peer answers pings
+   behaves exactly as before; a seat is never marked not connected while
+   its pongs arrive.
