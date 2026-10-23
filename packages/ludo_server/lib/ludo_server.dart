@@ -79,7 +79,11 @@ export 'src/verify_record.dart' show buildVerifyRecord, verifyRecordFormat;
 export 'src/verify_scripts.dart' show verifyJsSource, verifyPySource;
 export 'src/verify_page.dart' show buildVerifyPageHtml, buildVerifyNotFoundHtml;
 export 'src/wire_server.dart'
-    show WireServer, housekeepingInterval, turnExpiryInterval;
+    show
+        WireServer,
+        housekeepingInterval,
+        turnExpiryInterval,
+        defaultKeepaliveInterval;
 
 // GameState is ludo_engine's, not this package's, but Room.game exposes it
 // and a caller of this package should not have to depend on ludo_engine
