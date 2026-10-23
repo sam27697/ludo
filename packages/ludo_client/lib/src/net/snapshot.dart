@@ -94,6 +94,7 @@ class SeatState {
     required this.tokens,
     required this.clientSeed,
     required this.seedOrigin,
+    this.timerSteps,
   });
 
   final int seat;
@@ -106,6 +107,12 @@ class SeatState {
   final String? clientSeed;
   final SeedOrigin? seedOrigin;
 
+  /// docs/PROTOCOL.md section 23: how many turn steps the timer has taken
+  /// for this seat since the current game started or the seat's own last
+  /// accepted `roll` or `move`. Null when the server sent no such key (an
+  /// older server), which is not the same as 0.
+  final int? timerSteps;
+
   factory SeatState.fromJson(Map<String, Object?> json) {
     final int seat = _reqInt(json, 'seat');
     if (seat < 0 || seat > 3) {
@@ -116,6 +123,10 @@ class SeatState {
     final List<int> tokens = _reqIntList(json, 'tokens', exactLength: 4);
     final String? clientSeed = _optString(json, 'client_seed');
     final SeedOrigin? seedOrigin = _optSeedOrigin(json, 'seed_origin');
+    final int? timerSteps = _optInt(json, 'timer_steps');
+    if (timerSteps != null && timerSteps < 0) {
+      throw const SnapshotFormatException('timer_steps');
+    }
 
     return SeatState(
       seat: seat,
@@ -124,6 +135,7 @@ class SeatState {
       tokens: tokens,
       clientSeed: clientSeed,
       seedOrigin: seedOrigin,
+      timerSteps: timerSteps,
     );
   }
 
@@ -138,6 +150,7 @@ class SeatState {
     List<int>? tokens,
     String? clientSeed,
     SeedOrigin? seedOrigin,
+    int? timerSteps,
   }) {
     return SeatState(
       seat: seat ?? this.seat,
@@ -146,6 +159,7 @@ class SeatState {
       tokens: tokens ?? this.tokens,
       clientSeed: clientSeed ?? this.clientSeed,
       seedOrigin: seedOrigin ?? this.seedOrigin,
+      timerSteps: timerSteps ?? this.timerSteps,
     );
   }
 }

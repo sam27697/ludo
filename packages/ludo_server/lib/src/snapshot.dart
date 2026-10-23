@@ -80,6 +80,9 @@ Map<String, Object?> _seatSnapshot(Room room, Seat seat) {
     // never null again.
     'client_seed': seat.clientSeed,
     'seed_origin': seat.seedOrigin,
+    // docs/PROTOCOL.md section 23 rule 1: always present, an int >= 0, in
+    // every state; LOBBY reads 0 because the registry resets it there.
+    'timer_steps': seat.timerSteps,
   };
 }
 
