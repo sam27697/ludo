@@ -1273,3 +1273,38 @@ holds for every other field and for the frame order.
 3. **`game_log`.** Section 17 serves each push's data as it was broadcast,
    so a timer step's entry carries `by` and a client step's does not.
 4. **Old clients** ignore the field and see the frames they always saw.
+
+## 23. Timer steps survive a resume, 2026-10-23
+
+Section 22 tells a connected client that the timer played. A phone that
+was off the socket when it happened (the app in the background, the
+process killed, the signal lost) comes back through `resume` into a
+snapshot, and section 22 rule 2 keeps `by` out of snapshots. The usual
+reason the timer plays a seat is that its player is away, so the snapshot
+carries a count.
+
+1. **`timer_steps`.** Every seat object of every snapshot (section 6:
+   `room`, and the answer to `resume`) gains `timer_steps`, an integer,
+   always present, never negative.
+2. **What it counts.** In PLAYING and FINISHED it is the number of
+   `rolled` and `moved` frames carrying `by: "timer"` for that seat since
+   the later of (a) the `game_started` of the current game and (b) that
+   seat's own most recent accepted `roll` or `move`. Each such frame adds
+   one when it is published. A timer roll that leaves no legal move adds
+   one; the `turn_passed` after it adds nothing. An expiry the server
+   declines to act on adds nothing.
+3. **What resets it.** An accepted `roll` or `move` sent by the seat's
+   own client sets it to 0. `game_started` sets every seat to 0, in the
+   first game and in every rematch. A rejected request changes nothing.
+   In LOBBY, a rematch LOBBY included, it is 0 for every seat. In
+   FINISHED it keeps the value it had at `game_over`.
+4. **Nothing else changes.** No frame other than a snapshot carries the
+   field. `rolled`, `moved`, `game_log` entries and the verify record are
+   byte-identical to section 22. The engine and the golden corpus do not
+   hold it: it is room state, not game state.
+5. **Old clients** ignore the field.
+6. **The client (informative).** On a PLAYING snapshot whose own seat
+   has `timer_steps > 0`, the client shows the section 22 notice for its
+   own seat; on one with `timer_steps == 0` it drops that notice; when
+   the field is absent (an older server) it changes nothing. No notice for
+   another seat comes from a snapshot.

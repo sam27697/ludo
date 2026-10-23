@@ -49,6 +49,11 @@ import 'theme.dart';
 /// and dispose the old controller without opening another table.
 enum GameScreenResult { newTable, removed }
 
+/// C-432 D4: what a snapshot's own-seat `timer_steps` asks of the C-426 D3
+/// notice. `none` is an older server's absent field, a seat that is not in
+/// the snapshot, or a LOBBY snapshot.
+enum _TimerStepsAction { arm, drop, none }
+
 /// Safety-net fallback duration for held landing cues, contract C-268 rule 4e.
 const Duration kLandingCueFallback = Duration(milliseconds: 2000);
 
@@ -276,6 +281,14 @@ class _GameScreenState extends State<GameScreen> {
   Timer? _timerPlayedOtherTimer;
   static const Duration _timerPlayedOtherHold = Duration(milliseconds: 2500);
 
+  // C-432 D4 (order 434, docs/PROTOCOL.md section 23): the same
+  // `_timerPlayedMineVisible` is also armed from my own seat's
+  // `timer_steps` in a PLAYING snapshot. The one the controller already
+  // held when this screen mounted cannot be announced from `initState`
+  // (no inherited widget is readable there), so it sets this flag and
+  // `didChangeDependencies` announces it once.
+  bool _announceMountTimerPlayed = false;
+
   // C-293 rule 3: the last `turn` frame in gameTranscript when this screen
   // mounted, if any. Tied to mount time so the initial your_turn cue cannot
   // play a second time through _onFrame.
@@ -354,6 +367,12 @@ class _GameScreenState extends State<GameScreen> {
   void initState() {
     super.initState();
     _currentGameId = widget.controller.room?.gameId;
+    final RoomSnapshot? mountRoom = widget.controller.room;
+    if (mountRoom != null &&
+        _timerStepsAction(mountRoom) == _TimerStepsAction.arm) {
+      _timerPlayedMineVisible = true;
+      _announceMountTimerPlayed = true;
+    }
     _mountTurnFrame = _lastTurnFrame(widget.controller.gameTranscript);
     _seenRolls = List<(int k, int face)>.of(
       widget.controller.room?.recentRolls ?? const <(int k, int face)>[],
@@ -380,6 +399,10 @@ class _GameScreenState extends State<GameScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (_announceMountTimerPlayed) {
+      _announceMountTimerPlayed = false;
+      _announce(AppLocalizations.of(context).gameTimerPlayedMine);
+    }
     _checkMountTurnCue();
     _releaseMoveGuard();
     _syncSelectedFace();
@@ -481,6 +504,9 @@ class _GameScreenState extends State<GameScreen> {
     }
     if (frame.type == 'game_over') {
       _dropTimerPlayedNoticesOnGameOver();
+    }
+    if (frame.type == 'room') {
+      _onSnapshotFrame(frame);
     }
 
     if (frame.type == 'game_over' && _travelCount > 0) {
@@ -1110,13 +1136,7 @@ class _GameScreenState extends State<GameScreen> {
     }
     final int? mySeat = widget.controller.seat;
     if (mySeat != null && seat == mySeat) {
-      if (_timerPlayedMineVisible) {
-        return;
-      }
-      setState(() {
-        _timerPlayedMineVisible = true;
-      });
-      _announce(AppLocalizations.of(context).gameTimerPlayedMine);
+      _showTimerPlayedMine();
       return;
     }
     final RoomSnapshot? room = widget.controller.room;
@@ -1142,6 +1162,74 @@ class _GameScreenState extends State<GameScreen> {
       _timerPlayedOtherName = name;
     });
     _announce(AppLocalizations.of(context).gameTimerPlayedOther(name));
+  }
+
+  /// Arms my own notice and announces it once, only while it was hidden.
+  /// Shared by the live `by: "timer"` path and the snapshot path below, so
+  /// both obey the same "announce only when armed from hidden" rule.
+  void _showTimerPlayedMine() {
+    if (!mounted || _timerPlayedMineVisible) {
+      return;
+    }
+    setState(() {
+      _timerPlayedMineVisible = true;
+    });
+    _announce(AppLocalizations.of(context).gameTimerPlayedMine);
+  }
+
+  /// What my own seat's `timer_steps` in [room] asks of the notice
+  /// (docs/PROTOCOL.md section 23 rule 6, C-432 D4). Only my own seat is
+  /// read; another seat's count never raises a notice.
+  _TimerStepsAction _timerStepsAction(RoomSnapshot room) {
+    if (room.state == RoomState.finished) {
+      return _TimerStepsAction.drop;
+    }
+    if (room.state != RoomState.playing) {
+      return _TimerStepsAction.none;
+    }
+    final int? mySeat = widget.controller.seat;
+    if (mySeat == null) {
+      return _TimerStepsAction.none;
+    }
+    for (final SeatState candidate in room.seats) {
+      if (candidate.seat != mySeat) {
+        continue;
+      }
+      final int? steps = candidate.timerSteps;
+      if (steps == null) {
+        return _TimerStepsAction.none;
+      }
+      return steps > 0 ? _TimerStepsAction.arm : _TimerStepsAction.drop;
+    }
+    return _TimerStepsAction.none;
+  }
+
+  /// C-432 D4: a `room` frame is a snapshot, which is how the answer to a
+  /// `resume` reaches this screen. It reaches [_onFrame] before the
+  /// controller has replaced its own room with it, so the frame's data is
+  /// decoded here with the same [RoomSnapshot.fromJson] the controller
+  /// uses; a frame that does not decode is one the controller itself
+  /// discards, and it changes nothing here either. A FINISHED snapshot
+  /// shows no notice, so it also drops one a missed `game_over` left up.
+  void _onSnapshotFrame(Frame frame) {
+    final RoomSnapshot room;
+    try {
+      room = RoomSnapshot.fromJson(frame.data);
+    } on SnapshotFormatException {
+      return;
+    }
+    switch (_timerStepsAction(room)) {
+      case _TimerStepsAction.arm:
+        _showTimerPlayedMine();
+      case _TimerStepsAction.drop:
+        if (_timerPlayedMineVisible && mounted) {
+          setState(() {
+            _timerPlayedMineVisible = false;
+          });
+        }
+      case _TimerStepsAction.none:
+        break;
+    }
   }
 
   void _dropTimerPlayedOther() {

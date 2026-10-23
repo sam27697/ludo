@@ -117,6 +117,13 @@ class Seat {
   /// null exactly when [clientSeed] is null.
   String? seedOrigin;
 
+  /// `docs/PROTOCOL.md` section 23: how many `rolled` and `moved` frames
+  /// carrying `by: "timer"` this seat has had since the later of the current
+  /// game's start and its own last accepted `roll` or `move`. Room state,
+  /// not game state: the engine never sees it and nothing but the snapshot
+  /// publishes it. Never negative.
+  int timerSteps = 0;
+
   @override
   String toString() => 'Seat(seat: $seat, name: $name, connected: $connected)';
 }

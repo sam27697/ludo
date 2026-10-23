@@ -793,6 +793,11 @@ class RoomRegistry {
     );
     room.game = engine.newGame(config);
     room.state = RoomState.playing;
+    // docs/PROTOCOL.md section 23 rule 3: game_started sets every seat's
+    // timer_steps to 0, in the first game and in every rematch.
+    for (final Seat s in room.seats) {
+      s.timerSteps = 0;
+    }
     // docs/PROTOCOL.md section 16.4: "rematch becomes null again in the
     // room and frames the start sends" -- true of every path through here,
     // and a no-op for the ordinary, non-rematch start_game, where this is
@@ -910,6 +915,8 @@ class RoomRegistry {
     for (final Seat s in room.seats) {
       s.clientSeed = null;
       s.seedOrigin = null;
+      // docs/PROTOCOL.md section 23 rule 3: a rematch LOBBY reads 0.
+      s.timerSteps = 0;
     }
     // docs/PROTOCOL.md section 11.3, "never reuse a chain across games":
     // a fresh chain, from a fresh CSPRNG draw, never derived from the chain
@@ -926,6 +933,11 @@ class RoomRegistry {
   /// the section's own table, in order, first failure wins: nothing is
   /// touched before a rejection, so a client that retries a rejected roll
   /// gets the `k` it would have had.
+  ///
+  /// `docs/PROTOCOL.md` section 23 rule 3: an accepted roll resets the
+  /// seat's `timerSteps` to 0, and a rejected one changes nothing.
+  /// [expireTurns] calls this same method for the timer and puts the count
+  /// back one higher afterwards (rule 2), so there is one accept path.
   RollResult roll({required String code, required String seatToken}) {
     final Room? room = _rooms[code];
     if (room == null) {
@@ -980,6 +992,7 @@ class RoomRegistry {
     final engine.Applied appliedOk = applied as engine.Applied;
     room.game = appliedOk.state;
     room.rollCount = k;
+    seat.timerSteps = 0;
     // docs/VERIFY.md section 1.2: this is the one code path that sets
     // room.rollCount = k, whether a player rolled or the turn timer did on
     // their behalf (expireTurns() reaches here through this same method) --
@@ -1050,6 +1063,11 @@ class RoomRegistry {
   /// file never picks one itself, it only forwards the caller's choice (or
   /// its absence) to `engine.MoveIntention`, which is the one thing that
   /// decides whether a given face is legal for this move at all.
+  ///
+  /// `docs/PROTOCOL.md` section 23 rule 3: an accepted move resets the
+  /// seat's `timerSteps` to 0, and a rejected one changes nothing.
+  /// [expireTurns] calls this same method for the timer and puts the count
+  /// back one higher afterwards (rule 2).
   MoveResult move({
     required String code,
     required String seatToken,
@@ -1090,6 +1108,7 @@ class RoomRegistry {
     }
     final engine.Applied appliedOk = applied as engine.Applied;
     room.game = appliedOk.state;
+    seat.timerSteps = 0;
 
     // docs/PROTOCOL.md section 21.1: the face this move spent. `face` is
     // the caller's own choice when it gave one -- the engine has already
@@ -1466,9 +1485,13 @@ class RoomRegistry {
         continue;
       }
       if (game.phase == engine.GamePhase.awaitRoll) {
+        final int stepsBefore = seat.timerSteps;
         final RollResult result =
             roll(code: room.code, seatToken: seat.seatToken);
         if (result is RollOk) {
+          // docs/PROTOCOL.md section 23 rule 2: the timer's own step adds
+          // one; roll() reset the count as it does for a client's roll.
+          seat.timerSteps = stepsBefore + 1;
           acted.add(
             ExpiredTurn(code: room.code, seat: seat.seat, roll: result),
           );
@@ -1492,12 +1515,15 @@ class RoomRegistry {
           );
           continue;
         }
+        final int stepsBefore = seat.timerSteps;
         final MoveResult result = move(
           code: room.code,
           seatToken: seat.seatToken,
           token: legal.first,
         );
         if (result is MoveOk) {
+          // Section 23 rule 2, as for the roll above.
+          seat.timerSteps = stepsBefore + 1;
           acted.add(
             ExpiredTurn(code: room.code, seat: seat.seat, move: result),
           );
