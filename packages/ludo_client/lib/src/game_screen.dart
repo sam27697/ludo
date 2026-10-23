@@ -375,6 +375,9 @@ class _GameScreenState extends State<GameScreen> {
   int _gameLogRequestsCount = 0;
   bool _gameLogFailedSocketDown = false;
   bool _gameLogFetchInFlight = false;
+  // C-445 D3: the game the last game_log request was made for, so a snapshot
+  // naming that same game does not forget the request already made for it.
+  String? _gameLogTargetId;
 
   @override
   void initState() {
@@ -477,6 +480,46 @@ class _GameScreenState extends State<GameScreen> {
       if (gameId != null && gameId != _currentGameId) {
         _resetForNewGame();
         _currentGameId = gameId;
+      }
+    }
+    // C-445 D3: a snapshot (a `room` frame, C-442's meaning) of a PLAYING or
+    // FINISHED game this screen has not recorded is the next game seen from
+    // a phone that was away through the rematch, which never gets that
+    // game's `game_started`. It starts the new game exactly as that frame
+    // would, ahead of the re-base `_onSnapshotFrame` runs below, so the
+    // re-base and the per-turn memory begin from the new game.
+    if (frame.type == 'room') {
+      RoomSnapshot? snapshot;
+      try {
+        snapshot = RoomSnapshot.fromJson(frame.data);
+      } on SnapshotFormatException {
+        snapshot = null;
+      }
+      final String? gameId = snapshot?.gameId;
+      if (snapshot != null &&
+          gameId != null &&
+          snapshot.state != RoomState.lobby &&
+          gameId != _currentGameId) {
+        // The controller applies a snapshot before this screen sees its
+        // frame, so the end card may already have asked for this game's
+        // log; that request, its answer and its count belong to the game
+        // the snapshot names and survive the reset.
+        final bool keepLogFetch = _gameLogTargetId == gameId;
+        final GameStats? keptStats = _fetchedStats;
+        final String? keptStatsGameId = _fetchedStatsGameId;
+        final int keptRequests = _gameLogRequestsCount;
+        final bool keptFailed = _gameLogFailedSocketDown;
+        final bool keptInFlight = _gameLogFetchInFlight;
+        _resetForNewGame();
+        _currentGameId = gameId;
+        if (keepLogFetch) {
+          _gameLogTargetId = gameId;
+          _fetchedStats = keptStats;
+          _fetchedStatsGameId = keptStatsGameId;
+          _gameLogRequestsCount = keptRequests;
+          _gameLogFailedSocketDown = keptFailed;
+          _gameLogFetchInFlight = keptInFlight;
+        }
       }
     }
 
@@ -1127,6 +1170,7 @@ class _GameScreenState extends State<GameScreen> {
     _gameLogRequestsCount = 0;
     _gameLogFailedSocketDown = false;
     _gameLogFetchInFlight = false;
+    _gameLogTargetId = null;
   }
 
   void _armNoMoveHold(int? face) {
@@ -4077,6 +4121,7 @@ class _GameScreenState extends State<GameScreen> {
     List<int> finalTokens,
   ) async {
     _gameLogFetchInFlight = true;
+    _gameLogTargetId = targetGameId;
     _gameLogRequestsCount++;
     try {
       final List<Frame> frames = await widget.controller.fetchGameLog();
