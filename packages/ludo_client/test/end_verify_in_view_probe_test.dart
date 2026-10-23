@@ -1,15 +1,29 @@
-// Order 425, amended by order 429 for C-429. Probe, not a fix: does the end
-// card's fairness line (`loc.endFairLine`), its one-tap Check-the-rolls
-// button (`game-screen-verify-button`) and `end-card-fair-hint` sit wholly on
-// screen, with the scroll at its start, in every end-card variant, on
-// shapes s1/s2/s3? A red case here is the finding; it stays red.
+// Order 425, amended by order 429 for C-429 and by order 436 for C-436.
+// Probe, not a fix: does the end card's fairness line (`loc.endFairLine`),
+// its one-tap Check-the-rolls button (`game-screen-verify-button`) and
+// `end-card-fair-hint` sit wholly on screen, with the scroll at its start,
+// in every end-card variant, on shapes s1/s2/s3? A red case here is the
+// finding; it stays red.
 //
 // C-429 D3's verdict set: every s1/s2/s3 x en/ar variant at scale 1.0 (order
 // 425's own table), plus `win` and `lose` on s2 at scale 1.3, en and ar, are
-// asserted. Every other s2 1.3 case (every other variant, at 1.3) stays
-// report-only and keeps printing its own ENDVERIFY line, unasserted, exactly
-// as order 425 left it; those are X74's own open residue, not this file's
-// concern to close.
+// asserted.
+//
+// C-436 D3 extends that set by ten cases: friend_left, everyone_left,
+// offline, rematch_gone and rematch_ask on s2 at scale 1.3, en and ar. The
+// verify button, the fairness line and the hint must sit wholly inside the
+// viewport with the scroll at its start, asserted exactly the way the C-429
+// verdict set is. A status line in the dock costs the scroll viewport about
+// 38 px, which is what pushes the verify button under the dock today; these
+// ten are red until the end card gives that height back.
+//
+// C-436 D4, the stated limit: `offline_friend_left` on s2 at 1.3 (two status
+// lines at once, and the phone is offline, so the verify page cannot load
+// from that state anyway) stays report-only and keeps printing its own
+// ENDVERIFY line, unasserted. Every other s2 1.3 case (ended, rematch_waiting,
+// rematch_waiting_host_start, in both locales) also stays report-only and
+// keeps printing its own ENDVERIFY line exactly as order 425 left it; those
+// are X74's own open residue, not this file's concern to close.
 //
 // C-429 D4: on the win card, `end-card-celebration` stays present, its
 // painted child (the `CustomPaint` the animated burst builds, or the
@@ -1484,6 +1498,19 @@ Future<void> _runCase(
   }
 }
 
+/// The variants asserted on s2 at scale 1.3: C-429 D3's `win` and `lose`,
+/// then C-436 D3's friend_left, everyone_left, offline, rematch_gone and
+/// rematch_ask. offline_friend_left is deliberately absent (C-436 D4).
+const List<_Variant> _assertedAtLargeText = <_Variant>[
+  _Variant.win,
+  _Variant.lose,
+  _Variant.friendLeft,
+  _Variant.everyoneLeft,
+  _Variant.offline,
+  _Variant.rematchGone,
+  _Variant.rematchAsk,
+];
+
 void main() {
   setUpAll(() async {
     await _loadAppFonts();
@@ -1531,10 +1558,11 @@ void main() {
     );
   });
 
-  // C-429 D3: on s2 at scale 1.3, `win` and `lose`, en and ar, are promoted
-  // out of report-only into the verdict set.
+  // C-429 D3 and C-436 D3: on s2 at scale 1.3, these variants, en and ar,
+  // are in the verdict set and asserted. Every other variant at s2 1.3 is
+  // report-only (below).
   for (final Locale locale in _locales) {
-    for (final _Variant v in <_Variant>[_Variant.win, _Variant.lose]) {
+    for (final _Variant v in _assertedAtLargeText) {
       testWidgets('${_variantLabel(v)} s2 1.3 ${locale.languageCode}', (
         WidgetTester tester,
       ) async {
@@ -1550,12 +1578,13 @@ void main() {
     }
   }
 
-  // Report-only: s2 only, scale 1.3, en/ar, every variant except `win` and
-  // `lose` (promoted above by C-429 D3). Printed but never asserted
-  // (order's own "make them pass whatever they measure").
+  // Report-only: s2 only, scale 1.3, en/ar, every variant not in
+  // [_assertedAtLargeText]. That includes C-436 D4's stated limit,
+  // offline_friend_left. Printed but never asserted (order's own "make them
+  // pass whatever they measure").
   for (final Locale locale in _locales) {
     for (final _Variant v in _Variant.values) {
-      if (v == _Variant.win || v == _Variant.lose) {
+      if (_assertedAtLargeText.contains(v)) {
         continue;
       }
       testWidgets(

@@ -298,7 +298,7 @@ class _EndCardState extends State<EndCard> {
     return Container(
       key: key,
       width: double.infinity,
-      padding: const EdgeInsets.all(kSpace5),
+      padding: const EdgeInsets.all(kSpace4),
       decoration: BoxDecoration(
         color: LudoColors.paperElevated,
         borderRadius: BorderRadius.circular(kRadiusControl * 1.5),
@@ -369,10 +369,10 @@ class _EndCardState extends State<EndCard> {
           ],
         ),
         if (widget.stats != null) ...<Widget>[
-          const SizedBox(height: kSpace4),
+          const SizedBox(height: kSpace3),
           _statRow(loc, widget.stats!),
         ],
-        const SizedBox(height: kSpace4),
+        const SizedBox(height: kSpace3),
         _fairness(context, loc),
         if (includeAction) ...<Widget>[
           const SizedBox(height: kSpace3),
@@ -430,10 +430,10 @@ class _EndCardState extends State<EndCard> {
           textAlign: TextAlign.center,
         ),
         if (widget.stats != null) ...<Widget>[
-          const SizedBox(height: kSpace4),
+          const SizedBox(height: kSpace3),
           _statRow(loc, widget.stats!),
         ],
-        const SizedBox(height: kSpace4),
+        const SizedBox(height: kSpace3),
         _fairness(context, loc),
         if (includeAction) ...<Widget>[
           const SizedBox(height: kSpace3),
@@ -458,7 +458,7 @@ class _EndCardState extends State<EndCard> {
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.headlineLarge,
         ),
-        const SizedBox(height: kSpace4),
+        const SizedBox(height: kSpace3),
         _fairness(context, loc),
         if (includeAction) ...<Widget>[
           const SizedBox(height: kSpace3),
@@ -529,17 +529,26 @@ class _EndCardState extends State<EndCard> {
       key: key,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        Icon(icon, color: LudoColors.feltMid),
-        const SizedBox(height: kSpace1),
-        FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Text(
-            value.toString(),
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            softWrap: false,
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
+        // C-436 D1: the icon sits beside its value (icon first in reading
+        // order, so it mirrors in Arabic); the label stays under both.
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(icon, color: LudoColors.feltMid),
+            const SizedBox(width: kSpace1),
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  value.toString(),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  softWrap: false,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
         ),
         FittedBox(
           fit: BoxFit.scaleDown,
