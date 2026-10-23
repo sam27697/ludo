@@ -904,12 +904,44 @@ class RoomController extends ChangeNotifier {
     _lastFinished = null;
   }
 
+  /// C-445 D1, D2: a `room` snapshot of a PLAYING or FINISHED game is how a
+  /// phone that was away learns which game the room is in now; it never
+  /// sees that game's `game_started`. When the snapshot names a game other
+  /// than the one the open transcript belongs to, the transcript is
+  /// cleared and re-keyed to the snapshot's game, so the old game's frames
+  /// never read as the new game's record (the transcript then holds no
+  /// `game_started` and the stats fall back to the server's `game_log`).
+  /// A snapshot of the same game appends as any other frame. A transcript
+  /// never opened (a relaunch) is left alone. A PLAYING snapshot of a game
+  /// other than the held finished one also drops that finished snapshot,
+  /// as a live start does; a FINISHED one is recorded by
+  /// [_recordLastFinished] as before.
+  void _noteSnapshotGame(Frame frame) {
+    final String? state = _asString(frame.data, 'state');
+    final String? gameId = _asString(frame.data, 'game_id');
+    if (gameId == null || (state != 'PLAYING' && state != 'FINISHED')) {
+      return;
+    }
+    if (_hasOpenedTranscript && gameId != _transcriptGameId) {
+      _transcriptGameId = gameId;
+      _gameTranscript.clear();
+    }
+    if (state == 'PLAYING' &&
+        _lastFinished != null &&
+        _lastFinished!.gameId != gameId) {
+      _clearLastFinished();
+    }
+  }
+
   /// Every frame the current connection produces, including every one this
   /// controller's reducer ignores. Recorded into [gameTranscript] from
   /// `game_started` onward, forwarded to [frames] unconditionally, then
   /// handed to the reducer when it is one of the types docs/PROTOCOL.md
   /// section 5 marks as carrying `seq`.
   void _handleFrame(Frame frame) {
+    if (frame.type == 'room') {
+      _noteSnapshotGame(frame);
+    }
     if (frame.type == 'game_started') {
       final String? gameId = _asString(frame.data, 'game_id');
       if (!_hasOpenedTranscript || gameId != _transcriptGameId) {
