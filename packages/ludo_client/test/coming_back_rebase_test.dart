@@ -25,10 +25,12 @@
 // (the safe pill), per the project rule never to import across test files.
 //
 // Expected on the base commit (17119d7): every case named for a decision
-// (D1a, D1b, D1c, D1d, D2, D3, D4a, D4a2, D4c, D5a, D5b, D6, D6b) is red
+// (D1a, D1b, D1c, D1d, D2, D3, D4a, D4a2, D4e, D5a, D5b, D6, D6b) is red
 // because GameScreen does not do what the contract says; every case named
-// "control" or "guard" is green and stays green once the contract is built,
-// because it pins what the contract keeps.
+// "control" or "guard", and D4c and D4d (the amended D4 of order 444: a
+// relaunch mount and a resume of the turn already shown are silent), is green
+// and stays green once the contract is built, because it pins what the
+// contract keeps.
 //
 // Hygiene: one mount per case; no pumpAndSettle (the die, the arc and the
 // countdown all animate while armed); every pump is bounded; no
@@ -1485,12 +1487,12 @@ void main() {
     );
 
     testWidgets(
-      'D4c: a relaunch mounted into my await_roll with an empty transcript '
-      'plays yourTurn once',
+      'D4c control: a relaunch mounted into my await_roll with an empty '
+      'transcript plays no cue at all',
       (tester) async {
         const _Case c = _Case(
-          'D4c: a relaunch mounted into my await_roll with an empty '
-              'transcript plays yourTurn once',
+          'D4c control: a relaunch mounted into my await_roll with an empty '
+              'transcript plays no cue at all',
           'GameScreen mounts over a room whose only frame is the resume '
               'answer (no turn frame in the transcript): my await_roll k=4',
         );
@@ -1501,19 +1503,140 @@ void main() {
         );
         try {
           expect(
-            rig.cues(FeedbackCue.yourTurn),
-            1,
+            rig.fake.recorded,
+            isEmpty,
             reason: c.why(
-              'yourTurn once at mount',
-              'played ${rig.cues(FeedbackCue.yourTurn)} time(s); '
-                  'cues: ${rig.fake.recorded}',
+              'a screen the player has just opened is silent',
+              'cues: ${rig.fake.recorded}',
             ),
           );
           await tester.pump(const Duration(seconds: 1));
           expect(
+            rig.fake.recorded,
+            isEmpty,
+            reason: c.why(
+              'still silent a second later',
+              'cues: ${rig.fake.recorded}',
+            ),
+          );
+        } finally {
+          await _finish(tester, rig);
+        }
+      },
+    );
+
+    testWidgets(
+      'D4d: a resume into the same my await_roll k the screen mounted onto '
+      'plays no yourTurn',
+      (tester) async {
+        const _Case c = _Case(
+          'D4d: a resume into the same my await_roll k the screen mounted '
+              'onto plays no yourTurn',
+          'GameScreen mounts over my await_roll k=4 (no cue at mount), the '
+              'socket drops, the resume snapshot shows my await_roll k=4',
+        );
+        final _Rig rig = await _start(
+          tester,
+          seats: _seats(),
+          turn: _rollTurn(_me, 4),
+        );
+        try {
+          expect(
+            rig.fake.recorded,
+            isEmpty,
+            reason: c.why(
+              'no cue at mount (fixture)',
+              'cues: ${rig.fake.recorded}',
+            ),
+          );
+          await _drop(tester, rig);
+          await _resume(tester, rig, seats: _seats(), turn: _rollTurn(_me, 4));
+          await tester.pump(const Duration(seconds: 1));
+          expect(
+            rig.cues(FeedbackCue.yourTurn),
+            0,
+            reason: c.why(
+              'the turn the screen mounted onto counts as shown, so no '
+                  'yourTurn',
+              'played ${rig.cues(FeedbackCue.yourTurn)} time(s); '
+                  'cues: ${rig.fake.recorded}',
+            ),
+          );
+        } finally {
+          await _finish(tester, rig);
+        }
+      },
+    );
+
+    testWidgets(
+      'D4e: a resume into my await_roll at a later k than the one mounted '
+      'onto plays yourTurn once',
+      (tester) async {
+        const _Case c = _Case(
+          'D4e: a resume into my await_roll at a later k than the one '
+              'mounted onto plays yourTurn once',
+          'GameScreen mounts over my await_roll k=3 (no cue at mount); my '
+              'roll is dead and the turn passes live to seat 2 (k=4); the '
+              'socket drops; the resume snapshot shows my await_roll k=5',
+        );
+        final _Rig rig = await _start(
+          tester,
+          seats: _seats(),
+          turn: _rollTurn(_me, 3),
+        );
+        try {
+          expect(
+            rig.fake.recorded,
+            isEmpty,
+            reason: c.why(
+              'no cue at mount (fixture)',
+              'cues: ${rig.fake.recorded}',
+            ),
+          );
+          final String rollId = await _tapDie(tester, rig);
+          await _push(
+            tester,
+            rig,
+            'rolled',
+            _rolledData(
+              seat: _me,
+              value: 3,
+              legal: const <int>[],
+              k: 4,
+              queue: const <int>[],
+            ),
+            re: rollId,
+          );
+          await _push(tester, rig, 'turn_passed', <String, Object?>{
+            'seat': _me,
+            'reason': 'no_legal_move',
+          });
+          await _push(tester, rig, 'turn', _turnData(_bob));
+          expect(
+            rig.controller.room!.turn!.seat,
+            _bob,
+            reason: c.why('the live turn is seat 2\'s (fixture)'),
+          );
+          expect(
+            rig.cues(FeedbackCue.yourTurn),
+            0,
+            reason: c.why(
+              'no yourTurn while the turn is seat 2\'s (fixture)',
+              'cues: ${rig.fake.recorded}',
+            ),
+          );
+          await _drop(tester, rig);
+          await _resume(tester, rig, seats: _seats(), turn: _rollTurn(_me, 5));
+          await tester.pump(const Duration(seconds: 1));
+          expect(
             rig.cues(FeedbackCue.yourTurn),
             1,
-            reason: c.why('still once a second later'),
+            reason: c.why(
+              'yourTurn exactly once for the turn that became mine while I '
+                  'was away',
+              'played ${rig.cues(FeedbackCue.yourTurn)} time(s); '
+                  'cues: ${rig.fake.recorded}',
+            ),
           );
         } finally {
           await _finish(tester, rig);
