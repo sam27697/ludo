@@ -6199,6 +6199,121 @@ void main() {
       seatToken: 'tok-shot-52',
     );
   });
+
+  // ==========================================================================
+  // 53-56: order 438. The end cards of captures 19-22 at system text scale
+  // 1.3, the scale C-429 and C-436 fitted the fairness line and "Check the
+  // rolls" for on small phones. 53 and 54 stage the loser the way 21 and 22
+  // do (Priya loses to Karim, all four stat tiles); 55 and 56 stage the
+  // winner the way 19 and 20 do. Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 53-end-loser-scale13-en', (tester) async {
+    await _shootEndCardScale13(
+      tester,
+      binding,
+      shotName: '53-end-loser-scale13-en',
+      locale: const Locale('en'),
+      iWin: false,
+      roomCode: 'SHOT53',
+      gameId: 'b53b53b53b53b53b',
+      seatToken: 'tok-shot-53',
+    );
+  });
+
+  testWidgets('capture 54-end-loser-scale13-ar', (tester) async {
+    await _shootEndCardScale13(
+      tester,
+      binding,
+      shotName: '54-end-loser-scale13-ar',
+      locale: const Locale('ar'),
+      iWin: false,
+      roomCode: 'SHOT54',
+      gameId: 'b54b54b54b54b54b',
+      seatToken: 'tok-shot-54',
+    );
+  });
+
+  testWidgets('capture 55-end-winner-scale13-en', (tester) async {
+    await _shootEndCardScale13(
+      tester,
+      binding,
+      shotName: '55-end-winner-scale13-en',
+      locale: const Locale('en'),
+      iWin: true,
+      roomCode: 'SHOT55',
+      gameId: 'b55b55b55b55b55b',
+      seatToken: 'tok-shot-55',
+    );
+  });
+
+  testWidgets('capture 56-end-winner-scale13-ar', (tester) async {
+    await _shootEndCardScale13(
+      tester,
+      binding,
+      shotName: '56-end-winner-scale13-ar',
+      locale: const Locale('ar'),
+      iWin: true,
+      roomCode: 'SHOT56',
+      gameId: 'b56b56b56b56b56b',
+      seatToken: 'tok-shot-56',
+    );
+  });
+
+  // ==========================================================================
+  // 57-60: order 438. A phone that comes back to a turn the timer played for
+  // it (C-432, docs/PROTOCOL.md section 23). 57 and 58: GameScreen is up and
+  // playing, the socket drops, and the resume answer carries my seat's
+  // timer_steps 2 with my tokens moved and the turn on the other seat. 59
+  // and 60: the app mounts GameScreen straight into a PLAYING snapshot whose
+  // seat 0 has timer_steps 1. A GameScreen over FakeTransport, no server, no
+  // pumpAndSettle once GameScreen is up. Bodies live at the bottom of the
+  // file.
+  // ==========================================================================
+  testWidgets('capture 57-resume-timer-played-en', (tester) async {
+    await _shootResumeTimerPlayed(
+      tester,
+      binding,
+      shotName: '57-resume-timer-played-en',
+      locale: const Locale('en'),
+      roomCode: 'SHOT57',
+      gameId: 'b57b57b57b57b57b',
+      seatToken: 'tok-shot-57',
+    );
+  });
+
+  testWidgets('capture 58-resume-timer-played-ar', (tester) async {
+    await _shootResumeTimerPlayed(
+      tester,
+      binding,
+      shotName: '58-resume-timer-played-ar',
+      locale: const Locale('ar'),
+      roomCode: 'SHOT58',
+      gameId: 'b58b58b58b58b58b',
+      seatToken: 'tok-shot-58',
+    );
+  });
+
+  testWidgets('capture 59-relaunch-timer-played-en', (tester) async {
+    await _shootRelaunchTimerPlayed(
+      tester,
+      binding,
+      shotName: '59-relaunch-timer-played-en',
+      locale: const Locale('en'),
+      roomCode: 'SHOT59',
+      seatToken: 'tok-shot-59',
+    );
+  });
+
+  testWidgets('capture 60-relaunch-timer-played-ar', (tester) async {
+    await _shootRelaunchTimerPlayed(
+      tester,
+      binding,
+      shotName: '60-relaunch-timer-played-ar',
+      locale: const Locale('ar'),
+      roomCode: 'SHOT60',
+      seatToken: 'tok-shot-60',
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -10462,6 +10577,845 @@ Future<void> _shootTimerPlayedOther(
       reason:
           'capture $shotName: D4, the other-seat notice must name the '
           'seat ("$opponentName"); read "${otherNoticeText.data}"',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+// --- order 438: captures 53-60 ---------------------------------------------
+
+/// The line a failure message ends with, so a red capture names the one
+/// command that reproduces it. There is no seed: every frame is fixed.
+String _reproduce438(String shotName) =>
+    'Reproduce: cd packages/ludo_client && flutter test '
+    'integration_test/screenshots_test.dart --plain-name "capture '
+    '${shotName.split('-').first}"';
+
+/// Captures 53-56: [iWin] false is capture 21/22's flow and numbers (Priya
+/// loses to Karim; rolls 2, sixes 1, captures 0, home 0), true is capture
+/// 19/20's (Priya wins; rolls 6, sixes 1, captures 1, home 4). The same
+/// names, the same room shape and the same `_playEndCardScript` game, so all
+/// four stat tiles show. The whole case runs at system text scale 1.3, set
+/// through the test platform dispatcher the way capture 37-40 sets 2.0.
+///
+/// The verify button's key is `game-screen-verify-button`
+/// (lib/src/end_card.dart). It is asserted found, and its own
+/// `MediaQuery.textScalerOf` is asserted to scale 10 to 13, before the shot.
+/// Whether it lies inside the viewport is read off the frame, not asserted.
+Future<void> _shootEndCardScale13(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required bool iWin,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  const String hostName = 'Priya';
+  const String otherName = 'Karim';
+  final String reproduce = _reproduce438(shotName);
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+
+  // Cleared in the body after the shot and, if an expectation throws first,
+  // here.
+  tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  RoomController? controller;
+  try {
+    final Widget home;
+    if (locale.languageCode == 'ar') {
+      home = _reconnectingCaptureHarness(
+        HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+        locale: locale,
+      );
+    } else {
+      home = _ScreenshotHarness(controllerFactory: factory.call);
+    }
+    await tester.pumpWidget(home);
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
+    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+
+    expect(
+      factory.controllers,
+      hasLength(1),
+      reason:
+          'capture $shotName: tapping Create Room must build exactly one '
+          'controller. $reproduce',
+    );
+    controller = factory.controllers.single;
+    final FakeTransport transport = factory.transports.single;
+
+    final List<String> createMessages = _sentOfType(transport, 'create_room');
+    expect(
+      createMessages,
+      hasLength(1),
+      reason:
+          'capture $shotName: expected one create_room, sent '
+          '${transport.sentRaw.map(_typeOf).toList()}. $reproduce',
+    );
+    final String createId = _idOf(createMessages.single);
+
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: roomCode,
+          players: 2,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      'capture $shotName: LobbyScreen after the create_room reply carrying '
+      'code "$roomCode". $reproduce',
+    );
+
+    transport.pushText(
+      _frame(
+        type: 'player_joined',
+        data: <String, Object?>{'seat': 1, 'name': otherName, 'seq': 2},
+      ),
+    );
+    await tester.pump();
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: locale.languageCode,
+      code: roomCode,
+      expectedSeatCount: 2,
+    );
+
+    final Finder startButton = find.byKey(const Key('lobby-start-button'));
+    expect(
+      startButton,
+      findsOneWidget,
+      reason:
+          'capture $shotName: the host, seat 0, must see a Start button '
+          'once seated. $reproduce',
+    );
+    await tester.ensureVisible(startButton);
+    await tester.pump();
+    await tester.tap(startButton);
+    await tester.pump();
+    final List<String> startMessages = _sentOfType(transport, 'start_game');
+    expect(
+      startMessages,
+      hasLength(1),
+      reason:
+          'capture $shotName: tapping Start must send one start_game. '
+          '$reproduce',
+    );
+    final String startId = _idOf(startMessages.single);
+
+    transport.pushText(
+      _frame(
+        type: 'game_started',
+        re: startId,
+        data: <String, Object?>{
+          'turn': 0,
+          'game_id': gameId,
+          'client_seeds': '0:seed',
+          'seq': 3,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(GameScreen),
+      'capture $shotName: GameScreen after the game_started push answering '
+      'start_game. $reproduce',
+    );
+    expect(find.byType(LobbyScreen), findsNothing);
+
+    final int gameOverSeq = await _playEndCardScript(
+      tester,
+      transport,
+      controller,
+      gameStartedSeq: 3,
+      priyaWins: iWin,
+    );
+
+    final int winnerSeat = iWin ? 0 : 1;
+    transport.pushText(
+      _frame(
+        type: 'game_over',
+        data: <String, Object?>{
+          'winner': winnerSeat,
+          'verify_url':
+              'https://verify.example.invalid/shot${shotName.substring(0, 2)}',
+          'seq': gameOverSeq,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, got '
+          '${loc.localeName}. $reproduce',
+    );
+    final String expectedTitle = iWin
+        ? loc.endWinTitle
+        : loc.endLoseTitle(otherName);
+
+    await _pumpRealDurationFrames(tester);
+
+    _expectGameOverWinnerText(
+      tester,
+      controller: controller,
+      expectedWinner: winnerSeat,
+      expectedText: expectedTitle,
+      momentDescription:
+          'after the post-game-over settle, immediately before capture '
+          '$shotName',
+    );
+    if (iWin) {
+      // rolls 6, sixes 1, captures 1, home 4.
+      _expectEndCardStatTiles(
+        tester,
+        rolls: 6,
+        sixes: 1,
+        captures: 1,
+        home: 4,
+        momentDescription:
+            'after the post-game-over settle, immediately before capture '
+            '$shotName',
+      );
+    } else {
+      // rolls 2, sixes 1, captures 0, home 0.
+      _expectEndCardStatTiles(
+        tester,
+        rolls: 2,
+        sixes: 1,
+        captures: 0,
+        home: 0,
+        momentDescription:
+            'after the post-game-over settle, immediately before capture '
+            '$shotName',
+      );
+    }
+
+    final Finder verifyButton = find.byKey(
+      const Key('game-screen-verify-button'),
+    );
+    expect(
+      verifyButton,
+      findsOneWidget,
+      reason:
+          'capture $shotName: expected the end card\'s verify button '
+          '(game-screen-verify-button) in the tree before the shot. '
+          '$reproduce',
+    );
+    final double scaledTen = MediaQuery.textScalerOf(
+      tester.element(verifyButton),
+    ).scale(10);
+    expect(
+      scaledTen,
+      closeTo(13.0, 1e-9),
+      reason:
+          'capture $shotName: expected MediaQuery.textScalerOf at '
+          'game-screen-verify-button to scale 10 to 13 under '
+          'tester.platformDispatcher.textScaleFactorTestValue = 1.3, got '
+          '$scaledTen. $reproduce',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+
+  // The scale is cleared here, in the body, and again by the addTearDown
+  // registered above.
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+}
+
+/// A section 6 seat object carrying `timer_steps` (section 23 rule 1: always
+/// present in a snapshot). [_seatJson] is not changed.
+Map<String, Object?> _seatJsonWithSteps(
+  int seat, {
+  required String name,
+  required List<int> tokens,
+  required int steps,
+}) => <String, Object?>{
+  ..._seatJson(seat, name: name, tokens: tokens),
+  'timer_steps': steps,
+};
+
+/// HomeScreen's factory for captures 57 and 58. Every `connect` builds a new
+/// transport, so the automatic reconnect after the drop is a second socket.
+/// The first delay holds the reconnecting state on screen long enough to be
+/// asserted, and short enough for the bounded real-time pumps to reach; the
+/// second stays at five minutes and is only armed if the first attempt
+/// fails.
+class _ResumeShotFactory {
+  final List<RoomController> controllers = <RoomController>[];
+  final List<FakeTransport> transports = <FakeTransport>[];
+
+  static const List<Duration> delays = <Duration>[
+    Duration(seconds: 2),
+    Duration(minutes: 5),
+  ];
+
+  RoomController call() {
+    final RoomController created = RoomController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: (Uri url) async {
+        final FakeTransport transport = FakeTransport();
+        transports.add(transport);
+        return transport;
+      },
+      autoReconnectDelays: delays,
+    );
+    controllers.add(created);
+    return created;
+  }
+}
+
+/// Captures 57 and 58. The route captures 49-52 take: Home, lobby, start,
+/// GameScreen over FakeTransport, a 2-player room seated at [0, 2] (the
+/// server's own `_seatIndicesFor` for two players, so the other seat is 2,
+/// not 1). Seat 0 is Priya, seat 2 is Rana. Seat 0 to roll with its tokens
+/// at [12, 20, -1, -1] and Rana's token 0 at 30. The socket then drops the
+/// way capture 25 drops it; the reconnecting line is asserted; the resume
+/// answer arrives with a seq three ahead of the last frame this client saw
+/// (the timer's `rolled`, its `moved` and the `turn` that followed were
+/// never delivered), seat 0 at `timer_steps: 2` with token 0 moved from 12 to
+/// 16, the turn on seat 2 and seat 2 at `timer_steps: 0`.
+Future<void> _shootResumeTimerPlayed(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  const String hostName = 'Priya';
+  const String opponentName = 'Rana';
+  final String reproduce = _reproduce438(shotName);
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final _ResumeShotFactory factory = _ResumeShotFactory();
+  RoomController? controller;
+  try {
+    final Widget home;
+    if (locale.languageCode == 'ar') {
+      home = _reconnectingCaptureHarness(
+        HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+        locale: locale,
+      );
+    } else {
+      home = _ScreenshotHarness(controllerFactory: factory.call);
+    }
+    await tester.pumpWidget(home);
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
+    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+
+    expect(
+      factory.controllers,
+      hasLength(1),
+      reason:
+          'capture $shotName: tapping Create Room must build exactly one '
+          'controller. $reproduce',
+    );
+    controller = factory.controllers.single;
+    final FakeTransport first = factory.transports.single;
+
+    final List<String> createMessages = _sentOfType(first, 'create_room');
+    expect(
+      createMessages,
+      hasLength(1),
+      reason:
+          'capture $shotName: expected one create_room, sent '
+          '${first.sentRaw.map(_typeOf).toList()}. $reproduce',
+    );
+    final String createId = _idOf(createMessages.single);
+
+    first.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+    first.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: roomCode,
+          players: 2,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      'capture $shotName: LobbyScreen after the create_room reply carrying '
+      'code "$roomCode". $reproduce',
+    );
+
+    first.pushText(
+      _frame(
+        type: 'player_joined',
+        data: <String, Object?>{'seat': 2, 'name': opponentName, 'seq': 2},
+      ),
+    );
+    await tester.pump();
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: locale.languageCode,
+      code: roomCode,
+      expectedSeatCount: 2,
+    );
+    expect(
+      controller.room!.seats.map((SeatState s) => s.seat).toList(),
+      <int>[0, 2],
+      reason:
+          'capture $shotName: a 2-player room is seated at [0, 2], got '
+          '${controller.room!.seats.map((SeatState s) => s.seat).toList()}. '
+          '$reproduce',
+    );
+
+    final Finder startButton = find.byKey(const Key('lobby-start-button'));
+    expect(
+      startButton,
+      findsOneWidget,
+      reason:
+          'capture $shotName: the host, seat 0, must see a Start button '
+          'once seated. $reproduce',
+    );
+    await tester.tap(startButton);
+    await tester.pump();
+    final List<String> startMessages = _sentOfType(first, 'start_game');
+    expect(
+      startMessages,
+      hasLength(1),
+      reason:
+          'capture $shotName: tapping Start must send one start_game. '
+          '$reproduce',
+    );
+    final String startId = _idOf(startMessages.single);
+
+    first.pushText(
+      _frame(
+        type: 'game_started',
+        re: startId,
+        data: <String, Object?>{
+          'turn': 0,
+          'game_id': gameId,
+          'client_seeds': '0:seed',
+          'seq': 3,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(GameScreen),
+      'capture $shotName: GameScreen after the game_started push answering '
+      'start_game. $reproduce',
+    );
+    expect(find.byType(LobbyScreen), findsNothing);
+
+    int seq = 3;
+    seq = await _pushSeatMoved(
+      tester,
+      first,
+      seq,
+      seat: 0,
+      token: 0,
+      from: -1,
+      to: 12,
+    );
+    seq = await _pushSeatMoved(
+      tester,
+      first,
+      seq,
+      seat: 0,
+      token: 1,
+      from: -1,
+      to: 20,
+    );
+    seq = await _pushSeatMoved(
+      tester,
+      first,
+      seq,
+      seat: 2,
+      token: 0,
+      from: -1,
+      to: 30,
+    );
+
+    expect(
+      controller.hasDesynced,
+      isFalse,
+      reason:
+          'capture $shotName: the live prefix must stay in seq (room seq '
+          '${controller.room?.seq}, last push $seq). $reproduce',
+    );
+    expect(controller.room?.seq, seq);
+    expect(controller.room?.state, RoomState.playing);
+    expect(_endCardTokens(controller, 0), <int>[12, 20, -1, -1]);
+    expect(_turnOf(controller).seat, 0);
+    expect(_turnOf(controller).phaseName, 'awaitRoll');
+    expect(
+      find.byKey(const Key('game-timer-played-notice')),
+      findsNothing,
+      reason:
+          'capture $shotName: nothing has been played by the timer yet, so '
+          'the notice must be absent before the drop. $reproduce',
+    );
+
+    // The drop. The automatic attempt is two seconds away, so the
+    // reconnecting line is on screen for the asserts below.
+    first.endFromFarSide();
+    await tester.pump();
+    await tester.pump();
+    expect(
+      first.isClosed,
+      isTrue,
+      reason:
+          'capture $shotName: the first transport must actually have '
+          'dropped. $reproduce',
+    );
+    expect(controller.phase, RoomPhase.closed);
+    expect(controller.autoReconnectPending, isTrue);
+    expect(
+      find.byKey(const Key('game-screen-connection-lost')),
+      findsOneWidget,
+      reason:
+          'capture $shotName: expected game-screen-connection-lost after '
+          'the drop. $reproduce',
+    );
+    final Finder reconnecting = find.byKey(
+      const Key('game-screen-reconnecting'),
+    );
+    expect(
+      reconnecting,
+      findsOneWidget,
+      reason:
+          'capture $shotName: expected game-screen-reconnecting after the '
+          'drop. $reproduce',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, got '
+          '${loc.localeName}. $reproduce',
+    );
+    expect(tester.widget<Text>(reconnecting).data, loc.lobbyReconnecting);
+
+    await _pumpUntilReady(
+      tester,
+      () =>
+          factory.transports.length >= 2 &&
+          factory.transports.last.sentRaw.any(
+            (String raw) => _typeOf(raw) == 'resume',
+          ),
+      'capture $shotName: a second transport with resume on it. $reproduce',
+      maxPumps: 300,
+    );
+    expect(factory.transports, hasLength(2));
+    final FakeTransport live = factory.transports.last;
+    expect(
+      _typeOf(live.sentRaw.first),
+      'resume',
+      reason:
+          'capture $shotName: the new transport\'s first frame must be '
+          'resume. $reproduce',
+    );
+    final String resumeId = _idOf(live.sentRaw.first);
+
+    // Three frames were never delivered: the timer's rolled, its moved and
+    // the turn that followed.
+    final int resumeSeq = seq + 3;
+    live.pushText(
+      _frame(
+        type: 'room',
+        re: resumeId,
+        data: _roomJson(
+          code: roomCode,
+          state: 'PLAYING',
+          players: 2,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[
+            _seatJsonWithSteps(
+              0,
+              name: hostName,
+              tokens: <int>[16, 20, -1, -1],
+              steps: 2,
+            ),
+            _seatJsonWithSteps(
+              2,
+              name: opponentName,
+              tokens: <int>[30, -1, -1, -1],
+              steps: 0,
+            ),
+          ],
+          turn: <String, Object?>{
+            'seat': 2,
+            'phase': 'await_roll',
+            'deadline_ms': _trayDeadlineMs,
+            'k': 0,
+          },
+          gameId: gameId,
+          clientSeeds: '0:seed',
+          seq: resumeSeq,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(controller.phase, RoomPhase.connected);
+    expect(
+      controller.hasDesynced,
+      isFalse,
+      reason:
+          'capture $shotName: the resume answer must not desync the '
+          'controller. $reproduce',
+    );
+    expect(controller.room?.seq, resumeSeq);
+    expect(controller.room?.state, RoomState.playing);
+    expect(_endCardTokens(controller, 0), <int>[16, 20, -1, -1]);
+    expect(
+      controller.room!.seats
+          .firstWhere((SeatState s) => s.seat == 0)
+          .timerSteps,
+      2,
+      reason:
+          'capture $shotName: the resume answer must carry seat 0 '
+          'timer_steps 2. $reproduce',
+    );
+    expect(_turnOf(controller).seat, 2);
+    expect(_turnOf(controller).phaseName, 'awaitRoll');
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    expect(
+      find.byKey(const Key('game-screen-connection-lost')),
+      findsNothing,
+      reason:
+          'capture $shotName: the resume answer must have taken the '
+          'reconnecting card away. $reproduce',
+    );
+    final Finder notice = find.byKey(const Key('game-timer-played-notice'));
+    expect(
+      notice,
+      findsOneWidget,
+      reason:
+          'capture $shotName: C-432 D4, game-timer-played-notice must be '
+          'on screen -- the resume answer says the timer played seat 0 '
+          '(timer_steps 2). $reproduce',
+    );
+    expect(
+      tester.widget<Text>(notice).data,
+      loc.gameTimerPlayedMine,
+      reason:
+          'capture $shotName: the notice must read gameTimerPlayedMine. '
+          '$reproduce',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Captures 59 and 60. The app relaunches into a room it was seated in:
+/// `resumeRoom` answered by a PLAYING snapshot (seats [0, 2], seat 0 Priya
+/// at `timer_steps: 1`, seat 2 Rana at 0, the turn on seat 2), and GameScreen
+/// mounts straight into it, the way capture 10 mounts one.
+Future<void> _shootRelaunchTimerPlayed(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String seatToken,
+}) async {
+  final String reproduce = _reproduce438(shotName);
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final FakeTransport transport = FakeTransport();
+  final RoomController controller = RoomController(
+    serverUrl: Uri.parse(_testUrl),
+    connect: (Uri url) async => transport,
+  );
+  try {
+    final Future<void> resumeFuture = controller.resumeRoom(
+      code: roomCode,
+      seat: 0,
+      seatToken: seatToken,
+    );
+    await _pumpUntilReady(
+      tester,
+      () => _sentOfType(transport, 'resume').isNotEmpty,
+      'capture $shotName: a resume request on the transport. $reproduce',
+    );
+    final List<String> resumeMessages = _sentOfType(transport, 'resume');
+    expect(
+      resumeMessages,
+      hasLength(1),
+      reason:
+          'capture $shotName: expected one resume, sent '
+          '${transport.sentRaw.map(_typeOf).toList()}. $reproduce',
+    );
+    final String resumeId = _idOf(resumeMessages.single);
+
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: resumeId,
+        data: _roomJson(
+          code: roomCode,
+          state: 'PLAYING',
+          players: 2,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[
+            _seatJsonWithSteps(
+              0,
+              name: 'Priya',
+              tokens: <int>[14, 31, -1, -1],
+              steps: 1,
+            ),
+            _seatJsonWithSteps(
+              2,
+              name: 'Rana',
+              tokens: <int>[22, -1, -1, -1],
+              steps: 0,
+            ),
+          ],
+          turn: <String, Object?>{
+            'seat': 2,
+            'phase': 'await_roll',
+            'deadline_ms': _trayDeadlineMs,
+            'k': 0,
+          },
+          gameId: 'b59b60b59b60b59b',
+          clientSeeds: '0:seed',
+          seq: 11,
+        ),
+      ),
+    );
+    await resumeFuture;
+    expect(
+      controller.phase,
+      RoomPhase.connected,
+      reason:
+          'capture $shotName: the resume answer must land the controller '
+          'connected before GameScreen mounts. $reproduce',
+    );
+    expect(controller.room?.state, RoomState.playing);
+    expect(controller.seat, 0);
+    expect(
+      controller.room!.seats
+          .firstWhere((SeatState s) => s.seat == 0)
+          .timerSteps,
+      1,
+      reason:
+          'capture $shotName: the snapshot must carry seat 0 timer_steps 1. '
+          '$reproduce',
+    );
+
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        GameScreen(controller: controller),
+        locale: locale,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(_turnOf(controller).seat, 2);
+    expect(_turnOf(controller).phaseName, 'awaitRoll');
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, got '
+          '${loc.localeName}. $reproduce',
+    );
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final Finder notice = find.byKey(const Key('game-timer-played-notice'));
+    expect(
+      notice,
+      findsOneWidget,
+      reason:
+          'capture $shotName: C-432 D4, game-timer-played-notice must be '
+          'on screen -- GameScreen mounted into a PLAYING snapshot whose '
+          'seat 0 has timer_steps 1. $reproduce',
+    );
+    expect(
+      tester.widget<Text>(notice).data,
+      loc.gameTimerPlayedMine,
+      reason:
+          'capture $shotName: the notice must read gameTimerPlayedMine. '
+          '$reproduce',
     );
 
     await binding.takeScreenshot(shotName);
