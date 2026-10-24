@@ -18,11 +18,20 @@ import 'room_code.dart';
 /// never offers a link the server has already reaped.
 const Duration kVerifyRetention = Duration(days: 90);
 
-/// How long a stored seat record is trusted (C-447 D2). docs/PROTOCOL.md
-/// section 3 reaps every room 60 minutes after it is created, and a seat is
-/// taken after its room exists, so a record written this long ago names a
-/// room the server has already reaped. [SessionMemory.load] treats an older
-/// record as absent and clears it.
+/// How often Home rewrites an unchanged seat record while connected (C-451
+/// D6): a controller notification arriving at least this long after Home's
+/// last write refreshes the saved time. Nothing else writes more often.
+const Duration kSeatRecordRefresh = Duration(minutes: 1);
+
+/// How long a stored seat record is trusted (C-447 D2, C-451 D7). The age is
+/// the time since this phone last held the seat while connected: Home
+/// rewrites the record at least every [kSeatRecordRefresh] while its
+/// controller is connected to a room that is not finished, so the saved time
+/// stays within a minute of the last moment the seat was held.
+/// [SessionMemory.load] treats a record at least this old as absent and
+/// clears it. Sixty minutes because a phone away from a live game for an hour
+/// has had every turn played by the server's timer, and a record that old is
+/// far more likely to name a room the server has reaped than a live one.
 const Duration kSeatRecordMaxAge = Duration(minutes: 60);
 
 /// A seat held on the server, kept so a killed and relaunched app can send
