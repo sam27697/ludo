@@ -866,6 +866,15 @@ class _HomeScreenState extends State<HomeScreen>
     return typed.isEmpty ? loc.homeDefaultPlayerName : typed;
   }
 
+  /// D2 of C-449: the player closes the notice by hand. Every other event
+  /// that hides it (create, join, rejoin) is handled where it starts.
+  void _dismissNotice() {
+    setState(() {
+      _removedNotice = false;
+      _gameGoneNotice = false;
+    });
+  }
+
   Future<void> _createRoom() async {
     if (_removedNotice || _gameGoneNotice) {
       setState(() {
@@ -929,6 +938,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (result == GameScreenResult.removed && mounted) {
       setState(() {
         _removedNotice = true;
+        _gameGoneNotice = false;
       });
     }
     // Rule 2 of order 080: LobbyScreen never disposes a controller it did
@@ -1018,6 +1028,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (result == GameScreenResult.removed && mounted) {
       setState(() {
         _removedNotice = true;
+        _gameGoneNotice = false;
       });
     }
     // See the matching comment in _createRoom: leave() must be awaited
@@ -1067,6 +1078,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (result == GameScreenResult.gameGone && mounted) {
       setState(() {
         _gameGoneNotice = true;
+        _removedNotice = false;
       });
     }
     // See the matching comment in _createRoom: leave() must be awaited
@@ -1082,6 +1094,7 @@ class _HomeScreenState extends State<HomeScreen>
     } else if (result == GameScreenResult.removed) {
       setState(() {
         _removedNotice = true;
+        _gameGoneNotice = false;
       });
     }
   }
@@ -1356,6 +1369,22 @@ class _HomeScreenState extends State<HomeScreen>
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
+                                  if (_removedNotice || _gameGoneNotice) ...[
+                                    _HomeNotice(
+                                      cardKey: const Key('home-notice'),
+                                      textKey: _gameGoneNotice
+                                          ? const Key('home-game-gone-notice')
+                                          : const Key('home-removed-notice'),
+                                      text: _gameGoneNotice
+                                          ? loc.homeGameGoneNotice
+                                          : loc.homeRemovedNotice,
+                                      dismissLabel: loc.homeNoticeDismiss,
+                                      onDismiss: _dismissNotice,
+                                    ),
+                                    SizedBox(
+                                      height: compact ? kSpace3 : kSpace4,
+                                    ),
+                                  ],
                                   if (seatRecord != null) ...[
                                     ElevatedButton.icon(
                                       key: const Key('home-rejoin-button'),
@@ -1561,32 +1590,6 @@ class _HomeScreenState extends State<HomeScreen>
                                     ),
                                   ],
                                   SizedBox(height: compact ? kSpace3 : kSpace6),
-                                  if (_removedNotice) ...[
-                                    Text(
-                                      loc.homeRemovedNotice,
-                                      key: const Key('home-removed-notice'),
-                                      textAlign: TextAlign.center,
-                                      style: textTheme.bodyMedium?.copyWith(
-                                        color: LudoColors.inkMuted,
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      height: compact ? kSpace2 : kSpace3,
-                                    ),
-                                  ],
-                                  if (_gameGoneNotice) ...[
-                                    Text(
-                                      loc.homeGameGoneNotice,
-                                      key: const Key('home-game-gone-notice'),
-                                      textAlign: TextAlign.center,
-                                      style: textTheme.bodyMedium?.copyWith(
-                                        color: LudoColors.inkMuted,
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      height: compact ? kSpace2 : kSpace3,
-                                    ),
-                                  ],
                                   KeyedSubtree(
                                     key: _createButtonScrollKey,
                                     child: _weightedButton(
@@ -1817,6 +1820,117 @@ class _RoomCodeInputFormatter extends TextInputFormatter {
 /// Last successful table, shown when [SessionMemory.hasLastTable] is true.
 /// Visual weight stays below Create (muted paper, not action fill) so
 /// Create still outweighs Join with the chip on screen.
+/// C-449 D1-D3: the one surface every Home notice renders in. A tinted card
+/// with a leading info icon and a trailing close control, ink text at body
+/// size. Directional padding and a plain [Row] mean it mirrors in Arabic
+/// without any locale branch: the icon sits at the start edge, the close
+/// control at the end edge. The text wraps at large text scales.
+class _HomeNotice extends StatefulWidget {
+  const _HomeNotice({
+    required this.cardKey,
+    required this.textKey,
+    required this.text,
+    required this.dismissLabel,
+    required this.onDismiss,
+  });
+
+  final Key cardKey;
+  final Key textKey;
+  final String text;
+  final String dismissLabel;
+  final VoidCallback onDismiss;
+
+  @override
+  State<_HomeNotice> createState() => _HomeNoticeState();
+}
+
+class _HomeNoticeState extends State<_HomeNotice> {
+  @override
+  void initState() {
+    super.initState();
+    // At a large text scale the title block can fill the screen and push the
+    // card below the fold, where the player cannot learn why they are here.
+    // Bring it into view once, by scrolling, never by jumping. A card that
+    // is already visible does not move the page.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final bool reduce = MediaQuery.disableAnimationsOf(context);
+      Scrollable.ensureVisible(
+        context,
+        duration: reduce ? Duration.zero : const Duration(milliseconds: 250),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final bool disableAnimations = MediaQuery.disableAnimationsOf(context);
+    final Widget card = DecoratedBox(
+      key: widget.cardKey,
+      decoration: BoxDecoration(
+        color: LudoColors.paperWashTop,
+        borderRadius: BorderRadius.circular(kRadiusControl),
+        border: Border.all(color: LudoColors.feltLight),
+      ),
+      child: Padding(
+        padding: const EdgeInsetsDirectional.only(
+          start: kSpace3,
+          top: kSpace1,
+          bottom: kSpace1,
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.info_outline_rounded,
+              color: LudoColors.ink,
+              size: 24,
+            ),
+            const SizedBox(width: kSpace3),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: kSpace2),
+                child: Text(
+                  widget.text,
+                  key: widget.textKey,
+                  textAlign: TextAlign.start,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: LudoColors.ink,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              key: const Key('home-notice-dismiss'),
+              onPressed: widget.onDismiss,
+              tooltip: widget.dismissLabel,
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              color: LudoColors.ink,
+              icon: const Icon(Icons.close_rounded),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (disableAnimations) {
+      return card;
+    }
+    // The notice fades in; it never pops. Layout is not animated so the
+    // controls inside are in their final place on the first frame.
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+      builder: (context, value, child) => Opacity(opacity: value, child: child),
+      child: card,
+    );
+  }
+}
+
 class _LastTableChip extends StatelessWidget {
   const _LastTableChip({required this.name, required this.seats});
 

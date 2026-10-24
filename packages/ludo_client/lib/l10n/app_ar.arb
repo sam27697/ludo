@@ -11,6 +11,7 @@
   "homeRoomCodeInvalid": "هذا لا يبدو رمز غرفة صحيحًا. تحقق من الحروف والأرقام وحاول مرة أخرى.",
   "homeRemovedNotice": "بدأت الجولة التالية بدونك",
   "homeGameGoneNotice": "انتهت تلك اللعبة.",
+  "homeNoticeDismiss": "إغلاق",
   "homeLastGame": "جولتك الأخيرة: كل رمية قابلة للتحقق",
   "homeLocaleToggleTooltip": "تغيير اللغة",
   "homeLocaleToggleLabel": "English",
