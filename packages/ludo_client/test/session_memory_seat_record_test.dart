@@ -526,18 +526,22 @@ void main() {
     test(
       'the stored int comes back as that many milliseconds since epoch',
       () async {
+        // Five minutes old: inside kSeatRecordMaxAge (D2), so load keeps it.
+        final int storedMs = DateTime.now()
+            .subtract(const Duration(minutes: 5))
+            .millisecondsSinceEpoch;
         SharedPreferences.setMockInitialValues(<String, Object>{
           'session.seat': <String>['K7M2QP', '2', 'tok-int'],
-          'session.seatSavedAt': 1700000000000,
+          'session.seatSavedAt': storedMs,
         });
 
         final SessionMemory memory = await SessionMemory.load();
 
         expect(
           savedAtOf(memory)?.millisecondsSinceEpoch,
-          1700000000000,
+          storedMs,
           reason:
-              'S-D1c: seatSavedAt must be the stored int read as '
+              'S-D1c: seatSavedAt must be the stored int $storedMs read as '
               'milliseconds since epoch; got ${savedAtOf(memory)}',
         );
       },

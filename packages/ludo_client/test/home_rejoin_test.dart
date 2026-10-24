@@ -129,13 +129,14 @@ Map<String, Object?> _roomJson({
 /// every case except W-9, which needs its single controller's connector to
 /// behave differently across its own two calls.
 class _RecordingControllerFactory {
-  final List<RoomController> controllers = <RoomController>[];
+  final List<_DisposalTrackingController> controllers =
+      <_DisposalTrackingController>[];
   final List<FakeTransport> transports = <FakeTransport>[];
 
   RoomController call() {
     final FakeTransport transport = FakeTransport();
     transports.add(transport);
-    final RoomController created = RoomController(
+    final _DisposalTrackingController created = _DisposalTrackingController(
       serverUrl: Uri.parse(_testUrl),
       connect: (Uri url) async => transport,
     );
@@ -143,10 +144,32 @@ class _RecordingControllerFactory {
     return created;
   }
 
+  /// Disposes only the controllers nobody has disposed yet. Under C-447 D4 a
+  /// refused resume pops the lobby and Home retires (leaves and disposes) the
+  /// controller itself, and a ChangeNotifier refuses a second dispose.
   void disposeAll() {
-    for (final RoomController controller in controllers) {
-      controller.dispose();
+    for (final _DisposalTrackingController controller in controllers) {
+      if (!controller.wasDisposed) {
+        controller.dispose();
+      }
     }
+  }
+}
+
+/// A [RoomController] that remembers whether [dispose] has run, so the rig
+/// can tell a controller Home already retired from one it still owns.
+class _DisposalTrackingController extends RoomController {
+  _DisposalTrackingController({
+    required super.serverUrl,
+    required super.connect,
+  });
+
+  bool wasDisposed = false;
+
+  @override
+  void dispose() {
+    wasDisposed = true;
+    super.dispose();
   }
 }
 
@@ -830,6 +853,27 @@ void main() {
           reason:
               'H2c: a resume for code "$_kCode" refused with $errorCode '
               'must clear session.seat; still holds $stored',
+        );
+
+        // C-447 D4: the refused resume pops the lobby and Home shows the
+        // true line instead of lobby-error.
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(
+          ModalRoute.of(
+            tester.element(find.byType(HomeScreen, skipOffstage: false)),
+          )?.isCurrent,
+          isTrue,
+          reason:
+              'C-447 D4: a resume for code "$_kCode" refused with $errorCode '
+              'must pop back to Home, which must be the current route',
+        );
+        expect(
+          find.byKey(const Key('home-game-gone-notice')),
+          findsOneWidget,
+          reason:
+              'C-447 D4: a resume refused with $errorCode must show '
+              'home-game-gone-notice on Home',
         );
       });
     }

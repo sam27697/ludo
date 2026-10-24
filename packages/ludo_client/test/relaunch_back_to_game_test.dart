@@ -13,6 +13,8 @@
 //                   home with a true line instead of lobby-error
 //   R10      D5     any other failure is unchanged
 //   R11, R12 D4b    a room link to a reaped room gets its own line and no Retry
+//   R6b-d    D3b    the cold link race: the link wins, the reader answers
+//                   null, or the reader never answers (500 ms bound)
 //   R13      D3     a Home that is not the current route does not resume
 //
 // Time: every saved time is seeded relative to DateTime.now() at the start of
@@ -197,15 +199,39 @@ Future<List<String>?> _storedSeat() async {
   return prefs.getStringList(_seatPrefsKey);
 }
 
+/// A [RoomController] that remembers whether [dispose] has run. Home retires
+/// (leaves and disposes) the controllers it owns when a route pops, and a
+/// ChangeNotifier refuses a second dispose, so the rigs below dispose only
+/// the controllers nobody has disposed yet.
+class _TrackedController extends RoomController {
+  _TrackedController({required super.serverUrl, required super.connect});
+
+  bool wasDisposed = false;
+
+  @override
+  void dispose() {
+    wasDisposed = true;
+    super.dispose();
+  }
+}
+
+void _disposeUnretired(List<_TrackedController> controllers) {
+  for (final _TrackedController controller in controllers) {
+    if (!controller.wasDisposed) {
+      controller.dispose();
+    }
+  }
+}
+
 /// Hands out a fresh controller over a fresh [FakeTransport] per call.
 class _Factory {
-  final List<RoomController> controllers = <RoomController>[];
+  final List<_TrackedController> controllers = <_TrackedController>[];
   final List<FakeTransport> transports = <FakeTransport>[];
 
   RoomController call() {
     final FakeTransport transport = FakeTransport();
     transports.add(transport);
-    final RoomController created = RoomController(
+    final _TrackedController created = _TrackedController(
       serverUrl: Uri.parse(_testUrl),
       connect: (Uri url) async => transport,
     );
@@ -225,27 +251,14 @@ class _Factory {
       for (final String s in t.sentRaw) _typeOf(s),
   ];
 
-  /// Disposes every controller. Home disposes the ones it retires itself, and
-  /// a ChangeNotifier refuses a second dispose, so that refusal is the only
-  /// thing swallowed here.
-  void disposeAll() {
-    final List<RoomController> pending = List<RoomController>.of(controllers);
-    controllers.clear();
-    for (final RoomController controller in pending) {
-      try {
-        controller.dispose();
-      } on FlutterError {
-        // Already disposed by Home's own retire flow.
-      }
-    }
-  }
+  void disposeAll() => _disposeUnretired(controllers);
 }
 
 /// A connector whose first call rejects (the shape RoomConnection maps to
 /// errorCode "transport") and whose later calls open a fresh transport.
 class _FlakyFactory {
   final List<FakeTransport> transports = <FakeTransport>[];
-  final List<RoomController> controllers = <RoomController>[];
+  final List<_TrackedController> controllers = <_TrackedController>[];
   int connectCalls = 0;
 
   Future<FakeTransport> _connect(Uri url) async {
@@ -259,7 +272,7 @@ class _FlakyFactory {
   }
 
   RoomController call() {
-    final RoomController created = RoomController(
+    final _TrackedController created = _TrackedController(
       serverUrl: Uri.parse(_testUrl),
       connect: _connect,
     );
@@ -267,15 +280,7 @@ class _FlakyFactory {
     return created;
   }
 
-  void disposeAll() {
-    for (final RoomController controller in controllers) {
-      try {
-        controller.dispose();
-      } on FlutterError {
-        // Already disposed by Home's own retire flow.
-      }
-    }
-  }
+  void disposeAll() => _disposeUnretired(controllers);
 }
 
 class _Observer extends NavigatorObserver {
@@ -351,6 +356,70 @@ Future<void> _pumpBounded(WidgetTester tester, {int frames = 8}) async {
 Future<void> _mount(WidgetTester tester, Widget app) async {
   await tester.pumpWidget(app);
   await _pumpBounded(tester);
+}
+
+/// Mounts [app] and lets the session-memory load complete without moving the
+/// fake clock: zero-length pumps run the microtasks the mock store needs.
+Future<void> _mountLoadedOnly(WidgetTester tester, Widget app) async {
+  await tester.pumpWidget(app);
+  for (int i = 0; i < 5; i += 1) {
+    await tester.pump();
+  }
+}
+
+/// R6's expectations: a fresh record for [_kCode] and a link for
+/// [_otherCode] that won. No resume, one pushed route and controller for the
+/// link alone, the join carries the stored name, the button for the old seat
+/// is still on Home, and its record is untouched.
+Future<void> _expectOtherLinkHandled(
+  _Factory factory,
+  _Observer observer, {
+  required String scenario,
+}) async {
+  expect(
+    factory.sent('resume'),
+    isEmpty,
+    reason:
+        '$scenario: no resume for the old seat may be sent; sent '
+        '${factory.allTypes}',
+  );
+  expect(
+    observer.abovePushes,
+    1,
+    reason:
+        '$scenario: the link pushes exactly one route; pushed '
+        '${observer.abovePushes}',
+  );
+  expect(
+    factory.controllers,
+    hasLength(1),
+    reason: '$scenario: one controller, for the link only',
+  );
+  final List<String> joins = factory.sent('join_room');
+  expect(
+    joins,
+    hasLength(1),
+    reason: '$scenario: the link joins once; sent ${factory.allTypes}',
+  );
+  expect(
+    _dataOf(joins.single),
+    <String, Object?>{'code': _otherCode, 'name': _knownName},
+    reason:
+        '$scenario: join_room carries the link code and the stored name; '
+        'sent ${_dataOf(joins.single)}',
+  );
+  expect(
+    find.byKey(_rejoinKey, skipOffstage: false),
+    findsOneWidget,
+    reason:
+        '$scenario: the button for $_kCode must still be on Home under the '
+        'pushed route',
+  );
+  expect(
+    await _storedSeat(),
+    _seatList(),
+    reason: '$scenario: the record for $_kCode must be untouched',
+  );
 }
 
 bool _homeIsCurrent(WidgetTester tester) {
@@ -799,61 +868,127 @@ void main() {
     },
   );
 
-  testWidgets('R6 (D3, link for another code): the link is handled as before, no '
-      'resume for the old seat, its button stays on Home', (tester) async {
-    _seedFresh(known: true);
-    final _Factory factory = _Factory();
-    final _Observer observer = _Observer();
-    final _LinkRig links = _LinkRig(cold: _linkTo(_otherCode));
-    addTearDown(links.stream.close);
-    await _mount(tester, _app(factory.call, observer: observer, links: links));
+  testWidgets(
+    'R6 (D3, link for another code): the link is handled as before, no '
+    'resume for the old seat, its button stays on Home',
+    (tester) async {
+      _seedFresh(known: true);
+      final _Factory factory = _Factory();
+      final _Observer observer = _Observer();
+      final _LinkRig links = _LinkRig(cold: _linkTo(_otherCode));
+      addTearDown(links.stream.close);
+      await _mount(
+        tester,
+        _app(factory.call, observer: observer, links: links),
+      );
 
-    expect(
-      factory.sent('resume'),
-      isEmpty,
-      reason:
-          'R6 fresh record for $_kCode, link for $_otherCode: no resume '
-          'for the old seat may be sent; sent ${factory.allTypes}',
-    );
-    expect(
-      observer.abovePushes,
-      1,
-      reason:
-          'R6: the link pushes exactly one route; pushed ${observer.abovePushes}',
-    );
-    expect(
-      factory.controllers,
-      hasLength(1),
-      reason: 'R6: one controller, for the link only',
-    );
-    final List<String> joins = factory.sent('join_room');
-    expect(
-      joins,
-      hasLength(1),
-      reason: 'R6: the link joins once; sent ${factory.allTypes}',
-    );
-    expect(
-      _dataOf(joins.single),
-      <String, Object?>{'code': _otherCode, 'name': _knownName},
-      reason:
-          'R6: join_room carries the link code and the stored name; sent '
-          '${_dataOf(joins.single)}',
-    );
-    expect(
-      find.byKey(_rejoinKey, skipOffstage: false),
-      findsOneWidget,
-      reason:
-          'R6: the button for $_kCode must still be on Home under the '
-          'pushed route',
-    );
-    expect(
-      await _storedSeat(),
-      _seatList(),
-      reason: 'R6: the record for $_kCode must be untouched',
-    );
+      await _expectOtherLinkHandled(
+        factory,
+        observer,
+        scenario: 'R6 fresh record for $_kCode, cold link for $_otherCode',
+      );
 
-    await _finish(tester, factory.disposeAll);
-  });
+      await _finish(tester, factory.disposeAll);
+    },
+  );
+
+  // D3b: the initial link reader and the session-memory load race on a cold
+  // start. All three cases below let the load complete first (zero-length
+  // pumps move no fake time), then move the fake clock by hand.
+  testWidgets(
+    'R6b (D3b): the reader answers a link for another code 200 ms after the '
+    'load: no resume for the old seat, the link handled as R6, button stays',
+    (tester) async {
+      _seedFresh(known: true);
+      final _Factory factory = _Factory();
+      final _Observer observer = _Observer();
+      final _LinkRig links = _LinkRig()..deferred = true;
+      addTearDown(links.stream.close);
+      await _mountLoadedOnly(
+        tester,
+        _app(factory.call, observer: observer, links: links),
+      );
+      const String scenario =
+          'R6b fresh record for $_kCode, reader answers a link for '
+          '$_otherCode at +200 ms';
+
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(
+        factory.allTypes,
+        isEmpty,
+        reason:
+            '$scenario: while the reader is pending inside the 500 ms window '
+            'nothing may be sent; sent ${factory.allTypes} at +200 ms',
+      );
+      links.late.complete(_linkTo(_otherCode));
+      await _pumpBounded(tester);
+
+      await _expectOtherLinkHandled(factory, observer, scenario: scenario);
+
+      await _finish(tester, factory.disposeAll);
+    },
+  );
+
+  testWidgets(
+    'R6c (D3b): the reader answers null 200 ms after the load: exactly one '
+    'auto-resume, started after the reader answered',
+    (tester) async {
+      _seedFresh();
+      final _Factory factory = _Factory();
+      final _LinkRig links = _LinkRig()..deferred = true;
+      addTearDown(links.stream.close);
+      await _mountLoadedOnly(tester, _app(factory.call, links: links));
+      const String scenario =
+          'R6c fresh record, reader answers null at +200 ms';
+
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(
+        factory.allTypes,
+        isEmpty,
+        reason:
+            '$scenario: the resume must wait for the reader; sent '
+            '${factory.allTypes} at +200 ms, before it answered',
+      );
+      links.late.complete(null);
+      await tester.pump(const Duration(milliseconds: 50));
+      _expectOnlyResume(
+        factory,
+        scenario: '$scenario, +50 ms after the answer',
+      );
+
+      // Past the 500 ms bound: the bound must not start a second resume.
+      await tester.pump(const Duration(milliseconds: 600));
+      _expectOnlyResume(factory, scenario: '$scenario, past the 500 ms bound');
+
+      await _finish(tester, factory.disposeAll);
+    },
+  );
+
+  testWidgets(
+    'R6d (D3b): the reader never completes: no resume at 400 ms, exactly one '
+    'by 700 ms after the load',
+    (tester) async {
+      _seedFresh();
+      final _Factory factory = _Factory();
+      final _LinkRig links = _LinkRig()..deferred = true;
+      addTearDown(links.stream.close);
+      await _mountLoadedOnly(tester, _app(factory.call, links: links));
+      const String scenario = 'R6d fresh record, reader never completes';
+
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        factory.allTypes,
+        isEmpty,
+        reason:
+            '$scenario: D3 waits up to 500 ms for the reader; sent '
+            '${factory.allTypes} at +400 ms',
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      _expectOnlyResume(factory, scenario: '$scenario, +700 ms');
+
+      await _finish(tester, factory.disposeAll);
+    },
+  );
 
   testWidgets(
     'R7 (D3, once): after the resumed game is left, Home is current and '
