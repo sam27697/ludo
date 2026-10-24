@@ -947,6 +947,8 @@ class RoomRegistry {
     // LOBBY's 60 minutes, and the 6-hour ceiling of a game that follows)
     // restarts from this moment.
     room.lifetimeStartedAt = _clock.now;
+    // The FINISHED stamp belonged to the game that just ended.
+    _finishedSince.remove(room.code);
   }
 
   /// `roll`, `docs/PROTOCOL.md` section 12.1. The rejection ladder below is
@@ -1422,7 +1424,8 @@ class RoomRegistry {
   ///   does not apply, and the turn timer playing for absent seats is not a
   ///   connection.
   /// - FINISHED: [_finishedTimeout] after the registry first observes it
-  ///   FINISHED.
+  ///   FINISHED. The stamp belongs to one finished game: a room seen in any
+  ///   other state loses it, so a rematch's game gets its own.
   /// - Any state but LOBBY: [_maxRoomLifetime] since
   ///   `Room.lifetimeStartedAt`, whatever else is true.
   int reap() {
@@ -1432,6 +1435,7 @@ class RoomRegistry {
       final Duration lifetime = now.difference(room.lifetimeStartedAt);
       switch (room.state) {
         case RoomState.lobby:
+          _finishedSince.remove(room.code);
           final DateTime? idleSince = _idleSince[room.code];
           if (lifetime >= _lobbyLifetime ||
               (idleSince != null &&
@@ -1439,6 +1443,7 @@ class RoomRegistry {
             toRemove.add(room.code);
           }
         case RoomState.playing:
+          _finishedSince.remove(room.code);
           final DateTime? idleSince = _idleSince[room.code];
           if (lifetime >= _maxRoomLifetime ||
               (idleSince != null &&
