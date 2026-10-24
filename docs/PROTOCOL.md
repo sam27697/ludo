@@ -57,7 +57,8 @@ seat is not reassignable by anything a third party can observe.
 
     LOBBY ----start----> PLAYING ----winner----> FINISHED ----> (reaped)
       |                     |                                      ^
-      |                     +---------- all seats gone ------------+
+      |                     +--- all seats gone, or nobody --------+
+      |                     |    connected for 10 min              |
       +----- empty for 10 min, or 60 min total ---------------------+
 
 - **LOBBY.** Created by the host. Accepts joins up to the configured player
@@ -71,8 +72,18 @@ seat is not reassignable by anything a third party can observe.
   LOBBY (section 18). A `rematch` (section 16) takes the room
   back to LOBBY with a new chain; without one, the final state is served to anyone reconnecting, for
   10 minutes, then the room is reaped.
-- A room in any state is reaped 60 minutes after creation regardless. A LOBBY
-  with no connected clients is reaped after 10 minutes.
+- A LOBBY is reaped 60 minutes after creation (or after the last accepted
+  `rematch`, section 16.2 item 4) regardless, and after 10 minutes with no
+  connected client.
+- A PLAYING room is never reaped by that 60-minute total: a game being played
+  is not cut short by the clock. It is reaped after 10 minutes with no
+  connected client (the turn timer acting for absent seats is not a
+  connection; a reconnect restarts the 10 minutes).
+- A FINISHED room is reaped 10 minutes after the game ended (above).
+- Any room that is not a LOBBY is reaped 6 hours after creation (or the last
+  accepted `rematch`) regardless, so no room lives for ever. A four-seat
+  game with two absent seats plays about five hours of timer turns, which is
+  why the bound is not lower.
 - A reaped room's code is not reissued for 24 hours.
 
 ## 4. Client to server
@@ -918,10 +929,10 @@ before anything is sent:
    `/v/<game_id>` and is not touched.
 3. `rematch` in the snapshot becomes `{ "by": <seat>, "ready": [<seat>] }`:
    the requester is ready.
-4. The room's 60-minute total lifetime (section 3) restarts from this
-   moment, so a second game is not reaped half way through. The LOBBY rules
-   of section 3 apply from here (reaped after 10 minutes with no connected
-   client).
+4. The room's lifetime clock (section 3: the LOBBY's 60-minute total and
+   the 6-hour bound on every other state) restarts from this moment. The
+   LOBBY rules of section 3 apply from here (reaped after 10 minutes with no
+   connected client).
 5. `seq` advances by one and the `room` snapshot is broadcast to every
    connected seat; the requester's copy carries `re`.
 

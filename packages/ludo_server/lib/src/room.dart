@@ -156,15 +156,17 @@ class Room {
   final String code;
   final DateTime createdAt;
 
-  /// The moment this room's current 60-minute lifetime budget began.
-  /// `docs/PROTOCOL.md` section 3: "A room in any state is reaped 60 minutes
-  /// after creation regardless." Starts at [createdAt] and is moved forward
-  /// to "this moment" by the first `rematch` of a cycle (section 16.2 item
-  /// 4: "The room's 60-minute total lifetime restarts from this moment, so a
-  /// second game is not reaped half way through"). [createdAt] itself never
-  /// changes -- it is still the room's true creation instant for anything
-  /// that wants that -- so `RoomRegistry.reap` reads this field instead for
-  /// the 60-minute ceiling.
+  /// The moment this room's current lifetime budget began.
+  /// `docs/PROTOCOL.md` section 3, as amended by C-451: a LOBBY is reaped 60
+  /// minutes after this moment even with a seat connected, and a room that
+  /// is not a LOBBY is reaped 6 hours after it regardless. A PLAYING room is
+  /// otherwise reaped only when no seat has been connected for 10 minutes,
+  /// and a FINISHED one 10 minutes after it was first seen finished. Starts
+  /// at [createdAt] and is moved forward to "this moment" by the first
+  /// `rematch` of a cycle (section 16.2 item 4), so a second game is not
+  /// held to the first one's budget. [createdAt] itself never changes -- it
+  /// is still the room's true creation instant for anything that wants that
+  /// -- so `RoomRegistry.reap` reads this field instead for both limits.
   DateTime lifetimeStartedAt;
 
   /// Monotonic, starts at 0 on creation, incremented by exactly one by the

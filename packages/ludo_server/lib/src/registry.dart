@@ -432,9 +432,26 @@ class RematchFailure extends RematchResult {
   final ProtocolError error;
 }
 
-const Duration _lobbyIdleTimeout = Duration(minutes: 10);
+/// `docs/PROTOCOL.md` section 3, as amended by C-451. A LOBBY or PLAYING
+/// room with no connected seat for this long is reaped.
+const Duration _idleTimeout = Duration(minutes: 10);
+
+/// A FINISHED room is reaped this long after the registry first observes it
+/// FINISHED.
 const Duration _finishedTimeout = Duration(minutes: 10);
-const Duration _anyRoomTimeout = Duration(minutes: 60);
+
+/// A LOBBY is reaped this long after `Room.lifetimeStartedAt` (creation, or
+/// the last accepted rematch) even while a seat stays connected. A room that
+/// is PLAYING or FINISHED is not bound by this; see [_maxRoomLifetime].
+const Duration _lobbyLifetime = Duration(minutes: 60);
+
+/// The ceiling for any room that is not a LOBBY, measured from
+/// `Room.lifetimeStartedAt`. A game being played is never reaped by the
+/// 60-minute clock; this is only the backstop for a game that somehow never
+/// ends and never goes idle. Six hours covers a four-seat game with two
+/// absent seats, whose turns the timer plays at the deployed 90 seconds
+/// (about five hours).
+const Duration _maxRoomLifetime = Duration(hours: 6);
 const Duration _codeQuarantine = Duration(hours: 24);
 
 const int _minName = 1;
@@ -487,9 +504,11 @@ class RoomRegistry {
   /// Code -> the moment it stops being quarantined (reap time + 24h).
   final Map<String, DateTime> _quarantine = <String, DateTime>{};
 
-  /// Room code -> the moment its LOBBY first had no connected seat. Absent
-  /// while at least one seat is connected.
-  final Map<String, DateTime> _lobbyIdleSince = <String, DateTime>{};
+  /// Room code -> the moment its room first had no connected seat, in any
+  /// state. Absent while at least one seat is connected. A LOBBY and a
+  /// PLAYING room are reaped [_idleTimeout] after this moment; the turn
+  /// timer playing an absent seat's turns does not touch it.
+  final Map<String, DateTime> _idleSince = <String, DateTime>{};
 
   /// Room code -> the moment this registry first observed it FINISHED.
   /// There is no field on `Room` for this (the frozen shape has none) and
@@ -924,9 +943,12 @@ class RoomRegistry {
     room.chainIndex += 1;
     room.chain = DiceChain.build(_drawBytes(_serverSecretBytes));
     room.rematch = Rematch(by: requester.seat, ready: <int>[requester.seat]);
-    // docs/PROTOCOL.md section 16.2 item 4: the room's 60-minute total
-    // lifetime restarts from this moment.
+    // docs/PROTOCOL.md section 16.2 item 4: the room's lifetime clock (the
+    // LOBBY's 60 minutes, and the 6-hour ceiling of a game that follows)
+    // restarts from this moment.
     room.lifetimeStartedAt = _clock.now;
+    // The FINISHED stamp belonged to the game that just ended.
+    _finishedSince.remove(room.code);
   }
 
   /// `roll`, `docs/PROTOCOL.md` section 12.1. The rejection ladder below is
@@ -1336,6 +1358,7 @@ class RoomRegistry {
       // timer, per docs/PROTOCOL.md section 3. The seat is simply marked
       // not connected.
       seat.connected = false;
+      _refreshIdleTracking(room);
     } else {
       // LOBBY and FINISHED: frees the seat, per docs/PROTOCOL.md section 3
       // and section 18 rules 1-3.
@@ -1358,9 +1381,7 @@ class RoomRegistry {
           ready: current.ready.where((int s) => s != seat.seat).toList(),
         );
       }
-      if (room.state == RoomState.lobby) {
-        _refreshIdleTracking(room);
-      }
+      _refreshIdleTracking(room);
     }
     room.seq++;
     return LeaveOk(room: room, seat: seat);
@@ -1388,38 +1409,59 @@ class RoomRegistry {
       return false;
     }
     seat.connected = connected;
-    if (room.state == RoomState.lobby) {
-      _refreshIdleTracking(room);
-    }
+    _refreshIdleTracking(room);
     room.seq++;
     return true;
   }
 
+  /// Removes every room one of whose state's rules says it is over, and
+  /// returns how many were removed (`docs/PROTOCOL.md` section 3, as amended
+  /// by C-451):
+  ///
+  /// - LOBBY: no connected seat for [_idleTimeout], or [_lobbyLifetime] since
+  ///   `Room.lifetimeStartedAt` even with a seat connected.
+  /// - PLAYING: no connected seat for [_idleTimeout]. The 60-minute total
+  ///   does not apply, and the turn timer playing for absent seats is not a
+  ///   connection.
+  /// - FINISHED: [_finishedTimeout] after the registry first observes it
+  ///   FINISHED. The stamp belongs to one finished game: a room seen in any
+  ///   other state loses it, so a rematch's game gets its own.
+  /// - Any state but LOBBY: [_maxRoomLifetime] since
+  ///   `Room.lifetimeStartedAt`, whatever else is true.
   int reap() {
     final DateTime now = _clock.now;
     final List<String> toRemove = <String>[];
     for (final Room room in _rooms.values) {
-      if (now.difference(room.lifetimeStartedAt) >= _anyRoomTimeout) {
-        toRemove.add(room.code);
-        continue;
-      }
-      if (room.state == RoomState.lobby) {
-        final DateTime? idleSince = _lobbyIdleSince[room.code];
-        if (idleSince != null &&
-            now.difference(idleSince) >= _lobbyIdleTimeout) {
-          toRemove.add(room.code);
-        }
-      } else if (room.state == RoomState.finished) {
-        final DateTime finishedSince =
-            _finishedSince.putIfAbsent(room.code, () => now);
-        if (now.difference(finishedSince) >= _finishedTimeout) {
-          toRemove.add(room.code);
-        }
+      final Duration lifetime = now.difference(room.lifetimeStartedAt);
+      switch (room.state) {
+        case RoomState.lobby:
+          _finishedSince.remove(room.code);
+          final DateTime? idleSince = _idleSince[room.code];
+          if (lifetime >= _lobbyLifetime ||
+              (idleSince != null &&
+                  now.difference(idleSince) >= _idleTimeout)) {
+            toRemove.add(room.code);
+          }
+        case RoomState.playing:
+          _finishedSince.remove(room.code);
+          final DateTime? idleSince = _idleSince[room.code];
+          if (lifetime >= _maxRoomLifetime ||
+              (idleSince != null &&
+                  now.difference(idleSince) >= _idleTimeout)) {
+            toRemove.add(room.code);
+          }
+        case RoomState.finished:
+          final DateTime finishedSince =
+              _finishedSince.putIfAbsent(room.code, () => now);
+          if (lifetime >= _maxRoomLifetime ||
+              now.difference(finishedSince) >= _finishedTimeout) {
+            toRemove.add(room.code);
+          }
       }
     }
     for (final String code in toRemove) {
       _rooms.remove(code);
-      _lobbyIdleSince.remove(code);
+      _idleSince.remove(code);
       _finishedSince.remove(code);
       _quarantine[code] = now.add(_codeQuarantine);
     }
@@ -1610,9 +1652,9 @@ class RoomRegistry {
   void _refreshIdleTracking(Room room) {
     final bool idle = room.seats.every((Seat s) => !s.connected);
     if (idle) {
-      _lobbyIdleSince.putIfAbsent(room.code, () => _clock.now);
+      _idleSince.putIfAbsent(room.code, () => _clock.now);
     } else {
-      _lobbyIdleSince.remove(room.code);
+      _idleSince.remove(room.code);
     }
   }
 
