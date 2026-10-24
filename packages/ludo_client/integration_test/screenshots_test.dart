@@ -1413,7 +1413,11 @@ void main() {
     await binding.convertFlutterSurfaceToImage();
 
     const String rejoinCode = 'K7M2QP';
-    await SessionMemory.recordSeat(
+    // C-449 D5: a record with no saved time (the legacy shape, C-447 D2), so
+    // the button shows and Home does not resume on its own. A record written
+    // through SessionMemory.recordSeat now carries a fresh saved time and
+    // would be resumed before this capture could be taken.
+    await _seedSeatWithoutSavedTime(
       const SeatRecord(code: rejoinCode, seat: 0, seatToken: 'tok-shot-rejoin'),
     );
 
@@ -4799,6 +4803,47 @@ void main() {
       locale: const Locale('ar'),
       roomCode: 'SHOT32',
       shotName: '32-home-removed-ar',
+    );
+  });
+
+  // ==========================================================================
+  // 61, 62: contract C-449 D5 (the Home notice reads as news). Home after a
+  // refused resume (C-447 D4): a legacy seat record (no saved time) shows
+  // the Back to game button, a tap on it is answered NO_SUCH_ROOM, the
+  // lobby route pops, and Home shows home-game-gone-notice in its card. The
+  // same rig as capture 32 (FakeTransport under a real RoomController,
+  // frames pushed by hand), reached through a resume instead of a forced
+  // start.
+  // ==========================================================================
+  testWidgets('capture 61-home-game-gone-en', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    await (await SharedPreferences.getInstance()).clear();
+
+    await _captureHomeGameGone(
+      tester,
+      binding,
+      locale: const Locale('en'),
+      roomCode: 'SHOT61',
+      shotName: '61-home-game-gone-en',
+    );
+  });
+
+  testWidgets('capture 62-home-game-gone-ar', (tester) async {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+
+    await (await SharedPreferences.getInstance()).clear();
+
+    await _captureHomeGameGone(
+      tester,
+      binding,
+      locale: const Locale('ar'),
+      roomCode: 'SHOT62',
+      shotName: '62-home-game-gone-ar',
     );
   });
 
@@ -8501,6 +8546,187 @@ void _expectHomeRemovedState(
         '$shotName ($momentDescription): home-removed-notice must read '
         'homeRemovedNotice ("${loc.homeRemovedNotice}"), got '
         '"${noticeText.data}"',
+  );
+}
+
+/// Writes [record] as `session.seat` alone (exactly `[code, seat, seatToken]`)
+/// and removes `session.seatSavedAt`: the record v1.18.0 and older wrote, which
+/// C-447 D2 keeps and shows as the button without ever resuming on its own.
+Future<void> _seedSeatWithoutSavedTime(SeatRecord record) async {
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+  await prefs.remove('session.seatSavedAt');
+  await prefs.setStringList('session.seat', <String>[
+    record.code,
+    record.seat.toString(),
+    record.seatToken,
+  ]);
+}
+
+/// Captures 61 and 62: Home after a refused resume (C-447 D4), the notice in
+/// its card (C-449 D1).
+Future<void> _captureHomeGameGone(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required Locale locale,
+  required String roomCode,
+  required String shotName,
+}) async {
+  await _seedSeatWithoutSavedTime(
+    SeatRecord(code: roomCode, seat: 0, seatToken: 'tok-$shotName'),
+  );
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+      locale: locale,
+    ),
+  );
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+  expect(
+    find.byKey(const Key('home-rejoin-button')),
+    findsOneWidget,
+    reason:
+        '$shotName: the seat record without a saved time must show '
+        'home-rejoin-button and must not resume on its own',
+  );
+  expect(
+    factory.controllers,
+    isEmpty,
+    reason: '$shotName: nothing may have started a resume before the tap',
+  );
+
+  await tester.ensureVisible(find.byKey(const Key('home-rejoin-button')));
+  await _tapAndAwaitPushedRoute(tester, const Key('home-rejoin-button'));
+
+  expect(
+    factory.controllers,
+    hasLength(1),
+    reason: '$shotName: tapping the button must build exactly one controller',
+  );
+  final FakeTransport transport = factory.transports.single;
+  final List<String> resumeMessages = _sentOfType(transport, 'resume');
+  expect(
+    resumeMessages,
+    hasLength(1),
+    reason: '$shotName: resume must have been sent',
+  );
+
+  // The server has reaped the room: PROTOCOL section 3.
+  transport.pushText(
+    _frame(
+      type: 'error',
+      re: _idOf(resumeMessages.single),
+      data: const <String, Object?>{'code': 'NO_SUCH_ROOM', 'message': ''},
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+
+  // Allow the route pop transition to finish.
+  for (var i = 0; i < 6; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
+  // Answer leave_room if HomeScreen's retirement sent it, as capture 32 does.
+  final List<String> leaveMessages = _sentOfType(transport, 'leave_room');
+  if (leaveMessages.isNotEmpty) {
+    transport.pushText(
+      _frame(
+        type: 'player_left',
+        re: _idOf(leaveMessages.single),
+        data: const <String, Object?>{'seat': 0, 'host_seat': 0, 'seq': 2},
+      ),
+    );
+    await tester.pump();
+  }
+
+  _expectHomeGameGoneState(
+    tester,
+    locale: locale,
+    shotName: shotName,
+    momentDescription: 'before settle',
+  );
+
+  await _pumpRealDurationFrames(tester);
+
+  _expectHomeGameGoneState(
+    tester,
+    locale: locale,
+    shotName: shotName,
+    momentDescription: 'after settle',
+  );
+
+  await binding.takeScreenshot(shotName);
+}
+
+void _expectHomeGameGoneState(
+  WidgetTester tester, {
+  required Locale locale,
+  required String shotName,
+  required String momentDescription,
+}) {
+  expect(
+    find.byType(LobbyScreen),
+    findsNothing,
+    reason:
+        '$shotName ($momentDescription): the lobby route must have popped '
+        'after the refused resume',
+  );
+  expect(
+    find.byKey(const Key('lobby-error')),
+    findsNothing,
+    reason:
+        '$shotName ($momentDescription): a refused resume must not render '
+        'lobby-error',
+  );
+  expect(
+    find.byType(HomeScreen),
+    findsOneWidget,
+    reason: '$shotName ($momentDescription): HomeScreen must be on screen',
+  );
+
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(HomeScreen)),
+  );
+  expect(
+    loc.localeName,
+    locale.languageCode,
+    reason:
+        '$shotName ($momentDescription): expected locale '
+        '"${locale.languageCode}", got "${loc.localeName}"',
+  );
+
+  expect(
+    find.byKey(const Key('home-notice')),
+    findsOneWidget,
+    reason: '$shotName ($momentDescription): home-notice must be shown',
+  );
+  final Finder noticeFinder = find.byKey(const Key('home-game-gone-notice'));
+  expect(
+    noticeFinder,
+    findsOneWidget,
+    reason:
+        '$shotName ($momentDescription): home-game-gone-notice must be '
+        'shown on HomeScreen',
+  );
+  final Text noticeText = tester.widget<Text>(noticeFinder);
+  expect(
+    noticeText.data,
+    loc.homeGameGoneNotice,
+    reason:
+        '$shotName ($momentDescription): home-game-gone-notice must read '
+        'homeGameGoneNotice ("${loc.homeGameGoneNotice}"), got '
+        '"${noticeText.data}"',
+  );
+  expect(
+    find.byKey(const Key('home-removed-notice')),
+    findsNothing,
+    reason:
+        '$shotName ($momentDescription): only one notice may be up, and it '
+        'is the game-gone one',
   );
 }
 
