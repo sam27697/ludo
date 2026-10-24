@@ -594,5 +594,353 @@ void main() {
           reason: 'R6: 10m after first observation at 4h');
       expect(harness.registry.lookup(code), isNull);
     });
+
+    // ------------------------------------------------------------------
+    // Order 456: the cases the first C-451 tests missed. Every scenario is
+    // driven by FakeClock alone, so there is no seed; rerun one with
+    //   dart test test/registry_reap_test.dart --plain-name '<id>'
+    // ------------------------------------------------------------------
+    String repro(String id) =>
+        'scenario $id; reproduce: dart test test/registry_reap_test.dart '
+        "--plain-name '$id'";
+
+    // Takes a started room through a rematch to game 2 PLAYING, the way the
+    // wire does it: FINISHED, host asks, guest accepts, auto-start.
+    void rematchToGame2(
+      ({RoomRegistry registry, FakeClock clock}) harness,
+      ({CreateOk host, JoinOk guest}) room,
+      String id,
+    ) {
+      final String code = room.host.room.code;
+      final RematchResult asked = harness.registry
+          .rematch(code: code, seatToken: room.host.seat.seatToken);
+      expect(asked, isA<RematchOk>(),
+          reason: 'fixture setup: host rematch refused, got $asked. '
+              '${repro(id)}');
+      final RematchResult accepted = harness.registry
+          .rematch(code: code, seatToken: room.guest.seat.seatToken);
+      expect(accepted, isA<RematchOk>(),
+          reason: 'fixture setup: guest accept refused, got $accepted. '
+              '${repro(id)}');
+      expect((accepted as RematchOk).autoStart, isTrue,
+          reason: 'fixture setup: the rematch must auto-start. ${repro(id)}');
+      harness.registry.startRematchAuto(accepted.room);
+      expect(harness.registry.lookup(code)!.state, RoomState.playing,
+          reason: 'fixture setup: game 2 must be PLAYING. ${repro(id)}');
+    }
+
+    // G1 (review defect 1, M7). A seat coming back through resume(), the
+    // path the wire uses, must clear the idle clock exactly as setConnected
+    // does.
+    test(
+        'G1: a PLAYING room with every seat disconnected is not reaped when '
+        'one phone comes back through resume(), at 10 or 15 minutes after the '
+        'first disconnect', () {
+      const String id = 'G1: a PLAYING room with every seat disconnected';
+      final harness = _harness();
+      final room = startedRoom(harness);
+      final String code = room.host.room.code;
+
+      harness.clock.advance(const Duration(minutes: 20));
+      setSeat(harness, code, room.host.seat.seatToken, false);
+      setSeat(harness, code, room.guest.seat.seatToken, false);
+
+      harness.clock.advance(const Duration(minutes: 9));
+      expect(harness.registry.reap(), 0,
+          reason: 'expected no reap 9m after every seat disconnected. '
+              '${repro(id)}');
+
+      final ResumeResult back = harness.registry
+          .resume(code: code, seatToken: room.host.seat.seatToken);
+      expect(back, isA<ResumeOk>(),
+          reason: 'fixture setup: resume of the host seat failed, got '
+              '$back. ${repro(id)}');
+      expect((back as ResumeOk).reconnected, isTrue,
+          reason: 'fixture setup: the host seat was disconnected, so the '
+              'resume must report a reconnection. ${repro(id)}');
+
+      harness.clock.advance(const Duration(minutes: 1));
+      expect(harness.registry.reap(), 0,
+          reason: 'expected the room kept 10m after the first disconnect '
+              '(host resumed at 9m), but reap() removed it: the idle stamp '
+              'survived resume(). ${repro(id)}');
+      expect(harness.registry.lookup(code), isNotNull,
+          reason: 'room $code gone 10m after the first disconnect although '
+              'the host resumed at 9m. ${repro(id)}');
+
+      harness.clock.advance(const Duration(minutes: 5));
+      expect(harness.registry.reap(), 0,
+          reason: 'expected the room kept 15m after the first disconnect '
+              '(host resumed at 9m). ${repro(id)}');
+      expect(harness.registry.lookup(code), isNotNull,
+          reason: 'room $code gone 15m after the first disconnect although '
+              'the host resumed at 9m. ${repro(id)}');
+
+      // The idle clock restarts at the next all-disconnected moment.
+      setSeat(harness, code, room.host.seat.seatToken, false);
+      harness.clock.advance(const Duration(minutes: 9, seconds: 59));
+      expect(harness.registry.reap(), 0,
+          reason: 'expected no reap 9m59s after the resumed seat left '
+              'again. ${repro(id)}');
+      harness.clock.advance(const Duration(seconds: 1));
+      expect(harness.registry.reap(), 1,
+          reason: 'expected a reap 10m after the resumed seat left again. '
+              '${repro(id)}');
+      expect(harness.registry.lookup(code), isNull);
+    });
+
+    // G2 (review defect 2, M5). leaveRoom in PLAYING marks the seat not
+    // connected; the socket close that follows calls setConnected(false),
+    // which returns early. leaveRoom is then the only place the idle clock
+    // can start.
+    test(
+        'G2: a PLAYING room whose last connected seat sends leave_room is not '
+        'reaped at 9m59s after the leave and is reaped at 10m', () {
+      const String id =
+          'G2: a PLAYING room whose last connected seat sends leave_room';
+      final harness = _harness();
+      final room = startedRoom(harness);
+      final String code = room.host.room.code;
+
+      harness.clock.advance(const Duration(minutes: 20));
+      setSeat(harness, code, room.guest.seat.seatToken, false);
+      harness.clock.advance(const Duration(minutes: 3));
+      expect(harness.registry.reap(), 0,
+          reason: 'fixture setup: the host is still connected, so the room '
+              'is not idle. ${repro(id)}');
+
+      final LeaveResult left = harness.registry
+          .leaveRoom(code: code, seatToken: room.host.seat.seatToken);
+      expect(left, isA<LeaveOk>(),
+          reason: 'fixture setup: leave_room refused, got $left. '
+              '${repro(id)}');
+      expect(
+        harness.registry.setConnected(
+            code: code, seatToken: room.host.seat.seatToken, connected: false),
+        isFalse,
+        reason: 'fixture setup: the socket close after leave_room must find '
+            'the seat already disconnected and flip nothing. ${repro(id)}',
+      );
+
+      harness.clock.advance(const Duration(minutes: 9, seconds: 59));
+      expect(harness.registry.reap(), 0,
+          reason: 'expected no reap 9m59s after the last connected seat '
+              'left. ${repro(id)}');
+      expect(harness.registry.lookup(code), isNotNull);
+
+      harness.clock.advance(const Duration(seconds: 1));
+      expect(harness.registry.reap(), 1,
+          reason: 'expected a reap exactly 10m after the last connected seat '
+              'sent leave_room, but the room survived: leaveRoom did not '
+              'start the idle clock. ${repro(id)}');
+      expect(harness.registry.lookup(code), isNull);
+    });
+
+    // G3a (review defect 3, M3a). The rematch path also drops the FINISHED
+    // stamp, and the registry cannot hold a stamp across a real rematch
+    // (the stamp is written only by reap(), the rematch removes it in the
+    // same synchronous call that leaves FINISHED). The only way to reach a
+    // non-FINISHED room that still carries a stamp is to leave FINISHED
+    // without the rematch path, which this file already does for R6 and R8:
+    // assign Room.state directly. Doing so here isolates reap()'s own drop.
+    test(
+        'G3a: reap() seeing the room in LOBBY drops the FINISHED stamp, so '
+        'the next FINISHED gets a fresh 10 minutes', () {
+      const String id = 'G3a: reap() seeing the room in LOBBY';
+      final harness = _harness();
+      final room = startedRoom(harness);
+      final String code = room.host.room.code;
+      final Room live = harness.registry.lookup(code)!;
+
+      live.state = RoomState.finished;
+      expect(harness.registry.reap(), 0,
+          reason: 'fixture setup: first observation of FINISHED stamps the '
+              'room at minute 0. ${repro(id)}');
+
+      harness.clock.advance(const Duration(minutes: 5));
+      live.state = RoomState.lobby;
+      expect(harness.registry.reap(), 0,
+          reason: 'fixture setup: a LOBBY with seats connected, 5m old, is '
+              'not reaped. ${repro(id)}');
+
+      harness.clock.advance(const Duration(minutes: 5));
+      live.state = RoomState.finished;
+      harness.clock.advance(const Duration(minutes: 1));
+      expect(harness.registry.reap(), 0,
+          reason: 'expected the second FINISHED to start its own clock at '
+              'minute 11, but reap() removed the room: the stamp from minute '
+              '0 survived reap() seeing the room in LOBBY. ${repro(id)}');
+      expect(harness.registry.lookup(code), isNotNull,
+          reason: 'room $code lost its end card 1m after the second '
+              'FINISHED. ${repro(id)}');
+
+      harness.clock.advance(const Duration(minutes: 9, seconds: 59));
+      expect(harness.registry.reap(), 0,
+          reason: 'expected no reap 9m59s after the second FINISHED was '
+              'first observed. ${repro(id)}');
+      harness.clock.advance(const Duration(seconds: 1));
+      expect(harness.registry.reap(), 1,
+          reason: 'expected a reap 10m after the second FINISHED was first '
+              'observed. ${repro(id)}');
+      expect(harness.registry.lookup(code), isNull);
+    });
+
+    // G3a, PLAYING half: reap() drops the stamp in the PLAYING branch too.
+    test(
+        'G3a: reap() seeing the room PLAYING drops the FINISHED stamp, so the '
+        'next FINISHED gets a fresh 10 minutes', () {
+      const String id = 'G3a: reap() seeing the room PLAYING';
+      final harness = _harness();
+      final room = startedRoom(harness);
+      final String code = room.host.room.code;
+      final Room live = harness.registry.lookup(code)!;
+
+      live.state = RoomState.finished;
+      expect(harness.registry.reap(), 0,
+          reason: 'fixture setup: first observation of FINISHED stamps the '
+              'room at minute 0. ${repro(id)}');
+
+      harness.clock.advance(const Duration(minutes: 5));
+      live.state = RoomState.playing;
+      expect(harness.registry.reap(), 0,
+          reason: 'fixture setup: PLAYING with seats connected is not '
+              'reaped. ${repro(id)}');
+
+      harness.clock.advance(const Duration(minutes: 5));
+      live.state = RoomState.finished;
+      harness.clock.advance(const Duration(minutes: 1));
+      expect(harness.registry.reap(), 0,
+          reason: 'expected the second FINISHED to start its own clock at '
+              'minute 11, but reap() removed the room: the stamp from minute '
+              '0 survived reap() seeing the room PLAYING. ${repro(id)}');
+      expect(harness.registry.lookup(code), isNotNull);
+
+      harness.clock.advance(const Duration(minutes: 9, seconds: 59));
+      expect(harness.registry.reap(), 0,
+          reason: 'expected no reap 9m59s after the second FINISHED was '
+              'first observed. ${repro(id)}');
+      harness.clock.advance(const Duration(seconds: 1));
+      expect(harness.registry.reap(), 1,
+          reason: 'expected a reap 10m after the second FINISHED was first '
+              'observed. ${repro(id)}');
+    });
+
+    // G3b (review defect 3, M3b). The real rematch path with no reap()
+    // between the rematch and game 2's FINISHED: only the rematch can have
+    // dropped game 1's stamp.
+    test(
+        'G3b: the rematch drops game 1\'s FINISHED stamp even when reap() '
+        'never ran between the rematch and game 2 finishing', () {
+      const String id = 'G3b: the rematch drops game 1';
+      final harness = _harness();
+      final room = startedRoom(harness);
+      final String code = room.host.room.code;
+
+      harness.registry.lookup(code)!.state = RoomState.finished;
+      expect(harness.registry.reap(), 0,
+          reason: 'fixture setup: game 1 FINISHED first observed at minute '
+              '0. ${repro(id)}');
+
+      harness.clock.advance(const Duration(minutes: 5));
+      rematchToGame2(harness, room, id);
+
+      // No reap() from here until game 2 has finished.
+      harness.clock.advance(const Duration(minutes: 30));
+      harness.registry.lookup(code)!.state = RoomState.finished;
+      harness.clock.advance(const Duration(minutes: 1));
+      expect(harness.registry.reap(), 0,
+          reason: 'expected game 2\'s end card kept 1m after it finished, '
+              'but reap() removed the room: game 1\'s stamp from minute 0 '
+              'survived the rematch. ${repro(id)}');
+      expect(harness.registry.lookup(code), isNotNull,
+          reason: 'room $code lost its game 2 end card. ${repro(id)}');
+
+      harness.clock.advance(const Duration(minutes: 9, seconds: 59));
+      expect(harness.registry.reap(), 0,
+          reason: 'expected no reap 9m59s after game 2 was first observed '
+              'FINISHED. ${repro(id)}');
+      harness.clock.advance(const Duration(seconds: 1));
+      expect(harness.registry.reap(), 1,
+          reason: 'expected a reap 10m after game 2 was first observed '
+              'FINISHED. ${repro(id)}');
+      expect(harness.registry.lookup(code), isNull);
+    });
+
+    // G4 (review "weaker points", M8). The ceiling applies to a FINISHED
+    // room as well: one first observed 5h55m into its life goes at 6h, 5
+    // minutes later, not after its own 10 minutes.
+    test(
+        'G4: a FINISHED room first observed 5h55m after its lifetime started '
+        'is reaped at exactly 6h, before its own 10 minutes are up', () {
+      const String id = 'G4: a FINISHED room first observed 5h55m';
+      final harness = _harness();
+      final room = startedRoom(harness);
+      final String code = room.host.room.code;
+
+      harness.clock.advance(const Duration(hours: 5, minutes: 55));
+      harness.registry.lookup(code)!.state = RoomState.finished;
+      expect(harness.registry.reap(), 0,
+          reason: 'expected the first observation at 5h55m not to reap. '
+              '${repro(id)}');
+
+      harness.clock.advance(const Duration(minutes: 4, seconds: 59));
+      expect(harness.registry.reap(), 0,
+          reason: 'expected no reap at 5h59m59s after creation. '
+              '${repro(id)}');
+      expect(harness.registry.lookup(code), isNotNull);
+
+      harness.clock.advance(const Duration(seconds: 1));
+      expect(harness.registry.reap(), 1,
+          reason: 'expected a reap at exactly 6h after creation (5m after '
+              'the FINISHED observation), but the room survived: the '
+              'ceiling does not apply to FINISHED. ${repro(id)}');
+      expect(harness.registry.lookup(code), isNull);
+    });
+
+    // G4b. The ceiling counts from lifetimeStartedAt, which a rematch moves,
+    // not from creation.
+    test(
+        'G4b: a game 2 whose rematch moved the lifetime to minute 50 survives '
+        'at 6h10m after creation and is reaped at 6h50m', () {
+      const String id = 'G4b: a game 2 whose rematch moved the lifetime';
+      final harness = _harness();
+      final room = startedRoom(harness);
+      final String code = room.host.room.code;
+
+      harness.clock.advance(const Duration(minutes: 50));
+      harness.registry.lookup(code)!.state = RoomState.finished;
+      expect(harness.registry.reap(), 0,
+          reason: 'fixture setup: game 1 FINISHED first observed at minute '
+              '50. ${repro(id)}');
+      rematchToGame2(harness, room, id);
+
+      Duration elapsed = const Duration(minutes: 50);
+      void advanceTo(Duration target) {
+        harness.clock.advance(target - elapsed);
+        elapsed = target;
+      }
+
+      final List<Duration> alive = <Duration>[
+        const Duration(hours: 6),
+        const Duration(hours: 6, minutes: 10),
+        const Duration(hours: 6, minutes: 49, seconds: 59),
+      ];
+      for (final Duration at in alive) {
+        advanceTo(at);
+        expect(harness.registry.reap(), 0,
+            reason: 'expected game 2 (rematch at minute 50, both seats '
+                'connected) kept $at after creation, but reap() removed '
+                'it: the ceiling is not anchored on the rematch. '
+                '${repro(id)}');
+        expect(harness.registry.lookup(code), isNotNull,
+            reason: 'room $code gone $at after creation. ${repro(id)}');
+      }
+
+      advanceTo(const Duration(hours: 6, minutes: 50));
+      expect(harness.registry.reap(), 1,
+          reason: 'expected a reap exactly 6h after the rematch (6h50m after '
+              'creation). ${repro(id)}');
+      expect(harness.registry.lookup(code), isNull);
+    });
   });
 }

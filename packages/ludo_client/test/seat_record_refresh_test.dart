@@ -736,4 +736,133 @@ void main() {
 
     await game.finish();
   });
+
+  // ---------------------------------------------------------------- G5
+  // Order 456 (review defect 4): a record that changes inside the refresh
+  // interval is written at once ("A changed record still writes at once",
+  // D6). The rig changes the record under one connected controller with a
+  // `seat_assigned` frame (the connection stores the new seat and token and
+  // the controller's cache follows on the next frame) or with a `room` push
+  // naming another code, followed by the `room` push that notifies. The
+  // write that fixes the fixture is at t+0; every change lands at t+10 s.
+  Future<void> expectChangeWrittenAtOnce(
+    WidgetTester tester, {
+    required String id,
+    required String what,
+    required int newSeat,
+    required String newToken,
+    required String newCode,
+    bool announceSeat = true,
+  }) async {
+    final _Game game = await _Game.start(tester, id);
+
+    const Duration at = Duration(seconds: 10);
+    game.clock.now = _base.add(at);
+    if (announceSeat) {
+      game.transport.pushText(
+        _frame(
+          type: 'seat_assigned',
+          data: <String, Object?>{'seat': newSeat, 'seat_token': newToken},
+        ),
+      );
+    }
+    final int before = game.notifications;
+    game.seq += 1;
+    game.transport.pushText(
+      _frame(
+        type: 'room',
+        data: <String, Object?>{
+          ..._roomJson(seq: game.seq),
+          'code': newCode,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _drainStore(tester);
+
+    expect(
+      game.notifications,
+      before + 1,
+      reason:
+          '$id fixture: the room push must notify the controller exactly '
+          'once; it notified ${game.notifications - before} times. '
+          '${_repro(id)}',
+    );
+    expect(
+      game.controller.phase,
+      RoomPhase.connected,
+      reason: '$id fixture: the controller must still be connected',
+    );
+    expect(
+      <Object?>[
+        game.controller.room?.code,
+        game.controller.seat,
+        game.controller.seatToken,
+      ],
+      <Object?>[newCode, newSeat, newToken],
+      reason:
+          '$id fixture: the controller must now hold the changed record '
+          '($what)',
+    );
+    expect(
+      await _storedSeat(),
+      <String>[newCode, newSeat.toString(), newToken],
+      reason:
+          '$id: $what 10 s after the last write must be stored at once '
+          '(D6: a changed record writes at once), not at the next minute; '
+          'stored ${await _storedSeat()}. ${_repro(id)}',
+    );
+    await game.expectSaved(
+      at,
+      what:
+          '$what 10 s after the last write must refresh the saved time to '
+          'the new now',
+    );
+
+    await game.finish();
+  }
+
+  testWidgets('G5a (D6): another seat token for the same controller 10 s '
+      'after a write is stored at once', (tester) async {
+    await expectChangeWrittenAtOnce(
+      tester,
+      id:
+          'G5a (D6): another seat token for the same controller 10 s '
+          'after a write is stored at once',
+      what: 'a new seat token',
+      newSeat: _kSeat,
+      newToken: 'tok-refresh-other-002',
+      newCode: _kCode,
+    );
+  });
+
+  testWidgets('G5b (D6): another seat for the same controller 10 s after a '
+      'write is stored at once', (tester) async {
+    await expectChangeWrittenAtOnce(
+      tester,
+      id:
+          'G5b (D6): another seat for the same controller 10 s after a '
+          'write is stored at once',
+      what: 'a new seat',
+      newSeat: 0,
+      newToken: _kToken,
+      newCode: _kCode,
+    );
+  });
+
+  testWidgets('G5c (D6): another room code for the same controller 10 s '
+      'after a write is stored at once', (tester) async {
+    await expectChangeWrittenAtOnce(
+      tester,
+      id:
+          'G5c (D6): another room code for the same controller 10 s '
+          'after a write is stored at once',
+      what: 'a new room code',
+      newSeat: _kSeat,
+      newToken: _kToken,
+      newCode: 'R8T4WN',
+      announceSeat: false,
+    );
+  });
 }
