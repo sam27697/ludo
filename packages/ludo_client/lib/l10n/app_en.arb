@@ -45,6 +45,10 @@
   "@homeRemovedNotice": {
     "description": "Quiet notice on the home screen shown after a player was removed by a host-forced rematch start."
   },
+  "homeGameGoneNotice": "That game has ended.",
+  "@homeGameGoneNotice": {
+    "description": "Quiet notice on the home screen shown after Back to game, or a relaunch that resumed on its own, found the room reaped or the seat gone."
+  },
   "homeLastGame": "Your last game: every roll is verifiable",
   "@homeLastGame": {
     "description": "Quiet home-screen entry over the last finished game's verify link, shown for 90 days after the game ends."
@@ -189,6 +193,10 @@
   "lobbyErrorNoSuchRoom": "That room does not exist. Check the code and try again.",
   "@lobbyErrorNoSuchRoom": {
     "description": "Error shown on the lobby screen when the server reports NO_SUCH_ROOM."
+  },
+  "lobbyErrorLinkRoomGone": "This game is no longer open. Ask your friend for a new link.",
+  "@lobbyErrorLinkRoomGone": {
+    "description": "Error shown on the lobby screen when a join started from a room link is answered NO_SUCH_ROOM. No retry is offered."
   },
   "lobbyErrorRoomFull": "That room is already full.",
   "@lobbyErrorRoomFull": {

@@ -70,6 +70,7 @@ class LobbyScreen extends StatefulWidget {
     this.players = 4,
     this.toggles = const RoomToggles(),
     this.resume,
+    this.fromLink = false,
     this.shareText,
   });
 
@@ -90,6 +91,12 @@ class LobbyScreen extends StatefulWidget {
   /// Required in practice when [action] is [LobbyAction.resume]; ignored
   /// otherwise. The seat the resume request is sent for.
   final SeatRecord? resume;
+
+  /// True when a [LobbyAction.join] was started from a room link rather than
+  /// from a code the player typed (C-447 D4b). A link whose room is gone
+  /// shows [AppLocalizations.lobbyErrorLinkRoomGone] with no retry, since no
+  /// retry of a reaped room can succeed. Ignored on create and resume.
+  final bool fromLink;
 
   /// The tap handler for `lobby-share-button`, in place of the real system
   /// share sheet. Null in production, where the screen calls
@@ -132,6 +139,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   StreamSubscription<Frame>? _framesSubscription;
 
+  /// C-447 D4: set once a refused resume has started popping this route, so
+  /// a second notification cannot pop twice.
+  bool _resumeRefusalHandled = false;
+
   @override
   void initState() {
     super.initState();
@@ -150,6 +161,34 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   void _onControllerChanged() {
     setState(() {});
+    if (_resumeRefused && !_resumeRefusalHandled) {
+      _resumeRefusalHandled = true;
+      _leaveRefusedResume();
+    }
+  }
+
+  /// Hands [GameScreenResult.gameGone] to Home. A popup above this route
+  /// (the settings sheet) must not be the thing a plain pop closes, so a
+  /// route that is not on top is removed by identity instead.
+  void _leaveRefusedResume() {
+    final Route<dynamic> route = ModalRoute.of(context)!;
+    if (route.isCurrent) {
+      _leaveLobby(GameScreenResult.gameGone);
+      return;
+    }
+    Navigator.of(context).removeRoute(route, GameScreenResult.gameGone);
+  }
+
+  /// C-447 D4: a resume answered NO_SUCH_ROOM (the room was reaped) or
+  /// BAD_SEAT_TOKEN (the seat was taken back). The player typed no code, so
+  /// there is nothing to check and nothing to retry: the route goes home
+  /// with [GameScreenResult.gameGone] instead of drawing the error body.
+  bool get _resumeRefused {
+    final RoomController controller = widget.controller;
+    return widget.action == LobbyAction.resume &&
+        controller.phase == RoomPhase.failed &&
+        (controller.errorCode == 'NO_SUCH_ROOM' ||
+            controller.errorCode == 'BAD_SEAT_TOKEN');
   }
 
   // C-316 rule 3: a player_left naming this seat while in lobby pops with
@@ -342,6 +381,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       phaseBody = switch (controller.phase) {
         RoomPhase.idle || RoomPhase.connecting => _connectingBody(loc),
         RoomPhase.connected => _connectedBody(loc, controller),
+        // A refused resume is already leaving with gameGone; the frames of
+        // the pop transition keep the waiting body, never the error body.
+        RoomPhase.failed when _resumeRefused => _connectingBody(loc),
         RoomPhase.failed => _errorBody(loc, controller),
         RoomPhase.closed => _closedBody(loc, controller),
       };
@@ -443,6 +485,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Widget _errorBody(AppLocalizations loc, RoomController controller) {
+    // C-447 D4b: a join that came from a link and found no such room says so
+    // in the link's terms and offers no retry; a typed code keeps its text
+    // and Retry.
+    final bool linkRoomGone =
+        widget.fromLink &&
+        widget.action == LobbyAction.join &&
+        controller.errorCode == 'NO_SUCH_ROOM';
     return Center(
       key: const Key('lobby-error'),
       child: Padding(
@@ -451,16 +500,20 @@ class _LobbyScreenState extends State<LobbyScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              lobbyErrorMessage(loc, controller.errorCode),
+              linkRoomGone
+                  ? loc.lobbyErrorLinkRoomGone
+                  : lobbyErrorMessage(loc, controller.errorCode),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: kSpace4),
-            ElevatedButton(
-              key: const Key('lobby-retry-button'),
-              onPressed: _issueRequest,
-              child: Text(loc.lobbyRetryButton),
-            ),
-            const SizedBox(height: kSpace2),
+            if (!linkRoomGone) ...[
+              ElevatedButton(
+                key: const Key('lobby-retry-button'),
+                onPressed: _issueRequest,
+                child: Text(loc.lobbyRetryButton),
+              ),
+              const SizedBox(height: kSpace2),
+            ],
             OutlinedButton(
               key: const Key('lobby-leave-button'),
               onPressed: _leaveLobby,

@@ -74,6 +74,11 @@ class _HomeScreenState extends State<HomeScreen>
   final TextEditingController _nameController = TextEditingController();
   String? _errorText;
   bool _removedNotice = false;
+  // C-447 D4: shown in the same slot as [_removedNotice] after a resume the
+  // server refused (the room was reaped or the seat taken back).
+  bool _gameGoneNotice = false;
+  // C-447 D3: the one automatic resume this screen state ever starts.
+  bool _autoResumeStarted = false;
   int _players = 4;
   bool _playersSelectorOpen = false;
   bool _rulesCaptureBonus = true;
@@ -290,20 +295,44 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   /// Resolves any pending link held while session memory was loading
-  /// (rule 5).
-  void _drainPendingLink() {
+  /// (rule 5). Returns true when a link with a valid code was decided, so
+  /// the caller knows the link, not the stored seat, has the say on what
+  /// Home does next (C-447 D3).
+  bool _drainPendingLink() {
     _linkHoldTimer?.cancel();
     _linkHoldTimer = null;
     final Uri? uri = _pendingLinkUri;
     _pendingLinkUri = null;
     if (uri == null) {
-      return;
+      return false;
     }
     final String? code = roomCodeFromUri(uri);
     if (code == null) {
-      return;
+      return false;
     }
     _decideLinkAction(code);
+    return true;
+  }
+
+  /// C-447 D3: starts the resume a tap on `home-rejoin-button` would start,
+  /// once, when the stored seat is fresh. Called only from the completion of
+  /// the session-memory load, after the pending link had its turn. Does
+  /// nothing when a link was decided in that completion (a link for the same
+  /// code made its own rejoin, a link for another code wins and leaves the
+  /// button), when Home is not the current route, or when a link join is
+  /// already in flight.
+  void _maybeAutoResume(SeatRecord? record, DateTime? savedAt) {
+    if (record == null || savedAt == null || _autoResumeStarted) {
+      return;
+    }
+    if (!mounted || _linkJoinInFlight) {
+      return;
+    }
+    if (!(ModalRoute.of(context)?.isCurrent ?? false)) {
+      return;
+    }
+    _autoResumeStarted = true;
+    unawaited(_rejoinRoom(record));
   }
 
   /// Decides a pending link held while session memory was loading as a
@@ -337,7 +366,7 @@ class _HomeScreenState extends State<HomeScreen>
       if (rejoin && seatRecord != null) {
         await _rejoinRoom(seatRecord);
       } else {
-        await _joinRoom();
+        await _joinRoom(fromLink: true);
       }
     } finally {
       _linkJoinInFlight = false;
@@ -440,20 +469,25 @@ class _HomeScreenState extends State<HomeScreen>
   /// leaves the localised name default, the four-seat disclosure, no recent
   /// chips, no rejoin button and no home-last-game entry as they are. The
   /// load itself returns empty on failure, so nothing is caught here.
-  /// Completing the load marks session memory as loaded and drains any
-  /// pending room link (order 296). A stored name fills the name field on
+  /// Completing the load marks session memory as loaded, drains any
+  /// pending room link (order 296) and, when no link was decided and the
+  /// stored seat is fresh, resumes it on its own once (C-447 D3). A stored name fills the name field on
   /// its own; the last-table chip still requires a seat count too.
   Future<void> _restoreSessionMemory() async {
+    SessionMemory? memory;
     try {
-      final SessionMemory memory = await SessionMemory.load();
+      final SessionMemory loaded = await SessionMemory.load(
+        clock: widget.clock,
+      );
+      memory = loaded;
       if (!mounted) {
         return;
       }
-      final bool hasTable = memory.hasLastTable;
-      final bool hasCodes = memory.recentCodes.isNotEmpty;
-      final SeatRecord? seatRecord = memory.seatRecord;
-      final LastGame? lastGame = memory.lastGame;
-      final String? storedName = memory.lastName;
+      final bool hasTable = loaded.hasLastTable;
+      final bool hasCodes = loaded.recentCodes.isNotEmpty;
+      final SeatRecord? seatRecord = loaded.seatRecord;
+      final LastGame? lastGame = loaded.lastGame;
+      final String? storedName = loaded.lastName;
       final bool hasStoredName = storedName != null && storedName.isNotEmpty;
       if (lastGame != null) {
         // C-322 rule 2's dedupe is per screen life, not per load: seed it
@@ -468,15 +502,15 @@ class _HomeScreenState extends State<HomeScreen>
           hasStoredName) {
         setState(() {
           if (hasCodes) {
-            _recentCodes = List<String>.from(memory.recentCodes);
+            _recentCodes = List<String>.from(loaded.recentCodes);
           }
           if (storedName != null && storedName.isNotEmpty) {
             _hasStoredName = true;
             _nameController.text = storedName;
           }
           if (hasTable) {
-            final String name = memory.lastName!;
-            final int seats = memory.lastSeats!;
+            final String name = loaded.lastName!;
+            final int seats = loaded.lastSeats!;
             _hasLastTable = true;
             _lastTableName = name;
             _lastTableSeats = seats;
@@ -496,7 +530,10 @@ class _HomeScreenState extends State<HomeScreen>
       _linkHoldTimer = null;
       _sessionMemoryLoaded = true;
       if (mounted) {
-        _drainPendingLink();
+        final bool linkDecided = _drainPendingLink();
+        if (!linkDecided && memory != null) {
+          _maybeAutoResume(memory.seatRecord, memory.seatSavedAt);
+        }
       }
     }
   }
@@ -611,7 +648,7 @@ class _HomeScreenState extends State<HomeScreen>
         );
         if (record != _lastRecordedSeatWritten) {
           _lastRecordedSeatWritten = record;
-          unawaited(SessionMemory.recordSeat(record));
+          unawaited(SessionMemory.recordSeat(record, clock: widget.clock));
         }
       }
     }
@@ -781,9 +818,10 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _createRoom() async {
-    if (_removedNotice) {
+    if (_removedNotice || _gameGoneNotice) {
       setState(() {
         _removedNotice = false;
+        _gameGoneNotice = false;
       });
     }
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -864,7 +902,10 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  Future<void> _joinRoom() async {
+  /// [fromLink] is true only for a join a room link started: the lobby then
+  /// words a vanished room in the link's terms and offers no retry (C-447
+  /// D4b). A join from a typed code leaves it false.
+  Future<void> _joinRoom({bool fromLink = false}) async {
     final AppLocalizations loc = AppLocalizations.of(context);
     final String normalized = normalizeRoomCode(_codeController.text);
     if (!isValidRoomCode(normalized)) {
@@ -876,6 +917,7 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() {
       _errorText = null;
       _removedNotice = false;
+      _gameGoneNotice = false;
     });
     final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
@@ -915,6 +957,7 @@ class _HomeScreenState extends State<HomeScreen>
             action: LobbyAction.join,
             code: normalized,
             playerName: name,
+            fromLink: fromLink,
           ),
         ),
       );
@@ -948,9 +991,10 @@ class _HomeScreenState extends State<HomeScreen>
   /// this watches, is what records the seat again once the resume lands;
   /// nothing here writes [SessionMemory] directly.
   Future<void> _rejoinRoom(SeatRecord record) async {
-    if (_removedNotice) {
+    if (_removedNotice || _gameGoneNotice) {
       setState(() {
         _removedNotice = false;
+        _gameGoneNotice = false;
       });
     }
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -968,6 +1012,14 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     );
+    // C-447 D4: a resume the server refused (room reaped, seat taken back)
+    // goes home with its own true line, set before the retire like the
+    // removed notice in _createRoom.
+    if (result == GameScreenResult.gameGone && mounted) {
+      setState(() {
+        _gameGoneNotice = true;
+      });
+    }
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
@@ -1464,6 +1516,19 @@ class _HomeScreenState extends State<HomeScreen>
                                     Text(
                                       loc.homeRemovedNotice,
                                       key: const Key('home-removed-notice'),
+                                      textAlign: TextAlign.center,
+                                      style: textTheme.bodyMedium?.copyWith(
+                                        color: LudoColors.inkMuted,
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      height: compact ? kSpace2 : kSpace3,
+                                    ),
+                                  ],
+                                  if (_gameGoneNotice) ...[
+                                    Text(
+                                      loc.homeGameGoneNotice,
+                                      key: const Key('home-game-gone-notice'),
                                       textAlign: TextAlign.center,
                                       style: textTheme.bodyMedium?.copyWith(
                                         color: LudoColors.inkMuted,
