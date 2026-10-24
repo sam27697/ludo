@@ -125,6 +125,10 @@ class _HomeScreenState extends State<HomeScreen>
   // write the same seat on every notification. Reset whenever a new
   // controller is watched.
   SeatRecord? _lastRecordedSeatWritten;
+  // C-451 D6: when this state last wrote the seat record, by widget.clock,
+  // so a long game keeps the stored saved time within kSeatRecordRefresh of
+  // now. Reset with _lastRecordedSeatWritten.
+  DateTime? _lastSeatWriteAt;
   // H2's per-controller dedupe for the finished/seat-gone clear, reset the
   // same way.
   bool _seatClearedForOwned = false;
@@ -661,6 +665,7 @@ class _HomeScreenState extends State<HomeScreen>
   void _watchOwnedController(RoomController controller) {
     _ownedController = controller;
     _lastRecordedSeatWritten = null;
+    _lastSeatWriteAt = null;
     _seatClearedForOwned = false;
     controller.addListener(_onOwnedControllerChanged);
   }
@@ -668,7 +673,12 @@ class _HomeScreenState extends State<HomeScreen>
   /// H1: writes the seat this controller currently holds the moment it is
   /// worth resuming -- connected, a room snapshot, that room not finished,
   /// a seat and a seat token both present -- at most once per distinct
-  /// record for as long as this controller is the one owned. Covers create,
+  /// record for as long as this controller is the one owned, plus (C-451 D6)
+  /// one rewrite of the same record with a new saved time whenever a
+  /// notification arrives and [kSeatRecordRefresh] has passed since this
+  /// state last wrote it, so the record's age measures time since the seat
+  /// was last held while connected. No timer: the rewrite rides controller
+  /// notifications. Covers create,
   /// join and H4's resume alike, since all three route through
   /// [_watchOwnedController].
   ///
@@ -696,8 +706,13 @@ class _HomeScreenState extends State<HomeScreen>
           seat: seat,
           seatToken: seatToken,
         );
-        if (record != _lastRecordedSeatWritten) {
+        final DateTime now = (widget.clock ?? DateTime.now)();
+        final DateTime? lastWriteAt = _lastSeatWriteAt;
+        if (record != _lastRecordedSeatWritten ||
+            lastWriteAt == null ||
+            now.difference(lastWriteAt) >= kSeatRecordRefresh) {
           _lastRecordedSeatWritten = record;
+          _lastSeatWriteAt = now;
           unawaited(SessionMemory.recordSeat(record, clock: widget.clock));
         }
       }
