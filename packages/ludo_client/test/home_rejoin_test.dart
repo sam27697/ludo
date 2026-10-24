@@ -382,6 +382,19 @@ _joinSuccessfully(
   return (controller: controller, transport: transport);
 }
 
+/// C-447 D7: a seat record as v1.18.0 and older wrote it, `session.seat`
+/// alone with no `session.seatSavedAt`. recordSeat now stamps a saved time,
+/// and Home resumes a fresh record on its own; this file asserts about the
+/// button, which a record with no saved time keeps.
+Future<void> _recordLegacySeat(SeatRecord record) async {
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+  await prefs.setStringList('session.seat', <String>[
+    record.code,
+    record.seat.toString(),
+    record.seatToken,
+  ]);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -410,7 +423,7 @@ void main() {
 
   testWidgets('W-2en: a stored record for code K7M2QP shows the rejoin button, '
       'labelled in English, above home-name-field', (tester) async {
-    await SessionMemory.recordSeat(
+    await _recordLegacySeat(
       const SeatRecord(code: _kCode, seat: _kSeat, seatToken: _kToken),
     );
     final _RecordingControllerFactory factory = _RecordingControllerFactory();
@@ -459,7 +472,7 @@ void main() {
 
   testWidgets('W-2ar: a stored record for code K7M2QP shows the rejoin button, '
       'labelled in Arabic, above home-name-field', (tester) async {
-    await SessionMemory.recordSeat(
+    await _recordLegacySeat(
       const SeatRecord(code: _kCode, seat: _kSeat, seatToken: _kToken),
     );
     final _RecordingControllerFactory factory = _RecordingControllerFactory();
@@ -512,7 +525,7 @@ void main() {
     'W-3 tap (H4, H5): tapping home-rejoin-button sends resume once and a '
     'PLAYING reply shows GameScreen',
     (tester) async {
-      await SessionMemory.recordSeat(
+      await _recordLegacySeat(
         const SeatRecord(code: _kCode, seat: _kSeat, seatToken: _kToken),
       );
       final _RecordingControllerFactory factory = _RecordingControllerFactory();
@@ -577,7 +590,7 @@ void main() {
     'W-4 lobby (H6): a LOBBY reply to resume shows the connected lobby with '
     'the stored room code',
     (tester) async {
-      await SessionMemory.recordSeat(
+      await _recordLegacySeat(
         const SeatRecord(code: _kCode, seat: _kSeat, seatToken: _kToken),
       );
       final _RecordingControllerFactory factory = _RecordingControllerFactory();
@@ -783,7 +796,7 @@ void main() {
       testWidgets('resume answered $errorCode clears session.seat', (
         tester,
       ) async {
-        await SessionMemory.recordSeat(
+        await _recordLegacySeat(
           const SeatRecord(code: _kCode, seat: _kSeat, seatToken: _kToken),
         );
         final _RecordingControllerFactory factory =
@@ -825,7 +838,7 @@ void main() {
   testWidgets('W-9 keep on a transport failure (control for H2c): the record '
       'survives, and the lobby retry button re-sends resume with the same '
       'code and token', (tester) async {
-    await SessionMemory.recordSeat(
+    await _recordLegacySeat(
       const SeatRecord(code: _kCode, seat: _kSeat, seatToken: _kToken),
     );
     final _SingleFlakyControllerFactory factory =

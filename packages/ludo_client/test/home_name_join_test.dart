@@ -161,6 +161,19 @@ void _expectDivider(WidgetTester tester, String text) {
   );
 }
 
+/// C-447 D7: a seat record as v1.18.0 and older wrote it, `session.seat`
+/// alone with no `session.seatSavedAt`. recordSeat now stamps a saved time,
+/// and Home resumes a fresh record on its own; this file asserts about the
+/// button, which a record with no saved time keeps.
+Future<void> _recordLegacySeat(SeatRecord record) async {
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+  await prefs.setStringList('session.seat', <String>[
+    record.code,
+    record.seat.toString(),
+    record.seatToken,
+  ]);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -395,7 +408,7 @@ void main() {
   testWidgets(
     'a stored seat shows Icons.play_arrow_rounded on home-rejoin-button',
     (WidgetTester tester) async {
-      await SessionMemory.recordSeat(
+      await _recordLegacySeat(
         const SeatRecord(
           code: _rejoinCode,
           seat: _rejoinSeat,
