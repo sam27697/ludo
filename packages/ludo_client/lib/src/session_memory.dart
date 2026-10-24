@@ -18,6 +18,13 @@ import 'room_code.dart';
 /// never offers a link the server has already reaped.
 const Duration kVerifyRetention = Duration(days: 90);
 
+/// How long a stored seat record is trusted (C-447 D2). docs/PROTOCOL.md
+/// section 3 reaps every room 60 minutes after it is created, and a seat is
+/// taken after its room exists, so a record written this long ago names a
+/// room the server has already reaped. [SessionMemory.load] treats an older
+/// record as absent and clears it.
+const Duration kSeatRecordMaxAge = Duration(minutes: 60);
+
 /// A seat held on the server, kept so a killed and relaunched app can send
 /// `resume` for it. [seatToken] is a capability, so [toString] omits it.
 class SeatRecord {
@@ -104,7 +111,8 @@ class LastGame {
 /// a previous [recordSuccessfulJoin] wrote when it was given one, and the
 /// recent codes [recordSuccessfulJoin] wrote (newest first, at most 3).
 /// [recordSeat] and [clearSeat] write and remove the seat record that a
-/// later [load] returns as [seatRecord]. [recordLastGame] writes the one
+/// later [load] returns as [seatRecord]; [recordSeat] also stamps the time it
+/// wrote, which a later [load] returns as [seatSavedAt]. [recordLastGame] writes the one
 /// record a later [load] returns as [lastGame]; clearing the seat does not
 /// touch it.
 class SessionMemory {
@@ -113,6 +121,7 @@ class SessionMemory {
     this.lastSeats,
     this.recentCodes = const <String>[],
     this.seatRecord,
+    this.seatSavedAt,
     this.lastGame,
   });
 
@@ -120,6 +129,7 @@ class SessionMemory {
   static const String _seatsKey = 'session.lastSeats';
   static const String _codesKey = 'session.recentCodes';
   static const String _seatKey = 'session.seat';
+  static const String _seatSavedAtKey = 'session.seatSavedAt';
   static const String _lastGameKey = 'session.lastGame';
   static const int _maxRecentCodes = 3;
 
@@ -139,6 +149,11 @@ class SessionMemory {
   /// when nothing is stored or the stored value cannot be trusted.
   final SeatRecord? seatRecord;
 
+  /// When [recordSeat] wrote [seatRecord], as the clock [recordSeat] was
+  /// given read it. Null when the key is absent or not an integer, which is
+  /// the case for a record written by v1.18.0 or older (C-447 D1, D2).
+  final DateTime? seatSavedAt;
+
   /// The last finished game's verify link, if the stored value is well
   /// formed. Null when nothing is stored or the stored value cannot be
   /// trusted.
@@ -157,20 +172,51 @@ class SessionMemory {
 
   /// Reads the store. Missing or unusable platform storage returns an
   /// empty snapshot rather than throwing, so Home still paints.
-  static Future<SessionMemory> load() async {
+  ///
+  /// C-447 D2: a seat record whose saved time is at least
+  /// [kSeatRecordMaxAge] before [clock]'s "now" (the wall clock when null)
+  /// is returned as absent and removed from the store, both keys. A record
+  /// with no saved time is kept as it is.
+  static Future<SessionMemory> load({DateTime Function()? clock}) async {
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
+      SeatRecord? seatRecord = _readSeatRecord(prefs);
+      DateTime? seatSavedAt = _readSeatSavedAt(prefs);
+      if (seatRecord != null && seatSavedAt != null) {
+        final DateTime now = (clock ?? DateTime.now)();
+        if (now.difference(seatSavedAt) >= kSeatRecordMaxAge) {
+          await prefs.remove(_seatKey);
+          await prefs.remove(_seatSavedAtKey);
+          seatRecord = null;
+          seatSavedAt = null;
+        }
+      }
       return SessionMemory(
         lastName: prefs.getString(_nameKey),
         lastSeats: prefs.getInt(_seatsKey),
         recentCodes: _cappedRecentCodes(
           prefs.getStringList(_codesKey) ?? const <String>[],
         ),
-        seatRecord: _readSeatRecord(prefs),
+        seatRecord: seatRecord,
+        seatSavedAt: seatSavedAt,
         lastGame: _readLastGame(prefs),
       );
     } on Object {
       return const SessionMemory();
+    }
+  }
+
+  /// The stored seat time, isolated the same way [_readSeatRecord] is. A
+  /// value that is absent or not an integer yields null.
+  static DateTime? _readSeatSavedAt(SharedPreferences prefs) {
+    try {
+      final Object? raw = prefs.get(_seatSavedAtKey);
+      if (raw is! int) {
+        return null;
+      }
+      return DateTime.fromMillisecondsSinceEpoch(raw);
+    } on Object {
+      return null;
     }
   }
 
@@ -186,9 +232,14 @@ class SessionMemory {
   }
 
   /// Writes [record] under the single seat key, replacing any previous
-  /// record. Never throws: an unusable store is swallowed, same as
-  /// [recordSuccessfulCreate].
-  static Future<void> recordSeat(SeatRecord record) async {
+  /// record, and the time it wrote (milliseconds since epoch, read from
+  /// [clock], the wall clock when null) under a second key (C-447 D1). The
+  /// seat key keeps exactly `[code, seat, seatToken]`. Never throws: an
+  /// unusable store is swallowed, same as [recordSuccessfulCreate].
+  static Future<void> recordSeat(
+    SeatRecord record, {
+    DateTime Function()? clock,
+  }) async {
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
       await prefs.setStringList(_seatKey, <String>[
@@ -196,6 +247,10 @@ class SessionMemory {
         record.seat.toString(),
         record.seatToken,
       ]);
+      await prefs.setInt(
+        _seatSavedAtKey,
+        (clock ?? DateTime.now)().millisecondsSinceEpoch,
+      );
     } on Object {
       return;
     }
@@ -266,12 +321,13 @@ class SessionMemory {
     );
   }
 
-  /// Removes the stored seat record, if any. Never throws, and clearing
-  /// when nothing is stored is not an error.
+  /// Removes the stored seat record and its saved time, if any. Never
+  /// throws, and clearing when nothing is stored is not an error.
   static Future<void> clearSeat() async {
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
       await prefs.remove(_seatKey);
+      await prefs.remove(_seatSavedAtKey);
     } on Object {
       return;
     }

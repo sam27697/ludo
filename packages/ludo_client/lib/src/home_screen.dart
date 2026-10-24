@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -74,6 +75,22 @@ class _HomeScreenState extends State<HomeScreen>
   final TextEditingController _nameController = TextEditingController();
   String? _errorText;
   bool _removedNotice = false;
+  // C-447 D4: shown in the same slot as [_removedNotice] after a resume the
+  // server refused (the room was reaped or the seat taken back).
+  bool _gameGoneNotice = false;
+  // C-447 D3: the one automatic resume this screen state ever starts.
+  bool _autoResumeStarted = false;
+  // C-447 D3b: the initial link reader has answered (a link, null or an
+  // error), so a cold link has had its say before the stored seat resumes.
+  bool _initialLinkSettled = false;
+  // C-447 D3b: a valid room link was decided by this screen, whichever path
+  // delivered it; the link then wins and the stored seat does not resume.
+  bool _linkHadSay = false;
+  // C-447 D3b: the stored seat waiting for the reader, with the bound that
+  // stops the wait (the same 500 ms as the link hold, measured from the
+  // moment the session-memory load completed).
+  SessionMemory? _autoResumeWaiting;
+  Timer? _autoResumeTimer;
   int _players = 4;
   bool _playersSelectorOpen = false;
   bool _rulesCaptureBonus = true;
@@ -160,13 +177,16 @@ class _HomeScreenState extends State<HomeScreen>
           if (uri != null) {
             _handleLink(uri);
           }
+          _settleInitialLink();
         },
         onError: (Object error, StackTrace stackTrace) {
           _reportLinkError(error, stackTrace, 'reading the initial link');
+          _settleInitialLink();
         },
       );
     } catch (error, stackTrace) {
       _reportLinkError(error, stackTrace, 'reading the initial link');
+      _initialLinkSettled = true;
     }
     try {
       _linkSubscription = widget.linkStream().listen(
@@ -266,6 +286,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted) {
       return;
     }
+    _linkHadSay = true;
     final bool isCurrent = ModalRoute.of(context)?.isCurrent ?? false;
     if (isCurrent && !_linkJoinInFlight) {
       final SeatRecord? record = _seatRecord;
@@ -290,20 +311,66 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   /// Resolves any pending link held while session memory was loading
-  /// (rule 5).
-  void _drainPendingLink() {
+  /// (rule 5). Returns true when a link with a valid code was decided, so
+  /// the caller knows the link, not the stored seat, has the say on what
+  /// Home does next (C-447 D3).
+  bool _drainPendingLink() {
     _linkHoldTimer?.cancel();
     _linkHoldTimer = null;
     final Uri? uri = _pendingLinkUri;
     _pendingLinkUri = null;
     if (uri == null) {
-      return;
+      return false;
     }
     final String? code = roomCodeFromUri(uri);
     if (code == null) {
-      return;
+      return false;
     }
     _decideLinkAction(code);
+    return true;
+  }
+
+  /// C-447 D3: starts the resume a tap on `home-rejoin-button` would start,
+  /// once, when the stored seat is fresh. Called only from the completion of
+  /// the session-memory load, after the pending link had its turn. Does
+  /// nothing when a link was decided in that completion (a link for the same
+  /// code made its own rejoin, a link for another code wins and leaves the
+  /// button), when Home is not the current route, or when a link join is
+  /// already in flight.
+  void _maybeAutoResume(SeatRecord? record, DateTime? savedAt) {
+    if (record == null || savedAt == null || _autoResumeStarted) {
+      return;
+    }
+    if (!mounted || _linkJoinInFlight || _linkHadSay) {
+      return;
+    }
+    if (!(ModalRoute.of(context)?.isCurrent ?? false)) {
+      return;
+    }
+    _autoResumeStarted = true;
+    unawaited(_rejoinRoom(record));
+  }
+
+  /// C-447 D3b: the initial link reader answered. Any link it returned has
+  /// already been handled by the caller, so a stored seat that was waiting
+  /// for the reader may now decide.
+  void _settleInitialLink() {
+    _initialLinkSettled = true;
+    _finishAutoResumeWait();
+  }
+
+  /// C-447 D3b: ends the wait for the initial link reader, because it
+  /// answered or because 500 ms passed since the load completed, and runs
+  /// the one auto-resume decision.
+  void _finishAutoResumeWait() {
+    final SessionMemory? memory = _autoResumeWaiting;
+    if (memory == null) {
+      return;
+    }
+    _autoResumeWaiting = null;
+    _autoResumeTimer?.cancel();
+    _autoResumeTimer = null;
+    _maybeAutoResume(memory.seatRecord, memory.seatSavedAt);
   }
 
   /// Decides a pending link held while session memory was loading as a
@@ -337,7 +404,7 @@ class _HomeScreenState extends State<HomeScreen>
       if (rejoin && seatRecord != null) {
         await _rejoinRoom(seatRecord);
       } else {
-        await _joinRoom();
+        await _joinRoom(fromLink: true);
       }
     } finally {
       _linkJoinInFlight = false;
@@ -440,20 +507,25 @@ class _HomeScreenState extends State<HomeScreen>
   /// leaves the localised name default, the four-seat disclosure, no recent
   /// chips, no rejoin button and no home-last-game entry as they are. The
   /// load itself returns empty on failure, so nothing is caught here.
-  /// Completing the load marks session memory as loaded and drains any
-  /// pending room link (order 296). A stored name fills the name field on
+  /// Completing the load marks session memory as loaded, drains any
+  /// pending room link (order 296) and, when no link was decided and the
+  /// stored seat is fresh, resumes it on its own once (C-447 D3). A stored name fills the name field on
   /// its own; the last-table chip still requires a seat count too.
   Future<void> _restoreSessionMemory() async {
+    SessionMemory? memory;
     try {
-      final SessionMemory memory = await SessionMemory.load();
+      final SessionMemory loaded = await SessionMemory.load(
+        clock: widget.clock,
+      );
+      memory = loaded;
       if (!mounted) {
         return;
       }
-      final bool hasTable = memory.hasLastTable;
-      final bool hasCodes = memory.recentCodes.isNotEmpty;
-      final SeatRecord? seatRecord = memory.seatRecord;
-      final LastGame? lastGame = memory.lastGame;
-      final String? storedName = memory.lastName;
+      final bool hasTable = loaded.hasLastTable;
+      final bool hasCodes = loaded.recentCodes.isNotEmpty;
+      final SeatRecord? seatRecord = loaded.seatRecord;
+      final LastGame? lastGame = loaded.lastGame;
+      final String? storedName = loaded.lastName;
       final bool hasStoredName = storedName != null && storedName.isNotEmpty;
       if (lastGame != null) {
         // C-322 rule 2's dedupe is per screen life, not per load: seed it
@@ -468,15 +540,15 @@ class _HomeScreenState extends State<HomeScreen>
           hasStoredName) {
         setState(() {
           if (hasCodes) {
-            _recentCodes = List<String>.from(memory.recentCodes);
+            _recentCodes = List<String>.from(loaded.recentCodes);
           }
           if (storedName != null && storedName.isNotEmpty) {
             _hasStoredName = true;
             _nameController.text = storedName;
           }
           if (hasTable) {
-            final String name = memory.lastName!;
-            final int seats = memory.lastSeats!;
+            final String name = loaded.lastName!;
+            final int seats = loaded.lastSeats!;
             _hasLastTable = true;
             _lastTableName = name;
             _lastTableSeats = seats;
@@ -496,7 +568,19 @@ class _HomeScreenState extends State<HomeScreen>
       _linkHoldTimer = null;
       _sessionMemoryLoaded = true;
       if (mounted) {
-        _drainPendingLink();
+        final bool linkDecided = _drainPendingLink();
+        if (!linkDecided && memory != null) {
+          if (_initialLinkSettled) {
+            _maybeAutoResume(memory.seatRecord, memory.seatSavedAt);
+          } else {
+            // D3b: the reader has not answered yet. Wait for it, bounded.
+            _autoResumeWaiting = memory;
+            _autoResumeTimer = Timer(
+              const Duration(milliseconds: 500),
+              _finishAutoResumeWait,
+            );
+          }
+        }
       }
     }
   }
@@ -556,6 +640,9 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     _linkSubscription?.cancel();
     _linkHoldTimer?.cancel();
+    _autoResumeTimer?.cancel();
+    _autoResumeTimer = null;
+    _autoResumeWaiting = null;
     _codeController.removeListener(_clearErrorOnEdit);
     _codeFocusNode.removeListener(_onCodeFieldFocus);
     _codeFocusNode.dispose();
@@ -611,7 +698,7 @@ class _HomeScreenState extends State<HomeScreen>
         );
         if (record != _lastRecordedSeatWritten) {
           _lastRecordedSeatWritten = record;
-          unawaited(SessionMemory.recordSeat(record));
+          unawaited(SessionMemory.recordSeat(record, clock: widget.clock));
         }
       }
     }
@@ -780,10 +867,20 @@ class _HomeScreenState extends State<HomeScreen>
     return typed.isEmpty ? loc.homeDefaultPlayerName : typed;
   }
 
+  /// D2 of C-449: the player closes the notice by hand. Every other event
+  /// that hides it (create, join, rejoin) is handled where it starts.
+  void _dismissNotice() {
+    setState(() {
+      _removedNotice = false;
+      _gameGoneNotice = false;
+    });
+  }
+
   Future<void> _createRoom() async {
-    if (_removedNotice) {
+    if (_removedNotice || _gameGoneNotice) {
       setState(() {
         _removedNotice = false;
+        _gameGoneNotice = false;
       });
     }
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -842,6 +939,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (result == GameScreenResult.removed && mounted) {
       setState(() {
         _removedNotice = true;
+        _gameGoneNotice = false;
       });
     }
     // Rule 2 of order 080: LobbyScreen never disposes a controller it did
@@ -864,7 +962,10 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  Future<void> _joinRoom() async {
+  /// [fromLink] is true only for a join a room link started: the lobby then
+  /// words a vanished room in the link's terms and offers no retry (C-447
+  /// D4b). A join from a typed code leaves it false.
+  Future<void> _joinRoom({bool fromLink = false}) async {
     final AppLocalizations loc = AppLocalizations.of(context);
     final String normalized = normalizeRoomCode(_codeController.text);
     if (!isValidRoomCode(normalized)) {
@@ -876,6 +977,7 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() {
       _errorText = null;
       _removedNotice = false;
+      _gameGoneNotice = false;
     });
     final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
@@ -915,6 +1017,7 @@ class _HomeScreenState extends State<HomeScreen>
             action: LobbyAction.join,
             code: normalized,
             playerName: name,
+            fromLink: fromLink,
           ),
         ),
       );
@@ -926,6 +1029,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (result == GameScreenResult.removed && mounted) {
       setState(() {
         _removedNotice = true;
+        _gameGoneNotice = false;
       });
     }
     // See the matching comment in _createRoom: leave() must be awaited
@@ -948,9 +1052,10 @@ class _HomeScreenState extends State<HomeScreen>
   /// this watches, is what records the seat again once the resume lands;
   /// nothing here writes [SessionMemory] directly.
   Future<void> _rejoinRoom(SeatRecord record) async {
-    if (_removedNotice) {
+    if (_removedNotice || _gameGoneNotice) {
       setState(() {
         _removedNotice = false;
+        _gameGoneNotice = false;
       });
     }
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -968,6 +1073,15 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     );
+    // C-447 D4: a resume the server refused (room reaped, seat taken back)
+    // goes home with its own true line, set before the retire like the
+    // removed notice in _createRoom.
+    if (result == GameScreenResult.gameGone && mounted) {
+      setState(() {
+        _gameGoneNotice = true;
+        _removedNotice = false;
+      });
+    }
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
@@ -981,6 +1095,7 @@ class _HomeScreenState extends State<HomeScreen>
     } else if (result == GameScreenResult.removed) {
       setState(() {
         _removedNotice = true;
+        _gameGoneNotice = false;
       });
     }
   }
@@ -1255,6 +1370,22 @@ class _HomeScreenState extends State<HomeScreen>
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
+                                  if (_removedNotice || _gameGoneNotice) ...[
+                                    _HomeNotice(
+                                      cardKey: const Key('home-notice'),
+                                      textKey: _gameGoneNotice
+                                          ? const Key('home-game-gone-notice')
+                                          : const Key('home-removed-notice'),
+                                      text: _gameGoneNotice
+                                          ? loc.homeGameGoneNotice
+                                          : loc.homeRemovedNotice,
+                                      dismissLabel: loc.homeNoticeDismiss,
+                                      onDismiss: _dismissNotice,
+                                    ),
+                                    SizedBox(
+                                      height: compact ? kSpace3 : kSpace4,
+                                    ),
+                                  ],
                                   if (seatRecord != null) ...[
                                     ElevatedButton.icon(
                                       key: const Key('home-rejoin-button'),
@@ -1460,19 +1591,6 @@ class _HomeScreenState extends State<HomeScreen>
                                     ),
                                   ],
                                   SizedBox(height: compact ? kSpace3 : kSpace6),
-                                  if (_removedNotice) ...[
-                                    Text(
-                                      loc.homeRemovedNotice,
-                                      key: const Key('home-removed-notice'),
-                                      textAlign: TextAlign.center,
-                                      style: textTheme.bodyMedium?.copyWith(
-                                        color: LudoColors.inkMuted,
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      height: compact ? kSpace2 : kSpace3,
-                                    ),
-                                  ],
                                   KeyedSubtree(
                                     key: _createButtonScrollKey,
                                     child: _weightedButton(
@@ -1697,6 +1815,155 @@ class _RoomCodeInputFormatter extends TextInputFormatter {
     }
     final int end = offset < raw.length ? offset : raw.length;
     return normalizeRoomCode(raw.substring(0, end)).length;
+  }
+}
+
+/// C-449 D1-D3: the one surface every Home notice renders in. A tinted card
+/// with a leading info icon and a trailing close control, ink text at body
+/// size. Directional padding and a plain [Row] mean it mirrors in Arabic
+/// without any locale branch: the icon sits at the start edge, the close
+/// control at the end edge. The text wraps at large text scales.
+class _HomeNotice extends StatefulWidget {
+  const _HomeNotice({
+    required this.cardKey,
+    required this.textKey,
+    required this.text,
+    required this.dismissLabel,
+    required this.onDismiss,
+  });
+
+  final Key cardKey;
+  final Key textKey;
+  final String text;
+  final String dismissLabel;
+  final VoidCallback onDismiss;
+
+  @override
+  State<_HomeNotice> createState() => _HomeNoticeState();
+}
+
+class _HomeNoticeState extends State<_HomeNotice> {
+  @override
+  void initState() {
+    super.initState();
+    // At a large text scale the title block can fill the screen and push the
+    // card below the fold, where the player cannot learn why they are here.
+    // C-449 D1b: scroll only when some part of the card is outside the
+    // viewport, by the least distance that shows all of it, and never by a
+    // jump. A card that is already fully visible leaves the offset alone.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _revealIfNeeded());
+  }
+
+  void _revealIfNeeded() {
+    if (!mounted) {
+      return;
+    }
+    final ScrollableState? scrollable = Scrollable.maybeOf(context);
+    final RenderObject? object = context.findRenderObject();
+    if (scrollable == null || object == null || !object.attached) {
+      return;
+    }
+    final RenderAbstractViewport? viewport = RenderAbstractViewport.maybeOf(
+      object,
+    );
+    if (viewport == null) {
+      return;
+    }
+    final ScrollPosition position = scrollable.position;
+    // Offsets at which the card's start edge sits on the viewport's start edge
+    // and its end edge sits on the viewport's end edge. The card is fully
+    // visible exactly when the current offset lies between the two.
+    final double atStart = viewport.getOffsetToReveal(object, 0.0).offset;
+    final double atEnd = viewport.getOffsetToReveal(object, 1.0).offset;
+    const double slack = 0.5;
+    final double pixels = position.pixels;
+    final ScrollPositionAlignmentPolicy? policy;
+    if (pixels > atStart + slack) {
+      policy = ScrollPositionAlignmentPolicy.keepVisibleAtStart;
+    } else if (pixels < atEnd - slack) {
+      policy = ScrollPositionAlignmentPolicy.keepVisibleAtEnd;
+    } else {
+      policy = null;
+    }
+    if (policy == null) {
+      return;
+    }
+    final bool reduce = MediaQuery.disableAnimationsOf(context);
+    position.ensureVisible(
+      object,
+      alignmentPolicy: policy,
+      duration: reduce ? Duration.zero : const Duration(milliseconds: 250),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final bool disableAnimations = MediaQuery.disableAnimationsOf(context);
+    final Widget card = DecoratedBox(
+      key: widget.cardKey,
+      decoration: BoxDecoration(
+        color: LudoColors.paperWashTop,
+        borderRadius: BorderRadius.circular(kRadiusControl),
+        border: Border.all(color: LudoColors.feltLight),
+      ),
+      child: Padding(
+        padding: const EdgeInsetsDirectional.only(
+          start: kSpace3,
+          top: kSpace1,
+          bottom: kSpace1,
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.info_outline_rounded,
+              color: LudoColors.ink,
+              size: 24,
+            ),
+            const SizedBox(width: kSpace3),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: kSpace2),
+                // C-449 D2b: announced when Home comes back.
+                child: Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    widget.text,
+                    key: widget.textKey,
+                    textAlign: TextAlign.start,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: LudoColors.ink,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              key: const Key('home-notice-dismiss'),
+              onPressed: widget.onDismiss,
+              tooltip: widget.dismissLabel,
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              color: LudoColors.ink,
+              icon: const Icon(Icons.close_rounded),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (disableAnimations) {
+      return card;
+    }
+    // The notice fades in; it never pops. Layout is not animated so the
+    // controls inside are in their final place on the first frame.
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+      builder: (context, value, child) => Opacity(opacity: value, child: child),
+      child: card,
+    );
   }
 }
 

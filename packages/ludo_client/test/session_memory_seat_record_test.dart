@@ -281,4 +281,270 @@ void main() {
       expect(a, isNot(equals(b)));
     });
   });
+
+  // ------------------------------------------------------------------
+  // C-447 D1: the saved time. The clock seam's name is the implementer's
+  // choice (an optional DateTime Function() parameter defaulting to
+  // DateTime.now), so these cases read the real clock and bound the stored
+  // value by a before/after window around the call.
+  //
+  // SessionMemory.seatSavedAt is read through a dynamic receiver so this file
+  // still compiles where the getter does not exist yet: the old S cases stay
+  // green there and the new ones fail with the missing name in the message.
+
+  DateTime? savedAtOf(SessionMemory memory) =>
+      (memory as dynamic).seatSavedAt as DateTime?;
+
+  test(
+    'S-D1a recordSeat writes session.seatSavedAt as an int, the time of '
+    'the call in milliseconds since epoch (window around DateTime.now)',
+    () async {
+      final int before = DateTime.now().millisecondsSinceEpoch;
+      await SessionMemory.recordSeat(
+        const SeatRecord(code: 'K7M2QP', seat: 2, seatToken: 'tok-d1a'),
+      );
+      final int after = DateTime.now().millisecondsSinceEpoch;
+
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      final Object? stored = prefs.get('session.seatSavedAt');
+
+      expect(
+        stored,
+        isA<int>(),
+        reason:
+            'S-D1a: session.seatSavedAt must be an int; got $stored '
+            '(${stored.runtimeType})',
+      );
+      expect(
+        stored as int,
+        inInclusiveRange(before, after),
+        reason:
+            'S-D1a: the stored time must lie between the clock reading '
+            'before the call ($before) and after it ($after); got $stored',
+      );
+      expect(prefs.getStringList('session.seat'), <String>[
+        'K7M2QP',
+        '2',
+        'tok-d1a',
+      ], reason: 'S-D1a with S-2: session.seat keeps exactly its shape');
+    },
+  );
+
+  test(
+    'S-D1a2 a second recordSeat replaces the saved time with its own',
+    () async {
+      await SessionMemory.recordSeat(
+        const SeatRecord(code: 'K7M2QP', seat: 1, seatToken: 'tok-first'),
+      );
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      // Age the first write so the second one cannot match it by accident.
+      await prefs.setInt(
+        'session.seatSavedAt',
+        DateTime.now()
+            .subtract(const Duration(minutes: 30))
+            .millisecondsSinceEpoch,
+      );
+
+      final int before = DateTime.now().millisecondsSinceEpoch;
+      await SessionMemory.recordSeat(
+        const SeatRecord(code: 'ZZZZZZ', seat: 3, seatToken: 'tok-second'),
+      );
+      final int after = DateTime.now().millisecondsSinceEpoch;
+
+      final Object? stored = prefs.get('session.seatSavedAt');
+      expect(
+        stored,
+        isA<int>(),
+        reason: 'S-D1a2: session.seatSavedAt must be an int; got $stored',
+      );
+      expect(
+        stored as int,
+        inInclusiveRange(before, after),
+        reason:
+            'S-D1a2: the second write must stamp its own time in [$before, '
+            '$after]; got $stored',
+      );
+    },
+  );
+
+  test(
+    'S-D1a3 recordSeat then load exposes seatSavedAt as the stored time',
+    () async {
+      final DateTime before = DateTime.now();
+      await SessionMemory.recordSeat(
+        const SeatRecord(code: 'K7M2QP', seat: 2, seatToken: 'tok-d1a3'),
+      );
+      final DateTime after = DateTime.now();
+
+      final SessionMemory memory = await SessionMemory.load();
+      final DateTime? savedAt = savedAtOf(memory);
+
+      expect(
+        savedAt,
+        isNotNull,
+        reason: 'S-D1a3: load() after recordSeat must expose a saved time',
+      );
+      expect(
+        savedAt!.millisecondsSinceEpoch,
+        inInclusiveRange(
+          before.millisecondsSinceEpoch,
+          after.millisecondsSinceEpoch,
+        ),
+        reason:
+            'S-D1a3: seatSavedAt must be the time of the write, between '
+            '$before and $after; got $savedAt',
+      );
+    },
+  );
+
+  test(
+    'S-D1b clearSeat removes both session.seat and session.seatSavedAt',
+    () async {
+      await SessionMemory.recordSeat(
+        const SeatRecord(code: 'K7M2QP', seat: 2, seatToken: 'tok-d1b'),
+      );
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      // Pin the saved time in the store whatever recordSeat wrote, so the
+      // case measures clearSeat alone.
+      await prefs.setInt('session.seatSavedAt', 1700000000000);
+      await SessionMemory.clearSeat();
+
+      expect(
+        prefs.containsKey('session.seat'),
+        isFalse,
+        reason: 'S-D1b: session.seat must be removed',
+      );
+      expect(
+        prefs.containsKey('session.seatSavedAt'),
+        isFalse,
+        reason:
+            'S-D1b: session.seatSavedAt must be removed with it; holds '
+            '${prefs.get('session.seatSavedAt')}',
+      );
+    },
+  );
+
+  test('S-D1b2 clearSeat removes an orphan session.seatSavedAt and a legacy '
+      'session.seat alone', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'session.seatSavedAt': 1700000000000,
+    });
+    await SessionMemory.clearSeat();
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.containsKey('session.seatSavedAt'),
+      isFalse,
+      reason: 'S-D1b2: an orphan saved time must be removed',
+    );
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'session.seat': <String>['K7M2QP', '2', 'tok-legacy'],
+    });
+    await SessionMemory.clearSeat();
+    prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.containsKey('session.seat'),
+      isFalse,
+      reason: 'S-D1b2: a legacy record with no saved time must be removed',
+    );
+  });
+
+  test('S-D1b3 clearSeat leaves the other session keys alone', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'session.lastName': 'Priya',
+      'session.lastSeats': 3,
+      'session.recentCodes': <String>['ABCDEF'],
+    });
+    await SessionMemory.recordSeat(
+      const SeatRecord(code: 'K7M2QP', seat: 2, seatToken: 'tok-d1b3'),
+    );
+    await SessionMemory.clearSeat();
+
+    final SessionMemory memory = await SessionMemory.load();
+    expect(memory.lastName, 'Priya', reason: 'S-D1b3: lastName untouched');
+    expect(memory.lastSeats, 3, reason: 'S-D1b3: lastSeats untouched');
+    expect(memory.recentCodes, <String>[
+      'ABCDEF',
+    ], reason: 'S-D1b3: recentCodes untouched');
+  });
+
+  group('S-D1c load exposes seatSavedAt', () {
+    test('null when session.seatSavedAt is absent (a legacy record)', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'session.seat': <String>['K7M2QP', '2', 'tok-legacy'],
+      });
+
+      final SessionMemory memory = await SessionMemory.load();
+
+      expect(
+        memory.seatRecord,
+        const SeatRecord(code: 'K7M2QP', seat: 2, seatToken: 'tok-legacy'),
+        reason: 'S-D1c: the legacy record itself must still load',
+      );
+      expect(
+        savedAtOf(memory),
+        isNull,
+        reason: 'S-D1c: no stored time means seatSavedAt is null',
+      );
+    });
+
+    test('null when session.seatSavedAt is a String, not an int', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'session.seat': <String>['K7M2QP', '2', 'tok-str'],
+        'session.seatSavedAt': '1700000000000',
+      });
+
+      final SessionMemory memory = await SessionMemory.load();
+
+      expect(
+        memory.seatRecord,
+        const SeatRecord(code: 'K7M2QP', seat: 2, seatToken: 'tok-str'),
+        reason: 'S-D1c: a bad saved time must not hide the record',
+      );
+      expect(
+        savedAtOf(memory),
+        isNull,
+        reason: 'S-D1c: a String saved time is not an int, so null',
+      );
+    });
+
+    test('null when session.seatSavedAt is a double, not an int', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'session.seat': <String>['K7M2QP', '2', 'tok-dbl'],
+        'session.seatSavedAt': 1700000000000.5,
+      });
+
+      final SessionMemory memory = await SessionMemory.load();
+
+      expect(
+        savedAtOf(memory),
+        isNull,
+        reason: 'S-D1c: a double saved time is not an int, so null',
+      );
+    });
+
+    test(
+      'the stored int comes back as that many milliseconds since epoch',
+      () async {
+        // Five minutes old: inside kSeatRecordMaxAge (D2), so load keeps it.
+        final int storedMs = DateTime.now()
+            .subtract(const Duration(minutes: 5))
+            .millisecondsSinceEpoch;
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          'session.seat': <String>['K7M2QP', '2', 'tok-int'],
+          'session.seatSavedAt': storedMs,
+        });
+
+        final SessionMemory memory = await SessionMemory.load();
+
+        expect(
+          savedAtOf(memory)?.millisecondsSinceEpoch,
+          storedMs,
+          reason:
+              'S-D1c: seatSavedAt must be the stored int $storedMs read as '
+              'milliseconds since epoch; got ${savedAtOf(memory)}',
+        );
+      },
+    );
+  });
 }
