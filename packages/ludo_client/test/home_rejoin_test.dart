@@ -129,13 +129,14 @@ Map<String, Object?> _roomJson({
 /// every case except W-9, which needs its single controller's connector to
 /// behave differently across its own two calls.
 class _RecordingControllerFactory {
-  final List<RoomController> controllers = <RoomController>[];
+  final List<_DisposalTrackingController> controllers =
+      <_DisposalTrackingController>[];
   final List<FakeTransport> transports = <FakeTransport>[];
 
   RoomController call() {
     final FakeTransport transport = FakeTransport();
     transports.add(transport);
-    final RoomController created = RoomController(
+    final _DisposalTrackingController created = _DisposalTrackingController(
       serverUrl: Uri.parse(_testUrl),
       connect: (Uri url) async => transport,
     );
@@ -143,10 +144,32 @@ class _RecordingControllerFactory {
     return created;
   }
 
+  /// Disposes only the controllers nobody has disposed yet. Under C-447 D4 a
+  /// refused resume pops the lobby and Home retires (leaves and disposes) the
+  /// controller itself, and a ChangeNotifier refuses a second dispose.
   void disposeAll() {
-    for (final RoomController controller in controllers) {
-      controller.dispose();
+    for (final _DisposalTrackingController controller in controllers) {
+      if (!controller.wasDisposed) {
+        controller.dispose();
+      }
     }
+  }
+}
+
+/// A [RoomController] that remembers whether [dispose] has run, so the rig
+/// can tell a controller Home already retired from one it still owns.
+class _DisposalTrackingController extends RoomController {
+  _DisposalTrackingController({
+    required super.serverUrl,
+    required super.connect,
+  });
+
+  bool wasDisposed = false;
+
+  @override
+  void dispose() {
+    wasDisposed = true;
+    super.dispose();
   }
 }
 
@@ -382,6 +405,19 @@ _joinSuccessfully(
   return (controller: controller, transport: transport);
 }
 
+/// C-447 D7: a seat record as v1.18.0 and older wrote it, `session.seat`
+/// alone with no `session.seatSavedAt`. recordSeat now stamps a saved time,
+/// and Home resumes a fresh record on its own; this file asserts about the
+/// button, which a record with no saved time keeps.
+Future<void> _recordLegacySeat(SeatRecord record) async {
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+  await prefs.setStringList('session.seat', <String>[
+    record.code,
+    record.seat.toString(),
+    record.seatToken,
+  ]);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -410,7 +446,7 @@ void main() {
 
   testWidgets('W-2en: a stored record for code K7M2QP shows the rejoin button, '
       'labelled in English, above home-name-field', (tester) async {
-    await SessionMemory.recordSeat(
+    await _recordLegacySeat(
       const SeatRecord(code: _kCode, seat: _kSeat, seatToken: _kToken),
     );
     final _RecordingControllerFactory factory = _RecordingControllerFactory();
@@ -459,7 +495,7 @@ void main() {
 
   testWidgets('W-2ar: a stored record for code K7M2QP shows the rejoin button, '
       'labelled in Arabic, above home-name-field', (tester) async {
-    await SessionMemory.recordSeat(
+    await _recordLegacySeat(
       const SeatRecord(code: _kCode, seat: _kSeat, seatToken: _kToken),
     );
     final _RecordingControllerFactory factory = _RecordingControllerFactory();
@@ -512,7 +548,7 @@ void main() {
     'W-3 tap (H4, H5): tapping home-rejoin-button sends resume once and a '
     'PLAYING reply shows GameScreen',
     (tester) async {
-      await SessionMemory.recordSeat(
+      await _recordLegacySeat(
         const SeatRecord(code: _kCode, seat: _kSeat, seatToken: _kToken),
       );
       final _RecordingControllerFactory factory = _RecordingControllerFactory();
@@ -577,7 +613,7 @@ void main() {
     'W-4 lobby (H6): a LOBBY reply to resume shows the connected lobby with '
     'the stored room code',
     (tester) async {
-      await SessionMemory.recordSeat(
+      await _recordLegacySeat(
         const SeatRecord(code: _kCode, seat: _kSeat, seatToken: _kToken),
       );
       final _RecordingControllerFactory factory = _RecordingControllerFactory();
@@ -783,7 +819,7 @@ void main() {
       testWidgets('resume answered $errorCode clears session.seat', (
         tester,
       ) async {
-        await SessionMemory.recordSeat(
+        await _recordLegacySeat(
           const SeatRecord(code: _kCode, seat: _kSeat, seatToken: _kToken),
         );
         final _RecordingControllerFactory factory =
@@ -818,6 +854,27 @@ void main() {
               'H2c: a resume for code "$_kCode" refused with $errorCode '
               'must clear session.seat; still holds $stored',
         );
+
+        // C-447 D4: the refused resume pops the lobby and Home shows the
+        // true line instead of lobby-error.
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(
+          ModalRoute.of(
+            tester.element(find.byType(HomeScreen, skipOffstage: false)),
+          )?.isCurrent,
+          isTrue,
+          reason:
+              'C-447 D4: a resume for code "$_kCode" refused with $errorCode '
+              'must pop back to Home, which must be the current route',
+        );
+        expect(
+          find.byKey(const Key('home-game-gone-notice')),
+          findsOneWidget,
+          reason:
+              'C-447 D4: a resume refused with $errorCode must show '
+              'home-game-gone-notice on Home',
+        );
       });
     }
   });
@@ -825,7 +882,7 @@ void main() {
   testWidgets('W-9 keep on a transport failure (control for H2c): the record '
       'survives, and the lobby retry button re-sends resume with the same '
       'code and token', (tester) async {
-    await SessionMemory.recordSeat(
+    await _recordLegacySeat(
       const SeatRecord(code: _kCode, seat: _kSeat, seatToken: _kToken),
     );
     final _SingleFlakyControllerFactory factory =

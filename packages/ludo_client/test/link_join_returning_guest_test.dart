@@ -602,6 +602,12 @@ void main() {
         seatToken: 'tok-d12-001',
       );
 
+      // C-447 D7: the join wrote a fresh seat record; without its saved time
+      // it is a legacy record, so the relaunch stays on Home as asserted.
+      await (await SharedPreferences.getInstance()).remove(
+        'session.seatSavedAt',
+      );
+
       // A new MaterialApp key drops the old Navigator, so the next pump is a
       // relaunch over the same prefs store, not a pop back to this mount.
       await tester.pumpWidget(

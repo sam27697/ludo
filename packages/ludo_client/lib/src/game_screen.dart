@@ -44,10 +44,11 @@ import 'safe_cue.dart';
 import 'theme.dart';
 
 /// Distinct [Navigator.pop] result from the finished-board next-table
-/// button, or a forced removal from the room. The corner leave control
+/// button, a forced removal from the room, or a resume the server refused
+/// because the room or the seat is gone (C-447 D4). The corner leave control
 /// pops with no result, so the screen that pushed this route can leave()
 /// and dispose the old controller without opening another table.
-enum GameScreenResult { newTable, removed }
+enum GameScreenResult { newTable, removed, gameGone }
 
 /// C-432 D4: what a snapshot's own-seat `timer_steps` asks of the C-426 D3
 /// notice. `none` is an older server's absent field, a seat that is not in

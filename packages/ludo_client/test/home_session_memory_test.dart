@@ -308,6 +308,11 @@ Future<void> _hostThenRelaunchHome(
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
 
+  // C-447 D7: the create just wrote a fresh seat record, and a relaunch over
+  // a fresh record resumes on its own. Dropping the saved time makes it a
+  // legacy record, so this relaunch stays on Home as these cases assert.
+  await (await SharedPreferences.getInstance()).remove('session.seatSavedAt');
+
   // A new MaterialApp key drops the old Navigator so this is a relaunch,
   // not a pop back to the still-mounted first HomeScreen.
   await tester.pumpWidget(

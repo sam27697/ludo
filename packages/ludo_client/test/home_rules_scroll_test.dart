@@ -243,6 +243,19 @@ void _expectCreateButtonScrolledIntoView(WidgetTester tester, String caseId) {
   );
 }
 
+/// C-447 D7: a seat record as v1.18.0 and older wrote it, `session.seat`
+/// alone with no `session.seatSavedAt`. recordSeat now stamps a saved time,
+/// and Home resumes a fresh record on its own; this file asserts about the
+/// button, which a record with no saved time keeps.
+Future<void> _recordLegacySeat(SeatRecord record) async {
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+  await prefs.setStringList('session.seat', <String>[
+    record.code,
+    record.seat.toString(),
+    record.seatToken,
+  ]);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -294,7 +307,7 @@ void main() {
       // test/home_rejoin_test.dart and test/home_session_memory_test.dart
       // seed them, by writing through SessionMemory's own static writers
       // before HomeScreen is ever mounted.
-      await SessionMemory.recordSeat(
+      await _recordLegacySeat(
         const SeatRecord(
           code: 'K7M2QP',
           seat: 2,
