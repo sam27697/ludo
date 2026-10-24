@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -1817,9 +1818,6 @@ class _RoomCodeInputFormatter extends TextInputFormatter {
   }
 }
 
-/// Last successful table, shown when [SessionMemory.hasLastTable] is true.
-/// Visual weight stays below Create (muted paper, not action fill) so
-/// Create still outweighs Join with the chip on screen.
 /// C-449 D1-D3: the one surface every Home notice renders in. A tinted card
 /// with a leading info icon and a trailing close control, ink text at body
 /// size. Directional padding and a plain [Row] mean it mirrors in Arabic
@@ -1850,19 +1848,53 @@ class _HomeNoticeState extends State<_HomeNotice> {
     super.initState();
     // At a large text scale the title block can fill the screen and push the
     // card below the fold, where the player cannot learn why they are here.
-    // Bring it into view once, by scrolling, never by jumping. A card that
-    // is already visible does not move the page.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      final bool reduce = MediaQuery.disableAnimationsOf(context);
-      Scrollable.ensureVisible(
-        context,
-        duration: reduce ? Duration.zero : const Duration(milliseconds: 250),
-        curve: Curves.easeOutCubic,
-      );
-    });
+    // C-449 D1b: scroll only when some part of the card is outside the
+    // viewport, by the least distance that shows all of it, and never by a
+    // jump. A card that is already fully visible leaves the offset alone.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _revealIfNeeded());
+  }
+
+  void _revealIfNeeded() {
+    if (!mounted) {
+      return;
+    }
+    final ScrollableState? scrollable = Scrollable.maybeOf(context);
+    final RenderObject? object = context.findRenderObject();
+    if (scrollable == null || object == null || !object.attached) {
+      return;
+    }
+    final RenderAbstractViewport? viewport = RenderAbstractViewport.maybeOf(
+      object,
+    );
+    if (viewport == null) {
+      return;
+    }
+    final ScrollPosition position = scrollable.position;
+    // Offsets at which the card's start edge sits on the viewport's start edge
+    // and its end edge sits on the viewport's end edge. The card is fully
+    // visible exactly when the current offset lies between the two.
+    final double atStart = viewport.getOffsetToReveal(object, 0.0).offset;
+    final double atEnd = viewport.getOffsetToReveal(object, 1.0).offset;
+    const double slack = 0.5;
+    final double pixels = position.pixels;
+    final ScrollPositionAlignmentPolicy? policy;
+    if (pixels > atStart + slack) {
+      policy = ScrollPositionAlignmentPolicy.keepVisibleAtStart;
+    } else if (pixels < atEnd - slack) {
+      policy = ScrollPositionAlignmentPolicy.keepVisibleAtEnd;
+    } else {
+      policy = null;
+    }
+    if (policy == null) {
+      return;
+    }
+    final bool reduce = MediaQuery.disableAnimationsOf(context);
+    position.ensureVisible(
+      object,
+      alignmentPolicy: policy,
+      duration: reduce ? Duration.zero : const Duration(milliseconds: 250),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   @override
@@ -1893,13 +1925,17 @@ class _HomeNoticeState extends State<_HomeNotice> {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: kSpace2),
-                child: Text(
-                  widget.text,
-                  key: widget.textKey,
-                  textAlign: TextAlign.start,
-                  style: textTheme.bodyMedium?.copyWith(
-                    color: LudoColors.ink,
-                    height: 1.3,
+                // C-449 D2b: announced when Home comes back.
+                child: Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    widget.text,
+                    key: widget.textKey,
+                    textAlign: TextAlign.start,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: LudoColors.ink,
+                      height: 1.3,
+                    ),
                   ),
                 ),
               ),
@@ -1931,6 +1967,9 @@ class _HomeNoticeState extends State<_HomeNotice> {
   }
 }
 
+/// Last successful table, shown when [SessionMemory.hasLastTable] is true.
+/// Visual weight stays below Create (muted paper, not action fill) so
+/// Create still outweighs Join with the chip on screen.
 class _LastTableChip extends StatelessWidget {
   const _LastTableChip({required this.name, required this.seats});
 
