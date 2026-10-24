@@ -631,6 +631,17 @@ Future<void> _expectGameScreenMidGame(
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
+  // On a device SharedPreferences persist between captures, so the game an
+  // earlier capture played leaves a fresh session.seat and session.seatSavedAt
+  // behind, and under C-447 D3 Home resumes such a record on its own before
+  // the next capture looks at it. Every capture starts with no seat record.
+  // Only these two keys go; every capture still seeds the rest of its store.
+  setUp(() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.remove('session.seat');
+    await prefs.remove('session.seatSavedAt');
+  });
+
   // ==========================================================================
   // 01, 02, 03, 04: home in both locales (with a working locale toggle,
   // proved by tapping it twice), the lobby, and the game board mid-game, all
@@ -4826,7 +4837,7 @@ void main() {
       tester,
       binding,
       locale: const Locale('en'),
-      roomCode: 'SHOT61',
+      roomCode: 'GKQ6ZA',
       shotName: '61-home-game-gone-en',
     );
   });
@@ -4842,7 +4853,7 @@ void main() {
       tester,
       binding,
       locale: const Locale('ar'),
-      roomCode: 'SHOT62',
+      roomCode: 'GKQ7ZA',
       shotName: '62-home-game-gone-ar',
     );
   });

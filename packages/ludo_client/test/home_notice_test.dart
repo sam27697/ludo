@@ -19,6 +19,13 @@
 //   N7       D3  360 x 640 at text scale 2.0: no overflow, text wraps inside
 //   N8       D4  with no notice there is no card and Create Room has not moved
 //   N8b      D4  after a notice is dismissed Create Room is back where it was
+//   N9       D1b 360 x 640, scale 1.0: Home resumes on its own, the notice
+//                comes at scroll offset 0 and the card is already on screen,
+//                so the offset stays 0 and the title text does not move
+//   N9b      D1b 360 x 640, scale 2.0: the card ends up whole inside the
+//                viewport after the scroll settles, by the least distance
+//   N9c      D1b the same from a Home scrolled down to its button first
+//   N10      D2b the node holding the notice text is a live region
 //
 // How each notice is reached, with real clients on the real wire format over
 // a FakeTransport and no mocked Home:
@@ -28,6 +35,13 @@
 //              and nothing resumes on its own), a tap on home-rejoin-button,
 //              and an error NO_SUCH_ROOM answering the resume
 //              (relaunch_back_to_game_test R8c).
+//
+// N9 and N9b reach the notice through Home's own automatic resume (C-447 D3):
+// a fresh session.seat with session.seatSavedAt, so nothing taps and nothing
+// scrolls Home before the route pops. The game-gone notice answers the resume
+// with NO_SUCH_ROOM; the removed notice answers it with a LOBBY room and then
+// a player_left that names this seat, and answers the leave_room Home sends
+// while it retires the controller.
 //
 // Hygiene: one pumpWidget per case; every pump after a route can be pushed is
 // bounded; every request a case leaves unanswered is flushed past
@@ -62,6 +76,7 @@ const Key _rejoinKey = Key('home-rejoin-button');
 const String _testUrl = 'wss://home-notice-test.invalid/ws';
 
 const String _seatPrefsKey = 'session.seat';
+const String _savedAtPrefsKey = 'session.seatSavedAt';
 const String _kCode = 'K7M2QP';
 const int _kSeat = 2;
 const String _kToken = 'tok-home-notice-001';
@@ -182,6 +197,16 @@ void _seed({required bool withSeat}) {
   });
 }
 
+/// Seeds a record this build wrote a moment ago (session.seat and
+/// session.seatSavedAt), which Home resumes on its own at start (C-447 D3), so
+/// Home is never scrolled before the notice comes.
+void _seedFreshSeat() {
+  SharedPreferences.setMockInitialValues(<String, Object>{
+    _seatPrefsKey: <String>[_kCode, _kSeat.toString(), _kToken],
+    _savedAtPrefsKey: DateTime.now().millisecondsSinceEpoch,
+  });
+}
+
 Widget _app(
   _Factory factory, {
   Locale locale = const Locale('en'),
@@ -221,8 +246,9 @@ Future<void> _mount(WidgetTester tester, Widget app) async {
   await _pumpBounded(tester);
 }
 
-AppLocalizations _loc(WidgetTester tester) =>
-    AppLocalizations.of(tester.element(find.byType(Scaffold).first));
+AppLocalizations _loc(WidgetTester tester) => AppLocalizations.of(
+  tester.element(find.byType(Scaffold, skipOffstage: false).first),
+);
 
 /// Flushes any request still waiting on RoomConnection's ten second timeout,
 /// unmounts the tree so no listener outlives its controller, disposes the
@@ -341,6 +367,78 @@ Future<void> _driveRefusedResume(
   await _pumpBounded(tester, frames: 6);
 }
 
+/// Answers the resume Home started on its own (see [_seedFreshSeat]): with
+/// NO_SUCH_ROOM for the game-gone notice, or with a LOBBY room followed by a
+/// player_left that names this seat for the removed notice.
+Future<void> _answerAutoResume(
+  WidgetTester tester,
+  _Factory factory,
+  _Notice notice,
+  String scenario,
+) async {
+  expect(
+    factory.transports,
+    hasLength(1),
+    reason: '$scenario: fixture broken, Home did not resume on its own',
+  );
+  final FakeTransport transport = factory.transports.single;
+  final List<String> resumes = factory.sent(transport, 'resume');
+  expect(
+    resumes,
+    hasLength(1),
+    reason: '$scenario: fixture broken, no resume frame was sent',
+  );
+  switch (notice) {
+    case _Notice.gone:
+      transport.pushText(
+        _frame(
+          type: 'error',
+          re: _idOf(resumes.single),
+          data: <String, Object?>{'code': 'NO_SUCH_ROOM', 'message': ''},
+        ),
+      );
+    case _Notice.removed:
+      final Map<String, Object?> room = _lobbyRoomJson();
+      room['seats'] = <Map<String, Object?>>[
+        _seatJson(0, name: 'Sam'),
+        _seatJson(_kSeat, name: 'Me'),
+      ];
+      transport.pushText(
+        _frame(
+          type: 'seat_assigned',
+          data: <String, Object?>{'seat': _kSeat, 'seat_token': _kToken},
+        ),
+      );
+      transport.pushText(
+        _frame(type: 'room', re: _idOf(resumes.single), data: room),
+      );
+      await tester.pump();
+      await tester.pump();
+      transport.pushText(
+        _frame(
+          type: 'player_left',
+          data: <String, Object?>{'seat': _kSeat, 'seq': 2},
+        ),
+      );
+  }
+  await tester.pump();
+  await tester.pump();
+  // Home retires the controller before it shows the removed notice, and the
+  // retirement waits for the answer to its leave_room.
+  final List<String> leaves = factory.sent(transport, 'leave_room');
+  if (leaves.isNotEmpty) {
+    transport.pushText(
+      _frame(
+        type: 'player_left',
+        re: _idOf(leaves.single),
+        data: <String, Object?>{'seat': _kSeat, 'host_seat': 0, 'seq': 3},
+      ),
+    );
+    await tester.pump();
+  }
+  await _pumpBounded(tester, frames: 6);
+}
+
 Future<void> _driveNotice(
   WidgetTester tester,
   _Factory factory,
@@ -406,6 +504,47 @@ double _titleBlockBottom(WidgetTester tester) {
     }
   }
   return bottom;
+}
+
+/// The vertical scrollable that holds Home's content: the nearest vertical
+/// Scrollable above the name row.
+Finder _homeScrollable() => find
+    .ancestor(
+      of: find.byKey(_nameKey, skipOffstage: false),
+      matching: find.byWidgetPredicate(
+        (Widget w) => w is Scrollable && w.axis == Axis.vertical,
+        skipOffstage: false,
+      ),
+    )
+    .first;
+
+double _scrollOffset(WidgetTester tester) =>
+    tester.state<ScrollableState>(_homeScrollable()).position.pixels;
+
+/// Top edge of the app title text, the first thing in the title block.
+double _titleTop(WidgetTester tester) {
+  final AppLocalizations loc = _loc(tester);
+  return tester.getRect(find.text(loc.appTitle, skipOffstage: false).first).top;
+}
+
+/// D1b: the page moves by the least distance that shows the whole card, so a
+/// card that had to be brought into view ends flush against the viewport edge
+/// it came from. Home at offset 0 means it never had to move.
+void _expectLeastScroll(
+  WidgetTester tester,
+  Rect card,
+  Rect viewport,
+  String scenario,
+) {
+  final bool flush = card.top == viewport.top || card.bottom == viewport.bottom;
+  expect(
+    _scrollOffset(tester) == 0.0 || flush,
+    isTrue,
+    reason:
+        '$scenario: the card $card is whole in the viewport $viewport but '
+        'neither edge is flush, so the page moved further than the least '
+        'distance (offset ${_scrollOffset(tester)})',
+  );
 }
 
 void main() {
@@ -838,6 +977,189 @@ void main() {
           reason: '$scenario: the text $text must sit inside the card $card',
         );
       });
+    });
+  }
+
+  // ------------------------------------------------------------ D1b, D2b
+  for (final double scale in <double>[1.0, 2.0]) {
+    for (final Locale locale in <Locale>[
+      const Locale('en'),
+      const Locale('ar'),
+    ]) {
+      for (final _Notice notice in _Notice.values) {
+        final bool atRest = scale == 1.0;
+        final String id = atRest ? 'N9' : 'N9b';
+        testWidgets(
+          atRest
+              ? 'N9 (D1b): 360 x 640 at text scale 1.0 in '
+                    '${locale.languageCode}: the ${notice.name} card is '
+                    'already on screen, so Home does not scroll'
+              : 'N9b (D1b): 360 x 640 at text scale 2.0 in '
+                    '${locale.languageCode}: the ${notice.name} card ends '
+                    'up whole inside the viewport',
+          (tester) async {
+            _seedFreshSeat();
+            _useSurface(tester, const Size(360, 640));
+            final _Factory factory = _Factory();
+            final String scenario =
+                '$id ${notice.name}, locale ${locale.languageCode}, '
+                '360x640, scale $scale';
+            await _mount(
+              tester,
+              _app(factory, locale: locale, textScale: scale),
+            );
+            await _guarded(tester, factory, () async {
+              // Home resumed on its own and sits under the pushed route at
+              // scroll offset 0; the title block has not moved.
+              expect(
+                _scrollOffset(tester),
+                0.0,
+                reason:
+                    '$scenario: fixture broken, Home was scrolled before the '
+                    'notice came',
+              );
+              final double titleBefore = _titleTop(tester);
+
+              await _answerAutoResume(tester, factory, notice, scenario);
+
+              expect(
+                find.byKey(_noticeKey),
+                findsOneWidget,
+                reason: '$scenario: home-notice is absent after the pop',
+              );
+              final Object? error = tester.takeException();
+              expect(
+                error,
+                isNull,
+                reason: '$scenario: the layout threw (overflow?): $error',
+              );
+              final Rect viewport = tester.getRect(_homeScrollable());
+              final Rect card = tester.getRect(find.byKey(_noticeKey));
+              if (atRest) {
+                // The card fits under the title block on a 640 dp screen at
+                // scale 1.0, so nothing may be scrolled.
+                expect(
+                  card.top >= viewport.top && card.bottom <= viewport.bottom,
+                  isTrue,
+                  reason:
+                      '$scenario: fixture broken, the card $card is not '
+                      'inside the viewport $viewport at offset 0',
+                );
+                expect(
+                  _scrollOffset(tester),
+                  0.0,
+                  reason:
+                      '$scenario: the scroll offset is '
+                      '${_scrollOffset(tester)}; a card already fully on '
+                      'screen must leave it at 0',
+                );
+                expect(
+                  _titleTop(tester),
+                  titleBefore,
+                  reason:
+                      '$scenario: the title text top moved from $titleBefore '
+                      'to ${_titleTop(tester)}',
+                );
+              } else {
+                expect(
+                  card.top >= viewport.top && card.bottom <= viewport.bottom,
+                  isTrue,
+                  reason:
+                      '$scenario: after the scroll settled the card $card '
+                      'is not whole inside the viewport $viewport (offset '
+                      '${_scrollOffset(tester)})',
+                );
+                _expectLeastScroll(tester, card, viewport, scenario);
+              }
+            });
+          },
+        );
+      }
+    }
+  }
+
+  // N9c: the realistic phone path. Home is scrolled down to reach Create Room
+  // or the rejoin button, the route pops, and the card sits above the
+  // viewport. It must be brought fully into view, by the shortest scroll.
+  for (final double scale in <double>[1.0, 2.0]) {
+    for (final Locale locale in <Locale>[
+      const Locale('en'),
+      const Locale('ar'),
+    ]) {
+      for (final _Notice notice in _Notice.values) {
+        testWidgets('N9c (D1b): 360 x 640 at text scale $scale in '
+            '${locale.languageCode}: Home scrolled down to its button, the '
+            '${notice.name} card ends up whole inside the viewport', (
+          tester,
+        ) async {
+          _seed(withSeat: notice == _Notice.gone);
+          _useSurface(tester, const Size(360, 640));
+          final _Factory factory = _Factory();
+          final String scenario =
+              'N9c ${notice.name}, locale ${locale.languageCode}, '
+              '360x640, scale $scale';
+          await _mount(tester, _app(factory, locale: locale, textScale: scale));
+          await _guarded(tester, factory, () async {
+            await _driveNotice(tester, factory, notice, scenario: scenario);
+
+            expect(
+              find.byKey(_noticeKey),
+              findsOneWidget,
+              reason: '$scenario: home-notice is absent after the pop',
+            );
+            final Object? error = tester.takeException();
+            expect(
+              error,
+              isNull,
+              reason: '$scenario: the layout threw (overflow?): $error',
+            );
+            final Rect viewport = tester.getRect(_homeScrollable());
+            final Rect card = tester.getRect(find.byKey(_noticeKey));
+            expect(
+              card.top >= viewport.top && card.bottom <= viewport.bottom,
+              isTrue,
+              reason:
+                  '$scenario: after the scroll settled the card $card is '
+                  'not whole inside the viewport $viewport (offset '
+                  '${_scrollOffset(tester)})',
+            );
+          });
+        });
+      }
+    }
+  }
+
+  for (final _Notice notice in _Notice.values) {
+    testWidgets('N10 (D2b): the ${notice.name} notice text sits in a live '
+        'region', (tester) async {
+      _seed(withSeat: notice == _Notice.gone);
+      final _Factory factory = _Factory();
+      final String scenario = 'N10 ${notice.name}, locale en, 800x600';
+      final SemanticsHandle handle = tester.ensureSemantics();
+      try {
+        await _mount(tester, _app(factory));
+        await _guarded(tester, factory, () async {
+          await _driveNotice(tester, factory, notice, scenario: scenario);
+          expect(
+            find.byKey(_textKeyOf(notice)),
+            findsOneWidget,
+            reason: '$scenario: the notice text is absent',
+          );
+          final SemanticsNode node = tester.getSemantics(
+            find.byKey(_textKeyOf(notice)),
+          );
+          expect(
+            node.flagsCollection.isLiveRegion,
+            isTrue,
+            reason:
+                '$scenario: the semantics node holding the notice text '
+                '(label "${node.label}") must carry the live-region flag so a '
+                'screen reader announces it when Home comes back',
+          );
+        });
+      } finally {
+        handle.dispose();
+      }
     });
   }
 
