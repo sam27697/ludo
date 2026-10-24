@@ -35,7 +35,6 @@
 // countdown ticks forever, so pumpAndSettle would never return); the tree is
 // unmounted and the controllers disposed in the body.
 
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
