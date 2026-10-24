@@ -79,6 +79,17 @@ class _HomeScreenState extends State<HomeScreen>
   bool _gameGoneNotice = false;
   // C-447 D3: the one automatic resume this screen state ever starts.
   bool _autoResumeStarted = false;
+  // C-447 D3b: the initial link reader has answered (a link, null or an
+  // error), so a cold link has had its say before the stored seat resumes.
+  bool _initialLinkSettled = false;
+  // C-447 D3b: a valid room link was decided by this screen, whichever path
+  // delivered it; the link then wins and the stored seat does not resume.
+  bool _linkHadSay = false;
+  // C-447 D3b: the stored seat waiting for the reader, with the bound that
+  // stops the wait (the same 500 ms as the link hold, measured from the
+  // moment the session-memory load completed).
+  SessionMemory? _autoResumeWaiting;
+  Timer? _autoResumeTimer;
   int _players = 4;
   bool _playersSelectorOpen = false;
   bool _rulesCaptureBonus = true;
@@ -165,13 +176,16 @@ class _HomeScreenState extends State<HomeScreen>
           if (uri != null) {
             _handleLink(uri);
           }
+          _settleInitialLink();
         },
         onError: (Object error, StackTrace stackTrace) {
           _reportLinkError(error, stackTrace, 'reading the initial link');
+          _settleInitialLink();
         },
       );
     } catch (error, stackTrace) {
       _reportLinkError(error, stackTrace, 'reading the initial link');
+      _initialLinkSettled = true;
     }
     try {
       _linkSubscription = widget.linkStream().listen(
@@ -271,6 +285,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted) {
       return;
     }
+    _linkHadSay = true;
     final bool isCurrent = ModalRoute.of(context)?.isCurrent ?? false;
     if (isCurrent && !_linkJoinInFlight) {
       final SeatRecord? record = _seatRecord;
@@ -325,7 +340,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (record == null || savedAt == null || _autoResumeStarted) {
       return;
     }
-    if (!mounted || _linkJoinInFlight) {
+    if (!mounted || _linkJoinInFlight || _linkHadSay) {
       return;
     }
     if (!(ModalRoute.of(context)?.isCurrent ?? false)) {
@@ -333,6 +348,28 @@ class _HomeScreenState extends State<HomeScreen>
     }
     _autoResumeStarted = true;
     unawaited(_rejoinRoom(record));
+  }
+
+  /// C-447 D3b: the initial link reader answered. Any link it returned has
+  /// already been handled by the caller, so a stored seat that was waiting
+  /// for the reader may now decide.
+  void _settleInitialLink() {
+    _initialLinkSettled = true;
+    _finishAutoResumeWait();
+  }
+
+  /// C-447 D3b: ends the wait for the initial link reader, because it
+  /// answered or because 500 ms passed since the load completed, and runs
+  /// the one auto-resume decision.
+  void _finishAutoResumeWait() {
+    final SessionMemory? memory = _autoResumeWaiting;
+    if (memory == null) {
+      return;
+    }
+    _autoResumeWaiting = null;
+    _autoResumeTimer?.cancel();
+    _autoResumeTimer = null;
+    _maybeAutoResume(memory.seatRecord, memory.seatSavedAt);
   }
 
   /// Decides a pending link held while session memory was loading as a
@@ -532,7 +569,16 @@ class _HomeScreenState extends State<HomeScreen>
       if (mounted) {
         final bool linkDecided = _drainPendingLink();
         if (!linkDecided && memory != null) {
-          _maybeAutoResume(memory.seatRecord, memory.seatSavedAt);
+          if (_initialLinkSettled) {
+            _maybeAutoResume(memory.seatRecord, memory.seatSavedAt);
+          } else {
+            // D3b: the reader has not answered yet. Wait for it, bounded.
+            _autoResumeWaiting = memory;
+            _autoResumeTimer = Timer(
+              const Duration(milliseconds: 500),
+              _finishAutoResumeWait,
+            );
+          }
         }
       }
     }
@@ -593,6 +639,9 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     _linkSubscription?.cancel();
     _linkHoldTimer?.cancel();
+    _autoResumeTimer?.cancel();
+    _autoResumeTimer = null;
+    _autoResumeWaiting = null;
     _codeController.removeListener(_clearErrorOnEdit);
     _codeFocusNode.removeListener(_onCodeFieldFocus);
     _codeFocusNode.dispose();
