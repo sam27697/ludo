@@ -352,7 +352,7 @@ const String roomLinkJsSource = r'''
     }
   }
 
-  function confirmCopied() {
+  function showConfirmation() {
     button.textContent = button.getAttribute('data-copied');
     if (timer !== null) {
       clearTimeout(timer);
@@ -367,7 +367,7 @@ const String roomLinkJsSource = r'''
     var text = (code.textContent || '').trim();
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(confirmCopied, selectCode);
+        navigator.clipboard.writeText(text).then(showConfirmation, selectCode);
         return;
       }
     } catch (ignored) {
