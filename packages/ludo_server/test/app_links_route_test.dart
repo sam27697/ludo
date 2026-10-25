@@ -1326,46 +1326,107 @@ void main() {
   });
 
   test(
-      'GET /r/<CODE>, item 5: the page contains both English and Arabic '
-      'text and a link to the Play listing for app.fayad.ludo', () async {
+      'GET /r/<CODE>, item 5 (C-457 D3): one language per page, English '
+      'with no header and a switch to Arabic, Arabic with ?lang=ar and a '
+      'switch to English, and a link to the Play listing for app.fayad.ludo '
+      'on both', () async {
     final ServerHarness harness = ServerHarness.build();
     harnesses.add(harness);
     await harness.start();
 
-    final HttpClientResponse response =
-        await _send(client, _httpUri(harness, '/r/$validSampleCode'));
-    final String body = await _bodyOf(response);
-
     final RegExp arabicScript = RegExp(r'[؀-ۿ]');
-    expect(
-      arabicScript.hasMatch(body),
-      isTrue,
-      reason: 'expected at least one Arabic-script character (U+0600 to '
-          'U+06FF) somewhere in the body of GET /r/$validSampleCode; full '
-          'body: $body',
-    );
-
-    final RegExp latinWord = RegExp(r'[A-Za-z]{2,}');
-    expect(
-      latinWord.hasMatch(body),
-      isTrue,
-      reason: 'expected at least one English word (a run of two or more '
-          'Latin letters, distinct from the room code itself) somewhere '
-          'in the body of GET /r/$validSampleCode; full body: $body',
-    );
-
     final RegExp playLink = RegExp(
       r'href="[^"]*play\.google\.com[^"]*app\.fayad\.ludo[^"]*"',
       caseSensitive: false,
     );
+    final RegExp switchLink = RegExp(
+      r'<a\b[^>]*\bid="lang-switch"[^>]*>(.*?)</a>',
+      dotAll: true,
+    );
+    String switchHref(String body) {
+      final RegExpMatch? tag =
+          RegExp(r'<a\b[^>]*\bid="lang-switch"[^>]*>').firstMatch(body);
+      return tag == null
+          ? ''
+          : (RegExp(r'href="([^"]*)"').firstMatch(tag.group(0)!)?.group(1) ??
+              '');
+    }
+
+    final HttpClientResponse englishResponse =
+        await _send(client, _httpUri(harness, '/r/$validSampleCode'));
+    final String english = await _bodyOf(englishResponse);
+
     expect(
-      playLink.hasMatch(body),
+      english.contains('<html lang="en">'),
       isTrue,
-      reason: 'expected an <a href="..."> pointing at a play.google.com '
-          'URL that names app.fayad.ludo (the Play listing for this app, '
-          '`packages/ludo_client/android/app/build.gradle.kts:46`) '
-          'somewhere in the body of GET /r/$validSampleCode; full body: '
-          '$body',
+      reason: 'GET /r/$validSampleCode with no Accept-Language header and '
+          'no ?lang= must render the English page, which opens with '
+          '<html lang="en"> (C-457 D3); full body: $english',
+    );
+    expect(
+      english.contains('dir="rtl"'),
+      isFalse,
+      reason: 'the English page for GET /r/$validSampleCode must not be '
+          'right-to-left; full body: $english',
+    );
+    expect(
+      switchHref(english),
+      '?lang=ar',
+      reason: 'the English page must carry a link with id="lang-switch" '
+          'whose href is ?lang=ar (C-457 D3); full body: $english',
+    );
+    expect(
+      switchLink.firstMatch(english)?.group(1)?.trim(),
+      'العربية',
+      reason: 'the English page lang-switch link text must be the Arabic '
+          'name of the language, العربية (C-457 D3); full body: $english',
+    );
+    expect(
+      playLink.hasMatch(english),
+      isTrue,
+      reason: 'expected an <a href="..."> pointing at a play.google.com URL '
+          'that names app.fayad.ludo (the Play listing for this app, '
+          '`packages/ludo_client/android/app/build.gradle.kts:46`) in the '
+          'English body of GET /r/$validSampleCode; full body: $english',
+    );
+
+    final HttpClientResponse arabicResponse = await _send(
+      client,
+      _httpUri(harness, '/r/$validSampleCode').replace(query: 'lang=ar'),
+    );
+    final String arabic = await _bodyOf(arabicResponse);
+
+    expect(
+      arabic.contains('<html lang="ar" dir="rtl">'),
+      isTrue,
+      reason: 'GET /r/$validSampleCode?lang=ar must render the Arabic page, '
+          'which opens with <html lang="ar" dir="rtl"> (C-457 D3); full '
+          'body: $arabic',
+    );
+    expect(
+      arabicScript.hasMatch(arabic),
+      isTrue,
+      reason: 'the Arabic page must contain Arabic-script characters '
+          '(U+0600 to U+06FF); full body: $arabic',
+    );
+    expect(
+      switchHref(arabic),
+      '?lang=en',
+      reason: 'the Arabic page must carry a link with id="lang-switch" '
+          'whose href is ?lang=en (C-457 D3); full body: $arabic',
+    );
+    expect(
+      switchLink.firstMatch(arabic)?.group(1)?.trim(),
+      'English',
+      reason: 'the Arabic page lang-switch link text must be English '
+          '(C-457 D3); full body: $arabic',
+    );
+    expect(
+      playLink.hasMatch(arabic),
+      isTrue,
+      reason: 'expected an <a href="..."> pointing at a play.google.com URL '
+          'that names app.fayad.ludo in the Arabic body of GET '
+          '/r/$validSampleCode?lang=ar; full body: $arabic',
     );
   });
 
