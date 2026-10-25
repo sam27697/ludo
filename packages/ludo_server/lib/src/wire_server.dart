@@ -458,20 +458,49 @@ class WireServer {
   /// real, because the code is the only thing protecting a private room and
   /// a route that answered differently for a live code than a dead one
   /// would let brute-forcing codes work.
+  ///
+  /// C-457: `room.js`, the page's one script, is matched before the shape
+  /// check so it never reaches [isWellFormedRoomCode]. The page's language
+  /// is resolved once here by [resolveVerifyLanguage], from the query and
+  /// `Accept-Language`, and handed to the builder; the body depends on that
+  /// header, hence the `vary` header, and still never on the registry.
   shelf.Response _handleRoomLink(shelf.Request request, String rawCode) {
     switch (request.method) {
       case 'GET':
       case 'HEAD':
+        final bool isHead = request.method == 'HEAD';
+        if (rawCode == 'room.js') {
+          return shelf.Response.ok(
+            isHead ? '' : roomLinkJsSource,
+            headers: const <String, String>{
+              'content-type': 'application/javascript; charset=utf-8',
+              'cache-control': 'public, max-age=300',
+              'x-content-type-options': 'nosniff',
+            },
+          );
+        }
         final String code = rawCode.toUpperCase();
         if (!isWellFormedRoomCode(code)) {
           return shelf.Response.notFound('');
         }
-        const Map<String, String> headers = <String, String>{
-          'content-type': 'text/html; charset=utf-8',
-        };
+        final String language = resolveVerifyLanguage(
+          query: request.url.queryParameters,
+          acceptLanguageHeader: request.headers['accept-language'],
+        );
         return shelf.Response.ok(
-          request.method == 'HEAD' ? '' : buildRoomLandingPageHtml(code),
-          headers: headers,
+          isHead ? '' : buildRoomLandingPageHtml(code, language: language),
+          headers: const <String, String>{
+            'content-type': 'text/html; charset=utf-8',
+            'vary': 'accept-language',
+            'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff',
+            'referrer-policy': 'no-referrer',
+            // The verify page's policy, verbatim.
+            'content-security-policy': "default-src 'none'; "
+                "script-src 'self'; style-src 'unsafe-inline'; "
+                "base-uri 'none'; form-action 'none'; "
+                "frame-ancestors 'none'",
+          },
         );
       default:
         return shelf.Response(405, headers: const <String, String>{

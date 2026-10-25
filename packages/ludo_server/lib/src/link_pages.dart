@@ -62,8 +62,91 @@ String buildAssetLinksJson(String fingerprint) {
   return jsonEncode(document);
 }
 
+/// The host the App Links intent filter in the client manifest claims. The
+/// open-in-app URL below must name exactly this host and a path under
+/// `/r/`, or Chrome builds an intent the app does not answer.
+const String _roomLinkHost = 'ludo.provefair.app';
+
+/// Builds the `intent://` URL behind the page's "Open in Ludo RNG" button
+/// for [code], which the caller must already have validated. Chrome turns
+/// it into a VIEW intent for `https://ludo.provefair.app/r/<CODE>` with the
+/// package set, so the installed app gets the room even while the domain is
+/// still unverified; with the app absent Chrome follows
+/// `S.browser_fallback_url` to the Play listing instead. This function does
+/// not validate or reject; it only formats.
+String buildOpenInAppUrl(String code) {
+  final String fallback = Uri.encodeComponent(playStoreListingUrl);
+  return 'intent://$_roomLinkHost/r/$code#Intent;scheme=https;'
+      'package=$androidPackageName;S.browser_fallback_url=$fallback;end';
+}
+
+/// Escapes `&`, `<`, `>` and `"`, which is all a double-quoted
+/// attribute needs: the default escaper above would also turn
+/// every `/` into `&#47;`, which is harmless to a browser but makes the
+/// `href` in the served document differ from the string it was built from.
+const HtmlEscape _attributeEscaper = HtmlEscape(HtmlEscapeMode.attribute);
+
+/// One language's worth of words for the room page. Every user-facing
+/// string on the page comes from here, in the table C-457 decision 4 pins.
+class _RoomPageWords {
+  const _RoomPageWords({
+    required this.title,
+    required this.lead,
+    required this.open,
+    required this.codeLabel,
+    required this.copy,
+    required this.copied,
+    required this.newHere,
+    required this.get,
+    required this.fair,
+  });
+
+  /// The heading and `<title>` text, up to the room code, which follows
+  /// after one space.
+  final String title;
+  final String lead;
+  final String open;
+  final String codeLabel;
+  final String copy;
+  final String copied;
+  final String newHere;
+  final String get;
+  final String fair;
+}
+
+const _RoomPageWords _enWords = _RoomPageWords(
+  title: 'Join room',
+  lead: 'Your friend is waiting for you in Ludo RNG.',
+  open: 'Open in Ludo RNG',
+  codeLabel: 'Room code',
+  copy: 'Copy code',
+  copied: 'Copied',
+  newHere: 'New to Ludo RNG? Install it, then type this code on the home '
+      'screen.',
+  get: 'Get Ludo RNG on Google Play',
+  fair: 'Every roll in Ludo RNG is verifiable.',
+);
+
+const _RoomPageWords _arWords = _RoomPageWords(
+  title: 'انضم إلى الغرفة',
+  lead: 'صديقك بانتظارك في Ludo RNG.',
+  open: 'افتح في Ludo RNG',
+  codeLabel: 'رمز الغرفة',
+  copy: 'انسخ الرمز',
+  copied: 'تم النسخ',
+  newHere: 'جديد على Ludo RNG؟ ثبّته، ثم اكتب هذا الرمز في الشاشة الرئيسية.',
+  get: 'احصل على Ludo RNG من Google Play',
+  fair: 'كل رمية في Ludo RNG قابلة للتحقق.',
+);
+
 /// Builds the landing page a person lands on after tapping a shared
-/// `https://ludo.provefair.app/r/<CODE>` link without the app installed.
+/// `https://ludo.provefair.app/r/<CODE>` link.
+///
+/// On Android 12 and later a web link whose domain is not yet verified
+/// resolves to the browser even with the app installed, so the page does
+/// not claim the link opens the app on its own. It carries one large
+/// button, [buildOpenInAppUrl], that hands the room to the installed app,
+/// and a copy button for the code for the person who has to install first.
 ///
 /// [code] must already be validated (uppercased, checked against
 /// `isWellFormedRoomCode`) by the caller; this function does not consult a
@@ -73,62 +156,224 @@ String buildAssetLinksJson(String fingerprint) {
 /// and a page that answered differently for a live code than a dead one
 /// would turn code-guessing into a working attack.
 ///
-/// English and Arabic both appear on the one page, the Arabic marked
-/// `dir="rtl"` so it renders right-to-left rather than being merely
-/// transliterated left-to-right text.
-String buildRoomLandingPageHtml(String code) {
+/// One language per page: [language] is whatever `resolveVerifyLanguage`
+/// picked, and anything other than `'ar'` renders English. The Arabic page
+/// is the same layout mirrored by `dir="rtl"`, not a patched copy.
+String buildRoomLandingPageHtml(String code, {String language = 'en'}) {
+  final bool isAr = language == 'ar';
+  final _RoomPageWords words = isAr ? _arWords : _enWords;
   final String escapedCode = _escaper.convert(code);
+  final String openUrl = _attributeEscaper.convert(buildOpenInAppUrl(code));
+  final String playUrl = _attributeEscaper.convert(playStoreListingUrl);
+  final String copyWord = _attributeEscaper.convert(words.copy);
+  final String copiedWord = _attributeEscaper.convert(words.copied);
+  final String heading = '${words.title} $escapedCode';
+  final String htmlOpen =
+      isAr ? '<html lang="ar" dir="rtl">' : '<html lang="en">';
+  final String switchLink = isAr
+      ? '<a id="lang-switch" class="switch" href="?lang=en" '
+          'hreflang="en" lang="en">English</a>'
+      : '<a id="lang-switch" class="switch" href="?lang=ar" '
+          'hreflang="ar" lang="ar">العربية</a>';
 
   return '''
 <!DOCTYPE html>
-<html lang="en">
+$htmlOpen
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ludo RNG - Room $escapedCode</title>
+<title>Ludo RNG - $heading</title>
 <style>
+html {
+  background: #0A3D38;
+}
 body {
+  margin: 0;
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 1rem;
+  background: linear-gradient(160deg, #0A3D38, #14665C);
+  color: #0A2A27;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
-  max-width: 32em;
-  margin: 0 auto;
-  padding: 1.5em;
   line-height: 1.5;
-  color: #1a1a1a;
+  overflow-wrap: anywhere;
 }
+.card {
+  box-sizing: border-box;
+  max-width: 28rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem;
+  background: #F7FBFA;
+  border-radius: 1.25rem;
+  text-align: center;
+}
+.seats {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.seats span {
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+}
+.seats .red { background: #D32F2F; }
+.seats .green { background: #388E3C; }
+.seats .yellow { background: #FBC02D; }
+.seats .blue { background: #1976D2; }
 h1 {
-  font-size: 1.3em;
+  margin: 1rem 0 0.25rem;
+  font-size: 1.5rem;
+  line-height: 1.25;
 }
-p.room-code {
-  font-size: 1.4em;
-  letter-spacing: 0.1em;
+.lead {
+  margin: 0 0 1.25rem;
+  font-size: 1.0625rem;
 }
-section.ar {
-  margin-top: 2em;
-  padding-top: 1.5em;
-  border-top: 1px solid #ccc;
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.75rem;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
 }
-a {
-  color: #1a1a1a;
+.btn:focus-visible, .switch:focus-visible {
+  outline: 3px solid #1976D2;
+  outline-offset: 2px;
+}
+#open-app {
+  min-height: 3.5rem;
+  background: #0F6B5F;
+  border: 2px solid #0F6B5F;
+  color: #F7FBFA;
+  font-size: 1.25rem;
+}
+.label {
+  margin: 1.5rem 0 0.25rem;
+  font-size: 0.875rem;
+}
+#room-code {
+  -webkit-user-select: all;
+  user-select: all;
+  margin: 0 0 0.75rem;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 2rem;
+  font-size: min(2.25rem, 11vw);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  padding-inline-start: 0.15em;
+}
+#copy-code {
+  background: transparent;
+  border: 2px solid #0F6B5F;
+  color: #0F6B5F;
+  font-size: 1rem;
+}
+.hint {
+  margin: 1.5rem 0 0.25rem;
+  font-size: 0.9375rem;
+}
+#get-app {
+  color: #0F6B5F;
+  font-size: 0.9375rem;
+  text-decoration: underline;
+}
+.fair {
+  margin: 1rem 0 0;
+  font-size: 0.875rem;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  min-height: 3rem;
+  padding: 0 0.75rem;
+  color: #0F6B5F;
 }
 </style>
 </head>
 <body>
-<section class="en" lang="en" dir="ltr">
-<h1>Join room $escapedCode</h1>
-<p>This link opens the Ludo RNG app directly if it is installed. If it is
-not, install it and then enter the room code below.</p>
-<p class="room-code">Room code: <strong>$escapedCode</strong></p>
-<p><a href="$playStoreListingUrl">Get Ludo RNG on Google Play</a></p>
-</section>
-<section class="ar" lang="ar" dir="rtl">
-<h1>انضم إلى الغرفة $escapedCode</h1>
-<p>يفتح هذا الرابط تطبيق Ludo RNG مباشرة إذا كان مثبتا. إن لم يكن مثبتا،
-ثبته ثم أدخل رمز الغرفة أدناه.</p>
-<p class="room-code">رمز الغرفة: <strong>$escapedCode</strong></p>
-<p><a href="$playStoreListingUrl">احصل على Ludo RNG من Google Play</a></p>
-</section>
+<main class="card">
+<div class="seats" aria-hidden="true"><span class="red"></span><span class="green"></span><span class="yellow"></span><span class="blue"></span></div>
+<h1>$heading</h1>
+<p class="lead">${words.lead}</p>
+<a id="open-app" class="btn" href="$openUrl">${words.open}</a>
+<p class="label">${words.codeLabel}</p>
+<div id="room-code" dir="ltr">$escapedCode</div>
+<button type="button" id="copy-code" class="btn" data-copy="$copyWord" data-copied="$copiedWord" aria-live="polite">${words.copy}</button>
+<p class="hint">${words.newHere}</p>
+<a id="get-app" class="btn" href="$playUrl">${words.get}</a>
+<p class="fair">${words.fair}</p>
+$switchLink
+</main>
+<script src="/r/room.js" defer></script>
 </body>
 </html>
 ''';
 }
+
+/// The complete text of `/r/room.js`, the page's one script. A raw string,
+/// not a template: nothing in it is filled in at request time, and it holds
+/// no user-facing text. The button carries the words it needs as
+/// `data-copy` and `data-copied`, so the page's language never reaches this
+/// file. Neither path out of the click handler throws: a missing or
+/// rejecting clipboard falls back to selecting the code so a long-press
+/// copy works, and that fallback shows no confirmation because nothing was
+/// copied.
+const String roomLinkJsSource = r'''
+'use strict';
+
+(function () {
+  var button = document.getElementById('copy-code');
+  var code = document.getElementById('room-code');
+  if (!button || !code) {
+    return;
+  }
+  var timer = null;
+
+  function selectCode() {
+    try {
+      var range = document.createRange();
+      range.selectNodeContents(code);
+      var selection = window.getSelection();
+      if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    } catch (ignored) {
+      // Nothing left to try; the code is still on screen to read.
+    }
+  }
+
+  function showConfirmation() {
+    button.textContent = button.getAttribute('data-copied');
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+    timer = setTimeout(function () {
+      button.textContent = button.getAttribute('data-copy');
+      timer = null;
+    }, 2000);
+  }
+
+  button.addEventListener('click', function () {
+    var text = (code.textContent || '').trim();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(showConfirmation, selectCode);
+        return;
+      }
+    } catch (ignored) {
+      // Fall through to the selection below.
+    }
+    selectCode();
+  });
+})();
+''';
