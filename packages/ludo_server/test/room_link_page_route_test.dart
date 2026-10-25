@@ -114,10 +114,11 @@ String _repro(String scenario) =>
 // ---------------------------------------------------------------------
 
 class _Server {
-  _Server._(this.registry, this.server);
+  _Server._(this.registry, this.server, this.clock);
 
   final RoomRegistry registry;
   final WireServer server;
+  final FakeClock clock;
 
   static _Server build() {
     final FakeClock clock = FakeClock(DateTime.utc(2026, 10, 25));
@@ -128,7 +129,7 @@ class _Server {
       rateLimiter: RateLimiter(clock: clock),
       clock: clock,
     );
-    return _Server._(registry, server);
+    return _Server._(registry, server, clock);
   }
 
   Future<void> start() =>
@@ -739,6 +740,160 @@ Future<_LiveRoom> _createLiveRoom(String testName) async {
     ),
   );
   return _LiveRoom(code, socket);
+}
+
+/// How far a room created by [_createRoomInState] has progressed.
+enum _RoomState { waiting, full, started }
+
+/// A WebSocket that keeps every frame it receives, so a test can wait for a
+/// frame of one type without racing the order the server sends them in.
+class _Wire {
+  _Wire._(this.label, this._socket) {
+    _socket.listen(
+      (Object? raw) {
+        final Object? frame = jsonDecode(raw! as String);
+        if (frame is Map<String, Object?>) {
+          _frames.add(frame);
+          _wake();
+        }
+      },
+      onError: (Object _) {},
+      onDone: () {
+        _closed = true;
+        _wake();
+      },
+    );
+  }
+
+  final String label;
+  final WebSocket _socket;
+  final List<Map<String, Object?>> _frames = <Map<String, Object?>>[];
+  Completer<void> _changed = Completer<void>();
+  bool _closed = false;
+
+  static Future<_Wire> connect(String label) async =>
+      _Wire._(label, await WebSocket.connect(_server.wsUri.toString()));
+
+  void _wake() {
+    final Completer<void> old = _changed;
+    _changed = Completer<void>();
+    old.complete();
+  }
+
+  void send(String type, Map<String, Object?> data) {
+    _socket.add(jsonEncode(<String, Object?>{
+      'v': 1,
+      't': type,
+      'id': 'room-link-test-$label-$type',
+      'd': data,
+    }));
+  }
+
+  /// Removes and returns the first received frame of [type], waiting up to
+  /// five seconds for it to arrive.
+  Future<Map<String, Object?>> take(String type, String scenario) async {
+    final Stopwatch watch = Stopwatch()..start();
+    while (true) {
+      final int at =
+          _frames.indexWhere((Map<String, Object?> f) => f['t'] == type);
+      if (at >= 0) {
+        return _frames.removeAt(at);
+      }
+      final int left = 5000 - watch.elapsedMilliseconds;
+      if (left <= 0 || _closed) {
+        throw TestFailure(
+          'expected a "$type" frame on the $label socket within 5s '
+          '(socket closed: $_closed); frames still unread: '
+          '${_frames.map((Map<String, Object?> f) => '${f['t']}:${f['d']}').toList()}. '
+          '${_repro(scenario)}',
+        );
+      }
+      await _changed.future.timeout(
+        Duration(milliseconds: left),
+        onTimeout: () {},
+      );
+    }
+  }
+
+  Future<void> close() => _socket.close();
+}
+
+/// A room held open over real WebSockets, in the state [_RoomState] names.
+class _StagedRoom {
+  _StagedRoom(this.code, this.host, this.guest, this.scenario);
+
+  final String code;
+  final _Wire host;
+  final _Wire? guest;
+  final String scenario;
+
+  /// Moves a waiting room to full: a second player joins.
+  static Future<_Wire> _join(String code, String scenario) async {
+    final _Wire guest = await _Wire.connect('guest');
+    guest.send('join_room', <String, Object?>{'code': code, 'name': 'Guest'});
+    await guest.take('room', scenario);
+    return guest;
+  }
+
+  Future<_StagedRoom> toFull() async {
+    final _Wire joined = await _join(code, scenario);
+    await host.take('player_joined', scenario);
+    return _StagedRoom(code, host, joined, scenario);
+  }
+
+  /// Moves a full room to started: the host sends start_game.
+  Future<void> toStarted() async {
+    host.send('start_game', <String, Object?>{});
+    await host.take('game_started', scenario);
+  }
+
+  Future<void> close() async {
+    await host.close();
+    await guest?.close();
+  }
+}
+
+/// Creates a two-seat room on the real server and returns it waiting for a
+/// second player. The server allows five create_room calls an hour per
+/// address on the test clock, so the clock moves on before each create.
+Future<_StagedRoom> _createWaitingRoom(String scenario) async {
+  _server.clock.advance(const Duration(hours: 2));
+  final _Wire host = await _Wire.connect('host');
+  host.send(
+    'create_room',
+    <String, Object?>{'name': 'Host', 'players': 2},
+  );
+  final Map<String, Object?> room = await host.take('room', scenario);
+  final Object? data = room['d'];
+  final Object? code = data is Map<String, Object?> ? data['code'] : null;
+  if (code is! String) {
+    throw TestFailure(
+      'the room frame answering create_room carried no string code: $room. '
+      '${_repro(scenario)}',
+    );
+  }
+  return _StagedRoom(code, host, null, scenario);
+}
+
+/// A room in [state]: waiting for a player, full, or with its game started.
+Future<_StagedRoom> _createRoomInState(
+  _RoomState state,
+  String scenario,
+) async {
+  _StagedRoom room = await _createWaitingRoom(scenario);
+  try {
+    if (state == _RoomState.waiting) {
+      return room;
+    }
+    room = await room.toFull();
+    if (state == _RoomState.started) {
+      await room.toStarted();
+    }
+    return room;
+  } catch (_) {
+    await room.close();
+    rethrow;
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -1397,6 +1552,94 @@ void main() {
       });
     }
 
+    for (final _RoomState state in <_RoomState>[
+      _RoomState.full,
+      _RoomState.started,
+    ]) {
+      for (final String lang in <String>['en', 'ar']) {
+        test(
+            'the $lang body for a ${state.name} room code matches the body '
+            'for a never-created code', () async {
+          final String name = 'D6 ${state.name} versus unknown ($lang)';
+          final _StagedRoom room = await _createRoomInState(state, name);
+          try {
+            final String path = '/r/${room.code}?lang=$lang';
+            final _Res live = await _get(path);
+            expect(live.status, 200,
+                reason: '${state.name} room ${room.code} must serve the page '
+                    'like any code. ${_repro(name)}. ${live.describe()}');
+            final String unknownCode =
+                room.code == _otherCode ? _code : _otherCode;
+            final _Res unknown = await _get('/r/$unknownCode?lang=$lang');
+            expect(unknown.status, live.status,
+                reason: 'status differs for the ${state.name} room '
+                    '${room.code} and the unknown code $unknownCode. '
+                    '${_repro(name)}');
+            expect(
+              unknown.body.replaceAll(unknownCode, '<<CODE>>'),
+              live.body.replaceAll(room.code, '<<CODE>>'),
+              reason: 'body differs between the ${state.name} room '
+                  '${room.code} and the never-created code $unknownCode '
+                  'apart from the code itself; the page must not read the '
+                  'room, because that is an oracle for room state. '
+                  '${_repro(name)}',
+            );
+            for (final String header in <String>[
+              'content-type',
+              'cache-control',
+              'vary',
+              'content-security-policy',
+              'x-content-type-options',
+              'referrer-policy',
+            ]) {
+              expect(unknown.header(header), live.header(header),
+                  reason: 'header $header differs between the ${state.name} '
+                      'room ${room.code} and the unknown code $unknownCode. '
+                      '${_repro(name)}');
+            }
+          } finally {
+            await room.close();
+          }
+        });
+      }
+    }
+
+    for (final String lang in <String>['en', 'ar']) {
+      test(
+          'the $lang body for one code does not change as its room fills, '
+          'starts its game and goes away', () async {
+        final String name = 'D6 one code through every room state ($lang)';
+        final _StagedRoom waiting = await _createRoomInState(
+          _RoomState.waiting,
+          name,
+        );
+        _StagedRoom room = waiting;
+        try {
+          final String path = '/r/${waiting.code}?lang=$lang';
+          final _Res whileWaiting = await _get(path);
+          expect(whileWaiting.status, 200,
+              reason: '${_repro(name)}. ${whileWaiting.describe()}');
+          room = await waiting.toFull();
+          final _Res whileFull = await _get(path);
+          await room.toStarted();
+          final _Res whileStarted = await _get(path);
+          expect(whileFull.body, whileWaiting.body,
+              reason: 'the page for ${room.code} changed when its room went '
+                  'from waiting to full. ${_repro(name)}');
+          expect(whileStarted.body, whileWaiting.body,
+              reason: 'the page for ${room.code} changed when its game '
+                  'started. ${_repro(name)}');
+          await room.close();
+          final _Res after = await _get(path);
+          expect(after.body, whileWaiting.body,
+              reason: 'the page for ${room.code} changed once its room was '
+                  'gone. ${_repro(name)}');
+        } finally {
+          await room.close();
+        }
+      });
+    }
+
     test('an invalid shape answers 404', () async {
       const String name = 'D6 invalid shape is 404';
       for (final String bad in <String>[
@@ -1413,6 +1656,44 @@ void main() {
         expect(res.status, 404,
             reason: 'GET /r/$bad must be 404. ${_repro(name)}. '
                 '${res.describe()}');
+      }
+    });
+
+    test('room.js is matched exactly: other spellings answer 404', () async {
+      const String name = 'D2 room.js matched exactly';
+      for (final String method in <String>['GET', 'HEAD']) {
+        for (final String bad in <String>[
+          'ROOM.JS',
+          'Room.js',
+          'room.JS',
+          'room.js/',
+        ]) {
+          final _Res res = await _request(method, '/r/$bad');
+          expect(res.status, 404,
+              reason: '$method /r/$bad must be 404, only the exact path '
+                  '/r/room.js serves the script. ${_repro(name)}. '
+                  '${res.describe()}');
+          expect(res.header('content-type'), isNot(contains('javascript')),
+              reason: '$method /r/$bad must not answer as a script. '
+                  '${_repro(name)}. ${res.describe()}');
+        }
+      }
+    });
+
+    test('other methods on /r/room.js answer 405 with allow: GET, HEAD',
+        () async {
+      const String name = 'D2 room.js other methods are 405';
+      for (final String method in <String>['POST', 'PUT', 'DELETE']) {
+        final _Res res = await _request(method, '/r/room.js');
+        expect(res.status, 405,
+            reason: '$method /r/room.js must be 405. ${_repro(name)}. '
+                '${res.describe()}');
+        expect(res.header('allow'), 'GET, HEAD',
+            reason: '$method /r/room.js allow header. ${_repro(name)}. '
+                '${res.describe()}');
+        expect(res.body, isNot(contains('addEventListener')),
+            reason: '$method /r/room.js must not serve the script. '
+                '${_repro(name)}. ${res.describe()}');
       }
     });
 
@@ -1446,39 +1727,43 @@ void main() {
   });
 
   group('D7 headers', () {
-    test('/r/<CODE> carries the pinned headers', () async {
-      const String name = 'D7 page headers';
-      final _Res res = await _page('en');
-      expect(res.status, 200, reason: '${_repro(name)}. ${res.describe()}');
-      final Map<String, String> expected = <String, String>{
-        'content-type': 'text/html; charset=utf-8',
-        'vary': 'accept-language',
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-        'referrer-policy': 'no-referrer',
-        'content-security-policy': _expectedCsp,
-      };
-      expected.forEach((String header, String value) {
-        expect(res.header(header), value,
-            reason: 'header $header on /r/$_code. ${_repro(name)}. '
-                '${res.describe()}');
-      });
-    });
+    for (final String method in <String>['GET', 'HEAD']) {
+      for (final String lang in <String>['en', 'ar']) {
+        test('$method /r/<CODE> ($lang) carries the pinned headers', () async {
+          final String name = 'D7 page headers ($method, $lang)';
+          final _Res res = await _request(method, '/r/$_code?lang=$lang');
+          expect(res.status, 200, reason: '${_repro(name)}. ${res.describe()}');
+          final Map<String, String> expected = <String, String>{
+            'content-type': 'text/html; charset=utf-8',
+            'vary': 'accept-language',
+            'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff',
+            'referrer-policy': 'no-referrer',
+            'content-security-policy': _expectedCsp,
+          };
+          expected.forEach((String header, String value) {
+            expect(res.header(header), value,
+                reason: 'header $header on $method /r/$_code?lang=$lang. '
+                    '${_repro(name)}. ${res.describe()}');
+          });
+        });
+      }
 
-    test('/r/room.js carries the pinned headers', () async {
-      const String name = 'D7 script headers';
-      final _Res res = await _get('/r/room.js');
-      expect(res.status, 200, reason: '${_repro(name)}. ${res.describe()}');
-      final Map<String, String> expected = <String, String>{
-        'content-type': 'application/javascript; charset=utf-8',
-        'cache-control': 'public, max-age=300',
-        'x-content-type-options': 'nosniff',
-      };
-      expected.forEach((String header, String value) {
-        expect(res.header(header), value,
-            reason: 'header $header on /r/room.js. ${_repro(name)}. '
-                '${res.describe()}');
+      test('$method /r/room.js carries the pinned headers', () async {
+        final String name = 'D7 script headers ($method)';
+        final _Res res = await _request(method, '/r/room.js');
+        expect(res.status, 200, reason: '${_repro(name)}. ${res.describe()}');
+        final Map<String, String> expected = <String, String>{
+          'content-type': 'application/javascript; charset=utf-8',
+          'cache-control': 'public, max-age=300',
+          'x-content-type-options': 'nosniff',
+        };
+        expected.forEach((String header, String value) {
+          expect(res.header(header), value,
+              reason: 'header $header on $method /r/room.js. '
+                  '${_repro(name)}. ${res.describe()}');
+        });
       });
-    });
+    }
   });
 }
