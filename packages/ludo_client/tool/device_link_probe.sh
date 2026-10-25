@@ -112,6 +112,77 @@ print_edittext_values() {
   done
 }
 
+# component_package COMPONENT
+# Echoes the package part of an Android component name: everything before
+# the first slash, so "app.fayad.ludo/.MainActivity" gives "app.fayad.ludo".
+component_package() {
+  printf '%s\n' "${1%%/*}"
+}
+
+# implicit_tap_probe
+# Measures what a friend's tap on the room link does: an implicit VIEW of the
+# link with no package, the intent WhatsApp and Telegram fire. The legs above
+# name the package, so they prove the intent filter and the app's link
+# handling; they cannot say whether Android would hand a real tap to the app
+# or to a browser. That depends on the domain being verified, and
+# assetlinks.json is 404 by design today. The day it starts serving, this
+# same leg is where the tap moves from OTHER to APP.
+#
+# A measurement, never a failure: nothing here touches the probe's exit code,
+# and an image with no browser is a result (OTHER or UNKNOWN), not an error.
+# The component comes from the `Activity:` line of `am start -W` when it
+# printed one, else from the resumed activity in dumpsys, whichever of
+# mResumedActivity or topResumedActivity this API level prints. Variables
+# are tap_-prefixed so none of them can touch the cold and warm results.
+implicit_tap_probe() {
+  tap_url="https://ludo.provefair.app/r/T4PW9C"
+  tap_component=""
+  tap_reason=""
+
+  echo "device-link-probe: pm get-app-links $PACKAGE"
+  adb shell pm get-app-links "$PACKAGE" 2>&1
+
+  adb shell am force-stop "$PACKAGE"
+  tap_output=$(adb shell am start -W -a android.intent.action.VIEW -c android.intent.category.BROWSABLE -d "$tap_url" 2>&1 | tr -d '\r')
+  echo "$tap_output"
+
+  tap_line=$(printf '%s\n' "$tap_output" | grep -E '^[[:space:]]*Activity:' | head -n 1)
+  if [ -n "$tap_line" ]; then
+    echo "device-link-probe: component read from am start: $tap_line"
+    tap_component=$(printf '%s\n' "$tap_line" | sed 's/^[[:space:]]*Activity:[[:space:]]*//; s/[[:space:]]*$//')
+  elif printf '%s\n' "$tap_output" | grep -q 'Error:'; then
+    tap_reason="am start reported an error and started nothing"
+  else
+    tap_line=$(adb shell dumpsys activity activities 2>&1 | tr -d '\r' | grep -E 'mResumedActivity|topResumedActivity' | head -n 1)
+    if [ -n "$tap_line" ]; then
+      echo "device-link-probe: component read from dumpsys: $tap_line"
+      tap_component=$(printf '%s\n' "$tap_line" | sed -n 's/.*ActivityRecord{[^ ]* [^ ]* \([^ }]*\).*/\1/p')
+    fi
+  fi
+
+  if [ -z "$tap_component" ]; then
+    if [ -z "$tap_reason" ]; then
+      tap_reason="no Activity line in am start output and no resumed activity in dumpsys"
+    fi
+    echo "device-link-probe: implicit tap -> UNKNOWN ($tap_reason)"
+  else
+    tap_package=$(component_package "$tap_component")
+    if [ "$tap_package" = "$PACKAGE" ]; then
+      echo "device-link-probe: implicit tap -> APP ($tap_component)"
+    else
+      echo "device-link-probe: implicit tap -> OTHER ($tap_component)"
+      # The resolver runs inside the "android" package, which must not be
+      # force-stopped; HOME below dismisses it. Anything else is a browser
+      # (or similar) the tap opened, so stop it.
+      if [ "$tap_package" != "android" ]; then
+        adb shell am force-stop "$tap_package"
+      fi
+    fi
+  fi
+
+  adb shell input keyevent KEYCODE_HOME
+}
+
 # Cold leg.
 deliver "$COLD_CODE" yes
 poll_for_code "$COLD_CODE" /sdcard/link-cold.xml link-cold.xml
@@ -141,6 +212,11 @@ echo "device-link-probe: warm $WARM_RESULT"
 if [ "$WARM_RESULT" != "FOUND" ]; then
   print_edittext_values link-warm.xml
 fi
+
+# Implicit-tap leg. After both legs have reported, so their lines and the
+# files they leave behind are exactly as before; it does not feed the exit
+# code below.
+implicit_tap_probe
 
 if [ "$COLD_RESULT" = "FOUND" ] && [ "$WARM_RESULT" = "FOUND" ]; then
   exit 0
