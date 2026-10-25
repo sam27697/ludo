@@ -80,8 +80,8 @@ String buildOpenInAppUrl(String code) {
       'package=$androidPackageName;S.browser_fallback_url=$fallback;end';
 }
 
-/// Escapes the five characters that matter inside a double-quoted
-/// attribute, and nothing else: the default escaper above would also turn
+/// Escapes `&`, `<`, `>` and `"`, which is all a double-quoted
+/// attribute needs: the default escaper above would also turn
 /// every `/` into `&#47;`, which is harmless to a browser but makes the
 /// `href` in the served document differ from the string it was built from.
 const HtmlEscape _attributeEscaper = HtmlEscape(HtmlEscapeMode.attribute);
