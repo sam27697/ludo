@@ -35,6 +35,7 @@ BUTTON_CODE="B8NV3K"
 BUTTON_LABEL="Open in Ludo RNG"
 BUTTON_PAGE_SECONDS=45
 BUTTON_APP_SECONDS=30
+POLL_DECLINE_MAX=4
 CHROME_PACKAGE="com.android.chrome"
 
 # deliver CODE FORCE_STOP
@@ -226,12 +227,20 @@ node_centre() {
 # with its own timeout. Sets NODE_CENTRE to "X Y", or to nothing on a miss.
 # LOCAL_XML is removed first so a dump that failed cannot leave an old one
 # to be read as this one.
+#
+# When a dump has no such node but does hold a node that declines something
+# ("No thanks", "Use without an account", "Got it": Chrome's own promo
+# dialogs sit over the page and hide it), that node is tapped, what was
+# tapped is printed, and the poll goes on inside the same TOTAL_SECONDS. At
+# most POLL_DECLINE_MAX such taps. Nothing that accepts is ever tapped:
+# "Continue" and "Accept & continue" are not in the list.
 poll_for_node() {
   label="$1"
   remote_xml="$2"
   local_xml="$3"
   total="$4"
   elapsed=0
+  declines=0
   NODE_CENTRE=""
   rm -f "$local_xml"
   while true; do
@@ -243,11 +252,39 @@ poll_for_node() {
     if [ -n "$NODE_CENTRE" ]; then
       break
     fi
+    if [ -f "$local_xml" ] && [ "$declines" -lt "$POLL_DECLINE_MAX" ]; then
+      for decline_label in "No thanks" "Use without an account" "Got it"; do
+        decline_xy=$(node_centre "$local_xml" "$decline_label")
+        if [ -n "$decline_xy" ]; then
+          declines=$((declines + 1))
+          echo "device-link-probe: no \"$label\" in the dump, tapping \"$decline_label\" at $decline_xy (decline tap $declines of $POLL_DECLINE_MAX)"
+          adb shell input tap $decline_xy
+          break
+        fi
+      done
+    fi
     if [ "$elapsed" -ge "$total" ]; then
       break
     fi
     sleep "$POLL_INTERVAL_SECONDS"
     elapsed=$((elapsed + POLL_INTERVAL_SECONDS))
+  done
+}
+
+# print_node_texts LOCAL_XML
+# Prints one line per node in LOCAL_XML that has a non-empty text or
+# content-desc, with both in full, so what was on the screen can be read from
+# the step log alone.
+print_node_texts() {
+  echo "device-link-probe: text of every node in $1"
+  if [ ! -f "$1" ]; then
+    echo "device-link-probe: $1 was never pulled"
+    return
+  fi
+  split_nodes "$1" | grep -E ' (text|content-desc)="[^"]+"' | while IFS= read -r node_line; do
+    text_value=$(printf '%s' "$node_line" | sed -n 's/.* text="\([^"]*\)".*/\1/p')
+    desc_value=$(printf '%s' "$node_line" | sed -n 's/.* content-desc="\([^"]*\)".*/\1/p')
+    echo "device-link-probe: node text=\"$text_value\" content-desc=\"$desc_value\""
   done
 }
 
@@ -312,7 +349,8 @@ chrome_first_run_tap() {
 # google_apis is one); no account is touched. A measurement, never a
 # failure: nothing here touches the probe's exit code. Variables are
 # btn_-prefixed so none of them can touch the cold and warm results.
-# One verdict line: APP FOUND, APP MISSING (app in front, code not in an
+# Chrome's notification promo is pre-empted with pm grant and, if it still
+# shows, declined inside the button poll. One verdict line: APP FOUND, APP MISSING (app in front, code not in an
 # EditText), NOT-APP (<component>), or NO-BUTTON (<reason>), with the dumps
 # printed on anything but FOUND.
 page_button_probe() {
@@ -320,6 +358,12 @@ page_button_probe() {
 
   adb shell am set-debug-app --persistent "$CHROME_PACKAGE" 2>&1
   adb shell "echo 'chrome --disable-fre --no-default-browser-check --no-first-run' > /data/local/tmp/chrome-command-line" 2>&1
+  # Chrome asks to send notifications in a dialog that covers the page;
+  # granting the permission up front keeps it from being asked. A failure is
+  # printed and the leg goes on: the decline tap in poll_for_node is the
+  # second line of defence.
+  grant_output=$(adb shell pm grant "$CHROME_PACKAGE" android.permission.POST_NOTIFICATIONS 2>&1 | tr -d '\r')
+  echo "device-link-probe: pm grant POST_NOTIFICATIONS to $CHROME_PACKAGE: ${grant_output:-no output}"
   adb shell am force-stop "$CHROME_PACKAGE"
 
   adb shell am force-stop "$PACKAGE"
@@ -344,6 +388,7 @@ page_button_probe() {
       btn_reason="no node with text or content-desc \"$BUTTON_LABEL\" in ${BUTTON_PAGE_SECONDS}s, resumed activity ${btn_component:-unreadable}"
     fi
     echo "device-link-probe: page button -> NO-BUTTON ($btn_reason)"
+    print_node_texts link-page.xml
     print_dump link-page.xml
   else
     echo "device-link-probe: tapping \"$BUTTON_LABEL\" at $NODE_CENTRE"
