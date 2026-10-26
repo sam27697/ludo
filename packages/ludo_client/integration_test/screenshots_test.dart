@@ -10801,9 +10801,13 @@ Future<void> _pumpUntilThrowGone(
   // until opponent-throw-$seat leaves the tree (at most 3 s, 60 frames).
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 16));
+  // A seat on the roll queue throws twice; the next throw starts a frame
+  // after the last one ends, so the throw must stay gone for three steps.
   final Finder throwFinder = find.byKey(Key('opponent-throw-$seat'));
+  int goneSteps = 0;
   for (int step = 0; step < 60; step++) {
-    if (throwFinder.evaluate().isEmpty) {
+    goneSteps = throwFinder.evaluate().isEmpty ? goneSteps + 1 : 0;
+    if (goneSteps >= 3) {
       return;
     }
     await tester.pump(const Duration(milliseconds: 50));
@@ -11003,7 +11007,17 @@ Future<void> _shootSeatDieTwoSeats(
       findsOneWidget,
       reason: 'capture $shotName: ludo-board must be on screen',
     );
-    final Rect boardRect = tester.getRect(boardFinder);
+    // The keyed board can be wider than the square it paints (large
+    // text); measure the square, centred, as the board draws it.
+    final Rect boardWidget = tester.getRect(boardFinder);
+    final double boardSide = boardWidget.width < boardWidget.height
+        ? boardWidget.width
+        : boardWidget.height;
+    final Rect boardRect = Rect.fromCenter(
+      center: boardWidget.center,
+      width: boardSide,
+      height: boardSide,
+    );
     final Finder seatDieFinder = find.byKey(Key('board-seat-die-$rollerSeat'));
     final Rect seatDieRect = tester.getRect(seatDieFinder);
     expect(
