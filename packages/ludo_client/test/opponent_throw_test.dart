@@ -106,8 +106,9 @@ void _expectNoOpponentThrowKeys(WidgetTester tester) {
 void main() {
   for (int v = 1; v <= 6; v++) {
     testWidgets(
-      'A2: seat 2 rolled face $v tumbles on board, lands in top-right '
-      'quarter, updates below-board die, and fades with no feedback cue',
+      'A2: seat 2 rolled face $v tumbles on board, lands on seat 2\'s yard '
+      'centre in the top-right quarter, leaves the below-board die mine and '
+      'idle, and fades with no feedback cue',
       (tester) async {
         final RollTrayDrive drive = await connectPlaying(
           tester,
@@ -221,17 +222,35 @@ void main() {
             reason: 'A2: landed centre is in the top half of ludo-board',
           );
 
+          // C-465 D3.1: the throw lands on the centre of seat 2's yard
+          // quadrant (my yard is bottom-left, so seat 2 is top-right).
+          final Rect yard = yardQuadrantViewRect(boardSquare(tester), 2, 0);
+          expect(
+            (landedCenter - yard.center).distance,
+            lessThan(1.0),
+            reason:
+                'C-465 D3: landed centre $landedCenter is on seat 2\'s yard '
+                'centre ${yard.center}',
+          );
+          // C-465 D1.2 replaces "the big die takes the face once landed":
+          // the die under the board is mine and never shows seat 2's face.
           expect(
             find.byKey(bigFaceKey(v)),
-            findsOneWidget,
+            findsNothing,
             reason:
-                'A2/D2: below-board GameDie shows face $v once the throw '
-                'has landed',
+                'C-465 D1: below-board GameDie never shows seat 2\'s face '
+                '$v, landed or not',
           );
           expect(
             find.byKey(_idleArtKey),
-            findsNothing,
-            reason: 'A2/D2: game-die-idle-art is replaced by face $v',
+            findsOneWidget,
+            reason:
+                'C-465 D1: game-die-idle-art stays on the die under the board',
+          );
+          expect(
+            find.byKey(seatDieFaceKey(2, v)),
+            findsOneWidget,
+            reason: 'C-465 D2: seat 2\'s own die shows face $v under the throw',
           );
           expect(
             drive.feedback.recorded,
