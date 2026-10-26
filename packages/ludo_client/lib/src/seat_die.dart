@@ -16,7 +16,7 @@ class SeatDie {
   /// Never the viewer's own seat.
   final int seat;
 
-  /// Null is the idle pose.
+  /// Null, or a face outside 1..6, is the idle pose (C-465 D2).
   final int? face;
 
   /// True while [seat] holds the turn: the die is drawn at full opacity.
@@ -57,7 +57,10 @@ class SeatDieView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
-    final int? face = die.face;
+    // C-465 D2: a face outside 1..6 draws the idle pose.
+    // restingRotationFor throws outside that range.
+    final int? raw = die.face;
+    final int? face = raw != null && raw >= 1 && raw <= 6 ? raw : null;
     final bool idle = face == null;
     final String label = idle
         ? loc.seatDieIdle(name)
