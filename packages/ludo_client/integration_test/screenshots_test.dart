@@ -10798,15 +10798,25 @@ Future<void> _pumpUntilThrowGone(
   required String shotName,
 }) async {
   // Start the throw ticker on its first frame, then step in 50 ms increments
-  // until opponent-throw-$seat leaves the tree (at most 3 s, 60 frames).
+  // until every throw has left the tree (at most 6 s, 120 frames).
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 16));
-  // A seat on the roll queue throws twice; the next throw starts a frame
-  // after the last one ends, so the throw must stay gone for three steps.
+  // Throws play one after another across seats, so a seat's throw can
+  // still be queued behind another seat's while its own overlay is
+  // absent. Wait until no seat's throw is up for three steps.
   final Finder throwFinder = find.byKey(Key('opponent-throw-$seat'));
+  bool anyThrowUp() {
+    for (int s = 0; s < 4; s++) {
+      if (find.byKey(Key('opponent-throw-$s')).evaluate().isNotEmpty) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   int goneSteps = 0;
-  for (int step = 0; step < 60; step++) {
-    goneSteps = throwFinder.evaluate().isEmpty ? goneSteps + 1 : 0;
+  for (int step = 0; step < 120; step++) {
+    goneSteps = anyThrowUp() ? 0 : goneSteps + 1;
     if (goneSteps >= 3) {
       return;
     }
@@ -10817,7 +10827,7 @@ Future<void> _pumpUntilThrowGone(
     findsNothing,
     reason:
         'capture $shotName: C-465 D3, opponent-throw-$seat must finish and '
-        'leave the tree within 3 s',
+        'leave the tree within 6 s',
   );
 }
 
