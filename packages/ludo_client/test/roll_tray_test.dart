@@ -1,8 +1,7 @@
-// Screen proof for the roll tray (order 366, contract K1-K11).
-// GameScreen is driven through RoomController on FakeTransport. The tray
-// widget is not on this branch; a missing key or a missing behaviour is
-// the failure these cases are written to produce, except the old-server
-// case, which the screen already does.
+// Screen proof for the roll tray (order 366, contract K1-K11), migrated by
+// order 463 to C-462: the tray is a read-only record, the face is picked on
+// the token (test/token_face_pick_test.dart holds the picker's own cases).
+// GameScreen is driven through RoomController on FakeTransport.
 
 import 'dart:ui' show Tristate;
 
@@ -89,8 +88,8 @@ void _expectChild(WidgetTester tester, Key parent, Key child, String reason) {
 }
 
 void main() {
-  testWidgets('case 1: 6, 6 then 3 shows three tray dice, die 0 selected, '
-      'big die on the default face', (tester) async {
+  testWidgets('case 1: 6, 6 then 3 shows three tray dice with no selection '
+      'mark and the big die on turn.value', (tester) async {
     final RollTrayDrive drive = await connectPlaying(
       tester,
       turn: turnJson(seat: 0, phase: 'await_roll', k: 0, queue: const <int>[]),
@@ -133,24 +132,26 @@ void main() {
         trayFaceKey(2, 3),
         'K2: die 2 draws face 3, game-roll-tray-face-2-3',
       );
-      _expectChild(
-        tester,
-        trayDieKey(0),
-        traySelectedKey(0),
-        'K3/K4: die 0 is selected; the default face is the first '
-        'queued 6',
-      );
-      expect(find.byKey(traySelectedKey(1)), findsNothing);
-      expect(find.byKey(traySelectedKey(2)), findsNothing);
-      expect(find.byKey(trayDeadKey(0)), findsNothing);
-      expect(find.byKey(trayDeadKey(1)), findsNothing);
-      expect(find.byKey(trayDeadKey(2)), findsNothing);
+      for (int i = 0; i < 3; i++) {
+        expect(
+          find.byKey(traySelectedKey(i)),
+          findsNothing,
+          reason:
+              'D6: the tray draws no selected mark, game-roll-tray-selected-$i',
+        );
+        expect(find.byKey(trayDeadKey(i)), findsNothing);
+      }
       expect(
-        find.byKey(bigFaceKey(6)),
+        find.byKey(bigFaceKey(turn.value!)),
         findsOneWidget,
         reason:
-            'K4: the big die shows the default face, game-die-face-6, '
-            'and the tray does not reuse that key',
+            'D7: the big die shows turn.value ${turn.value}, '
+            'game-die-face-${turn.value}, and the tray does not reuse that key',
+      );
+      expect(
+        find.byKey(bigFaceKey(6)),
+        findsNothing,
+        reason: 'D7: the big die no longer shows the first queued 6',
       );
 
       final Rect die = tester.getRect(find.byKey(bigDieKey));
@@ -171,8 +172,8 @@ void main() {
   });
 
   testWidgets(
-    'case 2: tapping another live tray die moves the mark and the rings '
-    'and sends nothing',
+    'case 2: the rings are the union over every alive face and a tray tap '
+    'changes nothing',
     (tester) async {
       final RollTrayDrive drive = await connectPlaying(
         tester,
@@ -188,61 +189,59 @@ void main() {
         await mountGame(tester, drive);
         await _pushSixSixThree(tester, drive);
 
-        expect(
-          find.byKey(legalRingKey(0, 0)),
-          findsOneWidget,
-          reason: 'fixture is broken: the default face rings token 0',
-        );
-        expect(find.byKey(legalRingKey(0, 1)), findsOneWidget);
-        expect(find.byKey(legalRingKey(0, 2)), findsOneWidget);
-        expect(find.byKey(legalRingKey(0, 3)), findsOneWidget);
+        for (int token = 0; token < 4; token++) {
+          expect(
+            find.byKey(legalRingKey(0, token)),
+            findsOneWidget,
+            reason: 'D1: token $token is ringed by face 6 or face 3',
+          );
+        }
 
-        expect(
-          find.byKey(trayDieKey(2)),
-          findsOneWidget,
-          reason: 'K2: game-roll-tray-die-2 is the live 3',
-        );
         final int sentBefore = drive.transport.sentRaw.length;
-        await tester.tap(find.byKey(trayDieKey(2)));
-        await tester.pump();
+        final int cuesBefore = drive.feedback.recorded.length;
+        for (final int tile in <int>[2, 0]) {
+          expect(
+            find.byKey(trayDieKey(tile)),
+            findsOneWidget,
+            reason: 'K2: game-roll-tray-die-$tile is in the tray',
+          );
+          await tester.tapAt(tester.getCenter(find.byKey(trayDieKey(tile))));
+          await tester.pump();
 
-        expect(
-          drive.transport.sentRaw.length,
-          sentBefore,
-          reason: 'K5: tapping a live unselected tray die sends nothing',
-        );
-        _expectChild(
-          tester,
-          trayDieKey(2),
-          traySelectedKey(2),
-          'K3: the selected mark moves to die 2',
-        );
-        expect(
-          find.byKey(traySelectedKey(0)),
-          findsNothing,
-          reason: 'K3: die 0 is no longer selected',
-        );
-        expect(
-          find.byKey(legalRingKey(0, 0)),
-          findsOneWidget,
-          reason: 'K5/K7: face 3 rings token 0',
-        );
-        expect(find.byKey(legalRingKey(0, 1)), findsNothing);
-        expect(find.byKey(legalRingKey(0, 2)), findsNothing);
-        expect(find.byKey(legalRingKey(0, 3)), findsNothing);
-        expect(
-          find.byKey(bigFaceKey(3)),
-          findsOneWidget,
-          reason: 'K4: the big die shows the face just selected',
-        );
+          expect(
+            drive.transport.sentRaw.length,
+            sentBefore,
+            reason: 'D6: tapping tray tile $tile sends nothing',
+          );
+          expect(
+            drive.feedback.recorded.length,
+            cuesBefore,
+            reason: 'D6: tapping tray tile $tile plays no cue',
+          );
+          for (int token = 0; token < 4; token++) {
+            expect(
+              find.byKey(legalRingKey(0, token)),
+              findsOneWidget,
+              reason: 'D1/D6: the tray tap $tile leaves token $token ringed',
+            );
+          }
+          for (int i = 0; i < 3; i++) {
+            expect(find.byKey(traySelectedKey(i)), findsNothing);
+          }
+          expect(
+            find.byKey(bigFaceKey(3)),
+            findsOneWidget,
+            reason: 'D7: the big die keeps turn.value 3 after a tray tap',
+          );
+        }
       } finally {
         await releaseGame(tester, drive);
       }
     },
   );
 
-  testWidgets('case 3: tapping a ringed token after picking a face sends that '
-      'token and that face', (tester) async {
+  testWidgets('case 3: tapping a two-face token and then its face-3 option '
+      'sends that token and that face', (tester) async {
     final RollTrayDrive drive = await connectPlaying(
       tester,
       turn: turnJson(seat: 0, phase: 'await_roll', k: 0, queue: const <int>[]),
@@ -252,21 +251,33 @@ void main() {
       await mountGame(tester, drive);
       await _pushSixSixThree(tester, drive);
 
-      expect(
-        find.byKey(trayDieKey(2)),
-        findsOneWidget,
-        reason: 'K2: game-roll-tray-die-2 is the face to pick',
-      );
-      await tester.tap(find.byKey(trayDieKey(2)));
+      final int sentBefore = drive.transport.sentRaw.length;
+      await tester.tap(find.byKey(tokenHitKey(0, 0)), warnIfMissed: false);
       await tester.pump();
+      for (int i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
       expect(
-        find.byKey(legalRingKey(0, 0)),
+        movesSince(drive.transport, sentBefore),
+        isEmpty,
+        reason:
+            'D2.2: token 0 is legal for 6 and for 3, so the tap opens the '
+            'picker and sends nothing',
+      );
+      expect(
+        find.byKey(facePickerKey),
         findsOneWidget,
-        reason: 'fixture is broken: face 3 must ring token 0 before the tap',
+        reason: 'D2.2: board-face-picker opens on token 0',
+      );
+      expect(
+        find.byKey(facePickerOptionKey(3)),
+        findsOneWidget,
+        reason:
+            'D5: board-face-picker-option-3 is the face the old tray die '
+            '2 stood for',
       );
 
-      final int sentBefore = drive.transport.sentRaw.length;
-      await tester.tap(find.byKey(tokenHitKey(0, 0)));
+      await tester.tap(find.byKey(facePickerOptionKey(3)));
       await tester.pump();
 
       final List<Map<String, Object?>> moves = movesSince(
@@ -276,15 +287,15 @@ void main() {
       expect(
         moves,
         hasLength(1),
-        reason: 'K6: the token tap sends one move; got ${moves.length}',
+        reason: 'D3: the option tap sends one move; got ${moves.length}',
       );
-      expect(moves.single['token'], 0, reason: 'K6: the move names token 0');
+      expect(moves.single['token'], 0, reason: 'D3: the move names token 0');
       expect(
         moves.single['face'],
         3,
         reason:
-            'K6: the move names the picked face 3, not the default '
-            'face and not an omitted face',
+            'D3: the move names the picked face 3, not the default face '
+            'and not an omitted face',
       );
     } finally {
       await releaseGame(tester, drive);
@@ -292,7 +303,7 @@ void main() {
   });
 
   testWidgets(
-    'case 4: tapping a dead tray die plays invalidTap and sends nothing',
+    'case 4: tapping a dead tray tile sends nothing and plays no cue',
     (tester) async {
       final RollTrayDrive drive = await _mountQueue(
         tester,
@@ -324,25 +335,29 @@ void main() {
 
         final int sentBefore = drive.transport.sentRaw.length;
         final int cuesBefore = drive.feedback.recorded.length;
-        await tester.tap(find.byKey(trayDieKey(1)));
+        await tester.tapAt(tester.getCenter(find.byKey(trayDieKey(1))));
         await tester.pump();
 
         expect(
           drive.transport.sentRaw.length,
           sentBefore,
-          reason: 'K5: tapping a dead tray die sends nothing',
+          reason: 'D6: tapping a dead tray tile sends nothing',
         );
-        expect(drive.feedback.recorded.skip(cuesBefore).toList(), <FeedbackCue>[
-          FeedbackCue.invalidTap,
-        ], reason: 'K5: tapping a dead tray die plays invalidTap once');
+        expect(
+          drive.feedback.recorded.skip(cuesBefore).toList(),
+          isEmpty,
+          reason:
+              'D6: the tray is a record, so a dead tile plays no cue, '
+              'not even invalidTap',
+        );
       } finally {
         await releaseGame(tester, drive);
       }
     },
   );
 
-  testWidgets('case 5: a shorter queue on the next turn resets the selection '
-      'to the new value', (tester) async {
+  testWidgets('case 5: a shorter queue on the next turn shows the new value, '
+      'rings the new union and keeps no tray selection', (tester) async {
     final RollTrayDrive drive = await _mountQueue(
       tester,
       seats: twoSeats(mine: const <int>[0, 8, 16, 24]),
@@ -361,24 +376,30 @@ void main() {
       ),
     );
     try {
+      for (int token = 0; token < 4; token++) {
+        expect(
+          find.byKey(legalRingKey(0, token)),
+          findsOneWidget,
+          reason: 'D1: token $token is ringed by one of the faces 6, 5 and 4',
+        );
+      }
       expect(
         find.byKey(trayDieKey(1)),
         findsOneWidget,
         reason: 'K2: game-roll-tray-die-1 is the live 5',
       );
       final int sentBefore = drive.transport.sentRaw.length;
-      await tester.tap(find.byKey(trayDieKey(1)));
+      await tester.tapAt(tester.getCenter(find.byKey(trayDieKey(1))));
       await tester.pump();
       expect(
         drive.transport.sentRaw.length,
         sentBefore,
-        reason: 'fixture is broken: picking the 5 must not send a move',
+        reason: 'D6: tapping the 5 in the tray sends nothing',
       );
-      _expectChild(
-        tester,
-        trayDieKey(1),
-        traySelectedKey(1),
-        'fixture is broken: die 1 must be selected before the turn frame',
+      expect(
+        find.byKey(traySelectedKey(1)),
+        findsNothing,
+        reason: 'D6: tapping the 5 in the tray marks nothing selected',
       );
 
       await drive.push(tester, 'moved', <String, Object?>{
@@ -406,23 +427,25 @@ void main() {
       final TurnState turn = drive.controller.room!.turn!;
       expect(turn.queue, <int>[6, 5], reason: 'fixture is broken');
       expect(turn.value, 6, reason: 'fixture is broken');
-      _expectChild(
-        tester,
-        trayDieKey(0),
-        traySelectedKey(0),
-        'K4: the shorter queue resets the selection to the new value, '
-        'die 0',
-      );
-      expect(
-        find.byKey(traySelectedKey(1)),
-        findsNothing,
-        reason: 'K4: the previously selected 5 does not stay selected',
-      );
+      for (int i = 0; i < 3; i++) {
+        expect(
+          find.byKey(traySelectedKey(i)),
+          findsNothing,
+          reason: 'D6: no tray tile carries a selected mark, tile $i',
+        );
+      }
       expect(
         find.byKey(bigFaceKey(6)),
         findsOneWidget,
-        reason: 'K4: the big die shows the new value, game-die-face-6',
+        reason: 'D7: the big die shows the new turn.value, game-die-face-6',
       );
+      expect(
+        find.byKey(legalRingKey(0, 2)),
+        findsOneWidget,
+        reason: 'D1: token 2 is still ringed, by the 5',
+      );
+      expect(find.byKey(legalRingKey(0, 0)), findsOneWidget);
+      expect(find.byKey(legalRingKey(0, 1)), findsOneWidget);
     } finally {
       await releaseGame(tester, drive);
     }
@@ -678,7 +701,7 @@ void main() {
       expect(
         find.byKey(traySelectedKey(0)),
         findsNothing,
-        reason: 'K3: awaitRoll selects no tray die',
+        reason: 'D6: awaitRoll marks no tray tile selected',
       );
       expect(
         find.byKey(trayDeadKey(0)),
@@ -855,7 +878,7 @@ void main() {
     try {
       await mountGame(tester, drive, locale: const Locale('en'));
       await _pushQueuedSix(tester, drive, const <int>[6], 1);
-      _expectTrayLabel(tester, 0, 'Die 6', 'K11: awaitRoll label is "Die 6"');
+      _expectTrayLabel(tester, 0, 'Die 6', 'D6: awaitRoll label is "Die 6"');
       _expectHitTarget(tester, trayDieKey(0));
 
       await _pushQueuedSix(tester, drive, const <int>[6, 6], 2);
@@ -875,21 +898,20 @@ void main() {
       _expectTrayLabel(
         tester,
         0,
-        'Die 6, selected',
-        'K11: the selected 6 reads "Die 6, selected"',
+        'Die 6, can move',
+        'D6: every alive 6 reads "Die 6, can move", none "selected"',
       );
       _expectTrayLabel(
         tester,
         1,
         'Die 6, can move',
-        'K11: the other live 6 reads "Die 6, can move"',
-        tap: true,
+        'D6: the other live 6 reads "Die 6, can move"',
       );
       _expectTrayLabel(
         tester,
         2,
         'Die 2, no move',
-        'K11: the dead 2 reads "Die 2, no move"',
+        'D6: the dead 2 reads "Die 2, no move"',
       );
       _expectHitTarget(tester, trayDieKey(0));
       _expectHitTarget(tester, trayDieKey(1));
@@ -914,7 +936,7 @@ void main() {
         tester,
         0,
         'النرد 6',
-        'K11: awaitRoll label is "النرد 6"',
+        'D6: awaitRoll label is "النرد 6"',
       );
 
       await _pushQueuedSix(tester, drive, const <int>[6, 6], 2);
@@ -934,21 +956,20 @@ void main() {
       _expectTrayLabel(
         tester,
         0,
-        'النرد 6، محدد',
-        'K11: the selected 6 reads "النرد 6، محدد"',
+        'النرد 6، يمكن التحريك',
+        'D6: every alive 6 reads "النرد 6، يمكن التحريك", none "محدد"',
       );
       _expectTrayLabel(
         tester,
         1,
         'النرد 6، يمكن التحريك',
-        'K11: the other live 6 reads "النرد 6، يمكن التحريك"',
-        tap: true,
+        'D6: the other live 6 reads "النرد 6، يمكن التحريك"',
       );
       _expectTrayLabel(
         tester,
         2,
         'النرد 2، لا حركة',
-        'K11: the dead 2 reads "النرد 2، لا حركة"',
+        'D6: the dead 2 reads "النرد 2، لا حركة"',
       );
     } finally {
       semantics.dispose();
@@ -961,19 +982,21 @@ void _expectTrayLabel(
   WidgetTester tester,
   int index,
   String label,
-  String reason, {
-  bool tap = false,
-}) {
+  String reason,
+) {
   expect(find.byKey(trayDieKey(index)), findsOneWidget, reason: reason);
   final SemanticsNode node = tester.getSemantics(find.byKey(trayDieKey(index)));
   expect(node.label, label, reason: reason);
-  if (tap) {
-    expect(
-      node.getSemanticsData().hasAction(SemanticsAction.tap),
-      isTrue,
-      reason: 'K11: an alive tray die that is not selected exposes a tap',
-    );
-  }
+  expect(
+    node.flagsCollection.isButton,
+    isFalse,
+    reason: 'D6: tray tile $index ("${node.label}") is not a button',
+  );
+  expect(
+    node.getSemanticsData().hasAction(SemanticsAction.tap),
+    isFalse,
+    reason: 'D6: tray tile $index ("${node.label}") exposes no tap action',
+  );
 }
 
 void _expectHitTarget(WidgetTester tester, Key key) {
