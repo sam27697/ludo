@@ -332,8 +332,15 @@ Element _boardStack(WidgetTester tester) {
 }
 
 List<String> _semanticsLabels(WidgetTester tester) {
-  final SemanticsNode root =
-      tester.binding.rootPipelineOwner.semanticsOwner!.rootSemanticsNode!;
+  // The root pipeline owner owns no render tree; semantics live on the
+  // view's own owner.
+  final SemanticsNode root = tester
+      .binding
+      .renderViews
+      .first
+      .owner!
+      .semanticsOwner!
+      .rootSemanticsNode!;
   final List<String> labels = <String>[];
   void visit(SemanticsNode node) {
     if (node.label.isNotEmpty) {
