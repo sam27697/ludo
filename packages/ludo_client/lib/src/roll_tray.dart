@@ -510,6 +510,8 @@ class _RollTrayState extends State<RollTray> {
 /// C-462 D6: the face as a Western numeral, bold, in [color]. No die
 /// body. Dead tiles pass [color] already at about 45% opacity. The glyph
 /// is out of the semantics tree; the tile's own label names the face.
+/// C-462 D6.3: [artKey] sits on this 38dp box. The numeral is centred in
+/// it, and the dead badge is deadBadgeRect of the same box.
 class _TrayNumeral extends StatelessWidget {
   const _TrayNumeral({required this.face, required this.color, this.artKey});
 
@@ -520,13 +522,13 @@ class _TrayNumeral extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox.square(
+      key: artKey,
       dimension: _kTrayDieArt,
       child: FittedBox(
         fit: BoxFit.scaleDown,
         child: ExcludeSemantics(
           child: Text(
             face.toString(),
-            key: artKey,
             textDirection: TextDirection.ltr,
             textScaler: TextScaler.noScaling,
             style: TextStyle(
