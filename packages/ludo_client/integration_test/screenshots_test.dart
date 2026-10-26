@@ -6134,7 +6134,27 @@ void main() {
   });
 
   testWidgets('capture 43-game-tray-pick-en', (tester) async {
-    await _shootPickedTray(tester, binding);
+    await _shootPickedTray(
+      tester,
+      binding,
+      shotName: '43-game-tray-pick-en',
+      locale: const Locale('en'),
+      roomCode: 'SHOT43',
+      gameId: 'u' * 16,
+      seatToken: 'tok-shot-43',
+    );
+  });
+
+  testWidgets('capture 63-game-tray-pick-ar', (tester) async {
+    await _shootPickedTray(
+      tester,
+      binding,
+      shotName: '63-game-tray-pick-ar',
+      locale: const Locale('ar'),
+      roomCode: 'SHOT63',
+      gameId: 'j' * 16,
+      seatToken: 'tok-shot-63',
+    );
   });
 
   testWidgets('capture 44-game-tray-dead-ar', (tester) async {
@@ -9154,8 +9174,8 @@ int _progressOf(RoomController controller, int seat, int token) {
 }
 
 /// Captures 41 and 42. My turn, queue [6, 6, 3] after the third roll,
-/// token 0 on square 0 so both the 6 and the 3 are live, die 0 selected,
-/// rings on all four of my tokens.
+/// token 0 on square 0 so both the 6 and the 3 are live, the big die on
+/// the thrown 3 (C-462 D7), rings on all four of my tokens.
 Future<void> _shootLiveTray(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -9253,12 +9273,6 @@ Future<void> _shootLiveTray(
       const Key('game-roll-tray-face-0-6'),
       'capture $shotName: K2 die 0 draws 6',
     );
-    _expectChildKey(
-      tester,
-      const Key('game-roll-tray-die-0'),
-      const Key('game-roll-tray-selected-0'),
-      'capture $shotName: K3 die 0 is the selected default face',
-    );
     _expectKey(
       tester,
       const Key('game-roll-tray-dead-0'),
@@ -9270,12 +9284,6 @@ Future<void> _shootLiveTray(
       const Key('game-roll-tray-die-1'),
       const Key('game-roll-tray-face-1-6'),
       'capture $shotName: K2 die 1 draws the other 6',
-    );
-    _expectKey(
-      tester,
-      const Key('game-roll-tray-selected-1'),
-      present: false,
-      reason: 'capture $shotName: K3 only the first 6 is selected',
     );
     _expectKey(
       tester,
@@ -9291,12 +9299,6 @@ Future<void> _shootLiveTray(
     );
     _expectKey(
       tester,
-      const Key('game-roll-tray-selected-2'),
-      present: false,
-      reason: 'capture $shotName: K3 the 3 is not the default face',
-    );
-    _expectKey(
-      tester,
       const Key('game-roll-tray-dead-2'),
       present: false,
       reason: 'capture $shotName: K3 the 3 is live',
@@ -9309,15 +9311,15 @@ Future<void> _shootLiveTray(
     );
     _expectKey(
       tester,
-      const Key('game-die-face-6'),
+      const Key('game-die-face-3'),
       present: true,
-      reason: 'capture $shotName: K4 the big die shows the default face 6',
+      reason: 'capture $shotName: C-462 D7 the big die shows turn.value 3',
     );
     _expectKey(
       tester,
-      const Key('game-die-face-3'),
+      const Key('game-die-face-6'),
       present: false,
-      reason: 'capture $shotName: the big die is not showing the rolled 3',
+      reason: 'capture $shotName: the big die is not showing 6',
     );
     for (final int token in <int>[0, 1, 2, 3]) {
       _expectKey(
@@ -9341,14 +9343,19 @@ Future<void> _shootLiveTray(
   }
 }
 
-/// Capture 43. Same three rolls as 41, plus a dead 2 on the end of the
-/// queue (cases 4 and 12 leave a 2 out of legal_by_face), then a tap on
-/// the die showing 3. The rings move from the 6's four tokens to token 0.
+/// Captures 43 and 63. Same three rolls as 41, plus a dead 2 on the end of
+/// the queue (cases 4 and 12 leave a 2 out of legal_by_face), then a tap on
+/// token 0 (`board-token-hit-0-0`). Both the 6 and the 3 can move token 0,
+/// so the face picker opens on token 0 (C-462 D2, D4).
 Future<void> _shootPickedTray(
   WidgetTester tester,
-  IntegrationTestWidgetsFlutterBinding binding,
-) async {
-  const String shotName = '43-game-tray-pick-en';
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
   binding.testTextInput.register();
   _stubScreenshotChannel(tester);
   await binding.convertFlutterSurfaceToImage();
@@ -9360,10 +9367,10 @@ Future<void> _shootPickedTray(
     final _OpenedTrayGame opened = await _openHostGame(
       tester,
       capture: shotName,
-      roomCode: 'SHOT43',
-      locale: const Locale('en'),
-      gameId: 'u' * 16,
-      seatToken: 'tok-shot-43',
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
     );
     controller = opened.controller;
     int seq = await _pushMyMoved(
@@ -9384,32 +9391,48 @@ Future<void> _shootPickedTray(
 
     _expectKey(
       tester,
-      const Key('game-roll-tray-selected-0'),
-      present: true,
-      reason: 'capture $shotName: the default 6 is selected before the tap',
-    );
-    _expectKey(
-      tester,
       const Key('board-legal-ring-0-1'),
       present: true,
       reason: 'capture $shotName: the 6 rings token 1 before the tap',
     );
+    _expectKey(
+      tester,
+      const Key('board-face-picker'),
+      present: false,
+      reason: 'capture $shotName: the picker is closed before the tap',
+    );
 
-    final Finder pickedDie = find.byKey(const Key('game-roll-tray-die-2'));
+    final Finder tokenZero = find.byKey(const Key('board-token-hit-0-0'));
     expect(
-      pickedDie,
+      tokenZero,
       findsOneWidget,
-      reason: 'capture $shotName: game-roll-tray-die-2 is the live 3',
+      reason: 'capture $shotName: board-token-hit-0-0 is on the board',
     );
     final int sentBefore = opened.transport.sentRaw.length;
-    await tester.ensureVisible(pickedDie);
-    await tester.pump();
-    await tester.tap(pickedDie);
+    await tester.tap(tokenZero, warnIfMissed: false);
     await tester.pump();
     expect(
       opened.transport.sentRaw.length,
       sentBefore,
-      reason: 'capture $shotName: tapping the 3 sends nothing',
+      reason: 'capture $shotName: C-462 D2 tapping token 0 sends nothing',
+    );
+    _expectKey(
+      tester,
+      const Key('board-face-picker'),
+      present: true,
+      reason: 'capture $shotName: C-462 D4 board-face-picker opens on token 0',
+    );
+    _expectChildKey(
+      tester,
+      const Key('board-face-picker'),
+      const Key('board-face-picker-option-6'),
+      'capture $shotName: C-462 D4 option 6 is in the picker',
+    );
+    _expectChildKey(
+      tester,
+      const Key('board-face-picker'),
+      const Key('board-face-picker-option-3'),
+      'capture $shotName: C-462 D4 option 3 is in the picker',
     );
 
     await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
@@ -9439,10 +9462,30 @@ Future<void> _shootPickedTray(
     );
     expect(
       loc.localeName,
-      'en',
-      reason: 'capture $shotName: expected locale en, got ${loc.localeName}',
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
     );
 
+    _expectKey(
+      tester,
+      const Key('board-face-picker'),
+      present: true,
+      reason: 'capture $shotName: C-462 D4 board-face-picker stays open',
+    );
+    _expectChildKey(
+      tester,
+      const Key('board-face-picker'),
+      const Key('board-face-picker-option-6'),
+      'capture $shotName: C-462 D4 option 6 stays in the picker',
+    );
+    _expectChildKey(
+      tester,
+      const Key('board-face-picker'),
+      const Key('board-face-picker-option-3'),
+      'capture $shotName: C-462 D4 option 3 stays in the picker',
+    );
     _expectKey(
       tester,
       const Key('game-roll-tray'),
@@ -9454,12 +9497,6 @@ Future<void> _shootPickedTray(
       const Key('game-roll-tray-die-0'),
       const Key('game-roll-tray-face-0-6'),
       'capture $shotName: K2 die 0 still draws 6',
-    );
-    _expectKey(
-      tester,
-      const Key('game-roll-tray-selected-0'),
-      present: false,
-      reason: 'capture $shotName: K3 the tap moved the mark off die 0',
     );
     _expectKey(
       tester,
@@ -9475,12 +9512,6 @@ Future<void> _shootPickedTray(
     );
     _expectKey(
       tester,
-      const Key('game-roll-tray-selected-1'),
-      present: false,
-      reason: 'capture $shotName: K3 die 1 is not selected',
-    );
-    _expectKey(
-      tester,
       const Key('game-roll-tray-dead-1'),
       present: false,
       reason: 'capture $shotName: K3 die 1 is live',
@@ -9489,19 +9520,13 @@ Future<void> _shootPickedTray(
       tester,
       const Key('game-roll-tray-die-2'),
       const Key('game-roll-tray-face-2-3'),
-      'capture $shotName: K2 die 2 draws the picked 3',
-    );
-    _expectChildKey(
-      tester,
-      const Key('game-roll-tray-die-2'),
-      const Key('game-roll-tray-selected-2'),
-      'capture $shotName: K3 the 3 is selected',
+      'capture $shotName: K2 die 2 draws the live 3',
     );
     _expectKey(
       tester,
       const Key('game-roll-tray-dead-2'),
       present: false,
-      reason: 'capture $shotName: K3 the picked 3 is not dead',
+      reason: 'capture $shotName: K3 the 3 is not dead',
     );
     _expectChildKey(
       tester,
@@ -9517,12 +9542,6 @@ Future<void> _shootPickedTray(
     );
     _expectKey(
       tester,
-      const Key('game-roll-tray-selected-3'),
-      present: false,
-      reason: 'capture $shotName: K3 the dead 2 is not selected',
-    );
-    _expectKey(
-      tester,
       const Key('game-roll-tray-die-4'),
       present: false,
       reason: 'capture $shotName: the tray holds four dice',
@@ -9531,34 +9550,28 @@ Future<void> _shootPickedTray(
       tester,
       const Key('game-die-face-3'),
       present: true,
-      reason: 'capture $shotName: K4 the big die shows the picked 3',
+      reason: 'capture $shotName: C-462 D7 the big die shows turn.value 3',
     );
     _expectKey(
       tester,
       const Key('game-die-face-6'),
       present: false,
-      reason: 'capture $shotName: the big die left the default 6',
+      reason: 'capture $shotName: the big die is not showing 6',
     );
-    _expectKey(
-      tester,
-      const Key('board-legal-ring-0-0'),
-      present: true,
-      reason: 'capture $shotName: K7 the 3 rings token 0',
-    );
-    for (final int token in <int>[1, 2, 3]) {
+    for (final int token in <int>[0, 1, 2, 3]) {
       _expectKey(
         tester,
         Key('board-legal-ring-0-$token'),
-        present: false,
-        reason:
-            'capture $shotName: K7 the rings left token $token when the '
-            '3 was picked',
+        present: true,
+        reason: 'capture $shotName: C-462 D1 the union rings token $token',
       );
     }
     _expectTrayBesideDie(
       tester,
-      onTheRight: true,
-      reason: 'capture $shotName: K1 the tray sits to the right of the big die',
+      onTheRight: locale.languageCode == 'en',
+      reason:
+          'capture $shotName: K1 the tray sits after the big die in '
+          'reading order',
     );
 
     await binding.takeScreenshot(shotName);
@@ -9779,18 +9792,6 @@ Future<void> _shootDeadTray(
       const Key('game-roll-tray-die-2'),
       present: false,
       reason: 'capture $shotName: K9 the spent 2 is gone from the tray',
-    );
-    _expectKey(
-      tester,
-      const Key('game-roll-tray-selected-0'),
-      present: false,
-      reason: 'capture $shotName: K9 no die is selected',
-    );
-    _expectKey(
-      tester,
-      const Key('game-roll-tray-selected-1'),
-      present: false,
-      reason: 'capture $shotName: K9 die 1 is dead, not selected',
     );
     _expectTrayBesideDie(
       tester,

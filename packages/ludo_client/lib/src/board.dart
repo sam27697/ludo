@@ -25,6 +25,7 @@ import 'board_geometry.dart';
 import 'safe_cue.dart';
 import 'seat_mark.dart';
 import 'theme.dart';
+import 'token_face_picker.dart';
 
 export 'board_geometry.dart';
 
@@ -423,6 +424,7 @@ class LudoBoard extends StatefulWidget {
     this.onTravelReset,
     this.overlay,
     this.safeCue,
+    this.facePick,
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -535,6 +537,11 @@ class LudoBoard extends StatefulWidget {
   /// mover's destination cell. The screen owns when it appears and when
   /// it leaves; this widget only anchors it. C-384.
   final SafeCue? safeCue;
+
+  /// C-462 D5: the face picker on one of [mySeat]'s tokens, or null when
+  /// none is open. Null adds nothing, so a board built without it draws
+  /// exactly what it drew before.
+  final TokenFacePick? facePick;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -1401,6 +1408,10 @@ class _LudoBoardState extends State<LudoBoard> {
                         mySeat: widget.mySeat,
                       ),
                     ),
+                  // C-462 D5: above every other layer, the thrown die and
+                  // the safe cue included. Absent when [facePick] is null.
+                  if (widget.facePick != null && widget.mySeat != null)
+                    _anchoredFacePick(cellSize),
                 ],
               ),
             ),
@@ -1727,6 +1738,57 @@ class _LudoBoardState extends State<LudoBoard> {
     return layer;
   }
 
+  /// C-462 D5: the bubble on the drawn centre of (mySeat, token), the same
+  /// layout the disc is painted at. Above the token, or below when that
+  /// would cross the board's top edge, then clamped inside the board.
+  Widget _anchoredFacePick(double cellSize) {
+    final TokenFacePick pick = widget.facePick!;
+    final int seat = widget.mySeat!;
+    final List<int>? progresses = widget.tokens[seat];
+    if (progresses == null ||
+        pick.token < 0 ||
+        pick.token >= progresses.length) {
+      return const SizedBox.shrink();
+    }
+    final int progress = _drawnProgress(seat, pick.token);
+    final _TokenLayout layout = _tokenLayout(
+      seat: seat,
+      tokenIndex: pick.token,
+      progress: progress,
+      cellSize: cellSize,
+      mySeat: seat,
+      tokens: widget.tokens,
+      seatsInPlay: widget.seatsInPlay,
+      progressOf: _drawnProgress,
+    );
+    final double boardSide = cellSize * 15;
+    final double width = facePickerBubbleWidth(pick.faces.length);
+    final double aboveTop =
+        layout.center.dy -
+        layout.size / 2 -
+        kFacePickerTipGap -
+        kFacePickerBubbleHeight;
+    final bool placeBelow = aboveTop < 0;
+    final double left = _clampOrigin(
+      layout.center.dx - width / 2,
+      width,
+      boardSide,
+    );
+    return CustomSingleChildLayout(
+      delegate: _FacePickAnchorDelegate(
+        center: layout.center,
+        tokenRadius: layout.size / 2,
+        placeBelow: placeBelow,
+      ),
+      child: TokenFacePickerBubble(
+        key: ValueKey<int>(pick.token),
+        pick: pick,
+        placeBelow: placeBelow,
+        pointerDx: layout.center.dx - left,
+      ),
+    );
+  }
+
   /// The largest square that fits the constraints this widget is given. Both
   /// axes bounded picks the smaller; one axis bounded uses that axis; both
   /// unbounded has no sensible size to fall back on and renders nothing
@@ -1748,6 +1810,48 @@ class _LudoBoardState extends State<LudoBoard> {
       side = 0;
     }
     return side;
+  }
+}
+
+/// Places the face-picker bubble on the token (C-462 D5). [placeBelow] is
+/// decided from the bubble's fixed height before layout; the position
+/// itself uses the child's measured size, which matches that height.
+class _FacePickAnchorDelegate extends SingleChildLayoutDelegate {
+  _FacePickAnchorDelegate({
+    required this.center,
+    required this.tokenRadius,
+    required this.placeBelow,
+  });
+
+  final Offset center;
+  final double tokenRadius;
+  final bool placeBelow;
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
+    return BoxConstraints(
+      maxWidth: constraints.maxWidth,
+      maxHeight: constraints.maxHeight,
+    );
+  }
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) {
+    final double rawLeft = center.dx - childSize.width / 2;
+    final double rawTop = placeBelow
+        ? center.dy + tokenRadius + kFacePickerTipGap
+        : center.dy - tokenRadius - kFacePickerTipGap - childSize.height;
+    return Offset(
+      _clampOrigin(rawLeft, childSize.width, size.width),
+      _clampOrigin(rawTop, childSize.height, size.height),
+    );
+  }
+
+  @override
+  bool shouldRelayout(covariant _FacePickAnchorDelegate oldDelegate) {
+    return oldDelegate.center != center ||
+        oldDelegate.tokenRadius != tokenRadius ||
+        oldDelegate.placeBelow != placeBelow;
   }
 }
 

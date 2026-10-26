@@ -63,7 +63,26 @@
   "gameTokenButton": "قطعة {number}",
   "announceAutoMoveArmed": "حركة وحيدة. القطعة {number} ستتحرك وحدها.",
   "gameDieValue": "الرمية: {value}",
-  "trayDieSelected": "النرد {face}، محدد",
+  "facePickerLabel": "أي رمية للقطعة {number}؟",
+  "@facePickerLabel": {
+    "description": "Semantics label for the face picker bubble on a token two or more queued faces can move (C-462 D5). number is the piece, 1 through 4.",
+    "placeholders": {
+      "number": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
+  "facePickerOption": "العب {face}",
+  "@facePickerOption": {
+    "description": "Semantics label for one face in the token face picker (C-462 D5). face is the roll, 1 through 6.",
+    "placeholders": {
+      "face": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
   "trayDieCanMove": "النرد {face}، يمكن التحريك",
   "trayDieNoMove": "النرد {face}، لا حركة",
   "trayDie": "النرد {face}",
