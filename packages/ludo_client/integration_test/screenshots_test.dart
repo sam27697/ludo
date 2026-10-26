@@ -9174,8 +9174,8 @@ int _progressOf(RoomController controller, int seat, int token) {
 }
 
 /// Captures 41 and 42. My turn, queue [6, 6, 3] after the third roll,
-/// token 0 on square 0 so both the 6 and the 3 are live, die 0 selected,
-/// rings on all four of my tokens.
+/// token 0 on square 0 so both the 6 and the 3 are live, the big die on
+/// the thrown 3 (C-462 D7), rings on all four of my tokens.
 Future<void> _shootLiveTray(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -9311,15 +9311,15 @@ Future<void> _shootLiveTray(
     );
     _expectKey(
       tester,
-      const Key('game-die-face-6'),
+      const Key('game-die-face-3'),
       present: true,
-      reason: 'capture $shotName: K4 the big die shows the default face 6',
+      reason: 'capture $shotName: C-462 D7 the big die shows turn.value 3',
     );
     _expectKey(
       tester,
-      const Key('game-die-face-3'),
+      const Key('game-die-face-6'),
       present: false,
-      reason: 'capture $shotName: the big die is not showing the rolled 3',
+      reason: 'capture $shotName: the big die is not showing 6',
     );
     for (final int token in <int>[0, 1, 2, 3]) {
       _expectKey(
