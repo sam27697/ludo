@@ -23,6 +23,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -1997,6 +1998,8 @@ void main() {
     _motion('start');
 
     binding.testTextInput.register();
+    final SemanticsHandle semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
     await (await SharedPreferences.getInstance()).clear();
 
     final _MotionControllerFactory factory = _MotionControllerFactory();
@@ -2562,6 +2565,10 @@ class _Playback {
       warnIfMissed: false,
     );
     await tester.pump();
+    return _expectSentMove(before, token, face);
+  }
+
+  String _expectSentMove(int before, int token, int face) {
     final String raw = _sentSince(before, 'move').single;
     final String id = _idOf(raw);
     final Map<String, Object?> data = _dataOf(raw);
@@ -2630,13 +2637,22 @@ class _Playback {
     };
   }
 
-  List<int> _tokensForFace(List<Map<String, Object?>> legalByFace, int face) {
-    for (final Map<String, Object?> entry in legalByFace) {
-      if (entry['face'] == face) {
-        return List<int>.from(entry['tokens']! as List);
-      }
+  List<int> _legalTokens(List<Map<String, Object?>> legalByFace) {
+    return <int>{
+      for (final Map<String, Object?> entry in legalByFace)
+        for (final Object? token in entry['tokens']! as List) token! as int,
+    }.toList();
+  }
+
+  List<int> _facesForToken(int token) {
+    final byFace = controller.room!.turn!.legalByFace;
+    if (byFace == null) {
+      return const <int>[];
     }
-    return const <int>[];
+    return <int>[
+      for (final entry in byFace)
+        if (entry.tokens.contains(token)) entry.face,
+    ];
   }
 
   void _expectRings(int seat, List<int> tokens, {String? note}) {
@@ -2692,10 +2708,9 @@ class _Playback {
     );
   }
 
-  /// Tray, selected die and dead die, from the queue the wire just set.
-  /// [selectedFace] overrides the default after a tray tap. Set
-  /// [ringsAfterWalk] when the push behind this check just moved one of
-  /// seat's own tokens: the ring check then waits for the walk to land
+  /// Tray and dead die, from the queue the wire just set (C-462 D1, D6).
+  /// Set [ringsAfterWalk] when the push behind this check just moved one
+  /// of seat's own tokens: the ring check then waits for the walk to land
   /// (C-408 rule 2) instead of asserting on the frame the push arrived.
   Future<void> _expectTray({
     required int seat,
@@ -2703,7 +2718,6 @@ class _Playback {
     required bool awaitRoll,
     required bool mine,
     List<Map<String, Object?>>? legalByFace,
-    int? selectedFace,
     bool ringsAfterWalk = false,
   }) async {
     final bool show = _showsTray(queue: queue, awaitRoll: awaitRoll);
@@ -2712,37 +2726,34 @@ class _Playback {
       show ? findsOneWidget : findsNothing,
       reason: 'tray when a queue is owed, queue $queue awaitRoll $awaitRoll',
     );
-    // A single remaining face in await_move hides the tray and still rings
-    // that face's tokens. Rings follow the selected face, not the tray.
-    final int? face = awaitRoll
-        ? null
-        : (selectedFace ??
-              (legalByFace == null || legalByFace.isEmpty
-                  ? null
-                  : legalByFace.first['face']! as int));
     if (show) {
       final Set<int> live = _liveFaces(legalByFace);
-      var selectedTaken = false;
       for (var i = 0; i < queue.length; i++) {
         final Key die = Key('game-roll-tray-die-$i');
         expect(find.byKey(die), findsOneWidget);
-        final bool selected = !awaitRoll && !selectedTaken && queue[i] == face;
-        if (selected) {
-          selectedTaken = true;
-        }
         final bool dead =
             !awaitRoll && legalByFace != null && !live.contains(queue[i]);
-        _expectChild(die, Key('game-roll-tray-selected-$i'), present: selected);
         _expectChild(die, Key('game-roll-tray-dead-$i'), present: dead);
+        if (mine) {
+          expect(
+            tester
+                .getSemantics(find.byKey(die))
+                .getSemanticsData()
+                .hasAction(SemanticsAction.tap),
+            isFalse,
+            reason: 'C-462 D6: tray tile $i has no tap action',
+          );
+        }
       }
       expect(
         find.byKey(Key('game-roll-tray-die-${queue.length}')),
         findsNothing,
       );
     }
+    // C-462 D1: rings are the union of tokens across legalByFace.
     if (mine) {
-      final List<int> tokens = !awaitRoll && face != null && legalByFace != null
-          ? _tokensForFace(legalByFace, face)
+      final List<int> tokens = !awaitRoll && legalByFace != null
+          ? _legalTokens(legalByFace)
           : const <int>[];
       if (ringsAfterWalk) {
         await _expectRingsAfterWalk(seat, tokens);
@@ -2929,33 +2940,44 @@ class _Playback {
     _expectFrom(seat, step);
     String? re;
     final bool act = mine && step.play;
-    if (mine && step.pickTrayIndex != null) {
-      expect(step.play, isTrue, reason: 'a tray pick is this seat\'s own move');
-      _motion('6 pick');
-      final int index = step.pickTrayIndex!;
-      final int before = transport.sentRaw.length;
-      final Finder die = find.byKey(Key('game-roll-tray-die-$index'));
-      await tester.ensureVisible(die);
-      await tester.pump();
-      await tester.tap(die);
-      await tester.pump();
-      expect(
-        transport.sentRaw.length,
-        before,
-        reason: 'picking a tray die sends nothing',
-      );
-      await _expectTray(
-        seat: seat,
-        queue: controller.room!.turn!.queue,
-        awaitRoll: false,
-        mine: true,
-        legalByFace: _legalByFaceRaw(),
-        selectedFace: step.face,
-      );
-      await _holdFor(tester, const Duration(milliseconds: 800));
-    }
     if (act) {
-      re = await _tapToken(step.token, step.face);
+      final List<int> tokenFaces = _facesForToken(step.token);
+      expect(tokenFaces, contains(step.face));
+      // C-462 D2, D3: a token with two or more alive faces opens the picker;
+      // a token with one face sends at once on the token tap.
+      if (tokenFaces.length >= 2) {
+        _motion('6 pick');
+        final int before = transport.sentRaw.length;
+        await tester.tap(
+          find.byKey(Key('board-token-hit-$deviceSeat-${step.token}')),
+          warnIfMissed: false,
+        );
+        await tester.pump();
+        expect(
+          transport.sentRaw.length,
+          before,
+          reason: 'opening the face picker sends nothing',
+        );
+        expect(find.byKey(const Key('board-face-picker')), findsOneWidget);
+        final Finder option = find.byKey(
+          Key('board-face-picker-option-${step.face}'),
+        );
+        expect(option, findsOneWidget);
+        await _expectTray(
+          seat: seat,
+          queue: controller.room!.turn!.queue,
+          awaitRoll: false,
+          mine: true,
+          legalByFace: _legalByFaceRaw(),
+        );
+        await _holdFor(tester, const Duration(milliseconds: 800));
+        final int beforePick = transport.sentRaw.length;
+        await tester.tap(option);
+        await tester.pump();
+        re = _expectSentMove(beforePick, step.token, step.face);
+      } else {
+        re = await _tapToken(step.token, step.face);
+      }
     }
     final List<Map<String, Object?>> captured = <Map<String, Object?>>[
       for (final (int capSeat, int capToken) in step.captured)
