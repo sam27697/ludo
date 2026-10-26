@@ -1086,16 +1086,27 @@ void main() {
       await tester.tap(find.byKey(tokenHitKey(0, 2)), warnIfMissed: false);
       await tester.pump();
       p.expectPicker('picker in the tree on the frame of the tap');
-      final Rect first = tester.getRect(find.byKey(facePickerKey));
-      await tester.pump(const Duration(milliseconds: 150));
-      final Rect last = tester.getRect(find.byKey(facePickerKey));
+      // The option sits inside the scale; the bubble's keyed root is laid
+      // out above it and keeps its size. A ticker counts from its first
+      // frame, so the motion is measured over bounded frames, not one pump.
+      final Finder option = find.byKey(facePickerOptionKey(6));
+      final Rect first = tester.getRect(option);
+      for (int i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      final Rect last = tester.getRect(option);
       expect(
         first.width,
         lessThan(last.width - 0.5),
         reason: p.why(
-          'picker width ${first.width} on the opening frame is smaller than '
-          '${last.width} after 150 ms (scale-and-fade from the token)',
+          'option width ${first.width} on the opening frame is smaller than '
+          '${last.width} after 12 frames (scale-and-fade from the token)',
         ),
+      );
+      expect(
+        last.width,
+        greaterThanOrEqualTo(48),
+        reason: p.why('the option reaches full size, ${last.width}'),
       );
     } finally {
       await releaseGame(tester, drive);
@@ -1110,9 +1121,12 @@ void main() {
       await tester.tap(find.byKey(tokenHitKey(0, 2)), warnIfMissed: false);
       await tester.pump();
       p.expectPicker('picker in the tree on the frame of the tap');
-      final Rect first = tester.getRect(find.byKey(facePickerKey));
-      await tester.pump(const Duration(milliseconds: 150));
-      final Rect last = tester.getRect(find.byKey(facePickerKey));
+      final Finder option = find.byKey(facePickerOptionKey(6));
+      final Rect first = tester.getRect(option);
+      for (int i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      final Rect last = tester.getRect(option);
       expect(
         first,
         last,
