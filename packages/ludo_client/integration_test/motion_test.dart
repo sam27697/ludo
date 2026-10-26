@@ -1998,8 +1998,6 @@ void main() {
     _motion('start');
 
     binding.testTextInput.register();
-    final SemanticsHandle semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
     await (await SharedPreferences.getInstance()).clear();
 
     final _MotionControllerFactory factory = _MotionControllerFactory();
@@ -2728,22 +2726,32 @@ class _Playback {
     );
     if (show) {
       final Set<int> live = _liveFaces(legalByFace);
-      for (var i = 0; i < queue.length; i++) {
-        final Key die = Key('game-roll-tray-die-$i');
-        expect(find.byKey(die), findsOneWidget);
-        final bool dead =
-            !awaitRoll && legalByFace != null && !live.contains(queue[i]);
-        _expectChild(die, Key('game-roll-tray-dead-$i'), present: dead);
-        if (mine) {
-          expect(
-            tester
-                .getSemantics(find.byKey(die))
-                .getSemanticsData()
-                .hasAction(SemanticsAction.tap),
-            isFalse,
-            reason: 'C-462 D6: tray tile $i has no tap action',
-          );
+      // Semantics only for the D6 check, disposed in this body: a handle
+      // left to addTearDown fails the test's own end-of-test check.
+      final SemanticsHandle? semantics = mine ? tester.ensureSemantics() : null;
+      if (semantics != null) {
+        await tester.pump();
+      }
+      try {
+        for (var i = 0; i < queue.length; i++) {
+          final Key die = Key('game-roll-tray-die-$i');
+          expect(find.byKey(die), findsOneWidget);
+          final bool dead =
+              !awaitRoll && legalByFace != null && !live.contains(queue[i]);
+          _expectChild(die, Key('game-roll-tray-dead-$i'), present: dead);
+          if (mine) {
+            expect(
+              tester
+                  .getSemantics(find.byKey(die))
+                  .getSemanticsData()
+                  .hasAction(SemanticsAction.tap),
+              isFalse,
+              reason: 'C-462 D6: tray tile $i has no tap action',
+            );
+          }
         }
+      } finally {
+        semantics?.dispose();
       }
       expect(
         find.byKey(Key('game-roll-tray-die-${queue.length}')),
