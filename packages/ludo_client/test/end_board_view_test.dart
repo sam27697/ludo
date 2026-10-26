@@ -306,10 +306,14 @@ bool _playingBodyShown(WidgetTester tester) =>
 /// exclusive branches of GameScreen's own body switch), so this is never
 /// ambiguous between the two boards this file measures.
 Rect _boardRect(WidgetTester tester) {
-  final Finder stack = find.descendant(
-    of: find.byKey(const Key('ludo-board')),
-    matching: find.byType(Stack),
-  );
+  // The board's own Stack is the outermost one; the seat dice (C-465)
+  // draw Stacks of their own inside it.
+  final Finder stack = find
+      .descendant(
+        of: find.byKey(const Key('ludo-board')),
+        matching: find.byType(Stack),
+      )
+      .first;
   return tester.getRect(stack);
 }
 
