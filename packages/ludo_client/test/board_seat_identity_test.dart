@@ -287,10 +287,14 @@ Future<Color> _samplePixel(WidgetTester tester, Offset local) async {
 /// than that key's own rect -- see ambiguity 2 above for why those differ
 /// on a non-square viewport.
 Rect _boardRect(WidgetTester tester) {
-  final Finder stack = find.descendant(
-    of: find.byKey(const Key('ludo-board')),
-    matching: find.byType(Stack),
-  );
+  // The board's own Stack is the outermost one; the seat dice (C-465)
+  // draw Stacks of their own inside it.
+  final Finder stack = find
+      .descendant(
+        of: find.byKey(const Key('ludo-board')),
+        matching: find.byType(Stack),
+      )
+      .first;
   return tester.getRect(stack);
 }
 

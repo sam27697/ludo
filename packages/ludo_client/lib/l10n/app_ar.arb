@@ -88,6 +88,30 @@
   "trayDie": "النرد {face}",
   "trayDieCount": "العدد {count}",
   "trayDieCountMark": "×{count}",
+  "seatDieFace": "نرد {name}: {face}",
+  "@seatDieFace": {
+    "description": "Semantics label for another seat's die on the board when it shows a face (C-465 D2). name is the name already drawn on that seat's chip. The die is not a button.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Bob"
+      },
+      "face": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "seatDieIdle": "نرد {name}",
+  "@seatDieIdle": {
+    "description": "Semantics label for another seat's die on the board when it shows the idle pose, no face (C-465 D2). name is the name already drawn on that seat's chip. The die is not a button.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Bob"
+      }
+    }
+  },
   "gameTurnCountdown": "باقي {seconds} ثانية",
   "gameTurnCountdownDigits": "{seconds}",
   "gameSeatOffline": "انقطع اتصال {name}",

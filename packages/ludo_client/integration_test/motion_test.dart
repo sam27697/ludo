@@ -2706,7 +2706,8 @@ class _Playback {
     );
   }
 
-  /// Tray and dead die, from the queue the wire just set (C-462 D1, D6).
+  /// Tray and dead die, from the queue the wire just set (C-462 D1, D6;
+  /// C-465 D4: my record under the board, another seat's on the board).
   /// Set [ringsAfterWalk] when the push behind this check just moved one
   /// of seat's own tokens: the ring check then waits for the walk to land
   /// (C-408 rule 2) instead of asserting on the frame the push arrived.
@@ -2719,11 +2720,26 @@ class _Playback {
     bool ringsAfterWalk = false,
   }) async {
     final bool show = _showsTray(queue: queue, awaitRoll: awaitRoll);
-    expect(
-      find.byKey(const Key('game-roll-tray')),
-      show ? findsOneWidget : findsNothing,
-      reason: 'tray when a queue is owed, queue $queue awaitRoll $awaitRoll',
-    );
+    if (mine) {
+      expect(
+        find.byKey(const Key('game-roll-tray')),
+        show ? findsOneWidget : findsNothing,
+        reason: 'tray when a queue is owed, queue $queue awaitRoll $awaitRoll',
+      );
+    } else {
+      expect(
+        find.byKey(const Key('game-roll-tray')),
+        findsNothing,
+        reason: 'C-465 D4 (order 467): no tray under the board for seat $seat',
+      );
+      expect(
+        find.byKey(Key('board-seat-record-$seat')),
+        show ? findsOneWidget : findsNothing,
+        reason:
+            'C-465 D4 (order 467): seat record on board when a queue is owed, '
+            'queue $queue awaitRoll $awaitRoll',
+      );
+    }
     if (show) {
       final Set<int> live = _liveFaces(legalByFace);
       // Semantics only for the D6 check, disposed in this body: a handle

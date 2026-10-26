@@ -22,7 +22,11 @@ enum TrayDieState { plain, dead }
 const double _kTrayDieArt = 38;
 
 /// C-420: every tray tile's slot, even though the numeral is drawn smaller.
-const double _kTrayHitMin = 48;
+/// Public so the on-board record can scale a row laid out at this height
+/// (C-465 D4). The under-board tray still measures with this same number.
+const double kRollTraySlot = 48;
+
+const double _kTrayHitMin = kRollTraySlot;
 
 /// K12: the enter/exit motion's duration. Instant (zero) under reduced
 /// motion, per [MediaQuery.disableAnimations].
@@ -63,6 +67,7 @@ class RollTray extends StatefulWidget {
     required this.states,
     required this.seatColor,
     this.ownMove = false,
+    this.fitWidth,
   }) : assert(faces.length == states.length);
 
   /// Roll order, K1/K2: `turn.queue` order, or the dead faces D (K9) while
@@ -80,6 +85,12 @@ class RollTray extends StatefulWidget {
   /// the roll queue. An alive tile then reads `trayDieCanMove`; otherwise
   /// it reads `trayDie`. Never makes a tile tappable (C-462 D6).
   final bool ownMove;
+
+  /// Width the C-420 fit check uses, in place of the parent's width.
+  /// Null, the default, reads the parent, which is the under-board tray
+  /// and leaves that check's maths unchanged. The on-board record passes
+  /// the yard's width measured in this tray's own slot (C-465 D4).
+  final double? fitWidth;
 
   @override
   State<RollTray> createState() => _RollTrayState();
@@ -256,9 +267,11 @@ class _RollTrayState extends State<RollTray> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final int totalTiles = _slots.length + _exiting.length;
+        // C-465 D4: [fitWidth] only substitutes the width the check reads.
+        // Null keeps `constraints.maxWidth`, the under-board tray's input.
+        final double available = widget.fitWidth ?? constraints.maxWidth;
         final bool natural =
-            totalTiles <= 1 ||
-            _naturalRowWidth(totalTiles) <= constraints.maxWidth;
+            totalTiles <= 1 || _naturalRowWidth(totalTiles) <= available;
         final List<Widget> children = <Widget>[];
         if (natural) {
           // D1: unchanged from before C-420, pixel-for-pixel.

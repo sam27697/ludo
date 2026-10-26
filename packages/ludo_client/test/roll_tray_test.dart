@@ -782,10 +782,25 @@ void main() {
     );
     try {
       expect(drive.controller.room!.turn!.seat, 1, reason: 'fixture is broken');
+      // C-465 D4: every player still sees the turn seat's record, now on
+      // the board in that seat's yard instead of under it.
+      expect(
+        find.byKey(seatRecordKey(1)),
+        findsOneWidget,
+        reason: 'K1/C-465 D4: every player sees the turn seat\'s record',
+      );
       expect(
         find.byKey(rollTrayKey),
+        findsNothing,
+        reason: 'C-465 D4: another seat\'s record is not under the board',
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(seatRecordKey(1)),
+          matching: find.byKey(trayDieKey(0)),
+        ),
         findsOneWidget,
-        reason: 'K1: every player sees the turn seat\'s tray',
+        reason: 'C-465 D4: the tile being tapped is inside seat 1\'s record',
       );
       final int sentBefore = drive.transport.sentRaw.length;
       final List<FeedbackCue> cuesBefore = List<FeedbackCue>.of(

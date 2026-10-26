@@ -9,6 +9,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
+import 'package:ludo_client/src/board_geometry.dart';
 import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
@@ -41,6 +42,31 @@ Key traySelectedKey(int index) => Key('game-roll-tray-selected-$index');
 Key trayDeadKey(int index) => Key('game-roll-tray-dead-$index');
 
 Key bigFaceKey(int face) => Key('game-die-face-$face');
+
+/// The big die's idle cube (C-238), shown when no face is known.
+const Key idleArtKey = Key('game-die-idle-art');
+
+/// The die-value semantics wrapper around the big die (C-465 D1.4).
+const Key diceValueKey = Key('game-screen-dice-value');
+
+/// C-465 D2: the die a seat keeps in the middle of its own yard.
+Key seatDieKey(int seat) => Key('board-seat-die-$seat');
+
+Key seatDieFaceKey(int seat, int face) =>
+    Key('board-seat-die-face-$seat-$face');
+
+Key seatDieIdleKey(int seat) => Key('board-seat-die-idle-$seat');
+
+/// C-465 D4: another seat's roll record, drawn on the board in its yard.
+Key seatRecordKey(int seat) => Key('board-seat-record-$seat');
+
+/// C-377 / C-465 D3: the opponent's thrown die and its two phases.
+Key opponentThrowKey(int seat) => Key('opponent-throw-$seat');
+
+Key opponentThrowTumblingKey(int seat) => Key('opponent-throw-tumbling-$seat');
+
+Key opponentThrowLandedKey(int seat, int face) =>
+    Key('opponent-throw-landed-$seat-$face');
 
 Key legalRingKey(int seat, int token) => Key('board-legal-ring-$seat-$token');
 
@@ -133,11 +159,12 @@ Map<String, Object?> _roomJson({
   required List<Map<String, Object?>> seats,
   Map<String, Object?>? turn,
   int seq = 1,
+  int players = 2,
 }) => <String, Object?>{
   'code': 'K7M2QP',
   'state': 'PLAYING',
   'host_seat': 0,
-  'players': 2,
+  'players': players,
   'rules': <String, Object?>{
     'blocks': true,
     'capture_bonus': true,
@@ -158,7 +185,8 @@ Map<String, Object?> _roomJson({
 Map<String, Object?> roomData({
   required List<Map<String, Object?>> seats,
   Map<String, Object?>? turn,
-}) => _roomJson(seats: seats, turn: turn);
+  int players = 2,
+}) => _roomJson(seats: seats, turn: turn, players: players);
 
 class _Connector {
   final List<FakeTransport> _queue = <FakeTransport>[];
@@ -219,11 +247,15 @@ class RollTrayDrive {
 }
 
 /// createRoom, then seat_assigned and a room snapshot. [turn] is the
-/// snapshot turn object, already in wire shape.
+/// snapshot turn object, already in wire shape. [mySeat] is the seat the
+/// server assigns this client (0 unless a case needs another view) and
+/// [players] the room's player count.
 Future<RollTrayDrive> connectPlaying(
   WidgetTester tester, {
   required Map<String, Object?>? turn,
   List<Map<String, Object?>>? seats,
+  int mySeat = 0,
+  int players = 2,
 }) async {
   final _Connector connector = _Connector();
   final FakeTransport transport = FakeTransport();
@@ -239,14 +271,14 @@ Future<RollTrayDrive> connectPlaying(
   transport.pushText(
     _frame(
       type: 'seat_assigned',
-      data: <String, Object?>{'seat': 0, 'seat_token': 'tok-0'},
+      data: <String, Object?>{'seat': mySeat, 'seat_token': 'tok-$mySeat'},
     ),
   );
   transport.pushText(
     _frame(
       type: 'room',
       re: id,
-      data: _roomJson(seats: seats ?? twoSeats(), turn: turn),
+      data: _roomJson(seats: seats ?? twoSeats(), turn: turn, players: players),
     ),
   );
   await future;
@@ -401,4 +433,32 @@ Rect boardSquare(WidgetTester tester) {
       ? widget.width
       : widget.height;
   return Rect.fromCenter(center: widget.center, width: side, height: side);
+}
+
+/// The yard quadrant of [seat] in view space, inside the board square
+/// [board]: the 6 by 6 block [yardQuadrantOrigin] names, run through the
+/// same view rotation the board uses for [mySeat]. My own yard is
+/// bottom-left in every view.
+Rect yardQuadrantViewRect(Rect board, int seat, int? mySeat) {
+  final double cell = board.width / 15;
+  final int quarters = viewQuarters(mySeat);
+  final BoardCell origin = yardQuadrantOrigin(seat);
+  final BoardCell a = toView(origin, quarters);
+  final BoardCell b = toView(
+    BoardCell(
+      origin.col + yardQuadrantSide - 1,
+      origin.row + yardQuadrantSide - 1,
+    ),
+    quarters,
+  );
+  final int minCol = a.col < b.col ? a.col : b.col;
+  final int maxCol = a.col < b.col ? b.col : a.col;
+  final int minRow = a.row < b.row ? a.row : b.row;
+  final int maxRow = a.row < b.row ? b.row : a.row;
+  return Rect.fromLTRB(
+    board.left + minCol * cell,
+    board.top + minRow * cell,
+    board.left + (maxCol + 1) * cell,
+    board.top + (maxRow + 1) * cell,
+  );
 }

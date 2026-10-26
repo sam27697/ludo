@@ -457,11 +457,11 @@ void main() {
 
     // Kills: the hold watches only my own seat's next `rolled` to end
     // early, not any seat's, so a newer roll for another seat would leave
-    // the stale mark on a die that must, per 4a, now show that other
-    // seat's real roll instead.
+    // the stale mark on a die that must, per 4a, now leave the hold (the
+    // other seat's roll then shows on that seat's own die, C-465 D2).
     testWidgets(
       'a rolled(5, ...) for seat 1 landing within the hold clears the '
-      'no-move mark and notice at once and shows face-5',
+      'no-move mark and notice at once and shows face-5 on seat 1\'s own die',
       (tester) async {
         final (RoomController controller, FakeTransport transport, _) =
             await _landOnNoMove(tester, faceValue: 3);
@@ -506,9 +506,9 @@ void main() {
               'rule 4a: the hold ending early clears the notice together '
               'with the mark; game-no-move-notice is still shown',
         );
-        // C-377 D2: seat 1's roll is thrown on the board first, and the
-        // shared die keeps its face hidden until that throw lands. What it
-        // must never do meanwhile is keep showing the stale held face 3.
+        // C-465 D1: seat 1's roll is thrown on the board, and the die under
+        // the board never takes its face. What it must never do either is
+        // keep showing the stale held face 3.
         expect(
           find.byKey(_faceKey(3)),
           findsNothing,
@@ -529,12 +529,32 @@ void main() {
           await tester.pump(step);
           waited += step;
         }
+        // C-465 D1.2: the die under the board is mine, so seat 1's roll
+        // lands on seat 1's own die on the board instead.
         expect(
           find.byKey(_faceKey(5)),
+          findsNothing,
+          reason:
+              'C-465 D1: my big die never shows seat 1\'s face 5, landed '
+              'or not',
+        );
+        expect(
+          find.byKey(_faceKey(3)),
+          findsNothing,
+          reason:
+              'the stale held face 3 is not back once seat 1\'s throw lands',
+        );
+        expect(
+          find.byKey(const Key('game-die-idle-art')),
+          findsOneWidget,
+          reason: 'C-465 D1: my big die is idle on seat 1\'s turn',
+        );
+        expect(
+          find.byKey(const Key('board-seat-die-face-1-5')),
           findsOneWidget,
           reason:
-              'the die is shared and must show seat 1\'s real roll (face '
-              '5) once it lands, not the stale held face 3',
+              'C-465 D2: seat 1\'s real roll (face 5) rests on seat 1\'s '
+              'own die once it lands',
         );
       },
     );
