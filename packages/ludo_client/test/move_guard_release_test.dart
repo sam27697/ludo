@@ -12,6 +12,11 @@
 // the guard's own job: one decision, one move in flight, after a refusal
 // too, so a fix that drops the guard altogether stays red there. Case 4
 // keeps the one-legal hold from resending a refused move on its own.
+//
+// Migrated by order 463 to C-462: in cases 1 to 3 the queue is [6, 3] with
+// both tokens legal for both faces, so a spend is a tap on the token and
+// then on board-face-picker-option-<face>. Case 4 has one face and one
+// token, so its tap still sends at once.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
@@ -20,6 +25,26 @@ import 'net/fake_transport.dart';
 import 'support/roll_tray_harness.dart';
 
 const Duration _frame = Duration(milliseconds: 16);
+
+/// Taps seat 0's [token] and then its picker option for [face]: under the
+/// two-face queue every token here can take either face, so each tap asks
+/// (C-462 D2.2) and the pick is what sends (D3).
+Future<void> _spend(WidgetTester tester, int token, {required int face}) async {
+  await tester.tap(find.byKey(tokenHitKey(0, token)), warnIfMissed: false);
+  await tester.pump();
+  for (int i = 0; i < 12; i++) {
+    await tester.pump(_frame);
+  }
+  expect(
+    find.byKey(facePickerKey),
+    findsOneWidget,
+    reason:
+        'C-462 D2.2: token $token can take faces 6 and 3, so the tap opens '
+        'board-face-picker and sends nothing yet',
+  );
+  await tester.tap(find.byKey(facePickerOptionKey(face)));
+  await tester.pump();
+}
 
 List<Map<String, Object?>> _seats() =>
     twoSeats(mine: const <int>[10, 20, -1, -1]);
@@ -86,8 +111,7 @@ void main() {
     final RollTrayDrive drive = await _mount(tester, _twoFacesTurn());
     try {
       final int before = drive.transport.sentRaw.length;
-      await tester.tap(find.byKey(tokenHitKey(0, 0)));
-      await tester.pump();
+      await _spend(tester, 0, face: 6);
       final List<String> first = _moveFramesSince(drive.transport, before);
       expect(first, hasLength(1), reason: 'fixture: the first move is sent');
 
@@ -108,8 +132,7 @@ void main() {
       );
 
       final int beforeRetry = drive.transport.sentRaw.length;
-      await tester.tap(find.byKey(tokenHitKey(0, 1)));
-      await tester.pump();
+      await _spend(tester, 1, face: 3);
       final List<Map<String, Object?>> retry = movesSince(
         drive.transport,
         beforeRetry,
@@ -134,8 +157,7 @@ void main() {
       final RollTrayDrive drive = await _mount(tester, _twoFacesTurn());
       try {
         final int before = drive.transport.sentRaw.length;
-        await tester.tap(find.byKey(tokenHitKey(0, 0)));
-        await tester.pump();
+        await _spend(tester, 0, face: 6);
         expect(
           _moveFramesSince(drive.transport, before),
           hasLength(1),
@@ -187,8 +209,7 @@ void main() {
         );
 
         final int beforeRetry = second.sentRaw.length;
-        await tester.tap(find.byKey(tokenHitKey(0, 0)));
-        await tester.pump();
+        await _spend(tester, 0, face: 6);
         final List<Map<String, Object?>> retry = movesSince(
           second,
           beforeRetry,
@@ -213,8 +234,7 @@ void main() {
     final RollTrayDrive drive = await _mount(tester, _twoFacesTurn());
     try {
       final int before = drive.transport.sentRaw.length;
-      await tester.tap(find.byKey(tokenHitKey(0, 0)));
-      await tester.pump();
+      await _spend(tester, 0, face: 6);
       final List<String> first = _moveFramesSince(drive.transport, before);
       expect(first, hasLength(1), reason: 'fixture: the first move is sent');
       drive.transport.pushText(
@@ -224,10 +244,8 @@ void main() {
       await tester.pump();
 
       final int beforeRetry = drive.transport.sentRaw.length;
-      await tester.tap(find.byKey(tokenHitKey(0, 0)));
-      await tester.pump();
-      await tester.tap(find.byKey(tokenHitKey(0, 1)));
-      await tester.pump();
+      await _spend(tester, 0, face: 6);
+      await _spend(tester, 1, face: 3);
       final List<Map<String, Object?>> moves = movesSince(
         drive.transport,
         beforeRetry,

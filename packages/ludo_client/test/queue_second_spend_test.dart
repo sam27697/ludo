@@ -4,13 +4,42 @@
 // first spend every later tap, and the one-legal-move hold, sent nothing
 // and the turn stalled until the server's timer played it. These cases pin
 // the second spend, by tap and by the hold, and keep the guard's original
-// job: two taps on one decision send one move.
+// job: two taps on one decision send one move. Migrated by order 463 to
+// C-462: a token both faces can move asks which face (a tap on the token,
+// then on board-face-picker-option-<face>); the last face left needs no
+// question.
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/roll_tray_harness.dart';
 
 const Duration _frame = Duration(milliseconds: 16);
+
+/// Taps seat 0's [token] and, when the token has two alive faces, the
+/// picker option for [face] (C-462 D2.2 and D3).
+Future<void> _spend(
+  WidgetTester tester,
+  int token, {
+  required int face,
+  required bool asks,
+}) async {
+  await tester.tap(find.byKey(tokenHitKey(0, token)), warnIfMissed: false);
+  await tester.pump();
+  for (int i = 0; i < 12; i++) {
+    await tester.pump(_frame);
+  }
+  if (asks) {
+    expect(
+      find.byKey(facePickerKey),
+      findsOneWidget,
+      reason:
+          'C-462 D2.2: token $token can take two faces, so the tap opens '
+          'board-face-picker and sends nothing yet',
+    );
+    await tester.tap(find.byKey(facePickerOptionKey(face)));
+    await tester.pump();
+  }
+}
 
 /// My turn, await_move at k 3 with the queue [6, 3]: tokens 0 and 1 on the
 /// track, both legal for either face.
@@ -70,8 +99,7 @@ void main() {
     final RollTrayDrive drive = await _mountTwoFaces(tester);
     try {
       final int before = drive.transport.sentRaw.length;
-      await tester.tap(find.byKey(tokenHitKey(0, 0)));
-      await tester.pump();
+      await _spend(tester, 0, face: 6, asks: true);
       final List<Map<String, Object?>> first = movesSince(
         drive.transport,
         before,
@@ -97,8 +125,12 @@ void main() {
       );
 
       final int beforeSecond = drive.transport.sentRaw.length;
-      await tester.tap(find.byKey(tokenHitKey(0, 1)));
-      await tester.pump();
+      await _spend(tester, 1, face: 3, asks: false);
+      expect(
+        find.byKey(facePickerKey),
+        findsNothing,
+        reason: 'C-462 D2.1: the 3 is the last face left, no picker',
+      );
       final List<Map<String, Object?>> second = movesSince(
         drive.transport,
         beforeSecond,
@@ -123,8 +155,7 @@ void main() {
     (tester) async {
       final RollTrayDrive drive = await _mountTwoFaces(tester);
       try {
-        await tester.tap(find.byKey(tokenHitKey(0, 0)));
-        await tester.pump();
+        await _spend(tester, 0, face: 6, asks: true);
         await _answerSixOnTokenZero(
           tester,
           drive,
@@ -162,10 +193,11 @@ void main() {
     final RollTrayDrive drive = await _mountTwoFaces(tester);
     try {
       final int before = drive.transport.sentRaw.length;
-      await tester.tap(find.byKey(tokenHitKey(0, 0)));
-      await tester.pump();
-      await tester.tap(find.byKey(tokenHitKey(0, 1)));
-      await tester.pump();
+      await _spend(tester, 0, face: 6, asks: true);
+      // Token 1 still takes both faces (legal_by_face is unchanged until
+      // `moved` arrives), so its tap asks; the pick that follows is refused
+      // by the move already in flight (C-462 D3).
+      await _spend(tester, 1, face: 3, asks: true);
       final List<Map<String, Object?>> moves = movesSince(
         drive.transport,
         before,

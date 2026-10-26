@@ -294,9 +294,19 @@
       }
     }
   },
-  "trayDieSelected": "Die {face}, selected",
-  "@trayDieSelected": {
-    "description": "Semantics label for a roll-tray die the player has selected to spend next (order 365, C-362 Part B K4/K11).",
+  "facePickerLabel": "Which roll for piece {number}?",
+  "@facePickerLabel": {
+    "description": "Semantics label for the face picker bubble on a token two or more queued faces can move (C-462 D5). number is the piece, 1 through 4.",
+    "placeholders": {
+      "number": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
+  "facePickerOption": "Play {face}",
+  "@facePickerOption": {
+    "description": "Semantics label for one face in the token face picker (C-462 D5). face is the roll, 1 through 6.",
     "placeholders": {
       "face": {
         "type": "int",
@@ -306,7 +316,7 @@
   },
   "trayDieCanMove": "Die {face}, can move",
   "@trayDieCanMove": {
-    "description": "Semantics label for a roll-tray die with a legal move that is not yet selected (order 365).",
+    "description": "Semantics label for an alive roll-tray tile when it is this seat's own move (C-462 D6). The tile is not a button.",
     "placeholders": {
       "face": {
         "type": "int",
@@ -326,7 +336,7 @@
   },
   "trayDie": "Die {face}",
   "@trayDie": {
-    "description": "Semantics label for a roll-tray die with no selected/can-move/no-move state to report: a seat still owed another roll, or another seat's own tray (order 365).",
+    "description": "Semantics label for an alive roll-tray tile when it is not this seat's own move: a seat still owed another roll, or another seat's tray (C-462 D6).",
     "placeholders": {
       "face": {
         "type": "int",
@@ -336,7 +346,7 @@
   },
   "trayDieCount": "{count} of them",
   "@trayDieCount": {
-    "description": "Appended to a grouped roll-tray tile's state label (trayDieSelected/trayDieCanMove/trayDieNoMove/trayDie), joined by the locale's list comma, when that one tile stands for more than one queued face of the same value (C-420 D3). count is always 2 or more.",
+    "description": "Appended to a grouped roll-tray tile's state label (trayDieCanMove/trayDieNoMove/trayDie), joined by the locale's list comma, when that one tile stands for more than one queued face of the same value (C-420 D3). count is always 2 or more.",
     "placeholders": {
       "count": {
         "type": "int",

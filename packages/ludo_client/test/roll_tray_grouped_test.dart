@@ -13,10 +13,10 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart' show SemanticsHandle, SemanticsNode;
+import 'package:flutter/semantics.dart'
+    show SemanticsAction, SemanticsHandle, SemanticsNode;
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ludo_client/src/feedback.dart';
 
 import 'support/roll_tray_harness.dart';
 
@@ -261,8 +261,8 @@ void main() {
   }
 
   testWidgets(
-    'case 2c (D2 state): the 6-group is selected by default and the lone '
-    '2 is dead',
+    'case 2c (D2 state): the 6-group is alive with no selected mark and the '
+    'lone 2 is dead',
     (tester) async {
       final List<FlutterErrorDetails> captured = <FlutterErrorDetails>[];
       final FlutterExceptionHandler? previous = FlutterError.onError;
@@ -279,8 +279,7 @@ void main() {
           legal: const <int>[0, 1, 2, 3],
           queue: const <int>[6, 6, 6, 6, 2],
           // Only the 6 is in legal_by_face: the 2's token has no legal
-          // move this turn, so it is dead, and 6, being the only alive
-          // face, is also the default selection (K4).
+          // move this turn, so it is dead.
           legalByFace: <Map<String, Object?>>[
             faceLegal(6, const <int>[0, 1, 2, 3]),
           ],
@@ -291,14 +290,16 @@ void main() {
         _expectNoOverflow(captured, 'D2 state');
 
         expect(
-          find.descendant(
-            of: find.byKey(trayDieKey(0)),
-            matching: find.byKey(traySelectedKey(0)),
-          ),
-          findsOneWidget,
+          find.byKey(traySelectedKey(0)),
+          findsNothing,
           reason:
-              'D2: the 6-group, the only alive face, is selected by '
-              'default, game-roll-tray-selected-0',
+              'C-462 D6: the 6-group draws no selected mark, '
+              'game-roll-tray-selected-0 is gone',
+        );
+        expect(
+          find.byKey(trayDeadKey(0)),
+          findsNothing,
+          reason: 'D2: the alive 6-group carries no dead mark',
         );
         expect(
           find.descendant(
@@ -319,8 +320,8 @@ void main() {
   );
 
   testWidgets(
-    'case 2d (D2 tap): tapping the grouped 6 selects face 6; tapping the '
-    'dead group selects nothing and plays invalidTap',
+    'case 2d (D6 tap): tapping the grouped 6, the lone 2 and a dead group '
+    'sends nothing, plays no cue and moves no ring',
     (tester) async {
       final List<FlutterErrorDetails> captured = <FlutterErrorDetails>[];
       final FlutterExceptionHandler? previous = FlutterError.onError;
@@ -336,8 +337,7 @@ void main() {
           value: 6,
           legal: const <int>[0, 1, 2, 3],
           queue: const <int>[6, 6, 6, 6, 2],
-          // Both faces alive, first-queued order (PROTOCOL.md section
-          // 21): the 6 is selected by default.
+          // Both faces alive, first-queued order (PROTOCOL.md section 21).
           legalByFace: <Map<String, Object?>>[
             faceLegal(6, const <int>[0, 1, 2, 3]),
             faceLegal(2, const <int>[0]),
@@ -346,49 +346,39 @@ void main() {
       );
       try {
         await mountGame(tester, drive);
-        _expectNoOverflow(captured, 'D2 tap, initial state');
+        _expectNoOverflow(captured, 'D6 tap, initial state');
 
+        final int sentBefore = drive.transport.sentRaw.length;
+        final int cuesBefore = drive.feedback.recorded.length;
+        expect(ringedTokens(tester), <int>[
+          0,
+          1,
+          2,
+          3,
+        ], reason: 'fixture is broken: the union of 6 and 2 rings all four');
         expect(
-          find.descendant(
-            of: find.byKey(trayDieKey(0)),
-            matching: find.byKey(traySelectedKey(0)),
-          ),
-          findsOneWidget,
-          reason: 'fixture is broken: the 6 is selected by default',
-        );
-
-        // Move the selection away from the default so a later tap on the
-        // grouped 6 is an observable change, the way
-        // test/roll_tray_test.dart's case 2 moves the mark off die 0.
-        await tester.tap(find.byKey(trayDieKey(4)));
-        await tester.pump();
-        expect(
-          find.descendant(
-            of: find.byKey(trayDieKey(4)),
-            matching: find.byKey(traySelectedKey(4)),
-          ),
-          findsOneWidget,
-          reason: 'fixture is broken: tapping the lone 2 must select it',
-        );
-        expect(find.byKey(traySelectedKey(0)), findsNothing);
-
-        await tester.tap(find.byKey(trayDieKey(0)));
-        await tester.pump();
-        expect(
-          find.descendant(
-            of: find.byKey(trayDieKey(0)),
-            matching: find.byKey(traySelectedKey(0)),
-          ),
-          findsOneWidget,
-          reason:
-              'D2: tapping the grouped 6 tile selects face 6, the '
-              'screen\'s selection',
-        );
-        expect(
-          find.byKey(traySelectedKey(4)),
+          find.byKey(traySelectedKey(0)),
           findsNothing,
-          reason: 'D2: the 2 is no longer selected once the 6 is tapped',
+          reason: 'C-462 D6: no selected mark on the 6 by default',
         );
+
+        for (final int tile in <int>[4, 0]) {
+          await tester.tapAt(tester.getCenter(find.byKey(trayDieKey(tile))));
+          await tester.pump();
+          expect(
+            drive.transport.sentRaw.length,
+            sentBefore,
+            reason: 'D6: tapping tile $tile sends nothing',
+          );
+          expect(
+            drive.feedback.recorded.length,
+            cuesBefore,
+            reason: 'D6: tapping tile $tile plays no cue',
+          );
+          expect(find.byKey(traySelectedKey(0)), findsNothing);
+          expect(find.byKey(traySelectedKey(4)), findsNothing);
+          expect(ringedTokens(tester), <int>[0, 1, 2, 3]);
+        }
 
         // Spend one of the queued 6s (12q: a 6 spent on a move grants
         // nothing), leaving the 2 dead in the shorter queue.
@@ -424,23 +414,25 @@ void main() {
               'index 3, must carry game-roll-tray-dead-3',
         );
 
-        final int sentBefore = drive.transport.sentRaw.length;
-        final int cuesBefore = drive.feedback.recorded.length;
-        await tester.tap(find.byKey(trayDieKey(3)));
+        final int sentDead = drive.transport.sentRaw.length;
+        final int cuesDead = drive.feedback.recorded.length;
+        await tester.tapAt(tester.getCenter(find.byKey(trayDieKey(3))));
         await tester.pump();
 
         expect(
           drive.transport.sentRaw.length,
-          sentBefore,
-          reason: 'D2/K5: tapping a dead group sends nothing',
+          sentDead,
+          reason: 'D6: tapping a dead group sends nothing',
         );
-        expect(drive.feedback.recorded.skip(cuesBefore).toList(), <FeedbackCue>[
-          FeedbackCue.invalidTap,
-        ], reason: 'D2: tapping a dead group plays invalidTap once');
+        expect(
+          drive.feedback.recorded.skip(cuesDead).toList(),
+          isEmpty,
+          reason: 'D6: tapping a dead group plays no cue, not invalidTap',
+        );
         expect(
           find.byKey(traySelectedKey(3)),
           findsNothing,
-          reason: 'D2: tapping a dead group selects nothing',
+          reason: 'D6: tapping a dead group selects nothing',
         );
       } finally {
         FlutterError.onError = previous;
@@ -572,7 +564,7 @@ void main() {
 
   testWidgets(
     'case 2f (D3 en): the grouped 6 reads can-move plus its count, the '
-    'lone 2 reads its old label unchanged',
+    'lone 2 reads can-move, neither reads selected',
     (tester) async {
       final SemanticsHandle semantics = tester.ensureSemantics();
       final List<FlutterErrorDetails> captured = <FlutterErrorDetails>[];
@@ -599,11 +591,6 @@ void main() {
         await mountGame(tester, drive, locale: const Locale('en'));
         _expectNoOverflow(captured, 'D3 en');
 
-        // Move the selection off the 6 so it reads "can move", the
-        // literal case D3 gives, not "selected".
-        await tester.tap(find.byKey(trayDieKey(4)));
-        await tester.pump();
-
         final SemanticsNode sixNode = tester.getSemantics(
           find.byKey(trayDieKey(0)),
         );
@@ -619,9 +606,23 @@ void main() {
         );
         expect(
           twoNode.label,
-          'Die 2, selected',
-          reason: 'D3: a count-1 tile reads exactly its old label',
+          'Die 2, can move',
+          reason:
+              'D3/C-462 D6: a count-1 alive tile reads "Die 2, can move", '
+              'never "selected"',
         );
+        for (final SemanticsNode node in <SemanticsNode>[sixNode, twoNode]) {
+          expect(
+            node.flagsCollection.isButton,
+            isFalse,
+            reason: 'D6: tile "${node.label}" is not a button',
+          );
+          expect(
+            node.getSemanticsData().hasAction(SemanticsAction.tap),
+            isFalse,
+            reason: 'D6: tile "${node.label}" has no tap action',
+          );
+        }
         expect(
           find.bySemanticsLabel(RegExp('×')),
           findsNothing,
@@ -641,7 +642,7 @@ void main() {
 
   testWidgets(
     'case 2f (D3 ar): the grouped 6 reads can-move plus its count, the '
-    'lone 2 reads its old label unchanged',
+    'lone 2 reads can-move, neither reads selected',
     (tester) async {
       final SemanticsHandle semantics = tester.ensureSemantics();
       final List<FlutterErrorDetails> captured = <FlutterErrorDetails>[];
@@ -668,9 +669,6 @@ void main() {
         await mountGame(tester, drive, locale: const Locale('ar'));
         _expectNoOverflow(captured, 'D3 ar');
 
-        await tester.tap(find.byKey(trayDieKey(4)));
-        await tester.pump();
-
         final SemanticsNode sixNode = tester.getSemantics(
           find.byKey(trayDieKey(0)),
         );
@@ -684,9 +682,23 @@ void main() {
         );
         expect(
           twoNode.label,
-          'النرد 2، محدد',
-          reason: 'D3: a count-1 tile reads exactly its old label',
+          'النرد 2، يمكن التحريك',
+          reason:
+              'D3/C-462 D6: a count-1 alive tile reads "النرد 2، يمكن '
+              'التحريك", never "محدد"',
         );
+        for (final SemanticsNode node in <SemanticsNode>[sixNode, twoNode]) {
+          expect(
+            node.flagsCollection.isButton,
+            isFalse,
+            reason: 'D6: tile "${node.label}" is not a button',
+          );
+          expect(
+            node.getSemanticsData().hasAction(SemanticsAction.tap),
+            isFalse,
+            reason: 'D6: tile "${node.label}" has no tap action',
+          );
+        }
         expect(
           find.bySemanticsLabel(RegExp('×')),
           findsNothing,
@@ -789,10 +801,8 @@ void main() {
     }
   });
 
-  testWidgets("case 2h (D2' tap): tapping the count text of a grouped, alive, "
-      'unselected 6 selects face 6 exactly as tapping the die does', (
-    tester,
-  ) async {
+  testWidgets("case 2h (D6 count tap): tapping the count text of the grouped "
+      '6 sends nothing and changes nothing', (tester) async {
     final List<FlutterErrorDetails> captured = <FlutterErrorDetails>[];
     final FlutterExceptionHandler? previous = FlutterError.onError;
     FlutterError.onError = captured.add;
@@ -807,8 +817,8 @@ void main() {
         value: 6,
         legal: const <int>[0, 1, 2, 3],
         queue: const <int>[6, 6, 6, 6, 2],
-        // Both faces alive, first-queued order (PROTOCOL.md section
-        // 21): the 6 is selected by default, same fixture as 2d.
+        // Both faces alive, first-queued order (PROTOCOL.md section 21),
+        // same fixture as 2d.
         legalByFace: <Map<String, Object?>>[
           faceLegal(6, const <int>[0, 1, 2, 3]),
           faceLegal(2, const <int>[0]),
@@ -817,50 +827,41 @@ void main() {
     );
     try {
       await mountGame(tester, drive);
-      _expectNoOverflow(captured, "D2' count tap, initial state");
+      _expectNoOverflow(captured, 'D6 count tap, initial state');
 
       expect(
-        find.descendant(
-          of: find.byKey(trayDieKey(0)),
-          matching: find.byKey(traySelectedKey(0)),
-        ),
-        findsOneWidget,
-        reason: 'fixture is broken: the 6 is selected by default',
-      );
-
-      // Move the selection off the 6, the same way case 2d does, so a
-      // later tap on the count text is an observable change.
-      await tester.tap(find.byKey(trayDieKey(4)));
-      await tester.pump();
-      expect(
-        find.descendant(
-          of: find.byKey(trayDieKey(4)),
-          matching: find.byKey(traySelectedKey(4)),
-        ),
-        findsOneWidget,
-        reason: 'fixture is broken: tapping the lone 2 must select it',
-      );
-      expect(find.byKey(traySelectedKey(0)), findsNothing);
-
-      await tester.tap(find.byKey(_countKey(0)));
-      await tester.pump();
-      expect(
-        find.descendant(
-          of: find.byKey(trayDieKey(0)),
-          matching: find.byKey(traySelectedKey(0)),
-        ),
-        findsOneWidget,
-        reason:
-            "D2': tapping the grouped 6's count text selects face 6, "
-            'exactly as tapping the die does',
-      );
-      expect(
-        find.byKey(traySelectedKey(4)),
+        find.byKey(traySelectedKey(0)),
         findsNothing,
-        reason:
-            "D2': the 2 is no longer selected once the count text is "
-            'tapped',
+        reason: 'C-462 D6: the grouped 6 carries no selected mark',
       );
+
+      final int sentBefore = drive.transport.sentRaw.length;
+      final int cuesBefore = drive.feedback.recorded.length;
+      await tester.tapAt(tester.getCenter(find.byKey(_countKey(0))));
+      await tester.pump();
+
+      expect(
+        drive.transport.sentRaw.length,
+        sentBefore,
+        reason: 'D6: tapping the grouped 6\'s count text sends nothing',
+      );
+      expect(
+        drive.feedback.recorded.length,
+        cuesBefore,
+        reason: 'D6: tapping the count text plays no cue',
+      );
+      expect(
+        find.byKey(traySelectedKey(0)),
+        findsNothing,
+        reason: 'D6: the count text tap selects nothing',
+      );
+      expect(find.byKey(traySelectedKey(4)), findsNothing);
+      expect(ringedTokens(tester), <int>[
+        0,
+        1,
+        2,
+        3,
+      ], reason: 'D1/D6: the count text tap leaves every ring in place');
     } finally {
       FlutterError.onError = previous;
       await releaseGame(tester, drive);

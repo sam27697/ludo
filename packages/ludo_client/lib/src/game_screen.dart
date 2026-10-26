@@ -42,6 +42,7 @@ import 'net/snapshot.dart';
 import 'roll_tray.dart';
 import 'safe_cue.dart';
 import 'theme.dart';
+import 'token_face_picker.dart';
 
 /// Distinct [Navigator.pop] result from the finished-board next-table
 /// button, a forced removal from the room, or a resume the server refused
@@ -54,6 +55,22 @@ enum GameScreenResult { newTable, removed, gameGone }
 /// notice. `none` is an older server's absent field, a seat that is not in
 /// the snapshot, or a LOBBY snapshot.
 enum _TimerStepsAction { arm, drop, none }
+
+/// C-462 D2/D4: the picker open on one of my tokens, and the turn it
+/// opened against. A rebuild closes it when any D4 condition fails.
+class _OpenFacePick {
+  const _OpenFacePick({
+    required this.token,
+    required this.k,
+    required this.queue,
+    required this.faces,
+  });
+
+  final int token;
+  final int k;
+  final List<int> queue;
+  final List<int> faces;
+}
 
 /// Safety-net fallback duration for held landing cues, contract C-268 rule 4e.
 const Duration kLandingCueFallback = Duration(milliseconds: 2000);
@@ -181,13 +198,9 @@ class _GameScreenState extends State<GameScreen> {
   List<int>? _trayDeadFaces;
   Timer? _trayDeadTimer;
 
-  // K4: the face selected to spend from the queue, and the (k, queue)
-  // pair it was last reset against, so a manual tray tap is not undone by
-  // the next frame that merely repeats the same turn (a countdown tick,
-  // say) rather than genuinely moving it on.
-  int? _selectedFace;
-  int? _selectedFaceSeenK;
-  List<int>? _selectedFaceSeenQueue;
+  // C-462 D2/D4: the open face picker, or null. Closed by the checks in
+  // [_syncFacePick] on every rebuild, and by the tap rules in D2 and D3.
+  _OpenFacePick? _facePick;
 
   // The one guard both move paths (the hold's own timer and a token tap)
   // share. At most one move is in flight for one decision: this seat,
@@ -431,7 +444,6 @@ class _GameScreenState extends State<GameScreen> {
     }
     _checkMountTurnCue();
     _releaseMoveGuard();
-    _syncSelectedFace();
     _syncAutoMove();
     _syncConnectionLostAnnouncement();
   }
@@ -1154,9 +1166,7 @@ class _GameScreenState extends State<GameScreen> {
     _trayDeadTimer = null;
     _trayDeadSeat = null;
     _trayDeadFaces = null;
-    _selectedFace = null;
-    _selectedFaceSeenK = null;
-    _selectedFaceSeenQueue = null;
+    _facePick = null;
     _dropPendingLandingCues();
     _clearSafeCue();
     _endHoldDwellTimer?.cancel();
@@ -1678,41 +1688,6 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
-  /// K4, amended by the master mid-order: the selected face starts as
-  /// `legalByFace.first.face`, not `turn.value`. ENGINE_API.md 10.1 names
-  /// that `defaultFace` -- the first-queued face with a legal token, and
-  /// `legal_by_face` is already in that order and lists only live faces
-  /// (21.1). After a pushed `turn` frame the two agree; after a `rolled`
-  /// that leaves a move pending (no `turn` follows it, 21.3's own frame
-  /// table) the model's `turn.value` is the face just rolled, which is
-  /// wrong for the default whenever that roll was not the first-queued
-  /// one still alive. Resets on every reduced turn frame whose `k` or
-  /// `queue` differs from the last one this screen reset against -- not
-  /// on every rebuild, so a manual tray tap (K5) is not undone by the
-  /// next frame that merely repeats the same (k, queue), like a countdown
-  /// tick.
-  void _syncSelectedFace() {
-    final TurnState? turn = widget.controller.room?.turn;
-    final List<FaceLegal>? legalByFace = turn?.legalByFace;
-    if (turn == null ||
-        turn.phase != TurnPhase.awaitMove ||
-        legalByFace == null ||
-        legalByFace.isEmpty) {
-      _selectedFace = null;
-      _selectedFaceSeenK = null;
-      _selectedFaceSeenQueue = null;
-      return;
-    }
-    final bool changed =
-        _selectedFaceSeenK != turn.k ||
-        !_sameFaces(_selectedFaceSeenQueue, turn.queue);
-    if (changed) {
-      _selectedFace = legalByFace.first.face;
-      _selectedFaceSeenK = turn.k;
-      _selectedFaceSeenQueue = List<int>.from(turn.queue);
-    }
-  }
-
   void _onControllerChanged() {
     final RoomController controller = widget.controller;
     if (controller.phase == RoomPhase.failed ||
@@ -1727,7 +1702,6 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {
       _syncCountdown();
       _releaseMoveGuard();
-      _syncSelectedFace();
       _syncAutoMove();
       _syncRollWait();
     });
@@ -1858,7 +1832,7 @@ class _GameScreenState extends State<GameScreen> {
   /// travelling, none: the idle cube, so the result is not given away.
   /// From the moment that throw lands, its own face, including when a
   /// later roll has already replaced `turn.value`. With no throw up, the
-  /// caller's face (turn value, selected tray face, or the no-move hold).
+  /// caller's face (turn value, or the no-move hold).
   int? _boardDieFace(int? dieFace) {
     final _QueuedThrow? active = _activeThrow;
     if (active == null) {
@@ -2676,6 +2650,16 @@ class _GameScreenState extends State<GameScreen> {
         ((room.state == RoomState.finished && !_isEndHeld) ||
             (room.state == RoomState.lobby && controller.lastFinished != null));
 
+    // C-462 D4: the picker closes, with no send and no cue, on the rebuild
+    // that makes any of its conditions true.
+    _syncFacePick(
+      playingOnScreen:
+          !rematchGone &&
+          !isOfflineEndCard &&
+          room != null &&
+          _showsPlayingBody(room),
+    );
+
     final Widget body;
     if (rematchGone) {
       body = _gameOverBody(loc, controller, room, rematchGone: true);
@@ -2936,18 +2920,125 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// K7: `face`'s own tokens out of `legalByFace`, or none when `face` is
-  /// null or not (no longer) one of the queued, alive faces.
-  Set<int> _legalTokensForFace(List<FaceLegal> legalByFace, int? face) {
-    if (face == null) {
-      return const <int>{};
-    }
+  /// C-462 D1: every token any entry of [legalByFace] can move.
+  Set<int> _legalTokenUnion(List<FaceLegal> legalByFace) {
+    final Set<int> tokens = <int>{};
     for (final FaceLegal entry in legalByFace) {
-      if (entry.face == face) {
-        return entry.tokens.toSet();
+      tokens.addAll(entry.tokens);
+    }
+    return tokens;
+  }
+
+  /// C-462 D2: the faces, in [legalByFace] order, whose tokens include
+  /// [token].
+  List<int> _facesForToken(List<FaceLegal> legalByFace, int token) {
+    final List<int> faces = <int>[];
+    for (final FaceLegal entry in legalByFace) {
+      if (entry.tokens.contains(token)) {
+        faces.add(entry.face);
       }
     }
-    return const <int>{};
+    return faces;
+  }
+
+  /// True when [_connectedBody] draws [_playingBody] for [room]. The end
+  /// hold still counts: that body is on screen, and D4 closes the picker
+  /// for the hold itself.
+  bool _showsPlayingBody(RoomSnapshot room) {
+    if (room.state == RoomState.finished) {
+      return _isEndHeld && room.seats.length >= 2;
+    }
+    if (room.state == RoomState.lobby && room.rematch != null) {
+      return false;
+    }
+    return room.state == RoomState.playing && room.seats.length >= 2;
+  }
+
+  /// C-462 D4. Field write only: this runs at the start of [build].
+  void _syncFacePick({required bool playingOnScreen}) {
+    final _OpenFacePick? pick = _facePick;
+    if (pick == null) {
+      return;
+    }
+    if (_facePickMustClose(pick, playingOnScreen: playingOnScreen)) {
+      _facePick = null;
+    }
+  }
+
+  bool _facePickMustClose(_OpenFacePick pick, {required bool playingOnScreen}) {
+    if (!playingOnScreen || _isEndHeld || _pendingAutoMoveToken != null) {
+      return true;
+    }
+    final TurnState? turn = widget.controller.room?.turn;
+    if (turn == null ||
+        turn.seat != widget.controller.seat ||
+        turn.phase != TurnPhase.awaitMove ||
+        turn.k != pick.k ||
+        !_sameFaces(turn.queue, pick.queue)) {
+      return true;
+    }
+    final List<FaceLegal>? legalByFace = turn.legalByFace;
+    if (legalByFace == null) {
+      return true;
+    }
+    return _facesForToken(legalByFace, pick.token).length < 2;
+  }
+
+  /// C-422 D3 / C-462 D2: a token tap that sends [face] (null without the
+  /// roll queue) does it in the tap's own callback. The lift and the
+  /// `tap` cue happen only when [_sendMove] accepts. An open picker
+  /// closes either way. The hold's own commit does not come through here
+  /// (C-417).
+  void _sendTokenMove(int token, int k, {int? face}) {
+    bool sent = false;
+    setState(() {
+      _facePick = null;
+      sent = _sendMove(token, k, face: face);
+      if (sent) {
+        // C-426 D3: a token tap that sends `move` clears my timer-played
+        // notice.
+        _timerPlayedMineVisible = false;
+      }
+    });
+    if (sent) {
+      FeedbackScope.of(context).play(FeedbackCue.tap);
+    }
+  }
+
+  /// C-462 D3: the picked face goes out through [_sendMove]. The picker
+  /// closes either way. The tap cue plays only when the send went out.
+  void _onFacePicked(int face) {
+    final _OpenFacePick? pick = _facePick;
+    if (pick == null) {
+      return;
+    }
+    bool sent = false;
+    setState(() {
+      _facePick = null;
+      sent = _sendMove(pick.token, pick.k, face: face);
+      if (sent) {
+        // C-426 D3: a play that sends `move` clears my timer-played
+        // notice. With two or more faces this send is the picker tap,
+        // not the token tap (C-462 D3).
+        _timerPlayedMineVisible = false;
+      }
+    });
+    if (sent) {
+      FeedbackScope.of(context).play(FeedbackCue.tap);
+    }
+  }
+
+  TokenFacePick? _tokenFacePick(int? seat) {
+    final _OpenFacePick? pick = _facePick;
+    if (pick == null) {
+      return null;
+    }
+    return TokenFacePick(
+      token: pick.token,
+      faces: pick.faces,
+      seatColor: LudoColors.seats[(seat ?? 0).clamp(0, 3)],
+      onPick: _onFacePicked,
+    );
   }
 
   bool _faceIsAlive(List<FaceLegal> legalByFace, int face) {
@@ -2988,45 +3079,23 @@ class _GameScreenState extends State<GameScreen> {
     final List<int> faces = turn.queue;
     final Color color = LudoColors.seats[turn.seat.clamp(0, 3)];
     if (turn.phase == TurnPhase.awaitRoll) {
-      // K3: no die is selected or dead while the seat is still owed a
-      // roll.
+      // K3: no tile is dead while the seat is still owed a roll.
       return (
         faces,
         List<TrayDieState>.filled(faces.length, TrayDieState.plain),
         color,
       );
     }
+    // C-462 D6: a face legalByFace still lists is plain. Anything else
+    // in the queue is dead. The same face twice shares that one answer.
     final List<FaceLegal>? legalByFace = turn.legalByFace;
-    // A queue can hold the same face twice (two queued 6s): exactly one
-    // die is ever selected (the master's ruling on defect 1), the first
-    // queue index carrying the selected face. Any later die with that
-    // same face is alive but plain, reading as `trayDieCanMove`, never a
-    // second `selected`.
-    final List<TrayDieState> states = <TrayDieState>[];
-    bool selectedTaken = false;
-    for (final int face in faces) {
-      if (!selectedTaken && face == _selectedFace) {
-        states.add(TrayDieState.selected);
-        selectedTaken = true;
-      } else if (legalByFace != null && _faceIsAlive(legalByFace, face)) {
-        states.add(TrayDieState.plain);
-      } else {
-        states.add(TrayDieState.dead);
-      }
-    }
+    final List<TrayDieState> states = <TrayDieState>[
+      for (final int face in faces)
+        legalByFace != null && _faceIsAlive(legalByFace, face)
+            ? TrayDieState.plain
+            : TrayDieState.dead,
+    ];
     return (faces, states, color);
-  }
-
-  /// K5: a tap on an alive, unselected tray die. `RollTray` itself already
-  /// guards every other case (not interactive, the selected die, a dead
-  /// die), so reaching this at all means the tap is live.
-  void _onTraySelect(int face) {
-    if (_selectedFace == face) {
-      return;
-    }
-    setState(() {
-      _selectedFace = face;
-    });
   }
 
   /// H6.3: the room is playing and has at least two seated players. Board,
@@ -3050,9 +3119,8 @@ class _GameScreenState extends State<GameScreen> {
         turn.phase == TurnPhase.awaitRoll &&
         _rollWaitK == null;
 
-    // K7 (order 365, C-362 Part B): the rings are the selected face's own
-    // tokens from `legalByFace` whenever the roll queue sends one; without
-    // it, `turn.legal` exactly as before.
+    // C-462 D1: under the roll queue the rings are every token any alive
+    // face can move. Without `legalByFace`, `turn.legal` exactly as before.
     final bool myAwaitMove =
         !_isEndHeld &&
         turn != null &&
@@ -3060,7 +3128,7 @@ class _GameScreenState extends State<GameScreen> {
         turn.phase == TurnPhase.awaitMove;
     final Set<int> legalTokens = myAwaitMove
         ? (turn.legalByFace != null
-              ? _legalTokensForFace(turn.legalByFace!, _selectedFace)
+              ? _legalTokenUnion(turn.legalByFace!)
               : (turn.legal?.toSet() ?? const <int>{}))
         : const <int>{};
 
@@ -3071,13 +3139,11 @@ class _GameScreenState extends State<GameScreen> {
     final Color dieSeatColor = _noMoveVisible
         ? LudoColors.seats[(seat ?? 0).clamp(0, 3)]
         : LudoColors.seats[(turn?.seat ?? seat ?? 0).clamp(0, 3)];
-    // K4: under the roll queue, in awaitMove, the big die shows the
-    // selected face, not necessarily `turn.value`.
-    final int? dieFace = _noMoveVisible
-        ? _noMoveFace
-        : (myAwaitMove && turn.legalByFace != null
-              ? _selectedFace
-              : turn?.value);
+    // C-462 D7: in awaitMove under the queue the big die shows
+    // `turn.value`, the same face every viewer sees. The no-move hold
+    // keeps the face that armed it. The dead-faces hold does not change
+    // this die.
+    final int? dieFace = _noMoveVisible ? _noMoveFace : turn?.value;
 
     final (
       List<int>? trayFaces,
@@ -3087,7 +3153,8 @@ class _GameScreenState extends State<GameScreen> {
       turn,
       seat,
     );
-    final bool trayInteractive = myAwaitMove && turn.legalByFace != null;
+    // C-462 D6: the old `trayInteractive` flag, now only a label switch.
+    final bool trayOwnMove = myAwaitMove && turn.legalByFace != null;
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -3136,49 +3203,62 @@ class _GameScreenState extends State<GameScreen> {
                   onMoveLanded: _onBoardMoveLanded,
                   onTravelReset: _onBoardTravelReset,
                   safeCue: _safeCue,
+                  facePick: _tokenFacePick(seat),
                   onTokenTap: (int index) {
                     if (_isEndHeld) {
                       return;
                     }
                     _cancelPendingHoldForManualMove();
-                    final int? k = turn?.k;
-                    if (k == null) {
+                    final TurnState? liveTurn = turn;
+                    final int? k = liveTurn?.k;
+                    if (liveTurn == null || k == null) {
                       return;
                     }
+                    final List<FaceLegal>? legalByFace = liveTurn.legalByFace;
                     // K6: a server without the roll queue (`legalByFace`
                     // null) sends the byte-identical frame it always did.
-                    //
-                    // C-422 D3: the tap answers in its own frame -- the
-                    // guard, the lift and the cue all happen synchronously
-                    // here, in the tap's own gesture callback, not on a
-                    // later frame or after any reply from the server.
-                    bool sent = false;
-                    setState(() {
-                      sent = _sendMove(
-                        index,
-                        k,
-                        face: turn!.legalByFace != null ? _selectedFace : null,
-                      );
-                      if (sent) {
-                        // C-426 D3: a token tap that actually sends `move`
-                        // (and the same for a tray face pick that this tap
-                        // follows, since `_selectedFace` is what threads
-                        // the picked face into `_sendMove` above) is one
-                        // of the notice's own three clearing events for my
-                        // own seat. [_commitPendingAutoMove]'s own call to
-                        // `_sendMove` (the C-417 hold committing on its
-                        // own, with no tap) deliberately does not reach
-                        // here -- D7 and the order's own out-of-scope line
-                        // both leave that path untouched.
-                        _timerPlayedMineVisible = false;
-                      }
-                    });
-                    if (sent) {
+                    if (legalByFace == null) {
+                      _sendTokenMove(index, k, face: null);
+                      return;
+                    }
+                    // C-462 D2. F is this token's faces, in legalByFace
+                    // order. The cue plays only when something is sent
+                    // or a picker opens, never when a picker closes.
+                    final List<int> faces = _facesForToken(legalByFace, index);
+                    final bool openHere =
+                        _facePick != null && _facePick!.token == index;
+                    if (faces.length >= 2 && openHere) {
+                      setState(() {
+                        _facePick = null;
+                      });
+                      return;
+                    }
+                    if (faces.length >= 2) {
+                      setState(() {
+                        _facePick = _OpenFacePick(
+                          token: index,
+                          k: liveTurn.k,
+                          queue: List<int>.from(liveTurn.queue),
+                          faces: faces,
+                        );
+                      });
                       FeedbackScope.of(context).play(FeedbackCue.tap);
+                      return;
+                    }
+                    if (faces.length == 1) {
+                      _sendTokenMove(index, k, face: faces.single);
                     }
                   },
                   onIllegalTokenTap: (int index) {
+                    // Today's illegal tap, and an open picker closes with
+                    // it (C-462 D2). The cue is the one this tap already
+                    // played; closing adds none.
                     FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+                    if (_facePick != null) {
+                      setState(() {
+                        _facePick = null;
+                      });
+                    }
                   },
                   overlay: _thrownDieOverlay(seat),
                 ),
@@ -3227,13 +3307,7 @@ class _GameScreenState extends State<GameScreen> {
                           faces: trayFaces,
                           states: trayStates!,
                           seatColor: trayColor,
-                          interactive: trayInteractive,
-                          onSelect: (int index) =>
-                              _onTraySelect(trayFaces[index]),
-                          onInvalidTap: () {
-                            FeedbackScope.of(context)
-                                .play(FeedbackCue.invalidTap);
-                          },
+                          ownMove: trayOwnMove,
                         ),
                       ),
                     ],

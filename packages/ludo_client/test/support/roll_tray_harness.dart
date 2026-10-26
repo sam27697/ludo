@@ -34,6 +34,8 @@ Key trayDieKey(int index) => Key('game-roll-tray-die-$index');
 
 Key trayFaceKey(int index, int face) => Key('game-roll-tray-face-$index-$face');
 
+/// The selected mark C-462 removed from the tray. No state draws it any
+/// more; the key stays here so a case can assert it is absent.
 Key traySelectedKey(int index) => Key('game-roll-tray-selected-$index');
 
 Key trayDeadKey(int index) => Key('game-roll-tray-dead-$index');
@@ -43,6 +45,13 @@ Key bigFaceKey(int face) => Key('game-die-face-$face');
 Key legalRingKey(int seat, int token) => Key('board-legal-ring-$seat-$token');
 
 Key tokenHitKey(int seat, int token) => Key('board-token-hit-$seat-$token');
+
+/// C-462 D5: the face picker bubble and its options.
+const Key facePickerKey = Key('board-face-picker');
+
+Key facePickerOptionKey(int face) => Key('board-face-picker-option-$face');
+
+const String _facePickerOptionPrefix = 'board-face-picker-option-';
 
 int _serverIdSeq = 0;
 
@@ -143,6 +152,13 @@ Map<String, Object?> _roomJson({
   'winner': null,
   'seq': seq,
 };
+
+/// A room snapshot body in wire shape, for a server-initiated `room` push
+/// ([RollTrayDrive.push] stamps the sequence number).
+Map<String, Object?> roomData({
+  required List<Map<String, Object?>> seats,
+  Map<String, Object?>? turn,
+}) => _roomJson(seats: seats, turn: turn);
 
 class _Connector {
   final List<FakeTransport> _queue = <FakeTransport>[];
@@ -355,4 +371,34 @@ int cueCount(RecordingFeedback feedback, FeedbackCue cue) {
     }
   }
   return count;
+}
+
+/// The tokens of seat 0 that carry a legal ring right now.
+List<int> ringedTokens(WidgetTester tester) => <int>[
+  for (int token = 0; token < 4; token++)
+    if (tester.any(find.byKey(legalRingKey(0, token)))) token,
+];
+
+/// Every `board-face-picker-option-<face>` in the tree, as faces, in tree
+/// order.
+List<int> pickerOptionFaces(WidgetTester tester) {
+  final List<int> faces = <int>[];
+  for (final Element element in find.byWidgetPredicate((Widget widget) {
+    final Key? key = widget.key;
+    return key is ValueKey<String> &&
+        key.value.startsWith(_facePickerOptionPrefix);
+  }).evaluate()) {
+    final ValueKey<String> key = element.widget.key! as ValueKey<String>;
+    faces.add(int.parse(key.value.substring(_facePickerOptionPrefix.length)));
+  }
+  return faces;
+}
+
+/// The square the board draws in, centred inside the LudoBoard widget.
+Rect boardSquare(WidgetTester tester) {
+  final Rect widget = tester.getRect(find.byKey(boardKey));
+  final double side = widget.width < widget.height
+      ? widget.width
+      : widget.height;
+  return Rect.fromCenter(center: widget.center, width: side, height: side);
 }
