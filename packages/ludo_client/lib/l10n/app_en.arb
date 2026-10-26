@@ -364,6 +364,30 @@
       }
     }
   },
+  "seatDieFace": "{name}'s die: {face}",
+  "@seatDieFace": {
+    "description": "Semantics label for another seat's die on the board when it shows a face (C-465 D2). name is the name already drawn on that seat's chip. The die is not a button.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Bob"
+      },
+      "face": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "seatDieIdle": "{name}'s die",
+  "@seatDieIdle": {
+    "description": "Semantics label for another seat's die on the board when it shows the idle pose, no face (C-465 D2). name is the name already drawn on that seat's chip. The die is not a button.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Bob"
+      }
+    }
+  },
   "gameTurnCountdown": "{seconds}s left",
   "@gameTurnCountdown": {
     "description": "Shown on the game screen next to the turn banner whenever the current turn carries a deadline, counting down the whole seconds remaining before the server takes the turn. Never negative: it clamps at 0 and holds there until the next turn frame arrives.",

@@ -23,6 +23,7 @@ import 'package:flutter/widgets.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board_geometry.dart';
 import 'safe_cue.dart';
+import 'seat_die.dart';
 import 'seat_mark.dart';
 import 'theme.dart';
 import 'token_face_picker.dart';
@@ -425,6 +426,8 @@ class LudoBoard extends StatefulWidget {
     this.overlay,
     this.safeCue,
     this.facePick,
+    this.seatDice = const <SeatDie>[],
+    this.seatRecord,
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -543,8 +546,75 @@ class LudoBoard extends StatefulWidget {
   /// exactly what it drew before.
   final TokenFacePick? facePick;
 
+  /// One die per other seat in play, centred on that seat's yard. Empty,
+  /// the default, draws none, so a board built without it is unchanged.
+  /// C-465 D2.
+  final List<SeatDie> seatDice;
+
+  /// Another seat's roll record, drawn in that seat's yard. Null, the
+  /// default, draws none. C-465 D4.
+  final SeatRollRecord? seatRecord;
+
   @override
   State<LudoBoard> createState() => _LudoBoardState();
+}
+
+/// One positioned child of [_SeatPieceLayer]. [id] is stable for a seat
+/// so the layout can keep that child when the others appear. C-465 D2, D4.
+class _SeatPiece {
+  const _SeatPiece({required this.id, required this.rect, required this.child});
+
+  final Object id;
+  final Rect rect;
+  final Widget child;
+}
+
+/// Holds every seat die and the on-board record in one child of the board
+/// stack, so a piece appearing does not move the thrown-die overlay onto
+/// a new element and start its tumble over (C-465 D3).
+class _SeatPieceLayer extends StatelessWidget {
+  const _SeatPieceLayer({required this.pieces});
+
+  final List<_SeatPiece> pieces;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomMultiChildLayout(
+      delegate: _SeatPieceDelegate(pieces),
+      children: <Widget>[
+        for (final _SeatPiece piece in pieces)
+          LayoutId(id: piece.id, child: piece.child),
+      ],
+    );
+  }
+}
+
+class _SeatPieceDelegate extends MultiChildLayoutDelegate {
+  _SeatPieceDelegate(this.pieces);
+
+  final List<_SeatPiece> pieces;
+
+  @override
+  void performLayout(Size size) {
+    for (final _SeatPiece piece in pieces) {
+      layoutChild(piece.id, BoxConstraints.tight(piece.rect.size));
+      positionChild(piece.id, piece.rect.topLeft);
+    }
+  }
+
+  @override
+  bool shouldRelayout(covariant _SeatPieceDelegate oldDelegate) {
+    if (oldDelegate.pieces.length != pieces.length) {
+      return true;
+    }
+    for (var i = 0; i < pieces.length; i++) {
+      if (oldDelegate.pieces[i].id != pieces[i].id ||
+          oldDelegate.pieces[i].rect != pieces[i].rect) {
+        return true;
+      }
+    }
+    return false;
+  }
 }
 
 class _LudoBoardState extends State<LudoBoard> {
@@ -1391,6 +1461,14 @@ class _LudoBoardState extends State<LudoBoard> {
                   ..._safeSquareMarks(cellSize, widget.mySeat),
                   for (final seat in widget.seatsInPlay)
                     ..._seatIdentityLayer(seat: seat, cellSize: cellSize),
+                  // C-465 D2, D4: above the yard glow, below the tokens,
+                  // the thrown die, the safe cue and the face picker.
+                  // One slot for the whole layer, so a die or a record
+                  // appearing does not move the thrown-die overlay and
+                  // restart its flight (C-465 D3).
+                  Positioned.fill(
+                    child: _SeatPieceLayer(pieces: _seatPieces(cellSize)),
+                  ),
                   for (final int seat in _tokenPaintSeats())
                     for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++)
                       ..._tokenLayer(
@@ -1419,6 +1497,167 @@ class _LudoBoardState extends State<LudoBoard> {
         );
       },
     );
+  }
+
+  /// The viewed 6 by 6 yard of [seat]: its top-left and its side, in pixels.
+  ({double left, double top, double side, BoardCell origin}) _viewedYard(
+    double cellSize,
+    int seat,
+  ) {
+    final BoardCell origin = yardQuadrantOrigin(seat);
+    final ({int col, int row, int width, int height}) viewed = _viewBlock(
+      col: origin.col,
+      row: origin.row,
+      width: yardQuadrantSide,
+      height: yardQuadrantSide,
+      quarters: viewQuarters(widget.mySeat),
+    );
+    return (
+      left: viewed.col * cellSize,
+      top: viewed.row * cellSize,
+      side: yardQuadrantSide * cellSize,
+      origin: BoardCell(viewed.col, viewed.row),
+    );
+  }
+
+  /// C-465 D2 and D4, in paint order: dice, then the record.
+  List<_SeatPiece> _seatPieces(double cellSize) {
+    return <_SeatPiece>[
+      ..._seatDiePieces(cellSize),
+      ..._seatRecordPieces(cellSize),
+    ];
+  }
+
+  /// C-465 D2. Centred on the yard. Side starts at two cells and shrinks,
+  /// never moves, when a yard-slot disc of that seat reaches in. The same
+  /// measurement [_nameChip] uses: [_tokenDrawnRect] at progress -1.
+  List<_SeatPiece> _seatDiePieces(double cellSize) {
+    if (widget.seatDice.isEmpty) {
+      return const <_SeatPiece>[];
+    }
+    final List<_SeatPiece> layer = <_SeatPiece>[];
+    for (final SeatDie die in widget.seatDice) {
+      if (die.seat < 0 || die.seat > 3) {
+        continue;
+      }
+      final ({double left, double top, double side, BoardCell origin}) yard =
+          _viewedYard(cellSize, die.seat);
+      final Offset center = Offset(
+        yard.left + yard.side / 2,
+        yard.top + yard.side / 2,
+      );
+      final double side = _seatDieSide(die.seat, cellSize, center);
+      if (side <= 0) {
+        continue;
+      }
+      final String name = widget.seatNames?[die.seat] ?? '';
+      layer.add(
+        _SeatPiece(
+          id: 'die-${die.seat}',
+          rect: Rect.fromCenter(center: center, width: side, height: side),
+          child: IgnorePointer(
+            child: SeatDieView(die: die, name: name, side: side),
+          ),
+        ),
+      );
+    }
+    return layer;
+  }
+
+  /// Largest half-side of a square centred on [center] that does not
+  /// overlap [disc]. Zero when the disc covers the centre.
+  double _halfClearOf(Offset center, Rect disc) {
+    final List<double> gaps = <double>[
+      center.dx - disc.right,
+      disc.left - center.dx,
+      center.dy - disc.bottom,
+      disc.top - center.dy,
+    ];
+    double best = 0;
+    for (final double gap in gaps) {
+      if (gap > best) {
+        best = gap;
+      }
+    }
+    return best;
+  }
+
+  double _seatDieSide(int seat, double cellSize, Offset center) {
+    double half = cellSize;
+    for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++) {
+      final Rect disc = _tokenDrawnRect(
+        seat: seat,
+        tokenIndex: tokenIndex,
+        progress: -1,
+        cellSize: cellSize,
+        mySeat: widget.mySeat,
+        tokens: widget.tokens,
+        seatsInPlay: widget.seatsInPlay,
+      );
+      final double allowed = _halfClearOf(center, disc);
+      if (allowed < half) {
+        half = allowed;
+      }
+    }
+    return half * 2;
+  }
+
+  /// C-465 D4. The yard row that touches the track, opposite the name
+  /// chip's edge row. Height is that row less the name chip's cosmetic
+  /// inset, pulled back further if a yard-slot disc reaches in. Width is
+  /// the yard's. Centred across that width by [SeatYardRecord].
+  List<_SeatPiece> _seatRecordPieces(double cellSize) {
+    final SeatRollRecord? record = widget.seatRecord;
+    if (record == null || record.seat < 0 || record.seat > 3) {
+      return const <_SeatPiece>[];
+    }
+    final ({double left, double top, double side, BoardCell origin}) yard =
+        _viewedYard(cellSize, record.seat);
+    final bool yardOnTop = yard.origin.row == 0;
+    final double rowTop = yardOnTop
+        ? yard.top + (yardQuadrantSide - 1) * cellSize
+        : yard.top;
+    final double rowBottom = rowTop + cellSize;
+    // The name chip's own inset, on the yard-interior side of this row.
+    final double cosmeticInset = cellSize * 0.10;
+    double innerBound = yardOnTop
+        ? rowTop + cosmeticInset
+        : rowBottom - cosmeticInset;
+    for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++) {
+      final Rect disc = _tokenDrawnRect(
+        seat: record.seat,
+        tokenIndex: tokenIndex,
+        progress: -1,
+        cellSize: cellSize,
+        mySeat: widget.mySeat,
+        tokens: widget.tokens,
+        seatsInPlay: widget.seatsInPlay,
+      );
+      if (disc.bottom <= rowTop || disc.top >= rowBottom) {
+        continue;
+      }
+      if (yardOnTop) {
+        innerBound = math.max(innerBound, disc.bottom);
+      } else {
+        innerBound = math.min(innerBound, disc.top);
+      }
+    }
+    final double recordTop = yardOnTop ? innerBound : rowTop;
+    final double recordBottom = yardOnTop ? rowBottom : innerBound;
+    final double recordHeight = math.max(0.0, recordBottom - recordTop);
+    if (recordHeight <= 0 || yard.side <= 0) {
+      return const <_SeatPiece>[];
+    }
+    return <_SeatPiece>[
+      _SeatPiece(
+        id: 'record-${record.seat}',
+        rect: Rect.fromLTWH(yard.left, recordTop, yard.side, recordHeight),
+        child: KeyedSubtree(
+          key: Key('board-seat-record-${record.seat}'),
+          child: SeatYardRecord(record: record),
+        ),
+      ),
+    ];
   }
 
   /// [LudoBoard.seatsInPlay], with [LudoBoard.mySeat] moved to the end so

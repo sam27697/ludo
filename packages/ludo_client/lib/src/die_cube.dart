@@ -330,13 +330,24 @@ Matrix4 ownTumbleRotation(double turns) {
     ..rotateZ(turns * math.pi * 0.5);
 }
 
-/// Drawn size of a die thrown onto the board. C-377 D4.
+/// C-465 D2. The one idle pose, used wherever a cube has no face. An
+/// isometric tilt: faces 1, 2 and 4 stay toward the viewer at the same
+/// angle, and none of them is square-on, so the cube cannot be read as a
+/// rolled face (C-238).
+final Matrix4 kIdleDieRotation = Matrix4.identity()
+  ..rotateX(-math.atan(1 / math.sqrt2))
+  ..rotateY(math.pi / 4);
+
+/// Drawn size of a die thrown onto the board when the viewer has no seat
+/// of their own. A seated viewer's throw is two cells instead (C-465 D3).
+/// C-377 D4.
 const double kThrownDieSize = 48;
 
-/// One opponent roll, travelling from that seat's outer corner to a point
-/// 60% of the way to the board centre, then resting on [face]. The widget
-/// fills the board it is given; the die itself is [kThrownDieSize] and
-/// ignores pointers. C-377 D4, D5, D8, D10.
+/// One opponent roll, travelling from that seat's outer corner to the
+/// centre of that seat's yard, then resting on [face]. A viewer with no
+/// seat of their own still lands 60% of the way to the board centre, at
+/// [kThrownDieSize]. The widget fills the board it is given and ignores
+/// pointers. C-377 D4, D5, D8, D10; C-465 D3.
 class BoardThrownDie extends StatefulWidget {
   const BoardThrownDie({
     super.key,
@@ -568,8 +579,12 @@ class _BoardThrownDieState extends State<BoardThrownDie>
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final double side = constraints.maxWidth;
+        final bool seated = widget.mySeat != null;
+        // C-465 D3: two cells for the whole flight. A spectator keeps the
+        // fixed 48 (C-377 D4).
+        final double dieSize = seated ? 2 * side / 15 : kThrownDieSize;
         final Offset corner = _outerCorner(widget.seat, widget.mySeat);
-        final Offset landing = _landingPoint(corner);
+        final Offset landing = _landingPoint(corner, seated: seated);
         final double travel = Curves.easeOut.transform(_tumbleT);
         final Offset at = Offset.lerp(corner, landing, travel)!;
         final Offset center = Offset(at.dx * side, at.dy * side);
@@ -578,7 +593,7 @@ class _BoardThrownDieState extends State<BoardThrownDie>
             ? throwArcRotation(widget.face, travel)
             : restingRotationFor(widget.face);
         final Widget cube = DieCube(
-          size: kThrownDieSize,
+          size: dieSize,
           rotation: rotation,
           edgeColor: LudoColors.seats[widget.seat.clamp(0, 3)],
         );
@@ -595,10 +610,10 @@ class _BoardThrownDieState extends State<BoardThrownDie>
           clipBehavior: Clip.none,
           children: <Widget>[
             Positioned(
-              left: center.dx - kThrownDieSize / 2,
-              top: center.dy - kThrownDieSize / 2,
-              width: kThrownDieSize,
-              height: kThrownDieSize,
+              left: center.dx - dieSize / 2,
+              top: center.dy - dieSize / 2,
+              width: dieSize,
+              height: dieSize,
               child: IgnorePointer(
                 child: ExcludeSemantics(
                   child: Opacity(
@@ -640,10 +655,19 @@ Offset _outerCorner(int seat, int? mySeat) {
   return Offset(x / 15, y / 15);
 }
 
-/// 60% of the way from [corner] to the board centre. C-377 D4.
-Offset _landingPoint(Offset corner) {
-  return Offset(
-    corner.dx + 0.6 * (0.5 - corner.dx),
-    corner.dy + 0.6 * (0.5 - corner.dy),
-  );
+/// Seated: the centre of that seat's yard, 3/15 of the board in from
+/// [corner] on both axes (C-465 D3). Spectator: 60% of the way from
+/// [corner] to the board centre (C-377 D4).
+Offset _landingPoint(Offset corner, {required bool seated}) {
+  if (!seated) {
+    return Offset(
+      corner.dx + 0.6 * (0.5 - corner.dx),
+      corner.dy + 0.6 * (0.5 - corner.dy),
+    );
+  }
+  double inward(double component) {
+    return component <= 0.5 ? component + 3 / 15 : component - 3 / 15;
+  }
+
+  return Offset(inward(corner.dx), inward(corner.dy));
 }

@@ -41,6 +41,7 @@ import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'roll_tray.dart';
 import 'safe_cue.dart';
+import 'seat_die.dart';
 import 'theme.dart';
 import 'token_face_picker.dart';
 
@@ -261,9 +262,23 @@ class _GameScreenState extends State<GameScreen> {
   final List<_QueuedThrow> _throwQueue = <_QueuedThrow>[];
   bool _throwHurry = false;
 
-  /// True while the active throw is still travelling, so the die under the
-  /// board shows the idle cube instead of the face (C-377 D2).
+  /// True while the active throw is still travelling. The seat die of that
+  /// seat stays off the board until the throw lands (C-465 D2). With no
+  /// seat of my own, it still hides the face on the die under the board
+  /// (C-377 D2).
   bool _throwConcealsFace = false;
+
+  /// Last face this screen saw each other seat roll. Written when that
+  /// seat's throw lands, never when it is queued, and from `turn.value`
+  /// once no throw of that seat is queued or up (C-465 D2). Shown on the
+  /// seat die once their turn has passed, until their next turn begins.
+  /// A resync that replaces `recentRolls` drops the map, then the seat
+  /// holding the turn records `turn.value` again.
+  final Map<int, int> _rememberedSeatFaces = <int, int>{};
+
+  /// The turn seat [_syncSeatFaceMemory] last applied, so a change to a
+  /// new seat is that seat's turn beginning.
+  int? _faceMemoryTurnSeat;
 
   // C-236 rule 2: one subscription to controller.frames for the life of
   // this screen, feeding every frame's cues to the one FeedbackService
@@ -416,6 +431,7 @@ class _GameScreenState extends State<GameScreen> {
     _seenRolls = List<(int k, int face)>.of(
       widget.controller.room?.recentRolls ?? const <(int k, int face)>[],
     );
+    _syncSeatFaceMemory();
     widget.controller.addListener(_onControllerChanged);
     _frameSub = widget.controller.frames.listen(_onFrame);
     // K9: this screen can mount straight into a turn already mid-queue
@@ -1159,6 +1175,7 @@ class _GameScreenState extends State<GameScreen> {
     _rollWaitK = null;
     _rollNoAnswer = false;
     _clearThrows();
+    _syncSeatFaceMemory();
     _lastKnownQueue.clear();
     _yourTurnPlayedK = null;
     _dropDeadCandidate();
@@ -1698,7 +1715,10 @@ class _GameScreenState extends State<GameScreen> {
     if (controller.phase != RoomPhase.connected) {
       _dropWhatTheLinkArmed();
     }
+    // Throws first. A resync clears the remembered faces, and the sync
+    // below records the holder's `turn.value` again (C-465 D2).
     _syncOpponentThrows();
+    _syncSeatFaceMemory();
     setState(() {
       _syncCountdown();
       _releaseMoveGuard();
@@ -1744,6 +1764,8 @@ class _GameScreenState extends State<GameScreen> {
       _throwHurry = false;
       _throwConcealsFace = false;
       _seenRolls = next;
+      // C-465 D2: a resync forgets every face this screen had remembered.
+      _rememberedSeatFaces.clear();
       return;
     }
     _seenRolls = next;
@@ -1780,8 +1802,13 @@ class _GameScreenState extends State<GameScreen> {
     _throwHurry = _throwQueue.isNotEmpty;
     // D8 lands on the first frame, so the die under the board shows the
     // face in that same frame (D2). With motion on, the face stays hidden
-    // until the tumble ends.
+    // until the tumble ends. Reduced motion has already landed, so the
+    // face enters memory here (C-465 D2).
     _throwConcealsFace = !MediaQuery.disableAnimationsOf(context);
+    if (!_throwConcealsFace) {
+      final _QueuedThrow landed = _activeThrow!;
+      _rememberedSeatFaces[landed.seat] = landed.face;
+    }
   }
 
   /// C-377 D5: `moved` or `turn_passed` while a throw is up. The widget
@@ -1804,6 +1831,75 @@ class _GameScreenState extends State<GameScreen> {
     _seenRolls = List<(int k, int face)>.of(
       widget.controller.room?.recentRolls ?? const <(int k, int face)>[],
     );
+    _rememberedSeatFaces.clear();
+    _faceMemoryTurnSeat = null;
+  }
+
+  /// C-465 D2. While another seat holds the turn, remember `turn.value`
+  /// once no throw of that seat is queued or still up. The throw itself
+  /// writes the face when it lands, never when it is queued. When that
+  /// seat's turn begins, drop the face kept from the previous one first,
+  /// so a turn that never rolls goes back to the idle pose. The rolls
+  /// this screen mounted with are the baseline, same as the throws: they
+  /// are not faces this screen saw arrive.
+  void _syncSeatFaceMemory() {
+    final int? mySeat = widget.controller.seat;
+    final TurnState? turn = widget.controller.room?.turn;
+    if (turn == null) {
+      _faceMemoryTurnSeat = null;
+      return;
+    }
+    if (mySeat != null &&
+        turn.seat != mySeat &&
+        _faceMemoryTurnSeat != turn.seat) {
+      _rememberedSeatFaces.remove(turn.seat);
+    }
+    _faceMemoryTurnSeat = turn.seat;
+    final int? value = turn.value;
+    if (mySeat == null || turn.seat == mySeat || value == null) {
+      return;
+    }
+    if (_seatThrowPending(turn.seat)) {
+      return;
+    }
+    _rememberedSeatFaces[turn.seat] = value;
+  }
+
+  /// A throw of [seat] is waiting in the queue or is the one in flight,
+  /// in any phase (C-465 D2).
+  bool _seatThrowPending(int seat) {
+    final _QueuedThrow? active = _activeThrow;
+    if (active != null && active.seat == seat) {
+      return true;
+    }
+    for (final _QueuedThrow waiting in _throwQueue) {
+      if (waiting.seat == seat) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// C-465 D2, D3. The seat die stays off while [seat]'s throw is queued
+  /// or still tumbling, so a result is not on the board before the throw
+  /// has flown. From the moment the throw in flight leaves the tumble
+  /// the seat die is drawn under it, even when a successor is queued.
+  bool _seatDieHeldBack(int seat) {
+    final _QueuedThrow? active = _activeThrow;
+    if (active != null && active.seat == seat && _throwConcealsFace) {
+      return true;
+    }
+    final bool landedHere =
+        active != null && active.seat == seat && !_throwConcealsFace;
+    if (landedHere) {
+      return false;
+    }
+    for (final _QueuedThrow waiting in _throwQueue) {
+      if (waiting.seat == seat) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void _onThrowPhase(ThrownDiePhase phase) {
@@ -1813,6 +1909,14 @@ class _GameScreenState extends State<GameScreen> {
     }
     setState(() {
       _throwConcealsFace = conceal;
+      // Leaving the tumble is the landing. The face enters memory here,
+      // not when the throw was queued (C-465 D2).
+      if (!conceal) {
+        final _QueuedThrow? landed = _activeThrow;
+        if (landed != null) {
+          _rememberedSeatFaces[landed.seat] = landed.face;
+        }
+      }
     });
   }
 
@@ -1821,6 +1925,10 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
     setState(() {
+      final _QueuedThrow? done = _activeThrow;
+      if (done != null) {
+        _rememberedSeatFaces[done.seat] = done.face;
+      }
       _activeThrow = null;
       _throwConcealsFace = false;
       _throwHurry = false;
@@ -1828,12 +1936,14 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
-  /// The face under the board (C-377 D2). While a throw is still
-  /// travelling, none: the idle cube, so the result is not given away.
-  /// From the moment that throw lands, its own face, including when a
-  /// later roll has already replaced `turn.value`. With no throw up, the
-  /// caller's face (turn value, or the no-move hold).
+  /// The face under the board. With a seat of my own the throw never
+  /// conceals or sets it (C-465 D1.2): [dieFace] is already that die's
+  /// face. With no seat, C-377 D2 stands: while a throw is still
+  /// travelling, none, and from the moment it lands, its own face.
   int? _boardDieFace(int? dieFace) {
+    if (widget.controller.seat != null) {
+      return dieFace;
+    }
     final _QueuedThrow? active = _activeThrow;
     if (active == null) {
       return dieFace;
@@ -1842,6 +1952,46 @@ class _GameScreenState extends State<GameScreen> {
       return null;
     }
     return active.face;
+  }
+
+  /// C-465 D4: the seat the tray belongs to. The dead-faces hold wins,
+  /// the same way [_rollTrayData] already lets it win over [turn].
+  int? _rollRecordSeat(TurnState? turn) {
+    if (_trayDeadFaces != null && _trayDeadFaces!.length >= 2) {
+      return _trayDeadSeat;
+    }
+    return turn?.seat;
+  }
+
+  /// C-465 D2. One [SeatDie] per other seat in play. Empty when this
+  /// screen has no seat of its own, which leaves the board unchanged.
+  /// A seat whose throw is queued or still tumbling is left out: the
+  /// thrown die is that die in flight, and the result is not drawn
+  /// before the throw has flown.
+  List<SeatDie> _seatDiceOf(RoomSnapshot room) {
+    final int? mySeat = widget.controller.seat;
+    if (mySeat == null) {
+      return const <SeatDie>[];
+    }
+    final TurnState? turn = room.turn;
+    final _QueuedThrow? active = _activeThrow;
+    final List<SeatDie> dice = <SeatDie>[];
+    for (final int seat in _seatsInPlayOf(room)) {
+      if (seat == mySeat || _seatDieHeldBack(seat)) {
+        continue;
+      }
+      final bool holdsTurn = turn != null && turn.seat == seat;
+      final int? face;
+      if (active != null && active.seat == seat) {
+        face = active.face;
+      } else if (turn != null && turn.seat == seat) {
+        face = turn.value;
+      } else {
+        face = _rememberedSeatFaces[seat];
+      }
+      dice.add(SeatDie(seat: seat, face: face, active: holdsTurn));
+    }
+    return dice;
   }
 
   Widget? _thrownDieOverlay(int? mySeat) {
@@ -3132,18 +3282,25 @@ class _GameScreenState extends State<GameScreen> {
               : (turn.legal?.toSet() ?? const <int>{}))
         : const <int>{};
 
-    // Rule 4a: for the whole hold the die keeps showing the face and the
-    // seat colour of the `rolled` that armed it -- my own -- rather than
-    // whatever the next seat's turn has already put in `turn.seat` and
-    // `turn.value` underneath it.
-    final Color dieSeatColor = _noMoveVisible
-        ? LudoColors.seats[(seat ?? 0).clamp(0, 3)]
-        : LudoColors.seats[(turn?.seat ?? seat ?? 0).clamp(0, 3)];
-    // C-462 D7: in awaitMove under the queue the big die shows
-    // `turn.value`, the same face every viewer sees. The no-move hold
-    // keeps the face that armed it. The dead-faces hold does not change
-    // this die.
-    final int? dieFace = _noMoveVisible ? _noMoveFace : turn?.value;
+    // C-465 D1: with a seat of my own the die under the board is only ever
+    // mine. Its colour is my seat colour in every phase. On my own turn
+    // the face is still `turn.value` (C-462 D7) and my own tumble. While
+    // another seat holds the turn, and my no-move hold is not up, the
+    // face is null. Rule 4a is unchanged: for the whole hold the die
+    // keeps the face and the colour of the roll that armed it, my own,
+    // while the next seat's turn has begun underneath. With no seat, the
+    // colour and the face stay what they were (C-377). The no-move hold
+    // is only ever armed for my own seat, so a spectator has no separate
+    // colour for it.
+    final Color dieSeatColor = seat != null
+        ? LudoColors.seats[seat.clamp(0, 3)]
+        : LudoColors.seats[(turn?.seat ?? 0).clamp(0, 3)];
+    final int? rawDieFace = _noMoveVisible
+        ? _noMoveFace
+        : (seat != null && (turn == null || turn.seat != seat))
+        ? null
+        : turn?.value;
+    final int? dieFace = _boardDieFace(rawDieFace);
 
     final (
       List<int>? trayFaces,
@@ -3155,6 +3312,23 @@ class _GameScreenState extends State<GameScreen> {
     );
     // C-462 D6: the old `trayInteractive` flag, now only a label switch.
     final bool trayOwnMove = myAwaitMove && turn.legalByFace != null;
+    // C-465 D4: my record, and a spectator's, stay in the row under the
+    // board. Another seat's record is drawn in that seat's yard, so the
+    // row under the board does not carry it.
+    final int? recordSeat = trayFaces == null ? null : _rollRecordSeat(turn);
+    final SeatRollRecord? boardRecord =
+        trayFaces != null &&
+            trayStates != null &&
+            seat != null &&
+            recordSeat != null &&
+            recordSeat != seat
+        ? SeatRollRecord(
+            seat: recordSeat,
+            faces: trayFaces,
+            states: trayStates,
+            seatColor: trayColor,
+          )
+        : null;
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -3261,6 +3435,8 @@ class _GameScreenState extends State<GameScreen> {
                     }
                   },
                   overlay: _thrownDieOverlay(seat),
+                  seatDice: _seatDiceOf(room),
+                  seatRecord: boardRecord,
                 ),
               ),
               SizedBox(height: metrics.boardGap),
@@ -3277,7 +3453,7 @@ class _GameScreenState extends State<GameScreen> {
                       loc,
                       turn,
                       GameDie(
-                        face: _boardDieFace(dieFace),
+                        face: dieFace,
                         seatColor: dieSeatColor,
                         enabled: rollEnabled,
                         tumbling: _rollWaitK != null,
@@ -3299,7 +3475,7 @@ class _GameScreenState extends State<GameScreen> {
                         },
                       ),
                     ),
-                    if (trayFaces != null) ...[
+                    if (trayFaces != null && boardRecord == null) ...[
                       const SizedBox(width: kSpace2),
                       Flexible(
                         child: RollTray(
@@ -3847,7 +4023,29 @@ class _GameScreenState extends State<GameScreen> {
   /// With no throw up, [_diceValueWrap] exactly as before. While one is
   /// travelling the value is left unannounced (D2). Once it has landed,
   /// the announcement is that throw's face, which is what the die shows.
+  /// With a seat of my own the throw never sets this die (C-465 D1).
+  /// The node follows the face the die is showing: my turn's value, or
+  /// the held face during the no-move hold. While another seat holds the
+  /// turn and that hold is not up, the node is absent.
   Widget _boardDieSlot(AppLocalizations loc, TurnState? turn, Widget die) {
+    final int? mySeat = widget.controller.seat;
+    if (mySeat != null) {
+      if (_noMoveVisible) {
+        final int? held = _noMoveFace;
+        if (held == null) {
+          return die;
+        }
+        return Semantics(
+          key: const Key('game-screen-dice-value'),
+          label: loc.gameDieValue(held),
+          child: die,
+        );
+      }
+      if (turn != null && turn.seat == mySeat) {
+        return _diceValueWrap(loc, turn, die);
+      }
+      return die;
+    }
     final _QueuedThrow? active = _activeThrow;
     if (active == null) {
       return _diceValueWrap(loc, turn, die);

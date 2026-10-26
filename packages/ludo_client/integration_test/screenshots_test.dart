@@ -6275,6 +6275,83 @@ void main() {
       seatToken: 'tok-shot-52',
     );
   });
+
+  // ==========================================================================
+  // 64-68: order 467. Emulator frames of each seat's die at its own side of
+  // the board (C-465). Same route as captures 45-48 and 41-44: a GameScreen
+  // over FakeTransport, frames copied by hand into this file, no server, no
+  // pumpAndSettle once GameScreen is up. Bodies live at the bottom of the
+  // file.
+  // ==========================================================================
+  testWidgets('capture 64-seat-die-seat0-en', (tester) async {
+    await _shootSeatDieTwoSeats(
+      tester,
+      binding,
+      shotName: '64-seat-die-seat0-en',
+      locale: const Locale('en'),
+      mySeat: 0,
+      rollerSeat: 2,
+      face: 5,
+      roomCode: 'SD64EN',
+      gameId: '1' * 16,
+      seatToken: 'tok-shot-64',
+    );
+  });
+
+  testWidgets('capture 65-seat-die-seat2-ar', (tester) async {
+    await _shootSeatDieTwoSeats(
+      tester,
+      binding,
+      shotName: '65-seat-die-seat2-ar',
+      locale: const Locale('ar'),
+      mySeat: 2,
+      rollerSeat: 0,
+      face: 4,
+      roomCode: 'SD65AR',
+      gameId: '2' * 16,
+      seatToken: 'tok-shot-65',
+    );
+  });
+
+  testWidgets('capture 66-seat-die-four-en', (tester) async {
+    await _shootSeatDieFourSeats(
+      tester,
+      binding,
+      shotName: '66-seat-die-four-en',
+      locale: const Locale('en'),
+      roomCode: 'SD66EN',
+      gameId: '3' * 16,
+      seatToken: 'tok-shot-66',
+    );
+  });
+
+  testWidgets('capture 67-seat-die-four-ar', (tester) async {
+    await _shootSeatDieFourSeats(
+      tester,
+      binding,
+      shotName: '67-seat-die-four-ar',
+      locale: const Locale('ar'),
+      roomCode: 'SD67AR',
+      gameId: '4' * 16,
+      seatToken: 'tok-shot-67',
+    );
+  });
+
+  testWidgets('capture 68-seat-die-large-en', (tester) async {
+    await _shootSeatDieTwoSeats(
+      tester,
+      binding,
+      shotName: '68-seat-die-large-en',
+      locale: const Locale('en'),
+      mySeat: 0,
+      rollerSeat: 2,
+      face: 5,
+      roomCode: 'SD68EN',
+      gameId: '5' * 16,
+      seatToken: 'tok-shot-68',
+      textScale: 2.0,
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -10700,6 +10777,705 @@ Future<void> _shootTimerPlayedOther(
       reason:
           'capture $shotName: D4, the other-seat notice must name the '
           'seat ("$opponentName"); read "${otherNoticeText.data}"',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+// --- order 467: captures 64-68 (C-465) -------------------------------------
+//
+// Emulator frames of each seat's die at its own side of the board (C-465).
+// Same harness as captures 45-48 and 41-44: GameScreen over FakeTransport,
+// frames copied by hand into this file, no server, no pumpAndSettle once
+// GameScreen is up.
+
+Future<void> _pumpUntilThrowGone(
+  WidgetTester tester, {
+  required int seat,
+  required String shotName,
+}) async {
+  // Start the throw ticker on its first frame, then step in 50 ms increments
+  // until every throw has left the tree (at most 6 s, 120 frames).
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 16));
+  // Throws play one after another across seats, so a seat's throw can
+  // still be queued behind another seat's while its own overlay is
+  // absent. Wait until no seat's throw is up for three steps.
+  final Finder throwFinder = find.byKey(Key('opponent-throw-$seat'));
+  bool anyThrowUp() {
+    for (int s = 0; s < 4; s++) {
+      if (find.byKey(Key('opponent-throw-$s')).evaluate().isNotEmpty) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  int goneSteps = 0;
+  for (int step = 0; step < 120; step++) {
+    goneSteps = anyThrowUp() ? 0 : goneSteps + 1;
+    if (goneSteps >= 3) {
+      return;
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  expect(
+    throwFinder,
+    findsNothing,
+    reason:
+        'capture $shotName: C-465 D3, opponent-throw-$seat must finish and '
+        'leave the tree within 6 s',
+  );
+}
+
+/// Captures 64, 65, and 68. Two seats [0, 2], viewer at [mySeat], opponent at
+/// [rollerSeat]. [rollerSeat] holds the turn and rolls [face]. The throw plays
+/// out until `opponent-throw-$rollerSeat` leaves the tree, leaving
+/// `board-seat-die-face-$rollerSeat-$face` in the top-right yard and the big
+/// die below the board idle (`game-die-idle-art`).
+Future<void> _shootSeatDieTwoSeats(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required int mySeat,
+  required int rollerSeat,
+  required int face,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+  double? textScale,
+}) async {
+  expect(
+    (mySeat == 0 && rollerSeat == 2) || (mySeat == 2 && rollerSeat == 0),
+    isTrue,
+    reason:
+        'capture $shotName: [mySeat, rollerSeat] must be [0, 2] or [2, 0], '
+        'got [$mySeat, $rollerSeat]',
+  );
+
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  if (textScale != null) {
+    tester.platformDispatcher.textScaleFactorTestValue = textScale;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  } else {
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+  }
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = mySeat == 0
+        ? await _openHostGame(
+            tester,
+            capture: shotName,
+            roomCode: roomCode,
+            locale: locale,
+            gameId: gameId,
+            seatToken: seatToken,
+          )
+        : await _openGuestSeat(
+            tester,
+            capture: shotName,
+            roomCode: roomCode,
+            locale: locale,
+            gameId: gameId,
+            seatToken: seatToken,
+          );
+    controller = opened.controller;
+    int seq = opened.seq;
+
+    if (rollerSeat != 0) {
+      seq = await _pushTraySeq(
+        tester,
+        opened.transport,
+        seq,
+        type: 'turn',
+        data: <String, Object?>{
+          'seat': rollerSeat,
+          'deadline_ms': _trayDeadlineMs,
+        },
+      );
+    }
+
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': rollerSeat,
+        'value': face,
+        'legal': <int>[0],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 1,
+        'reveal': _trayReveal,
+      },
+    );
+
+    await _pumpUntilThrowGone(tester, seat: rollerSeat, shotName: shotName);
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      controller.seat,
+      mySeat,
+      reason: 'capture $shotName: viewer seat must be $mySeat',
+    );
+    expect(
+      turn.seat,
+      rollerSeat,
+      reason: 'capture $shotName: it is seat $rollerSeat\'s turn',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    if (textScale != null) {
+      final Finder banner = find.byKey(const Key('game-screen-turn-banner'));
+      expect(
+        banner,
+        findsOneWidget,
+        reason: 'capture $shotName: game-screen-turn-banner must be on screen',
+      );
+      final double scaledTen = MediaQuery.textScalerOf(tester.element(banner))
+          .scale(10);
+      expect(
+        scaledTen,
+        10.0 * textScale,
+        reason:
+            'capture $shotName: expected MediaQuery.textScalerOf at '
+            'game-screen-turn-banner to scale 10 to ${10.0 * textScale}, '
+            'got $scaledTen',
+      );
+    }
+
+    _expectKey(
+      tester,
+      Key('board-seat-die-$rollerSeat'),
+      present: true,
+      reason:
+          'capture $shotName: C-465 D2, board-seat-die-$rollerSeat must be '
+          'on the board',
+    );
+    _expectKey(
+      tester,
+      Key('board-seat-die-face-$rollerSeat-$face'),
+      present: true,
+      reason:
+          'capture $shotName: C-465 D2, '
+          'board-seat-die-face-$rollerSeat-$face must show rolled face $face',
+    );
+    _expectKey(
+      tester,
+      Key('board-seat-die-$mySeat'),
+      present: false,
+      reason:
+          'capture $shotName: C-465 D2, viewer seat $mySeat never draws a '
+          'board-seat-die',
+    );
+    _expectKey(
+      tester,
+      const Key('game-die-idle-art'),
+      present: true,
+      reason:
+          'capture $shotName: C-465 D1, the big die below the board is mine '
+          'alone and stays on game-die-idle-art during seat $rollerSeat\'s '
+          'turn',
+    );
+    _expectKey(
+      tester,
+      Key('game-die-face-$face'),
+      present: false,
+      reason:
+          'capture $shotName: C-465 D1, the big die must not show seat '
+          '$rollerSeat\'s face $face',
+    );
+
+    final Finder boardFinder = find.byKey(const Key('ludo-board'));
+    expect(
+      boardFinder,
+      findsOneWidget,
+      reason: 'capture $shotName: ludo-board must be on screen',
+    );
+    // The keyed board can be wider than the square it paints (large
+    // text); measure the square, centred, as the board draws it.
+    final Rect boardWidget = tester.getRect(boardFinder);
+    final double boardSide = boardWidget.width < boardWidget.height
+        ? boardWidget.width
+        : boardWidget.height;
+    final Rect boardRect = Rect.fromCenter(
+      center: boardWidget.center,
+      width: boardSide,
+      height: boardSide,
+    );
+    final Finder seatDieFinder = find.byKey(Key('board-seat-die-$rollerSeat'));
+    final Rect seatDieRect = tester.getRect(seatDieFinder);
+    expect(
+      _inTopRightQuarter(seatDieRect.center, boardRect),
+      isTrue,
+      reason:
+          'capture $shotName: C-465 D2, seat $rollerSeat\'s die centre '
+          '${_offsetText(seatDieRect.center)} must lie in the top-right '
+          'yard quadrant of ludo-board ${_rectText(boardRect)}',
+    );
+    final double cellSize = boardRect.width / 15.0;
+    final Rect topRightYard = Rect.fromLTWH(
+      boardRect.left + 9.0 * cellSize,
+      boardRect.top,
+      6.0 * cellSize,
+      6.0 * cellSize,
+    );
+    expect(
+      seatDieRect.left >= topRightYard.left &&
+          seatDieRect.top >= topRightYard.top &&
+          seatDieRect.right <= topRightYard.right &&
+          seatDieRect.bottom <= topRightYard.bottom,
+      isTrue,
+      reason:
+          'capture $shotName: C-465 D2, seat $rollerSeat\'s die rect '
+          '${_rectText(seatDieRect)} must sit inside seat $rollerSeat\'s '
+          '6x6 yard quadrant ${_rectText(topRightYard)}',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+    if (textScale != null) {
+      tester.platformDispatcher.clearTextScaleFactorTestValue();
+    }
+  }
+}
+
+/// Joins a 4-seat room `[0, 1, 2, 3]` as Karim at seat 1 and starts the game
+/// at seq 2 with seat 0 to roll. Caller disposes [controller].
+Future<_OpenedTrayGame> _openFourSeatGuestGame(
+  WidgetTester tester, {
+  required String capture,
+  required String roomCode,
+  required Locale locale,
+  required String gameId,
+  required String seatToken,
+}) async {
+  expect(
+    isValidRoomCode(normalizeRoomCode(roomCode)),
+    isTrue,
+    reason: 'capture $capture: "$roomCode" must be a valid room code',
+  );
+
+  final _ScreenshotControllerFactory viewerFactory =
+      _ScreenshotControllerFactory();
+  try {
+    final Widget home;
+    if (locale.languageCode == 'ar') {
+      home = _reconnectingCaptureHarness(
+        HomeScreen(
+          controllerFactory: viewerFactory.call,
+          onToggleLocale: () {},
+        ),
+        locale: locale,
+      );
+    } else {
+      home = _ScreenshotHarness(controllerFactory: viewerFactory.call);
+    }
+    await tester.pumpWidget(home);
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+    await tester.enterText(find.byKey(const Key('home-name-field')), 'Karim');
+    await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
+
+    expect(
+      viewerFactory.controllers,
+      hasLength(1),
+      reason:
+          'capture $capture: tapping Join Room must build exactly one '
+          'controller',
+    );
+    final RoomController controller = viewerFactory.controllers.single;
+    final FakeTransport transport = viewerFactory.transports.single;
+
+    final List<String> joinMessages = transport.sentRaw
+        .where((s) => _typeOf(s) == 'join_room')
+        .toList();
+    expect(
+      joinMessages,
+      hasLength(1),
+      reason: 'capture $capture: expected one join_room',
+    );
+    final String joinId = _idOf(joinMessages.single);
+
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 1, 'seat_token': seatToken},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: joinId,
+        data: _roomJson(
+          code: roomCode,
+          players: 4,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Priya'),
+            _seatJson(1, name: 'Karim'),
+            _seatJson(2, name: 'Lina'),
+            _seatJson(3, name: 'Tariq'),
+          ],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      'capture $capture: LobbyScreen after join_room reply',
+    );
+    await _expectLobbyScreen(
+      tester,
+      localeName: locale.languageCode,
+      code: roomCode,
+      expectedSeatCount: 4,
+    );
+    expect(
+      controller.seat,
+      1,
+      reason: 'capture $capture: viewer device is seat 1',
+    );
+
+    transport.pushText(
+      _frame(
+        type: 'game_started',
+        data: <String, Object?>{
+          'turn': 0,
+          'game_id': gameId,
+          'client_seeds': '0:seed',
+          'seq': 2,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(GameScreen),
+      'capture $capture: GameScreen after game_started',
+    );
+    expect(
+      find.byType(LobbyScreen),
+      findsNothing,
+      reason: 'capture $capture: RoomRoute must latch onto GameScreen',
+    );
+
+    return _OpenedTrayGame(
+      controller: controller,
+      transport: transport,
+      seq: 2,
+    );
+  } catch (_) {
+    for (final RoomController created in viewerFactory.controllers) {
+      await _releaseTrayGame(tester, created);
+    }
+    rethrow;
+  }
+}
+
+/// Captures 66 and 67. Four seats `[0, 1, 2, 3]`, viewer seat 1. Seats 0 and 2
+/// have each rolled once earlier (seat 0 rolled 2, seat 2 rolled 5), and seat
+/// 3 now holds the turn on the roll queue `[6, 3]` in `awaitMove` with
+/// `legal_by_face` for both faces (copied from `_shootLiveTray`).
+Future<void> _shootSeatDieFourSeats(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openFourSeatGuestGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    int seq = opened.seq;
+
+    // Place seat 3's token 0 on square 0 so both 6 and 3 are legal when seat 3
+    // rolls [6, 3], matching _shootLiveTray.
+    seq = await _pushSeatMoved(
+      tester,
+      opened.transport,
+      seq,
+      seat: 3,
+      token: 0,
+      from: -1,
+      to: 0,
+    );
+
+    // Seat 0 rolls 2 while holding the turn, then the turn moves on to seat 2.
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 0,
+        'value': 2,
+        'legal': <int>[],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 1,
+        'reveal': _trayReveal,
+      },
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn_passed',
+      data: <String, Object?>{'seat': 0, 'reason': 'no_legal_move'},
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn',
+      data: <String, Object?>{'seat': 2, 'deadline_ms': _trayDeadlineMs},
+    );
+
+    // Seat 2 rolls 5 while holding the turn, then the turn moves on to seat 3.
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 2,
+        'value': 5,
+        'legal': <int>[],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 2,
+        'reveal': _trayReveal,
+      },
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn_passed',
+      data: <String, Object?>{'seat': 2, 'reason': 'no_legal_move'},
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn',
+      data: <String, Object?>{'seat': 3, 'deadline_ms': _trayDeadlineMs},
+    );
+
+    // Seat 3 rolls 6 then 3 onto the roll queue [6, 3], awaiting a move with
+    // legal_by_face for both faces (shape copied from _shootLiveTray).
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 3,
+        'value': 6,
+        'legal': <int>[],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 3,
+        'reveal': _trayReveal,
+        'queue': <int>[6],
+      },
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn',
+      data: <String, Object?>{
+        'seat': 3,
+        'phase': 'await_roll',
+        'deadline_ms': _trayDeadlineMs,
+        'queue': <int>[6],
+      },
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 3,
+        'value': 3,
+        'legal': <int>[0, 1, 2, 3],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 4,
+        'reveal': _trayReveal,
+        'queue': <int>[6, 3],
+        'legal_by_face': _traySixAndThreeLegal,
+      },
+    );
+
+    await _pumpUntilThrowGone(tester, seat: 3, shotName: shotName);
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      controller.seat,
+      1,
+      reason: 'capture $shotName: viewer seat must be 1',
+    );
+    expect(turn.seat, 3, reason: 'capture $shotName: seat 3 holds the turn');
+    expect(
+      turn.phaseName,
+      'awaitMove',
+      reason: 'capture $shotName: seat 3 is in awaitMove on queue [6, 3]',
+    );
+    expect(turn.queue, <int>[
+      6,
+      3,
+    ], reason: 'capture $shotName: seat 3 queue is [6, 3]');
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    // Three opponent seat dice on the board (seats 0, 2, 3) and none for
+    // viewer seat 1.
+    _expectKey(
+      tester,
+      const Key('board-seat-die-0'),
+      present: true,
+      reason: 'capture $shotName: C-465 D2, seat 0 die is on the board',
+    );
+    _expectKey(
+      tester,
+      const Key('board-seat-die-face-0-2'),
+      present: true,
+      reason: 'capture $shotName: C-465 D2, seat 0 die shows its last roll 2',
+    );
+    _expectKey(
+      tester,
+      const Key('board-seat-die-2'),
+      present: true,
+      reason: 'capture $shotName: C-465 D2, seat 2 die is on the board',
+    );
+    _expectKey(
+      tester,
+      const Key('board-seat-die-face-2-5'),
+      present: true,
+      reason: 'capture $shotName: C-465 D2, seat 2 die shows its last roll 5',
+    );
+    _expectKey(
+      tester,
+      const Key('board-seat-die-3'),
+      present: true,
+      reason: 'capture $shotName: C-465 D2, seat 3 die is on the board',
+    );
+    _expectKey(
+      tester,
+      const Key('board-seat-die-face-3-3'),
+      present: true,
+      reason: 'capture $shotName: C-465 D2, seat 3 die shows turn.value 3',
+    );
+    _expectKey(
+      tester,
+      const Key('board-seat-die-1'),
+      present: false,
+      reason: 'capture $shotName: C-465 D2, viewer seat 1 has no board die',
+    );
+
+    // Seat 3's roll record [6, 3] sits on the board at seat 3's yard, and
+    // nothing is under the board at game-roll-tray.
+    _expectKey(
+      tester,
+      const Key('board-seat-record-3'),
+      present: true,
+      reason:
+          'capture $shotName: C-465 D4, seat 3\'s roll record [6, 3] sits '
+          'at board-seat-record-3',
+    );
+    _expectChildKey(
+      tester,
+      const Key('board-seat-record-3'),
+      const Key('game-roll-tray-face-0-6'),
+      'capture $shotName: C-465 D4, record tile 0 shows 6',
+    );
+    _expectChildKey(
+      tester,
+      const Key('board-seat-record-3'),
+      const Key('game-roll-tray-face-1-3'),
+      'capture $shotName: C-465 D4, record tile 1 shows 3',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray'),
+      present: false,
+      reason:
+          'capture $shotName: C-465 D4, game-roll-tray is absent when '
+          'another seat holds the turn',
+    );
+    _expectKey(
+      tester,
+      const Key('game-die-idle-art'),
+      present: true,
+      reason:
+          'capture $shotName: C-465 D1, the big die below the board stays '
+          'idle in viewer seat 1\'s colour',
     );
 
     await binding.takeScreenshot(shotName);

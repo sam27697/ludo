@@ -7,9 +7,10 @@
 // computes from RoomController and hands in as plain booleans.
 //
 // Drawn in the style of die_mark.dart's _DieMarkPainter: a rounded square
-// face with pips, not the four-seat brand mark. The border is painted in
-// the seat colour of whoever's turn it is, so the die itself carries whose
-// roll this is without a separate label. While my own roll is in flight
+// face with pips, not the four-seat brand mark. The border is the seat
+// colour the caller passes. With a seat of one's own that is always that
+// seat's colour (C-465 D1). With none it is the turn seat's colour, so a
+// spectator still sees whose roll it is. While my own roll is in flight
 // the same pips are on a cube (die_cube.dart) instead of this flat face.
 
 import 'dart:math' as math;
@@ -45,8 +46,9 @@ class GameDie extends StatefulWidget {
   /// cosmetic, never-settling face instead.
   final int? face;
 
-  /// `LudoColors.seats[turn.seat]`: the die's border is whoever's turn it
-  /// currently is, not whoever is looking at the screen.
+  /// Border colour. With a seat of one's own the caller passes that
+  /// seat's colour in every phase (C-465 D1). With no seat it is
+  /// `LudoColors.seats[turn.seat]`, whoever's turn it currently is.
   final Color seatColor;
 
   /// True exactly when a tap would send `controller.roll()`. Also the

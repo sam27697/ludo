@@ -848,8 +848,8 @@ void main() {
     }
   });
 
-  testWidgets('D7: under the queue the big die shows turn.value in an '
-      'opponent\'s view', (tester) async {
+  testWidgets('D7: under the queue the opponent\'s turn.value shows on his '
+      'seat die and never on my big die (C-465)', (tester) async {
     final RollTrayDrive drive = await _mount(
       tester,
       turn: _pickTurn(seat: 1, value: 4),
@@ -857,13 +857,31 @@ void main() {
     try {
       final _Probe p = _Probe(tester, drive, 'D7 opponent');
       expect(drive.controller.room!.turn!.seat, 1, reason: 'fixture is broken');
+      // C-465 D1.2: the big die is mine, idle on another seat's turn.
       expect(
         find.byKey(bigFaceKey(4)),
-        findsOneWidget,
-        reason: p.why('game-die-face-4, the same face every viewer sees'),
+        findsNothing,
+        reason: p.why('the big die never shows seat 1\'s face 4'),
       );
       expect(
         find.byKey(bigFaceKey(6)),
+        findsNothing,
+        reason: p.why('not the first queued face 6 either'),
+      );
+      expect(
+        find.byKey(const Key('game-die-idle-art')),
+        findsOneWidget,
+        reason: p.why('the big die is the idle art on another seat\'s turn'),
+      );
+      // C-465 D2: with no throw up, seat 1's die shows turn.value, not the
+      // first queued face.
+      expect(
+        find.byKey(seatDieFaceKey(1, 4)),
+        findsOneWidget,
+        reason: p.why('board-seat-die-face-1-4, the server\'s value'),
+      );
+      expect(
+        find.byKey(seatDieFaceKey(1, 6)),
         findsNothing,
         reason: p.why('not the first queued face 6'),
       );
