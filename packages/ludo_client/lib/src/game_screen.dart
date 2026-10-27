@@ -4176,21 +4176,21 @@ class _GameScreenState extends State<GameScreen> {
     }
 
     return math.max(
-      math.max(heightOf(loc.gameNoMove), heightOf(loc.gameSeatOffline(''))),
       math.max(
-        // C-474 D3.2: the two reason lines are one line at most, measured
-        // the way the timer lines are, so the slot never grows for them.
+        // C-474 A2: the two reason lines are measured unbounded, exactly as
+        // the plain line is, so the slot is the tallest of the three.
+        math.max(heightOf(loc.gameNoMove), heightOf(loc.gameSeatOffline(''))),
         math.max(
-          heightOf(loc.gameNoMoveNeedSix, maxLines: 1),
-          heightOf(loc.gameNoMoveNeedExact, maxLines: 1),
+          heightOf(loc.gameNoMoveNeedSix),
+          heightOf(loc.gameNoMoveNeedExact),
         ),
-        // C-426 D5 (order 428): these two measure at `maxLines: 1`, matching
-        // the live Text widgets below -- the slot's own rest height must
-        // never be able to grow from either one wrapping to a second line.
-        math.max(
-          heightOf(loc.gameTimerPlayedMine, maxLines: 1),
-          heightOf(loc.gameTimerPlayedOther(''), maxLines: 1),
-        ),
+      ),
+      // C-426 D5 (order 428): these two measure at `maxLines: 1`, matching
+      // the live Text widgets below -- the slot's own rest height must
+      // never be able to grow from either one wrapping to a second line.
+      math.max(
+        heightOf(loc.gameTimerPlayedMine, maxLines: 1),
+        heightOf(loc.gameTimerPlayedOther(''), maxLines: 1),
       ),
     );
   }
@@ -4496,8 +4496,6 @@ class _GameScreenState extends State<GameScreen> {
               loc.gameNoMoveNeedSix,
               textAlign: TextAlign.center,
               textScaler: scaler,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
           ),
         ),
@@ -4508,8 +4506,6 @@ class _GameScreenState extends State<GameScreen> {
               loc.gameNoMoveNeedExact,
               textAlign: TextAlign.center,
               textScaler: scaler,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
           ),
         ),
@@ -4554,12 +4550,6 @@ class _GameScreenState extends State<GameScreen> {
               key: const Key('game-no-move-notice'),
               textAlign: TextAlign.center,
               textScaler: scaler,
-              // C-474 D3.2: the reason lines are one line with an ellipsis;
-              // the plain line is today's, unbounded.
-              maxLines: _noMoveReason == NoMoveReason.plain ? null : 1,
-              overflow: _noMoveReason == NoMoveReason.plain
-                  ? TextOverflow.clip
-                  : TextOverflow.ellipsis,
             ),
           )
         else if (timerPlayedOtherName != null)

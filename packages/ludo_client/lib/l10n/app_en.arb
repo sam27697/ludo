@@ -508,11 +508,11 @@
   "@gameNoMove": {
     "description": "Shown next to the die, with a red X on it, when the player's own roll gives no legal move and the turn passes."
   },
-  "gameNoMoveNeedSix": "You need a 6 to bring a token out",
+  "gameNoMoveNeedSix": "You need a 6 to come out",
   "@gameNoMoveNeedSix": {
     "description": "The no-move line when every unfinished token of the player is still in the yard and the roll carried no 6. Same place and timing as the plain no-move line."
   },
-  "gameNoMoveNeedExact": "You need the exact number to finish",
+  "gameNoMoveNeedExact": "Home needs an exact roll",
   "@gameNoMoveNeedExact": {
     "description": "The no-move line when no token of the player is in the yard and every face of the roll overshoots home. Same place and timing as the plain no-move line."
   },
