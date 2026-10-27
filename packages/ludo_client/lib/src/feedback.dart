@@ -39,6 +39,14 @@ enum FeedbackCue {
   gameOver,
   invalidTap,
   tap,
+
+  /// Another seat's die landing, or my own roll that owes another throw
+  /// and has nothing to move yet. Sound only. C-468 D4, D6.
+  dieLand,
+
+  /// The captured seat hears this after the gloat appears. Sound only.
+  /// C-468 D5, D6.
+  gloat,
 }
 
 /// C-225's wire ids, one per [FeedbackCue], exactly as the Kotlin side and
@@ -57,6 +65,8 @@ const Map<FeedbackCue, String> _cueIds = <FeedbackCue, String>{
   FeedbackCue.gameOver: 'game_over',
   FeedbackCue.invalidTap: 'invalid_tap',
   FeedbackCue.tap: 'tap',
+  FeedbackCue.dieLand: 'die_land',
+  FeedbackCue.gloat: 'gloat',
 };
 
 extension FeedbackCueId on FeedbackCue {
@@ -278,11 +288,12 @@ class FeedbackSettings extends ChangeNotifier {
 /// invocations (`haptic`, `sound`) of the `app.fayad.ludo/feedback` method
 /// channel that MainActivity.kt answers, each gated on the matching
 /// in-app switch in [settings]. `invalidTap` and `tap` have no sound
-/// (doctrine section 3's table: none, and C-422 D1). `step` is throttled
-/// independently per channel
-/// to at most one call per [_stepThrottle]; a `step` inside the window is
-/// dropped, not queued, so a fast run of squares does not pile up buzzes
-/// behind the animation.
+/// (doctrine section 3's table: none, and C-422 D1). `dieLand` and `gloat`
+/// have no haptic (C-468 D6); both still call `sound`, gated on the sound
+/// switch, and neither is throttled. `step` is throttled independently
+/// per channel to at most one call per [_stepThrottle]; a `step` inside
+/// the window is dropped, not queued, so a fast run of squares does not
+/// pile up buzzes behind the animation.
 ///
 /// A `PlatformException` or `MissingPluginException` out of either
 /// invocation (a device with no vibrator, a stub engine under test, a
@@ -317,7 +328,12 @@ class PlatformFeedbackService implements FeedbackService {
 
   @override
   void play(FeedbackCue cue) {
-    if (settings.haptics && _admitStep(cue, isHaptic: true)) {
+    // C-468 D6: sound only, the same shape as the sound exclusion for
+    // invalidTap and tap below.
+    if (settings.haptics &&
+        cue != FeedbackCue.dieLand &&
+        cue != FeedbackCue.gloat &&
+        _admitStep(cue, isHaptic: true)) {
       unawaited(_invoke('haptic', cue));
     }
     if (settings.sound &&

@@ -22,6 +22,7 @@ import 'package:flutter/widgets.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board_geometry.dart';
+import 'capture_gloat.dart';
 import 'safe_cue.dart';
 import 'seat_die.dart';
 import 'seat_mark.dart';
@@ -428,6 +429,7 @@ class LudoBoard extends StatefulWidget {
     this.facePick,
     this.seatDice = const <SeatDie>[],
     this.seatRecord,
+    this.gloat,
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -554,6 +556,11 @@ class LudoBoard extends StatefulWidget {
   /// Another seat's roll record, drawn in that seat's yard. Null, the
   /// default, draws none. C-465 D4.
   final SeatRollRecord? seatRecord;
+
+  /// The capture gloat, or null when none is showing. Null, the default,
+  /// adds nothing, so a board built without it draws exactly what it drew
+  /// before. C-468 D5.
+  final BoardGloat? gloat;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -1476,6 +1483,10 @@ class _LudoBoardState extends State<LudoBoard> {
                         tokenIndex: tokenIndex,
                         cellSize: cellSize,
                       ),
+                  // C-468 D5: above tokens, seat dice and the record;
+                  // below the thrown die and the face picker. IgnorePointer
+                  // so the face never takes a tap.
+                  if (widget.gloat != null) _gloatLayer(cellSize),
                   if (widget.overlay != null)
                     Positioned.fill(child: widget.overlay!),
                   if (widget.safeCue != null)
@@ -1517,6 +1528,38 @@ class _LudoBoardState extends State<LudoBoard> {
       top: viewed.row * cellSize,
       side: yardQuadrantSide * cellSize,
       origin: BoardCell(viewed.col, viewed.row),
+    );
+  }
+
+  /// C-468 D5. Diameter is two cells, centred on the viewed yard, the
+  /// same point a seat die uses. Not shrunk out of the yard tokens' way:
+  /// the face sits above them.
+  Widget _gloatLayer(double cellSize) {
+    final BoardGloat gloat = widget.gloat!;
+    final int seat = gloat.seat;
+    if (seat < 0 || seat > 3) {
+      return const SizedBox.shrink();
+    }
+    final ({double left, double top, double side, BoardCell origin}) yard =
+        _viewedYard(cellSize, seat);
+    final Offset center = Offset(
+      yard.left + yard.side / 2,
+      yard.top + yard.side / 2,
+    );
+    final double diameter = cellSize * 2;
+    return Positioned(
+      left: center.dx - diameter / 2,
+      top: center.dy - diameter / 2,
+      width: diameter,
+      height: diameter,
+      child: IgnorePointer(
+        child: CaptureGloat(
+          seat: seat,
+          serial: gloat.serial,
+          diameter: diameter,
+          cellSize: cellSize,
+        ),
+      ),
     );
   }
 
