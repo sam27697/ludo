@@ -545,14 +545,34 @@ void main() {
       FeedbackCue.tap: 'tap',
     };
 
-    test('there are exactly eleven values, matching C-225 plus C-422 D1', () {
+    // C-468 D6 appends these after tap, in this order (order 469). Looked
+    // up by name so the cases above still compile and run on a tree where
+    // the two cues do not exist yet.
+    Map<FeedbackCue, String> allExpectedIds() => <FeedbackCue, String>{
+      ...expectedIds,
+      FeedbackCue.values.byName('dieLand'): 'die_land',
+      FeedbackCue.values.byName('gloat'): 'gloat',
+    };
+
+    test('there are exactly thirteen values, matching C-225, C-422 D1 and '
+        'C-468 D6', () {
       expect(
         FeedbackCue.values,
-        hasLength(11),
+        hasLength(13),
         reason:
-            'C-225 defines ten FeedbackCue values and C-422 D1 appends an '
-            'eleventh, tap, after invalidTap; got '
+            'C-225 defines ten FeedbackCue values, C-422 D1 appends tap and '
+            'C-468 D6 appends dieLand and gloat after it; got '
             '${FeedbackCue.values.length}: ${FeedbackCue.values}',
+      );
+      expect(
+        FeedbackCue.values.skip(11).toList(),
+        equals(<FeedbackCue>[
+          FeedbackCue.values.byName('dieLand'),
+          FeedbackCue.values.byName('gloat'),
+        ]),
+        reason:
+            'C-468 D6: dieLand and gloat come in that order after tap; '
+            'got ${FeedbackCue.values}',
       );
     });
 
@@ -570,14 +590,97 @@ void main() {
 
     test('every FeedbackCue value is covered by the map above', () {
       expect(
-        expectedIds.keys.toSet(),
+        allExpectedIds().keys.toSet(),
         equals(FeedbackCue.values.toSet()),
         reason:
-            'expectedIds must cover every FeedbackCue.values entry, or '
+            'the expected ids must cover every FeedbackCue.values entry, or '
             'this test silently stops proving anything about a new cue; '
             'missing from expectedIds: '
-            '${FeedbackCue.values.toSet().difference(expectedIds.keys.toSet())}',
+            '${FeedbackCue.values.toSet().difference(allExpectedIds().keys.toSet())}',
       );
+
+      test('the two C-468 cues carry the wire ids die_land and gloat', () {
+        for (final MapEntry<FeedbackCue, String> entry
+            in <MapEntry<FeedbackCue, String>>[
+              MapEntry<FeedbackCue, String>(
+                FeedbackCue.values.byName('dieLand'),
+                'die_land',
+              ),
+              MapEntry<FeedbackCue, String>(
+                FeedbackCue.values.byName('gloat'),
+                'gloat',
+              ),
+            ]) {
+          expect(
+            entry.key.id,
+            entry.value,
+            reason: 'FeedbackCue.${entry.key.name}.id must be "${entry.value}"',
+          );
+        }
+      });
     });
+  });
+
+  // --- C-468 D6: cuesForFrame is unchanged, neither new cue comes from a
+  // frame (order 469) -------------------------------------------------------
+  group('cuesForFrame never derives dieLand or gloat from a frame', () {
+    final List<Frame> frames = <Frame>[
+      for (final int seat in <int>[0, 1, 2, 3]) ...<Frame>[
+        _frame('turn', <String, Object?>{'seat': seat, 'deadline_ms': 45000}),
+        for (final List<int> legal in <List<int>>[
+          <int>[],
+          <int>[0],
+          <int>[0, 3],
+        ])
+          _frame('rolled', <String, Object?>{
+            'seat': seat,
+            'value': 6,
+            'legal': legal,
+            'deadline_ms': 1000,
+            'k': 2,
+            'reveal': 'c' * 64,
+          }),
+        _frame('moved', <String, Object?>{
+          'seat': seat,
+          'token': 0,
+          'from': 5,
+          'to': 10,
+          'captured': <Object?>[
+            <String, Object?>{'seat': (seat + 1) % 4, 'token': 1},
+            <String, Object?>{'seat': (seat + 2) % 4, 'token': 0},
+          ],
+          'extra_roll': true,
+        }),
+        _frame('moved', <String, Object?>{
+          'seat': seat,
+          'token': 0,
+          'from': 52,
+          'to': 57,
+          'captured': <Object?>[],
+          'extra_roll': false,
+        }),
+        _frame('game_over', <String, Object?>{
+          'winner': seat,
+          'verify_url': 'https://ludo.provefair.app/v/abc123',
+        }),
+      ],
+    ];
+
+    for (final int mySeat in <int>[0, 1, 2, 3]) {
+      test('mySeat $mySeat: no frame in the battery yields dieLand or '
+          'gloat', () {
+        for (final Frame frame in frames) {
+          final List<FeedbackCue> cues = cuesForFrame(frame, mySeat: mySeat);
+          expect(
+            cues.contains(FeedbackCue.values.byName('dieLand')) ||
+                cues.contains(FeedbackCue.values.byName('gloat')),
+            isFalse,
+            reason:
+                'C-468 D6: cuesForFrame is unchanged; ${frame.type} '
+                '${frame.data} for mySeat $mySeat gave $cues',
+          );
+        }
+      });
+    }
   });
 }
