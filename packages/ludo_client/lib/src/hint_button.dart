@@ -17,6 +17,10 @@ enum HintControlState { ready, waiting, used }
 const double _kHintVisual = 40;
 const double _kHintHit = 48;
 
+/// Hints per game, and the numeral on the badge while one is unspent
+/// (C-471 D3).
+const int _kHintsPerGame = 1;
+
 /// One gentle glow, not a loop. The die's own pulse is what says the
 /// turn is yours (C-471 D3).
 const Duration _kHintGlow = Duration(milliseconds: 800);
@@ -247,14 +251,15 @@ class _HintBadge extends StatelessWidget {
         color: LudoColors.paperElevated,
         border: Border.all(color: LudoColors.ink, width: 1),
       ),
-      child: const SizedBox(
+      child: SizedBox(
         width: 16,
         height: 16,
         child: Center(
           child: Text(
-            '1',
+            _kHintsPerGame.toString(),
+            textDirection: TextDirection.ltr,
             textScaler: TextScaler.noScaling,
-            style: TextStyle(
+            style: const TextStyle(
               color: LudoColors.ink,
               fontSize: kTypeLabel,
               fontWeight: FontWeight.w700,

@@ -231,6 +231,10 @@ class _GameScreenState extends State<GameScreen> {
   String? _storedHintGameId;
   String? _spentHintGameId;
 
+  // C-471 D5: false until the stored id has been read, on success or
+  // failure. Until then the control is waiting and a tap spends nothing.
+  bool _hintStoreRead = false;
+
   // C-471 D4: the marker up right now. Cleared when a move is sent, and
   // when the turn stops being this seat's await-move at this k.
   _ActiveHint? _shownHint;
@@ -496,12 +500,18 @@ class _GameScreenState extends State<GameScreen> {
 
   /// C-471 D5. A missing or unreadable store leaves the hint unused.
   Future<void> _loadHintUsed() async {
-    final String? stored = await SessionMemory.hintUsedGameId();
+    String? stored;
+    try {
+      stored = await SessionMemory.hintUsedGameId();
+    } on Object {
+      stored = null;
+    }
     if (!mounted) {
       return;
     }
     setState(() {
       _storedHintGameId = stored;
+      _hintStoreRead = true;
     });
   }
 
@@ -3637,7 +3647,7 @@ class _GameScreenState extends State<GameScreen> {
     if (_hintIsUsed(room.gameId)) {
       return HintControlState.used;
     }
-    if (room.gameId == null || !_hintOfferable(room, seat)) {
+    if (!_hintStoreRead || room.gameId == null || !_hintOfferable(room, seat)) {
       return HintControlState.waiting;
     }
     return HintControlState.ready;
@@ -3703,6 +3713,7 @@ class _GameScreenState extends State<GameScreen> {
         seat == null ||
         room.state != RoomState.playing ||
         room.gameId == null ||
+        !_hintStoreRead ||
         _hintIsUsed(room.gameId)) {
       FeedbackScope.of(context).play(FeedbackCue.invalidTap);
       return false;
