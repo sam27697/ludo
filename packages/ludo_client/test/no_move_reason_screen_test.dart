@@ -13,7 +13,7 @@
 // test/talkback_announce_test.dart reads it, off a mock handler on
 // SystemChannels.accessibility.
 //
-// The strings below are the exact D2 table, written as literals: the new
+// The strings below are the exact D2 table as amended by A1, written as literals: the new
 // getters do not exist on today's main, and a literal also catches a
 // wrong word in the ARB file that a getter-vs-getter comparison would pass.
 //
@@ -36,10 +36,10 @@ import 'package:ludo_client/src/game_screen.dart';
 
 import 'support/roll_tray_harness.dart';
 
-// --- C-474 D2, verbatim ------------------------------------------------------
+// --- C-474 D2 with the run 113 amendment A1 (English), verbatim --------------
 
-const String _needSixEn = 'You need a 6 to bring a token out';
-const String _needExactEn = 'You need the exact number to finish';
+const String _needSixEn = 'You need a 6 to come out';
+const String _needExactEn = 'Home needs an exact roll';
 const String _needSixAr = 'تحتاج 6 لإخراج قطعة';
 const String _needExactAr = 'تحتاج الرقم بالضبط للبيت';
 
@@ -572,9 +572,10 @@ void main() {
   });
 
   // ===========================================================================
-  // D3.2: the shown line fits on one line and the slot never grows.
+  // D3.2 as replaced by A2/A3: the shown line is cut by nothing, takes no more
+  // lines than the plain line, and the slot never grows.
   // ===========================================================================
-  group('D3.2 at 360 x 800 and text scale 2.0', () {
+  group('A2/A3 at 360 x 800 and text scale 2.0', () {
     const Size surface = Size(360, 800);
     const double scale = 2.0;
 
@@ -611,13 +612,17 @@ void main() {
 
     for (final Locale locale in _locales) {
       for (final _Scenario s in <_Scenario>[_needSix, _needExact]) {
-        // Catches a reason line that wraps to a second line or is clipped
-        // with an ellipsis at the largest supported scale on a narrow phone:
-        // the player would read half of the reason. The shown Text must be
-        // maxLines 1 with an ellipsis (D3.2) and its own style, scaler and
-        // width, laid out at maxLines 1 by a TextPainter, must not exceed
-        // one line; the real paragraph must agree.
-        testWidgets('C-474 D3.2: the ${s.reason.name} line is not truncated '
+        // Catches a reason line that is longer than the plain line at the
+        // largest supported scale on a narrow phone (the English strings of
+        // the first draft took three lines against two), or one that is cut
+        // with maxLines or an ellipsis so the player reads half of the
+        // reason. A2: the shown Text has no maxLines and no ellipsis. A3: a
+        // TextPainter with the shown style and scaler at the notice's width
+        // and no line limit gives at most as many lines as the PLAIN line
+        // laid out the same way in the same locale, size and scale; the real
+        // paragraph must agree that nothing was cut.
+        testWidgets('C-474 A2/A3: the ${s.reason.name} line has no maxLines or '
+            'ellipsis and takes no more lines than the plain line '
             '(${locale.languageCode})', (tester) async {
           _setSurface(tester, surface);
           final RollTrayDrive drive = await _mountWith(
@@ -630,7 +635,7 @@ void main() {
             await pushMyNoMoveRoll(tester, drive, face: s.face);
             final AppLocalizations loc = _locOf(tester);
             final String why = _label(
-              'D3.2 truncation at 360x800',
+              'A2/A3 line count at 360x800',
               s,
               locale,
               textScale: scale,
@@ -642,17 +647,17 @@ void main() {
             expect(
               text.data,
               _expectedLine(s.reason, locale, loc),
-              reason: '$why: the shown text is not the D2 line',
+              reason: '$why: the shown text is not the D2/A1 line',
             );
             expect(
               text.maxLines,
-              1,
-              reason: '$why: D3.2 the shown notice is maxLines: 1',
+              isNull,
+              reason: '$why: A2 the shown notice has no maxLines',
             );
             expect(
               text.overflow,
-              TextOverflow.ellipsis,
-              reason: '$why: D3.2 the shown notice ends with an ellipsis',
+              isNot(TextOverflow.ellipsis),
+              reason: '$why: A2 the shown notice has no ellipsis',
             );
 
             final BuildContext context = tester.element(notice);
@@ -661,24 +666,33 @@ void main() {
             final TextScaler scaler =
                 text.textScaler ?? MediaQuery.textScalerOf(context);
             final double width = tester.getSize(notice).width;
-            final TextPainter painter = TextPainter(
-              text: TextSpan(text: text.data, style: style),
-              textAlign: TextAlign.center,
-              textDirection: Directionality.of(context),
-              textScaler: scaler,
-              maxLines: 1,
-              ellipsis: '…',
-            )..layout(maxWidth: width);
-            final bool exceeded = painter.didExceedMaxLines;
-            final double needed = painter.width;
-            painter.dispose();
+            int linesOf(String line) {
+              final TextPainter painter = TextPainter(
+                text: TextSpan(text: line, style: style),
+                textAlign: TextAlign.center,
+                textDirection: Directionality.of(context),
+                textScaler: scaler,
+              )..layout(maxWidth: width);
+              final bool exceeded = painter.didExceedMaxLines;
+              final int count = painter.computeLineMetrics().length;
+              painter.dispose();
+              expect(
+                exceeded,
+                isFalse,
+                reason: '$why: "$line" was cut with no limit set',
+              );
+              return count;
+            }
+
+            final int shownLines = linesOf(text.data!);
+            final int plainLines = linesOf(loc.gameNoMove);
             expect(
-              exceeded,
-              isFalse,
+              shownLines,
+              lessThanOrEqualTo(plainLines),
               reason:
-                  '$why: the line "${text.data}" laid out at the notice '
-                  'width $width with the shown style and scaler needs more '
-                  'than one line (painter width $needed)',
+                  '$why: "${text.data}" takes $shownLines lines at the '
+                  'notice width $width, the plain line "${loc.gameNoMove}" '
+                  'takes $plainLines',
             );
 
             final RenderParagraph paragraph = tester
@@ -706,7 +720,7 @@ void main() {
         // below-die slot's Stack, which is sized by its invisible measuring
         // children, so that Stack's height is the slot's reserved height.
         testWidgets(
-          'C-474 D3.2: the ${s.reason.name} slot is as tall as the plain '
+          'C-474 A2/A3: the ${s.reason.name} slot is as tall as the plain '
           'slot, and the board does not move (${locale.languageCode})',
           (tester) async {
             _setSurface(tester, surface);
