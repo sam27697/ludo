@@ -132,6 +132,8 @@
   "gameRollHistoryEntry": "{k}: {face}",
   "gameRollNoAnswer": "لم تصل الرمية. اضغط على النرد مرة أخرى.",
   "gameNoMove": "لا حركة بهذه الرمية",
+  "gameNoMoveNeedSix": "تحتاج 6 لإخراج قطعة",
+  "gameNoMoveNeedExact": "تحتاج الرقم بالضبط للبيت",
   "announceCapturedOther": "ضربت قطعة",
   "announceCapturedMe": "ضُربت قطعتك",
   "announceHome": "وصلت قطعة إلى البيت",
