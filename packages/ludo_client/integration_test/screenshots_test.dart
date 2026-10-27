@@ -6352,6 +6352,51 @@ void main() {
       textScale: 2.0,
     );
   });
+
+  // ==========================================================================
+  // 69-71: order 470. Emulator frames of the capture gloat and the faded idle
+  // die (C-468 D5, D7). Same route as captures 64-68: a GameScreen over
+  // FakeTransport, frames copied by hand into this file, no server, no
+  // pumpAndSettle once GameScreen is up. Bodies live at the bottom of the
+  // file.
+  // ==========================================================================
+  testWidgets('capture 69-gloat-captured-en', (tester) async {
+    await _shootCaptureGloat(
+      tester,
+      binding,
+      shotName: '69-gloat-captured-en',
+      locale: const Locale('en'),
+      capturerSeat: 2,
+      roomCode: 'GL69EN',
+      gameId: '6' * 16,
+      seatToken: 'tok-shot-69',
+    );
+  });
+
+  testWidgets('capture 70-gloat-capturer-ar', (tester) async {
+    await _shootCaptureGloat(
+      tester,
+      binding,
+      shotName: '70-gloat-capturer-ar',
+      locale: const Locale('ar'),
+      capturerSeat: 0,
+      roomCode: 'GL70AR',
+      gameId: '7' * 16,
+      seatToken: 'tok-shot-70',
+    );
+  });
+
+  testWidgets('capture 71-idle-die-faded-en', (tester) async {
+    await _shootIdleDieFaded(
+      tester,
+      binding,
+      shotName: '71-idle-die-faded-en',
+      locale: const Locale('en'),
+      roomCode: 'ID71EN',
+      gameId: '8' * 16,
+      seatToken: 'tok-shot-71',
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -11476,6 +11521,403 @@ Future<void> _shootSeatDieFourSeats(
       reason:
           'capture $shotName: C-465 D1, the big die below the board stays '
           'idle in viewer seat 1\'s colour',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+// --- order 470: captures 69-71 (C-468) -------------------------------------
+//
+// Emulator frames of the capture gloat (C-468 D5) and the faded idle die on
+// another seat's turn (C-468 D7). Same harness as captures 64-68: GameScreen
+// over FakeTransport, frames copied by hand into this file, no server, no
+// pumpAndSettle once GameScreen is up.
+
+Future<void> _pumpUntilGloatFound(
+  WidgetTester tester, {
+  required int seat,
+  required String shotName,
+}) async {
+  // Start tickers on their first frame, then step in 50 ms increments until
+  // capture-gloat-$seat is in the tree (at most 3 s, 60 frames).
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 16));
+  final Finder gloatFinder = find.byKey(Key('capture-gloat-$seat'));
+  for (int step = 0; step < 60; step++) {
+    if (gloatFinder.evaluate().isNotEmpty) {
+      return;
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  expect(
+    gloatFinder,
+    findsOneWidget,
+    reason:
+        'capture $shotName: C-468 D5, capture-gloat-$seat must appear '
+        'within 3 s of the capturing moved frame',
+  );
+}
+
+/// Captures 69 and 70. Two seats `[0, 2]`, viewer at seat 0. [capturerSeat]
+/// holds the turn, rolls, and its `moved` captures the other seat's token 0.
+Future<void> _shootCaptureGloat(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required int capturerSeat,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  expect(
+    capturerSeat == 0 || capturerSeat == 2,
+    isTrue,
+    reason:
+        'capture $shotName: capturerSeat must be 0 or 2, got $capturerSeat',
+  );
+  final int capturedSeat = capturerSeat == 0 ? 2 : 0;
+  // Seat 0 enters at absolute square 0, seat 2 at 26. A progress of 26 for
+  // the victim sits on the capturer's entry square (progress 0).
+  const int victimProgress = 26;
+  const int capturerDestProgress = 0;
+
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    int seq = opened.seq;
+
+    // Scene-setting: place the victim's token 0 on the capturer's entry
+    // square. From -1 to 26 snaps onto the track without step animation.
+    seq = await _pushSeatMoved(
+      tester,
+      opened.transport,
+      seq,
+      seat: capturedSeat,
+      token: 0,
+      from: -1,
+      to: victimProgress,
+    );
+    expect(
+      _progressOf(controller, capturedSeat, 0),
+      victimProgress,
+      reason:
+          'capture $shotName: victim seat $capturedSeat token 0 must sit on '
+          'progress $victimProgress before the capturing roll and move',
+    );
+
+    if (capturerSeat != 0) {
+      seq = await _pushTraySeq(
+        tester,
+        opened.transport,
+        seq,
+        type: 'turn',
+        data: <String, Object?>{
+          'seat': capturerSeat,
+          'deadline_ms': _trayDeadlineMs,
+        },
+      );
+    }
+
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': capturerSeat,
+        'value': 6,
+        'legal': <int>[0],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 1,
+        'reveal': _trayReveal,
+      },
+    );
+
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'moved',
+      data: <String, Object?>{
+        'seat': capturerSeat,
+        'token': 0,
+        'from': -1,
+        'to': capturerDestProgress,
+        'captured': <Object?>[
+          <String, Object?>{'seat': capturedSeat, 'token': 0},
+        ],
+        'extra_roll': true,
+      },
+    );
+
+    await _pumpUntilGloatFound(tester, seat: capturerSeat, shotName: shotName);
+    // Advance 500 ms in bounded steps so the pop (300 ms) and the first
+    // wobble (250 ms) are over and the capture flight (360 ms) has landed.
+    for (int step = 0; step < 10; step++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      controller.seat,
+      0,
+      reason: 'capture $shotName: viewer seat must be 0',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    _expectKey(
+      tester,
+      Key('capture-gloat-$capturerSeat'),
+      present: true,
+      reason:
+          'capture $shotName: C-468 D5, capture-gloat-$capturerSeat must '
+          'still be on the board 500 ms after appearing',
+    );
+    expect(
+      _progressOf(controller, capturerSeat, 0),
+      capturerDestProgress,
+      reason:
+          'capture $shotName: capturer seat $capturerSeat token 0 must read '
+          '$capturerDestProgress in controller.room',
+    );
+    _expectCapturedTokenHome(
+      tester,
+      controller: controller,
+      capturedSeat: capturedSeat,
+      capturedToken: 0,
+      momentDescription: '500 ms after capture-gloat-$capturerSeat appeared',
+    );
+    _expectKey(
+      tester,
+      Key('board-capture-flight-$capturedSeat-0'),
+      present: false,
+      reason:
+          'capture $shotName: captured token flight must have finished '
+          'within 500 ms of the gloat starting',
+    );
+
+    final Finder boardFinder = find.byKey(const Key('ludo-board'));
+    expect(
+      boardFinder,
+      findsOneWidget,
+      reason: 'capture $shotName: ludo-board must be on screen',
+    );
+    final Rect boardWidget = tester.getRect(boardFinder);
+    final double boardSide = boardWidget.width < boardWidget.height
+        ? boardWidget.width
+        : boardWidget.height;
+    final Rect boardRect = Rect.fromCenter(
+      center: boardWidget.center,
+      width: boardSide,
+      height: boardSide,
+    );
+
+    final Finder capturedTokenFinder = _tokenFinder(capturedSeat, 0);
+    expect(
+      capturedTokenFinder,
+      findsOneWidget,
+      reason:
+          'capture $shotName: captured seat $capturedSeat token 0 must be '
+          'in the tree',
+    );
+    final Offset capturedTokenCenter = tester.getCenter(capturedTokenFinder);
+    final bool inCapturedYard = capturedSeat == 0
+        ? _inBottomLeftQuarter(capturedTokenCenter, boardRect)
+        : _inTopRightQuarter(capturedTokenCenter, boardRect);
+    expect(
+      inCapturedYard,
+      isTrue,
+      reason:
+          'capture $shotName: captured seat $capturedSeat token 0 centre '
+          '${_offsetText(capturedTokenCenter)} must lie in its yard '
+          'quadrant of ludo-board ${_rectText(boardRect)}',
+    );
+
+    final Finder gloatFinder = find.byKey(Key('capture-gloat-$capturerSeat'));
+    final Offset gloatCenter = tester.getCenter(gloatFinder);
+    final bool inCapturerYard = capturerSeat == 0
+        ? _inBottomLeftQuarter(gloatCenter, boardRect)
+        : _inTopRightQuarter(gloatCenter, boardRect);
+    expect(
+      inCapturerYard,
+      isTrue,
+      reason:
+          'capture $shotName: C-468 D5.2, capture-gloat-$capturerSeat '
+          'centre ${_offsetText(gloatCenter)} must lie in seat '
+          '$capturerSeat\'s yard quadrant of ludo-board '
+          '${_rectText(boardRect)}',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Capture 71. Two seats `[0, 2]`, viewer seat 0, English. Seat 2 holds the
+/// turn and has not rolled. Asserts the nearest `Opacity` ancestor of the art
+/// under `game-die` has opacity 0.45 (C-468 D7).
+Future<void> _shootIdleDieFaded(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    int seq = opened.seq;
+
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn',
+      data: <String, Object?>{'seat': 2, 'deadline_ms': _trayDeadlineMs},
+    );
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      controller.seat,
+      0,
+      reason: 'capture $shotName: viewer seat must be 0',
+    );
+    expect(turn.seat, 2, reason: 'capture $shotName: seat 2 holds the turn');
+    expect(
+      turn.phaseName,
+      'awaitRoll',
+      reason: 'capture $shotName: seat 2 has not rolled',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    _expectKey(
+      tester,
+      const Key('game-die'),
+      present: true,
+      reason: 'capture $shotName: game-die must be on screen',
+    );
+    _expectKey(
+      tester,
+      const Key('game-die-idle-art'),
+      present: true,
+      reason:
+          'capture $shotName: C-468 D7, the big die under the board is '
+          'idle (game-die-idle-art) on seat 2\'s turn',
+    );
+    _expectKey(
+      tester,
+      const Key('board-seat-die-2'),
+      present: true,
+      reason: 'capture $shotName: C-465 D2, board-seat-die-2 is on the board',
+    );
+
+    final Finder dieArtFinder = find.descendant(
+      of: find.byKey(const Key('game-die')),
+      matching: find.byKey(const Key('game-die-idle-art')),
+    );
+    expect(
+      dieArtFinder,
+      findsOneWidget,
+      reason:
+          'capture $shotName: game-die-idle-art must be a descendant of '
+          'game-die',
+    );
+    final Finder artPaintFinder = find.descendant(
+      of: dieArtFinder,
+      matching: find.byType(CustomPaint),
+    );
+    expect(
+      artPaintFinder,
+      findsOneWidget,
+      reason: 'capture $shotName: game-die-idle-art must wrap a CustomPaint',
+    );
+    final Finder opacityFinder = find.ancestor(
+      of: artPaintFinder,
+      matching: find.byType(Opacity),
+    );
+    expect(
+      opacityFinder,
+      findsWidgets,
+      reason:
+          'capture $shotName: C-468 D7, the art under game-die must have '
+          'an Opacity ancestor',
+    );
+    final Opacity nearestOpacity = tester.widget<Opacity>(opacityFinder.first);
+    expect(
+      nearestOpacity.opacity,
+      0.45,
+      reason:
+          'capture $shotName: C-468 D7, the nearest Opacity ancestor of '
+          'the art under game-die must have opacity 0.45 while another '
+          'seat holds the turn, got ${nearestOpacity.opacity}',
     );
 
     await binding.takeScreenshot(shotName);
