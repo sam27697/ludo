@@ -1986,6 +1986,10 @@ class _GameScreenState extends State<GameScreen> {
       _seenRolls = next;
       // C-465 D2: a resync forgets every face this screen had remembered.
       _rememberedSeatFaces.clear();
+      // C-468 D5: a room snapshot whose recentRolls is not an append
+      // (C-465 A6) is a resync too. The gloat that is up, and any still
+      // waiting for its landing, go, and the captured seat's sound with them.
+      _removeGloat();
       return;
     }
     _seenRolls = next;
@@ -1998,6 +2002,12 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
     for (final (int k, int face) in added) {
+      // C-465 D2: a face outside 1..6 is not a throw. Queuing it would
+      // build a thrown die, play die_land and remember the face.
+      // restingRotationFor refuses that face. The seat die stays idle.
+      if (face < 1 || face > 6) {
+        continue;
+      }
       _throwQueue.add(_QueuedThrow(k: k, seat: turnSeat, face: face));
     }
     _startNextThrow();
