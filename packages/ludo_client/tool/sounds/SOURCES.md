@@ -22,11 +22,21 @@ Licence of every pack: CC0 1.0,
    2 ms before it.
 3. The cuts, fades and mixes in the table.
 4. A clip with no named closing fade gets a 15 ms linear fade-out to zero.
-5. Peak-normalise to -1.0 dBFS, then apply the trim.
+5. Normalise by loudness, not peak (C-468 D3 step 4, amendments 1 to 3).
+   Loudness is the largest RMS over any 50 ms window (2205 samples,
+   windows stepped by 551, the last partial window ignored). The target is
+   the reference level R plus the clip's trim, with R = -19.0 dBFS (the
+   `REFERENCE_DBFS` constant in the script, printed on every run). The
+   pre-limiter gain starts at the target scaling and rises in 0.1 dB
+   steps until the output is within 0.5 dB of the target. Where the peak
+   would pass -1.0 dBFS, a deterministic limiter holds it there: 2 ms
+   look-ahead, instant attack, 50 ms exponential release, at most 9 dB of
+   gain reduction. Step 2 is applied again at the output level so the
+   written file starts within 15 ms of its first sound.
 
 ## Clips
 
-| Cue id | Pack | File in the zip | Operations | Trim | Licence |
+| Cue id | Pack | File in the zip | Operations | Trim (on R) | Licence |
 |---|---|---|---|---|---|
 | `your_turn` | Casino Audio | `Audio/dice-grab-1.ogg` | none beyond the common steps | -4 dB | CC0 1.0 |
 | `can_move` | Casino Audio | `Audio/die-throw-2.ogg` | none beyond the common steps | 0 dB | CC0 1.0 |

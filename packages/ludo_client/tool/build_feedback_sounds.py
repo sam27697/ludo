@@ -5,8 +5,8 @@ C-468 D1-D3: every clip is cut from the Kenney Casino Audio, Impact Sounds
 and Music Jingles archives (CC0), downloaded once into a cache outside the
 repository and checked against a pinned sha256. Each source is decoded to
 mono 16-bit 44.1 kHz with ffmpeg, stripped of leading silence, cut, faded,
-mixed, peak-normalised to -1.0 dBFS, trimmed and written to
-android/app/src/main/res/raw/fb_<id>.wav.
+mixed, loudness-normalised (D3 step 4, as amended in run 112) and written
+to android/app/src/main/res/raw/fb_<id>.wav.
 
 Nothing is random and every step is plain arithmetic on the decoded
 samples, so two runs on one machine write byte-identical files.
@@ -64,7 +64,23 @@ PACKS = {
 # C-468 D3 step 3 and 4.
 ONSET_DBFS = -40.0
 ONSET_LEAD_MS = 2
-PEAK_DBFS = -1.0
+# C-468 D3 step 4 as amended (runs 112, amendments 1 to 3): loudness is the
+# largest RMS over any 50 ms window, set to REFERENCE_DBFS plus the clip's
+# trim, with the peak held at -1.0 dBFS by a limiter that never takes more
+# than 9 dB. REFERENCE_DBFS is the one level for the whole set: -19.0, or
+# the first 0.5 dB step below it at which all eleven clips reach target.
+REFERENCE_DBFS = -19.0
+CEILING_DBFS = -1.0
+WINDOW = 2205
+WINDOW_STEP = 551
+LIMIT_LOOKAHEAD_MS = 2
+LIMIT_RELEASE_MS = 50
+LIMIT_MAX_REDUCTION_DB = 9.0
+# How far the final loudness may sit from the target (amendment 3), the
+# step of the pre-limiter gain search and how far it may go.
+LOUDNESS_TOLERANCE_DB = 0.5
+SEARCH_STEP_DB = 0.1
+SEARCH_STEPS = 200
 # D3 asks for at least 10 ms; 15 ms keeps the last 2 ms well under 0.2 of
 # the peak (D3 acceptance) with margin for the window rounding.
 TAIL_FADE_MS = 15
@@ -158,6 +174,11 @@ NO_MOVE_IMPACT_DB = -6.0
 
 class BuildError(Exception):
     pass
+
+
+class LoudnessShortfall(BuildError):
+    """A clip cannot reach its loudness target (amendment 3: lower
+    REFERENCE_DBFS for the whole set, in 0.5 dB steps)."""
 
 
 def _ms(ms: float) -> int:
@@ -270,11 +291,92 @@ def peak(x: list[float]) -> float:
     return max(abs(v) for v in x)
 
 
-def normalise(x: list[float], target_db: float) -> list[float]:
-    p = peak(x)
-    if p == 0:
+def loudness_db(x: list[float]) -> float:
+    """The largest RMS over any 50 ms window, in dBFS. Windows step by 551
+    samples and the last partial window is ignored (D3 step 4)."""
+    best = 0.0
+    for start in range(0, len(x) - WINDOW + 1, WINDOW_STEP):
+        energy = math.fsum(v * v for v in x[start:start + WINDOW]) / WINDOW
+        best = max(best, energy)
+    if best == 0.0:
         raise BuildError("clip is silent")
-    return gain(x, target_db - 20.0 * math.log10(p / 32768.0))
+    return 10.0 * math.log10(best / (32768.0 * 32768.0))
+
+
+def _ceiling() -> float:
+    # Whole sample units, rounded down, so int16 rounding cannot pass
+    # -1.0 dBFS.
+    return float(int(32768.0 * 10.0 ** (CEILING_DBFS / 20.0)))
+
+
+def _under_ceiling(x: list[float]) -> bool:
+    """True when the int16 rounding of every sample is within the ceiling
+    (float noise of a few ulps above it is not an overshoot)."""
+    return peak(x) < _ceiling() + 0.5
+
+
+def limit(x: list[float]) -> tuple[list[float], float]:
+    """Peak limiter at the ceiling: 2 ms look-ahead, instant attack, 50 ms
+    exponential release, gain floor -9 dB. Returns the limited samples and
+    the largest gain reduction in dB (a positive number). The caller checks
+    the peak: a sample the floor leaves above the ceiling stays there."""
+    ceiling = _ceiling()
+    look = _ms(LIMIT_LOOKAHEAD_MS)
+    keep = math.exp(-1.0 / (LIMIT_RELEASE_MS / 1000.0 * SAMPLE_RATE))
+    floor = 10.0 ** (-LIMIT_MAX_REDUCTION_DB / 20.0)
+    need = [min(1.0, ceiling / abs(v)) if v else 1.0 for v in x]
+    out = []
+    state = 1.0
+    lowest = 1.0
+    for i, v in enumerate(x):
+        want = min(need[i:i + look + 1])
+        state = min(want, 1.0 - (1.0 - state) * keep)
+        state = max(state, floor)
+        lowest = min(lowest, state)
+        out.append(v * state)
+    return out, -20.0 * math.log10(lowest)
+
+
+def normalise_loudness(
+    x: list[float], cue_id: str, target_db: float
+) -> tuple[list[float], dict]:
+    """Scale to `target_db` loudness under the peak ceiling. The pre-limiter
+    gain starts at the target scaling and rises in 0.1 dB steps; the first
+    step whose limited output has its peak under the ceiling, no more than
+    9 dB of limiting and a loudness within 0.5 dB of the target wins
+    (amendment 3). Returns the samples and a stats dict."""
+    base = gain(x, target_db - loudness_db(x))
+    best_seen = None
+    for step in range(SEARCH_STEPS + 1):
+        extra = step * SEARCH_STEP_DB
+        # An attenuated source's -40 dBFS point moves later once scaled, so
+        # step 3 is applied again at the output level (D3 acceptance: onset
+        # within 15 ms of the written file).
+        scaled = strip_leading_silence(gain(base, extra))
+        if _under_ceiling(scaled):
+            out, reduction = scaled, 0.0
+        else:
+            out, reduction = limit(scaled)
+            if not _under_ceiling(out):
+                break
+        # Measure what will be written: the int16 rounding of the output.
+        out = [float(max(-32768, min(32767, round(v)))) for v in out]
+        got = loudness_db(out)
+        if best_seen is None or got > best_seen:
+            best_seen = got
+        if abs(got - target_db) <= LOUDNESS_TOLERANCE_DB:
+            return out, {
+                "loudness": got,
+                "target": target_db,
+                "reduction": reduction,
+                "pregain": extra,
+            }
+    raise LoudnessShortfall(
+        f"{cue_id}: target {target_db:.2f} dBFS cannot be met under "
+        f"{CEILING_DBFS} dBFS with at most {LIMIT_MAX_REDUCTION_DB:.0f} dB "
+        f"of limiting; best is {best_seen:.2f} dBFS, short by "
+        f"{target_db - best_seen:.2f} dB"
+    )
 
 
 def to_pcm16(x: list[float]) -> bytes:
@@ -313,7 +415,8 @@ def _build_no_move(clip: Clip, zips: dict[str, str]) -> list[float]:
     return mix
 
 
-def build_clip(clip: Clip, zips: dict[str, str]) -> bytes:
+def build_clip(clip: Clip, zips: dict[str, str]) -> tuple[bytes, dict]:
+    """The WAV bytes and a stats dict (loudness, target, limiter)."""
     if clip.cue_id == "no_move":
         x = _build_no_move(clip, zips)
         named_fade_ends = True
@@ -332,8 +435,9 @@ def build_clip(clip: Clip, zips: dict[str, str]) -> bytes:
         raise BuildError(
             f"{clip.cue_id}: {seconds:.3f} s exceeds its {clip.max_s:.2f} s maximum"
         )
-    x = gain(normalise(x, PEAK_DBFS), clip.trim_db)
-    return wav_bytes(to_pcm16(x))
+    target = REFERENCE_DBFS + clip.trim_db
+    x, stats = normalise_loudness(x, clip.cue_id, target)
+    return wav_bytes(to_pcm16(x)), stats
 
 
 def write_atomic(path: str, data: bytes) -> None:
@@ -352,15 +456,32 @@ def write_atomic(path: str, data: bytes) -> None:
 def main() -> int:
     try:
         zips = {key: fetch_pack(key) for key in PACKS}
-        # Build every clip before writing any (D3 step 6).
-        built = [(c.cue_id, build_clip(c, zips)) for c in CLIPS]
     except (BuildError, OSError) as e:
         print(f"build_feedback_sounds: {e}", file=sys.stderr)
         return 1
+    # Build every clip before writing any (D3 step 6), and report every
+    # clip that fails, not just the first.
+    built = []
+    failures = []
+    for c in CLIPS:
+        try:
+            built.append((c.cue_id, *build_clip(c, zips)))
+        except BuildError as e:
+            failures.append(str(e))
+    if failures:
+        for f in failures:
+            print(f"build_feedback_sounds: {f}", file=sys.stderr)
+        return 1
     os.makedirs(OUT_DIR, exist_ok=True)
-    for cue_id, data in built:
+    print(f"reference level {REFERENCE_DBFS:.1f} dBFS")
+    for cue_id, data, st in built:
         write_atomic(os.path.join(OUT_DIR, f"fb_{cue_id}.wav"), data)
-        print(f"fb_{cue_id}.wav  {len(data)} bytes")
+        print(
+            f"fb_{cue_id}.wav  {len(data)} bytes  loudness "
+            f"{st['loudness']:.2f} dBFS (target {st['target']:.2f}), "
+            f"pre-gain +{st['pregain']:.1f} dB, "
+            f"limiter {st['reduction']:.2f} dB"
+        )
     return 0
 
 
