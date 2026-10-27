@@ -1,8 +1,8 @@
 // Screen proof for C-468 D7 (order 469): the big die under the board draws
 // at 45 percent opacity while another seat holds the turn and my no-move
 // hold is not up; full opacity on my turn and while my hold is up. The
-// opacity is read from the nearest Opacity between the die's art and the
-// game-die root key. Written from the contract's text alone.
+// opacity is read from the nearest Opacity ancestor of the die's art at any
+// depth, which must not also wrap ludo-board. Written from the contract's text alone.
 //
 // Every failure reason starts with the scenario name and ends with the
 // frames and pumps that led to it.
@@ -12,8 +12,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support/c468_harness.dart';
 import 'support/roll_tray_harness.dart';
 
-/// The opacity the die's art paints at: the nearest Opacity under
-/// game-die, or 1.0 when the art has none.
+/// The opacity the die's art paints at: its nearest Opacity ancestor, or
+/// 1.0 when the art has none.
 double _opacity(Scn s, Finder art, {required bool mustExist}) {
   expect(
     art,

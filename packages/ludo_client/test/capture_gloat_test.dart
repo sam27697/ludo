@@ -562,19 +562,32 @@ void main() {
       expect(gloatSeats(tester), <int>[
         0,
       ], reason: f.s.why('fixture: the gloat is up over my yard'));
+      // The token's 48dp hit area only partly overlaps the gloat, so the
+      // tap point is the centre of the overlap, inside both (order 469
+      // RETURN 1).
       final Rect hit = tester.getRect(find.byKey(tokenHitKey(0, 1)));
+      final Rect gloatRect = tester.getRect(f.gloat);
+      final Rect overlap = hit.intersect(gloatRect);
       expect(
-        tester.getRect(f.gloat).contains(hit.center),
+        overlap.width > 0 && overlap.height > 0,
         isTrue,
         reason: f.s.why(
-          'fixture: token 1\'s hit area ${hit.center} is under the gloat '
-          '${tester.getRect(f.gloat)}',
+          'fixture: token 1\'s hit area $hit overlaps the gloat $gloatRect',
+        ),
+      );
+      final Offset point = overlap.center;
+      expect(
+        hit.contains(point) && gloatRect.contains(point),
+        isTrue,
+        reason: f.s.why(
+          'fixture: the tap point $point is inside the token hit area $hit '
+          'and the gloat $gloatRect',
         ),
       );
       final int sentBefore = f.s.drive.transport.sentRaw.length;
-      await tester.tapAt(hit.center);
+      await tester.tapAt(point);
       await tester.pump();
-      f.s.steps.add('tap token-0-1 at ${hit.center}');
+      f.s.steps.add('tap token-0-1 at $point');
       final List<Map<String, Object?>> moves = movesSince(
         f.s.drive.transport,
         sentBefore,
