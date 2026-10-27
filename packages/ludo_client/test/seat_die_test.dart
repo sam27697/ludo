@@ -374,6 +374,11 @@ bool _circleTouchesRect(Rect disc, Rect rect) {
   return math.sqrt(dx * dx + dy * dy) < disc.width / 2;
 }
 
+/// C-468 D6's FeedbackCue.dieLand, looked up by name so this file still
+/// compiles, and its other cases still run, on a tree where the cue does
+/// not exist yet; only the case that uses it fails there (order 469).
+FeedbackCue get _dieLand => FeedbackCue.values.byName('dieLand');
+
 void main() {
   // -------------------------------------------------------------------
   // D1: the big die under the board is only ever mine.
@@ -1719,7 +1724,8 @@ void main() {
   );
 
   testWidgets(
-    'D5: seat 2\'s rolled, throw and moved frames play no cue, as before',
+    'D5: seat 2\'s rolled, throw and moved frames play no cue but the one '
+    'dieLand when the throw lands (C-468 D4, order 469)',
     (tester) async {
       final RollTrayDrive drive = await _mount(
         tester,
@@ -1731,6 +1737,8 @@ void main() {
         final List<FeedbackCue> before = List<FeedbackCue>.of(
           drive.feedback.recorded,
         );
+        // C-468 D4.1: another seat's die landing is heard, once.
+        final List<FeedbackCue> after = <FeedbackCue>[...before, _dieLand];
         await s.push('rolled', _rolledData(2, 5, 1));
         expect(
           drive.feedback.recorded,
@@ -1738,24 +1746,225 @@ void main() {
           reason: s.why('no cue on the rolled frame'),
         );
         Duration elapsed = Duration.zero;
+        bool wasTumbling = true;
         while (elapsed < _kThrowTotal) {
           await tester.pump(_kFrame);
           elapsed += _kFrame;
-          expect(
-            drive.feedback.recorded,
-            before,
-            reason: s.why('no cue $elapsed into the throw'),
+          final bool tumbling = tester.any(
+            find.byKey(opponentThrowTumblingKey(2)),
           );
+          if (tumbling) {
+            expect(
+              drive.feedback.recorded,
+              before,
+              reason: s.why('no cue $elapsed into the tumble'),
+            );
+          } else if (wasTumbling) {
+            expect(
+              drive.feedback.recorded,
+              anyOf(equals(before), equals(after)),
+              reason: s.why('the landing frame, $elapsed into the throw'),
+            );
+          } else {
+            expect(
+              drive.feedback.recorded,
+              after,
+              reason: s.why('only dieLand $elapsed into the throw'),
+            );
+          }
+          wasTumbling = tumbling;
         }
         await s.push('moved', _movedData(2, 0, 0, 5));
         expect(
           drive.feedback.recorded,
-          before,
-          reason: s.why('no cue on the moved frame'),
+          after,
+          reason: s.why('no further cue on the moved frame'),
         );
       } finally {
         await releaseGame(tester, drive);
       }
     },
   );
+
+  // -------------------------------------------------------------------
+  // Run 111 residue (C-465 D2), order 469.
+  // -------------------------------------------------------------------
+  for (final (int me, int opp) in const <(int, int)>[(0, 2), (2, 0)]) {
+    testWidgets(
+      'residue: a resync while seat $opp holds the turn on a 4 with no '
+      'throw queued shows face 4 on its die, not the idle pose (seen from '
+      '$me)',
+      (tester) async {
+        final List<Map<String, Object?>> seats = _pair(
+          mySeat: me,
+          mine: _oneOut,
+          opponent: _oneOut,
+        );
+        final RollTrayDrive drive = await _mount(
+          tester,
+          mySeat: me,
+          turn: _awaitRoll(opp),
+          seats: seats,
+        );
+        final _Scn s = _Scn('residue resync me=$me opp=$opp', tester, drive);
+        try {
+          await s.push('rolled', _rolledData(opp, 5, 1));
+          await s.pump(_kThrowTotal);
+          _expectSeatDie(s, opp, 5, 'fixture: the 5 landed and is remembered');
+          expect(
+            find.byKey(opponentThrowKey(opp)),
+            findsNothing,
+            reason: s.why('fixture: no throw of seat $opp is up'),
+          );
+          await s.push(
+            'room',
+            roomData(
+              seats: seats,
+              turn: turnJson(
+                seat: opp,
+                phase: 'await_move',
+                k: 1,
+                value: 4,
+                legal: const <int>[0],
+                queue: const <int>[4],
+                legalByFace: <Map<String, Object?>>[
+                  faceLegal(4, const <int>[0]),
+                ],
+              ),
+            ),
+          );
+          expect(
+            find.byKey(opponentThrowKey(opp)),
+            findsNothing,
+            reason: s.why('a snapshot starts no throw'),
+          );
+          _expectSeatDie(s, opp, 4, 'right after the resync');
+          await s.pump(const Duration(milliseconds: 800));
+          _expectSeatDie(s, opp, 4, 'after the resync has settled');
+        } finally {
+          await releaseGame(tester, drive);
+        }
+      },
+    );
+  }
+
+  testWidgets(
+    'residue: a resync that carries no value for the turn holder goes back '
+    'to the idle pose, a resync that does carry one shows it',
+    (tester) async {
+      final List<Map<String, Object?>> seats = _pair(
+        mySeat: 0,
+        mine: _oneOut,
+        opponent: _oneOut,
+      );
+      final RollTrayDrive drive = await _mount(
+        tester,
+        turn: _awaitRoll(2),
+        seats: seats,
+      );
+      final _Scn s = _Scn('residue resync twice', tester, drive);
+      try {
+        await s.push('rolled', _rolledData(2, 5, 1));
+        await s.pump(_kThrowTotal);
+        await s.push('room', roomData(seats: seats, turn: _awaitRoll(2, k: 4)));
+        _expectSeatDie(s, 2, null, 'resync with no value: idle pose');
+        await s.push('rolled', _rolledData(2, 2, 5));
+        await s.pump(_kThrowTotal);
+        _expectSeatDie(s, 2, 2, 'a new roll after the resync lands on 2');
+        await s.push(
+          'room',
+          roomData(
+            seats: seats,
+            turn: turnJson(
+              seat: 2,
+              phase: 'await_move',
+              k: 6,
+              value: 6,
+              legal: const <int>[0],
+              queue: const <int>[6],
+              legalByFace: <Map<String, Object?>>[
+                faceLegal(6, const <int>[0]),
+              ],
+            ),
+          ),
+        );
+        _expectSeatDie(s, 2, 6, 'second resync carries a 6');
+      } finally {
+        await releaseGame(tester, drive);
+      }
+    },
+  );
+
+  for (final int bad in const <int>[0, 7, -3, 100]) {
+    testWidgets(
+      'residue: a rolled frame carrying face $bad for another seat throws '
+      'nothing and leaves its die idle',
+      (tester) async {
+        final RollTrayDrive drive = await _mount(
+          tester,
+          turn: _awaitRoll(2),
+          seats: _pair(mySeat: 0, mine: _oneOut, opponent: _oneOut),
+        );
+        final _Scn s = _Scn('residue rolled $bad', tester, drive);
+        try {
+          await s.push('rolled', _rolledData(2, bad, 1));
+          await s.pump(_kThrowTotal);
+          expect(
+            tester.takeException(),
+            isNull,
+            reason: s.why('no exception for a rolled face of $bad'),
+          );
+          _expectSeatDie(s, 2, null, 'a face of $bad is not a face');
+        } finally {
+          await releaseGame(tester, drive);
+        }
+      },
+    );
+
+    testWidgets(
+      'residue: a snapshot carrying face $bad for another seat\'s turn '
+      'throws nothing and leaves its die idle',
+      (tester) async {
+        final List<Map<String, Object?>> seats = _pair(
+          mySeat: 0,
+          mine: _oneOut,
+          opponent: _oneOut,
+        );
+        final RollTrayDrive drive = await _mount(
+          tester,
+          turn: _awaitRoll(2),
+          seats: seats,
+        );
+        final _Scn s = _Scn('residue snapshot $bad', tester, drive);
+        try {
+          await s.push(
+            'room',
+            roomData(
+              seats: seats,
+              turn: turnJson(
+                seat: 2,
+                phase: 'await_move',
+                k: 1,
+                value: bad,
+                legal: const <int>[0],
+                queue: <int>[bad],
+                legalByFace: <Map<String, Object?>>[
+                  faceLegal(bad, const <int>[0]),
+                ],
+              ),
+            ),
+          );
+          await s.pump(_kThrowTotal);
+          expect(
+            tester.takeException(),
+            isNull,
+            reason: s.why('no exception for a snapshot face of $bad'),
+          );
+          _expectSeatDie(s, 2, null, 'a snapshot face of $bad is not a face');
+        } finally {
+          await releaseGame(tester, drive);
+        }
+      },
+    );
+  }
 }
