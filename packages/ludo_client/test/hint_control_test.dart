@@ -52,6 +52,10 @@ const String _game2 = 'game-0002';
 
 const List<int> _bob = <int>[1, -1, -1, -1];
 
+/// My tokens on board Q (see the header). Every case documented as board Q
+/// passes this as `mine:`; the default fixture is board A.
+const List<int> _mineQ = <int>[16, 30, -1, -1];
+
 // ---------------------------------------------------------------------------
 // Boards.
 // ---------------------------------------------------------------------------
@@ -432,11 +436,14 @@ void main() {
       c.expectState('ready');
     });
 
-    hintTest('ready with a roll queue and two faces (board Q)', (
-      HintCase c,
-    ) async {
-      c.expectState('ready');
-    }, turn: _queueTurn());
+    hintTest(
+      'ready with a roll queue and two faces (board Q)',
+      (HintCase c) async {
+        c.expectState('ready');
+      },
+      turn: _queueTurn(),
+      mine: _mineQ,
+    );
 
     // Catches: ready spent on a turn with nothing to recommend (D1).
     hintTest(
@@ -798,6 +805,7 @@ void main() {
         ], reason: c.why('board-hint-face-6 and no other chip'));
       },
       turn: _queueTurn(),
+      mine: _mineQ,
     );
 
     hintTest(
@@ -816,32 +824,37 @@ void main() {
     );
 
     // Catches: the picker marking both faces, or neither, or the wrong one.
-    hintTest('queue: the picker on the hinted token marks the hinted face only '
-        '(board Q: 6)', (HintCase c) async {
-      await c.tapControl();
-      await c.tapToken(0);
-      expect(
-        c.tester.any(find.byKey(facePickerKey)),
-        isTrue,
-        reason: c.why('the face picker open on token 0'),
-      );
-      expect(hintedPickerFaces(c.tester), <int>[
-        6,
-      ], reason: c.why('board-face-picker-hinted-6 and no other'));
-      expect(
-        find.descendant(
-          of: find.byKey(facePickerHintedKey(6)),
-          matching: find.byKey(facePickerOptionKey(6)),
-        ),
-        findsOneWidget,
-        reason: c.why('the hinted wrapper holds board-face-picker-option-6'),
-      );
-      expect(pickerOptionFaces(c.tester)..sort(), <int>[
-        3,
-        6,
-      ], reason: c.why('the picker keeps both options'));
-      c.expectMarker(0, 'while the picker is open');
-    }, turn: _queueTurn());
+    hintTest(
+      'queue: the picker on the hinted token marks the hinted face only '
+      '(board Q: 6)',
+      (HintCase c) async {
+        await c.tapControl();
+        await c.tapToken(0);
+        expect(
+          c.tester.any(find.byKey(facePickerKey)),
+          isTrue,
+          reason: c.why('the face picker open on token 0'),
+        );
+        expect(hintedPickerFaces(c.tester), <int>[
+          6,
+        ], reason: c.why('board-face-picker-hinted-6 and no other'));
+        expect(
+          find.descendant(
+            of: find.byKey(facePickerHintedKey(6)),
+            matching: find.byKey(facePickerOptionKey(6)),
+          ),
+          findsOneWidget,
+          reason: c.why('the hinted wrapper holds board-face-picker-option-6'),
+        );
+        expect(pickerOptionFaces(c.tester)..sort(), <int>[
+          3,
+          6,
+        ], reason: c.why('the picker keeps both options'));
+        c.expectMarker(0, 'while the picker is open');
+      },
+      turn: _queueTurn(),
+      mine: _mineQ,
+    );
 
     hintTest(
       'queue: the picker marks face 3 when 3 is hinted (board Q2)',
@@ -864,21 +877,28 @@ void main() {
 
     // Catches: a hint that changes how the picker answers a pick, and a
     // marker that survives a move made with the other face.
-    hintTest('queue: picking the other face sends it and clears the marker', (
-      HintCase c,
-    ) async {
-      await c.tapControl();
-      await c.tapToken(0);
-      c.remark();
-      await c.tester.tap(find.byKey(facePickerOptionKey(3)));
-      await c.tester.pump();
-      await settleFrames(c.tester);
-      expect(c.moves, hasLength(1), reason: c.why('one move frame'));
-      expect(c.moves.single['token'], 0, reason: c.why('token 0'));
-      expect(c.moves.single['face'], 3, reason: c.why('face 3, not the hint'));
-      c.expectNoMarker('after the other face was played');
-      c.expectState('used');
-    }, turn: _queueTurn());
+    hintTest(
+      'queue: picking the other face sends it and clears the marker',
+      (HintCase c) async {
+        await c.tapControl();
+        await c.tapToken(0);
+        c.remark();
+        await c.tester.tap(find.byKey(facePickerOptionKey(3)));
+        await c.tester.pump();
+        await settleFrames(c.tester);
+        expect(c.moves, hasLength(1), reason: c.why('one move frame'));
+        expect(c.moves.single['token'], 0, reason: c.why('token 0'));
+        expect(
+          c.moves.single['face'],
+          3,
+          reason: c.why('face 3, not the hint'),
+        );
+        c.expectNoMarker('after the other face was played');
+        c.expectState('used');
+      },
+      turn: _queueTurn(),
+      mine: _mineQ,
+    );
 
     // Catches: a numeral drawn when only one face can be played, even with a
     // dead face beside it in the queue.
@@ -1012,10 +1032,15 @@ void main() {
         for (final MapEntry<String, Size> size in sizes.entries) {
           final String code = locale.languageCode;
           // Catches: the control entering the centred Row and pulling the die
-          // off the board's axis.
+          // (or, with a tray, the die + gap + tray group) off the board's
+          // axis. C-471 A2: without a tray the die itself is centred; with a
+          // tray the row centres the union of the die's and the tray's rects.
           hintTest(
-            'die centre equals board centre within 1 px: $code, '
-            '${tray ? 'with' : 'without'} a tray, ${size.key}',
+            tray
+                ? 'die and tray union centre equals board centre within 1 px: '
+                      '$code, with a tray, ${size.key}'
+                : 'die centre equals board centre within 1 px: $code, '
+                      'without a tray, ${size.key}',
             (HintCase c) async {
               c.expectState('ready');
               expect(
@@ -1025,16 +1050,31 @@ void main() {
                   'fixture: the roll tray ${tray ? 'present' : 'absent'}',
                 ),
               );
-              final double die = c.tester.getCenter(find.byKey(bigDieKey)).dx;
               final double board = c.tester.getCenter(find.byKey(boardKey)).dx;
-              expect(
-                (die - board).abs(),
-                lessThanOrEqualTo(1.0),
-                reason: c.why(
-                  'game-die centre x $die within 1 px of game-screen-board '
-                  'centre x $board (${size.key}, $code)',
-                ),
-              );
+              if (tray) {
+                final Rect union = c.tester
+                    .getRect(find.byKey(bigDieKey))
+                    .expandToInclude(c.tester.getRect(find.byKey(rollTrayKey)));
+                expect(
+                  (union.center.dx - board).abs(),
+                  lessThanOrEqualTo(1.0),
+                  reason: c.why(
+                    'centre x ${union.center.dx} of the union $union of '
+                    'game-die and game-roll-tray within 1 px of '
+                    'game-screen-board centre x $board (${size.key}, $code)',
+                  ),
+                );
+              } else {
+                final double die = c.tester.getCenter(find.byKey(bigDieKey)).dx;
+                expect(
+                  (die - board).abs(),
+                  lessThanOrEqualTo(1.0),
+                  reason: c.why(
+                    'game-die centre x $die within 1 px of game-screen-board '
+                    'centre x $board (${size.key}, $code)',
+                  ),
+                );
+              }
             },
             turn: tray ? _queueTurn(queue: const <int>[6, 3, 2]) : _moveTurn(),
             locale: locale,
@@ -1356,6 +1396,7 @@ void main() {
           );
         },
         turn: _queueTurn(),
+        mine: _mineQ,
         locale: locale,
         semantics: true,
       );

@@ -168,12 +168,9 @@ class _HintArt extends StatelessWidget {
     final Color glyph = used
         ? seatColor
         : (lightDisc ? LudoColors.ink : LudoColors.paper);
-    final Color highlight = Color.lerp(
-      seatColor,
-      const Color(0xFFFFFFFF),
-      0.30,
-    )!;
-    final Color shade = Color.lerp(seatColor, const Color(0xFF000000), 0.22)!;
+    // Depth on the disc uses the paintbox near-white and ink (C-471 D3).
+    final Color highlight = Color.lerp(seatColor, LudoColors.actionOn, 0.30)!;
+    final Color shade = Color.lerp(seatColor, LudoColors.ink, 0.22)!;
     return AnimatedBuilder(
       animation: glow,
       builder: (BuildContext context, Widget? child) {
@@ -201,7 +198,7 @@ class _HintArt extends StatelessWidget {
           DecoratedBox(
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: used ? const Color(0x00000000) : null,
+              color: used ? Colors.transparent : null,
               gradient: used
                   ? null
                   : LinearGradient(
@@ -259,7 +256,7 @@ class _HintBadge extends StatelessWidget {
             textScaler: TextScaler.noScaling,
             style: TextStyle(
               color: LudoColors.ink,
-              fontSize: 11,
+              fontSize: kTypeLabel,
               fontWeight: FontWeight.w700,
               height: 1,
             ),

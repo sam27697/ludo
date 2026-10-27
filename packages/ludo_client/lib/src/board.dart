@@ -1824,6 +1824,20 @@ class _LudoBoardState extends State<LudoBoard> {
         seatsInPlay: widget.seatsInPlay,
       );
       final AppLocalizations loc = AppLocalizations.of(context);
+      // C-471 A1: TalkBack reads this hit node, so the hint suffix is
+      // appended to the label it already had. The drawn token node
+      // below keeps no label.
+      final String tokenLabel = loc.gameTokenButton(tokenIndex + 1);
+      final MoveHint? hint = widget.hint;
+      final String label;
+      if (hint != null && hint.token == tokenIndex) {
+        final String suffix = widget.hintNamesFace
+            ? loc.hintTokenFaceSuffix(hint.face)
+            : loc.hintTokenSuffix;
+        label = '$tokenLabel, $suffix';
+      } else {
+        label = tokenLabel;
+      }
       layer.add(
         Positioned(
           left: hitRect.left,
@@ -1845,7 +1859,7 @@ class _LudoBoardState extends State<LudoBoard> {
             key: Key('board-token-hit-$seat-$tokenIndex'),
             sortKey: tokenSortKey,
             button: true,
-            label: loc.gameTokenButton(tokenIndex + 1),
+            label: label,
             enabled: legalHere,
             onTap: () => _resolveTap(_groupIndicesFor(seat, tokenIndex)),
             child: const MetaData(
@@ -1921,23 +1935,10 @@ class _LudoBoardState extends State<LudoBoard> {
     final double drawnLeft = drawn.center.dx - drawnSize / 2;
     final double drawnTop = drawn.center.dy - drawnSize / 2;
 
-    final MoveHint? hint = widget.hint;
-    // C-471 D4: the suffix is only on the hinted token. Every other
-    // token keeps the node it had, with no label.
-    final String? hintLabel;
-    if (hint != null && isMine && hint.token == tokenIndex) {
-      final AppLocalizations loc = AppLocalizations.of(context);
-      hintLabel = widget.hintNamesFace
-          ? loc.hintTokenFaceSuffix(hint.face)
-          : loc.hintTokenSuffix;
-    } else {
-      hintLabel = null;
-    }
     final Widget token = Semantics(
       key: Key('token-$seat-$tokenIndex'),
       identifier: 'cell-${cell.col}-${cell.row}',
       sortKey: tokenSortKey,
-      label: hintLabel,
       child: DecoratedBox(
         decoration: BoxDecoration(
           shape: BoxShape.circle,
@@ -2661,10 +2662,11 @@ class _HintChevronPainter extends CustomPainter {
       ..lineTo(w * 0.5, h * 0.52)
       ..lineTo(w * 0.28, h * 0.08)
       ..close();
+    // C-471 D4: the outline is the paintbox near-white, not a new hex.
     canvas.drawPath(
       path,
       Paint()
-        ..color = const Color(0xFFFFFFFF)
+        ..color = LudoColors.actionOn
         ..style = PaintingStyle.stroke
         ..strokeWidth = math.max(2.0, w * 0.14)
         ..strokeJoin = StrokeJoin.round
