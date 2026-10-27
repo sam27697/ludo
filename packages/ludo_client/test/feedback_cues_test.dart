@@ -598,26 +598,28 @@ void main() {
             'missing from expectedIds: '
             '${FeedbackCue.values.toSet().difference(allExpectedIds().keys.toSet())}',
       );
+    });
 
-      test('the two C-468 cues carry the wire ids die_land and gloat', () {
-        for (final MapEntry<FeedbackCue, String> entry
-            in <MapEntry<FeedbackCue, String>>[
-              MapEntry<FeedbackCue, String>(
-                FeedbackCue.values.byName('dieLand'),
-                'die_land',
-              ),
-              MapEntry<FeedbackCue, String>(
-                FeedbackCue.values.byName('gloat'),
-                'gloat',
-              ),
-            ]) {
-          expect(
-            entry.key.id,
-            entry.value,
-            reason: 'FeedbackCue.${entry.key.name}.id must be "${entry.value}"',
-          );
-        }
-      });
+    // Declared at group level: a test() inside a running test body throws
+    // (order 469 RETURN 1).
+    test('the two C-468 cues carry the wire ids die_land and gloat', () {
+      for (final MapEntry<FeedbackCue, String> entry
+          in <MapEntry<FeedbackCue, String>>[
+            MapEntry<FeedbackCue, String>(
+              FeedbackCue.values.byName('dieLand'),
+              'die_land',
+            ),
+            MapEntry<FeedbackCue, String>(
+              FeedbackCue.values.byName('gloat'),
+              'gloat',
+            ),
+          ]) {
+        expect(
+          entry.key.id,
+          entry.value,
+          reason: 'FeedbackCue.${entry.key.name}.id must be "${entry.value}"',
+        );
+      }
     });
   });
 

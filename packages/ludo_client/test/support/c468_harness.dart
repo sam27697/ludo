@@ -305,25 +305,52 @@ Offset paintCentreOf(WidgetTester tester, Finder key) {
   return MatrixUtils.transformPoint(paint.getTransformTo(null), local.center);
 }
 
-/// The nearest `Opacity` between [art] and the `game-die` root, as its
-/// opacity; null when there is none (C-468 D7).
+/// The nearest `Opacity` ancestor of [art] at any depth, as its opacity;
+/// null when there is none (C-468 D7). The product may wrap the whole
+/// `GameDie` (the `game-die` key) rather than only the art, so the search
+/// does not stop at that key. It must still be the die's own fade: the
+/// found `Opacity` may not also be an ancestor of `ludo-board`, so a
+/// screen-wide fade cannot pass (order 469 RETURN 1).
 double? nearestOpacityUnderBigDie(WidgetTester tester, Finder art) {
   final Element start = tester.element(art);
-  double? found;
-  bool reachedDie = false;
+  Element? opacityElement;
+  bool underDie = start.widget.key == bigDieKey;
   start.visitAncestorElements((Element ancestor) {
     if (ancestor.widget.key == bigDieKey) {
-      reachedDie = true;
-      return false;
+      underDie = true;
     }
-    if (ancestor.widget is Opacity) {
-      found = (ancestor.widget as Opacity).opacity;
+    if (opacityElement == null && ancestor.widget is Opacity) {
+      opacityElement = ancestor;
+    }
+    return true;
+  });
+  if (!underDie) {
+    fail('the art is not under the game-die root key');
+  }
+  final Element? found = opacityElement;
+  if (found == null) {
+    return null;
+  }
+  final Finder board = find.byKey(const Key('ludo-board'));
+  expect(
+    board,
+    findsOneWidget,
+    reason: 'the ludo-board is on screen, to prove the fade is the die\'s own',
+  );
+  bool boardUnderIt = false;
+  tester.element(board).visitAncestorElements((Element ancestor) {
+    if (identical(ancestor, found)) {
+      boardUnderIt = true;
       return false;
     }
     return true;
   });
-  if (found == null && !reachedDie) {
-    fail('the art is not under the game-die root key');
-  }
-  return found;
+  expect(
+    boardUnderIt,
+    isFalse,
+    reason:
+        'the Opacity found above the die art (${found.widget}) is also an '
+        'ancestor of ludo-board: a screen-wide fade is not the D7 die fade',
+  );
+  return (found.widget as Opacity).opacity;
 }
