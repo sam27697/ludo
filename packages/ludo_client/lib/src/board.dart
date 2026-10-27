@@ -1470,6 +1470,10 @@ class _LudoBoardState extends State<LudoBoard> {
               onTapUp: (details) => _handleTapUp(details, cellSize, tokenSize),
               child: Stack(
                 alignment: Alignment.topLeft,
+                // C-471 D4: the hint arrow may stand above a token on the
+                // top row, outside the board square. Without a hint the
+                // clip is what it always was.
+                clipBehavior: widget.hint != null ? Clip.none : Clip.hardEdge,
                 children: [
                   Positioned.fill(
                     child: CustomPaint(
@@ -2052,9 +2056,10 @@ class _LudoBoardState extends State<LudoBoard> {
     return layer;
   }
 
-  /// C-471 D4. The chevron sits above the disc, inside the legal ring's
-  /// width, and may extend above the cell. The bob is 4 dp over about
-  /// 900 ms; reduced motion holds it still.
+  /// C-471 D4. The arrow stands wholly above the legal ring, one cell
+  /// wide, so a first-time player finds it. The bob is 4 dp over about
+  /// 900 ms; reduced motion holds it still. The face chip sits on the
+  /// arrow and grows with it.
   Widget _hintMarker(double cellSize) {
     final MoveHint? hint = widget.hint;
     final int? seat = widget.mySeat;
@@ -2077,27 +2082,26 @@ class _LudoBoardState extends State<LudoBoard> {
       progressOf: _drawnProgress,
     );
     final bool namesFace = widget.hintNamesFace;
-    // The legal ring already reaches this far past the disc. The marker
-    // stays inside that box, so it does not cover a neighbour's disc past
-    // the ring. It still stands above the cell (C-471 D4).
-    final double ring = drawn.size * 1.7;
-    final double roomAbove = drawn.size * 0.35;
-    final double overlap = drawn.size * 0.12;
-    final double budget = roomAbove + overlap;
-    final double chipSide = namesFace ? math.min(budget * 0.42, ring) : 0;
-    final double gap = chipSide > 0 ? math.min(1, budget * 0.06) : 0;
-    final double chevronH = math.max(0, budget - chipSide - gap);
-    final double chevronW = math.min(drawn.size * 0.72, ring);
+    // The ring's outer edge, as _tokenLayer sizes it. The auto-move arc
+    // clears that edge by 12 dp when this token carries it.
+    final double ringSide =
+        drawn.size * 1.7 + (widget.autoMoveToken == hint.token ? 12 : 0);
+    final double ringTop = drawn.center.dy - ringSide / 2;
+    final double chevronW = cellSize * _kHintArrowCells;
+    final double chevronH = chevronW * 0.8;
+    final double chipSide = namesFace ? chevronW * 0.8 : 0;
+    final double gap = namesFace ? 2 : 0;
     final double contentH = chipSide + gap + chevronH;
-    final double boxW = math.max(chevronW, chipSide);
-    // Point on the disc's top, the rest inside the ring above it.
-    final double left = drawn.center.dx - boxW / 2;
-    final double top = drawn.center.dy - drawn.size / 2 - contentH + overlap;
+    // The lowest point clears the ring by the bob's travel and the
+    // outline's half stroke, so it never touches the ring (C-471 D4).
+    final double clearance = _kHintBob + _hintOutlineWidth(chevronW) / 2 + 1;
+    final double left = drawn.center.dx - chevronW / 2;
+    final double top = ringTop - clearance - contentH;
     return Positioned(
       key: Key('board-hint-${hint.token}'),
       left: left,
       top: top,
-      width: boxW,
+      width: chevronW,
       height: contentH,
       child: IgnorePointer(
         child: ExcludeSemantics(
@@ -2134,7 +2138,8 @@ class _LudoBoardState extends State<LudoBoard> {
         ),
         child: Center(
           child: Text(
-            '$face',
+            face.toString(),
+            textDirection: TextDirection.ltr,
             textScaler: TextScaler.noScaling,
             textAlign: TextAlign.center,
             style: TextStyle(
@@ -2639,13 +2644,21 @@ class _BobbingMarkerState extends State<_BobbingMarker>
       builder: (BuildContext context, Widget? child) {
         final double dy = _reduced == true
             ? 0
-            : math.sin(_controller.value * math.pi * 2) * 4;
+            : math.sin(_controller.value * math.pi * 2) * _kHintBob;
         return Transform.translate(offset: Offset(0, dy), child: child);
       },
       child: widget.child,
     );
   }
 }
+
+/// The marker's arrow is this many cells wide (C-471 D4).
+const double _kHintArrowCells = 1.0;
+
+/// Travel of the marker's bob, up and down (C-471 D4).
+const double _kHintBob = 4;
+
+double _hintOutlineWidth(double arrowWidth) => math.max(2.0, arrowWidth * 0.14);
 
 class _HintChevronPainter extends CustomPainter {
   const _HintChevronPainter();
@@ -2668,7 +2681,7 @@ class _HintChevronPainter extends CustomPainter {
       Paint()
         ..color = LudoColors.actionOn
         ..style = PaintingStyle.stroke
-        ..strokeWidth = math.max(2.0, w * 0.14)
+        ..strokeWidth = _hintOutlineWidth(w)
         ..strokeJoin = StrokeJoin.round
         ..strokeCap = StrokeCap.round,
     );
