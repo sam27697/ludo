@@ -12467,11 +12467,10 @@ Future<void> _shootHintQueue(
       'awaitMove',
       reason: 'capture $shotName: seat 0 remains in awaitMove',
     );
-    expect(
-      turn.queue,
-      <int>[6, 3],
-      reason: 'capture $shotName: the roll queue is [6, 3]',
-    );
+    expect(turn.queue, <int>[
+      6,
+      3,
+    ], reason: 'capture $shotName: the roll queue is [6, 3]');
     final AppLocalizations loc = AppLocalizations.of(
       tester.element(find.byType(GameScreen)),
     );
@@ -12601,9 +12600,8 @@ Future<void> _shootHintUsedLarge(
       findsOneWidget,
       reason: 'capture $shotName: game-screen-turn-banner must be on screen',
     );
-    final double scaledTen = MediaQuery.textScalerOf(
-      tester.element(banner),
-    ).scale(10);
+    final double scaledTen = MediaQuery.textScalerOf(tester.element(banner))
+        .scale(10);
     expect(
       scaledTen,
       20.0,
