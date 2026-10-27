@@ -65,9 +65,9 @@ class MainActivity : FlutterActivity() {
     )
 
     // Every id except invalid_tap and tap (doctrine section 3's table:
-    // none, and C-422 D1) has a clip; tool/gen_feedback_sounds.py writes it
-    // to res/raw as fb_<id>.wav, and aapt2 generates the matching R.raw
-    // entry read here.
+    // none, and C-422 D1) has a clip; tool/build_feedback_sounds.py cuts it
+    // from the pinned Kenney packs into res/raw as fb_<id>.wav (C-468 D3),
+    // and aapt2 generates the matching R.raw entry read here.
     private val soundResources: Map<String, Int> = mapOf(
         "your_turn" to R.raw.fb_your_turn,
         "can_move" to R.raw.fb_can_move,
@@ -78,6 +78,8 @@ class MainActivity : FlutterActivity() {
         "home" to R.raw.fb_home,
         "win" to R.raw.fb_win,
         "game_over" to R.raw.fb_game_over,
+        "die_land" to R.raw.fb_die_land,
+        "gloat" to R.raw.fb_gloat,
     )
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

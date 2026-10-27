@@ -103,12 +103,17 @@ void _expectNoOpponentThrowKeys(WidgetTester tester) {
   }
 }
 
+/// C-468 D6's FeedbackCue.dieLand, looked up by name so this file still
+/// compiles, and its other cases still run, on a tree where the cue does
+/// not exist yet (order 469).
+FeedbackCue get _dieLand => FeedbackCue.values.byName('dieLand');
+
 void main() {
   for (int v = 1; v <= 6; v++) {
     testWidgets(
       'A2: seat 2 rolled face $v tumbles on board, lands on seat 2\'s yard '
       'centre in the top-right quarter, leaves the below-board die mine and '
-      'idle, and fades with no feedback cue',
+      'idle, and fades with no feedback cue but the one dieLand',
       (tester) async {
         final RollTrayDrive drive = await connectPlaying(
           tester,
@@ -252,10 +257,14 @@ void main() {
             findsOneWidget,
             reason: 'C-465 D2: seat 2\'s own die shows face $v under the throw',
           );
+          // C-468 D4.1: the landing of another seat's die is heard, once;
+          // nothing else fires for the throw.
           expect(
             drive.feedback.recorded,
-            cuesBefore,
-            reason: 'A2/D9: no feedback cue fires for another seat\'s throw',
+            <FeedbackCue>[...cuesBefore, _dieLand],
+            reason:
+                'A2/D9 as amended by C-468 D4: only dieLand fires for another '
+                'seat\'s throw once it has landed',
           );
 
           await _pumpDuration(tester, kThrowRest);
@@ -265,8 +274,10 @@ void main() {
           _expectNoOpponentThrowKeys(tester);
           expect(
             drive.feedback.recorded,
-            cuesBefore,
-            reason: 'A2/D9: no feedback cue fires after throw finishes',
+            <FeedbackCue>[...cuesBefore, _dieLand],
+            reason:
+                'A2/D9 as amended by C-468 D4: still just the one dieLand '
+                'after the throw finishes',
           );
         } finally {
           await releaseGame(tester, drive);
