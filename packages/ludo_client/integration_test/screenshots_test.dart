@@ -2713,6 +2713,7 @@ void main() {
       momentDescription:
           'immediately after the rolled/turn pair landed, before the '
           '~300ms settle',
+      expectedText: loc15.gameNoMoveNeedSix,
     );
 
     // "captured about 300 ms later" (the order's own words): 10 real
@@ -2736,6 +2737,7 @@ void main() {
       loc: loc15,
       momentDescription:
           'after the ~300ms settle, immediately before capture 15',
+      expectedText: loc15.gameNoMoveNeedSix,
     );
 
     await binding.takeScreenshot('15-game-no-move-en');
@@ -2924,6 +2926,7 @@ void main() {
       momentDescription:
           'immediately after the rolled/turn pair landed, before the '
           '~300ms settle',
+      expectedText: loc16.gameNoMoveNeedSix,
     );
 
     await _pumpRealDurationFrames(tester, frameCount: 10);
@@ -2942,6 +2945,7 @@ void main() {
       loc: loc16,
       momentDescription:
           'after the ~300ms settle, immediately before capture 16',
+      expectedText: loc16.gameNoMoveNeedSix,
     );
 
     await binding.takeScreenshot('16-game-no-move-ar');
@@ -6451,6 +6455,54 @@ void main() {
       seatToken: 'tok-shot-75',
     );
   });
+
+  // ==========================================================================
+  // 76-78: order 476. Emulator frames for the no-move reason lines (C-474 D1,
+  // D2). Same route as captures 15 and 16: a GameScreen over FakeTransport,
+  // frames copied by hand into this file, no server, no pumpAndSettle once
+  // GameScreen is up. Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 76-no-move-need-six-en', (tester) async {
+    await _shootNoMoveReason(
+      tester,
+      binding,
+      shotName: '76-no-move-need-six-en',
+      locale: const Locale('en'),
+      roomCode: 'NM76EN',
+      gameId: 'e' * 16,
+      seatToken: 'tok-shot-76',
+      rollValue: 3,
+      needExact: false,
+    );
+  });
+
+  testWidgets('capture 77-no-move-need-six-ar', (tester) async {
+    await _shootNoMoveReason(
+      tester,
+      binding,
+      shotName: '77-no-move-need-six-ar',
+      locale: const Locale('ar'),
+      roomCode: 'NM77AR',
+      gameId: 'f' * 16,
+      seatToken: 'tok-shot-77',
+      rollValue: 3,
+      needExact: false,
+    );
+  });
+
+  testWidgets('capture 78-no-move-need-exact-en', (tester) async {
+    await _shootNoMoveReason(
+      tester,
+      binding,
+      shotName: '78-no-move-need-exact-en',
+      locale: const Locale('en'),
+      roomCode: 'NM78EN',
+      gameId: '0' * 16,
+      seatToken: 'tok-shot-78',
+      rollValue: 4,
+      needExact: true,
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -6732,21 +6784,21 @@ void _expectLobbyHostStartWith(
   );
 }
 
-/// Order 240, captures 15 and 16: asserts PR #87's no-move beat (C-236 rule
-/// 4, game_screen.dart's `_armNoMoveHold`, armed by a `rolled` for my seat
-/// with an empty `legal`) is still showing both its die mark
-/// (`game-die-no-move-mark`) and its text notice (`game-no-move-notice`),
-/// and that the notice's own `Text` reads this tree's own
-/// `AppLocalizations.gameNoMove` -- looked up, not hardcoded, so a future
-/// change to either ARB file is what this assertion tracks, not a frozen
-/// copy of today's string. [momentDescription] names which of the two
-/// calls (before or after the ~300ms settle) failed, so a failure does not
-/// have to be re-run to know which one it was.
+/// Order 240, captures 15 and 16; order 476, captures 76-78 (C-474 D1):
+/// asserts PR #87's no-move beat (C-236 rule 4, game_screen.dart's
+/// `_armNoMoveHold`, armed by a `rolled` for my seat with an empty `legal`) is
+/// still showing both its die mark (`game-die-no-move-mark`) and its text
+/// notice (`game-no-move-notice`), and that the notice's own `Text` reads
+/// [expectedText] (defaulting to `loc.gameNoMoveNeedSix` for all-in-yard
+/// boards). [momentDescription] names which of the two calls (before or after
+/// the ~300ms settle) failed.
 void _expectNoMoveVisible(
   WidgetTester tester, {
   required AppLocalizations loc,
   required String momentDescription,
+  String? expectedText,
 }) {
+  final String expected = expectedText ?? loc.gameNoMoveNeedSix;
   expect(
     find.byKey(const Key('game-die-no-move-mark')),
     findsOneWidget,
@@ -6765,11 +6817,10 @@ void _expectNoMoveVisible(
   final Text noticeText = tester.widget<Text>(noticeFinder);
   expect(
     noticeText.data,
-    loc.gameNoMove,
+    expected,
     reason:
         'capture 15/16 ($momentDescription): expected '
-        'game-no-move-notice\'s Text to read this tree\'s own '
-        'AppLocalizations.gameNoMove ("${loc.gameNoMove}"), got '
+        'game-no-move-notice\'s Text to read "$expected", got '
         '"${noticeText.data}"',
   );
 }
@@ -12654,5 +12705,189 @@ Future<void> _shootHintUsedLarge(
     await _releaseTrayGame(tester, controller);
     tester.platformDispatcher.clearTextScaleFactorTestValue();
     await (await SharedPreferences.getInstance()).clear();
+  }
+}
+
+// ============================================================================
+// Order 476 (captures 76-78): no-move reason lines (C-474 D1, D2).
+// ============================================================================
+
+/// Captures 76-78 (order 476, C-474 D1, D2). Two seats `[0, 2]`, viewer seat 0.
+/// When [needExact] is false (captures 76 and 77), all four of seat 0's tokens
+/// stay in the yard (`[-1, -1, -1, -1]`) and seat 0 rolls [rollValue] (`3`)
+/// with an empty `legal`, arming `loc.gameNoMoveNeedSix`. When [needExact] is
+/// true (capture 78), seat 0's tokens are placed at `[55, 57, 57, 57]` and
+/// seat 0 rolls [rollValue] (`4`) with an empty `legal`, arming
+/// `loc.gameNoMoveNeedExact`.
+Future<void> _shootNoMoveReason(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+  required int rollValue,
+  required bool needExact,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    final FakeTransport transport = opened.transport;
+    int seq = opened.seq;
+
+    if (needExact) {
+      seq = await _pushSeatMoved(
+        tester,
+        transport,
+        seq,
+        seat: 0,
+        token: 0,
+        from: -1,
+        to: 55,
+      );
+      for (int token = 1; token <= 3; token++) {
+        seq = await _pushSeatMoved(
+          tester,
+          transport,
+          seq,
+          seat: 0,
+          token: token,
+          from: -1,
+          to: 57,
+        );
+      }
+    }
+
+    final List<int> expectedTokens = needExact
+        ? <int>[55, 57, 57, 57]
+        : <int>[-1, -1, -1, -1];
+    expect(
+      <int>[
+        _progressOf(controller, 0, 0),
+        _progressOf(controller, 0, 1),
+        _progressOf(controller, 0, 2),
+        _progressOf(controller, 0, 3),
+      ],
+      expectedTokens,
+      reason: 'capture $shotName: seat 0 tokens must be $expectedTokens',
+    );
+
+    final int rolledSeq = seq + 1;
+    final int turnSeq = seq + 2;
+    transport.pushText(
+      _frame(
+        type: 'rolled',
+        data: <String, Object?>{
+          'seat': 0,
+          'value': rollValue,
+          'legal': <int>[],
+          'deadline_ms': 41000,
+          'k': 1,
+          'seq': rolledSeq,
+        },
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'turn',
+        data: <String, Object?>{
+          'seat': 2,
+          'deadline_ms': 45000,
+          'seq': turnSeq,
+        },
+      ),
+    );
+    seq = turnSeq;
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: expected room seq $seq after rolled/turn pair, '
+          'got ${controller.room!.seq}',
+    );
+    expect(
+      controller.room!.turn!.seat,
+      2,
+      reason:
+          'capture $shotName: expected turn seat 2 (Karim) immediately after '
+          'the rolled/turn pair landed, got ${controller.room!.turn!.seat}',
+    );
+
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    final String expectedLine = needExact
+        ? loc.gameNoMoveNeedExact
+        : loc.gameNoMoveNeedSix;
+    _expectNoMoveVisible(
+      tester,
+      loc: loc,
+      momentDescription:
+          'immediately after the rolled/turn pair landed, before the '
+          '~300ms settle',
+      expectedText: expectedLine,
+    );
+
+    await _pumpRealDurationFrames(tester, frameCount: 10);
+
+    expect(
+      controller.room!.turn!.seat,
+      2,
+      reason:
+          'capture $shotName: after the ~300ms settle, expected turn seat 2 '
+          '(Karim) immediately before the capture, got '
+          '${controller.room!.turn!.seat}',
+    );
+    _expectNoMoveVisible(
+      tester,
+      loc: loc,
+      momentDescription:
+          'after the ~300ms settle, immediately before capture $shotName',
+      expectedText: expectedLine,
+    );
+    _expectKey(
+      tester,
+      Key('game-die-face-$rollValue'),
+      present: true,
+      reason:
+          'capture $shotName: C-474 D1, the big die must show face $rollValue',
+    );
+    expect(
+      tester.widget<Text>(find.byKey(const Key('game-no-move-notice'))).data,
+      expectedLine,
+      reason:
+          'capture $shotName: C-474 D1/D2, game-no-move-notice must read '
+          '"$expectedLine"',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
   }
 }

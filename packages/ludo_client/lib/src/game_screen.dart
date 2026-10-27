@@ -42,6 +42,7 @@ import 'net/connection.dart';
 import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
+import 'no_move_reason.dart';
 import 'roll_tray.dart';
 import 'safe_cue.dart';
 import 'seat_die.dart';
@@ -333,6 +334,9 @@ class _GameScreenState extends State<GameScreen> {
   Timer? _noMoveTimer;
   bool _noMoveVisible = false;
   int? _noMoveFace;
+  // C-474 D1: why the armed notice has no move. Fixed when the notice arms
+  // and untouched while it is up, even when a snapshot lands under it.
+  NoMoveReason _noMoveReason = NoMoveReason.plain;
 
   // C-426 (order 428, docs/PROTOCOL.md section 22): a `rolled` or `moved`
   // whose raw data carries `by == "timer"` exactly. Mine
@@ -632,6 +636,11 @@ class _GameScreenState extends State<GameScreen> {
           .where((FeedbackCue cue) => cue != FeedbackCue.noMove)
           .toList();
     }
+    // C-474 D3.3: the announcement below plays before the notice arms, so
+    // the reason is taken first and both read the same one.
+    if (frame.type == 'rolled' && cues.contains(FeedbackCue.noMove)) {
+      _resolveNoMoveReason(_intAt(frame.data, 'value'));
+    }
     if (frame.type == 'turn' && cues.contains(FeedbackCue.yourTurn)) {
       final TurnState? liveTurn = widget.controller.room?.turn;
       if (liveTurn != null && liveTurn.seat == widget.controller.seat) {
@@ -809,7 +818,8 @@ class _GameScreenState extends State<GameScreen> {
       case FeedbackCue.yourTurn:
         return loc.gameYourTurnStale;
       case FeedbackCue.noMove:
-        return loc.gameNoMove;
+        // C-474 D3.3: the same line the notice shows.
+        return _noMoveLine(loc, _noMoveReason);
       case FeedbackCue.capturedOther:
         return loc.announceCapturedOther;
       case FeedbackCue.capturedMe:
@@ -1418,6 +1428,7 @@ class _GameScreenState extends State<GameScreen> {
     _noMoveTimer = null;
     _noMoveVisible = false;
     _noMoveFace = null;
+    _noMoveReason = NoMoveReason.plain;
     _timerPlayedOtherTimer?.cancel();
     _timerPlayedOtherTimer = null;
     _timerPlayedMineVisible = false;
@@ -1469,7 +1480,46 @@ class _GameScreenState extends State<GameScreen> {
     _gameLogTargetId = null;
   }
 
+  /// C-474 D1: takes the reason for a notice arming on [face]. A notice
+  /// already up on the same face keeps the reason it was armed with. `F` is
+  /// the live queue when it is not empty, otherwise just the face; `U` is
+  /// read off my own seat's tokens in the room the controller holds.
+  void _resolveNoMoveReason(int? face) {
+    if (_noMoveVisible && _noMoveFace == face) {
+      return;
+    }
+    final RoomSnapshot? room = widget.controller.room;
+    final int? mySeat = widget.controller.seat;
+    List<int>? mine;
+    if (room != null && mySeat != null) {
+      for (final SeatState seatState in room.seats) {
+        if (seatState.seat == mySeat) {
+          mine = seatState.tokens;
+        }
+      }
+    }
+    final List<int> queue = room?.turn?.queue ?? const <int>[];
+    final List<int> faces = queue.isNotEmpty
+        ? List<int>.from(queue)
+        : <int>[?face];
+    _noMoveReason = mine == null
+        ? NoMoveReason.plain
+        : noMoveReason(myTokens: mine, faces: faces);
+  }
+
+  String _noMoveLine(AppLocalizations loc, NoMoveReason reason) {
+    switch (reason) {
+      case NoMoveReason.needSix:
+        return loc.gameNoMoveNeedSix;
+      case NoMoveReason.needExact:
+        return loc.gameNoMoveNeedExact;
+      case NoMoveReason.plain:
+        return loc.gameNoMove;
+    }
+  }
+
   void _armNoMoveHold(int? face) {
+    _resolveNoMoveReason(face);
     _noMoveTimer?.cancel();
     _noMoveTimer = Timer(_noMoveHold, _dropNoMoveHold);
     if (_noMoveVisible && _noMoveFace == face) {
@@ -1490,6 +1540,7 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {
       _noMoveVisible = false;
       _noMoveFace = null;
+      _noMoveReason = NoMoveReason.plain;
     });
   }
 
@@ -4125,7 +4176,15 @@ class _GameScreenState extends State<GameScreen> {
     }
 
     return math.max(
-      math.max(heightOf(loc.gameNoMove), heightOf(loc.gameSeatOffline(''))),
+      math.max(
+        // C-474 A2: the two reason lines are measured unbounded, exactly as
+        // the plain line is, so the slot is the tallest of the three.
+        math.max(heightOf(loc.gameNoMove), heightOf(loc.gameSeatOffline(''))),
+        math.max(
+          heightOf(loc.gameNoMoveNeedSix),
+          heightOf(loc.gameNoMoveNeedExact),
+        ),
+      ),
       // C-426 D5 (order 428): these two measure at `maxLines: 1`, matching
       // the live Text widgets below -- the slot's own rest height must
       // never be able to grow from either one wrapping to a second line.
@@ -4434,6 +4493,26 @@ class _GameScreenState extends State<GameScreen> {
           child: Opacity(
             opacity: 0,
             child: Text(
+              loc.gameNoMoveNeedSix,
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+            ),
+          ),
+        ),
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(
+              loc.gameNoMoveNeedExact,
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+            ),
+          ),
+        ),
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(
               loc.gameSeatOffline(''),
               textAlign: TextAlign.center,
               textScaler: scaler,
@@ -4467,7 +4546,7 @@ class _GameScreenState extends State<GameScreen> {
         if (_noMoveVisible)
           Positioned.fill(
             child: Text(
-              loc.gameNoMove,
+              _noMoveLine(loc, _noMoveReason),
               key: const Key('game-no-move-notice'),
               textAlign: TextAlign.center,
               textScaler: scaler,

@@ -511,3 +511,48 @@ Rect yardQuadrantViewRect(Rect board, int seat, int? mySeat) {
     board.top + (maxRow + 1) * cell,
   );
 }
+
+/// My own seat (0) rolls [face] with no legal token, as the server frames it
+/// when the roll voids the turn (docs/PROTOCOL.md section 21.3, rule 4):
+/// `rolled` with an empty `legal` and an empty `queue`, then `turn_passed`
+/// `no_legal_move`, then the next seat's `turn`. Each frame is flushed with
+/// the two bare pumps [RollTrayDrive.push] runs; no fake time passes, so the
+/// no-move notice is up when this returns.
+Future<void> pushMyNoMoveRoll(
+  WidgetTester tester,
+  RollTrayDrive drive, {
+  required int face,
+  int k = 1,
+}) async {
+  await drive.push(tester, 'rolled', <String, Object?>{
+    'seat': 0,
+    'value': face,
+    'legal': <int>[],
+    'deadline_ms': rollTrayDeadlineMs,
+    'k': k,
+    'reveal': rollTrayReveal,
+    'queue': <int>[],
+  });
+  await drive.push(tester, 'turn_passed', <String, Object?>{
+    'seat': 0,
+    'reason': 'no_legal_move',
+  });
+  await drive.push(tester, 'turn', <String, Object?>{
+    'seat': 1,
+    'phase': 'await_roll',
+    'deadline_ms': rollTrayDeadlineMs,
+    'queue': <int>[],
+  });
+}
+
+/// The height of the below-die notice slot while the no-move notice is up.
+/// The notice is a `Positioned.fill` child of the slot's `Stack`, and that
+/// `Stack` is the nearest ancestor `Stack` of the notice; the `Stack` is
+/// sized by the invisible measuring children, so its height is the slot's
+/// reserved height.
+double noMoveNoticeSlotHeight(WidgetTester tester) {
+  final Finder slot = find
+      .ancestor(of: find.byKey(noMoveNoticeKey), matching: find.byType(Stack))
+      .first;
+  return tester.getSize(slot).height;
+}
