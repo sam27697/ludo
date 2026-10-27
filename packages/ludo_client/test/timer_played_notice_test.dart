@@ -1972,6 +1972,16 @@ void main() {
             await tester.pump();
             await tester.pump();
 
+            // Run 112, review item C9: without this the comparison below
+            // passes when the notice never renders at all.
+            expect(
+              find.byKey(_mineKey),
+              findsOneWidget,
+              reason:
+                  'D5 (${locale.languageCode}, scale $scale): '
+                  'game-timer-played-notice must be on screen before the '
+                  'board rect is compared',
+            );
             final Rect after = tester.getRect(find.byKey(_boardKey));
             expect(
               _rectsClose(before, after),
@@ -1979,12 +1989,7 @@ void main() {
               reason:
                   'D5 (${locale.languageCode}, scale $scale): the board '
                   'rect must not move when game-timer-played-notice '
-                  'appears; before=$before after=$after. On this tree '
-                  '(no D3 implementation) the notice never actually '
-                  'renders, so before and after are the same render and '
-                  'this passes for the degenerate reason explained in '
-                  'this file\'s header ambiguity 2 -- it becomes 428\'s '
-                  'own regression guard once the notice is real',
+                  'appears; before=$before after=$after',
             );
           },
         );

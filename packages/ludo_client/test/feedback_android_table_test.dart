@@ -26,6 +26,13 @@
 // matching `"tap"` entries together, and it would fail if either side
 // gained its entry without the other.
 //
+// C-468 D6 (order 469): `die_land` and `gloat` are sound only. They are
+// keys of `soundResources` and of neither haptic table; every other id
+// keeps the rule above. The three-table cross-check still reads its ids
+// from `FeedbackCue.values`; the two sound-only ids are named from the
+// contract and also asserted to be Dart cue ids, so one side gaining them
+// without the other is caught.
+//
 // `path`'s `Directory`/`File` walk to the package root, and down to the
 // Kotlin file, is copied by hand from test/color_alias_scan_test.dart's
 // own `_findPackageRoot`, per this project's standing instruction never to
@@ -137,23 +144,67 @@ void main() {
       .map((FeedbackCue cue) => cue.id)
       .toSet();
 
-  test('every FeedbackCue id is a key of hapticTimings in MainActivity.kt', () {
-    for (final String id in dartIds) {
+  // C-468 D4, D5 and D6: sound only. They are keys of soundResources and
+  // of neither haptic table; every other cue id keeps the C-422 rule.
+  const Set<String> soundOnly = <String>{'die_land', 'gloat'};
+
+  test('die_land and gloat are FeedbackCue ids (C-468 D6)', () {
+    for (final String id in soundOnly) {
       expect(
-        hapticTimingKeys.contains(id),
+        dartIds.contains(id),
         isTrue,
         reason:
-            'FeedbackCue id "$id" must be a key of hapticTimings in '
-            'MainActivity.kt; hapticTimings carries '
-            '${hapticTimingKeys.toList()..sort()}',
+            'C-468 D6 adds the cue id "$id" to FeedbackCue; the ids are '
+            '${dartIds.toList()..sort()}',
       );
     }
   });
 
-  test(
-    'every FeedbackCue id is a key of hapticAmplitudes in MainActivity.kt',
-    () {
-      for (final String id in dartIds) {
+  test('every FeedbackCue id except die_land and gloat is a key of '
+      'hapticTimings in MainActivity.kt; die_land and gloat are not', () {
+    for (final String id in dartIds) {
+      if (soundOnly.contains(id)) {
+        expect(
+          hapticTimingKeys.contains(id),
+          isFalse,
+          reason:
+              'FeedbackCue id "$id" is sound only (C-468 D6) and must not '
+              'be a key of hapticTimings; hapticTimings carries '
+              '${hapticTimingKeys.toList()..sort()}',
+        );
+      } else {
+        expect(
+          hapticTimingKeys.contains(id),
+          isTrue,
+          reason:
+              'FeedbackCue id "$id" must be a key of hapticTimings in '
+              'MainActivity.kt; hapticTimings carries '
+              '${hapticTimingKeys.toList()..sort()}',
+        );
+      }
+    }
+    for (final String id in soundOnly) {
+      expect(
+        hapticTimingKeys.contains(id),
+        isFalse,
+        reason: '"$id" must not be a key of hapticTimings (C-468 D6)',
+      );
+    }
+  });
+
+  test('every FeedbackCue id except die_land and gloat is a key of '
+      'hapticAmplitudes in MainActivity.kt; die_land and gloat are not', () {
+    for (final String id in dartIds) {
+      if (soundOnly.contains(id)) {
+        expect(
+          hapticAmplitudeKeys.contains(id),
+          isFalse,
+          reason:
+              'FeedbackCue id "$id" is sound only (C-468 D6) and must not '
+              'be a key of hapticAmplitudes; hapticAmplitudes carries '
+              '${hapticAmplitudeKeys.toList()..sort()}',
+        );
+      } else {
         expect(
           hapticAmplitudeKeys.contains(id),
           isTrue,
@@ -163,11 +214,19 @@ void main() {
               '${hapticAmplitudeKeys.toList()..sort()}',
         );
       }
-    },
-  );
+    }
+    for (final String id in soundOnly) {
+      expect(
+        hapticAmplitudeKeys.contains(id),
+        isFalse,
+        reason: '"$id" must not be a key of hapticAmplitudes (C-468 D6)',
+      );
+    }
+  });
 
   test('every FeedbackCue id except invalid_tap and tap is a key of '
-      'soundResources; invalid_tap and tap are not', () {
+      'soundResources; invalid_tap and tap are not; die_land and gloat '
+      'are', () {
     const Set<String> hapticOnly = <String>{'invalid_tap', 'tap'};
     for (final String id in dartIds) {
       if (hapticOnly.contains(id)) {
@@ -190,5 +249,33 @@ void main() {
         );
       }
     }
+    for (final String id in soundOnly) {
+      expect(
+        soundResourceKeys.contains(id),
+        isTrue,
+        reason:
+            '"$id" must be a key of soundResources (C-468 D6); '
+            'soundResources carries ${soundResourceKeys.toList()..sort()}',
+      );
+    }
   });
+
+  test(
+    'the comment above soundResources names the build script (C-468 D6)',
+    () {
+      final int at = source.indexOf(RegExp(r'val\s+soundResources'));
+      expect(at, greaterThanOrEqualTo(0), reason: 'soundResources not found');
+      final String before = source.substring(0, at);
+      final String lastBlock = before.substring(
+        before.lastIndexOf('\n\n') < 0 ? 0 : before.lastIndexOf('\n\n'),
+      );
+      expect(
+        lastBlock.contains('build_feedback_sounds.py'),
+        isTrue,
+        reason:
+            'the comment directly above soundResources must name '
+            'tool/build_feedback_sounds.py; the text above it was:\n$lastBlock',
+      );
+    },
+  );
 }
