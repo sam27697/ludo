@@ -28,6 +28,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
+import 'capture_gloat.dart';
 import 'die_cube.dart';
 import 'die_mark.dart';
 import 'end_card.dart';
@@ -363,6 +364,16 @@ class _GameScreenState extends State<GameScreen> {
   // dispose and _resetForNewGame.
   final List<_PendingLandingCues> _pendingLandingCues = <_PendingLandingCues>[];
 
+  // C-468 D5: one gloat on the capturer's yard. Pending entries wait for
+  // the same three releases as the landing cues above. The sound timer
+  // belongs to the captured seat; a replace or a removal before it fires
+  // cancels it.
+  BoardGloat? _gloat;
+  int _gloatSerial = 0;
+  Timer? _gloatSoundTimer;
+  Timer? _gloatLifeTimer;
+  final List<_PendingGloat> _pendingGloats = <_PendingGloat>[];
+
   // C-384: at most one safe-landing pill. Held like a landing cue until
   // the mover's onMoveLanded (or kLandingCueFallback, or a travel snap),
   // except under reduced motion, where it shows on the moved frame.
@@ -483,6 +494,8 @@ class _GameScreenState extends State<GameScreen> {
     _mountTurnFrame = null;
     _frameSub?.cancel();
     widget.controller.removeListener(_onControllerChanged);
+    // C-468 D5: disposing before the 250 ms cancels the captured seat's sound.
+    _removeGloat();
     super.dispose();
   }
 
@@ -649,6 +662,19 @@ class _GameScreenState extends State<GameScreen> {
         _playCue(feedback, cue);
       }
     }
+    // C-468 D4: my own roll that left neither canMove nor noMove after the
+    // queue filter. Those two clips are themselves the landing.
+    _maybePlayOwnDieLand(frame, cues);
+    // C-468 D5: a live moved with a capture. A snapshot never reaches
+    // this, and a resync's ignored frames are skipped inside.
+    if (frame.type == 'moved') {
+      _considerGloat(frame);
+    }
+    if (frame.type == 'game_over') {
+      // Still in the air: the landing may still start one. Already down:
+      // the end card takes the board, so nothing pending may start later.
+      _removeGloat(pending: _travelCount == 0);
+    }
     // C-377 D5: a move or a passed turn while a throw is travelling
     // shortens that throw. It does not play a cue of its own (D9).
     if (frame.type == 'moved' || frame.type == 'turn_passed') {
@@ -723,6 +749,7 @@ class _GameScreenState extends State<GameScreen> {
   /// (C-422 D2/D3 play it straight off the die and token tap handlers, in
   /// the tap's own frame, not through the frame-driven table rule 1
   /// covers); the case below exists only so this switch stays exhaustive.
+  /// `dieLand` and `gloat` are sound only and answer null (C-468 D4, D5).
   String? _announcementFor(FeedbackCue cue, {RoomSnapshot? snapshot}) {
     final AppLocalizations loc = AppLocalizations.of(context);
     switch (cue) {
@@ -744,6 +771,8 @@ class _GameScreenState extends State<GameScreen> {
       case FeedbackCue.step:
       case FeedbackCue.invalidTap:
       case FeedbackCue.tap:
+      case FeedbackCue.dieLand:
+      case FeedbackCue.gloat:
         return null;
     }
   }
@@ -855,6 +884,8 @@ class _GameScreenState extends State<GameScreen> {
       entry.fallbackTimer = null;
       _playCues(entry.cues);
     }
+    // C-468 D5: the same landing that releases the cues starts the gloat.
+    _releaseGloatForLanding(seat, token);
     if (_isEndHeld && _travelCount == 0 && _endHoldDwellTimer == null) {
       _endHoldDwellTimer = Timer(kEndCardDwell, _releaseEndHold);
     }
@@ -864,6 +895,9 @@ class _GameScreenState extends State<GameScreen> {
   void _onBoardTravelReset() {
     _travelCount = 0;
     _safeCueLandingsToIgnore = 0;
+    // C-468 D5: a snap is one of the three releases. The board calls this
+    // from its own update, so the face is applied on the next frame.
+    _flushPendingGloats();
     // C-408 D7: a snap draws every token at truth at once (C-252 rule 2),
     // so every leg this screen was still waiting on has, in effect,
     // landed. Drop the bookkeeping and let a hold still waiting on one of
@@ -895,6 +929,8 @@ class _GameScreenState extends State<GameScreen> {
     _endHoldDwellTimer = null;
     _endHoldLimitTimer?.cancel();
     _endHoldLimitTimer = null;
+    // C-468 D5: the end card replaces the playing board.
+    _removeGloat();
     _flushPendingLandingCues();
     final List<FeedbackCue> cues = List<FeedbackCue>.from(_heldGameOverCues);
     _heldGameOverCues.clear();
@@ -926,6 +962,183 @@ class _GameScreenState extends State<GameScreen> {
       entry.fallbackTimer = null;
     }
     _pendingLandingCues.clear();
+  }
+
+  /// C-468 D4. A `rolled` for my seat whose cues, after the queue filter,
+  /// hold neither `canMove` nor `noMove`. The 6 that still owes a roll and
+  /// has nothing to move is the case that used to land in silence.
+  void _maybePlayOwnDieLand(Frame frame, List<FeedbackCue> cues) {
+    if (frame.type != 'rolled' || widget.controller.hasDesynced) {
+      return;
+    }
+    final int? seat = _intAt(frame.data, 'seat');
+    final int? mySeat = widget.controller.seat;
+    if (seat == null || mySeat == null || seat != mySeat) {
+      return;
+    }
+    if (cues.contains(FeedbackCue.canMove) ||
+        cues.contains(FeedbackCue.noMove)) {
+      return;
+    }
+    _playCue(FeedbackScope.of(context), FeedbackCue.dieLand);
+  }
+
+  /// C-468 D4. One sound per throw. A hurried throw still lands once.
+  void _playDieLandOnce(_QueuedThrow thrown) {
+    if (thrown.dieLandPlayed || !mounted || _screenDisposed) {
+      return;
+    }
+    thrown.dieLandPlayed = true;
+    _playCue(FeedbackScope.of(context), FeedbackCue.dieLand);
+  }
+
+  /// C-468 D5. A live `moved` whose `captured` list is non-empty. Empty,
+  /// missing, a snapshot and a frame ignored by a resync do not start one.
+  void _considerGloat(Frame frame) {
+    if (widget.controller.hasDesynced) {
+      return;
+    }
+    final Object? captured = frame.data['captured'];
+    if (captured is! List || captured.isEmpty) {
+      return;
+    }
+    final int? seat = _intAt(frame.data, 'seat');
+    final int? token = _intAt(frame.data, 'token');
+    if (seat == null || token == null || seat < 0 || seat > 3) {
+      return;
+    }
+    final List<int> capturedSeats = <int>[];
+    for (final Object? entry in captured) {
+      if (entry is Map) {
+        final Object? entrySeat = entry['seat'];
+        if (entrySeat is int) {
+          capturedSeats.add(entrySeat);
+        }
+      }
+    }
+    _holdGloat(seat, token, capturedSeats);
+  }
+
+  void _holdGloat(int seat, int token, List<int> capturedSeats) {
+    final _PendingGloat pending = _PendingGloat(
+      seat: seat,
+      token: token,
+      capturedSeats: capturedSeats,
+    );
+    pending.fallbackTimer = Timer(kLandingCueFallback, () {
+      if (!_pendingGloats.remove(pending)) {
+        return;
+      }
+      pending.fallbackTimer = null;
+      _beginGloat(pending);
+    });
+    _pendingGloats.add(pending);
+  }
+
+  void _releaseGloatForLanding(int seat, int token) {
+    final int index = _pendingGloats.indexWhere(
+      (entry) => entry.seat == seat && entry.token == token,
+    );
+    if (index == -1) {
+      return;
+    }
+    final _PendingGloat pending = _pendingGloats.removeAt(index);
+    pending.fallbackTimer?.cancel();
+    pending.fallbackTimer = null;
+    _beginGloat(pending);
+  }
+
+  void _flushPendingGloats() {
+    if (_pendingGloats.isEmpty) {
+      return;
+    }
+    final List<_PendingGloat> entries = List<_PendingGloat>.of(_pendingGloats);
+    _pendingGloats.clear();
+    for (final _PendingGloat entry in entries) {
+      entry.fallbackTimer?.cancel();
+      entry.fallbackTimer = null;
+      _beginGloat(entry);
+    }
+  }
+
+  void _dropPendingGloats() {
+    for (final _PendingGloat entry in _pendingGloats) {
+      entry.fallbackTimer?.cancel();
+      entry.fallbackTimer = null;
+    }
+    _pendingGloats.clear();
+  }
+
+  /// Starts the face and, when this screen's seat was captured, the sound
+  /// 250 ms later. A gloat already up is replaced, and its sound goes with
+  /// it if the 250 ms had not elapsed. C-468 D5.
+  void _beginGloat(_PendingGloat pending) {
+    _gloatSoundTimer?.cancel();
+    _gloatSoundTimer = null;
+    _gloatLifeTimer?.cancel();
+    _gloatLifeTimer = null;
+    _gloatSerial++;
+    final int serial = _gloatSerial;
+    final int seat = pending.seat;
+    _gloat = BoardGloat(seat: seat, serial: serial);
+    _scheduleGloatRebuild();
+    final int? mySeat = widget.controller.seat;
+    if (mySeat != null &&
+        mySeat != seat &&
+        pending.capturedSeats.contains(mySeat)) {
+      _gloatSoundTimer = Timer(kCaptureGloatSoundDelay, () {
+        _gloatSoundTimer = null;
+        if (!mounted || _screenDisposed || _gloat?.serial != serial) {
+          return;
+        }
+        _playCue(FeedbackScope.of(context), FeedbackCue.gloat);
+      });
+    }
+    _gloatLifeTimer = Timer(kCaptureGloatLife, () {
+      _gloatLifeTimer = null;
+      if (_gloat?.serial != serial) {
+        return;
+      }
+      _gloat = null;
+      _scheduleGloatRebuild();
+    });
+  }
+
+  /// The board reports a snap from inside its own update, so a setState
+  /// here has to wait until that frame is done. Same pattern as the
+  /// auto-move banner. C-468 D5.
+  void _scheduleGloatRebuild() {
+    if (!mounted || _screenDisposed) {
+      return;
+    }
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_screenDisposed) {
+          setState(() {});
+        }
+      });
+      return;
+    }
+    setState(() {});
+  }
+
+  /// Game over, resync, a new game, dispose. Cancels the sound when the
+  /// 250 ms has not elapsed. [pending] false leaves a gloat that is still
+  /// waiting for its landing. C-468 D5.
+  void _removeGloat({bool pending = true}) {
+    _gloatSoundTimer?.cancel();
+    _gloatSoundTimer = null;
+    _gloatLifeTimer?.cancel();
+    _gloatLifeTimer = null;
+    if (pending) {
+      _dropPendingGloats();
+    }
+    if (_gloat == null) {
+      return;
+    }
+    _gloat = null;
+    _scheduleGloatRebuild();
   }
 
   /// C-384 S1 and S2. A `moved` frame with an empty `captured`, a
@@ -1185,6 +1398,7 @@ class _GameScreenState extends State<GameScreen> {
     _trayDeadFaces = null;
     _facePick = null;
     _dropPendingLandingCues();
+    _removeGloat();
     _clearSafeCue();
     _endHoldDwellTimer?.cancel();
     _endHoldDwellTimer = null;
@@ -1711,6 +1925,10 @@ class _GameScreenState extends State<GameScreen> {
         controller.phase == RoomPhase.closed) {
       _travelCount = 0;
     }
+    // C-468 D5: resync notifies with hasDesynced before the snapshot.
+    if (controller.hasDesynced) {
+      _removeGloat();
+    }
     _notePlayingGame();
     if (controller.phase != RoomPhase.connected) {
       _dropWhatTheLinkArmed();
@@ -1740,6 +1958,8 @@ class _GameScreenState extends State<GameScreen> {
   /// receive that frame.
   void _dropWhatTheLinkArmed() {
     _dropPendingLandingCues();
+    // C-468 D5: a resync or a dropped link does not carry a gloat across.
+    _removeGloat();
     _safeCueEpoch++;
     _safeCueLandingsToIgnore = 0;
     _dropPendingSafeCue();
@@ -1808,6 +2028,8 @@ class _GameScreenState extends State<GameScreen> {
     if (!_throwConcealsFace) {
       final _QueuedThrow landed = _activeThrow!;
       _rememberedSeatFaces[landed.seat] = landed.face;
+      // C-468 D4: reduced motion has already landed, so the sound is now.
+      _playDieLandOnce(landed);
     }
   }
 
@@ -1907,17 +2129,23 @@ class _GameScreenState extends State<GameScreen> {
     if (conceal == _throwConcealsFace || !mounted) {
       return;
     }
+    _QueuedThrow? landed;
     setState(() {
       _throwConcealsFace = conceal;
       // Leaving the tumble is the landing. The face enters memory here,
       // not when the throw was queued (C-465 D2).
       if (!conceal) {
-        final _QueuedThrow? landed = _activeThrow;
+        landed = _activeThrow;
         if (landed != null) {
-          _rememberedSeatFaces[landed.seat] = landed.face;
+          _rememberedSeatFaces[landed!.seat] = landed!.face;
         }
       }
     });
+    // C-468 D4: once per throw, including a hurried one. The flag stops
+    // a later rest-to-fade phase from playing it again.
+    if (landed != null) {
+      _playDieLandOnce(landed!);
+    }
   }
 
   void _onThrowDone() {
@@ -3301,6 +3529,10 @@ class _GameScreenState extends State<GameScreen> {
         ? null
         : turn?.value;
     final int? dieFace = _boardDieFace(rawDieFace);
+    // C-468 D7: the idle die under the board, while another seat holds
+    // the turn and my no-move hold is not up. Full opacity otherwise.
+    final bool fadeIdleDie =
+        seat != null && turn != null && turn.seat != seat && !_noMoveVisible;
 
     final (
       List<int>? trayFaces,
@@ -3437,6 +3669,7 @@ class _GameScreenState extends State<GameScreen> {
                   overlay: _thrownDieOverlay(seat),
                   seatDice: _seatDiceOf(room),
                   seatRecord: boardRecord,
+                  gloat: _gloat,
                 ),
               ),
               SizedBox(height: metrics.boardGap),
@@ -3452,27 +3685,32 @@ class _GameScreenState extends State<GameScreen> {
                     _boardDieSlot(
                       loc,
                       turn,
-                      GameDie(
-                        face: dieFace,
-                        seatColor: dieSeatColor,
-                        enabled: rollEnabled,
-                        tumbling: _rollWaitK != null,
-                        noAnswer: _rollNoAnswer,
-                        noMove: _noMoveVisible,
-                        // C-404: the die's top sits exactly at the row's own
-                        // top (it is the tallest thing in the row), which
-                        // sits `metrics.boardGap` below the board -- the
-                        // same number board_floor_nav_inset_test.dart
-                        // measures as die.top - board.bottom. Handing that
-                        // straight to the die is what lets its badge clamp
-                        // itself without this column's gaps, clamp or floor
-                        // changing at all.
-                        badgeHeadroom: metrics.boardGap,
-                        onTap: rollEnabled ? _onDieTap : null,
-                        onInvalidTap: () {
-                          FeedbackScope.of(context)
-                              .play(FeedbackCue.invalidTap);
-                        },
+                      // C-468 D7: Opacity is an ancestor of the die's art.
+                      // The key on the die is unchanged.
+                      Opacity(
+                        opacity: fadeIdleDie ? 0.45 : 1,
+                        child: GameDie(
+                          face: dieFace,
+                          seatColor: dieSeatColor,
+                          enabled: rollEnabled,
+                          tumbling: _rollWaitK != null,
+                          noAnswer: _rollNoAnswer,
+                          noMove: _noMoveVisible,
+                          // C-404: the die's top sits exactly at the row's own
+                          // top (it is the tallest thing in the row), which
+                          // sits `metrics.boardGap` below the board -- the
+                          // same number board_floor_nav_inset_test.dart
+                          // measures as die.top - board.bottom. Handing that
+                          // straight to the die is what lets its badge clamp
+                          // itself without this column's gaps, clamp or floor
+                          // changing at all.
+                          badgeHeadroom: metrics.boardGap,
+                          onTap: rollEnabled ? _onDieTap : null,
+                          onInvalidTap: () {
+                            FeedbackScope.of(context)
+                                .play(FeedbackCue.invalidTap);
+                          },
+                        ),
                       ),
                     ),
                     if (trayFaces != null && boardRecord == null) ...[
@@ -4692,11 +4930,15 @@ class _PlayColumnMetrics {
 
 /// One opponent roll waiting to be thrown, or the one currently in flight.
 class _QueuedThrow {
-  const _QueuedThrow({required this.k, required this.seat, required this.face});
+  _QueuedThrow({required this.k, required this.seat, required this.face});
 
   final int k;
   final int seat;
   final int face;
+
+  /// C-468 D4: set the moment this throw's landing is heard, so a later
+  /// phase of the same throw does not play it again.
+  bool dieLandPlayed = false;
 }
 
 /// Pairs in [next] that were appended to [prev], or null when [next] is
@@ -4772,6 +5014,20 @@ class _PendingSafeCue {
   final int token;
   final int progress;
   final bool star;
+  Timer? fallbackTimer;
+}
+
+/// C-468 D5: one capture waiting for the mover's landing.
+class _PendingGloat {
+  _PendingGloat({
+    required this.seat,
+    required this.token,
+    required this.capturedSeats,
+  });
+
+  final int seat;
+  final int token;
+  final List<int> capturedSeats;
   Timer? fallbackTimer;
 }
 
