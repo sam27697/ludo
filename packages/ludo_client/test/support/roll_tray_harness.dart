@@ -79,6 +79,25 @@ Key facePickerOptionKey(int face) => Key('board-face-picker-option-$face');
 
 const String _facePickerOptionPrefix = 'board-face-picker-option-';
 
+/// C-471 D3: the hint control. The root carries `game-hint-button`; exactly
+/// one of the three state keys sits inside it.
+const Key hintButtonKey = Key('game-hint-button');
+const Key hintReadyKey = Key('game-hint-ready');
+const Key hintWaitingKey = Key('game-hint-waiting');
+const Key hintUsedKey = Key('game-hint-used');
+
+/// C-471 D4: the marker on the hinted token and its face chip.
+Key boardHintKey(int token) => Key('board-hint-$token');
+
+Key boardHintFaceKey(int face) => Key('board-hint-face-$face');
+
+/// C-471 D4: wraps the face picker option of the hinted face.
+Key facePickerHintedKey(int face) => Key('board-face-picker-hinted-$face');
+
+/// C-471 D5: the SharedPreferences key that holds the last game id the hint
+/// was spent in.
+const String hintUsedPrefsKey = 'session.hintUsedGame';
+
 int _serverIdSeq = 0;
 
 String _nextServerId() {
@@ -160,9 +179,12 @@ Map<String, Object?> _roomJson({
   Map<String, Object?>? turn,
   int seq = 1,
   int players = 2,
+  String? gameId,
+  String state = 'PLAYING',
+  int? winner,
 }) => <String, Object?>{
   'code': 'K7M2QP',
-  'state': 'PLAYING',
+  'state': state,
   'host_seat': 0,
   'players': players,
   'rules': <String, Object?>{
@@ -172,21 +194,33 @@ Map<String, Object?> _roomJson({
   },
   'chain_commit': 'a' * 64,
   'chain_index': 0,
-  'game_id': null,
+  'game_id': gameId,
   'client_seeds': null,
   'seats': seats,
   'turn': turn,
-  'winner': null,
+  'winner': winner,
   'seq': seq,
 };
 
 /// A room snapshot body in wire shape, for a server-initiated `room` push
-/// ([RollTrayDrive.push] stamps the sequence number).
+/// ([RollTrayDrive.push] stamps the sequence number). [gameId], [state] and
+/// [winner] default to what every earlier caller got: no game id, PLAYING,
+/// no winner.
 Map<String, Object?> roomData({
   required List<Map<String, Object?>> seats,
   Map<String, Object?>? turn,
   int players = 2,
-}) => _roomJson(seats: seats, turn: turn, players: players);
+  String? gameId,
+  String state = 'PLAYING',
+  int? winner,
+}) => _roomJson(
+  seats: seats,
+  turn: turn,
+  players: players,
+  gameId: gameId,
+  state: state,
+  winner: winner,
+);
 
 class _Connector {
   final List<FakeTransport> _queue = <FakeTransport>[];
@@ -249,13 +283,19 @@ class RollTrayDrive {
 /// createRoom, then seat_assigned and a room snapshot. [turn] is the
 /// snapshot turn object, already in wire shape. [mySeat] is the seat the
 /// server assigns this client (0 unless a case needs another view) and
-/// [players] the room's player count.
+/// [players] the room's player count. [gameId], [state] and [winner] are the
+/// snapshot's own fields (defaults: no game id, PLAYING, no winner), and
+/// [sendSeatAssigned] false leaves this client with no seat at all.
 Future<RollTrayDrive> connectPlaying(
   WidgetTester tester, {
   required Map<String, Object?>? turn,
   List<Map<String, Object?>>? seats,
   int mySeat = 0,
   int players = 2,
+  String? gameId,
+  String state = 'PLAYING',
+  int? winner,
+  bool sendSeatAssigned = true,
 }) async {
   final _Connector connector = _Connector();
   final FakeTransport transport = FakeTransport();
@@ -268,17 +308,26 @@ Future<RollTrayDrive> connectPlaying(
   await tester.runAsync(() => pumpEventQueue());
   await tester.pump();
   final String id = _idOf(transport.sentRaw.last);
-  transport.pushText(
-    _frame(
-      type: 'seat_assigned',
-      data: <String, Object?>{'seat': mySeat, 'seat_token': 'tok-$mySeat'},
-    ),
-  );
+  if (sendSeatAssigned) {
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': mySeat, 'seat_token': 'tok-$mySeat'},
+      ),
+    );
+  }
   transport.pushText(
     _frame(
       type: 'room',
       re: id,
-      data: _roomJson(seats: seats ?? twoSeats(), turn: turn, players: players),
+      data: _roomJson(
+        seats: seats ?? twoSeats(),
+        turn: turn,
+        players: players,
+        gameId: gameId,
+        state: state,
+        winner: winner,
+      ),
     ),
   );
   await future;

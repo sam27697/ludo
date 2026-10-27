@@ -72,11 +72,17 @@ class TokenFacePickerBubble extends StatefulWidget {
     required this.pick,
     required this.placeBelow,
     required this.pointerDx,
+    this.hintedFace,
   });
 
   final TokenFacePick pick;
   final bool placeBelow;
   final double pointerDx;
+
+  /// C-471 D4: the face whose option is drawn with the green outline, or
+  /// null when this picker is not on the hinted token. Null leaves every
+  /// option as it was.
+  final int? hintedFace;
 
   @override
   State<TokenFacePickerBubble> createState() => _TokenFacePickerBubbleState();
@@ -199,7 +205,7 @@ class _TokenFacePickerBubbleState extends State<TokenFacePickerBubble>
   /// ambient `Directionality`, so Arabic mirrors the row without a hand
   /// flip (C-462 D5).
   Widget _option(AppLocalizations loc, int face, Color seatColor) {
-    return Semantics(
+    final Widget option = Semantics(
       key: Key('board-face-picker-option-$face'),
       container: true,
       button: true,
@@ -220,6 +226,29 @@ class _TokenFacePickerBubbleState extends State<TokenFacePickerBubble>
           ),
         ),
       ),
+    );
+    // C-471 D4: the outline sits on the option and does not take the tap.
+    // Absent unless this face is the hinted one, so every other option
+    // keeps the tree it had.
+    if (widget.hintedFace != face) {
+      return option;
+    }
+    return Stack(
+      key: Key('board-face-picker-hinted-$face'),
+      children: <Widget>[
+        option,
+        Positioned.fill(
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: LudoColors.success, width: 2.5),
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
