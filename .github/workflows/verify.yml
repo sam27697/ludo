@@ -366,8 +366,39 @@ jobs:
               printf '%s\n' "${candidates[@]}" >&2
               exit 1
             fi
-            manifest="${matching[0]}"
-            echo "${#candidates[@]} merged release manifests under build/app, ${#matching[@]} with package=\"$app_id\"; taking the first in sorted order: $manifest"
+            manifest=""
+            why=""
+            if [ "${#matching[@]}" -eq 1 ]; then
+              manifest="${matching[0]}"
+              why="it is the only one with package=\"$app_id\""
+            else
+              for f in "${matching[@]}"; do
+                case "$f" in
+                  */merged_manifests/release/processReleaseManifest/*)
+                    manifest="$f"
+                    why="its path is the measured one (/merged_manifests/release/processReleaseManifest/)"
+                    break
+                    ;;
+                esac
+              done
+              if [ -z "$manifest" ]; then
+                for f in "${matching[@]}"; do
+                  case "$f" in
+                    *aapt_friendly*) ;;
+                    *)
+                      manifest="$f"
+                      why="it is the first in sorted order whose path does not contain aapt_friendly"
+                      break
+                      ;;
+                  esac
+                done
+              fi
+              if [ -z "$manifest" ]; then
+                manifest="${matching[0]}"
+                why="it is the first in sorted order"
+              fi
+            fi
+            echo "${#candidates[@]} merged release manifests under build/app, ${#matching[@]} with package=\"$app_id\"; taking $manifest because $why"
           fi
           echo "reading $manifest"
           cat "$manifest"
