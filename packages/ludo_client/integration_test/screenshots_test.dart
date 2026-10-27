@@ -6397,6 +6397,60 @@ void main() {
       seatToken: 'tok-shot-71',
     );
   });
+
+  // ==========================================================================
+  // 72-75: order 473. Emulator frames of the one-time move hint (C-471 D3,
+  // D4). Same route as captures 64-71: a GameScreen over FakeTransport, frames
+  // copied by hand into this file, no server, no pumpAndSettle once GameScreen
+  // is up. Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 72-hint-ready-en', (tester) async {
+    await _shootHintReady(
+      tester,
+      binding,
+      shotName: '72-hint-ready-en',
+      locale: const Locale('en'),
+      roomCode: 'HN72EN',
+      gameId: 'a' * 16,
+      seatToken: 'tok-shot-72',
+    );
+  });
+
+  testWidgets('capture 73-hint-shown-ar', (tester) async {
+    await _shootHintShown(
+      tester,
+      binding,
+      shotName: '73-hint-shown-ar',
+      locale: const Locale('ar'),
+      roomCode: 'HN73AR',
+      gameId: 'b' * 16,
+      seatToken: 'tok-shot-73',
+    );
+  });
+
+  testWidgets('capture 74-hint-queue-en', (tester) async {
+    await _shootHintQueue(
+      tester,
+      binding,
+      shotName: '74-hint-queue-en',
+      locale: const Locale('en'),
+      roomCode: 'HN74EN',
+      gameId: 'c' * 16,
+      seatToken: 'tok-shot-74',
+    );
+  });
+
+  testWidgets('capture 75-hint-used-ar-large', (tester) async {
+    await _shootHintUsedLarge(
+      tester,
+      binding,
+      shotName: '75-hint-used-ar-large',
+      locale: const Locale('ar'),
+      roomCode: 'HN75AR',
+      gameId: 'd' * 16,
+      seatToken: 'tok-shot-75',
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -11922,5 +11976,685 @@ Future<void> _shootIdleDieFaded(
     await binding.takeScreenshot(shotName);
   } finally {
     await _releaseTrayGame(tester, controller);
+  }
+}
+
+// --- order 473: captures 72-75 (C-471) -------------------------------------
+//
+// Emulator frames of the one-time move hint control (C-471 D3) and board
+// marker (C-471 D4). Same harness as captures 64-71 and 41-44: GameScreen
+// over FakeTransport, frames copied by hand into this file, no server, no
+// pumpAndSettle once GameScreen is up.
+
+Future<void> _pumpBounded300ms(WidgetTester tester) async {
+  // Start any newly mounted ticker on its first frame, then advance 300 ms in
+  // six bounded 50 ms steps.
+  await tester.pump();
+  for (int step = 0; step < 6; step++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+}
+
+/// Places seat 0 token 0 on progress 10 (absolute square 10) and seat 2
+/// token 0 on progress 42 (absolute square 16, six squares ahead of seat 0's
+/// token 0 and not safe). Both snap from -1 without step animation.
+Future<int> _pushHintBoardTokens(
+  WidgetTester tester,
+  RoomController controller,
+  FakeTransport transport,
+  int seq, {
+  required String shotName,
+}) async {
+  seq = await _pushSeatMoved(
+    tester,
+    transport,
+    seq,
+    seat: 0,
+    token: 0,
+    from: -1,
+    to: 10,
+  );
+  seq = await _pushSeatMoved(
+    tester,
+    transport,
+    seq,
+    seat: 2,
+    token: 0,
+    from: -1,
+    to: 42,
+  );
+  expect(
+    <int>[
+      _progressOf(controller, 0, 0),
+      _progressOf(controller, 0, 1),
+      _progressOf(controller, 0, 2),
+      _progressOf(controller, 0, 3),
+    ],
+    <int>[10, -1, -1, -1],
+    reason: 'capture $shotName: seat 0 tokens must be [10, -1, -1, -1]',
+  );
+  expect(
+    <int>[
+      _progressOf(controller, 2, 0),
+      _progressOf(controller, 2, 1),
+      _progressOf(controller, 2, 2),
+      _progressOf(controller, 2, 3),
+    ],
+    <int>[42, -1, -1, -1],
+    reason: 'capture $shotName: seat 2 tokens must be [42, -1, -1, -1]',
+  );
+  return seq;
+}
+
+Future<int> _pushHintSingleRollSix(
+  WidgetTester tester,
+  FakeTransport transport,
+  int seq,
+) {
+  return _pushTraySeq(
+    tester,
+    transport,
+    seq,
+    type: 'rolled',
+    data: <String, Object?>{
+      'seat': 0,
+      'value': 6,
+      'legal': <int>[0, 1, 2, 3],
+      'deadline_ms': _trayDeadlineMs,
+      'k': 1,
+      'reveal': _trayReveal,
+    },
+  );
+}
+
+/// Capture 72. Two seats `[0, 2]`, viewer seat 0, English. Seat 0 rolled 6
+/// with legal `[0, 1, 2, 3]` (two distinct choices: token 0 at 10 and yard
+/// tokens 1..3 at -1). Asserts `game-hint-ready` before the shot (C-471 D3).
+Future<void> _shootHintReady(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    int seq = await _pushHintBoardTokens(
+      tester,
+      controller,
+      opened.transport,
+      opened.seq,
+      shotName: shotName,
+    );
+    seq = await _pushHintSingleRollSix(tester, opened.transport, seq);
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      controller.seat,
+      0,
+      reason: 'capture $shotName: viewer seat must be 0',
+    );
+    expect(turn.seat, 0, reason: 'capture $shotName: seat 0 holds the turn');
+    expect(
+      turn.phaseName,
+      'awaitMove',
+      reason: 'capture $shotName: seat 0 is in awaitMove after rolling 6',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    _expectKey(
+      tester,
+      const Key('game-hint-button'),
+      present: true,
+      reason: 'capture $shotName: C-471 D3, game-hint-button must be shown',
+    );
+    _expectKey(
+      tester,
+      const Key('game-hint-ready'),
+      present: true,
+      reason: 'capture $shotName: C-471 D3, game-hint-ready must be shown',
+    );
+    _expectKey(
+      tester,
+      const Key('game-hint-waiting'),
+      present: false,
+      reason: 'capture $shotName: C-471 D3, game-hint-waiting must be absent',
+    );
+    _expectKey(
+      tester,
+      const Key('game-hint-used'),
+      present: false,
+      reason: 'capture $shotName: C-471 D3, game-hint-used must be absent',
+    );
+    _expectKey(
+      tester,
+      const Key('board-hint-0'),
+      present: false,
+      reason:
+          'capture $shotName: C-471 D4, board-hint-0 must not show before '
+          'tapping game-hint-button',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Capture 73. Same state as capture 72 in Arabic, then taps
+/// `game-hint-button`, pumps 300 ms in bounded steps, and asserts
+/// `board-hint-0`, no `board-hint-face-6`, and `game-hint-used` (C-471 D3, D4).
+Future<void> _shootHintShown(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    int seq = await _pushHintBoardTokens(
+      tester,
+      controller,
+      opened.transport,
+      opened.seq,
+      shotName: shotName,
+    );
+    seq = await _pushHintSingleRollSix(tester, opened.transport, seq);
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    _expectKey(
+      tester,
+      const Key('game-hint-button'),
+      present: true,
+      reason: 'capture $shotName: C-471 D3, game-hint-button must be shown',
+    );
+    _expectKey(
+      tester,
+      const Key('game-hint-ready'),
+      present: true,
+      reason:
+          'capture $shotName: C-471 D3, game-hint-ready must be shown before '
+          'the tap',
+    );
+
+    await tester.tap(find.byKey(const Key('game-hint-button')));
+    await _pumpBounded300ms(tester);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      controller.seat,
+      0,
+      reason: 'capture $shotName: viewer seat must be 0',
+    );
+    expect(turn.seat, 0, reason: 'capture $shotName: seat 0 holds the turn');
+    expect(
+      turn.phaseName,
+      'awaitMove',
+      reason: 'capture $shotName: tapping hint does not leave awaitMove',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    _expectKey(
+      tester,
+      const Key('board-hint-0'),
+      present: true,
+      reason:
+          'capture $shotName: C-471 D4, board-hint-0 must mark token 0 '
+          '(capturing seat 2 token 0 on square 16)',
+    );
+    _expectKey(
+      tester,
+      const Key('board-hint-face-6'),
+      present: false,
+      reason:
+          'capture $shotName: C-471 D4, board-hint-face-6 must be absent '
+          'when only one face is playable',
+    );
+    _expectKey(
+      tester,
+      const Key('game-hint-used'),
+      present: true,
+      reason:
+          'capture $shotName: C-471 D3, game-hint-used must be shown after '
+          'spending the hint',
+    );
+    _expectKey(
+      tester,
+      const Key('game-hint-ready'),
+      present: false,
+      reason:
+          'capture $shotName: C-471 D3, game-hint-ready must be gone after '
+          'spending the hint',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Capture 74. English, roll queue `[6, 3]` with `legal_by_face`
+/// `[{face: 6, tokens: [0, 1, 2, 3]}, {face: 3, tokens: [0]}]`. Taps
+/// `game-hint-button`, pumps 300 ms, asserts `board-hint-0` and
+/// `board-hint-face-6`, then taps token 0 (`board-token-hit-0-0`) to open the
+/// face picker, pumps 300 ms, and asserts `board-face-picker` and
+/// `board-face-picker-hinted-6` before the shot (C-471 D3, D4).
+Future<void> _shootHintQueue(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    int seq = await _pushHintBoardTokens(
+      tester,
+      controller,
+      opened.transport,
+      opened.seq,
+      shotName: shotName,
+    );
+
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 0,
+        'value': 6,
+        'legal': <int>[],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 1,
+        'reveal': _trayReveal,
+        'queue': <int>[6],
+      },
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'turn',
+      data: <String, Object?>{
+        'seat': 0,
+        'phase': 'await_roll',
+        'deadline_ms': _trayDeadlineMs,
+        'queue': <int>[6],
+      },
+    );
+    seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 0,
+        'value': 3,
+        'legal': <int>[0, 1, 2, 3],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 2,
+        'reveal': _trayReveal,
+        'queue': <int>[6, 3],
+        'legal_by_face': _traySixAndThreeLegal,
+      },
+    );
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    _expectKey(
+      tester,
+      const Key('game-hint-button'),
+      present: true,
+      reason: 'capture $shotName: C-471 D3, game-hint-button must be shown',
+    );
+    _expectKey(
+      tester,
+      const Key('game-hint-ready'),
+      present: true,
+      reason:
+          'capture $shotName: C-471 D3, game-hint-ready must be shown before '
+          'the tap',
+    );
+
+    await tester.tap(find.byKey(const Key('game-hint-button')));
+    await _pumpBounded300ms(tester);
+
+    _expectKey(
+      tester,
+      const Key('board-hint-0'),
+      present: true,
+      reason:
+          'capture $shotName: C-471 D4, board-hint-0 must mark token 0 '
+          'after tapping game-hint-button',
+    );
+    _expectKey(
+      tester,
+      const Key('board-hint-face-6'),
+      present: true,
+      reason:
+          'capture $shotName: C-471 D4, board-hint-face-6 must show face 6 '
+          'when two faces are playable',
+    );
+    _expectKey(
+      tester,
+      const Key('game-hint-used'),
+      present: true,
+      reason:
+          'capture $shotName: C-471 D3, game-hint-used must be shown after '
+          'tapping game-hint-button',
+    );
+
+    final Finder tokenZero = find.byKey(const Key('board-token-hit-0-0'));
+    expect(
+      tokenZero,
+      findsOneWidget,
+      reason: 'capture $shotName: board-token-hit-0-0 must be on the board',
+    );
+    final int sentBefore = opened.transport.sentRaw.length;
+    await tester.tap(tokenZero, warnIfMissed: false);
+    await _pumpBounded300ms(tester);
+
+    expect(
+      opened.transport.sentRaw.length,
+      sentBefore,
+      reason: 'capture $shotName: C-462 D2, tapping token 0 sends nothing',
+    );
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      controller.seat,
+      0,
+      reason: 'capture $shotName: viewer seat must be 0',
+    );
+    expect(turn.seat, 0, reason: 'capture $shotName: seat 0 holds the turn');
+    expect(
+      turn.phaseName,
+      'awaitMove',
+      reason: 'capture $shotName: seat 0 remains in awaitMove',
+    );
+    expect(
+      turn.queue,
+      <int>[6, 3],
+      reason: 'capture $shotName: the roll queue is [6, 3]',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    _expectKey(
+      tester,
+      const Key('board-hint-0'),
+      present: true,
+      reason:
+          'capture $shotName: C-471 D4, board-hint-0 stays up while the '
+          'face picker is open',
+    );
+    _expectKey(
+      tester,
+      const Key('board-hint-face-6'),
+      present: true,
+      reason:
+          'capture $shotName: C-471 D4, board-hint-face-6 stays up while '
+          'the face picker is open',
+    );
+    _expectKey(
+      tester,
+      const Key('board-face-picker'),
+      present: true,
+      reason:
+          'capture $shotName: C-462 D4, board-face-picker must open on '
+          'token 0',
+    );
+    _expectKey(
+      tester,
+      const Key('board-face-picker-hinted-6'),
+      present: true,
+      reason:
+          'capture $shotName: C-471 D4, board-face-picker-hinted-6 must '
+          'wrap face option 6 in the open picker',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Capture 75. Arabic, system text scale 2.0, the capture 72 state, with
+/// `session.hintUsedGame` pre-seeded to [gameId] before mounting. Asserts
+/// `game-hint-used` and no `board-hint-0` before the shot (C-471 D3, D5).
+Future<void> _shootHintUsedLarge(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  SharedPreferences.setMockInitialValues(<String, Object>{
+    'session.hintUsedGame': gameId,
+  });
+  tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    int seq = await _pushHintBoardTokens(
+      tester,
+      controller,
+      opened.transport,
+      opened.seq,
+      shotName: shotName,
+    );
+    seq = await _pushHintSingleRollSix(tester, opened.transport, seq);
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      controller.seat,
+      0,
+      reason: 'capture $shotName: viewer seat must be 0',
+    );
+    expect(turn.seat, 0, reason: 'capture $shotName: seat 0 holds the turn');
+    expect(
+      turn.phaseName,
+      'awaitMove',
+      reason: 'capture $shotName: seat 0 is in awaitMove after rolling 6',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    final Finder banner = find.byKey(const Key('game-screen-turn-banner'));
+    expect(
+      banner,
+      findsOneWidget,
+      reason: 'capture $shotName: game-screen-turn-banner must be on screen',
+    );
+    final double scaledTen = MediaQuery.textScalerOf(
+      tester.element(banner),
+    ).scale(10);
+    expect(
+      scaledTen,
+      20.0,
+      reason:
+          'capture $shotName: expected MediaQuery.textScalerOf at '
+          'game-screen-turn-banner to scale 10 to 20.0, got $scaledTen',
+    );
+
+    _expectKey(
+      tester,
+      const Key('game-hint-button'),
+      present: true,
+      reason: 'capture $shotName: C-471 D3, game-hint-button must be shown',
+    );
+    _expectKey(
+      tester,
+      const Key('game-hint-used'),
+      present: true,
+      reason:
+          'capture $shotName: C-471 D3/D5, game-hint-used must be shown '
+          'when session.hintUsedGame matches gameId',
+    );
+    _expectKey(
+      tester,
+      const Key('game-hint-ready'),
+      present: false,
+      reason:
+          'capture $shotName: C-471 D3/D5, game-hint-ready must be absent '
+          'when the hint was already used in this game',
+    );
+    _expectKey(
+      tester,
+      const Key('game-hint-waiting'),
+      present: false,
+      reason:
+          'capture $shotName: C-471 D3/D5, game-hint-waiting must be absent '
+          'when the hint was already used in this game',
+    );
+    _expectKey(
+      tester,
+      const Key('board-hint-0'),
+      present: false,
+      reason:
+          'capture $shotName: C-471 D4/D5, board-hint-0 must not be shown '
+          'on a fresh turn after the hint was spent earlier in the game',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+    await (await SharedPreferences.getInstance()).clear();
   }
 }
