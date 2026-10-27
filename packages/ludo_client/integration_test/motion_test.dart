@@ -2821,7 +2821,9 @@ class _Playback {
     final AppLocalizations loc = AppLocalizations.of(
       tester.element(find.byType(GameScreen)),
     );
-    expect(tester.widget<Text>(notice).data, loc.gameNoMove);
+    // Order 476, C-474 D1: turns 0 and 1 have all four tokens at -1 and roll
+    // 5 or 4, so the no-move reason is NEED_SIX.
+    expect(tester.widget<Text>(notice).data, loc.gameNoMoveNeedSix);
   }
 
   void _expectFrom(int seat, _MoveStep step) {
