@@ -333,17 +333,72 @@ jobs:
       # detail, so it is located with `find`, and this step fails loudly, not
       # silently, if no such file exists -- a grep over a missing path must
       # never report green having checked nothing.
+      # The lookup is scoped to the app module (build/app, the same module the
+      # bundle step above reads build/app/outputs/bundle/release from): plugin
+      # modules such as jni_flutter write their own release manifests under
+      # build/<module>/intermediates, and on run 40586228549 an unscoped
+      # `find -print -quit` returned one of those first and failed the check.
       - name: assert the shipped SDK numbers and application id
         run: |
           set -euo pipefail
-          manifest="$(find . -path '*intermediates*merged_manifest*/release/AndroidManifest.xml' -print -quit)"
-          if [ -z "$manifest" ]; then
-            manifest="$(find . -path '*intermediates*' -iname 'AndroidManifest.xml' | grep -i release | head -n1)"
+          app_id="app.fayad.ludo"
+          candidates=()
+          if [ -d ./build/app/intermediates ]; then
+            while IFS= read -r -d '' f; do
+              candidates+=("$f")
+            done < <(find ./build/app/intermediates -name 'AndroidManifest.xml' -path '*/release/*' -path '*merged_manifest*' -print0 | LC_ALL=C sort -z)
           fi
-          if [ -z "$manifest" ] || [ ! -f "$manifest" ]; then
-            echo "no merged manifest found under packages/ludo_client/build; cannot assert the shipped values, failing rather than passing vacuously" >&2
-            find . -iname 'AndroidManifest.xml' >&2 || true
+          if [ "${#candidates[@]}" -eq 0 ]; then
+            echo "no merged manifest found under packages/ludo_client/build/app; cannot assert the shipped values, failing rather than passing vacuously" >&2
+            find ./build -iname 'AndroidManifest.xml' >&2 || true
             exit 1
+          fi
+          manifest="${candidates[0]}"
+          if [ "${#candidates[@]}" -gt 1 ]; then
+            matching=()
+            for f in "${candidates[@]}"; do
+              if python3 -c 'import sys, xml.etree.ElementTree as ET; r = ET.parse(sys.argv[1]).getroot(); sys.exit(0 if r.tag == "manifest" and r.get("package") == sys.argv[2] else 1)' "$f" "$app_id" 2>/dev/null; then
+                matching+=("$f")
+              fi
+            done
+            if [ "${#matching[@]}" -eq 0 ]; then
+              echo "${#candidates[@]} merged release manifests under build/app, none with package=\"$app_id\" on the root <manifest>:" >&2
+              printf '%s\n' "${candidates[@]}" >&2
+              exit 1
+            fi
+            manifest=""
+            why=""
+            if [ "${#matching[@]}" -eq 1 ]; then
+              manifest="${matching[0]}"
+              why="it is the only one with package=\"$app_id\""
+            else
+              for f in "${matching[@]}"; do
+                case "$f" in
+                  */merged_manifests/release/processReleaseManifest/*)
+                    manifest="$f"
+                    why="its path is the measured one (/merged_manifests/release/processReleaseManifest/)"
+                    break
+                    ;;
+                esac
+              done
+              if [ -z "$manifest" ]; then
+                for f in "${matching[@]}"; do
+                  case "$f" in
+                    *aapt_friendly*) ;;
+                    *)
+                      manifest="$f"
+                      why="it is the first in sorted order whose path does not contain aapt_friendly"
+                      break
+                      ;;
+                  esac
+                done
+              fi
+              if [ -z "$manifest" ]; then
+                manifest="${matching[0]}"
+                why="it is the first in sorted order"
+              fi
+            fi
+            echo "${#candidates[@]} merged release manifests under build/app, ${#matching[@]} with package=\"$app_id\"; taking $manifest because $why"
           fi
           echo "reading $manifest"
           cat "$manifest"
