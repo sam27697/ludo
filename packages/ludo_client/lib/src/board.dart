@@ -23,6 +23,7 @@ import 'package:flutter/widgets.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board_geometry.dart';
 import 'capture_gloat.dart';
+import 'move_hint.dart';
 import 'safe_cue.dart';
 import 'seat_die.dart';
 import 'seat_mark.dart';
@@ -430,6 +431,8 @@ class LudoBoard extends StatefulWidget {
     this.seatDice = const <SeatDie>[],
     this.seatRecord,
     this.gloat,
+    this.hint,
+    this.hintNamesFace = false,
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -561,6 +564,17 @@ class LudoBoard extends StatefulWidget {
   /// adds nothing, so a board built without it draws exactly what it drew
   /// before. C-468 D5.
   final BoardGloat? gloat;
+
+  /// The token and face to mark, or null. Null, the default, adds nothing,
+  /// so a board built without it draws exactly what it drew before
+  /// (C-471 D4).
+  final MoveHint? hint;
+
+  /// When true and [hint] is non-null, the marker carries [MoveHint.face]
+  /// and the token's semantics use the face suffix. The screen sets this
+  /// when D1's candidates hold more than one face (C-471 D4). Default
+  /// false draws the marker with no numeral.
+  final bool hintNamesFace;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -1456,6 +1470,10 @@ class _LudoBoardState extends State<LudoBoard> {
               onTapUp: (details) => _handleTapUp(details, cellSize, tokenSize),
               child: Stack(
                 alignment: Alignment.topLeft,
+                // C-471 D4: the hint arrow may stand above a token on the
+                // top row, outside the board square. Without a hint the
+                // clip is what it always was.
+                clipBehavior: widget.hint != null ? Clip.none : Clip.hardEdge,
                 children: [
                   Positioned.fill(
                     child: CustomPaint(
@@ -1483,6 +1501,10 @@ class _LudoBoardState extends State<LudoBoard> {
                         tokenIndex: tokenIndex,
                         cellSize: cellSize,
                       ),
+                  // C-471 D4: above my disc, under the thrown die and the
+                  // face picker. IgnorePointer, so a tap lands on the token.
+                  if (widget.hint != null && widget.mySeat != null)
+                    _hintMarker(cellSize),
                   // C-468 D5: above tokens, seat dice and the record;
                   // below the thrown die and the face picker. IgnorePointer
                   // so the face never takes a tap.
@@ -1806,6 +1828,20 @@ class _LudoBoardState extends State<LudoBoard> {
         seatsInPlay: widget.seatsInPlay,
       );
       final AppLocalizations loc = AppLocalizations.of(context);
+      // C-471 A1: TalkBack reads this hit node, so the hint suffix is
+      // appended to the label it already had. The drawn token node
+      // below keeps no label.
+      final String tokenLabel = loc.gameTokenButton(tokenIndex + 1);
+      final MoveHint? hint = widget.hint;
+      final String label;
+      if (hint != null && hint.token == tokenIndex) {
+        final String suffix = widget.hintNamesFace
+            ? loc.hintTokenFaceSuffix(hint.face)
+            : loc.hintTokenSuffix;
+        label = '$tokenLabel, $suffix';
+      } else {
+        label = tokenLabel;
+      }
       layer.add(
         Positioned(
           left: hitRect.left,
@@ -1827,7 +1863,7 @@ class _LudoBoardState extends State<LudoBoard> {
             key: Key('board-token-hit-$seat-$tokenIndex'),
             sortKey: tokenSortKey,
             button: true,
-            label: loc.gameTokenButton(tokenIndex + 1),
+            label: label,
             enabled: legalHere,
             onTap: () => _resolveTap(_groupIndicesFor(seat, tokenIndex)),
             child: const MetaData(
@@ -2020,6 +2056,117 @@ class _LudoBoardState extends State<LudoBoard> {
     return layer;
   }
 
+  /// C-471 D4. The arrow stands wholly above the legal ring, one cell
+  /// wide, so a first-time player finds it. The bob is 4 dp over about
+  /// 900 ms; reduced motion holds it still. The face chip sits on the
+  /// arrow and grows with it.
+  Widget _hintMarker(double cellSize) {
+    final MoveHint? hint = widget.hint;
+    final int? seat = widget.mySeat;
+    if (hint == null || seat == null) {
+      return const SizedBox.shrink();
+    }
+    final List<int>? mine = widget.tokens[seat];
+    if (mine == null || hint.token < 0 || hint.token >= mine.length) {
+      return const SizedBox.shrink();
+    }
+    final int drawnProgress = _drawnProgress(seat, hint.token);
+    final _TokenLayout drawn = _tokenLayout(
+      seat: seat,
+      tokenIndex: hint.token,
+      progress: drawnProgress,
+      cellSize: cellSize,
+      mySeat: seat,
+      tokens: widget.tokens,
+      seatsInPlay: widget.seatsInPlay,
+      progressOf: _drawnProgress,
+    );
+    final bool namesFace = widget.hintNamesFace;
+    // The ring's outer edge, as _tokenLayer sizes it. The auto-move arc
+    // clears that edge by 12 dp when this token carries it.
+    final double ringSide =
+        drawn.size * 1.7 + (widget.autoMoveToken == hint.token ? 12 : 0);
+    final double ringTop = drawn.center.dy - ringSide / 2;
+    final double chevronW = cellSize * _kHintArrowCells;
+    final double chevronH = chevronW * 0.8;
+    final double chipSide = namesFace ? chevronW * 0.8 : 0;
+    final double gap = namesFace ? 2 : 0;
+    final double contentH = chipSide + gap + chevronH;
+    // The lowest point clears the ring by the bob's travel and the
+    // outline's half stroke, so it never touches the ring (C-471 D4).
+    final double clearance = _kHintBob + _hintOutlineWidth(chevronW) / 2 + 1;
+    final double left = drawn.center.dx - chevronW / 2;
+    final double top = ringTop - clearance - contentH;
+    return Positioned(
+      key: Key('board-hint-${hint.token}'),
+      left: left,
+      top: top,
+      width: chevronW,
+      height: contentH,
+      child: IgnorePointer(
+        child: ExcludeSemantics(
+          child: _BobbingMarker(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (namesFace) _hintFaceChip(hint.face, chipSide),
+                SizedBox(
+                  width: chevronW,
+                  height: chevronH,
+                  child: CustomPaint(painter: const _HintChevronPainter()),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The small die on the marker when D1 holds more than one face
+  /// (C-471 D4). The numeral is the signal, not a colour.
+  Widget _hintFaceChip(int face, double side) {
+    return SizedBox(
+      key: Key('board-hint-face-$face'),
+      width: side,
+      height: side,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: LudoColors.dieFace,
+          borderRadius: BorderRadius.circular(side * 0.18),
+          border: Border.all(color: LudoColors.dieEdge, width: 1),
+        ),
+        child: Center(
+          child: Text(
+            face.toString(),
+            textDirection: TextDirection.ltr,
+            textScaler: TextScaler.noScaling,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: LudoColors.ink,
+              fontSize: side * 0.62,
+              fontWeight: FontWeight.w700,
+              height: 1,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The hinted face, when this picker is open on the hinted token
+  /// (C-471 D4). Null leaves the bubble unchanged.
+  int? _hintedPickerFace(TokenFacePick pick) {
+    final MoveHint? hint = widget.hint;
+    if (hint == null || hint.token != pick.token) {
+      return null;
+    }
+    if (!pick.faces.contains(hint.face)) {
+      return null;
+    }
+    return hint.face;
+  }
+
   /// C-462 D5: the bubble on the drawn centre of (mySeat, token), the same
   /// layout the disc is painted at. Above the token, or below when that
   /// would cross the board's top edge, then clamped inside the board.
@@ -2067,6 +2214,7 @@ class _LudoBoardState extends State<LudoBoard> {
         pick: pick,
         placeBelow: placeBelow,
         pointerDx: layout.center.dx - left,
+        hintedFace: _hintedPickerFace(pick),
       ),
     );
   }
@@ -2439,6 +2587,109 @@ class _ShakeOnce extends StatelessWidget {
       child: child,
     );
   }
+}
+
+/// C-471 D4: 4 dp up and down, one cycle about 900 ms. Reduced motion
+/// holds the marker at rest. The shape is the signal; the colour matches
+/// the legal ring.
+class _BobbingMarker extends StatefulWidget {
+  const _BobbingMarker({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_BobbingMarker> createState() => _BobbingMarkerState();
+}
+
+class _BobbingMarkerState extends State<_BobbingMarker>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  bool? _reduced;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    if (reduced == _reduced) {
+      return;
+    }
+    _reduced = reduced;
+    if (reduced) {
+      _controller.stop();
+      _controller.value = 0;
+    } else {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (BuildContext context, Widget? child) {
+        final double dy = _reduced == true
+            ? 0
+            : math.sin(_controller.value * math.pi * 2) * _kHintBob;
+        return Transform.translate(offset: Offset(0, dy), child: child);
+      },
+      child: widget.child,
+    );
+  }
+}
+
+/// The marker's arrow is this many cells wide (C-471 D4).
+const double _kHintArrowCells = 1.0;
+
+/// Travel of the marker's bob, up and down (C-471 D4).
+const double _kHintBob = 4;
+
+double _hintOutlineWidth(double arrowWidth) => math.max(2.0, arrowWidth * 0.14);
+
+class _HintChevronPainter extends CustomPainter {
+  const _HintChevronPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double w = size.width;
+    final double h = size.height;
+    final Path path = Path()
+      ..moveTo(0, h * 0.08)
+      ..lineTo(w * 0.5, h * 0.92)
+      ..lineTo(w, h * 0.08)
+      ..lineTo(w * 0.72, h * 0.08)
+      ..lineTo(w * 0.5, h * 0.52)
+      ..lineTo(w * 0.28, h * 0.08)
+      ..close();
+    // C-471 D4: the outline is the paintbox near-white, not a new hex.
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = LudoColors.actionOn
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = _hintOutlineWidth(w)
+        ..strokeJoin = StrokeJoin.round
+        ..strokeCap = StrokeCap.round,
+    );
+    canvas.drawPath(path, Paint()..color = LudoColors.success);
+  }
+
+  @override
+  bool shouldRepaint(covariant _HintChevronPainter oldDelegate) => false;
 }
 
 /// The pulsing ring behind a legal or unique-legal-hold token: stroke width

@@ -123,7 +123,9 @@ class LastGame {
 /// later [load] returns as [seatRecord]; [recordSeat] also stamps the time it
 /// wrote, which a later [load] returns as [seatSavedAt]. [recordLastGame] writes the one
 /// record a later [load] returns as [lastGame]; clearing the seat does not
-/// touch it.
+/// touch it. [recordHintUsed] stores the one game id whose hint was spent;
+/// [hintUsedGameId] reads it. Unreadable storage reads as not used and
+/// never throws (C-471 D5).
 class SessionMemory {
   const SessionMemory({
     this.lastName,
@@ -140,6 +142,9 @@ class SessionMemory {
   static const String _seatKey = 'session.seat';
   static const String _seatSavedAtKey = 'session.seatSavedAt';
   static const String _lastGameKey = 'session.lastGame';
+
+  /// C-471 D5: the last game id the one hint was spent in.
+  static const String _hintUsedGameKey = 'session.hintUsedGame';
   static const int _maxRecentCodes = 3;
 
   /// Name sent on the last successful create, or on the last successful
@@ -407,6 +412,34 @@ class SessionMemory {
   /// [existing] with [code] first, duplicates removed, length at most 3.
   static List<String> prependRecentCode(List<String> existing, String code) {
     return _cappedRecentCodes(<String>[code, ...existing]);
+  }
+
+  /// Writes [gameId] as the game whose hint was spent, replacing any
+  /// previous id (C-471 D5). Never throws: an unusable store is swallowed,
+  /// same as [recordSeat].
+  static Future<void> recordHintUsed(String gameId) async {
+    try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_hintUsedGameKey, gameId);
+    } on Object {
+      return;
+    }
+  }
+
+  /// The game id [recordHintUsed] last wrote, or null when the key is
+  /// absent or the store cannot be read (C-471 D5). A value of the wrong
+  /// type reads as not used and does not throw.
+  static Future<String?> hintUsedGameId() async {
+    try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      final Object? raw = prefs.get(_hintUsedGameKey);
+      if (raw is! String) {
+        return null;
+      }
+      return raw;
+    } on Object {
+      return null;
+    }
   }
 
   static List<String> _cappedRecentCodes(List<String> raw) {

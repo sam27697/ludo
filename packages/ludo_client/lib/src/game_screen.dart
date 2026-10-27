@@ -36,6 +36,8 @@ import 'feedback.dart';
 import 'feedback_settings_sheet.dart';
 import 'game_die.dart';
 import 'game_stats.dart';
+import 'hint_button.dart';
+import 'move_hint.dart';
 import 'net/connection.dart';
 import 'net/frame.dart';
 import 'net/room_controller.dart';
@@ -43,6 +45,7 @@ import 'net/snapshot.dart';
 import 'roll_tray.dart';
 import 'safe_cue.dart';
 import 'seat_die.dart';
+import 'session_memory.dart';
 import 'theme.dart';
 import 'token_face_picker.dart';
 
@@ -72,6 +75,24 @@ class _OpenFacePick {
   final int k;
   final List<int> queue;
   final List<int> faces;
+}
+
+/// C-471 D4: the marker this screen is showing, and the turn it belongs
+/// to. [namesFace] is true when D1's candidates held more than one face.
+class _ActiveHint {
+  const _ActiveHint({
+    required this.move,
+    required this.gameId,
+    required this.k,
+    required this.seat,
+    required this.namesFace,
+  });
+
+  final MoveHint move;
+  final String gameId;
+  final int k;
+  final int seat;
+  final bool namesFace;
 }
 
 /// Safety-net fallback duration for held landing cues, contract C-268 rule 4e.
@@ -203,6 +224,20 @@ class _GameScreenState extends State<GameScreen> {
   // C-462 D2/D4: the open face picker, or null. Closed by the checks in
   // [_syncFacePick] on every rebuild, and by the tap rules in D2 and D3.
   _OpenFacePick? _facePick;
+
+  // C-471 D5: the id read from `session.hintUsedGame`, and the id this
+  // screen has spent. The spent id is set in the tap, before the store
+  // write returns, so a second tap in the same frame cannot spend again.
+  String? _storedHintGameId;
+  String? _spentHintGameId;
+
+  // C-471 D5: false until the stored id has been read, on success or
+  // failure. Until then the control is waiting and a tap spends nothing.
+  bool _hintStoreRead = false;
+
+  // C-471 D4: the marker up right now. Cleared when a move is sent, and
+  // when the turn stops being this seat's await-move at this k.
+  _ActiveHint? _shownHint;
 
   // The one guard both move paths (the hold's own timer and a token tap)
   // share. At most one move is in flight for one decision: this seat,
@@ -457,8 +492,26 @@ class _GameScreenState extends State<GameScreen> {
       _rememberQueue(mountTurn.seat, mountTurn.queue);
     }
     _syncCountdown();
+    unawaited(_loadHintUsed());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _maybeFetchGameLog();
+    });
+  }
+
+  /// C-471 D5. A missing or unreadable store leaves the hint unused.
+  Future<void> _loadHintUsed() async {
+    String? stored;
+    try {
+      stored = await SessionMemory.hintUsedGameId();
+    } on Object {
+      stored = null;
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _storedHintGameId = stored;
+      _hintStoreRead = true;
     });
   }
 
@@ -1397,6 +1450,7 @@ class _GameScreenState extends State<GameScreen> {
     _trayDeadSeat = null;
     _trayDeadFaces = null;
     _facePick = null;
+    _shownHint = null;
     _dropPendingLandingCues();
     _removeGloat();
     _clearSafeCue();
@@ -2696,6 +2750,9 @@ class _GameScreenState extends State<GameScreen> {
     _moveSentForQueue = List<int>.from(turn.queue);
     _moveGuardSerial = serial;
     _moveSentToken = token;
+    // C-471 D4: a move sent by me takes the marker down. It is not shown
+    // again in this game, even when the move was a different token.
+    _shownHint = null;
     unawaited(
       widget.controller.move(token, face: face).whenComplete(() {
         _dropMoveGuardFor(serial);
@@ -3047,6 +3104,7 @@ class _GameScreenState extends State<GameScreen> {
           room != null &&
           _showsPlayingBody(room),
     );
+    _syncShownHint();
 
     final Widget body;
     if (rematchGone) {
@@ -3486,6 +3544,237 @@ class _GameScreenState extends State<GameScreen> {
     return (faces, states, color);
   }
 
+  /// C-471 D3. The die's row, with the hint control overlaid on its
+  /// leading edge so the die and the tray keep the rects they have. The
+  /// control is absent unless the room is PLAYING and this device holds
+  /// a seat.
+  Widget _dieRow(
+    RoomSnapshot room,
+    int? seat,
+    AppLocalizations loc,
+    TurnState? turn,
+    bool fadeIdleDie,
+    int? dieFace,
+    Color dieSeatColor,
+    bool rollEnabled,
+    _PlayColumnMetrics metrics,
+    List<int>? trayFaces,
+    List<TrayDieState>? trayStates,
+    Color trayColor,
+    SeatRollRecord? boardRecord,
+    bool trayOwnMove,
+  ) {
+    final Widget row = Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: <Widget>[
+        _boardDieSlot(
+          loc,
+          turn,
+          // C-468 D7: Opacity is an ancestor of the die's art.
+          // The key on the die is unchanged.
+          Opacity(
+            opacity: fadeIdleDie ? 0.45 : 1,
+            child: GameDie(
+              face: dieFace,
+              seatColor: dieSeatColor,
+              enabled: rollEnabled,
+              tumbling: _rollWaitK != null,
+              noAnswer: _rollNoAnswer,
+              noMove: _noMoveVisible,
+              // C-404: the die's top sits exactly at the row's own
+              // top (it is the tallest thing in the row), which
+              // sits `metrics.boardGap` below the board -- the
+              // same number board_floor_nav_inset_test.dart
+              // measures as die.top - board.bottom. Handing that
+              // straight to the die is what lets its badge clamp
+              // itself without this column's gaps, clamp or floor
+              // changing at all.
+              badgeHeadroom: metrics.boardGap,
+              onTap: rollEnabled ? _onDieTap : null,
+              onInvalidTap: () {
+                FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+              },
+            ),
+          ),
+        ),
+        if (trayFaces != null && boardRecord == null) ...<Widget>[
+          const SizedBox(width: kSpace2),
+          Flexible(
+            child: RollTray(
+              key: const Key('game-roll-tray'),
+              faces: trayFaces,
+              states: trayStates!,
+              seatColor: trayColor,
+              ownMove: trayOwnMove,
+            ),
+          ),
+        ],
+      ],
+    );
+    final HintControlState? hintState = _hintControlState(room, seat);
+    if (hintState == null || seat == null) {
+      return Center(child: row);
+    }
+    // The row stays full width and centred, the same as the Centre that
+    // held it. The bulb is a positioned child, not a new child of the row
+    // (C-471 D3).
+    return Stack(
+      clipBehavior: Clip.none,
+      children: <Widget>[
+        row,
+        PositionedDirectional(
+          start: 0,
+          top: 0,
+          bottom: 0,
+          child: Center(
+            child: HintButton(
+              state: hintState,
+              seatColor: LudoColors.seats[seat.clamp(0, 3)],
+              onTap: _onHintTap,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// C-471 D3. Null when the control is not on screen.
+  HintControlState? _hintControlState(RoomSnapshot room, int? seat) {
+    if (room.state != RoomState.playing || seat == null) {
+      return null;
+    }
+    if (_hintIsUsed(room.gameId)) {
+      return HintControlState.used;
+    }
+    if (!_hintStoreRead || room.gameId == null || !_hintOfferable(room, seat)) {
+      return HintControlState.waiting;
+    }
+    return HintControlState.ready;
+  }
+
+  bool _hintIsUsed(String? gameId) {
+    if (gameId == null) {
+      return false;
+    }
+    return _spentHintGameId == gameId || _storedHintGameId == gameId;
+  }
+
+  /// Offerable only on my await-move, with a game id, and at least two
+  /// different choices (C-471 D1). [recommendMove] is that test.
+  bool _hintOfferable(RoomSnapshot room, int seat) {
+    final TurnState? turn = room.turn;
+    if (turn == null ||
+        turn.seat != seat ||
+        turn.phase != TurnPhase.awaitMove) {
+      return false;
+    }
+    return recommendMove(
+          mySeat: seat,
+          tokens: _tokensOf(room),
+          legal: _hintLegal(turn),
+        ) !=
+        null;
+  }
+
+  /// C-471 D1, in wire order.
+  List<(int face, List<int> tokens)> _hintLegal(TurnState turn) {
+    final List<FaceLegal>? byFace = turn.legalByFace;
+    if (byFace != null) {
+      return <(int face, List<int> tokens)>[
+        for (final FaceLegal entry in byFace) (entry.face, entry.tokens),
+      ];
+    }
+    final int? value = turn.value;
+    final List<int>? legal = turn.legal;
+    if (value == null || legal == null) {
+      return const <(int face, List<int> tokens)>[];
+    }
+    return <(int face, List<int> tokens)>[(value, legal)];
+  }
+
+  bool _hintNamesFace(List<(int face, List<int> tokens)> legal) {
+    final Set<int> faces = <int>{};
+    for (final (int face, List<int> tokenList) in legal) {
+      if (tokenList.isEmpty) {
+        continue;
+      }
+      faces.add(face);
+    }
+    return faces.length > 1;
+  }
+
+  /// C-471 D3. True only when this tap spent the hint. The used flag is
+  /// set before the store write, and before this callback returns.
+  bool _onHintTap() {
+    final RoomSnapshot? room = widget.controller.room;
+    final int? seat = widget.controller.seat;
+    if (room == null ||
+        seat == null ||
+        room.state != RoomState.playing ||
+        room.gameId == null ||
+        !_hintStoreRead ||
+        _hintIsUsed(room.gameId)) {
+      FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+      return false;
+    }
+    final TurnState? turn = room.turn;
+    if (turn == null ||
+        turn.seat != seat ||
+        turn.phase != TurnPhase.awaitMove) {
+      FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+      return false;
+    }
+    final String gameId = room.gameId!;
+    final List<(int face, List<int> tokens)> legal = _hintLegal(turn);
+    final MoveHint? hint = recommendMove(
+      mySeat: seat,
+      tokens: _tokensOf(room),
+      legal: legal,
+    );
+    if (hint == null) {
+      FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+      return false;
+    }
+    setState(() {
+      _spentHintGameId = gameId;
+      _shownHint = _ActiveHint(
+        move: hint,
+        gameId: gameId,
+        k: turn.k,
+        seat: seat,
+        namesFace: _hintNamesFace(legal),
+      );
+    });
+    unawaited(SessionMemory.recordHintUsed(gameId));
+    FeedbackScope.of(context).play(FeedbackCue.tap);
+    return true;
+  }
+
+  /// C-471 D4. Field write only: this runs at the start of [build].
+  void _syncShownHint() {
+    final _ActiveHint? shown = _shownHint;
+    if (shown == null) {
+      return;
+    }
+    final RoomSnapshot? room = widget.controller.room;
+    final int? mySeat = widget.controller.seat;
+    final TurnState? turn = room?.turn;
+    final bool still =
+        room != null &&
+        room.state == RoomState.playing &&
+        room.gameId == shown.gameId &&
+        mySeat != null &&
+        mySeat == shown.seat &&
+        turn != null &&
+        turn.seat == mySeat &&
+        turn.phase == TurnPhase.awaitMove &&
+        turn.k == shown.k;
+    if (!still) {
+      _shownHint = null;
+    }
+  }
+
   /// H6.3: the room is playing and has at least two seated players. Board,
   /// turn banner, and the die under it. Play itself happens on the board
   /// objects: the die is tapped to roll, a token is tapped to move it.
@@ -3680,6 +3969,8 @@ class _GameScreenState extends State<GameScreen> {
                   seatDice: _seatDiceOf(room),
                   seatRecord: boardRecord,
                   gloat: _gloat,
+                  hint: _shownHint?.move,
+                  hintNamesFace: _shownHint?.namesFace ?? false,
                 ),
               ),
               SizedBox(height: metrics.boardGap),
@@ -3687,56 +3978,21 @@ class _GameScreenState extends State<GameScreen> {
               // order -- a plain Row under the ambient Directionality
               // already mirrors that for Arabic, nothing here flips it by
               // hand.
-              Center(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    _boardDieSlot(
-                      loc,
-                      turn,
-                      // C-468 D7: Opacity is an ancestor of the die's art.
-                      // The key on the die is unchanged.
-                      Opacity(
-                        opacity: fadeIdleDie ? 0.45 : 1,
-                        child: GameDie(
-                          face: dieFace,
-                          seatColor: dieSeatColor,
-                          enabled: rollEnabled,
-                          tumbling: _rollWaitK != null,
-                          noAnswer: _rollNoAnswer,
-                          noMove: _noMoveVisible,
-                          // C-404: the die's top sits exactly at the row's own
-                          // top (it is the tallest thing in the row), which
-                          // sits `metrics.boardGap` below the board -- the
-                          // same number board_floor_nav_inset_test.dart
-                          // measures as die.top - board.bottom. Handing that
-                          // straight to the die is what lets its badge clamp
-                          // itself without this column's gaps, clamp or floor
-                          // changing at all.
-                          badgeHeadroom: metrics.boardGap,
-                          onTap: rollEnabled ? _onDieTap : null,
-                          onInvalidTap: () {
-                            FeedbackScope.of(context)
-                                .play(FeedbackCue.invalidTap);
-                          },
-                        ),
-                      ),
-                    ),
-                    if (trayFaces != null && boardRecord == null) ...[
-                      const SizedBox(width: kSpace2),
-                      Flexible(
-                        child: RollTray(
-                          key: const Key('game-roll-tray'),
-                          faces: trayFaces,
-                          states: trayStates!,
-                          seatColor: trayColor,
-                          ownMove: trayOwnMove,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+              _dieRow(
+                room,
+                seat,
+                loc,
+                turn,
+                fadeIdleDie,
+                dieFace,
+                dieSeatColor,
+                rollEnabled,
+                metrics,
+                trayFaces,
+                trayStates,
+                trayColor,
+                boardRecord,
+                trayOwnMove,
               ),
               SizedBox(height: metrics.dieGap),
               _belowDieNoticeSlot(

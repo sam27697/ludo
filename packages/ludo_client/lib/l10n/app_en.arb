@@ -686,5 +686,31 @@
   "boardSafePairCue": "Pair is safe",
   "@boardSafePairCue": {
     "description": "Pill on the board when a move lands on another seat's pair, captures nothing, and the square is not a safe square. A pair on a safe square uses boardSafeSquareCue instead."
+  },
+  "hintReady": "Hint: show a good move (once per game)",
+  "@hintReady": {
+    "description": "Semantics label for the hint control when a good move can be shown, once per game (C-471 D3)."
+  },
+  "hintWaiting": "Hint, once per game, on your move",
+  "@hintWaiting": {
+    "description": "Semantics label for the hint control when it is not usable yet: not this player's move, or only one choice (C-471 D3)."
+  },
+  "hintUsed": "Hint used this game",
+  "@hintUsed": {
+    "description": "Semantics label for the hint control after its one use this game has been spent (C-471 D3)."
+  },
+  "hintTokenSuffix": "suggested move",
+  "@hintTokenSuffix": {
+    "description": "Semantics suffix on the hinted token when the marker shows no face numeral (C-471 D4)."
+  },
+  "hintTokenFaceSuffix": "suggested: move {face}",
+  "@hintTokenFaceSuffix": {
+    "description": "Semantics suffix on the hinted token when the marker shows the face numeral (C-471 D4). face is the roll, 1 through 6.",
+    "placeholders": {
+      "face": {
+        "type": "int",
+        "example": "6"
+      }
+    }
   }
 }

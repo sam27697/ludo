@@ -167,5 +167,31 @@
   "boardSafePairCue": "قطعتان آمنتان",
   "@boardSafePairCue": {
     "description": "Pill on the board when a move lands on another seat's pair, captures nothing, and the square is not a safe square. A pair on a safe square uses boardSafeSquareCue instead."
+  },
+  "hintReady": "تلميح: اقترح نقلة جيدة (مرة وحدة باللعبة)",
+  "@hintReady": {
+    "description": "Semantics label for the hint control when a good move can be shown, once per game (C-471 D3)."
+  },
+  "hintWaiting": "تلميح، مرة وحدة باللعبة، وقت دورك",
+  "@hintWaiting": {
+    "description": "Semantics label for the hint control when it is not usable yet (C-471 D3)."
+  },
+  "hintUsed": "استعملت التلميح بهاللعبة",
+  "@hintUsed": {
+    "description": "Semantics label for the hint control after its one use this game has been spent (C-471 D3)."
+  },
+  "hintTokenSuffix": "النقلة المقترحة",
+  "@hintTokenSuffix": {
+    "description": "Semantics suffix on the hinted token when the marker shows no face numeral (C-471 D4)."
+  },
+  "hintTokenFaceSuffix": "المقترح: حرّك {face}",
+  "@hintTokenFaceSuffix": {
+    "description": "Semantics suffix on the hinted token when the marker shows the face numeral (C-471 D4). face is the roll, 1 through 6.",
+    "placeholders": {
+      "face": {
+        "type": "int",
+        "example": "6"
+      }
+    }
   }
 }
