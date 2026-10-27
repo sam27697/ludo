@@ -11576,8 +11576,7 @@ Future<void> _shootCaptureGloat(
   expect(
     capturerSeat == 0 || capturerSeat == 2,
     isTrue,
-    reason:
-        'capture $shotName: capturerSeat must be 0 or 2, got $capturerSeat',
+    reason: 'capture $shotName: capturerSeat must be 0 or 2, got $capturerSeat',
   );
   final int capturedSeat = capturerSeat == 0 ? 2 : 0;
   // Seat 0 enters at absolute square 0, seat 2 at 26. A progress of 26 for
