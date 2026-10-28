@@ -1028,8 +1028,9 @@ class Connection {
   }
 
   /// `emote`, `docs/PROTOCOL.md` section 25. Ladder after the blanket
-  /// limit: identity, room, seat, FINISHED, LOBBY, payload, cadence. Any
-  /// seated socket may send in PLAYING, on its turn or not. An admitted
+  /// limit: identity, room, seat, payload, cadence. Any seated socket may
+  /// send in any room state (LOBBY, PLAYING and FINISHED, rule 9), on its
+  /// turn or not; section 19.2 does not apply to it. An admitted
   /// emote changes no room state, so there is no registry call, no `seq`
   /// and nothing for the game log: the sender gets the push with `re`, every
   /// other socket the same push without it.
@@ -1052,14 +1053,6 @@ class Connection {
     }
     if (seat == null) {
       _reject(envelope, ProtocolError.badSeatToken, room: liveRoom.code);
-      return;
-    }
-    if (liveRoom.state == RoomState.finished) {
-      _reject(envelope, ProtocolError.gameOver, room: liveRoom.code);
-      return;
-    }
-    if (liveRoom.state == RoomState.lobby) {
-      _reject(envelope, ProtocolError.wrongPhase, room: liveRoom.code);
       return;
     }
     final Object? emote = envelope.data['emote'];
