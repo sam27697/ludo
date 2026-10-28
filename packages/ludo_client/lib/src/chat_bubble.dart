@@ -1,7 +1,8 @@
 // The speech bubble a quick message is drawn in: on the board at the
-// sender's seat, and as the chips of the quick messages sheet. GameScreen
-// decides when a bubble exists and for how long; this file only paints it.
-// Contract C-478 D5.2 and D5.4.
+// sender's seat, as the chips of the quick messages sheet and the end card's
+// reply chips, and as the lines laid over the end card. GameScreen decides
+// when a bubble exists and for how long; this file only paints it. Contract
+// C-478 D5.2 and D5.4, C-485 D5.
 
 import 'package:flutter/material.dart';
 
@@ -32,6 +33,24 @@ class BoardChatBubble {
   });
 
   final int seat;
+  final String text;
+  final int serial;
+}
+
+/// One line over the end card: the seat that said it, its display name
+/// (resolved by the screen), the resolved text and a start serial. A new
+/// [serial] is a new message, including one that replaces another from the
+/// same seat still showing. C-485 D5.2.
+class EndCardChatLine {
+  const EndCardChatLine({
+    required this.seat,
+    required this.name,
+    required this.text,
+    required this.serial,
+  });
+
+  final int seat;
+  final String name;
   final String text;
   final int serial;
 }
@@ -284,4 +303,181 @@ double _opacityAt(double ms) {
     1.0,
   );
   return 1 - u;
+}
+
+/// One preset as a small speech bubble: paper, a quiet border, a short tail
+/// at the bottom start corner. At least 48 dp tall, tail included. Not a
+/// Material chip, so it reads as something said rather than a filter. Used
+/// by the quick messages sheet and by the end card's reply chips. A button
+/// for TalkBack, labelled with its line.
+class SpeechChip extends StatelessWidget {
+  const SpeechChip({super.key, required this.line, required this.onTap});
+
+  final String line;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextStyle? style = Theme.of(context).textTheme.labelLarge
+        ?.copyWith(color: LudoColors.ink);
+    return Semantics(
+      button: true,
+      container: true,
+      label: line,
+      onTap: onTap,
+      child: ExcludeSemantics(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: CustomPaint(
+            painter: SpeechBubblePainter(
+              fill: LudoColors.paperElevated,
+              border: LudoColors.inkMuted,
+              borderWidth: 1.5,
+              radius: 16,
+              textDirection: Directionality.of(context),
+              tailAnchor: ChatTailAnchor.start,
+            ),
+            child: Padding(
+              padding: const EdgeInsetsDirectional.only(
+                start: kSpace3,
+                end: kSpace3,
+                bottom: kChatTailHeight,
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Align(
+                  widthFactor: 1,
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: kSpace3),
+                    child: Text(line, style: style),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The line laid over the end card for one seat: the board bubble's look
+/// without the tail, one line, the name in w700 then the line in w500. The
+/// root key is `end-card-chat-<seat>`. Pops in and fades out like the board
+/// bubble and starts over when [serial] changes. C-485 D5.2.
+class EndCardChatBubble extends StatefulWidget {
+  EndCardChatBubble({
+    required this.seat,
+    required this.name,
+    required this.text,
+    required this.label,
+    required this.serial,
+    required this.maxWidth,
+  }) : super(key: Key('end-card-chat-$seat'));
+
+  final int seat;
+  final String name;
+  final String text;
+
+  /// The spoken form: who said it, then the line.
+  final String label;
+  final int serial;
+  final double maxWidth;
+
+  @override
+  State<EndCardChatBubble> createState() => _EndCardChatBubbleState();
+}
+
+class _EndCardChatBubbleState extends State<EndCardChatBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _clock;
+
+  @override
+  void initState() {
+    super.initState();
+    _clock = AnimationController(vsync: this, duration: kChatBubbleLife)
+      ..forward();
+  }
+
+  @override
+  void didUpdateWidget(covariant EndCardChatBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.serial != widget.serial) {
+      _clock.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _clock.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    final Color seatColor =
+        LudoColors.seats[widget.seat.clamp(0, LudoColors.seats.length - 1)];
+    final TextStyle? base = Theme.of(context).textTheme.labelLarge
+        ?.copyWith(color: LudoColors.ink);
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: widget.label,
+      child: ExcludeSemantics(
+        child: AnimatedBuilder(
+          animation: _clock,
+          builder: (BuildContext context, Widget? child) {
+            final double ms = _clock.value * kChatBubbleLife.inMilliseconds;
+            return Opacity(
+              opacity: reduced ? 1 : _opacityAt(ms),
+              child: Transform.scale(
+                scale: reduced ? 1 : _scaleAt(ms),
+                child: child,
+              ),
+            );
+          },
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: widget.maxWidth),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: LudoColors.paperElevated,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: seatColor, width: 2),
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: LudoColors.ink.withValues(alpha: 0.25),
+                    blurRadius: 6,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Text.rich(
+                  TextSpan(
+                    children: <InlineSpan>[
+                      TextSpan(
+                        text: '${widget.name}: ',
+                        style: base?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      TextSpan(
+                        text: widget.text,
+                        style: base?.copyWith(fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

@@ -29,6 +29,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
 import 'capture_gloat.dart';
+import 'chat_bubble.dart' show EndCardChatLine;
 import 'die_cube.dart';
 import 'die_mark.dart';
 import 'end_card.dart';
@@ -420,6 +421,10 @@ class _GameScreenState extends State<GameScreen> {
   // PLAYING clears them all, the way it clears the gloat. [_chatMuted] is
   // owned here and bound both ways to the sheet's switch.
   final Map<int, _ChatEntry> _chatEntries = <int, _ChatEntry>{};
+  // C-485 D4: the same, for the lines laid over the end card once the game is
+  // over (FINISHED, or a rematch LOBBY). Kept apart so the PLAYING to
+  // FINISHED change takes down the board's and leaves these alone.
+  final Map<int, _ChatEntry> _endChatEntries = <int, _ChatEntry>{};
   int _chatSerial = 0;
   final ValueNotifier<bool> _chatMuted = ValueNotifier<bool>(false);
   bool _chatCooling = false;
@@ -1227,11 +1232,13 @@ class _GameScreenState extends State<GameScreen> {
     _scheduleGloatRebuild();
   }
 
-  /// C-478 D5.4. An `emote` push shows a bubble at its sender's seat when
-  /// the seat holds a seat in the snapshot, the id is one of the twelve and
-  /// the player has not hidden the others (mine are never hidden). Anything
-  /// else shows nothing and says nothing. A newer bubble for a seat replaces
-  /// that seat's and starts its life over.
+  /// C-478 D5.4 and C-485 D4. An `emote` push shows a line at its sender's
+  /// seat when the seat is known, the id is one of the twelve and the player
+  /// has not hidden the others (mine are never hidden): a bubble on the board
+  /// while PLAYING, a line over the end card in FINISHED or a rematch LOBBY,
+  /// nothing in any other state. Anything else shows nothing and says
+  /// nothing. A newer line for a seat replaces that seat's and starts its
+  /// life over.
   void _onEmoteFrame(Frame frame) {
     final RoomSnapshot? room = widget.controller.room;
     final int? seat = _intAt(frame.data, 'seat');
@@ -1239,35 +1246,51 @@ class _GameScreenState extends State<GameScreen> {
     if (room == null || seat == null || id == null) {
       return;
     }
-    if (room.state != RoomState.playing ||
-        !room.seats.any((SeatState s) => s.seat == seat) ||
-        !kQuickChatIds.contains(id)) {
+    final bool onBoard = room.state == RoomState.playing;
+    final bool onCard =
+        room.state == RoomState.finished ||
+        (room.state == RoomState.lobby && room.rematch != null);
+    if (!onBoard && !onCard) {
+      return;
+    }
+    // A seat that left after the game still says good game: the card also
+    // knows the seats of the game it is showing.
+    final bool known =
+        room.seats.any((SeatState s) => s.seat == seat) ||
+        (onCard &&
+            (widget.controller.lastFinished?.seats.any(
+                  (SeatState s) => s.seat == seat,
+                ) ??
+                false));
+    if (!known || !kQuickChatIds.contains(id)) {
       return;
     }
     if (_chatMuted.value && seat != widget.controller.seat) {
       return;
     }
-    _chatEntries[seat]?.timer.cancel();
+    final Map<int, _ChatEntry> entries = onBoard
+        ? _chatEntries
+        : _endChatEntries;
+    entries[seat]?.timer.cancel();
     _chatSerial++;
     final int serial = _chatSerial;
-    _chatEntries[seat] = _ChatEntry(
+    entries[seat] = _ChatEntry(
       id: id,
       serial: serial,
       timer: Timer(kChatBubbleLife, () {
-        final _ChatEntry? entry = _chatEntries[seat];
+        final _ChatEntry? entry = entries[seat];
         if (entry == null || entry.serial != serial) {
           return;
         }
-        _chatEntries.remove(seat);
+        entries.remove(seat);
         _scheduleGloatRebuild();
       }),
     );
     _scheduleGloatRebuild();
   }
 
-  /// Every bubble goes, with its timer. A resync, a resume, the room
-  /// leaving PLAYING, a new game, dispose. C-478 D5.4.
-  void _clearChatBubbles() {
+  /// The board's bubbles go, with their timers: the room left PLAYING.
+  void _clearBoardChat() {
     if (_chatEntries.isEmpty) {
       return;
     }
@@ -1278,16 +1301,35 @@ class _GameScreenState extends State<GameScreen> {
     _scheduleGloatRebuild();
   }
 
-  /// Hiding the others takes down the bubbles of the others that are up.
+  /// Every bubble and every end-card line goes, with their timers. A resync,
+  /// a resume, a new game, dispose. C-478 D5.4, C-485 D4.
+  void _clearChatBubbles() {
+    _clearBoardChat();
+    if (_endChatEntries.isEmpty) {
+      return;
+    }
+    for (final _ChatEntry entry in _endChatEntries.values) {
+      entry.timer.cancel();
+    }
+    _endChatEntries.clear();
+    _scheduleGloatRebuild();
+  }
+
+  /// Hiding the others takes down the lines of the others that are up.
   void _onChatMutedChanged() {
     if (_chatMuted.value) {
       final int? mine = widget.controller.seat;
-      final List<int> others = <int>[
-        for (final int seat in _chatEntries.keys)
-          if (seat != mine) seat,
-      ];
-      for (final int seat in others) {
-        _chatEntries.remove(seat)?.timer.cancel();
+      for (final Map<int, _ChatEntry> entries in <Map<int, _ChatEntry>>[
+        _chatEntries,
+        _endChatEntries,
+      ]) {
+        final List<int> others = <int>[
+          for (final int seat in entries.keys)
+            if (seat != mine) seat,
+        ];
+        for (final int seat in others) {
+          entries.remove(seat)?.timer.cancel();
+        }
       }
     }
     _scheduleGloatRebuild();
@@ -1302,6 +1344,38 @@ class _GameScreenState extends State<GameScreen> {
             text: line,
             serial: entry.value.serial,
           ),
+    ];
+  }
+
+  /// C-485 D5.2. The lines over the end card, the name resolved against the
+  /// live seats and then the game just finished. A line whose seat has no
+  /// name in either is not drawn.
+  List<EndCardChatLine> _endChatLinesOf(
+    AppLocalizations loc,
+    RoomSnapshot room,
+    RoomSnapshot finished,
+  ) {
+    String? nameOf(int seat) {
+      for (final RoomSnapshot source in <RoomSnapshot>[room, finished]) {
+        for (final SeatState s in source.seats) {
+          if (s.seat == seat) {
+            return s.name;
+          }
+        }
+      }
+      return null;
+    }
+
+    return <EndCardChatLine>[
+      for (final MapEntry<int, _ChatEntry> entry in _endChatEntries.entries)
+        if (quickChatLine(loc, entry.value.id) case final String line)
+          if (nameOf(entry.key) case final String name)
+            EndCardChatLine(
+              seat: entry.key,
+              name: name,
+              text: line,
+              serial: entry.value.serial,
+            ),
     ];
   }
 
@@ -2173,7 +2247,7 @@ class _GameScreenState extends State<GameScreen> {
       _clearChatBubbles();
     }
     if (controller.room?.state != RoomState.playing) {
-      _clearChatBubbles();
+      _clearBoardChat();
     }
     _notePlayingGame();
     if (controller.phase != RoomPhase.connected) {
@@ -4986,6 +5060,16 @@ class _GameScreenState extends State<GameScreen> {
         isOffline: isOffline,
         onRematch: _rematchInFlight ? null : () => _onRematchTap(),
         onStartReady: controller.isHost ? controller.startGame : null,
+        quickReplies: mySeat == null || isOffline || rematchGone || everyoneLeft
+            ? const <String>[]
+            : winnerSeat == null
+            ? const <String>['good_game']
+            : winnerSeat == mySeat
+            ? const <String>['good_game', 'ha_ha']
+            : const <String>['good_game', 'revenge', 'lucky'],
+        onQuickReply: _onChatPick,
+        quickReplyCooling: _chatCooling,
+        chatLines: _endChatLinesOf(loc, room, finished),
       ),
       trailing: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
