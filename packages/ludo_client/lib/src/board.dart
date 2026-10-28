@@ -23,6 +23,7 @@ import 'package:flutter/widgets.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board_geometry.dart';
 import 'capture_gloat.dart';
+import 'chat_bubble.dart';
 import 'move_hint.dart';
 import 'safe_cue.dart';
 import 'seat_die.dart';
@@ -31,6 +32,7 @@ import 'theme.dart';
 import 'token_face_picker.dart';
 
 export 'board_geometry.dart';
+export 'chat_bubble.dart' show BoardChatBubble;
 
 /// How long the drawn token dwells on each square of a travel step, contract
 /// C-252 rule 5. [kTokenStepDurationReduced] is the same dwell under
@@ -433,6 +435,7 @@ class LudoBoard extends StatefulWidget {
     this.gloat,
     this.hint,
     this.hintNamesFace = false,
+    this.chatBubbles = const <BoardChatBubble>[],
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -575,6 +578,11 @@ class LudoBoard extends StatefulWidget {
   /// when D1's candidates hold more than one face (C-471 D4). Default
   /// false draws the marker with no numeral.
   final bool hintNamesFace;
+
+  /// Quick messages showing now, at most one per seat, each drawn as a
+  /// speech bubble at its seat's yard. Empty, the default, adds nothing, so
+  /// a board built without it draws exactly what it drew before. C-478 D5.4.
+  final List<BoardChatBubble> chatBubbles;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -1509,6 +1517,10 @@ class _LudoBoardState extends State<LudoBoard> {
                   // below the thrown die and the face picker. IgnorePointer
                   // so the face never takes a tap.
                   if (widget.gloat != null) _gloatLayer(cellSize),
+                  // C-478 D5.4: above the gloat, below the thrown die, the
+                  // safe cue and the face picker. Keyed so its coming and
+                  // going does not hand the thrown-die overlay's slot to it.
+                  if (widget.chatBubbles.isNotEmpty) _chatLayer(cellSize),
                   if (widget.overlay != null)
                     Positioned.fill(child: widget.overlay!),
                   if (widget.safeCue != null)
@@ -1581,6 +1593,57 @@ class _LudoBoardState extends State<LudoBoard> {
           diameter: diameter,
           cellSize: cellSize,
         ),
+      ),
+    );
+  }
+
+  /// C-478 D5.4. The tail tip stands on the centre of the viewed yard moved
+  /// one cell toward the board's horizontal midline. A yard in the lower
+  /// half gets its body above the tip, one in the upper half below it, the
+  /// body centred on the yard and at most five cells wide.
+  Widget _chatLayer(double cellSize) {
+    final AppLocalizations loc = AppLocalizations.of(context);
+    final double boardSide = cellSize * 15;
+    final double midline = boardSide / 2;
+    final double maxWidth = cellSize * 5;
+    final List<Widget> bubbles = <Widget>[];
+    for (final BoardChatBubble bubble in widget.chatBubbles) {
+      final int seat = bubble.seat;
+      if (seat < 0 || seat > 3) {
+        continue;
+      }
+      final ({double left, double top, double side, BoardCell origin}) yard =
+          _viewedYard(cellSize, seat);
+      final double centerX = yard.left + yard.side / 2;
+      final double centerY = yard.top + yard.side / 2;
+      final bool lowerHalf = centerY > midline;
+      final double tipY = lowerHalf ? centerY - cellSize : centerY + cellSize;
+      final String name = widget.seatNames?[seat] ?? '';
+      bubbles.add(
+        Positioned(
+          key: ValueKey<String>('board-chat-slot-$seat'),
+          left: centerX - maxWidth / 2,
+          width: maxWidth,
+          top: lowerHalf ? null : tipY,
+          bottom: lowerHalf ? boardSide - tipY : null,
+          child: Align(
+            heightFactor: 1,
+            child: ChatBubble(
+              seat: seat,
+              text: bubble.text,
+              label: loc.chatSaid(name, bubble.text),
+              serial: bubble.serial,
+              maxWidth: maxWidth,
+              tailOnTop: !lowerHalf,
+            ),
+          ),
+        ),
+      );
+    }
+    return Positioned.fill(
+      key: const Key('board-chat-layer'),
+      child: IgnorePointer(
+        child: Stack(clipBehavior: Clip.none, children: bubbles),
       ),
     );
   }

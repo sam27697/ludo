@@ -43,6 +43,7 @@ import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'no_move_reason.dart';
+import 'quick_chat.dart';
 import 'roll_tray.dart';
 import 'safe_cue.dart';
 import 'seat_die.dart';
@@ -413,6 +414,17 @@ class _GameScreenState extends State<GameScreen> {
   Timer? _gloatLifeTimer;
   final List<_PendingGloat> _pendingGloats = <_PendingGloat>[];
 
+  // C-478 D5: quick messages. One bubble per seat, born from the server's
+  // `emote` frame only (mine included, no optimistic draw), each on its own
+  // [kChatBubbleLife] timer. A resync, a dropped link or the room leaving
+  // PLAYING clears them all, the way it clears the gloat. [_chatMuted] is
+  // owned here and bound both ways to the sheet's switch.
+  final Map<int, _ChatEntry> _chatEntries = <int, _ChatEntry>{};
+  int _chatSerial = 0;
+  final ValueNotifier<bool> _chatMuted = ValueNotifier<bool>(false);
+  bool _chatCooling = false;
+  Timer? _chatCoolTimer;
+
   // C-384: at most one safe-landing pill. Held like a landing cue until
   // the mover's onMoveLanded (or kLandingCueFallback, or a travel snap),
   // except under reduced motion, where it shows on the moved frame.
@@ -483,6 +495,7 @@ class _GameScreenState extends State<GameScreen> {
     );
     _syncSeatFaceMemory();
     widget.controller.addListener(_onControllerChanged);
+    _chatMuted.addListener(_onChatMutedChanged);
     _frameSub = widget.controller.frames.listen(_onFrame);
     // K9: this screen can mount straight into a turn already mid-queue
     // (a resumed app, a reconnect) with no `turn` or `rolled` frame of
@@ -553,6 +566,10 @@ class _GameScreenState extends State<GameScreen> {
     widget.controller.removeListener(_onControllerChanged);
     // C-468 D5: disposing before the 250 ms cancels the captured seat's sound.
     _removeGloat();
+    _chatCoolTimer?.cancel();
+    _clearChatBubbles();
+    _chatMuted.removeListener(_onChatMutedChanged);
+    _chatMuted.dispose();
     super.dispose();
   }
 
@@ -568,6 +585,12 @@ class _GameScreenState extends State<GameScreen> {
   /// earlier hold; a `rolled` with no readable `value` changes nothing,
   /// there being no new face to take the die's place.
   void _onFrame(Frame frame) {
+    // C-478 D5.4: a quick message is chatter. It changes no state here, owes
+    // no cue and reaches none of the bookkeeping below.
+    if (frame.type == 'emote') {
+      _onEmoteFrame(frame);
+      return;
+    }
     // C-246 rule 5: a `game_started` naming a game this screen has not
     // already recorded is the next game after a rematch (or the very
     // first game, handled the same way since `_currentGameId` starts
@@ -1204,6 +1227,117 @@ class _GameScreenState extends State<GameScreen> {
     _scheduleGloatRebuild();
   }
 
+  /// C-478 D5.4. An `emote` push shows a bubble at its sender's seat when
+  /// the seat holds a seat in the snapshot, the id is one of the twelve and
+  /// the player has not hidden the others (mine are never hidden). Anything
+  /// else shows nothing and says nothing. A newer bubble for a seat replaces
+  /// that seat's and starts its life over.
+  void _onEmoteFrame(Frame frame) {
+    final RoomSnapshot? room = widget.controller.room;
+    final int? seat = _intAt(frame.data, 'seat');
+    final String? id = _stringAt(frame.data, 'emote');
+    if (room == null || seat == null || id == null) {
+      return;
+    }
+    if (room.state != RoomState.playing ||
+        !room.seats.any((SeatState s) => s.seat == seat) ||
+        !kQuickChatIds.contains(id)) {
+      return;
+    }
+    if (_chatMuted.value && seat != widget.controller.seat) {
+      return;
+    }
+    _chatEntries[seat]?.timer.cancel();
+    _chatSerial++;
+    final int serial = _chatSerial;
+    _chatEntries[seat] = _ChatEntry(
+      id: id,
+      serial: serial,
+      timer: Timer(kChatBubbleLife, () {
+        final _ChatEntry? entry = _chatEntries[seat];
+        if (entry == null || entry.serial != serial) {
+          return;
+        }
+        _chatEntries.remove(seat);
+        _scheduleGloatRebuild();
+      }),
+    );
+    _scheduleGloatRebuild();
+  }
+
+  /// Every bubble goes, with its timer. A resync, a resume, the room
+  /// leaving PLAYING, a new game, dispose. C-478 D5.4.
+  void _clearChatBubbles() {
+    if (_chatEntries.isEmpty) {
+      return;
+    }
+    for (final _ChatEntry entry in _chatEntries.values) {
+      entry.timer.cancel();
+    }
+    _chatEntries.clear();
+    _scheduleGloatRebuild();
+  }
+
+  /// Hiding the others takes down the bubbles of the others that are up.
+  void _onChatMutedChanged() {
+    if (_chatMuted.value) {
+      final int? mine = widget.controller.seat;
+      final List<int> others = <int>[
+        for (final int seat in _chatEntries.keys)
+          if (seat != mine) seat,
+      ];
+      for (final int seat in others) {
+        _chatEntries.remove(seat)?.timer.cancel();
+      }
+    }
+    _scheduleGloatRebuild();
+  }
+
+  List<BoardChatBubble> _chatBubblesOf(AppLocalizations loc) {
+    return <BoardChatBubble>[
+      for (final MapEntry<int, _ChatEntry> entry in _chatEntries.entries)
+        if (quickChatLine(loc, entry.value.id) case final String line)
+          BoardChatBubble(
+            seat: entry.key,
+            text: line,
+            serial: entry.value.serial,
+          ),
+    ];
+  }
+
+  /// C-478 D5.1. A tap while the button rests plays the invalid-tap cue and
+  /// opens nothing.
+  void _onChatButtonTap() {
+    if (_chatCooling) {
+      FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+      return;
+    }
+    showQuickChatSheet(context, onPick: _onChatPick, muted: _chatMuted);
+  }
+
+  /// C-478 D5.3. No optimistic bubble: the server's copy of the message
+  /// comes back as an `emote` frame like everyone else's. The rest starts
+  /// when that copy has come back, and a refusal shows and plays nothing.
+  Future<void> _onChatPick(String id) async {
+    final bool sent = await widget.controller.sendEmote(id);
+    if (!sent || !mounted || _screenDisposed) {
+      return;
+    }
+    _chatCoolTimer?.cancel();
+    setState(() {
+      _chatCooling = true;
+    });
+    _chatCoolTimer = Timer(kQuickChatCooldown, () {
+      _chatCoolTimer = null;
+      if (!mounted || _screenDisposed) {
+        return;
+      }
+      setState(() {
+        _chatCooling = false;
+      });
+    });
+  }
+
   /// C-384 S1 and S2. A `moved` frame with an empty `captured`, a
   /// main-track `to`, and at least one other seat's token already on
   /// that absolute square. Safe square wins over a pair.
@@ -1464,6 +1598,10 @@ class _GameScreenState extends State<GameScreen> {
     _shownHint = null;
     _dropPendingLandingCues();
     _removeGloat();
+    _clearChatBubbles();
+    _chatCoolTimer?.cancel();
+    _chatCoolTimer = null;
+    _chatCooling = false;
     _clearSafeCue();
     _endHoldDwellTimer?.cancel();
     _endHoldDwellTimer = null;
@@ -2033,6 +2171,10 @@ class _GameScreenState extends State<GameScreen> {
     // C-468 D5: resync notifies with hasDesynced before the snapshot.
     if (controller.hasDesynced) {
       _removeGloat();
+      _clearChatBubbles();
+    }
+    if (controller.room?.state != RoomState.playing) {
+      _clearChatBubbles();
     }
     _notePlayingGame();
     if (controller.phase != RoomPhase.connected) {
@@ -2065,6 +2207,7 @@ class _GameScreenState extends State<GameScreen> {
     _dropPendingLandingCues();
     // C-468 D5: a resync or a dropped link does not carry a gloat across.
     _removeGloat();
+    _clearChatBubbles();
     _safeCueEpoch++;
     _safeCueLandingsToIgnore = 0;
     _dropPendingSafeCue();
@@ -2095,6 +2238,7 @@ class _GameScreenState extends State<GameScreen> {
       // (C-465 A6) is a resync too. The gloat that is up, and any still
       // waiting for its landing, go, and the captured seat's sound with them.
       _removeGloat();
+      _clearChatBubbles();
       return;
     }
     _seenRolls = next;
@@ -3255,6 +3399,27 @@ class _GameScreenState extends State<GameScreen> {
                           icon: const Icon(Icons.close),
                         ),
                       ),
+                      if (controller.phase == RoomPhase.connected &&
+                          room != null &&
+                          room.state == RoomState.playing &&
+                          controller.seat != null)
+                        PositionedDirectional(
+                          end: kSpace2 + 48 + kSpace1,
+                          child: Opacity(
+                            opacity: _chatCooling ? 0.38 : 1,
+                            child: IconButton(
+                              key: const Key('game-chat-button'),
+                              style: IconButton.styleFrom(
+                                minimumSize: const Size(48, 48),
+                              ),
+                              tooltip: loc.chatButtonTooltip,
+                              onPressed: _onChatButtonTap,
+                              icon: const Icon(
+                                Icons.chat_bubble_outline_rounded,
+                              ),
+                            ),
+                          ),
+                        ),
                       PositionedDirectional(
                         end: kSpace2,
                         child: IconButton(
@@ -4020,6 +4185,7 @@ class _GameScreenState extends State<GameScreen> {
                   seatDice: _seatDiceOf(room),
                   seatRecord: boardRecord,
                   gloat: _gloat,
+                  chatBubbles: _chatBubblesOf(loc),
                   hint: _shownHint?.move,
                   hintNamesFace: _shownHint?.namesFace ?? false,
                 ),
@@ -5363,6 +5529,16 @@ class _PendingSafeCue {
 }
 
 /// C-468 D5: one capture waiting for the mover's landing.
+/// One quick message on the board: the preset id, the start serial the
+/// board restarts its pop on, and the timer that takes it down.
+class _ChatEntry {
+  _ChatEntry({required this.id, required this.serial, required this.timer});
+
+  final String id;
+  final int serial;
+  final Timer timer;
+}
+
 class _PendingGloat {
   _PendingGloat({
     required this.seat,
