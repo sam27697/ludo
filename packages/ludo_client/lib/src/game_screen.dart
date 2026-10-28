@@ -569,7 +569,7 @@ class _GameScreenState extends State<GameScreen> {
     _chatCoolTimer?.cancel();
     _clearChatBubbles();
     _chatMuted.removeListener(_onChatMutedChanged);
-    _chatMuted.dispose();
+    // Not disposed: an open quick messages sheet can still write the switch.
     super.dispose();
   }
 
@@ -1599,9 +1599,8 @@ class _GameScreenState extends State<GameScreen> {
     _dropPendingLandingCues();
     _removeGloat();
     _clearChatBubbles();
-    _chatCoolTimer?.cancel();
-    _chatCoolTimer = null;
-    _chatCooling = false;
+    // The cooldown is the server's cadence (PROTOCOL section 25 rule 3), not
+    // the game's: a new game leaves it running.
     _clearSafeCue();
     _endHoldDwellTimer?.cancel();
     _endHoldDwellTimer = null;
@@ -5528,7 +5527,6 @@ class _PendingSafeCue {
   Timer? fallbackTimer;
 }
 
-/// C-468 D5: one capture waiting for the mover's landing.
 /// One quick message on the board: the preset id, the start serial the
 /// board restarts its pop on, and the timer that takes it down.
 class _ChatEntry {
@@ -5539,6 +5537,7 @@ class _ChatEntry {
   final Timer timer;
 }
 
+/// C-468 D5: one capture waiting for the mover's landing.
 class _PendingGloat {
   _PendingGloat({
     required this.seat,

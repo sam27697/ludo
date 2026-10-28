@@ -5,8 +5,10 @@
 
 import 'package:flutter/material.dart';
 
-import 'quick_chat.dart' show kChatBubbleLife;
 import 'theme.dart';
+
+/// How long a bubble stays on the board, reduced motion included.
+const Duration kChatBubbleLife = Duration(milliseconds: 2500);
 
 /// Pop-in. C-478 D5.4.
 const Duration kChatBubblePop = Duration(milliseconds: 160);
@@ -206,6 +208,7 @@ class _ChatBubbleState extends State<ChatBubble>
     final TextStyle? style = Theme.of(context).textTheme.labelLarge
         ?.copyWith(color: LudoColors.ink, fontWeight: FontWeight.w700);
     return Semantics(
+      container: true,
       liveRegion: true,
       label: widget.label,
       child: ExcludeSemantics(

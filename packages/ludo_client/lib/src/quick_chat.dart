@@ -9,7 +9,7 @@ import '../l10n/gen/app_localizations.dart';
 import 'chat_bubble.dart';
 import 'theme.dart';
 
-export 'chat_bubble.dart' show BoardChatBubble;
+export 'chat_bubble.dart' show kChatBubbleLife;
 
 /// The ids the server knows, in the sheet's order. They are permanent.
 const List<String> kQuickChatIds = <String>[
@@ -29,9 +29,6 @@ const List<String> kQuickChatIds = <String>[
 
 /// How long this device's own button rests after a send that came back.
 const Duration kQuickChatCooldown = Duration(milliseconds: 3000);
-
-/// How long a bubble stays on the board, reduced motion included.
-const Duration kChatBubbleLife = Duration(milliseconds: 2500);
 
 /// The line for [id] in [loc]'s language, or null for an id not in
 /// [kQuickChatIds].
