@@ -1360,3 +1360,66 @@ the connection out (minutes). This section bounds that.
    other than the 1001 above. A live socket whose peer answers pings
    behaves exactly as before; a seat is never marked not connected while
    its pongs arrive.
+
+## 25. Quick messages, 2026-10-28
+
+Players asked for a way to tease and cheer each other during a game. The
+answer is a fixed set of preset lines, sent as ids. There is no free text
+on this wire and there will not be: free text needs moderation and is user
+content, and nothing in this protocol stores or forwards anything a
+player typed except a display name.
+
+1. **Request.** `emote` `{ "emote": string }`, with an `id`. The value is
+   one of exactly these twelve ids: `hi`, `good_luck`, `your_move`,
+   `nice`, `lucky`, `oops`, `ha_ha`, `revenge`, `coming`, `back_home`,
+   `no_way`, `good_game`. The client owns the words in each language; the
+   server knows only the ids. An id outside the set, a value that is not a
+   string, a missing `emote` key or any other key in `d` is `BAD_FIELD`.
+2. **Who and when.** Any seated socket, PLAYING only, whether or not it
+   is that seat's turn. Validated in the section 7 order: the blanket
+   per-message limit, then no identity on the socket `BAD_SEAT_TOKEN`,
+   room gone `NO_SUCH_ROOM`, a seat token that is not in the room
+   `BAD_SEAT_TOKEN`, FINISHED `GAME_OVER` (section 19.2 holds), LOBBY
+   `WRONG_PHASE`, then the payload (rule 1), then the cadence (rule 3).
+3. **Cadence.** Kept per seat, by seat token, in the room, so a resume or
+   a second socket does not reset it. An `emote` is admitted only when at
+   least 3000 ms have passed since that seat's last admitted `emote` and
+   fewer than 10 were admitted from that seat in the 60 000 ms before it.
+   Otherwise `RATE_LIMITED`, and the connection stays open. A rejected
+   `emote` does not count toward either bound. This bound is a rule of
+   the table rather than a flood guard, which is why it runs last, after
+   the seat is known; the flood guard is the blanket limit of section 7
+   and it still runs first. The server's clock decides, never the
+   client's.
+4. **Answer.** An admitted `emote` is sent as the push `emote`
+   `{ "seat": int, "emote": string }`, `seat` being the sender's seat and
+   `emote` the id as received. The sender's socket gets it with `re` set
+   to the request's `id`; that copy is the acknowledgement. Every other
+   socket attached to the room gets the same `t` and `d` with no `re`.
+5. **Not state.** `emote` carries no `seq`, changes nothing in the room
+   and is not in the snapshot. A socket that was not attached when it was
+   sent never receives it; nothing replays it on `resume`. It is not in
+   the `game_log` answer (section 17 rule 2 reads "every push the room
+   broadcast for the current game" except `emote`), and it is not in the
+   verify record.
+6. **Old clients** receive a frame type they do not know and ignore it,
+   as section 5's deltas already allow.
+7. **What does not change.** Every other message, field, error, close
+   code and limit. The section 5 table gains one row on each side and the
+   section 7 `GAME_OVER` exception list does not gain `emote`.
+8. **Tests this section requires before it is implemented.** In a
+   two-seat PLAYING room: an `emote` from seat 1 reaches seat 1 with `re`
+   and seat 0 without `re`, both with `{seat: 1, emote: id}` and no `seq`;
+   an `emote` sent when it is not the sender's turn is admitted; every
+   one of the twelve ids is admitted (advancing the clock between them);
+   `BAD_FIELD` for an unknown id, a number, a missing key and an extra
+   key; `WRONG_PHASE` in LOBBY; `GAME_OVER` after `game_over`;
+   `BAD_SEAT_TOKEN` from a socket with no seat; a second `emote` 2999 ms
+   after the first `RATE_LIMITED` and one at 3000 ms admitted; an
+   eleventh within 60 000 ms `RATE_LIMITED` even with 3000 ms gaps, and
+   admitted again once the oldest of the ten is 60 000 ms old; a rejected
+   one does not count (a reject at 1000 ms does not delay the admit at
+   3000 ms); the cadence survives a `resume` of that seat on a new
+   socket; the connection stays open after `RATE_LIMITED`; the
+   `game_log` answer holds no `emote` entry after several were sent; the
+   room's `seq` is the same before and after an admitted `emote`.
