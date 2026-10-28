@@ -296,6 +296,7 @@ Future<RollTrayDrive> connectPlaying(
   String state = 'PLAYING',
   int? winner,
   bool sendSeatAssigned = true,
+  List<Duration> autoReconnectDelays = const <Duration>[],
 }) async {
   final _Connector connector = _Connector();
   final FakeTransport transport = FakeTransport();
@@ -303,6 +304,7 @@ Future<RollTrayDrive> connectPlaying(
   final RoomController controller = RoomController(
     serverUrl: Uri.parse(rollTrayTestUrl),
     connect: connector.call,
+    autoReconnectDelays: autoReconnectDelays,
   );
   final Future<void> future = controller.createRoom(name: 'Sam', players: 2);
   await tester.runAsync(() => pumpEventQueue());
@@ -350,6 +352,44 @@ String errorReplyFrame({required String re, required String code}) => _frame(
   re: re,
   data: <String, Object?>{'code': code, 'message': code},
 );
+
+/// The server's `emote` push (docs/PROTOCOL.md section 25): `{seat, emote}`
+/// and no `seq`. [re] is set only on the sender's own copy. [emote] and
+/// [seat] are untyped so a case can send what a broken server would.
+String emoteFrame({
+  required Object? seat,
+  required Object? emote,
+  String? re,
+}) => _frame(
+  type: 'emote',
+  re: re,
+  data: <String, Object?>{'seat': seat, 'emote': emote},
+);
+
+/// Delivers [text] (a frame built here) and flushes it with the two bare
+/// pumps [RollTrayDrive.push] runs; no fake time passes.
+Future<void> pushRaw(
+  WidgetTester tester,
+  RollTrayDrive drive,
+  String text,
+) async {
+  drive.transport.pushText(text);
+  await tester.pump();
+  await tester.pump();
+}
+
+/// The `emote` requests this client sent from index [from] of the
+/// transport's sent frames, whole (type, id, data).
+List<Map<String, Object?>> emotesSince(FakeTransport transport, int from) =>
+    <Map<String, Object?>>[
+      for (final String text in transport.sentRaw.skip(from))
+        if (frameType(text) == 'emote') decodeFrame(text),
+    ];
+
+/// The `t` of every frame this client sent from index [from].
+List<String> sentTypesSince(FakeTransport transport, int from) => <String>[
+  for (final String text in transport.sentRaw.skip(from)) frameType(text),
+];
 
 /// The server's `room` reply to the request [re], a resume most often.
 String roomReplyFrame({

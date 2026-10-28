@@ -756,6 +756,24 @@ class RoomController extends ChangeNotifier {
     }
   }
 
+  /// C-478 D4: sends one quick-message id. True when the server's copy came
+  /// back. False, silently, when not connected, disposed, or on any error
+  /// (RATE_LIMITED, a timeout, a closed connection). Unlike [roll] and
+  /// [move] this never goes through [_failFromRollOrMove]: a refused
+  /// message blocks nothing and starts no reconnect.
+  Future<bool> sendEmote(String id) async {
+    final RoomConnection? connection = _connection;
+    if (_disposed || _phase != RoomPhase.connected || connection == null) {
+      return false;
+    }
+    try {
+      await connection.emote(id);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// C-304 rule 1: fetches the server's game log for the current game.
   /// Forwards directly to the current connection's [gameLog].
   Future<List<Frame>> fetchGameLog() {
@@ -951,7 +969,9 @@ class RoomController extends ChangeNotifier {
       }
       _gameTranscript.add(frame);
     } else if (_hasOpenedTranscript) {
-      if (frame.type != 'game_log') {
+      // A quick message is chatter, not game record (section 25.5): it is
+      // not in the server's game_log and must not be in this transcript.
+      if (frame.type != 'game_log' && frame.type != 'emote') {
         _gameTranscript.add(frame);
       }
     }
