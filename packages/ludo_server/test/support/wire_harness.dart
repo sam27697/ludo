@@ -199,6 +199,25 @@ class WireTestClient {
         );
   }
 
+  /// Waits, bounded by [timeout], for this socket to be closed by whichever
+  /// side, then returns `dart:io`'s own [WebSocket.closeCode] for it. Added
+  /// for order 491, which has to prove the displaced socket of a takeover
+  /// really is closed and with the code section 7.1 pins; nothing else in
+  /// this class reads or changes.
+  Future<int?> waitClosed({
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    try {
+      await _socket.done.timeout(timeout);
+    } on TimeoutException {
+      throw TestFailure(
+        'expected this socket to be closed by the server within $timeout and '
+        'it was still open',
+      );
+    }
+    return _socket.closeCode;
+  }
+
   Future<void> close() async {
     await _queue.close();
     if (_socket.readyState == WebSocket.open) {
