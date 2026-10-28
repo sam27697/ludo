@@ -124,6 +124,21 @@ class Seat {
   /// publishes it. Never negative.
   int timerSteps = 0;
 
+  /// `docs/PROTOCOL.md` section 26 rule 1: the seat has been away for one
+  /// whole turn of its own and has not reconnected since, so every segment
+  /// that starts for it has the fixed away budget. Room state, never on the
+  /// wire: the snapshot shows its effect in `turn.segment_ms` and nothing
+  /// else. Cleared for every seat by `game_started` and for one seat by the
+  /// `resume` that reconnects it.
+  bool away = false;
+
+  /// Section 26 rule 2: whether this seat was connected at any point of the
+  /// turn it holds now or held last, that is, connected as the turn began or
+  /// reconnected by a `resume` before the turn ended. A turn that ends with
+  /// this false makes the seat [away]. Meaningful only for the seat on turn
+  /// in a PLAYING room; the registry sets it again as each turn begins.
+  bool connectedThisTurn = true;
+
   @override
   String toString() => 'Seat(seat: $seat, name: $name, connected: $connected)';
 }
@@ -151,7 +166,8 @@ class Room {
     DateTime? lifetimeStartedAt,
     List<Map<String, Object?>>? gameLog,
   })  : lifetimeStartedAt = lifetimeStartedAt ?? createdAt,
-        gameLog = gameLog ?? <Map<String, Object?>>[];
+        gameLog = gameLog ?? <Map<String, Object?>>[],
+        turnSegmentMs = rules.turnSeconds * 1000;
 
   final String code;
   final DateTime createdAt;
@@ -262,8 +278,16 @@ class Room {
   /// `start_game`. Every `deadline_ms`, whether in a pushed frame or in a
   /// `room` snapshot built later, is `max(0, rules.turnSeconds * 1000 -
   /// now.difference(this).inMilliseconds)` on the registry's injected
-  /// `Clock` -- never `DateTime.now()` directly.
+  /// `Clock` -- never `DateTime.now()` directly. Section 26 rule 3 replaces
+  /// `rules.turnSeconds * 1000` in that formula with [turnSegmentMs].
   DateTime? turnSegmentStartedAt;
+
+  /// `docs/PROTOCOL.md` section 26 rule 3: the budget of the segment that
+  /// began at [turnSegmentStartedAt], in milliseconds. `rules.turnSeconds *
+  /// 1000` unless the seat the segment was started for was away, in which
+  /// case the fixed away budget. Set only by the registry's
+  /// `_restartSegment`, and published as `turn.segment_ms`.
+  int turnSegmentMs;
 
   /// `docs/PROTOCOL.md` section 16.6. Null except while this room is a
   /// rematch LOBBY: set by `RoomRegistry.rematch`'s first call in a FINISHED

@@ -145,9 +145,7 @@ class _QuickChatSheet extends StatelessWidget {
   }
 }
 
-/// One preset as a small speech bubble: paper, a quiet border, a short tail
-/// at the bottom start corner. At least 48 dp tall, tail included. Not a
-/// Material chip, so it reads as something said rather than a filter.
+/// One preset as a [SpeechChip], keyed `quick-chat-<id>`.
 class _QuickChatChip extends StatelessWidget {
   _QuickChatChip({required this.id, required this.line, required this.onTap})
     : super(key: Key('quick-chat-$id'));
@@ -157,50 +155,7 @@ class _QuickChatChip extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
-    final TextStyle? style = Theme.of(context).textTheme.labelLarge
-        ?.copyWith(color: LudoColors.ink);
-    return Semantics(
-      button: true,
-      container: true,
-      label: line,
-      onTap: onTap,
-      child: ExcludeSemantics(
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          child: CustomPaint(
-            painter: SpeechBubblePainter(
-              fill: LudoColors.paperElevated,
-              border: LudoColors.inkMuted,
-              borderWidth: 1.5,
-              radius: 16,
-              textDirection: Directionality.of(context),
-              tailAnchor: ChatTailAnchor.start,
-            ),
-            child: Padding(
-              padding: const EdgeInsetsDirectional.only(
-                start: kSpace3,
-                end: kSpace3,
-                bottom: kChatTailHeight,
-              ),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 48),
-                child: Align(
-                  widthFactor: 1,
-                  alignment: AlignmentDirectional.centerStart,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: kSpace3),
-                    child: Text(line, style: style),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => SpeechChip(line: line, onTap: onTap);
 }
 
 /// The switch row, laid out like the settings sheet's rows: the whole row at

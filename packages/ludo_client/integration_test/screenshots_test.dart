@@ -6570,6 +6570,79 @@ void main() {
       seatToken: 'tok-shot-83',
     );
   });
+
+  // ==========================================================================
+  // 84-87: order 489 (C-485 D7). Emulator frames of the end card's replies and
+  // lines: a FINISHED room reached through a real GameScreen over
+  // FakeTransport the way captures 21 and 22 reach theirs, then `emote`
+  // pushes with no `re` the way captures 81-83 inject them. Frames copied by
+  // hand into this file, no server, no pumpAndSettle once GameScreen is up.
+  // Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 84-end-lose-chat-en', (tester) async {
+    await _shootEndCardChat(
+      tester,
+      binding,
+      shotName: '84-end-lose-chat-en',
+      locale: const Locale('en'),
+      fourSeats: false,
+      winnerSeat: 2,
+      emotes: const <(int, String)>[(2, 'ha_ha')],
+      expectedReplies: const <String>['good_game', 'revenge', 'lucky'],
+      roomCode: 'GG84EN',
+      gameId: '6' * 16,
+      seatToken: 'tok-shot-84',
+    );
+  });
+
+  testWidgets('capture 85-end-lose-chat-ar', (tester) async {
+    await _shootEndCardChat(
+      tester,
+      binding,
+      shotName: '85-end-lose-chat-ar',
+      locale: const Locale('ar'),
+      fourSeats: false,
+      winnerSeat: 2,
+      emotes: const <(int, String)>[(2, 'ha_ha')],
+      expectedReplies: const <String>['good_game', 'revenge', 'lucky'],
+      roomCode: 'GG85AR',
+      gameId: '7' * 16,
+      seatToken: 'tok-shot-85',
+    );
+  });
+
+  testWidgets('capture 86-end-win-chat-en', (tester) async {
+    await _shootEndCardChat(
+      tester,
+      binding,
+      shotName: '86-end-win-chat-en',
+      locale: const Locale('en'),
+      fourSeats: true,
+      winnerSeat: 0,
+      emotes: const <(int, String)>[(1, 'good_game'), (3, 'lucky')],
+      expectedReplies: const <String>['good_game', 'ha_ha'],
+      roomCode: 'GG86EN',
+      gameId: '8' * 16,
+      seatToken: 'tok-shot-86',
+    );
+  });
+
+  testWidgets('capture 87-end-lose-chat-ar-large-text', (tester) async {
+    await _shootEndCardChat(
+      tester,
+      binding,
+      shotName: '87-end-lose-chat-ar-large-text',
+      locale: const Locale('ar'),
+      fourSeats: false,
+      winnerSeat: 2,
+      emotes: const <(int, String)>[(2, 'revenge')],
+      expectedReplies: const <String>['good_game', 'revenge', 'lucky'],
+      roomCode: 'GG87AR',
+      gameId: '9' * 16,
+      seatToken: 'tok-shot-87',
+      textScale: 2.0,
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -13565,5 +13638,316 @@ Future<void> _shootChatBubblesLarge(
   } finally {
     await _releaseTrayGame(tester, controller);
     tester.platformDispatcher.clearTextScaleFactorTestValue();
+  }
+}
+
+// ============================================================================
+// Order 489 (captures 84-87): the end card's replies and lines (C-485 D5.1,
+// D5.2, D7).
+// ============================================================================
+
+/// Every `Text` and `RichText` under [root] flattened to one string, so a
+/// bubble that paints its name and its line as two spans reads as one.
+String _plainTextUnder(WidgetTester tester, Finder root) {
+  final StringBuffer out = StringBuffer();
+  for (final Element element
+      in find
+          .descendant(of: root, matching: find.byType(RichText))
+          .evaluate()) {
+    out.write((element.widget as RichText).text.toPlainText());
+  }
+  return out.toString();
+}
+
+/// Asserts `end-card-chat-<seat>` is on screen and reads [name] then [line].
+void _expectEndCardChat(
+  WidgetTester tester, {
+  required int seat,
+  required String name,
+  required String line,
+  required String shotName,
+  required String scenario,
+}) {
+  final Finder bubble = find.byKey(Key('end-card-chat-$seat'));
+  expect(
+    bubble,
+    findsOneWidget,
+    reason:
+        'capture $shotName ($scenario): C-485 D5.2, an emote from seat $seat '
+        'in FINISHED must show end-card-chat-$seat',
+  );
+  final String shown = _plainTextUnder(tester, bubble);
+  final int nameAt = shown.indexOf(name);
+  final int lineAt = shown.indexOf(line);
+  expect(
+    nameAt >= 0 && lineAt > nameAt,
+    isTrue,
+    reason:
+        'capture $shotName ($scenario): C-485 D5.2, end-card-chat-$seat must '
+        'read the name "$name" and then the line "$line", got "$shown"',
+  );
+}
+
+/// Captures 84-87 (order 489, C-485 D5.1, D5.2, D7). A room walked to
+/// FINISHED through a real GameScreen: two seats `[0, 2]` or, with
+/// [fourSeats], `[0, 1, 2, 3]`, viewer seat 0, `game_over` naming
+/// [winnerSeat]. After the end card has settled the [emotes] land as pushes
+/// with no `re`, in order, and the shot is taken 400 ms after the last. Before
+/// the shot the card's variant, its lines and its reply chips are asserted.
+Future<void> _shootEndCardChat(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required bool fourSeats,
+  required int winnerSeat,
+  required List<(int, String)> emotes,
+  required List<String> expectedReplies,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+  double? textScale,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  if (textScale == null) {
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+  } else {
+    tester.platformDispatcher.textScaleFactorTestValue = textScale;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  }
+
+  final String scenario =
+      'room $roomCode, game $gameId, locale ${locale.languageCode}'
+      '${textScale == null ? '' : ', text scale $textScale'}, winner seat '
+      '$winnerSeat';
+  final List<int> seats = fourSeats ? <int>[0, 1, 2, 3] : <int>[0, 2];
+  final Map<int, String> names = fourSeats
+      ? const <int, String>{0: 'Priya', 1: 'Karim', 2: 'Lina', 3: 'Tariq'}
+      : const <int, String>{0: 'Priya', 2: 'Karim'};
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = fourSeats
+        ? await _openFourSeatHostGame(
+            tester,
+            capture: shotName,
+            roomCode: roomCode,
+            locale: locale,
+            gameId: gameId,
+            seatToken: seatToken,
+          )
+        : await _openHostGame(
+            tester,
+            capture: shotName,
+            roomCode: roomCode,
+            locale: locale,
+            gameId: gameId,
+            seatToken: seatToken,
+          );
+    controller = opened.controller;
+    expect(
+      controller.room!.seats.map((SeatState s) => s.seat).toList(),
+      seats,
+      reason:
+          'capture $shotName ($scenario): expected seats $seats, got '
+          '${controller.room!.seats.map((SeatState s) => s.seat).toList()}',
+    );
+
+    opened.transport.pushText(
+      _frame(
+        type: 'game_over',
+        data: <String, Object?>{
+          'winner': winnerSeat,
+          'verify_url': 'https://verify.example.invalid/shot$shotName',
+          'seq': opened.seq + 1,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpRealDurationFrames(tester);
+
+    expect(
+      <Object?>[controller.room?.state, controller.room?.winner],
+      <Object?>[RoomState.finished, winnerSeat],
+      reason:
+          'capture $shotName ($scenario): expected the room FINISHED with '
+          'winner $winnerSeat, got ${controller.room?.state} with winner '
+          '${controller.room?.winner}',
+    );
+    expect(
+      controller.seat,
+      0,
+      reason: 'capture $shotName ($scenario): viewer seat must be 0',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName ($scenario): expected locale '
+          '${locale.languageCode}, got ${loc.localeName}',
+    );
+    if (textScale != null) {
+      final double scaledTen = MediaQuery.textScalerOf(
+        tester.element(find.byType(GameScreen)),
+      ).scale(10);
+      expect(
+        scaledTen,
+        10 * textScale,
+        reason:
+            'capture $shotName ($scenario): expected MediaQuery.textScalerOf '
+            'to scale 10 to ${10 * textScale}, got $scaledTen',
+      );
+    }
+
+    final bool iWon = winnerSeat == 0;
+    expect(
+      find.byKey(Key(iWon ? 'end-card-win' : 'end-card-lose')),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): C-243, the card must be the '
+          '${iWon ? 'winner' : 'loser'} variant',
+    );
+    expect(
+      find.byKey(Key(iWon ? 'end-card-lose' : 'end-card-win')),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): C-243, the card must not also be '
+          'the ${iWon ? 'loser' : 'winner'} variant',
+    );
+    final Finder winnerTitle = find.byKey(const Key('game-screen-winner'));
+    expect(
+      winnerTitle,
+      findsOneWidget,
+      reason: 'capture $shotName ($scenario): expected game-screen-winner',
+    );
+    final Text winnerText = tester.widget<Text>(winnerTitle);
+    final String? shownTitle =
+        winnerText.data ?? winnerText.textSpan?.toPlainText();
+    final String expectedTitle = iWon
+        ? loc.endWinTitle
+        : loc.endLoseTitle(names[winnerSeat]!);
+    expect(
+      shownTitle,
+      expectedTitle,
+      reason:
+          'capture $shotName ($scenario): expected the card title '
+          '"$expectedTitle", got "$shownTitle"',
+    );
+
+    expect(
+      find.byKey(const Key('end-card-chat-lines')),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): C-485 D6.1, no line may be up '
+          'before the emote pushes',
+    );
+    final Finder replies = find.byKey(const Key('end-card-quick-replies'));
+    expect(
+      replies,
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): C-485 D5.1, a seated viewer on a '
+          'live card must see end-card-quick-replies',
+    );
+
+    final Map<String, String> lines = locale.languageCode == 'ar'
+        ? _chatLinesAr
+        : _chatLinesEn;
+    for (final (int seat, String emote) in emotes) {
+      await _pushEmote(tester, opened.transport, seat: seat, emote: emote);
+    }
+    await tester.pump(_chatShotPump);
+
+    for (final (int seat, String emote) in emotes) {
+      _expectEndCardChat(
+        tester,
+        seat: seat,
+        name: names[seat]!,
+        line: lines[emote]!,
+        shotName: shotName,
+        scenario: scenario,
+      );
+    }
+    for (final int seat in seats) {
+      if (emotes.any(((int, String) e) => e.$1 == seat)) {
+        continue;
+      }
+      expect(
+        find.byKey(Key('end-card-chat-$seat')),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario): seat $seat sent nothing, so '
+            'end-card-chat-$seat must not be on screen',
+      );
+    }
+    expect(
+      find.byKey(const Key('end-card-chat-lines')),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): C-485 D5.2, the lines overlay '
+          'must be on screen',
+    );
+    if (emotes.length > 1) {
+      final double firstTop = tester
+          .getTopLeft(find.byKey(Key('end-card-chat-${emotes.first.$1}')))
+          .dy;
+      final double lastTop = tester
+          .getTopLeft(find.byKey(Key('end-card-chat-${emotes.last.$1}')))
+          .dy;
+      expect(
+        firstTop < lastTop,
+        isTrue,
+        reason:
+            'capture $shotName ($scenario): C-485 D5.2, the older line '
+            '(seat ${emotes.first.$1}, top $firstTop) must sit above the '
+            'newer (seat ${emotes.last.$1}, top $lastTop)',
+      );
+    }
+
+    final List<String> shownReplies = tester
+        .widgetList(
+          find.descendant(
+            of: replies,
+            matching: find.byWidgetPredicate((Widget w) {
+              final Key? key = w.key;
+              return key is ValueKey<String> &&
+                  key.value.startsWith('end-card-reply-');
+            }),
+          ),
+        )
+        .map((Widget w) => (w.key! as ValueKey<String>).value)
+        .toList();
+    expect(
+      shownReplies,
+      <String>[for (final String id in expectedReplies) 'end-card-reply-$id'],
+      reason:
+          'capture $shotName ($scenario): C-485 D5.1, the card must offer '
+          'exactly $expectedReplies in order, got $shownReplies',
+    );
+    for (final String id in expectedReplies) {
+      expect(
+        find.descendant(
+          of: find.byKey(Key('end-card-reply-$id')),
+          matching: find.text(lines[id]!),
+        ),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario): C-478 D3, end-card-reply-$id '
+            'must read "${lines[id]}"',
+      );
+    }
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+    if (textScale != null) {
+      tester.platformDispatcher.clearTextScaleFactorTestValue();
+    }
   }
 }

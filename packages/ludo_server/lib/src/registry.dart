@@ -72,7 +72,14 @@ class JoinFailure extends JoinResult {
 sealed class ResumeResult {}
 
 class ResumeOk extends ResumeResult {
-  ResumeOk({required this.room, required this.seat, required this.reconnected});
+  ResumeOk({
+    required this.room,
+    required this.seat,
+    required this.reconnected,
+    this.presenceSeq,
+    this.turnSeq,
+    this.turnDeadlineMs,
+  });
   final Room room;
   final Seat seat;
 
@@ -81,6 +88,23 @@ class ResumeOk extends ResumeResult {
   /// layer uses this to decide whether a `presence` push actually describes
   /// a change, since the registry only advances `seq` on a real flip.
   final bool reconnected;
+
+  /// The `seq` the `presence` push carries: `room.seq` at the instant the
+  /// flip landed, before the `turn` below took the next one. Set exactly
+  /// when [reconnected] is.
+  final int? presenceSeq;
+
+  /// `docs/PROTOCOL.md` section 26 rule 5. Set, together with
+  /// [turnDeadlineMs], only when this resume reconnected an away seat that
+  /// is on turn with an away-length segment running: the segment was
+  /// restarted at the full `rules.turnSeconds * 1000` and the other sockets
+  /// are owed a `turn` frame for the seat at this `seq`, right after the
+  /// `presence`. `room.seq` equals it, so the resumer's own `room` answer,
+  /// built afterwards, carries it too.
+  final int? turnSeq;
+
+  /// The restarted segment's `deadline_ms` for that `turn` frame.
+  final int? turnDeadlineMs;
 }
 
 class ResumeFailure extends ResumeResult {
@@ -432,6 +456,10 @@ class RematchFailure extends RematchResult {
   final ProtocolError error;
 }
 
+/// `docs/PROTOCOL.md` section 26 rule 3: the budget of every segment that
+/// starts for an away seat. Fixed, not a rules field, the same in every room.
+const int _awaySegmentMs = 10000;
+
 /// `docs/PROTOCOL.md` section 3, as amended by C-451. A LOBBY or PLAYING
 /// room with no connected seat for this long is reaped.
 const Duration _idleTimeout = Duration(minutes: 10);
@@ -613,11 +641,38 @@ class RoomRegistry {
     }
     final bool reconnected = !seat.connected;
     seat.connected = true;
+    // docs/PROTOCOL.md section 26 rule 2: a seat reconnected at any point of
+    // the turn that would have made it away is not made away by that turn.
+    seat.connectedThisTurn = true;
     _refreshIdleTracking(room);
+    int? presenceSeq;
+    int? turnSeq;
+    int? turnDeadlineMs;
     if (reconnected) {
       room.seq++;
+      presenceSeq = room.seq;
+      // Section 26 rule 5: a reconnect always clears away. Only a seat on
+      // turn with the short segment running has anything to restart; one
+      // whose running segment is already a full one keeps counting down.
+      seat.away = false;
+      final engine.GameState? game = room.game;
+      if (room.state == RoomState.playing &&
+          game != null &&
+          game.currentSeat == seat.seat &&
+          room.turnSegmentMs == _awaySegmentMs) {
+        turnDeadlineMs = _restartSegment(room);
+        room.seq++;
+        turnSeq = room.seq;
+      }
     }
-    return ResumeOk(room: room, seat: seat, reconnected: reconnected);
+    return ResumeOk(
+      room: room,
+      seat: seat,
+      reconnected: reconnected,
+      presenceSeq: presenceSeq,
+      turnSeq: turnSeq,
+      turnDeadlineMs: turnDeadlineMs,
+    );
   }
 
   StartResult startGame({required String code, required String seatToken}) {
@@ -816,7 +871,11 @@ class RoomRegistry {
     // timer_steps to 0, in the first game and in every rematch.
     for (final Seat s in room.seats) {
       s.timerSteps = 0;
+      // Section 26 rule 1: game_started makes every seat not away, in the
+      // first game and in every rematch.
+      s.away = false;
     }
+    _noteTurnOwner(room, null);
     // docs/PROTOCOL.md section 16.4: "rematch becomes null again in the
     // room and frames the start sends" -- true of every path through here,
     // and a no-op for the ordinary, non-rematch start_game, where this is
@@ -1057,6 +1116,7 @@ class RoomRegistry {
       }
       room.seq++;
       turnSeq = room.seq;
+      _noteTurnOwner(room, seat.seat);
       nextDeadlineMs = _restartSegment(room);
     }
 
@@ -1207,6 +1267,7 @@ class RoomRegistry {
       }
       room.seq++;
       turnSeq = room.seq;
+      _noteTurnOwner(room, seat.seat);
       nextDeadlineMs = _restartSegment(room);
     }
 
@@ -1611,7 +1672,8 @@ class RoomRegistry {
   /// Called from every path through [expireTurns] that has passed the
   /// `_remainingSegmentMs(room) > 0` check and is not adding an
   /// [ExpiredTurn] for [room] to the result. Restarts the segment -- so
-  /// this seat gets a fresh full turn budget rather than the sweep
+  /// this seat gets a fresh turn budget, its own under section 26 rule 3,
+  /// rather than the sweep
   /// hammering the same expired room again next tick -- and prints exactly
   /// one line in the frozen `turn-expiry skipped` format, with `error=`
   /// appended only when [error] is given.
@@ -1658,17 +1720,49 @@ class RoomRegistry {
     }
   }
 
-  /// `docs/PROTOCOL.md` section 6: restarts the current turn segment on the
-  /// registry's own injected clock and returns the freshly restored
-  /// `deadline_ms` (always `rules.turnSeconds * 1000`, since the elapsed
-  /// time from a segment that starts this instant is zero).
-  int _restartSegment(Room room) {
-    room.turnSegmentStartedAt = _clock.now;
-    return room.rules.turnSeconds * 1000;
+  /// `docs/PROTOCOL.md` section 26 rule 2, the one place it is applied.
+  /// Called after the engine has moved the turn and before the new segment
+  /// is started: [previous] is the seat that held it, or null when a game
+  /// is just starting. When the turn did change hands, [previous] becomes
+  /// away if it was not connected for any of the turn that just ended, and
+  /// the seat now on turn has its connection noted as its turn begins. The
+  /// same seat acting again (an extra roll, a six, faces left) is still the
+  /// same turn and touches nothing.
+  void _noteTurnOwner(Room room, int? previous) {
+    final int current = room.game!.currentSeat;
+    if (previous == current) {
+      return;
+    }
+    if (previous != null) {
+      final Seat? ended = _seatAt(room, previous);
+      if (ended != null && !ended.connectedThisTurn) {
+        ended.away = true;
+      }
+    }
+    final Seat? began = _seatAt(room, current);
+    if (began != null) {
+      began.connectedThisTurn = began.connected;
+    }
   }
 
-  /// `docs/PROTOCOL.md` section 6: `max(0, turn_seconds * 1000 - elapsed)`
-  /// for the segment already running, without restarting it. Zero if no
+  /// `docs/PROTOCOL.md` section 6 and section 26 rule 3: restarts the
+  /// current turn segment on the registry's own injected clock, with the
+  /// budget of the seat it is for, and returns the freshly restored
+  /// `deadline_ms` (that budget, since the elapsed time from a segment that
+  /// starts this instant is zero).
+  int _restartSegment(Room room) {
+    final engine.GameState? game = room.game;
+    final Seat? onTurn = game == null ? null : _seatAt(room, game.currentSeat);
+    room.turnSegmentMs = onTurn != null && onTurn.away
+        ? _awaySegmentMs
+        : room.rules.turnSeconds * 1000;
+    room.turnSegmentStartedAt = _clock.now;
+    return room.turnSegmentMs;
+  }
+
+  /// `docs/PROTOCOL.md` section 6: `max(0, budget - elapsed)` for the
+  /// segment already running, without restarting it, where the budget is the
+  /// one that segment started with (`Room.turnSegmentMs`). Zero if no
   /// segment has ever started, which should not happen once a game exists
   /// but is not something this method should throw over.
   int _remainingSegmentMs(Room room) {
@@ -1676,7 +1770,7 @@ class RoomRegistry {
     if (startedAt == null) {
       return 0;
     }
-    final int budgetMs = room.rules.turnSeconds * 1000;
+    final int budgetMs = room.turnSegmentMs;
     final int elapsedMs = _clock.now.difference(startedAt).inMilliseconds;
     final int remaining = budgetMs - elapsedMs;
     return remaining > 0 ? remaining : 0;
