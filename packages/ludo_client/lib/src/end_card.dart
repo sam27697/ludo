@@ -1113,16 +1113,27 @@ class _ReplyChipState extends State<_ReplyChip>
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _shake,
-      builder: (BuildContext context, Widget? child) {
-        final double dx =
-            6 * math.sin(_shake.value * math.pi * 4) * (1 - _shake.value);
-        return Transform.translate(offset: Offset(dx, 0), child: child);
-      },
-      child: Opacity(
-        opacity: widget.dimmed ? 0.38 : 1,
-        child: SpeechChip(line: widget.line, onTap: _tap),
+    // The node is made here, outside the shake, so the keyed widget's own
+    // render object carries the button and its line; the chip's own node
+    // underneath is excluded and the two never double up for TalkBack.
+    return Semantics(
+      container: true,
+      button: true,
+      label: widget.line,
+      onTap: _tap,
+      child: ExcludeSemantics(
+        child: AnimatedBuilder(
+          animation: _shake,
+          builder: (BuildContext context, Widget? child) {
+            final double dx =
+                6 * math.sin(_shake.value * math.pi * 4) * (1 - _shake.value);
+            return Transform.translate(offset: Offset(dx, 0), child: child);
+          },
+          child: Opacity(
+            opacity: widget.dimmed ? 0.38 : 1,
+            child: SpeechChip(line: widget.line, onTap: _tap),
+          ),
+        ),
       ),
     );
   }
