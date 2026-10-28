@@ -39,7 +39,6 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/src/board.dart';
 import 'package:ludo_client/src/net/room_controller.dart' show RoomPhase;
-import 'package:ludo_client/src/quick_chat.dart';
 import 'package:ludo_client/src/theme.dart';
 
 import 'net/fake_transport.dart';
