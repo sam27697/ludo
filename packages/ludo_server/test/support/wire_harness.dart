@@ -145,6 +145,28 @@ class _FrameQueue {
     return completer.future;
   }
 
+  /// Like [next], but returns null if nothing arrives within [timeout]
+  /// and cancels that wait. A frame that shows up later is left for a
+  /// later [next]. [next] itself is not changed: its own timeout still
+  /// leaves the wait in place, which is what every existing caller does.
+  Future<Map<String, Object?>?> nextOrNull(Duration timeout) async {
+    if (_buffered.isNotEmpty) {
+      return _buffered.removeAt(0);
+    }
+    if (_done) {
+      throw StateError('socket already closed and no frame was pending');
+    }
+    final Completer<Map<String, Object?>> completer =
+        Completer<Map<String, Object?>>();
+    _waiting.add(completer);
+    try {
+      return await completer.future.timeout(timeout);
+    } on TimeoutException {
+      _waiting.remove(completer);
+      return null;
+    }
+  }
+
   Future<void> close() => _subscription.cancel();
 }
 
@@ -197,6 +219,16 @@ class WireTestClient {
             'arrived',
           ),
         );
+  }
+
+  /// The next frame, or null if none arrives within [timeout]. The wait
+  /// is cancelled on timeout so the frame is not swallowed. Used to assert
+  /// that a push did not happen. [next] is the call for a frame that must
+  /// arrive.
+  Future<Map<String, Object?>?> nextOrNull({
+    Duration timeout = const Duration(milliseconds: 200),
+  }) {
+    return _queue.nextOrNull(timeout);
   }
 
   Future<void> close() async {
