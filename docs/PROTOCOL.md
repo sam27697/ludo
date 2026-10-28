@@ -1425,6 +1425,15 @@ player typed except a display name.
    socket; the connection stays open after `RATE_LIMITED`; the
    `game_log` answer holds no `emote` entry after several were sent; the
    room's `seq` is the same before and after an admitted `emote`.
+9. **Amended 2026-10-28 (contract C-485): every state admits `emote`.**
+   LOBBY (a rematch LOBBY and a first-game LOBBY alike), PLAYING and
+   FINISHED. In the rule 2 ladder the FINISHED `GAME_OVER` and the LOBBY
+   `WRONG_PHASE` steps are struck for `emote` and nothing takes their
+   place; every other step, rule 1, the cadence of rule 3 (keyed by seat
+   token, so it carries over `game_over`, a rematch and `game_started`
+   unchanged), rule 4 and rule 5 hold as written. Section 19.2 is
+   untouched for every other message. Rule 8's `WRONG_PHASE` and
+   `GAME_OVER` cases are replaced by C-485 D3's.
 
 ## 26. A seat away for a whole turn plays on 10 seconds, 2026-10-28
 
