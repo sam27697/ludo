@@ -720,5 +720,79 @@
         "example": "6"
       }
     }
+  },
+  "chatHi": "Hi all",
+  "@chatHi": {
+    "description": "Quick message line for the preset id `hi` (C-478 D3). Sent as an id, never as text; each player sees it in their own language."
+  },
+  "chatGoodLuck": "Good luck",
+  "@chatGoodLuck": {
+    "description": "Quick message line for the preset id `good_luck` (C-478 D3). Sent as an id, never as text; each player sees it in their own language."
+  },
+  "chatYourMove": "Come on, your move!",
+  "@chatYourMove": {
+    "description": "Quick message line for the preset id `your_move` (C-478 D3). Sent as an id, never as text; each player sees it in their own language."
+  },
+  "chatNice": "Nice move",
+  "@chatNice": {
+    "description": "Quick message line for the preset id `nice` (C-478 D3). Sent as an id, never as text; each player sees it in their own language."
+  },
+  "chatLucky": "So lucky!",
+  "@chatLucky": {
+    "description": "Quick message line for the preset id `lucky` (C-478 D3). Sent as an id, never as text; each player sees it in their own language."
+  },
+  "chatOops": "Oops",
+  "@chatOops": {
+    "description": "Quick message line for the preset id `oops` (C-478 D3). Sent as an id, never as text; each player sees it in their own language."
+  },
+  "chatHaHa": "Ha ha ha",
+  "@chatHaHa": {
+    "description": "Quick message line for the preset id `ha_ha` (C-478 D3). Sent as an id, never as text; each player sees it in their own language."
+  },
+  "chatRevenge": "I'll get you back",
+  "@chatRevenge": {
+    "description": "Quick message line for the preset id `revenge` (C-478 D3). Sent as an id, never as text; each player sees it in their own language."
+  },
+  "chatComing": "Run, I'm coming!",
+  "@chatComing": {
+    "description": "Quick message line for the preset id `coming` (C-478 D3). Sent as an id, never as text; each player sees it in their own language."
+  },
+  "chatBackHome": "Back home you go",
+  "@chatBackHome": {
+    "description": "Quick message line for the preset id `back_home` (C-478 D3). Sent as an id, never as text; each player sees it in their own language."
+  },
+  "chatNoWay": "No way!",
+  "@chatNoWay": {
+    "description": "Quick message line for the preset id `no_way` (C-478 D3). Sent as an id, never as text; each player sees it in their own language."
+  },
+  "chatGoodGame": "Good game",
+  "@chatGoodGame": {
+    "description": "Quick message line for the preset id `good_game` (C-478 D3). Sent as an id, never as text; each player sees it in their own language."
+  },
+  "chatButtonTooltip": "Quick messages",
+  "@chatButtonTooltip": {
+    "description": "Tooltip and semantics label for the game header button that opens the quick messages sheet (C-478 D5.1)."
+  },
+  "chatSheetTitle": "Quick messages",
+  "@chatSheetTitle": {
+    "description": "Title of the quick messages sheet (C-478 D5.2)."
+  },
+  "chatMuteOthers": "Hide the others' messages",
+  "@chatMuteOthers": {
+    "description": "Label of the switch in the quick messages sheet that hides other players' bubbles on the board. The player's own are never hidden (C-478 D5.2)."
+  },
+  "chatSaid": "{name}: {line}",
+  "@chatSaid": {
+    "description": "Semantics label of a quick message bubble on the board: who said it, then the line (C-478 D5.4).",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      },
+      "line": {
+        "type": "String",
+        "example": "Good luck"
+      }
+    }
   }
 }

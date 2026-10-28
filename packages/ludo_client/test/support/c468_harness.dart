@@ -41,6 +41,12 @@ class Scn {
     await drive.push(tester, type, data);
   }
 
+  /// A server `emote` push, no `seq`. [re] marks it as the sender's own copy.
+  Future<void> pushEmote(Object? seat, Object? emote, {String? re}) async {
+    steps.add('emote seat=$seat id=$emote${re == null ? '' : ' re=$re'}');
+    await pushRaw(tester, drive, emoteFrame(seat: seat, emote: emote, re: re));
+  }
+
   /// Pumps [duration] in steps of [step] (the last one may be shorter).
   Future<void> pump(Duration duration, {Duration step = kC468Frame}) async {
     steps.add('pump ${duration.inMilliseconds}ms');
