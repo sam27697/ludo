@@ -52,6 +52,7 @@ import 'package:ludo_engine/ludo_engine.dart' as engine;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'clock.dart';
+import 'emote.dart';
 import 'envelope.dart';
 import 'rate_limit.dart';
 import 'registry.dart';
@@ -276,6 +277,8 @@ class Connection {
         _handleRematch(envelope);
       case 'game_log':
         _handleGameLog(envelope);
+      case 'emote':
+        _handleEmote(envelope);
       default:
         // Unreachable: parseEnvelope already rejected anything outside
         // knownMessageTypes as BAD_TYPE.
@@ -999,6 +1002,69 @@ class Connection {
     }
 
     _publishGameLog(envelope, liveRoom, seat);
+  }
+
+  /// `emote`, `docs/PROTOCOL.md` section 25. Ladder after the blanket
+  /// limit: identity, room, seat, FINISHED, LOBBY, payload, cadence. Any
+  /// seated socket may send in PLAYING, on its turn or not. An admitted
+  /// emote changes no room state, so there is no registry call, no `seq`
+  /// and nothing for the game log: the sender gets the push with `re`, every
+  /// other socket the same push without it.
+  void _handleEmote(ParsedEnvelope envelope) {
+    if (!_hasIdentity) {
+      _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    final Room? liveRoom = registry.lookup(roomCode!);
+    if (liveRoom == null) {
+      _reject(envelope, ProtocolError.noSuchRoom, room: roomCode);
+      return;
+    }
+    Seat? seat;
+    for (final Seat candidate in liveRoom.seats) {
+      if (candidate.seatToken == seatToken) {
+        seat = candidate;
+        break;
+      }
+    }
+    if (seat == null) {
+      _reject(envelope, ProtocolError.badSeatToken, room: liveRoom.code);
+      return;
+    }
+    if (liveRoom.state == RoomState.finished) {
+      _reject(envelope, ProtocolError.gameOver, room: liveRoom.code);
+      return;
+    }
+    if (liveRoom.state == RoomState.lobby) {
+      _reject(envelope, ProtocolError.wrongPhase, room: liveRoom.code);
+      return;
+    }
+    final Object? emote = envelope.data['emote'];
+    if (envelope.data.length != 1 ||
+        emote is! String ||
+        !emoteIds.contains(emote)) {
+      _reject(envelope, ProtocolError.badField, room: liveRoom.code);
+      return;
+    }
+    final List<DateTime> admitted =
+        liveRoom.emoteAdmits.putIfAbsent(seat.seatToken, () => <DateTime>[]);
+    if (!admitEmote(admitted, clock.now)) {
+      _reject(envelope, ProtocolError.rateLimited, room: liveRoom.code);
+      return;
+    }
+
+    final Map<String, Object?> data = <String, Object?>{
+      'seat': seat.seat,
+      'emote': emote,
+    };
+    _sendAndBroadcast(
+        room: liveRoom.code, type: 'emote', data: data, re: envelope.id);
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: 'ok',
+      room: liveRoom.code,
+    );
   }
 
   void _publishGameLog(

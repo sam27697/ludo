@@ -747,7 +747,11 @@ class _ConnectionHub implements RoomHub {
           't': type,
           'd': Map<String, Object?>.of(data),
         });
-      } else if (room.game != null && room.state != RoomState.lobby) {
+      } else if (type != 'emote' &&
+          room.game != null &&
+          room.state != RoomState.lobby) {
+        // docs/PROTOCOL.md section 25 rule 5: an `emote` is not game
+        // history, so section 17's log never holds one.
         room.gameLog.add(<String, Object?>{
           't': type,
           'd': Map<String, Object?>.of(data),

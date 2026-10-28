@@ -516,6 +516,13 @@ class RoomConnection {
     return request('roll', const <String, Object?>{});
   }
 
+  /// docs/PROTOCOL.md section 25.1: one of the twelve preset ids, never
+  /// text. The answer is the sender's own `emote` copy, `re` set; that copy
+  /// is the acknowledgement.
+  Future<Frame> emote(String id) {
+    return request('emote', <String, Object?>{'emote': id});
+  }
+
   /// docs/PROTOCOL.md section 21.1: `face` is the queued face this move
   /// spends, carried on the wire only when given. Absent, the server spends
   /// `defaultFace`.

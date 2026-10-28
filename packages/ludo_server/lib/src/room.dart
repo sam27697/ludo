@@ -278,6 +278,14 @@ class Room {
   /// entry is `{"t": type, "d": data}`.
   final List<Map<String, Object?>> gameLog;
 
+  /// `docs/PROTOCOL.md` section 25 rule 3. When each seat's recent `emote`
+  /// requests were admitted, oldest first, keyed by seat token so a resume
+  /// on a new socket does not reset it. Room state in the sense that it
+  /// lives and dies with the room, but never game state: it is not in the
+  /// snapshot, the game log or the verify record, and `admitEmote` prunes a
+  /// list to the last minute each time it is touched.
+  final Map<String, List<DateTime>> emoteAdmits = <String, List<DateTime>>{};
+
   @override
   String toString() => 'Room(code: $code, state: $state, '
       'players: $players, seats: ${seats.length})';

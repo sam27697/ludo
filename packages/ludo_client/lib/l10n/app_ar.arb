@@ -195,5 +195,21 @@
         "example": "6"
       }
     }
-  }
+  },
+  "chatHi": "مرحبا يا جماعة",
+  "chatGoodLuck": "بالتوفيق",
+  "chatYourMove": "يلا، دورك!",
+  "chatNice": "حلوة منك",
+  "chatLucky": "شو هالحظ!",
+  "chatOops": "أوبس",
+  "chatHaHa": "هههههه",
+  "chatRevenge": "رح ردّلك ياها",
+  "chatComing": "اهرب، جايّك!",
+  "chatBackHome": "عالبيت يا حلو",
+  "chatNoWay": "مستحيل!",
+  "chatGoodGame": "لعبة حلوة",
+  "chatButtonTooltip": "رسايل سريعة",
+  "chatSheetTitle": "رسايل سريعة",
+  "chatMuteOthers": "خبّي رسايل الباقين",
+  "chatSaid": "{name}: {line}"
 }

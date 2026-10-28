@@ -6503,6 +6503,73 @@ void main() {
       needExact: true,
     );
   });
+
+  // ==========================================================================
+  // 79-83: order 482. Emulator frames of the quick messages (C-478 D5.2,
+  // D5.4): the sheet and the bubbles on the board. Same route as captures
+  // 76-78: a GameScreen over FakeTransport, frames copied by hand into this
+  // file, no server, no pumpAndSettle once GameScreen is up. Bodies live at
+  // the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 79-chat-sheet-en', (tester) async {
+    await _shootChatSheet(
+      tester,
+      binding,
+      shotName: '79-chat-sheet-en',
+      locale: const Locale('en'),
+      roomCode: 'QC79EN',
+      gameId: '1' * 16,
+      seatToken: 'tok-shot-79',
+    );
+  });
+
+  testWidgets('capture 80-chat-sheet-ar', (tester) async {
+    await _shootChatSheet(
+      tester,
+      binding,
+      shotName: '80-chat-sheet-ar',
+      locale: const Locale('ar'),
+      roomCode: 'QC80AR',
+      gameId: '2' * 16,
+      seatToken: 'tok-shot-80',
+    );
+  });
+
+  testWidgets('capture 81-chat-bubbles-en', (tester) async {
+    await _shootChatBubbles(
+      tester,
+      binding,
+      shotName: '81-chat-bubbles-en',
+      locale: const Locale('en'),
+      roomCode: 'QC81EN',
+      gameId: '3' * 16,
+      seatToken: 'tok-shot-81',
+    );
+  });
+
+  testWidgets('capture 82-chat-bubbles-ar', (tester) async {
+    await _shootChatBubbles(
+      tester,
+      binding,
+      shotName: '82-chat-bubbles-ar',
+      locale: const Locale('ar'),
+      roomCode: 'QC82AR',
+      gameId: '4' * 16,
+      seatToken: 'tok-shot-82',
+    );
+  });
+
+  testWidgets('capture 83-chat-bubbles-ar-large-text', (tester) async {
+    await _shootChatBubblesLarge(
+      tester,
+      binding,
+      shotName: '83-chat-bubbles-ar-large-text',
+      locale: const Locale('ar'),
+      roomCode: 'QC83AR',
+      gameId: '5' * 16,
+      seatToken: 'tok-shot-83',
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -12889,5 +12956,614 @@ Future<void> _shootNoMoveReason(
     await binding.takeScreenshot(shotName);
   } finally {
     await _releaseTrayGame(tester, controller);
+  }
+}
+
+// ============================================================================
+// Order 482 (captures 79-83): quick messages (C-478 D5.2, D5.4).
+// ============================================================================
+
+/// The twelve presets of C-478 D3, quoted here and not looked up through
+/// AppLocalizations, so a wrong ARB line fails the capture instead of being
+/// photographed. Ids in the sheet's order.
+const List<String> _chatIds = <String>[
+  'hi',
+  'good_luck',
+  'your_move',
+  'nice',
+  'lucky',
+  'oops',
+  'ha_ha',
+  'revenge',
+  'coming',
+  'back_home',
+  'no_way',
+  'good_game',
+];
+
+const Map<String, String> _chatLinesEn = <String, String>{
+  'hi': 'Hi all',
+  'good_luck': 'Good luck',
+  'your_move': 'Come on, your move!',
+  'nice': 'Nice move',
+  'lucky': 'So lucky!',
+  'oops': 'Oops',
+  'ha_ha': 'Ha ha ha',
+  'revenge': 'I\'ll get you back',
+  'coming': 'Run, I\'m coming!',
+  'back_home': 'Back home you go',
+  'no_way': 'No way!',
+  'good_game': 'Good game',
+};
+
+const Map<String, String> _chatLinesAr = <String, String>{
+  'hi': 'مرحبا يا جماعة',
+  'good_luck': 'بالتوفيق',
+  'your_move': 'يلا، دورك!',
+  'nice': 'حلوة منك',
+  'lucky': 'شو هالحظ!',
+  'oops': 'أوبس',
+  'ha_ha': 'هههههه',
+  'revenge': 'رح ردّلك ياها',
+  'coming': 'اهرب، جايّك!',
+  'back_home': 'عالبيت يا حلو',
+  'no_way': 'مستحيل!',
+  'good_game': 'لعبة حلوة',
+};
+
+/// Held after the emote pushes land: past the 160 ms pop-in, well inside
+/// the 2500 ms bubble life (C-478 D5.4).
+const Duration _chatShotPump = Duration(milliseconds: 400);
+
+/// Host flow for a 4-seat room `[0, 1, 2, 3]`, viewer seat 0 (Priya, the
+/// host). Same steps as [_openHostGame] with three joins instead of one.
+/// Returns with room seq at 5, seat 0's turn, every token still in its
+/// yard. Caller disposes [controller].
+Future<_OpenedTrayGame> _openFourSeatHostGame(
+  WidgetTester tester, {
+  required String capture,
+  required String roomCode,
+  required Locale locale,
+  required String gameId,
+  required String seatToken,
+}) async {
+  final _ScreenshotControllerFactory hostFactory =
+      _ScreenshotControllerFactory();
+  try {
+    final Widget home;
+    if (locale.languageCode == 'ar') {
+      home = _reconnectingCaptureHarness(
+        HomeScreen(controllerFactory: hostFactory.call, onToggleLocale: () {}),
+        locale: locale,
+      );
+    } else {
+      home = _ScreenshotHarness(controllerFactory: hostFactory.call);
+    }
+    await tester.pumpWidget(home);
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+    const String hostName = 'Priya';
+    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
+    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+
+    expect(
+      hostFactory.controllers,
+      hasLength(1),
+      reason:
+          'capture $capture: tapping Create Room must build exactly one '
+          'controller',
+    );
+    final RoomController controller = hostFactory.controllers.single;
+    final FakeTransport transport = hostFactory.transports.single;
+
+    final List<String> createMessages = transport.sentRaw
+        .where((s) => _typeOf(s) == 'create_room')
+        .toList();
+    expect(
+      createMessages,
+      hasLength(1),
+      reason:
+          'capture $capture: expected one create_room, sent '
+          '${transport.sentRaw.map(_typeOf).toList()}',
+    );
+    final String createId = _idOf(createMessages.single);
+
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: roomCode,
+          players: 4,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      'capture $capture: LobbyScreen after the create_room reply carrying '
+      'code "$roomCode"',
+    );
+
+    const List<String> guestNames = <String>['Karim', 'Lina', 'Tariq'];
+    for (int i = 0; i < guestNames.length; i++) {
+      transport.pushText(
+        _frame(
+          type: 'player_joined',
+          data: <String, Object?>{
+            'seat': i + 1,
+            'name': guestNames[i],
+            'seq': i + 2,
+          },
+        ),
+      );
+      await tester.pump();
+    }
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: locale.languageCode,
+      code: roomCode,
+      expectedSeatCount: 4,
+    );
+    expect(
+      controller.room!.seats.map((SeatState s) => s.seat).toList(),
+      <int>[0, 1, 2, 3],
+      reason:
+          'capture $capture: a 4-player room is seated at [0, 1, 2, 3], got '
+          '${controller.room!.seats.map((SeatState s) => s.seat).toList()}',
+    );
+
+    final Finder startButton = find.byKey(const Key('lobby-start-button'));
+    expect(
+      startButton,
+      findsOneWidget,
+      reason:
+          'capture $capture: the host, seat 0, must see a Start button '
+          'once seated',
+    );
+    await tester.tap(startButton);
+    await tester.pump();
+    final List<String> startMessages = transport.sentRaw
+        .where((s) => _typeOf(s) == 'start_game')
+        .toList();
+    expect(
+      startMessages,
+      hasLength(1),
+      reason: 'capture $capture: tapping Start must send one start_game',
+    );
+    final String startId = _idOf(startMessages.single);
+
+    transport.pushText(
+      _frame(
+        type: 'game_started',
+        re: startId,
+        data: <String, Object?>{
+          'turn': 0,
+          'game_id': gameId,
+          'client_seeds': '0:seed',
+          'seq': 5,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await _pumpUntilFound(
+      tester,
+      find.byType(GameScreen),
+      'capture $capture: GameScreen after game_started',
+    );
+    expect(
+      find.byType(LobbyScreen),
+      findsNothing,
+      reason:
+          'capture $capture: RoomRoute must latch onto GameScreen and '
+          'never go back',
+    );
+    expect(
+      controller.room!.seq,
+      5,
+      reason: 'capture $capture: game_started must land at seq 5',
+    );
+    expect(
+      controller.seat,
+      0,
+      reason: 'capture $capture: this device is seat 0',
+    );
+
+    return _OpenedTrayGame(
+      controller: controller,
+      transport: transport,
+      seq: 5,
+    );
+  } catch (_) {
+    for (final RoomController created in hostFactory.controllers) {
+      await _releaseTrayGame(tester, created);
+    }
+    rethrow;
+  }
+}
+
+/// A server `emote` push as C-478 D1 sends it to the other sockets: `seat`
+/// and `emote`, no `re`, no `seq`.
+Future<void> _pushEmote(
+  WidgetTester tester,
+  FakeTransport transport, {
+  required int seat,
+  required String emote,
+}) async {
+  transport.pushText(
+    _frame(
+      type: 'emote',
+      data: <String, Object?>{'seat': seat, 'emote': emote},
+    ),
+  );
+  await tester.pump();
+}
+
+/// What a capture of the quick messages needs on screen before the shot:
+/// the room PLAYING, this device on [viewerSeat], the locale named, and the
+/// turn on seat 0 awaiting a roll.
+void _expectChatFixture(
+  WidgetTester tester,
+  RoomController controller, {
+  required String shotName,
+  required String scenario,
+  required Locale locale,
+  required List<int> seats,
+}) {
+  expect(
+    controller.room!.state,
+    RoomState.playing,
+    reason:
+        'capture $shotName ($scenario): the room must be PLAYING, got '
+        '${controller.room!.state}',
+  );
+  expect(
+    controller.room!.seats.map((SeatState s) => s.seat).toList(),
+    seats,
+    reason:
+        'capture $shotName ($scenario): expected seats $seats, got '
+        '${controller.room!.seats.map((SeatState s) => s.seat).toList()}',
+  );
+  expect(
+    controller.seat,
+    0,
+    reason: 'capture $shotName ($scenario): viewer seat must be 0',
+  );
+  final TurnStateSnapshot turn = _turnOf(controller);
+  expect(
+    <Object>[turn.seat, turn.phaseName],
+    <Object>[0, 'awaitRoll'],
+    reason:
+        'capture $shotName ($scenario): expected seat 0 awaiting a roll, got '
+        'seat ${turn.seat} in ${turn.phaseName}',
+  );
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+  expect(
+    loc.localeName,
+    locale.languageCode,
+    reason:
+        'capture $shotName ($scenario): expected locale '
+        '${locale.languageCode}, got ${loc.localeName}',
+  );
+}
+
+/// Captures 79 and 80 (order 482, C-478 D5.2). Two seats `[0, 2]`, viewer
+/// seat 0, PLAYING, seat 0 awaiting a roll. Taps `game-chat-button` and
+/// shoots the open sheet: all twelve chips and the mute switch.
+Future<void> _shootChatSheet(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final String scenario =
+      'room $roomCode, game $gameId, locale '
+      '${locale.languageCode}';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    await _pumpRealDurationFrames(tester, frameCount: 4);
+
+    _expectChatFixture(
+      tester,
+      controller,
+      shotName: shotName,
+      scenario: scenario,
+      locale: locale,
+      seats: <int>[0, 2],
+    );
+
+    final Finder chatButton = find.byKey(const Key('game-chat-button'));
+    expect(
+      chatButton,
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): C-478 D5.1, game-chat-button must '
+          'be in the header while PLAYING and seated',
+    );
+    expect(
+      find.byKey(const Key('quick-chat-sheet')),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): the sheet must be closed before '
+          'the tap',
+    );
+    await tester.tap(chatButton);
+    await tester.pump();
+    await _pumpRealDurationFrames(tester, frameCount: 12);
+
+    final Map<String, String> lines = locale.languageCode == 'ar'
+        ? _chatLinesAr
+        : _chatLinesEn;
+    expect(
+      find.byKey(const Key('quick-chat-sheet')),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): C-478 D5.2, tapping '
+          'game-chat-button must open quick-chat-sheet',
+    );
+    for (final String id in _chatIds) {
+      final Finder chip = find.byKey(Key('quick-chat-$id'));
+      expect(
+        chip,
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario): C-478 D5.2, the sheet must hold '
+            'the chip quick-chat-$id',
+      );
+      expect(
+        find.descendant(of: chip, matching: find.text(lines[id]!)),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario): C-478 D3, quick-chat-$id must '
+            'read "${lines[id]}"',
+      );
+    }
+    expect(
+      find.byKey(const Key('quick-chat-mute')),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): C-478 D5.2, the sheet must hold '
+          'the quick-chat-mute switch',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Asserts `chat-bubble-<seat>` is on screen and shows [line].
+void _expectChatBubble(
+  WidgetTester tester, {
+  required int seat,
+  required String line,
+  required String shotName,
+  required String scenario,
+}) {
+  final Finder bubble = find.byKey(Key('chat-bubble-$seat'));
+  expect(
+    bubble,
+    findsOneWidget,
+    reason:
+        'capture $shotName ($scenario): C-478 D5.4, an emote from seat $seat '
+        'must show chat-bubble-$seat',
+  );
+  expect(
+    find.descendant(of: bubble, matching: find.text(line)),
+    findsOneWidget,
+    reason:
+        'capture $shotName ($scenario): C-478 D3, chat-bubble-$seat must '
+        'read "$line"',
+  );
+}
+
+/// Captures 81 and 82 (order 482, C-478 D5.4). Four seats `[0, 1, 2, 3]`,
+/// viewer seat 0, PLAYING. Three `emote` pushes land with no `re`: seat 2
+/// `revenge`, seat 1 `ha_ha`, seat 0 `good_luck`. The shot is taken 400 ms
+/// after the last push, inside the 2500 ms bubble life.
+Future<void> _shootChatBubbles(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final String scenario =
+      'room $roomCode, game $gameId, locale '
+      '${locale.languageCode}';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openFourSeatHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    await _pumpRealDurationFrames(tester, frameCount: 4);
+
+    _expectChatFixture(
+      tester,
+      controller,
+      shotName: shotName,
+      scenario: scenario,
+      locale: locale,
+      seats: <int>[0, 1, 2, 3],
+    );
+    expect(
+      find.byKey(const Key('chat-bubble-0')),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): no bubble may be up before the '
+          'emote pushes',
+    );
+
+    await _pushEmote(tester, opened.transport, seat: 2, emote: 'revenge');
+    await _pushEmote(tester, opened.transport, seat: 1, emote: 'ha_ha');
+    await _pushEmote(tester, opened.transport, seat: 0, emote: 'good_luck');
+    await tester.pump(_chatShotPump);
+
+    final Map<String, String> lines = locale.languageCode == 'ar'
+        ? _chatLinesAr
+        : _chatLinesEn;
+    _expectChatBubble(
+      tester,
+      seat: 2,
+      line: lines['revenge']!,
+      shotName: shotName,
+      scenario: scenario,
+    );
+    _expectChatBubble(
+      tester,
+      seat: 1,
+      line: lines['ha_ha']!,
+      shotName: shotName,
+      scenario: scenario,
+    );
+    _expectChatBubble(
+      tester,
+      seat: 0,
+      line: lines['good_luck']!,
+      shotName: shotName,
+      scenario: scenario,
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Capture 83 (order 482, C-478 D5.4). Two seats `[0, 2]`, viewer seat 0,
+/// Arabic, system text scale 2.0 the way captures 37-40 set it. Seat 2 sends
+/// `your_move`, seat 0 sends `coming`; the shot is taken 400 ms after the
+/// last push.
+Future<void> _shootChatBubblesLarge(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+  final String scenario =
+      'room $roomCode, game $gameId, locale '
+      '${locale.languageCode}, text scale 2.0';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    await _pumpRealDurationFrames(tester, frameCount: 4);
+
+    _expectChatFixture(
+      tester,
+      controller,
+      shotName: shotName,
+      scenario: scenario,
+      locale: locale,
+      seats: <int>[0, 2],
+    );
+    final Finder banner = find.byKey(const Key('game-screen-turn-banner'));
+    expect(
+      banner,
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): game-screen-turn-banner must be '
+          'on screen',
+    );
+    final double scaledTen = MediaQuery.textScalerOf(tester.element(banner))
+        .scale(10);
+    expect(
+      scaledTen,
+      20.0,
+      reason:
+          'capture $shotName ($scenario): expected MediaQuery.textScalerOf '
+          'at game-screen-turn-banner to scale 10 to 20.0, got $scaledTen',
+    );
+
+    await _pushEmote(tester, opened.transport, seat: 2, emote: 'your_move');
+    await _pushEmote(tester, opened.transport, seat: 0, emote: 'coming');
+    await tester.pump(_chatShotPump);
+
+    _expectChatBubble(
+      tester,
+      seat: 2,
+      line: _chatLinesAr['your_move']!,
+      shotName: shotName,
+      scenario: scenario,
+    );
+    _expectChatBubble(
+      tester,
+      seat: 0,
+      line: _chatLinesAr['coming']!,
+      shotName: shotName,
+      scenario: scenario,
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
   }
 }
