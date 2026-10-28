@@ -123,8 +123,12 @@ Future<_SheetHost> _openSheet(
   Locale locale = const Locale('en'),
   bool muted = false,
   double textScale = 1.0,
+  double? width,
 }) async {
   phoneSurface(tester);
+  if (width != null) {
+    tester.view.physicalSize = Size(width, 800);
+  }
   final _SheetHost host = _SheetHost(ValueNotifier<bool>(muted));
   host.steps.add('mount ${locale.languageCode} muted=$muted scale=$textScale');
   await tester.pumpWidget(
@@ -194,6 +198,9 @@ Finder _muteSwitch(WidgetTester tester) {
 
 bool _switchOn(WidgetTester tester) =>
     tester.widget<Switch>(_muteSwitch(tester)).value;
+
+/// Surface width for the row-order case, see the comment there.
+const double _kRowWidth = 800;
 
 /// A rect-based reading of the layout row a chip sits on.
 bool _sameRow(Rect a, Rect b) => (a.top - b.top).abs() < 1.0;
@@ -634,7 +641,12 @@ void main() {
 
     testWidgets('English is ltr and the chip order runs the other way in '
         'Arabic on one row', (tester) async {
-      final _SheetHost en = await _openSheet(tester);
+      // The Arabic pair ("مرحبا يا جماعة" and "بالتوفيق", 22 glyphs) is wider
+      // than the 320 dp wrap of a 360 dp phone under the test font (Ahem, 1 em
+      // per glyph), so both locales run on an 800 dp surface (_kRowWidth):
+      // 22 glyphs at under 20 dp each plus two chips of padding is well
+      // inside it, and the 800 dp is not tuned to any one chip padding.
+      final _SheetHost en = await _openSheet(tester, width: _kRowWidth);
       expect(
         Directionality.of(tester.element(find.byKey(kSheetKey))),
         TextDirection.ltr,
@@ -645,7 +657,9 @@ void main() {
       expect(
         _sameRow(enFirst, enSecond),
         isTrue,
-        reason: en.why('fixture: the first two chips share a row at 360 wide'),
+        reason: en.why(
+          'fixture: the first two chips share a row at ${_kRowWidth.toInt()} wide',
+        ),
       );
       expect(
         enFirst.left,
@@ -656,13 +670,16 @@ void main() {
       final _SheetHost ar = await _openSheet(
         tester,
         locale: const Locale('ar'),
+        width: _kRowWidth,
       );
       final Rect arFirst = tester.getRect(find.byKey(chipKey('hi')));
       final Rect arSecond = tester.getRect(find.byKey(chipKey('good_luck')));
       expect(
         _sameRow(arFirst, arSecond),
         isTrue,
-        reason: ar.why('fixture: the first two chips share a row in ar'),
+        reason: ar.why(
+          'fixture: the first two chips share a row in ar at ${_kRowWidth.toInt()} wide',
+        ),
       );
       expect(
         arFirst.right,

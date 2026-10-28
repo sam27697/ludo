@@ -959,7 +959,7 @@ void main() {
     (2, 'upper half: tail above the body'),
   ]) {
     testWidgets('look: seat $seat bubble has a 2 dp border in the seat '
-        'colour and a paper fill ($where)', (tester) async {
+        'colour and a paperElevated fill ($where)', (tester) async {
       final _Fix f = await _fix(tester, 'look seat $seat');
       try {
         await f.emote(seat, 'nice');
@@ -991,10 +991,10 @@ void main() {
         );
         final Color fill = shot.at(Offset(text.left - 4, text.center.dy));
         expect(
-          _near(fill, LudoColors.paper, 6),
+          _near(fill, LudoColors.paperElevated, 6),
           isTrue,
           reason: f.s.why(
-            'padding pixel ${fill.toARGB32().toRadixString(16)} is the paper fill',
+            'padding pixel ${fill.toARGB32().toRadixString(16)} is the paperElevated fill',
           ),
         );
         final Text widget = tester.widget<Text>(
@@ -1361,6 +1361,8 @@ void main() {
         closeTo(settled, 0.5),
         reason: f.s.why('full size on the first frame'),
       );
+      // Pump to exactly 2490 ms (never past it): the bubble is removed at
+      // 2500 ms, so the presence check below needs an elapsed time under it.
       while (f.s.clockMs - f.zero < 2490) {
         expect(
           textRect(tester, 2).width,
@@ -1372,7 +1374,8 @@ void main() {
           closeTo(1.0, 0.01),
           reason: f.s.why('full opacity at ${f.s.clockMs - f.zero} ms'),
         );
-        await f.s.pump(const Duration(milliseconds: 100));
+        final int left = 2490 - (f.s.clockMs - f.zero);
+        await f.s.pump(Duration(milliseconds: left < 100 ? left : 100));
       }
       expect(bubbleSeats(tester), <int>[
         2,
