@@ -700,25 +700,27 @@ class _ConnectionHub implements RoomHub {
       _removeFromRoom(previousRoom, conn);
     }
 
-    final Set<Connection> sockets = _byRoom.putIfAbsent(
-      code,
-      () => <Connection>{},
-    );
-
     Connection? displaced;
-    for (final Connection other in sockets) {
-      if (!identical(other, conn) &&
-          other.seatToken != null &&
-          other.seatToken == conn.seatToken) {
-        displaced = other;
-        break;
+    final Set<Connection>? current = _byRoom[code];
+    if (current != null) {
+      for (final Connection other in current) {
+        if (!identical(other, conn) &&
+            other.seatToken != null &&
+            other.seatToken == conn.seatToken) {
+          displaced = other;
+          break;
+        }
       }
     }
     if (displaced != null) {
       _removeFromRoom(code, displaced);
     }
 
-    sockets.add(conn);
+    // Looked up only now, after the takeover removal: when the displaced
+    // socket was the room's last one, _removeFromRoom has just dropped the
+    // emptied set from _byRoom, and a set fetched before that would take
+    // the new socket while no longer being the one broadcast reads.
+    _byRoom.putIfAbsent(code, () => <Connection>{}).add(conn);
     _roomByConnection[conn] = code;
     return displaced;
   }
