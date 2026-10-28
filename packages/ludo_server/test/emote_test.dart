@@ -1,8 +1,10 @@
-// Wire tests for quick messages, docs/PROTOCOL.md section 25 rule 8, one
-// case per item of that rule (the four BAD_FIELD shapes are split).
-// Written from section 25 and from docs/RULES.md rule 2. Nothing here
-// reads the handler: on this branch `emote` is not a known `t`, so a case
-// that sends one is answered `BAD_TYPE`.
+// Wire tests for quick messages, docs/PROTOCOL.md section 25. Rule 8 is
+// one case per item of that rule (the four BAD_FIELD shapes are split).
+// Rule 9 strikes rule 8's `WRONG_PHASE` and `GAME_OVER` cases and replaces
+// them: `emote` is admitted in a first-game LOBBY, a rematch LOBBY,
+// PLAYING and FINISHED, and the cadence of rule 3 carries over
+// `game_over`. Written from section 25 and from docs/RULES.md rule 2.
+// Nothing here reads the handler.
 //
 // Two-player rooms sit on seats 0 and 2 (docs/RULES.md rule 2). There is
 // no seat 1. Section 25 rule 8 says "an emote from seat 1" and writes the
@@ -206,9 +208,11 @@ void main() {
     );
   }
 
-  Future<void> admit(
-    _Playing game,
+  /// The admitted push on [sender] (with `re`) and [other] (without).
+  /// Section 25 rule 4, the same relay in every room state (rule 9).
+  Future<void> admitOn(
     WireTestSeat sender,
+    WireTestSeat other,
     String emote, {
     required String because,
   }) async {
@@ -223,7 +227,6 @@ void main() {
       re: requestId,
       because: '$because, sender seat ${sender.seat}',
     );
-    final WireTestSeat other = otherOf(game, sender);
     final Map<String, Object?> theirs = await other.client.next();
     expectEmote(
       theirs,
@@ -231,6 +234,20 @@ void main() {
       emote: emote,
       re: null,
       because: '$because, other seat ${other.seat}',
+    );
+  }
+
+  Future<void> admit(
+    _Playing game,
+    WireTestSeat sender,
+    String emote, {
+    required String because,
+  }) async {
+    await admitOn(
+      sender,
+      otherOf(game, sender),
+      emote,
+      because: because,
     );
   }
 
@@ -384,65 +401,291 @@ void main() {
       );
     });
 
-    test('WRONG_PHASE in LOBBY', () async {
+    // Section 25 rule 9. LOBBY and FINISHED admit emote. The cadence of
+    // rule 3 carries over game_over.
+    test(
+        'an emote after game_over is admitted and relayed with re on the '
+        'sender only and no seq', () async {
+      final _Playing game = await playing();
+      await finishWithGameOver(harness, game);
+      await admit(
+        game,
+        game.lobby.guest,
+        'good_game',
+        because: 'section 25 rule 9: after game_over, emote is relayed '
+            'exactly as in PLAYING',
+      );
+    });
+
+    test(
+        'an emote in a first-game LOBBY is admitted and relayed the same '
+        'way', () async {
       await harness.start();
       final WireTestLobby lobby = await buildWireTestLobby(
         harness.wsUri,
         clients,
         players: 2,
       );
-      final String requestId =
-          lobby.guest.client.send('emote', <String, Object?>{
-        'emote': 'hi',
-      });
-      await expectEmoteError(
-        lobby.guest.client,
-        requestId,
-        'WRONG_PHASE',
-        because: 'section 25 rule 2: LOBBY is WRONG_PHASE, before the '
-            'payload is read',
+      expect(
+        lobby.guestRoom['state'],
+        'LOBBY',
+        reason: 'two seats joined and the game not started is a '
+            'first-game LOBBY',
+      );
+      expect(
+        lobby.guestRoom['rematch'],
+        isNull,
+        reason: 'section 16.6: rematch is null outside a rematch LOBBY, '
+            'so this is not one',
+      );
+      await admitOn(
+        lobby.guest,
+        lobby.host,
+        'hi',
+        because: 'section 25 rule 9: a first-game LOBBY admits emote '
+            'the same way PLAYING does',
       );
     });
 
-    test('GAME_OVER after game_over', () async {
+    test('an emote in a rematch LOBBY is admitted and relayed the same way',
+        () async {
       final _Playing game = await playing();
-      final Room? room = harness.registry.lookup(game.lobby.code);
-      if (room == null || room.game == null) {
-        fail(
-          'setup: room ${game.lobby.code} has no game to finish',
-        );
-      }
-      // The winning position roll_queue_wire_test.dart already drives:
-      // three tokens home, the fourth three steps away, queue starting
-      // with that 3. The move is the server's; this only places the
-      // tokens so the next move is the win.
-      forceQueueGame(
-        room,
-        currentSeat: game.lobby.host.seat,
-        phase: engine.GamePhase.awaitMove,
-        queue: const <int>[3, 5],
-        tokens: <int, List<int>>{
-          game.lobby.host.seat: <int>[57, 57, 57, 54],
-        },
-        now: harness.clock.now,
+      // rematch_test.dart's finish: room.state and a hand-built game with
+      // a winner, no frame sent. The first rematch then opens the LOBBY
+      // (section 16.2), the same way game_log_test.dart case 7 does.
+      _forceFinished(
+        harness,
+        game.lobby.code,
+        winner: game.lobby.host.seat,
       );
-      game.lobby.host.client.send('move', <String, Object?>{
-        'token': 3,
-        'face': 3,
-      });
-      await expectMovedThenOver(game.lobby.host.client);
-      await expectMovedThenOver(game.lobby.guest.client);
+      final String rematchId =
+          game.lobby.host.client.send('rematch', <String, Object?>{});
+      final Map<String, Object?> hostRoom = await game.lobby.host.client.next();
+      final Map<String, Object?> guestRoom =
+          await game.lobby.guest.client.next();
+      expect(
+        hostRoom['t'],
+        'room',
+        reason: 'section 16.2: the first rematch answers room; got '
+            '"${hostRoom['t']}" ${hostRoom['d']}',
+      );
+      expect(hostRoom['re'], rematchId);
+      expect(
+        guestRoom['t'],
+        'room',
+        reason: 'section 16.2: the other seat gets the room broadcast; '
+            'got "${guestRoom['t']}" ${guestRoom['d']}',
+      );
+      expect(
+        guestRoom.containsKey('re'),
+        isFalse,
+        reason: 'a broadcast copy to a socket that did not send rematch '
+            'carries no re',
+      );
+      final Map<String, Object?> hostData =
+          hostRoom['d']! as Map<String, Object?>;
+      final Map<String, Object?> guestData =
+          guestRoom['d']! as Map<String, Object?>;
+      expect(hostData['state'], 'LOBBY');
+      expect(guestData['state'], 'LOBBY');
+      expect(
+        hostData['rematch'],
+        isNotNull,
+        reason: 'section 16.2 and 16.6: the first rematch leaves a '
+            'rematch LOBBY, rematch non-null',
+      );
+      expect(guestData['rematch'], isNotNull);
+      await admitOn(
+        game.lobby.guest,
+        game.lobby.host,
+        'hi',
+        because: 'section 25 rule 9: a rematch LOBBY admits emote the '
+            'same way PLAYING does',
+      );
+    });
 
-      final String requestId =
-          game.lobby.guest.client.send('emote', <String, Object?>{
-        'emote': 'good_game',
+    test(
+        'the cadence carries over game_over: one 1000 ms after it is '
+        'RATE_LIMITED and one 3000 ms after the admitted emote is admitted',
+        () async {
+      final _Playing game = await playing();
+      final WireTestSeat sender = game.lobby.guest;
+      // The win sits armed while the room is still PLAYING. No frame yet.
+      armHostWin(harness, game);
+
+      // t = 0. Admitted in PLAYING, 1000 ms before game_over.
+      await admit(
+        game,
+        sender,
+        'hi',
+        because: 'admitted 1000 ms before game_over',
+      );
+
+      // t = 1000. This move is the game_over, so the admitted emote was
+      // 1000 ms before it (section 25 rule 9).
+      harness.clock.advance(const Duration(milliseconds: 1000));
+      await playHostWin(game);
+
+      // t = 2000: 1000 ms after game_over, 2000 ms after the admitted
+      // emote. Rule 3 refuses it.
+      harness.clock.advance(const Duration(milliseconds: 1000));
+      final String limitedId = sender.client.send('emote', <String, Object?>{
+        'emote': 'oops',
       });
       await expectEmoteError(
-        game.lobby.guest.client,
+        sender.client,
+        limitedId,
+        'RATE_LIMITED',
+        because: 'section 25 rule 9: an emote 1000 ms after game_over is '
+            'still inside 3000 ms of the emote admitted before it, so '
+            'RATE_LIMITED. game_over does not start a new window',
+      );
+
+      // t = 3000 from the admitted emote, which is 2000 ms after
+      // game_over. Rule 3 allows it only because the window was not
+      // restarted at game_over. A rejected emote does not count (rule 3).
+      harness.clock.advance(const Duration(milliseconds: 1000));
+      await admit(
+        game,
+        sender,
+        'nice',
+        because: '3000 ms after the emote admitted before game_over',
+      );
+    });
+
+    test(
+        'the room seq is the same before and after an admitted emote in '
+        'FINISHED', () async {
+      final _Playing game = await playing();
+      await finishWithGameOver(harness, game);
+      final Map<String, Object?> before = await resumeSnapshot(
+        game.lobby.host,
+        game.lobby.code,
+        because: 'the room seq in FINISHED, before the emote',
+      );
+      expect(
+        before['state'],
+        'FINISHED',
+        reason: 'the emote is admitted in FINISHED (section 25 rule 9)',
+      );
+      final Object? seqBefore = before['seq'];
+      expect(
+        seqBefore,
+        isA<int>(),
+        reason: 'section 6: the snapshot carries seq; got $seqBefore',
+      );
+      await admit(
+        game,
+        game.lobby.guest,
+        'good_game',
+        because: 'section 25 rule 9: the FINISHED emote that must not '
+            'move seq',
+      );
+      final Map<String, Object?> after = await resumeSnapshot(
+        game.lobby.host,
+        game.lobby.code,
+        because: 'the room seq in FINISHED, after the emote',
+      );
+      expect(
+        after['seq'],
+        seqBefore,
+        reason: 'section 25 rules 5 and 9: an admitted emote is not a '
+            'state change, so the room seq stays $seqBefore in FINISHED; '
+            'got ${after['seq']}',
+      );
+    });
+
+    test(
+        'the room seq is the same before and after an admitted emote in '
+        'a first-game LOBBY', () async {
+      await harness.start();
+      final WireTestLobby lobby = await buildWireTestLobby(
+        harness.wsUri,
+        clients,
+        players: 2,
+      );
+      final Map<String, Object?> before = await resumeSnapshot(
+        lobby.host,
+        lobby.code,
+        because: 'the room seq in a first-game LOBBY, before the emote',
+      );
+      expect(
+        before['state'],
+        'LOBBY',
+        reason: 'the emote is admitted in LOBBY (section 25 rule 9)',
+      );
+      expect(
+        before['rematch'],
+        isNull,
+        reason: 'section 16.6: a first-game LOBBY, rematch null',
+      );
+      final Object? seqBefore = before['seq'];
+      expect(
+        seqBefore,
+        isA<int>(),
+        reason: 'section 6: the snapshot carries seq; got $seqBefore',
+      );
+      await admitOn(
+        lobby.guest,
+        lobby.host,
+        'hi',
+        because: 'section 25 rule 9: the LOBBY emote that must not move '
+            'seq',
+      );
+      final Map<String, Object?> after = await resumeSnapshot(
+        lobby.host,
+        lobby.code,
+        because: 'the room seq in a first-game LOBBY, after the emote',
+      );
+      expect(
+        after['seq'],
+        seqBefore,
+        reason: 'section 25 rules 5 and 9: an admitted emote is not a '
+            'state change, so the room seq stays $seqBefore in LOBBY; '
+            'got ${after['seq']}',
+      );
+    });
+
+    test('the game_log answer after a FINISHED emote holds no emote', () async {
+      final _Playing game = await playing();
+      await finishWithGameOver(harness, game);
+      await admit(
+        game,
+        game.lobby.guest,
+        'good_game',
+        because: 'section 25 rule 9: the FINISHED emote that game_log '
+            'must not hold',
+      );
+      final String requestId =
+          game.lobby.host.client.send('game_log', <String, Object?>{});
+      final List<Map<String, Object?>> entries = await readGameLog(
+        game.lobby.host.client,
         requestId,
-        'GAME_OVER',
-        because: 'section 25 rule 2 and rule 7: after game_over, emote '
-            'is GAME_OVER. emote is not on the section 7 exception list',
+      );
+      for (final Map<String, Object?> entry in entries) {
+        expect(
+          entry['t'],
+          isNot('emote'),
+          reason: 'section 25 rules 5 and 9: the game_log answer after '
+              'a FINISHED emote holds no emote; got $entry',
+        );
+      }
+      expect(
+        entries.any(
+          (Map<String, Object?> entry) => entry['t'] == 'game_started',
+        ),
+        isTrue,
+        reason: 'section 17 rule 2: the log of this game runs from '
+            'game_started, so an empty answer is not "no emote"',
+      );
+      expect(
+        entries.any(
+          (Map<String, Object?> entry) => entry['t'] == 'game_over',
+        ),
+        isTrue,
+        reason: 'section 17 rule 2: game_over was broadcast, so the log '
+            'of the finished game holds it. An answer from before the '
+            'end is not this case',
       );
     });
 
@@ -784,8 +1027,57 @@ void main() {
   });
 }
 
+/// Forces [code]'s room FINISHED with a hand-built winning board, the same
+/// way `rematch_test.dart` does. No frame is sent. Fixture setup only: the
+/// first `rematch` is what a caller then asserts on.
+void _forceFinished(
+  ServerHarness harness,
+  String code, {
+  required int winner,
+}) {
+  final Room? room = harness.registry.lookup(code);
+  if (room == null) {
+    fail('fixture setup: room $code must still exist to be forced FINISHED');
+  }
+  final engine.GameState base = room.game!;
+  room.game = engine.GameState(
+    config: base.config,
+    tokens: base.tokens,
+    currentSeat: winner,
+    phase: engine.GamePhase.finished,
+    roll: null,
+    sixes: 0,
+    winner: winner,
+    seq: base.seq + 1,
+    rngState: base.rngState,
+  );
+  room.state = RoomState.finished;
+}
+
+/// The winning position `roll_queue_wire_test.dart` already drives: three
+/// of the host's tokens home, the fourth three steps away, the queue
+/// starting with that 3. The room stays PLAYING. No frame is sent. The
+/// move is the server's.
+void armHostWin(ServerHarness harness, _Playing game) {
+  final Room? room = harness.registry.lookup(game.lobby.code);
+  if (room == null || room.game == null) {
+    fail('setup: room ${game.lobby.code} has no game to finish');
+  }
+  forceQueueGame(
+    room,
+    currentSeat: game.lobby.host.seat,
+    phase: engine.GamePhase.awaitMove,
+    queue: const <int>[3, 5],
+    tokens: <int, List<int>>{
+      game.lobby.host.seat: <int>[57, 57, 57, 54],
+    },
+    now: harness.clock.now,
+  );
+}
+
 /// `moved` then `game_over`, section 21.3's winning move, on one socket.
-Future<void> expectMovedThenOver(WireTestClient client) async {
+/// Returns the `seq` carried on `game_over` (section 5).
+Future<int> expectMovedThenOver(WireTestClient client) async {
   final Map<String, Object?> moved = await client.next();
   expect(
     moved['t'],
@@ -797,9 +1089,84 @@ Future<void> expectMovedThenOver(WireTestClient client) async {
   expect(
     over['t'],
     'game_over',
-    reason: 'setup: section 25 rule 8 is GAME_OVER after game_over; '
-        'got "${over['t']}" ${over['d']}',
+    reason: 'setup: the winning move ends the game with game_over '
+        '(section 21.3); got "${over['t']}" ${over['d']}',
   );
+  final Object? raw = over['d'];
+  expect(
+    raw,
+    isA<Map<String, Object?>>(),
+    reason: 'setup: game_over d is an object; got $raw',
+  );
+  final Object? seq = (raw! as Map<String, Object?>)['seq'];
+  expect(
+    seq,
+    isA<int>(),
+    reason: 'section 5: game_over carries seq; got $seq',
+  );
+  return seq! as int;
+}
+
+/// Host plays the armed winning move. Drains `moved` then `game_over` off
+/// both sockets, so the room is FINISHED and both queues are empty.
+Future<void> playHostWin(_Playing game) async {
+  game.lobby.host.client.send('move', <String, Object?>{
+    'token': 3,
+    'face': 3,
+  });
+  final int hostSeq = await expectMovedThenOver(game.lobby.host.client);
+  final int guestSeq = await expectMovedThenOver(game.lobby.guest.client);
+  expect(
+    guestSeq,
+    hostSeq,
+    reason: 'section 5: one seq counter per room, so both sockets see '
+        'the same game_over seq; host=$hostSeq guest=$guestSeq',
+  );
+}
+
+/// Arms the win and plays it. Both sockets are left just after `game_over`.
+Future<void> finishWithGameOver(ServerHarness harness, _Playing game) async {
+  armHostWin(harness, game);
+  await playHostWin(game);
+}
+
+/// `seat_assigned` then `room` for a `resume` of a seat that is already
+/// connected (section 13.2: that takeover broadcasts nothing). The returned
+/// map is the snapshot, whose `seq` is the room's.
+Future<Map<String, Object?>> resumeSnapshot(
+  WireTestSeat seat,
+  String code, {
+  required String because,
+}) async {
+  final String resumeId = seat.client.send('resume', <String, Object?>{
+    'code': code,
+    'seat_token': seat.token,
+  });
+  await expectSeatAssigned(
+    seat.client,
+    expectedSeat: seat.seat,
+    expectedToken: seat.token,
+    because: because,
+  );
+  final Map<String, Object?> roomFrame = await seat.client.next();
+  expect(
+    roomFrame['t'],
+    'room',
+    reason: 'section 8: resume answers with room after seat_assigned; '
+        '$because; got "${roomFrame['t']}" ${roomFrame['d']}',
+  );
+  expect(
+    roomFrame['re'],
+    resumeId,
+    reason: 'section 4: the room that answers resume carries re; $because',
+  );
+  final Object? raw = roomFrame['d'];
+  expect(
+    raw,
+    isA<Map<String, Object?>>(),
+    reason: '$because: room d is an object; got $raw',
+  );
+  return raw! as Map<String, Object?>;
 }
 
 /// One `presence` on [survivor], section 8. Left in the queue it is read

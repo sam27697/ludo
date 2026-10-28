@@ -176,6 +176,22 @@ server room. With `rollQueue` on, rules 9, 12 and 13 are replaced by 9q to
     is connected and simply not acting expires on the same schedule as one
     that has dropped.
 
+16c. Added 2026-10-28, Sam's ruling. A seat whose player has been away
+    for one whole turn of their own plays its later turns on **10 seconds**
+    a segment instead of 45. "Away for one whole turn" means the seat was
+    not connected when its turn began and did not reconnect at any point
+    before that turn ended. From the end of such a turn the seat is
+    **away**, and every segment that starts for it while it is away has a
+    10 second budget; rules 15, 15q and 16a act on it exactly as they do
+    on a 45 second one. The moment the seat reconnects it is no longer
+    away, and if it is on turn with a 10 second segment running, that
+    segment restarts at the full 45. Nobody is removed and no seat is
+    given up: the seat, its tokens and its place in the turn order stay
+    as they were. A seat that is connected and simply not acting is never
+    away (rule 16b still holds for it), and a seat that drops in the middle
+    of its turn, or between turns, still gets one whole turn at 45 seconds
+    a segment before 16c applies.
+
 ## 4. Movement
 
 17. A token in the yard, `progress = -1`, may leave only on a roll of 6, and it
