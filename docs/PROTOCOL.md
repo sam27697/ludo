@@ -102,6 +102,7 @@ seat is not reassignable by anything a third party can observe.
 | `ping` | `{ }` | Answered by `pong`. |
 | `rematch` | `{ }` | Any seated player. FINISHED (asks for a rematch) or a rematch LOBBY (accepts it). Answered by `room`. Section 16. |
 | `game_log` | `{ }` | Any seated player, PLAYING or FINISHED. Answered by `game_log` on that socket only. Section 17. |
+| `emote` | `{ "emote": string }` | Any seated player, PLAYING only. One of twelve preset ids, never text. Answered by the `emote` push, `re` set on the sender's copy. Section 25. |
 
 `name` is a display name: 1 to 24 characters after trimming, no control
 characters. It is held in memory for the life of the room and never persisted.
@@ -144,6 +145,7 @@ different games.
 | `error` | `{ "code": string, "message": string }`, with `re` set when it answers a specific message. |
 | `pong` | `{ }` |
 | `game_log` | `{ "game_id": string, "part": int, "parts": int, "frames": [ ... ] }`, one part of the answer to a `game_log` request, to that socket only. Section 17. |
+| `emote` | `{ "seat": int, "emote": string }`. A preset quick message from that seat, to every socket in the room. No `seq`, not state. Section 25. |
 
 `deadline_ms` is milliseconds remaining, not an absolute timestamp. Four phones
 do not agree on the wall clock and the client must not be asked to reconcile
