@@ -471,7 +471,30 @@ class Connection {
       hub.broadcast(
         code: ok.room.code,
         type: 'presence',
-        data: buildPresence(ok.seat.seat, true, ok.room.seq),
+        data: buildPresence(ok.seat.seat, true, ok.presenceSeq!),
+        exceptConn: this,
+      );
+    }
+    // docs/PROTOCOL.md section 26 rule 5: an away seat that came back on
+    // turn restarted its segment at the full budget, and the other sockets
+    // are owed the `turn` that says so, after the `presence` and at the next
+    // `seq`. The resuming socket is owed nothing: its `room` above was built
+    // after both and already carries the restarted segment.
+    if (ok.turnSeq != null) {
+      final TurnQueueFields fields = turnQueueFields(ok.room.game!);
+      hub.broadcast(
+        code: ok.room.code,
+        type: 'turn',
+        data: buildTurn(
+          seat: ok.room.game!.currentSeat,
+          deadlineMs: ok.turnDeadlineMs!,
+          seq: ok.turnSeq!,
+          phase: fields.phase,
+          queue: fields.queue,
+          value: fields.value,
+          legal: fields.legal,
+          legalByFace: fields.legalByFace,
+        ),
         exceptConn: this,
       );
     }

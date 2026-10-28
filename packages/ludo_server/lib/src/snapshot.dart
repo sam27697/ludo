@@ -113,6 +113,9 @@ Map<String, Object?>? _turnSnapshot(Room room, DateTime now) {
     turn['legal_by_face'] = queueFields.legalByFace;
   }
   turn['deadline_ms'] = _deadlineMs(room, now);
+  // docs/PROTOCOL.md section 26 rule 4: present exactly when `deadline_ms`
+  // is, and the budget that countdown runs against.
+  turn['segment_ms'] = room.turnSegmentMs;
   turn['k'] = room.rollCount;
   return turn;
 }
@@ -168,7 +171,8 @@ List<Map<String, Object?>> _wireLegalByFace(engine.GameState game) {
   ];
 }
 
-/// `docs/PROTOCOL.md` section 6's `deadline_ms` formula, read against [now]
+/// `docs/PROTOCOL.md` section 6's `deadline_ms` formula, with the running
+/// segment's own budget (section 26 rule 3), read against [now]
 /// rather than against the moment some earlier frame was built -- a `room`
 /// snapshot can be requested at any time after the segment it describes
 /// started, so this is computed fresh every time this function runs, unlike
@@ -180,7 +184,7 @@ int _deadlineMs(Room room, DateTime now) {
   if (startedAt == null) {
     return 0;
   }
-  final int budgetMs = room.rules.turnSeconds * 1000;
+  final int budgetMs = room.turnSegmentMs;
   final int elapsedMs = now.difference(startedAt).inMilliseconds;
   final int remaining = budgetMs - elapsedMs;
   return remaining > 0 ? remaining : 0;
