@@ -1425,3 +1425,91 @@ player typed except a display name.
    socket; the connection stays open after `RATE_LIMITED`; the
    `game_log` answer holds no `emote` entry after several were sent; the
    room's `seq` is the same before and after an admitted `emote`.
+
+## 26. A seat away for a whole turn plays on 10 seconds, 2026-10-28
+
+Sam's ruling of 2026-10-28, `docs/RULES.md` rule 16c. Until now a table
+with one phone gone waited up to 90 seconds (45 for the roll, 45 for the
+move) on every one of that seat's turns for as long as the game lasted.
+
+1. **`away` is room state on the server.** Every seat of a PLAYING room
+   is either away or not. `game_started` makes every seat not away, in
+   the first game and in every rematch. It means nothing in LOBBY or
+   FINISHED.
+2. **Becoming away.** When a seat's turn begins (the `turn` frame that
+   names it after a frame that named another seat, or the opening `turn`
+   of a game), the server notes whether the seat is connected. When that
+   turn ends (the next `turn` frame names another seat), the seat becomes
+   away exactly when it was not connected as the turn began and no
+   `resume` reconnected it before the turn ended. A seat on turn alone
+   (an extra roll, a six, faces left) is still in the same turn.
+3. **The budget.** Every segment (section 6, `deadline_ms`) that starts
+   for an away seat has a budget of **10 000 ms**; every other segment
+   keeps `rules.turn_seconds * 1000`. The 10 seconds is fixed, is not a
+   field of `rules`, and is the same in every room. `deadline_ms` in
+   every frame and snapshot is computed against the budget of the
+   segment it describes: `max(0, budget - elapsed)`. Rules 15, 15q and 16a
+   act on an expired 10 second segment exactly as on a 45 second one, and
+   the frames they publish (section 21.3 rule 4, section 22's `by`) are
+   unchanged.
+4. **The snapshot.** The `turn` object gains `segment_ms`, the budget of
+   the segment `deadline_ms` counts down, an integer, present exactly
+   when `deadline_ms` is. Seats carry no `away` field. Old clients ignore
+   `segment_ms`.
+5. **Coming back.** A `resume` that reconnects an away seat (it flips the
+   seat from not connected to connected) makes it not away, at once. If
+   that seat is on turn and the running segment has a 10 000 ms budget,
+   the segment restarts with the full `rules.turn_seconds * 1000` and the
+   room pushes a `turn` frame for that seat, in its current phase, with
+   the restarted `deadline_ms`, after the `presence` frame, with the next
+   `seq`. That `turn` goes to every other socket in the room, like the
+   `presence`; the resuming socket gets neither, because its own `room`
+   answer is built after both and carries the restarted segment and the
+   later `seq`. A resume that reconnects a seat whose running segment is
+   already a full one changes nothing about the segment and pushes no
+   `turn`. A takeover (section 8 rule 6) flips nothing and changes
+   nothing here.
+6. **A seat that drops while away** is simply away again after its next
+   whole turn under rule 2; a reconnect always clears it.
+7. **What does not change.** The engine, the golden corpus, the dice
+   chain, the verify record and `timer_steps` (section 23). No new
+   message type, error or close code. A seat that left the table
+   (section 18) stays seated and disconnected in PLAYING, so rule 2
+   applies to it as to any seat that dropped.
+8. **Tests this section requires before it is implemented.** On an
+   injected clock, in a two-seat and a three-seat PLAYING room:
+   - a seat that disconnects while another seat is on turn gets its next
+     turn on 45 000 ms segments (roll and move), the timer plays it, and
+     its turn after that starts with `deadline_ms` 10 000 and expires at
+     10 000 ms, not before (9 999 ms: no action) and not later;
+   - while away, a move segment after a timer roll is 10 000 ms too, and
+     so is the segment after a six or an extra roll for that seat;
+   - a seat that disconnects in the middle of its own turn gets the rest
+     of that turn and the whole of its next turn at 45 000 ms, and only
+     then 10 000 ms;
+   - a seat that reconnects at any point during the turn that would have
+     made it away (even if it drops again before the turn ends) is not
+     away after it;
+   - a seat that is connected and never acts keeps 45 000 ms on every
+     turn (rule 16b unchanged);
+   - the other seats' segments are 45 000 ms throughout;
+   - a `resume` of an away seat between its turns clears it: its next
+     turn is 45 000 ms, and no `turn` frame is pushed on the resume;
+   - a `resume` of an away seat on turn with a 10 000 ms segment running
+     (say 4 000 ms elapsed): the other socket receives `presence`
+     (connected true) then `turn` for that seat, same phase, with
+     `deadline_ms` 45 000 and consecutive `seq`; the resumer's `room`
+     answer has `turn.deadline_ms` 45 000, `turn.segment_ms` 45 000 and
+     the `seq` of that `turn`; the segment then expires at 45 000 ms
+     after the resume, not at 6 000;
+   - a `resume` of a seat on turn whose running segment is 45 000 ms
+     (its first away turn) pushes `presence` only and leaves the
+     deadline counting down from where it was;
+   - the snapshot of a room whose current seat is away shows
+     `turn.segment_ms` 10 000 and `turn.deadline_ms` 10 000 minus the
+     elapsed time; a present seat's shows 45 000;
+   - a rematch starts with no seat away, including one that was away
+     when the previous game ended;
+   - a two-seat game with one seat dropped before its first turn
+     reaches `game_over` on the timer with every one of that seat's
+     segments after its first turn at 10 000 ms.
