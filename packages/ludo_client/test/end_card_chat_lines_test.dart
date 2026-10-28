@@ -1242,7 +1242,7 @@ void main() {
               '${px.at(r.left + 1, mid)} at ${r.left + 1}',
         );
         expect(
-          _near(px.at(r.right - 2, mid), border, 8),
+          _near(px.at(r.right - 1, mid), border, 8),
           isTrue,
           reason: 'seat $seat: the right border is the seat colour',
         );
@@ -1252,7 +1252,7 @@ void main() {
           reason: 'seat $seat: the top border is the seat colour',
         );
         expect(
-          _near(px.at(r.center.dx, r.bottom - 2), border, 8),
+          _near(px.at(r.center.dx, r.bottom - 1), border, 8),
           isTrue,
           reason:
               'seat $seat: the bottom border is the seat colour, so '
