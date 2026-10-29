@@ -1,25 +1,26 @@
-// Screen proof for C-485 D6 items 5, 6, 7 and 8 (order 488): the lines other
-// seats say, shown on the end card. Written from work/ludo/orders/C-485 and
-// C-478 alone; the implementation (order 485) was being written in another
-// tree and has not been read.
+// Screen proof for C-485 D6 items 5, 6, 7 and 8, amended by C-492 (order 494).
+// Written from those contracts and from C-478. The C-492 implementation was
+// being written in another tree and has not been read.
 //
-// Two halves. The game screen cases drive a real GameScreen over a real
-// RoomController on FakeTransport (test/support/end_card_chat_harness.dart),
-// every state a decoded wire frame, time measured from the frame the `emote`
-// push was flushed on, and reach the new widgets by key only. The direct
-// cases mount an EndCard with chatLines and EndCardChatLine; they sit between
-// the BEGIN direct and END direct markers and do not compile until the
-// implementation lands. The surface is 360x800 at pixel ratio 1.
+// Every case drives a real GameScreen over a real RoomController on
+// FakeTransport (test/support/end_card_chat_harness.dart). State arrives as
+// decoded wire frames. Time is measured from the frame the `emote` push was
+// flushed on. The new widgets are reached by key only. The surface is
+// 360x800 at pixel ratio 1 unless a case names another size.
+//
+// C-492 moves the one line into the header band and drops the EndCard
+// overlay, so nothing here mounts EndCard(chatLines:). The header row is the
+// widest 48 dp-tall ancestor of game-screen-appbar-leave (the SizedBox under
+// game-felt-edge). Geometry is that row's rect from getRect's own coordinate
+// space, via the render box's localToGlobal.
 //
 // Every failure reason starts with the scenario name and ends with the
 // frames and pumps that led to it, so a red case replays from its message.
 //
-// Ambiguities in the contract, reported and not invented around:
-//   - EndCardChatLine's constructor is not given. The direct cases call it
-//     with the four fields as named arguments (seat, name, text, serial).
+// Ambiguities, reported and not invented around:
 //   - D5.2 says the name is w700 and the line w500 but not what sits between
-//     them; the cases require two different spans, the name before the line,
-//     and no particular separator.
+//     them; the text case requires two different spans, the name before the
+//     line, and no particular separator.
 //   - How the opacity is animated is not given. The measure multiplies every
 //     Opacity / FadeTransition above the bubble's text. A fade done with a
 //     colour alpha instead would read as 1.0 and fail the fade cases.
@@ -27,12 +28,17 @@
 //     the fill paperElevated. The look case follows A1.
 //   - The soft shadow of D5.2 is not asserted: it has no stable pixel to
 //     read against the card behind it.
-//   - "kSpace3 from the top" is read as the top of the EndCard widget, which
-//     is the top of the card's scroll area.
 //   - A spectator seeing the lines is not asserted: D4 does not say.
 //   - D4 does not say whether a line already up survives the LOBBY change to
 //     a rematch LOBBY; the cases do not assert either way.
+//   - Two emote frames pushed before one pump have no contract rule for
+//     which is newer. That case asserts exactly one of the two seats, and
+//     does not name which.
+//   - The direct motion, reduced-motion and semantics cases duplicated the
+//     GameScreen cases in group 7. Group 7 stays; the direct copies are not
+//     repeated.
 
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -40,7 +46,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ludo_client/src/chat_bubble.dart';
 import 'package:ludo_client/src/end_card.dart';
 import 'package:ludo_client/src/net/snapshot.dart' show SeatState;
 import 'package:ludo_client/src/theme.dart';
@@ -198,100 +203,66 @@ void _expectMotion(List<_Sample> trace, String Function(String) why) {
   );
 }
 
-// BEGIN direct
-const Key _shotKey = Key('c485-shot');
+const Key _leaveKey = Key('game-screen-appbar-leave');
+const Key _settingsKey = Key('game-settings-button');
+const Key _winnerKey = Key('game-screen-winner');
+const Key _pipKey = Key('game-seat-pip-strip');
+const Key _panelKey = Key('end-card-lose');
 
-/// An EndCard in an EndCardFrame, the way the finished body mounts it, with
-/// [lines] on it.
-Widget _lineTree({
-  required List<EndCardChatLine> lines,
-  EndKind kind = EndKind.loser,
-  Locale locale = const Locale('en'),
-  double textScale = 1.0,
-  bool reduced = false,
-  double trailing = 300,
-}) => rollTrayHarness(
-  RepaintBoundary(
-    key: _shotKey,
-    child: Scaffold(
-      body: EndCardFrame(
-        card: EndCard(
-          mySeat: 0,
-          winnerSeat: switch (kind) {
-            EndKind.winner => 0,
-            EndKind.loser => 1,
-            EndKind.ended => null,
-          },
-          winnerName: switch (kind) {
-            EndKind.winner => 'Sam',
-            EndKind.loser => 'Bob',
-            EndKind.ended => null,
-          },
-          seatColors: LudoColors.seats,
-          stats: null,
-          verifyUrl: null,
-          onVerify: () {},
-          onNewTable: () {},
-          onRematch: () {},
-          chatLines: lines,
-        ),
-        trailing: SizedBox(height: trailing),
-      ),
-    ),
-  ),
-  locale: locale,
-  textScale: textScale,
-  disableAnimations: reduced,
-);
+/// C-492 decision 6: `kSpace2 + 48 + kSpace1`.
+const double _rowDp = 48;
+const double _inset = kSpace2 + _rowDp + kSpace1;
 
-Future<void> _mountLines(
-  WidgetTester tester,
-  Widget tree, {
-  Size size = const Size(360, 800),
-  bool settle = true,
-}) async {
-  phoneSurface(tester);
-  tester.view.physicalSize = size;
-  await tester.pumpWidget(tree);
-  if (settle) {
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+/// The header row: the widest ancestor of the leave button whose height is
+/// the 48 dp row. Its rect is in the same space as [WidgetTester.getRect].
+Rect _headerRow(WidgetTester tester) {
+  final RenderBox leave = tester.renderObject<RenderBox>(find.byKey(_leaveKey));
+  RenderBox? row;
+  RenderObject? walker = leave;
+  while (walker != null) {
+    if (walker is RenderBox && (walker.size.height - _rowDp).abs() <= 0.5) {
+      if (row == null || walker.size.width > row.size.width) {
+        row = walker;
+      }
+    }
+    walker = walker.parent;
   }
+  expect(
+    row,
+    isNotNull,
+    reason: 'a 48 dp ancestor of game-screen-appbar-leave',
+  );
+  return row!.localToGlobal(Offset.zero) & row.size;
 }
 
-EndCardChatLine _line(
-  int seat,
-  int serial, {
-  String? name,
-  String text = 'Good game',
-}) => EndCardChatLine(
-  seat: seat,
-  name: name ?? kNames[seat]!,
-  text: text,
-  serial: serial,
-);
-
-/// The pixels of the card, read at logical points (the surface is ratio 1).
+/// The pixels of the screen, read at logical points (the surface is ratio 1).
 class _Pixels {
-  _Pixels(this.image, this.data);
+  _Pixels(this.image, this.data, this.origin);
 
   final ui.Image image;
   final ByteData data;
+  final Offset origin;
 
-  static Future<_Pixels> of(WidgetTester tester) async {
-    final RenderRepaintBoundary boundary = tester
-        .renderObject<RenderRepaintBoundary>(find.byKey(_shotKey));
+  static Future<_Pixels> of(WidgetTester tester, Finder anchor) async {
+    final RenderObject start = tester.renderObject(anchor);
+    RenderObject? walker = start;
+    while (walker != null && walker is! RenderRepaintBoundary) {
+      walker = walker.parent;
+    }
+    final RenderRepaintBoundary boundary = walker! as RenderRepaintBoundary;
     final ui.Image? image = await tester.runAsync<ui.Image>(
       () => boundary.toImage(),
     );
     final ByteData? data = await tester.runAsync<ByteData?>(
       () => image!.toByteData(format: ui.ImageByteFormat.rawRgba),
     );
-    return _Pixels(image!, data!);
+    return _Pixels(image!, data!, boundary.localToGlobal(Offset.zero));
   }
 
   Color at(double x, double y) {
-    final int i = (y.floor() * image.width + x.floor()) * 4;
+    final double lx = x - origin.dx;
+    final double ly = y - origin.dy;
+    final int i = (ly.floor() * image.width + lx.floor()) * 4;
     return Color.fromARGB(
       data.getUint8(i + 3),
       data.getUint8(i),
@@ -318,7 +289,52 @@ bool _isUnder(RenderObject target, RenderObject ancestor) {
   return false;
 }
 
-// END direct
+/// C-492 decision 6 at text scale 1.0: the whole bubble sits in the row,
+/// centred vertically when it fits.
+void _expectInRow(EndGame g, Rect bubble, Rect row) {
+  final double expectedTop =
+      row.top + math.max(0, (_rowDp - bubble.height) / 2);
+  expect(
+    bubble.top,
+    closeTo(expectedTop, 0.5),
+    reason: g.why('the bubble top follows the row: bubble $bubble, row $row'),
+  );
+  expect(
+    bubble.bottom,
+    lessThanOrEqualTo(row.bottom + 0.5),
+    reason: g.why('at text scale 1.0 the bubble stays inside the row'),
+  );
+  expect(
+    bubble.center.dx,
+    closeTo(row.center.dx, 1),
+    reason: g.why('the bubble is centred on the header row'),
+  );
+}
+
+void _expectInsideInsets(EndGame g, Rect bubble, Rect row) {
+  expect(
+    bubble.left,
+    greaterThanOrEqualTo(row.left + _inset - 0.5),
+    reason: g.why(
+      '$_inset dp clear of the row\'s left: bubble $bubble, row $row',
+    ),
+  );
+  expect(
+    bubble.right,
+    lessThanOrEqualTo(row.right - _inset + 0.5),
+    reason: g.why('$_inset dp clear of the row\'s right'),
+  );
+}
+
+void _expectClearOf(EndGame g, Rect bubble, Key key) {
+  expect(find.byKey(key), findsOneWidget, reason: g.why('$key is on screen'));
+  final Rect other = g.tester.getRect(find.byKey(key));
+  expect(
+    bubble.overlaps(other),
+    isFalse,
+    reason: g.why('bubble $bubble does not meet $key $other'),
+  );
+}
 
 void main() {
   // -------------------------------------------------------------------
@@ -327,8 +343,8 @@ void main() {
   group('5. a received line on the end card', () {
     for (final EndKind kind in <EndKind>[EndKind.winner, EndKind.loser]) {
       for (final bool ar in const <bool>[false, true]) {
-        testWidgets('${kind.name} FINISHED, ${ar ? 'ar' : 'en'}: a line from '
-            'another seat and my own both show, named', (tester) async {
+        testWidgets('${kind.name} FINISHED, ${ar ? 'ar' : 'en'}: another '
+            'seat\'s line shows, then mine replaces it', (tester) async {
           final EndGame g = await openFinished(
             tester,
             '5 finished ${kind.name} ${ar ? 'ar' : 'en'}',
@@ -343,12 +359,19 @@ void main() {
             );
             await g.emote(1, 'good_game');
             _expectLine(g, 1, 'Bob', endLine('good_game', ar: ar));
+            expect(chatLineSeats(tester), <int>[
+              1,
+            ], reason: g.why('one line, the other seat\'s'));
             await g.emote(0, 'ha_ha');
-            _expectLine(g, 0, 'Sam', endLine('ha_ha', ar: ar));
             expect(chatLineSeats(tester), <int>[
               0,
-              1,
-            ], reason: g.why('both lines up'));
+            ], reason: g.why('mine replaces it: one end-card-chat-*'));
+            _expectLine(g, 0, 'Sam', endLine('ha_ha', ar: ar));
+            expect(
+              find.byKey(chatLineKey(1)),
+              findsNothing,
+              reason: g.why('seat 1\'s line is gone'),
+            );
             expect(tester.takeException(), isNull);
           } finally {
             await g.done();
@@ -527,6 +550,48 @@ void main() {
       }
     });
 
+    testWidgets('a hidden line does not remove mine, and does not restart '
+        'its life', (tester) async {
+      final EndGame g = await openPlaying(
+        tester,
+        '5 hidden keeps mine',
+        players: 4,
+      );
+      try {
+        await toggleMute(g);
+        await g.gameOver(1);
+        await g.s.pump(const Duration(milliseconds: 100));
+        await g.emote(0, 'lucky');
+        _expectLine(g, 0, 'Sam', 'So lucky!');
+        final int mineAt = g.zero;
+        await g.s.pump(const Duration(milliseconds: 2000));
+        await g.emote(1, 'good_game');
+        expect(chatLineSeats(tester), <int>[
+          0,
+        ], reason: g.why('the hidden line left mine up'));
+        _expectLine(g, 0, 'Sam', 'So lucky!');
+        expect(
+          textUnder(tester, find.byKey(chatLineKey(0))),
+          isNot(contains('Good game')),
+          reason: g.why('seat 1\'s line was not drawn'),
+        );
+        final int left = mineAt + 2510 - g.s.clockMs;
+        expect(
+          left,
+          greaterThan(0),
+          reason: g.why('fixture: mine has life left to check'),
+        );
+        await g.s.pump(Duration(milliseconds: left));
+        _expectNoLines(
+          g,
+          'mine ended on the timer it started with, 510 ms after the '
+          'hidden line',
+        );
+      } finally {
+        await g.done();
+      }
+    });
+
     testWidgets('a line makes no sound and no haptic', (tester) async {
       final EndGame g = await openFinished(tester, '5 silent');
       try {
@@ -657,60 +722,86 @@ void main() {
       }
     });
 
-    testWidgets('two seats show two bubbles, the older on top; a seat that '
-        'speaks again goes to the bottom', (tester) async {
-      final EndGame g = await openFinished(tester, '6 order', players: 4);
+    testWidgets('a newer line from any seat replaces the one up: one '
+        'end-card-chat-* , the newest', (tester) async {
+      final EndGame g = await openFinished(tester, '6 one line', players: 4);
       try {
         await g.emote(2, 'hi');
+        expect(chatLineSeats(tester), <int>[
+          2,
+        ], reason: g.why('seat 2 is the only line'));
+        _expectLine(g, 2, 'Cara', 'Hi all');
         await g.s.pump(const Duration(milliseconds: 50));
         await g.emote(1, 'oops');
-        expect(chatLinesTopDown(tester), <int>[
-          2,
+        expect(chatLineSeats(tester), <int>[
           1,
-        ], reason: g.why('seat 2 spoke first, so it is on top'));
+        ], reason: g.why('seat 1 replaces seat 2'));
+        _expectLine(g, 1, 'Bob', 'Oops');
+        expect(
+          find.byKey(chatLineKey(2)),
+          findsNothing,
+          reason: g.why('seat 2 is gone'),
+        );
         await g.s.pump(const Duration(milliseconds: 50));
         await g.emote(2, 'good_game');
-        expect(chatLinesTopDown(tester), <int>[
-          1,
+        expect(chatLineSeats(tester), <int>[
           2,
-        ], reason: g.why('seat 2 spoke again, so it is newest, at the bottom'));
+        ], reason: g.why('seat 2 speaking again replaces seat 1'));
+        _expectLine(g, 2, 'Cara', 'Good game');
+        expect(
+          textUnder(tester, find.byKey(chatLineKey(2))),
+          isNot(contains('Hi all')),
+          reason: g.why('the old line is gone from the bubble'),
+        );
         await g.s.pump(const Duration(milliseconds: 50));
         await g.emote(3, 'lucky');
         await g.s.pump(const Duration(milliseconds: 50));
         await g.emote(0, 'ha_ha');
-        expect(chatLinesTopDown(tester), <int>[
-          1,
-          2,
-          3,
+        expect(chatLineSeats(tester), <int>[
           0,
-        ], reason: g.why('four seats, four bubbles, oldest first'));
+        ], reason: g.why('the newest line, seat 0, is the only one'));
         _expectLine(g, 0, 'Sam', 'Ha ha ha');
-        _expectLine(g, 3, 'Dan', 'So lucky!');
+        expect(
+          find.byKey(chatLineKey(3)),
+          findsNothing,
+          reason: g.why('seat 3 was replaced'),
+        );
       } finally {
         await g.done();
       }
     });
 
-    testWidgets('each seat\'s line ends at its own 2500 ms', (tester) async {
-      final EndGame g = await openFinished(tester, '6 two lives', players: 4);
+    testWidgets('a line from another seat drops the one it replaces and '
+        'that line\'s timer', (tester) async {
+      final EndGame g = await openFinished(tester, '6 one timer', players: 4);
       try {
         await g.emote(1, 'hi');
         await g.s.pump(const Duration(milliseconds: 1000));
         final int t1 = g.zero;
         await g.emote(2, 'oops');
-        expect(chatLineSeats(tester), <int>[1, 2], reason: g.why('both show'));
-        await g.s.pump(Duration(milliseconds: t1 + 2510 - g.s.clockMs));
         expect(chatLineSeats(tester), <int>[
           2,
-        ], reason: g.why('seat 1 expired at its own 2500 ms; seat 2 did not'));
+        ], reason: g.why('only the newer line is up'));
+        _expectLine(g, 2, 'Cara', 'Oops');
+        await g.s.pump(Duration(milliseconds: t1 + 2510 - g.s.clockMs));
+        expect(
+          chatLineSeats(tester),
+          <int>[2],
+          reason: g.why(
+            'past seat 1\'s 2500 ms the replacement is still up: its '
+            'timer was dropped',
+          ),
+        );
         await g.at(2510);
-        _expectNoLines(g, 'seat 2 expires too');
+        _expectNoLines(g, 'seat 2 ends on its own 2500 ms');
       } finally {
         await g.done();
       }
     });
 
-    testWidgets('two lines delivered in one frame both show', (tester) async {
+    testWidgets('two lines delivered before one pump leave one bubble', (
+      tester,
+    ) async {
       final EndGame g = await openFinished(tester, '6 one frame', players: 4);
       try {
         g.s.steps.add('two emotes, one pump');
@@ -718,10 +809,20 @@ void main() {
         g.drive.transport.pushText(emoteFrame(seat: 3, emote: 'oops'));
         await tester.pump();
         await tester.pump();
-        expect(chatLineSeats(tester), <int>[
-          1,
-          3,
-        ], reason: g.why('both lines from one frame'));
+        final List<int> seats = chatLineSeats(tester);
+        expect(
+          seats,
+          hasLength(1),
+          reason: g.why(
+            'one end-card-chat-* after two lines in one pump '
+            '(on screen: $seats)',
+          ),
+        );
+        expect(
+          <int>[1, 3],
+          contains(seats.single),
+          reason: g.why('the one line is one of the two that arrived'),
+        );
       } finally {
         await g.done();
       }
@@ -867,11 +968,9 @@ void main() {
       );
       try {
         await g.emote(1, 'good_game');
-        await g.emote(2, 'revenge');
         expect(chatLineSeats(tester), <int>[
           1,
-          2,
-        ], reason: g.why('fixture: two lines up'));
+        ], reason: g.why('fixture: the line is up'));
         await g.rematchLobby(by: 1);
         await g.startRematchGame(turnSeat: 1);
         await g.s.pump(const Duration(milliseconds: 50));
@@ -946,11 +1045,9 @@ void main() {
       final EndGame g = await openFinished(tester, '8 resync', players: 4);
       try {
         await g.emote(1, 'hi');
-        await g.emote(2, 'oops');
         expect(chatLineSeats(tester), <int>[
           1,
-          2,
-        ], reason: g.why('fixture: two lines'));
+        ], reason: g.why('fixture: the line is up'));
         await gapAndResync(g);
         expect(
           find.byKey(const Key('end-card-lose')),
@@ -973,11 +1070,9 @@ void main() {
       final EndGame g = await openFinished(tester, '8 resume', players: 4);
       try {
         await g.emote(1, 'hi');
-        await g.emote(3, 'oops');
         expect(chatLineSeats(tester), <int>[
           1,
-          3,
-        ], reason: g.why('fixture: two lines up before the drop'));
+        ], reason: g.why('fixture: the line is up before the drop'));
         await dropAndResume(g);
         expect(
           find.byKey(const Key('end-card-lose')),
@@ -1003,417 +1098,534 @@ void main() {
     });
   });
 
-  // -------------------------------------------------------------------
-  // Fit.
-  // -------------------------------------------------------------------
   group('fit', () {
     for (final bool ar in const <bool>[false, true]) {
-      testWidgets('360 x 640 at 2x text, ${ar ? 'ar' : 'en'}: four lines, '
-          'no overflow, each inside the screen', (tester) async {
-        final EndGame g = await openFinished(
-          tester,
-          'fit ${ar ? 'ar' : 'en'}',
-          players: 4,
-          textScale: 2.0,
-          size: const Size(360, 640),
-          locale: Locale(ar ? 'ar' : 'en'),
-        );
-        try {
-          for (final (int, String) row in const <(int, String)>[
-            (1, 'revenge'),
-            (2, 'good_game'),
-            (3, 'lucky'),
-            (0, 'ha_ha'),
-          ]) {
-            await g.emote(row.$1, row.$2);
-          }
-          await g.s.pump(const Duration(milliseconds: 300));
-          expect(chatLineSeats(tester), <int>[
-            0,
-            1,
-            2,
-            3,
-          ], reason: g.why('four bubbles'));
-          for (final int seat in const <int>[0, 1, 2, 3]) {
-            final Rect r = tester.getRect(find.byKey(chatLineKey(seat)));
+      testWidgets(
+        '360 x 640 at 2x text, ${ar ? 'ar' : 'en'}: the newest of four '
+        'lines, no overflow, inside the screen',
+        (tester) async {
+          final EndGame g = await openFinished(
+            tester,
+            'fit ${ar ? 'ar' : 'en'}',
+            players: 4,
+            textScale: 2.0,
+            size: const Size(360, 640),
+            locale: Locale(ar ? 'ar' : 'en'),
+          );
+          try {
+            for (final (int, String) row in const <(int, String)>[
+              (1, 'revenge'),
+              (2, 'good_game'),
+              (3, 'lucky'),
+              (0, 'ha_ha'),
+            ]) {
+              await g.emote(row.$1, row.$2);
+            }
+            await g.s.pump(const Duration(milliseconds: 300));
+            expect(chatLineSeats(tester), <int>[
+              0,
+            ], reason: g.why('the newest line is the only one'));
+            _expectLine(g, 0, 'Sam', endLine('ha_ha', ar: ar));
+            final Rect r = tester.getRect(find.byKey(chatLineKey(0)));
             expect(
               r.left,
               greaterThanOrEqualTo(0.0),
-              reason: g.why('bubble $seat $r inside the screen on the left'),
+              reason: g.why('bubble $r inside the screen on the left'),
             );
             expect(
               r.right,
               lessThanOrEqualTo(360.0),
-              reason: g.why('bubble $seat $r inside the screen on the right'),
+              reason: g.why('bubble $r inside the screen on the right'),
             );
+            expect(
+              tester.takeException(),
+              isNull,
+              reason: g.why('no overflow'),
+            );
+          } finally {
+            await g.done();
           }
-          expect(tester.takeException(), isNull, reason: g.why('no overflow'));
+        },
+      );
+    }
+  });
+
+  // -------------------------------------------------------------------
+  // C-492 decisions 1, 4 and 6: the one line in the header band.
+  // -------------------------------------------------------------------
+  group('header band', () {
+    for (final EndKind kind in <EndKind>[EndKind.winner, EndKind.loser]) {
+      for (final bool ar in const <bool>[false, true]) {
+        testWidgets(
+          '${kind.name} at text scale 1.0, ${ar ? 'ar' : 'en'}: the line '
+          'sits in the header row, clear of the buttons and the winner '
+          'title',
+          (tester) async {
+            final EndGame g = await openFinished(
+              tester,
+              'band ${kind.name} ${ar ? 'ar' : 'en'}',
+              kind: kind,
+              locale: Locale(ar ? 'ar' : 'en'),
+            );
+            try {
+              await g.emote(1, 'good_game');
+              await g.at(400);
+              final Finder line = lineOf(g, 1);
+              expect(
+                find.byKey(kChatLinesKey),
+                findsOneWidget,
+                reason: g.why('end-card-chat-lines is the header layer'),
+              );
+              bool underLayer = false;
+              tester.element(line).visitAncestorElements((Element ancestor) {
+                if (ancestor.widget.key == kChatLinesKey) {
+                  underLayer = true;
+                  return false;
+                }
+                return true;
+              });
+              expect(
+                underLayer,
+                isTrue,
+                reason: g.why('the bubble is inside end-card-chat-lines'),
+              );
+              expect(
+                tester
+                    .element(find.byKey(kChatLinesKey))
+                    .findAncestorWidgetOfExactType<EndCard>(),
+                isNull,
+                reason: g.why('the layer is not a child of EndCard'),
+              );
+              final Rect row = _headerRow(tester);
+              final Rect bubble = tester.getRect(line);
+              _expectInRow(g, bubble, row);
+              _expectInsideInsets(g, bubble, row);
+              _expectClearOf(g, bubble, _leaveKey);
+              _expectClearOf(g, bubble, _settingsKey);
+              _expectClearOf(g, bubble, _winnerKey);
+            } finally {
+              await g.done();
+            }
+          },
+        );
+      }
+    }
+
+    for (final bool ar in const <bool>[false, true]) {
+      for (final double width in const <double>[360, 411]) {
+        testWidgets(
+          '${width.toInt()} dp, ${ar ? 'ar' : 'en'}: the bubble stays '
+          'inside the 60 dp insets, and a long line is the max width',
+          (tester) async {
+            expect(_inset, 60);
+            final EndGame g = await openFinished(
+              tester,
+              'inset $width ${ar ? 'ar' : 'en'}',
+              names: <int, String>{1: 'M' * 40},
+              size: Size(width, width == 411 ? 891 : 800),
+              locale: Locale(ar ? 'ar' : 'en'),
+            );
+            try {
+              await g.emote(1, 'good_game');
+              await g.at(400);
+              final Rect row = _headerRow(tester);
+              final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
+              final double maxWidth = math.min(320, row.width - 2 * _inset);
+              expect(
+                bubble.width,
+                closeTo(maxWidth, 1),
+                reason: g.why(
+                  'long line is min(320, row width - 120): bubble $bubble, '
+                  'row $row, max $maxWidth',
+                ),
+              );
+              _expectInsideInsets(g, bubble, row);
+              expect(
+                bubble.center.dx,
+                closeTo(row.center.dx, 1),
+                reason: g.why('centred on the row'),
+              );
+              await g.emote(0, 'hi');
+              await g.at(400);
+              final Rect short = tester.getRect(find.byKey(chatLineKey(0)));
+              expect(
+                short.width,
+                lessThan(maxWidth - 40),
+                reason: g.why('a short line is its own width, not the maximum'),
+              );
+              _expectInsideInsets(g, short, _headerRow(tester));
+            } finally {
+              await g.done();
+            }
+          },
+        );
+      }
+    }
+
+    for (final double width in const <double>[800, 300]) {
+      testWidgets('a long line on a ${width.toInt()} dp screen is '
+          'min(320, width - 120) wide', (tester) async {
+        final EndGame g = await openFinished(
+          tester,
+          'width $width',
+          names: <int, String>{1: 'M' * 40},
+          size: Size(width, 800),
+        );
+        try {
+          await g.emote(1, 'good_game');
+          await g.at(400);
+          final Rect row = _headerRow(tester);
+          final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
+          final double maxWidth = math.min(320, row.width - 2 * _inset);
+          expect(
+            bubble.width,
+            closeTo(maxWidth, 1),
+            reason: g.why('bubble $bubble, row $row, max $maxWidth'),
+          );
+          _expectInsideInsets(g, bubble, row);
+          await g.emote(0, 'hi');
+          await g.at(400);
+          expect(
+            tester.getRect(find.byKey(chatLineKey(0))).width,
+            lessThan(maxWidth - 40),
+            reason: g.why('a short line is its own width'),
+          );
         } finally {
           await g.done();
         }
       });
     }
-  });
 
-  // BEGIN direct
-  // -------------------------------------------------------------------
-  // Items 5 to 7 on the widget alone.
-  // -------------------------------------------------------------------
-  group('direct EndCard: the lines overlay', () {
-    testWidgets('a column keyed end-card-chat-lines of one bubble per seat, '
-        'ordered by serial whatever order they are handed in, kSpace2 apart, '
-        'kSpace3 from the top, centred', (tester) async {
-      await _mountLines(
-        tester,
-        _lineTree(
-          lines: <EndCardChatLine>[
-            _line(2, 3),
-            _line(0, 1),
-            _line(3, 4),
-            _line(1, 2),
-          ],
-        ),
+    for (final bool ar in const <bool>[false, true]) {
+      testWidgets(
+        'text scale 2.0, ${ar ? 'ar' : 'en'}: one line tall, starting at '
+        'the row\'s top',
+        (tester) async {
+          final EndGame g = await openFinished(
+            tester,
+            'tall ${ar ? 'ar' : 'en'}',
+            players: 3,
+            textScale: 2.0,
+            size: const Size(360, 640),
+            locale: Locale(ar ? 'ar' : 'en'),
+            names: <int, String>{2: 'N' * 40},
+          );
+          try {
+            await g.emote(1, 'hi');
+            await g.at(400);
+            final double short = tester
+                .getRect(find.byKey(chatLineKey(1)))
+                .height;
+            await g.emote(2, 'good_game');
+            await g.at(400);
+            final Rect bubble = tester.getRect(find.byKey(chatLineKey(2)));
+            expect(
+              bubble.height,
+              closeTo(short, 0.5),
+              reason: g.why(
+                'the long line is as tall as the short one: one line',
+              ),
+            );
+            expect(
+              tester.takeException(),
+              isNull,
+              reason: g.why('no overflow'),
+            );
+            final Rect row = _headerRow(tester);
+            expect(
+              bubble.height,
+              greaterThan(_rowDp),
+              reason: g.why('at 2.0 the bubble is taller than the row'),
+            );
+            expect(
+              bubble.top,
+              closeTo(row.top, 0.5),
+              reason: g.why(
+                'a bubble taller than the row starts at the row\'s top: '
+                'bubble $bubble, row $row',
+              ),
+            );
+            expect(
+              bubble.bottom,
+              greaterThan(row.bottom),
+              reason: g.why('it paints down over the body'),
+            );
+          } finally {
+            await g.done();
+          }
+        },
       );
-      expect(find.byKey(kChatLinesKey), findsOneWidget);
-      expect(chatLineSeats(tester), <int>[0, 1, 2, 3]);
-      expect(
-        chatLinesTopDown(tester),
-        <int>[0, 1, 2, 3],
-        reason: 'oldest serial on top: serials 1, 2, 3, 4 are seats 0, 1, 2, 3',
-      );
-      final Rect card = tester.getRect(find.byType(EndCard));
-      final List<Rect> rects = <Rect>[
-        for (final int seat in chatLinesTopDown(tester))
-          tester.getRect(find.byKey(chatLineKey(seat))),
-      ];
-      expect(
-        rects.first.top - card.top,
-        closeTo(kSpace3, 0.5),
-        reason: 'the first bubble is kSpace3 below the top of the card',
-      );
-      for (int i = 1; i < rects.length; i++) {
-        expect(
-          rects[i].top - rects[i - 1].bottom,
-          closeTo(kSpace2, 0.5),
-          reason: 'bubbles ${i - 1} and $i are kSpace2 apart',
-        );
-      }
-      for (final Rect r in rects) {
-        expect(
-          r.center.dx,
-          closeTo(card.center.dx, 1.0),
-          reason: 'each bubble is centred on the card',
-        );
-      }
-      expect(tester.takeException(), isNull);
-    });
-
-    for (final (double, double) row in const <(double, double)>[
-      (800, 320),
-      (360, 320),
-      (300, 268),
-    ]) {
-      testWidgets('a long line is ${row.$2} dp wide on a ${row.$1} dp card: '
-          'the lesser of 320 and the width minus 2 x kSpace4', (tester) async {
-        await _mountLines(
-          tester,
-          _lineTree(lines: <EndCardChatLine>[_line(1, 1, text: 'M' * 80)]),
-          size: Size(row.$1, 800),
-        );
-        final Rect r = tester.getRect(find.byKey(chatLineKey(1)));
-        expect(
-          r.width,
-          closeTo(row.$2, 1.0),
-          reason: 'bubble $r on a ${row.$1} dp card',
-        );
-        await tester.pumpWidget(
-          _lineTree(lines: <EndCardChatLine>[_line(1, 2, text: 'Hi')]),
-        );
-        await tester.pump(const Duration(milliseconds: 400));
-        expect(
-          tester.getRect(find.byKey(chatLineKey(1))).width,
-          lessThan(row.$2 - 40),
-          reason: 'a short line is its own width, not the maximum',
-        );
-      });
     }
 
-    testWidgets('the overlay takes no layout space: the panel, New table and '
-        'the dock sit where they sat without it', (tester) async {
-      await _mountLines(tester, _lineTree(lines: const <EndCardChatLine>[]));
-      final Rect panel = tester.getRect(find.byKey(const Key('end-card-lose')));
-      final Rect table = tester.getRect(find.byKey(kNewTableKey));
-      final Rect dock = tester.getRect(find.byKey(kRematchKey));
-      expect(find.byKey(kChatLinesKey), findsNothing);
-      await tester.pumpWidget(
-        _lineTree(
-          lines: <EndCardChatLine>[_line(0, 1), _line(1, 2), _line(2, 3)],
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(
-        tester.getRect(find.byKey(const Key('end-card-lose'))),
-        panel,
-        reason: 'the panel did not move',
-      );
-      expect(
-        tester.getRect(find.byKey(kNewTableKey)),
-        table,
-        reason: 'New table did not move',
-      );
-      expect(
-        tester.getRect(find.byKey(kRematchKey)),
-        dock,
-        reason: 'the dock did not move',
-      );
-    });
-
-    testWidgets('the overlay is outside the scroll: it stays put while the '
-        'card scrolls', (tester) async {
-      await _mountLines(
+    testWidgets('the line stays put while the card scrolls', (tester) async {
+      final EndGame g = await openFinished(
         tester,
-        _lineTree(lines: <EndCardChatLine>[_line(1, 1)], trailing: 1500),
+        'scroll',
         size: const Size(360, 640),
       );
-      final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
-      final Rect panel = tester.getRect(find.byKey(const Key('end-card-lose')));
-      await tester.drag(
-        find.byType(SingleChildScrollView),
-        const Offset(0, -200),
-      );
-      await tester.pump(const Duration(milliseconds: 500));
-      final Rect panelAfter = tester.getRect(
-        find.byKey(const Key('end-card-lose')),
-      );
-      expect(
-        panelAfter.top,
-        lessThan(panel.top - 100),
-        reason: 'fixture: the card scrolled ($panel to $panelAfter)',
-      );
-      expect(
-        tester.getRect(find.byKey(chatLineKey(1))),
-        bubble,
-        reason: 'the bubble did not scroll with the card',
-      );
+      try {
+        await g.emote(1, 'good_game');
+        await g.at(400);
+        final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
+        final Rect panel = tester.getRect(find.byKey(_panelKey));
+        await tester.drag(
+          find.byType(SingleChildScrollView),
+          const Offset(0, -200),
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+        final Rect panelAfter = tester.getRect(find.byKey(_panelKey));
+        expect(
+          panelAfter.top,
+          lessThan(panel.top - 100),
+          reason: g.why('fixture: the card scrolled ($panel to $panelAfter)'),
+        );
+        expect(
+          tester.getRect(find.byKey(chatLineKey(1))),
+          bubble,
+          reason: g.why('the line did not scroll with the card'),
+        );
+        _expectInRow(
+          g,
+          tester.getRect(find.byKey(chatLineKey(1))),
+          _headerRow(tester),
+        );
+      } finally {
+        await g.done();
+      }
     });
 
-    testWidgets('the overlay is IgnorePointer: a hit at a bubble reaches '
-        'nothing inside it', (tester) async {
-      await _mountLines(
-        tester,
-        _lineTree(lines: <EndCardChatLine>[_line(1, 1), _line(2, 2)]),
-      );
-      final RenderObject root = tester.renderObject(find.byKey(kChatLinesKey));
-      for (final int seat in const <int>[1, 2]) {
-        final Offset at = tester.getCenter(find.byKey(chatLineKey(seat)));
-        final HitTestResult result = tester.hitTestOnBinding(at);
+    testWidgets('the line takes no layout space: the row, the panel, New '
+        'table and the dock stay put', (tester) async {
+      final EndGame g = await openFinished(tester, 'no space');
+      try {
+        final Rect row = _headerRow(tester);
+        final Rect panel = tester.getRect(find.byKey(_panelKey));
+        final Rect table = tester.getRect(find.byKey(kNewTableKey));
+        final Rect dock = tester.getRect(find.byKey(kRematchKey));
+        final Rect leave = tester.getRect(find.byKey(_leaveKey));
+        expect(
+          find.byKey(kChatLinesKey),
+          findsNothing,
+          reason: g.why('fixture: no line yet, so no layer'),
+        );
+        await g.emote(1, 'good_game');
+        await g.at(400);
+        expect(find.byKey(chatLineKey(1)), findsOneWidget);
+        expect(
+          _headerRow(tester),
+          row,
+          reason: g.why('the header row did not move'),
+        );
+        expect(
+          tester.getRect(find.byKey(_panelKey)),
+          panel,
+          reason: g.why('the panel did not move'),
+        );
+        expect(
+          tester.getRect(find.byKey(kNewTableKey)),
+          table,
+          reason: g.why('New table did not move'),
+        );
+        expect(
+          tester.getRect(find.byKey(kRematchKey)),
+          dock,
+          reason: g.why('the dock did not move'),
+        );
+        expect(
+          tester.getRect(find.byKey(_leaveKey)),
+          leave,
+          reason: g.why('the leave button did not move'),
+        );
+      } finally {
+        await g.done();
+      }
+    });
+
+    testWidgets('IgnorePointer: a hit on the bubble misses it, and the '
+        'leave button and the pip strip still take taps', (tester) async {
+      final EndGame g = await openFinished(tester, 'pointer', players: 4);
+      try {
+        await g.emote(1, 'good_game');
+        await g.emote(2, 'oops');
+        await g.at(400);
+        final RenderObject bubbleBox = tester.renderObject(
+          find.byKey(chatLineKey(2)),
+        );
+        final Offset at = tester.getCenter(find.byKey(chatLineKey(2)));
+        final HitTestResult onBubble = tester.hitTestOnBinding(at);
         final List<HitTestTarget> inside = <HitTestTarget>[
-          for (final HitTestEntry e in result.path)
+          for (final HitTestEntry e in onBubble.path)
             if (e.target is RenderObject &&
-                _isUnder(e.target as RenderObject, root))
+                _isUnder(e.target as RenderObject, bubbleBox))
               e.target,
         ];
         expect(
           inside,
           isEmpty,
-          reason:
-              'a hit at the centre of bubble $seat $at reached '
-              '${inside.length} render objects inside end-card-chat-lines',
+          reason: g.why(
+            'a hit at the bubble centre $at reached ${inside.length} '
+            'render objects inside the bubble',
+          ),
         );
+        final Rect bubble = tester.getRect(find.byKey(chatLineKey(2)));
+        final Rect pip = tester.getRect(find.byKey(_pipKey));
+        if (bubble.overlaps(pip)) {
+          final Offset pipAt = tester.getCenter(find.byKey(_pipKey));
+          final HitTestResult onPip = tester.hitTestOnBinding(pipAt);
+          final RenderObject pipBox = tester.renderObject(find.byKey(_pipKey));
+          final bool hitPip = onPip.path.any(
+            (HitTestEntry e) =>
+                e.target is RenderObject &&
+                _isUnder(e.target as RenderObject, pipBox),
+          );
+          expect(
+            hitPip,
+            isTrue,
+            reason: g.why('the pip strip under the bubble still takes the tap'),
+          );
+        }
+        final Offset leaveAt = tester.getCenter(find.byKey(_leaveKey));
+        final HitTestResult onLeave = tester.hitTestOnBinding(leaveAt);
+        final RenderObject leaveBox = tester.renderObject(
+          find.byKey(_leaveKey),
+        );
+        final bool hitLeave = onLeave.path.any(
+          (HitTestEntry e) =>
+              e.target is RenderObject &&
+              _isUnder(e.target as RenderObject, leaveBox),
+        );
+        expect(
+          hitLeave,
+          isTrue,
+          reason: g.why('the leave button still takes the tap'),
+        );
+      } finally {
+        await g.done();
       }
     });
 
     testWidgets('the look: seat-colour 2 dp border, paperElevated fill, '
         'rounded corners, no tail', (tester) async {
-      await _mountLines(
-        tester,
-        _lineTree(lines: <EndCardChatLine>[_line(1, 1), _line(3, 2)]),
-      );
-      final _Pixels px = await _Pixels.of(tester);
-      for (final int seat in const <int>[1, 3]) {
-        final Rect r = tester.getRect(find.byKey(chatLineKey(seat)));
-        final Color border = LudoColors.seats[seat];
-        final double mid = r.center.dy;
-        expect(
-          _near(px.at(r.left + 1, mid), border, 8),
-          isTrue,
-          reason:
+      final EndGame g = await openFinished(tester, 'look', players: 4);
+      try {
+        for (final int seat in const <int>[1, 3]) {
+          await g.emote(seat, 'good_game');
+          await g.at(400);
+          final Finder bubble = find.byKey(chatLineKey(seat));
+          final _Pixels px = await _Pixels.of(tester, bubble);
+          final Rect r = tester.getRect(bubble);
+          final Color border = LudoColors.seats[seat];
+          final double mid = r.center.dy;
+          expect(
+            _near(px.at(r.left + 1, mid), border, 8),
+            isTrue,
+            reason: g.why(
               'seat $seat: the left border is the seat colour, read '
               '${px.at(r.left + 1, mid)} at ${r.left + 1}',
-        );
-        expect(
-          _near(px.at(r.right - 1, mid), border, 8),
-          isTrue,
-          reason: 'seat $seat: the right border is the seat colour',
-        );
-        expect(
-          _near(px.at(r.center.dx, r.top + 1), border, 8),
-          isTrue,
-          reason: 'seat $seat: the top border is the seat colour',
-        );
-        expect(
-          _near(px.at(r.center.dx, r.bottom - 1), border, 8),
-          isTrue,
-          reason:
+            ),
+          );
+          expect(
+            _near(px.at(r.right - 1, mid), border, 8),
+            isTrue,
+            reason: g.why('seat $seat: the right border is the seat colour'),
+          );
+          expect(
+            _near(px.at(r.center.dx, r.top + 1), border, 8),
+            isTrue,
+            reason: g.why('seat $seat: the top border is the seat colour'),
+          );
+          expect(
+            _near(px.at(r.center.dx, r.bottom - 1), border, 8),
+            isTrue,
+            reason: g.why(
               'seat $seat: the bottom border is the seat colour, so '
               'there is no tail under the middle',
-        );
-        expect(
-          _near(px.at(r.left + 4, mid), LudoColors.paperElevated, 8),
-          isTrue,
-          reason:
+            ),
+          );
+          expect(
+            _near(px.at(r.left + 4, mid), LudoColors.paperElevated, 8),
+            isTrue,
+            reason: g.why(
               'seat $seat: 4 dp in is the paperElevated fill, so the '
               'border is 2 dp, read ${px.at(r.left + 4, mid)}',
-        );
-        expect(
-          _near(px.at(r.left + 0.5, r.top + 0.5), border, 8),
-          isFalse,
-          reason:
+            ),
+          );
+          expect(
+            _near(px.at(r.left + 0.5, r.top + 0.5), border, 8),
+            isFalse,
+            reason: g.why(
               'seat $seat: the corner pixel is not border colour, so '
               'the corners are rounded',
-        );
+            ),
+          );
+        }
+      } finally {
+        await g.done();
       }
     });
 
     testWidgets('the text: the name in w700, then the line in w500, '
         'labelLarge, one line with an ellipsis', (tester) async {
-      await _mountLines(
-        tester,
-        _lineTree(lines: <EndCardChatLine>[_line(1, 1, text: 'Good game')]),
-      );
-      final Finder bubble = find.byKey(chatLineKey(1));
-      final RichText rich = tester.widget<RichText>(
-        find.descendant(of: bubble, matching: find.byType(RichText)).first,
-      );
-      final List<(String, TextStyle)> leaves = spanLeaves(rich.text);
-      final int nameAt = leaves.indexWhere(
-        ((String, TextStyle) l) => l.$1.contains('Bob'),
-      );
-      final int lineAt = leaves.indexWhere(
-        ((String, TextStyle) l) => l.$1.contains('Good game'),
-      );
-      expect(nameAt, isNonNegative, reason: 'a span carries the name: $leaves');
-      expect(lineAt, isNonNegative, reason: 'a span carries the line: $leaves');
-      expect(
-        nameAt,
-        isNot(lineAt),
-        reason:
-            'the name and the line are two '
-            'spans: $leaves',
-      );
-      expect(nameAt, lessThan(lineAt), reason: 'the name comes first');
-      expect(
-        leaves[nameAt].$2.fontWeight,
-        FontWeight.w700,
-        reason: 'name w700',
-      );
-      expect(
-        leaves[lineAt].$2.fontWeight,
-        FontWeight.w500,
-        reason: 'line w500',
-      );
-      final double label = Theme.of(tester.element(bubble))
-          .textTheme
-          .labelLarge!
-          .fontSize!;
-      expect(leaves[nameAt].$2.fontSize, label, reason: 'labelLarge size');
-      expect(leaves[lineAt].$2.fontSize, label, reason: 'labelLarge size');
-      expect(rich.maxLines, 1, reason: 'one line');
-      expect(rich.overflow, TextOverflow.ellipsis, reason: 'ellipsis');
+      final EndGame g = await openFinished(tester, 'weights');
+      try {
+        await g.emote(1, 'good_game');
+        await g.at(400);
+        final Finder bubble = lineOf(g, 1);
+        final RichText rich = tester.widget<RichText>(
+          find.descendant(of: bubble, matching: find.byType(RichText)).first,
+        );
+        final List<(String, TextStyle)> leaves = spanLeaves(rich.text);
+        final int nameAt = leaves.indexWhere(
+          ((String, TextStyle) l) => l.$1.contains('Bob'),
+        );
+        final int lineAt = leaves.indexWhere(
+          ((String, TextStyle) l) => l.$1.contains('Good game'),
+        );
+        expect(
+          nameAt,
+          isNonNegative,
+          reason: g.why('a span carries the name: $leaves'),
+        );
+        expect(
+          lineAt,
+          isNonNegative,
+          reason: g.why('a span carries the line: $leaves'),
+        );
+        expect(
+          nameAt,
+          isNot(lineAt),
+          reason: g.why('the name and the line are two spans: $leaves'),
+        );
+        expect(nameAt, lessThan(lineAt), reason: g.why('the name comes first'));
+        expect(
+          leaves[nameAt].$2.fontWeight,
+          FontWeight.w700,
+          reason: g.why('name w700'),
+        );
+        expect(
+          leaves[lineAt].$2.fontWeight,
+          FontWeight.w500,
+          reason: g.why('line w500'),
+        );
+        final double label = Theme.of(tester.element(bubble))
+            .textTheme
+            .labelLarge!
+            .fontSize!;
+        expect(
+          leaves[nameAt].$2.fontSize,
+          label,
+          reason: g.why('labelLarge size'),
+        );
+        expect(
+          leaves[lineAt].$2.fontSize,
+          label,
+          reason: g.why('labelLarge size'),
+        );
+        expect(rich.maxLines, 1, reason: g.why('one line'));
+        expect(rich.overflow, TextOverflow.ellipsis, reason: g.why('ellipsis'));
+      } finally {
+        await g.done();
+      }
     });
-
-    testWidgets('a long name and a long line stay on one line at 2x text', (
-      tester,
-    ) async {
-      await _mountLines(
-        tester,
-        _lineTree(
-          lines: <EndCardChatLine>[_line(1, 1, text: 'Hi')],
-          textScale: 2.0,
-        ),
-      );
-      final double short = tester.getRect(find.byKey(chatLineKey(1))).height;
-      await tester.pumpWidget(
-        _lineTree(
-          lines: <EndCardChatLine>[_line(1, 2, name: 'N' * 40, text: 'M' * 80)],
-          textScale: 2.0,
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(
-        tester.getRect(find.byKey(chatLineKey(1))).height,
-        closeTo(short, 0.5),
-        reason: 'the long bubble is as tall as the short one: one line',
-      );
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('motion: scale 0.6 to 1.0 in 160 ms, fade over the last '
-        '250 ms of the life', (tester) async {
-      final Widget tree = _lineTree(lines: <EndCardChatLine>[_line(1, 1)]);
-      await _mountLines(tester, tree);
-      final Finder line = find.byKey(chatLineKey(1));
-      final double base = textWidthUnder(tester, line);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
-      await tester.pumpWidget(tree);
-      final List<_Sample> trace = await _trace(
-        tester,
-        line,
-        base,
-        (Duration d) => tester.pump(d),
-      );
-      _expectMotion(trace, (String m) => 'direct motion: $m');
-    });
-
-    testWidgets('reduced motion: full size and opacity from the first '
-        'frame', (tester) async {
-      final Widget tree = _lineTree(
-        lines: <EndCardChatLine>[_line(1, 1)],
-        reduced: true,
-      );
-      await _mountLines(tester, tree, settle: false);
-      final Finder line = find.byKey(chatLineKey(1));
-      final double first = textWidthUnder(tester, line);
-      expect(alphaUnder(tester, line), closeTo(1.0, 0.01));
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(
-        first,
-        closeTo(textWidthUnder(tester, line), 0.5),
-        reason: 'the first frame is already full size',
-      );
-      await tester.pump(const Duration(milliseconds: 2000));
-      expect(
-        alphaUnder(tester, line),
-        closeTo(1.0, 0.01),
-        reason: 'no fade under reduced motion at 2400 ms',
-      );
-    });
-
-    for (final bool ar in const <bool>[false, true]) {
-      testWidgets('semantics ${ar ? 'ar' : 'en'}: live region, label '
-          'chatSaid(name, line)', (tester) async {
-        final SemanticsHandle handle = tester.ensureSemantics();
-        try {
-          await _mountLines(
-            tester,
-            _lineTree(
-              lines: <EndCardChatLine>[
-                _line(1, 1, text: endLine('good_game', ar: ar)),
-              ],
-              locale: Locale(ar ? 'ar' : 'en'),
-            ),
-          );
-          final SemanticsNode node = tester.getSemantics(
-            find.byKey(chatLineKey(1)),
-          );
-          expect(node.label, said('Bob', endLine('good_game', ar: ar)));
-          expect(node.flagsCollection.isLiveRegion, isTrue);
-        } finally {
-          handle.dispose();
-        }
-      });
-    }
   });
-  // END direct
 }
