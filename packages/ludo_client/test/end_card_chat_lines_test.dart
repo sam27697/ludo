@@ -18,6 +18,13 @@
 // game-felt-edge). Geometry is that row's rect from getRect's own coordinate
 // space, via the render box's localToGlobal.
 //
+// The file runs on the app's own fonts (loadAppFonts in setUpAll): the test
+// framework's default font is one em per glyph, which makes "Bob: Good game"
+// overflow the 224 dp of text a 360 dp header leaves and drops the name under
+// C-500 D5, where on a phone's Poppins it fits. Max width is reached by a line
+// that does not fit alone (the widest preset at a large text scale), shown
+// alone with an ellipsis, never by a long name, which D5 drops first.
+//
 // Every failure reason starts with the scenario name and ends with the
 // frames and pumps that led to it, so a red case replays from its message.
 //
@@ -318,14 +325,13 @@ bool _isUnder(RenderObject target, RenderObject ancestor) {
 
 /// A short line in a header-band case: seat 0 gets a two-letter name and says
 /// the shortest preset in either locale ("Oops", "أوبس"), so the bubble is its
-/// own width. Asserts it is clearly under [maxWidth] and under the long
-/// bubble [longWidth], with both measured widths in the reason.
+/// own width at text scale 1.0: the name and the line on one line, clearly
+/// under [maxWidth], with the measured width in the reason.
 Future<void> _expectShortIsShort(
   WidgetTester tester,
   EndGame g, {
   required bool ar,
   required double maxWidth,
-  required double longWidth,
 }) async {
   await g.emote(0, 'oops');
   await g.at(400);
@@ -337,17 +343,13 @@ Future<void> _expectShortIsShort(
     lessThan(maxWidth - _shortMargin),
     reason: g.why(
       'a short line is its own width, not the maximum: short bubble '
-      '${short.width} dp, long bubble $longWidth dp, max $maxWidth dp, '
-      'margin $_shortMargin dp',
+      '${short.width} dp, max $maxWidth dp, margin $_shortMargin dp',
     ),
   );
   expect(
-    short.width,
-    lessThan(longWidth - _shortMargin),
-    reason: g.why(
-      'the short bubble ${short.width} dp is narrower than the long one '
-      '$longWidth dp by at least $_shortMargin dp',
-    ),
+    _paragraph(tester, find.byKey(chatLineKey(0))).didExceedMaxLines,
+    isFalse,
+    reason: g.why('the short line is not ellipsised'),
   );
   _expectInsideInsets(g, short, row);
 }
@@ -371,6 +373,46 @@ void _expectInRow(EndGame g, Rect bubble, Rect row) {
     bubble.center.dx,
     closeTo(row.center.dx, 1),
     reason: g.why('the bubble is centred on the header row'),
+  );
+}
+
+/// The paragraph that draws the bubble's text.
+RenderParagraph _paragraph(WidgetTester tester, Finder bubble) =>
+    tester.renderObject<RenderParagraph>(
+      find.descendant(of: bubble, matching: find.byType(RichText)).first,
+    );
+
+/// C-500 D5 when the line alone does not fit: the line is drawn without the
+/// name, ellipsised, and the label still names the speaker.
+void _expectLineAloneEllipsised(EndGame g, int seat, String name, String line) {
+  final Finder bubble = find.byKey(chatLineKey(seat));
+  final String text = textUnder(g.tester, bubble);
+  expect(
+    text,
+    line,
+    reason: g.why(
+      'end-card-chat-$seat draws the line alone ("$line"), not "$name: '
+      '$line"; reads "$text"',
+    ),
+  );
+  expect(
+    text,
+    isNot(contains(name)),
+    reason: g.why('the name "$name" is dropped, reads "$text"'),
+  );
+  expect(
+    _paragraph(g.tester, bubble).didExceedMaxLines,
+    isTrue,
+    reason: g.why('the line alone does not fit, so it ends in an ellipsis'),
+  );
+}
+
+/// The label of the bubble is chatSaid(name, line) whatever is drawn.
+void _expectSaidLabel(EndGame g, int seat, String name, String line) {
+  expect(
+    g.tester.getSemantics(lineOf(g, seat)).label,
+    said(name, line),
+    reason: g.why('label is chatSaid("$name", "$line")'),
   );
 }
 
@@ -399,7 +441,62 @@ void _expectClearOf(EndGame g, Rect bubble, Key key) {
   );
 }
 
+/// The preset whose line is widest in each locale on the app fonts:
+/// "I'll get you back", and "مرحبا يا جماعة" (wider than the Arabic of
+/// "revenge", which measures 209 dp against 237.8 dp at 3.0).
+const String _longIdEn = 'revenge';
+const String _longIdAr = 'hi';
+
+/// The text scale at which that line alone exceeds the span on a phone-width
+/// header. On the app fonts the line alone at 2.0 measures 235.8 dp (en) and
+/// 225.0 dp (ar) against the 240 dp span of a 360 dp screen, 291 dp at 411 and
+/// 320 dp at 800, so it fits alone there and only a 300 dp screen (180 dp) is
+/// exceeded; at 3.0 the Arabic line is still 237.8 dp wide against a 291 dp
+/// span at 411. 4.0 overflows every span in the group.
+const double _longScale = 4.0;
+
+/// Seat 1 says the widest preset at [_longScale], where the line alone
+/// exceeds the span: the bubble is the max width, `min(320, row.width - 120)`
+/// within 1 dp, centred on the row, with the line alone ellipsised and the
+/// label still naming the speaker.
+Future<void> _expectMaxWidthByLongLine(
+  WidgetTester tester,
+  EndGame g, {
+  required bool ar,
+}) async {
+  final SemanticsHandle handle = tester.ensureSemantics();
+  try {
+    final String id = ar ? _longIdAr : _longIdEn;
+    final String line = endLine(id, ar: ar);
+    await g.emote(1, id);
+    await g.at(400);
+    final Rect row = _headerRow(tester);
+    final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
+    final double maxWidth = math.min(320, row.width - 2 * _inset);
+    expect(
+      bubble.width,
+      closeTo(maxWidth, 1),
+      reason: g.why(
+        'a line too long alone is min(320, row width - 120): bubble '
+        '$bubble, row $row, max $maxWidth',
+      ),
+    );
+    _expectLineAloneEllipsised(g, 1, 'Bob', line);
+    _expectSaidLabel(g, 1, 'Bob', line);
+    _expectInsideInsets(g, bubble, row);
+    expect(
+      bubble.center.dx,
+      closeTo(row.center.dx, 1),
+      reason: g.why('centred on the row'),
+    );
+  } finally {
+    handle.dispose();
+  }
+}
+
 void main() {
+  setUpAll(loadAppFonts);
+
   // -------------------------------------------------------------------
   // Item 5: what shows, when.
   // -------------------------------------------------------------------
@@ -1464,6 +1561,135 @@ void main() {
   });
 
   // -------------------------------------------------------------------
+  // C-500 D5: the name goes when "name: line" does not fit, on the app fonts.
+  // -------------------------------------------------------------------
+  group('D5. name and line, or the line alone', () {
+    /// The bubble reads "name: line" on one unellipsised line inside the span
+    /// the header leaves, and the label is chatSaid(name, line).
+    Future<void> expectJoined(
+      WidgetTester tester,
+      EndGame g,
+      String name,
+      String line,
+    ) async {
+      _expectLine(g, 1, name, line);
+      final Rect row = _headerRow(tester);
+      final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
+      expect(
+        bubble.width,
+        lessThanOrEqualTo(math.min(320, row.width - 2 * _inset) + 0.5),
+        reason: g.why('the joined bubble $bubble fits the span, row $row'),
+      );
+      expect(
+        _paragraph(tester, find.byKey(chatLineKey(1))).didExceedMaxLines,
+        isFalse,
+        reason: g.why('name and line fit, so nothing is ellipsised'),
+      );
+      _expectSaidLabel(g, 1, name, line);
+    }
+
+    /// The line alone fits, so it is drawn whole, without the name, and the
+    /// label still names the speaker.
+    Future<void> expectAlone(
+      WidgetTester tester,
+      EndGame g,
+      String name,
+      String line,
+    ) async {
+      final String text = textUnder(tester, find.byKey(chatLineKey(1)));
+      expect(
+        text,
+        line,
+        reason: g.why('the line alone "$line" is drawn, reads "$text"'),
+      );
+      expect(
+        text,
+        isNot(contains(name)),
+        reason: g.why('the name "$name" is not drawn, reads "$text"'),
+      );
+      expect(
+        _paragraph(tester, find.byKey(chatLineKey(1))).didExceedMaxLines,
+        isFalse,
+        reason: g.why('the line alone fits, so it is not ellipsised'),
+      );
+      _expectSaidLabel(g, 1, name, line);
+    }
+
+    for (final bool ar in const <bool>[false, true]) {
+      testWidgets('360 x 800 at 1.0, ${ar ? 'ar' : 'en'}: a 40 character '
+          'name draws the line alone, the label is still chatSaid(name, '
+          'line)', (tester) async {
+        final SemanticsHandle handle = tester.ensureSemantics();
+        final String name = 'M' * 40;
+        final EndGame g = await openFinished(
+          tester,
+          'D5 long name ${ar ? 'ar' : 'en'}',
+          names: <int, String>{1: name},
+          locale: Locale(ar ? 'ar' : 'en'),
+        );
+        try {
+          await g.emote(1, 'good_game');
+          await g.at(400);
+          await expectAlone(tester, g, name, endLine('good_game', ar: ar));
+        } finally {
+          handle.dispose();
+          await g.done();
+        }
+      });
+
+      testWidgets('360 x 800 at 1.0, ${ar ? 'ar' : 'en'}: "Bob" with the '
+          'same line draws Bob, then the line', (tester) async {
+        final SemanticsHandle handle = tester.ensureSemantics();
+        final EndGame g = await openFinished(
+          tester,
+          'D5 short name ${ar ? 'ar' : 'en'}',
+          locale: Locale(ar ? 'ar' : 'en'),
+        );
+        try {
+          await g.emote(1, 'good_game');
+          await g.at(400);
+          await expectJoined(tester, g, 'Bob', endLine('good_game', ar: ar));
+        } finally {
+          handle.dispose();
+          await g.done();
+        }
+      });
+    }
+
+    // On Poppins at 360 dp the span is 240 dp: nine "M" and the line measure
+    // 224.6 dp, ten 237.6 dp, eleven about 250 dp. The last that fits, and the
+    // first that does not.
+    for (final (int, bool) edge in const <(int, bool)>[
+      (10, true),
+      (11, false),
+    ]) {
+      testWidgets('360 x 800 at 1.0, en: a name of ${edge.$1} "M" '
+          '${edge.$2 ? 'still fits with the line' : 'no longer fits with the '
+                    'line, so the line is alone'}', (tester) async {
+        final SemanticsHandle handle = tester.ensureSemantics();
+        final String name = 'M' * edge.$1;
+        final EndGame g = await openFinished(
+          tester,
+          'D5 edge ${edge.$1}',
+          names: <int, String>{1: name},
+        );
+        try {
+          await g.emote(1, 'good_game');
+          await g.at(400);
+          if (edge.$2) {
+            await expectJoined(tester, g, name, 'Good game');
+          } else {
+            await expectAlone(tester, g, name, 'Good game');
+          }
+        } finally {
+          handle.dispose();
+          await g.done();
+        }
+      });
+    }
+  });
+
+  // -------------------------------------------------------------------
   // C-492 decisions 1, 4 and 6: the one line in the header band.
   // -------------------------------------------------------------------
   group('header band', () {
@@ -1524,47 +1750,26 @@ void main() {
       }
     }
 
+    // C-500 D5 + C-492 D6: the max width is reached by a line that does not
+    // fit alone. A long name no longer does it, the name is dropped first.
     for (final bool ar in const <bool>[false, true]) {
       for (final double width in const <double>[360, 411]) {
         testWidgets(
           '${width.toInt()} dp, ${ar ? 'ar' : 'en'}: the bubble stays '
-          'inside the 60 dp insets, and a long line is the max width',
+          'inside the 60 dp insets, and a line too long alone is the max '
+          'width, shown alone with an ellipsis',
           (tester) async {
             expect(_inset, 60);
             final EndGame g = await openFinished(
               tester,
-              'inset $width ${ar ? 'ar' : 'en'}',
-              names: <int, String>{0: _shortName, 1: 'M' * 40},
+              'inset $width ${ar ? 'ar' : 'en'} $_longScale',
+              names: <int, String>{0: _shortName},
               size: Size(width, width == 411 ? 891 : 800),
+              textScale: _longScale,
               locale: Locale(ar ? 'ar' : 'en'),
             );
             try {
-              await g.emote(1, 'good_game');
-              await g.at(400);
-              final Rect row = _headerRow(tester);
-              final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
-              final double maxWidth = math.min(320, row.width - 2 * _inset);
-              expect(
-                bubble.width,
-                closeTo(maxWidth, 1),
-                reason: g.why(
-                  'long line is min(320, row width - 120): bubble $bubble, '
-                  'row $row, max $maxWidth',
-                ),
-              );
-              _expectInsideInsets(g, bubble, row);
-              expect(
-                bubble.center.dx,
-                closeTo(row.center.dx, 1),
-                reason: g.why('centred on the row'),
-              );
-              await _expectShortIsShort(
-                tester,
-                g,
-                ar: ar,
-                maxWidth: maxWidth,
-                longWidth: bubble.width,
-              );
+              await _expectMaxWidthByLongLine(tester, g, ar: ar);
             } finally {
               await g.done();
             }
@@ -1574,32 +1779,56 @@ void main() {
     }
 
     for (final double width in const <double>[800, 300]) {
-      testWidgets('a long line on a ${width.toInt()} dp screen is '
-          'min(320, width - 120) wide', (tester) async {
+      // The order's 2.0 holds on 300 dp, where the 180 dp span is exceeded.
+      final double scale = width == 300 ? 2.0 : _longScale;
+      testWidgets('a line too long alone on a ${width.toInt()} dp screen is '
+          'min(320, width - 120) wide, shown alone with an ellipsis', (
+        tester,
+      ) async {
         final EndGame g = await openFinished(
           tester,
-          'width $width',
-          names: <int, String>{0: _shortName, 1: 'M' * 40},
+          'width $width $scale',
+          names: <int, String>{0: _shortName},
           size: Size(width, 800),
+          textScale: scale,
         );
         try {
-          await g.emote(1, 'good_game');
-          await g.at(400);
-          final Rect row = _headerRow(tester);
-          final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
-          final double maxWidth = math.min(320, row.width - 2 * _inset);
-          expect(
-            bubble.width,
-            closeTo(maxWidth, 1),
-            reason: g.why('bubble $bubble, row $row, max $maxWidth'),
-          );
-          _expectInsideInsets(g, bubble, row);
+          await _expectMaxWidthByLongLine(tester, g, ar: false);
+        } finally {
+          await g.done();
+        }
+      });
+    }
+
+    // The short-line half of the old max width cases: at text scale 1.0 a
+    // short line is its own width, name kept, far from the maximum.
+    for (final (double, bool) shape in const <(double, bool)>[
+      (360, false),
+      (360, true),
+      (411, false),
+      (411, true),
+      (800, false),
+      (300, false),
+    ]) {
+      testWidgets('${shape.$1.toInt()} dp, ${shape.$2 ? 'ar' : 'en'}: a short '
+          'line is its own width, name kept, not the max width', (
+        tester,
+      ) async {
+        final double width = shape.$1;
+        final bool ar = shape.$2;
+        final EndGame g = await openFinished(
+          tester,
+          'short $width ${ar ? 'ar' : 'en'}',
+          names: <int, String>{0: _shortName},
+          size: Size(width, width == 411 ? 891 : 800),
+          locale: Locale(ar ? 'ar' : 'en'),
+        );
+        try {
           await _expectShortIsShort(
             tester,
             g,
-            ar: false,
-            maxWidth: maxWidth,
-            longWidth: bubble.width,
+            ar: ar,
+            maxWidth: math.min(320, width - 2 * _inset),
           );
         } finally {
           await g.done();
