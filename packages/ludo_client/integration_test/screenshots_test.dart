@@ -73,6 +73,7 @@ import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/services.dart' show MethodCall, MethodChannel;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6509,8 +6510,9 @@ void main() {
   // 79-83: order 482. Emulator frames of the quick messages (C-478 D5.2,
   // D5.4): the sheet and the bubbles on the board. Same route as captures
   // 76-78: a GameScreen over FakeTransport, frames copied by hand into this
-  // file, no server, no pumpAndSettle once GameScreen is up. Bodies live at
-  // the bottom of the file.
+  // file, no server, no pumpAndSettle once GameScreen is up. Since order 504
+  // captures 81-83 assert C-500's placement: one line, the newest, in the
+  // header band. Bodies live at the bottom of the file.
   // ==========================================================================
   testWidgets('capture 79-chat-sheet-en', (tester) async {
     await _shootChatSheet(
@@ -6644,6 +6646,7 @@ void main() {
       gameId: '9' * 16,
       seatToken: 'tok-shot-87',
       textScale: 2.0,
+      expectNameDroppedOnPhone: true,
     );
   });
 
@@ -6696,6 +6699,40 @@ void main() {
       roomCode: 'AW90AR',
       gameId: 'c' * 16,
       seatToken: 'tok-shot-90',
+    );
+  });
+
+  // ==========================================================================
+  // 91-92: order 504 (C-500 D1, D4). The worst board for a quick message: my
+  // turn in await_move with a 6 rolled and all four of my tokens in the yard,
+  // so four legal rings, then seat 2 sends `revenge`. The line must sit in the
+  // header band and cover no ring. 91 is English at text scale 1.0, 92 is
+  // Arabic at 2.0. A four-seat GameScreen over FakeTransport reached the way
+  // 79-83 reach theirs, no pumpAndSettle once it is up. Body lives at the
+  // bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 91-chat-my-six-en', (tester) async {
+    await _shootChatMySix(
+      tester,
+      binding,
+      shotName: '91-chat-my-six-en',
+      locale: const Locale('en'),
+      roomCode: 'QC91EN',
+      gameId: 'd' * 16,
+      seatToken: 'tok-shot-91',
+    );
+  });
+
+  testWidgets('capture 92-chat-my-six-ar-large-text', (tester) async {
+    await _shootChatMySix(
+      tester,
+      binding,
+      shotName: '92-chat-my-six-ar-large-text',
+      locale: const Locale('ar'),
+      roomCode: 'QC92AR',
+      gameId: 'e' * 16,
+      seatToken: 'tok-shot-92',
+      textScale: 2.0,
     );
   });
 }
@@ -13496,35 +13533,115 @@ Future<void> _shootChatSheet(
   }
 }
 
-/// Asserts `chat-bubble-<seat>` is on screen and shows [line].
-void _expectChatBubble(
+/// Every widget keyed with a `ValueKey<String>` that starts with [prefix].
+Finder _keysStartingWith(String prefix) => find.byWidgetPredicate((Widget w) {
+  final Key? key = w.key;
+  return key is ValueKey<String> && key.value.startsWith(prefix);
+});
+
+/// Asserts the one quick-message line C-500 D1 allows is up: only
+/// `end-card-chat-<seat>` of [seats] is on screen, inside the header layer
+/// `end-card-chat-lines`, and it shows [line] (C-500 D5 may drop the name, so
+/// the name is not asserted). No `chat-bubble-*` or `board-chat-*` key exists
+/// anywhere (C-500 D6), and the bubble's rect intersects none of the leave
+/// button, the chat button, the settings button, the board and the turn
+/// banner (C-500 D4, P3). Plain rect intersection, edges that only touch do
+/// not count. Returns the bubble's rect.
+Rect _expectHeaderChat(
   WidgetTester tester, {
   required int seat,
+  required List<int> seats,
   required String line,
   required String shotName,
   required String scenario,
 }) {
-  final Finder bubble = find.byKey(Key('chat-bubble-$seat'));
+  final Finder layer = find.byKey(const Key('end-card-chat-lines'));
+  expect(
+    layer,
+    findsOneWidget,
+    reason:
+        'capture $shotName ($scenario): C-500 D7, the header layer '
+        'end-card-chat-lines must be on screen',
+  );
+  final Finder bubble = find.byKey(Key('end-card-chat-$seat'));
   expect(
     bubble,
     findsOneWidget,
     reason:
-        'capture $shotName ($scenario): C-478 D5.4, an emote from seat $seat '
-        'must show chat-bubble-$seat',
+        'capture $shotName ($scenario): C-500 D1, the newest line, from '
+        'seat $seat, must show end-card-chat-$seat',
   );
   expect(
-    find.descendant(of: bubble, matching: find.text(line)),
+    find.descendant(of: layer, matching: bubble),
     findsOneWidget,
     reason:
-        'capture $shotName ($scenario): C-478 D3, chat-bubble-$seat must '
-        'read "$line"',
+        'capture $shotName ($scenario): C-500 D7, end-card-chat-$seat must '
+        'sit inside end-card-chat-lines',
   );
+  for (final int other in seats) {
+    if (other == seat) {
+      continue;
+    }
+    expect(
+      find.byKey(Key('end-card-chat-$other')),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): C-500 D1, the newest line is '
+          "seat $seat's, so end-card-chat-$other must not be on screen",
+    );
+  }
+  final String shown = _plainTextUnder(tester, bubble);
+  expect(
+    shown.contains(line),
+    isTrue,
+    reason:
+        'capture $shotName ($scenario): C-478 D3, end-card-chat-$seat must '
+        'read "$line", got "$shown"',
+  );
+  for (final String prefix in const <String>['chat-bubble-', 'board-chat-']) {
+    expect(
+      _keysStartingWith(prefix),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): C-500 D6, no key starting '
+          '"$prefix" may exist, the board holds no chat layer',
+    );
+  }
+
+  final Rect rect = tester.getRect(bubble);
+  for (final String keyName in const <String>[
+    'game-screen-appbar-leave',
+    'game-chat-button',
+    'game-settings-button',
+    'ludo-board',
+    'game-screen-turn-banner',
+  ]) {
+    final Finder other = find.byKey(Key(keyName));
+    expect(
+      other,
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): C-500 D4, $keyName must be on '
+          'screen to be measured against end-card-chat-$seat',
+    );
+    final Rect otherRect = tester.getRect(other);
+    expect(
+      rect.overlaps(otherRect),
+      isFalse,
+      reason:
+          'capture $shotName ($scenario): C-500 D4, end-card-chat-$seat '
+          '($rect) must not intersect $keyName ($otherRect)',
+    );
+  }
+  return rect;
 }
 
-/// Captures 81 and 82 (order 482, C-478 D5.4). Four seats `[0, 1, 2, 3]`,
-/// viewer seat 0, PLAYING. Three `emote` pushes land with no `re`: seat 2
-/// `revenge`, seat 1 `ha_ha`, seat 0 `good_luck`. The shot is taken 400 ms
-/// after the last push, inside the 2500 ms bubble life.
+/// Captures 81 and 82 (order 482, C-478 D5.4, re-pointed by order 504 to
+/// C-500). Four seats `[0, 1, 2, 3]`, viewer seat 0, PLAYING. Three `emote`
+/// pushes land with no `re`: seat 2 `revenge`, seat 1 `ha_ha`, seat 0
+/// `good_luck`. The shot is taken 400 ms after the last push, inside the
+/// 2500 ms bubble life. One line is up, the newest (seat 0's), in the header
+/// band, and it covers nothing the player needs.
 Future<void> _shootChatBubbles(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -13564,13 +13681,15 @@ Future<void> _shootChatBubbles(
       locale: locale,
       seats: <int>[0, 1, 2, 3],
     );
-    expect(
-      find.byKey(const Key('chat-bubble-0')),
-      findsNothing,
-      reason:
-          'capture $shotName ($scenario): no bubble may be up before the '
-          'emote pushes',
-    );
+    for (final int seat in <int>[0, 1, 2, 3]) {
+      expect(
+        find.byKey(Key('end-card-chat-$seat')),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario): no line may be up before the '
+            'emote pushes, but end-card-chat-$seat is',
+      );
+    }
 
     await _pushEmote(tester, opened.transport, seat: 2, emote: 'revenge');
     await _pushEmote(tester, opened.transport, seat: 1, emote: 'ha_ha');
@@ -13580,23 +13699,10 @@ Future<void> _shootChatBubbles(
     final Map<String, String> lines = locale.languageCode == 'ar'
         ? _chatLinesAr
         : _chatLinesEn;
-    _expectChatBubble(
-      tester,
-      seat: 2,
-      line: lines['revenge']!,
-      shotName: shotName,
-      scenario: scenario,
-    );
-    _expectChatBubble(
-      tester,
-      seat: 1,
-      line: lines['ha_ha']!,
-      shotName: shotName,
-      scenario: scenario,
-    );
-    _expectChatBubble(
+    _expectHeaderChat(
       tester,
       seat: 0,
+      seats: <int>[0, 1, 2, 3],
       line: lines['good_luck']!,
       shotName: shotName,
       scenario: scenario,
@@ -13608,10 +13714,11 @@ Future<void> _shootChatBubbles(
   }
 }
 
-/// Capture 83 (order 482, C-478 D5.4). Two seats `[0, 2]`, viewer seat 0,
-/// Arabic, system text scale 2.0 the way captures 37-40 set it. Seat 2 sends
-/// `your_move`, seat 0 sends `coming`; the shot is taken 400 ms after the
-/// last push.
+/// Capture 83 (order 482, C-478 D5.4, re-pointed by order 504 to C-500). Two
+/// seats `[0, 2]`, viewer seat 0, Arabic, system text scale 2.0 the way
+/// captures 37-40 set it. Seat 2 sends `your_move`, seat 0 sends `coming`;
+/// the shot is taken 400 ms after the last push, with seat 0's line the only
+/// one up.
 Future<void> _shootChatBubblesLarge(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -13674,16 +13781,10 @@ Future<void> _shootChatBubblesLarge(
     await _pushEmote(tester, opened.transport, seat: 0, emote: 'coming');
     await tester.pump(_chatShotPump);
 
-    _expectChatBubble(
-      tester,
-      seat: 2,
-      line: _chatLinesAr['your_move']!,
-      shotName: shotName,
-      scenario: scenario,
-    );
-    _expectChatBubble(
+    _expectHeaderChat(
       tester,
       seat: 0,
+      seats: <int>[0, 2],
       line: _chatLinesAr['coming']!,
       shotName: shotName,
       scenario: scenario,
@@ -13716,14 +13817,35 @@ String _plainTextUnder(WidgetTester tester, Finder root) {
   return out.toString();
 }
 
-/// Asserts `end-card-chat-<seat>` is on screen and reads [name] then [line].
-void _expectEndCardChat(
+/// Logical width under which a surface counts as a phone for the pinned
+/// name drop in [_expectEndCardChat] (the Material compact breakpoint).
+const double _kPhoneWidth = 600;
+
+/// Asserts `end-card-chat-<seat>` is on screen and obeys C-500 D5: it shows
+/// [line] whole on one line (no ellipsis), it shows [name] before it exactly
+/// when "name: line" fits one line in the bubble's own text width, and its
+/// live region label is `chatSaid(name, line)` either way. The fit is decided
+/// from the painted text, not from a per-capture expectation: the bubble's
+/// plain text either starts with the name or is the line alone, and when the
+/// name was dropped the same two strings are laid out again here, in the
+/// bubble's own style, text scale and width, to prove they really do not fit.
+/// The width is the bubble's max width less the chrome the bubble measures for
+/// itself (its own size minus its text's). The replay uses the line's weight
+/// for the name, the narrowest the name can be, so a drop is only accepted when
+/// even that does not fit. With [expectNameDroppedOnPhone] set the answer is also
+/// pinned, but only on a phone-wide surface (logical width under [_kPhoneWidth]):
+/// capture 87, text scale 2.0 in Arabic, drops the name at 360 dp, while the
+/// headless tester's wider default surface can hold "name: line" in the 320 dp
+/// cap, and there the consistency checks above are the whole assertion.
+/// Returns true when the name is shown.
+bool _expectEndCardChat(
   WidgetTester tester, {
   required int seat,
   required String name,
   required String line,
   required String shotName,
   required String scenario,
+  bool? expectNameDroppedOnPhone,
 }) {
   final Finder bubble = find.byKey(Key('end-card-chat-$seat'));
   expect(
@@ -13734,15 +13856,158 @@ void _expectEndCardChat(
         'seat $seat, in FINISHED must show end-card-chat-$seat',
   );
   final String shown = _plainTextUnder(tester, bubble);
-  final int nameAt = shown.indexOf(name);
-  final int lineAt = shown.indexOf(line);
+  final bool nameShown = shown.startsWith(name);
   expect(
-    nameAt >= 0 && lineAt > nameAt,
-    isTrue,
+    shown,
+    nameShown ? '$name: $line' : line,
     reason:
-        'capture $shotName ($scenario): C-492 D3, end-card-chat-$seat must '
-        'read the name "$name" and then the line "$line", got "$shown"',
+        'capture $shotName ($scenario): C-500 D5, end-card-chat-$seat must '
+        'read the line "$line" whole, with or without "$name: " before it, '
+        'got "$shown"',
   );
+
+  final Finder paragraph = find.descendant(
+    of: bubble,
+    matching: find.byType(RichText),
+  );
+  expect(
+    paragraph,
+    findsOneWidget,
+    reason:
+        'capture $shotName ($scenario): C-500 D5, end-card-chat-$seat must '
+        'paint one paragraph, found ${paragraph.evaluate().length}',
+  );
+  final RenderParagraph rendered = tester.renderObject<RenderParagraph>(
+    paragraph,
+  );
+  expect(
+    rendered.didExceedMaxLines,
+    isFalse,
+    reason:
+        'capture $shotName ($scenario): C-500 D5, the text of '
+        'end-card-chat-$seat must fit its one line with no ellipsis, but '
+        '"$shown" overflowed',
+  );
+  expect(
+    rendered.size.height,
+    lessThan(2 * rendered.getMinIntrinsicHeight(double.infinity)),
+    reason:
+        'capture $shotName ($scenario): C-500 D5, end-card-chat-$seat must '
+        'be one line, its paragraph is ${rendered.size.height} dp tall',
+  );
+
+  final Element element = tester.element(bubble);
+  final double maxWidth = tester
+      .widget<ConstrainedBox>(
+        find
+            .descendant(of: bubble, matching: find.byType(ConstrainedBox))
+            .first,
+      )
+      .constraints
+      .maxWidth;
+  final double chrome = tester.getSize(bubble).width - rendered.size.width;
+  final double textWidth = maxWidth - chrome;
+
+  final TextSpan root = rendered.text as TextSpan;
+  TextSpan? lineSpan;
+  root.visitChildren((InlineSpan span) {
+    if (span is TextSpan && span.text == line) {
+      lineSpan = span;
+    }
+    return true;
+  });
+  expect(
+    lineSpan,
+    isNotNull,
+    reason:
+        'capture $shotName ($scenario): C-500 D5, no span of '
+        'end-card-chat-$seat carries the line "$line"',
+  );
+  final TextPainter painter = TextPainter(
+    text: TextSpan(
+      style: root.style,
+      children: <InlineSpan>[
+        TextSpan(text: '$name: ', style: lineSpan!.style),
+        lineSpan!,
+      ],
+    ),
+    textDirection: Directionality.of(element),
+    textScaler: MediaQuery.textScalerOf(element),
+    locale: Localizations.maybeLocaleOf(element),
+    maxLines: 1,
+    ellipsis: '\u2026',
+  )..layout(maxWidth: textWidth);
+  final bool wouldFit = !painter.didExceedMaxLines;
+  painter.text = TextSpan(
+    style: root.style,
+    children: <InlineSpan>[
+      TextSpan(text: '$name: ', style: lineSpan!.style),
+      lineSpan!,
+    ],
+  );
+  painter
+    ..maxLines = null
+    ..ellipsis = null
+    ..layout();
+  final double wanted = painter.width;
+  painter.dispose();
+  if (nameShown) {
+    expect(
+      wouldFit,
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): C-500 D5, the name is shown in '
+          'end-card-chat-$seat but "$name: $line" does not fit '
+          '$textWidth dp',
+    );
+  } else {
+    expect(
+      wouldFit,
+      isFalse,
+      reason:
+          'capture $shotName ($scenario): C-500 D5, the name was dropped '
+          'from end-card-chat-$seat but "$name: $line" fits $textWidth dp '
+          '(laid out at $wanted dp)',
+    );
+  }
+  final double surfaceWidth =
+      tester.view.physicalSize.width / tester.view.devicePixelRatio;
+  if (expectNameDroppedOnPhone != null && surfaceWidth < _kPhoneWidth) {
+    expect(
+      !nameShown,
+      expectNameDroppedOnPhone,
+      reason:
+          'capture $shotName ($scenario): C-500 D5, expected the name to '
+          'be ${expectNameDroppedOnPhone ? 'dropped' : 'kept'} in '
+          'end-card-chat-$seat on a $surfaceWidth dp wide surface, got '
+          '"$shown" in a text width of $textWidth dp',
+    );
+  }
+
+  final AppLocalizations loc = AppLocalizations.of(element);
+  final SemanticsHandle semantics = tester.ensureSemantics();
+  try {
+    expect(
+      tester.getSemantics(bubble).label,
+      loc.chatSaid(name, line),
+      reason:
+          'capture $shotName ($scenario): C-500 D5, the live region label of '
+          'end-card-chat-$seat must be chatSaid("$name", "$line") whether or '
+          'not the name is drawn',
+    );
+  } finally {
+    semantics.dispose();
+  }
+  // What this run measured, for the record: the name is shown or dropped by
+  // the width of the surface the run has.
+  // ignore: avoid_print
+  print(
+    'capture $shotName ($scenario): end-card-chat-$seat on a $surfaceWidth '
+    'dp surface, text width $textWidth dp, "$name: $line" needs $wanted dp, '
+    'name '
+    '${nameShown ? 'shown' : 'dropped'}',
+  );
+  return nameShown;
 }
 
 /// Asserts the bubble `end-card-chat-<seat>` sits clear of the three things
@@ -13787,7 +14052,9 @@ void _expectChatClearOfHeader(
 /// with no `re`, in order, [emoteGap] apart, and the shot is taken 400 ms after
 /// the last. Before the shot the card's variant, the one line that is up (the
 /// newest, C-492 D2, with no bubble of any other seat) and its place clear of
-/// the title and the header's buttons, and the reply chips are asserted.
+/// the title and the header's buttons, and the reply chips are asserted. The
+/// line is read under C-500 D5 (the name only when it fits); [expectNameDroppedOnPhone]
+/// pins that answer for a capture whose text scale forces it.
 Future<void> _shootEndCardChat(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -13801,6 +14068,7 @@ Future<void> _shootEndCardChat(
   required String gameId,
   required String seatToken,
   double? textScale,
+  bool? expectNameDroppedOnPhone,
   Duration emoteGap = Duration.zero,
 }) async {
   binding.testTextInput.register();
@@ -13980,6 +14248,7 @@ Future<void> _shootEndCardChat(
       line: lines[newestEmote]!,
       shotName: shotName,
       scenario: scenario,
+      expectNameDroppedOnPhone: expectNameDroppedOnPhone,
     );
     for (final int seat in seats) {
       if (seat == newestSeat) {
@@ -14037,6 +14306,185 @@ Future<void> _shootEndCardChat(
         reason:
             'capture $shotName ($scenario): C-478 D3, end-card-reply-$id '
             'must read "${lines[id]}"',
+      );
+    }
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+    if (textScale != null) {
+      tester.platformDispatcher.clearTextScaleFactorTestValue();
+    }
+  }
+}
+
+// ============================================================================
+// Order 504 (captures 91 and 92): the quick message on a board full of rings
+// (C-500 D1, D4).
+// ============================================================================
+
+/// Held after seat 2's `emote` lands in captures 91 and 92.
+const Duration _chatMySixPump = Duration(milliseconds: 300);
+
+/// Captures 91 and 92 (order 504, C-500). Four seats `[0, 1, 2, 3]`, viewer
+/// seat 0, PLAYING. Seat 0 rolls a 6 with legal `[0, 1, 2, 3]` and every
+/// token still in its yard, so the turn is `awaitMove` and the board rings
+/// four tokens. Seat 2 then sends `revenge` and 300 ms are pumped. Before the
+/// shot the four `board-legal-ring-0-*` keys are asserted on screen and none
+/// of their rects may intersect the bubble, which is the newest line in the
+/// header band and clear of the header's buttons, the board and the turn
+/// banner. With [textScale] the system scale is set the way capture 83 sets
+/// it.
+Future<void> _shootChatMySix(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+  double? textScale,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  if (textScale == null) {
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+  } else {
+    tester.platformDispatcher.textScaleFactorTestValue = textScale;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  }
+
+  final String scenario =
+      'room $roomCode, game $gameId, locale ${locale.languageCode}'
+      '${textScale == null ? '' : ', text scale $textScale'}';
+  const List<int> seats = <int>[0, 1, 2, 3];
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openFourSeatHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    await _pumpRealDurationFrames(tester, frameCount: 4);
+
+    _expectChatFixture(
+      tester,
+      controller,
+      shotName: shotName,
+      scenario: scenario,
+      locale: locale,
+      seats: seats,
+    );
+    if (textScale != null) {
+      final double scaledTen = MediaQuery.textScalerOf(
+        tester.element(find.byType(GameScreen)),
+      ).scale(10);
+      expect(
+        scaledTen,
+        10 * textScale,
+        reason:
+            'capture $shotName ($scenario): expected MediaQuery.textScalerOf '
+            'to scale 10 to ${10 * textScale}, got $scaledTen',
+      );
+    }
+
+    final int seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      opened.seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 0,
+        'value': 6,
+        'legal': <int>[0, 1, 2, 3],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 1,
+        'reveal': _trayReveal,
+      },
+    );
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName ($scenario): a pushed frame was dropped; room '
+          'seq is ${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      <Object>[turn.seat, turn.phaseName],
+      <Object>[0, 'awaitMove'],
+      reason:
+          'capture $shotName ($scenario): expected seat 0 in awaitMove '
+          'after rolling 6, got seat ${turn.seat} in ${turn.phaseName}',
+    );
+    expect(
+      <int>[
+        for (int token = 0; token < 4; token++)
+          _progressOf(controller, 0, token),
+      ],
+      <int>[-1, -1, -1, -1],
+      reason:
+          'capture $shotName ($scenario): all four of seat 0\'s tokens must '
+          'be in the yard',
+    );
+    for (final int token in <int>[0, 1, 2, 3]) {
+      expect(
+        find.byKey(Key('board-legal-ring-0-$token')),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario): the 6 must ring yard token '
+            '$token before the line arrives',
+      );
+    }
+    for (final int seat in seats) {
+      expect(
+        find.byKey(Key('end-card-chat-$seat')),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario): no line may be up before the '
+            'emote push, but end-card-chat-$seat is',
+      );
+    }
+
+    await _pushEmote(tester, opened.transport, seat: 2, emote: 'revenge');
+    await tester.pump(_chatMySixPump);
+
+    final Map<String, String> lines = locale.languageCode == 'ar'
+        ? _chatLinesAr
+        : _chatLinesEn;
+    final Rect bubble = _expectHeaderChat(
+      tester,
+      seat: 2,
+      seats: seats,
+      line: lines['revenge']!,
+      shotName: shotName,
+      scenario: scenario,
+    );
+
+    final Finder rings = _keysStartingWith('board-legal-ring-');
+    expect(
+      rings,
+      findsNWidgets(4),
+      reason:
+          'capture $shotName ($scenario): expected four board-legal-ring-* '
+          'keys on screen with the line up, found ${rings.evaluate().length}',
+    );
+    for (final Element ring in rings.evaluate()) {
+      final Rect ringRect = tester.getRect(find.byWidget(ring.widget));
+      expect(
+        bubble.overlaps(ringRect),
+        isFalse,
+        reason:
+            'capture $shotName ($scenario): C-500 D1, end-card-chat-2 '
+            '($bubble) must not intersect ${ring.widget.key} ($ringRect)',
       );
     }
 
