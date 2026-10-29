@@ -172,10 +172,6 @@ class EndCard extends StatefulWidget {
   /// 38 % and a tap plays the invalid-tap cue and sends nothing.
   final bool quickReplyCooling;
 
-  /// C-485 D5.2: lines friends sent since the game ended, laid over the top
-  /// of the card for [kChatBubbleLife]. The screen owns their lifetime.
-  final List<EndCardChatLine> chatLines;
-
   const EndCard({
     super.key,
     required this.mySeat,
@@ -201,7 +197,6 @@ class EndCard extends StatefulWidget {
     this.quickReplies = const <String>[],
     this.onQuickReply,
     this.quickReplyCooling = false,
-    this.chatLines = const <EndCardChatLine>[],
   });
 
   @override
@@ -249,21 +244,17 @@ class _EndCardState extends State<EndCard> {
     // Without a frame (a card mounted on its own, inside someone else's
     // scroll) the action stays in the panel, where those callers measured it.
     if (frame == null) {
-      return _withChatLines(
-        context,
-        loc,
-        replies == null
-            ? _panel(key: panelKey, child: upper)
-            : Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  _panel(key: panelKey, child: upper),
-                  const SizedBox(height: kSpace3),
-                  replies,
-                ],
-              ),
-      );
+      return replies == null
+          ? _panel(key: panelKey, child: upper)
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                _panel(key: panelKey, child: upper),
+                const SizedBox(height: kSpace3),
+                replies,
+              ],
+            );
     }
     // C-398 defect 1's lever: the dock holds Play again (or whichever
     // control is the one next step -- the waiting line, the ask, the gone
@@ -279,107 +270,36 @@ class _EndCardState extends State<EndCard> {
     final Widget? scrolledNewTable = widget.rematchGone || widget.everyoneLeft
         ? null
         : _newTableButton(loc, primary: false);
-    return _withChatLines(
-      context,
-      loc,
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Expanded(
-            child: NotificationListener<ScrollMetricsNotification>(
-              onNotification: (ScrollMetricsNotification notification) {
-                _noteContentUnderAction(notification.metrics);
-                return false;
-              },
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(kSpace4),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    _panel(key: panelKey, child: upper),
-                    if (replies != null) ...<Widget>[
-                      const SizedBox(height: kSpace3),
-                      replies,
-                    ],
-                    if (scrolledNewTable != null) ...<Widget>[
-                      const SizedBox(height: kSpace3),
-                      scrolledNewTable,
-                    ],
-                    frame.trailing,
-                  ],
-                ),
-              ),
-            ),
-          ),
-          _actionDock(
-            _actionArea(context, loc, includeSecondaryNewTable: false),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// C-485 D5.2: the received lines ride over the top of the card, outside
-  /// the scroll, taking no layout space. The card is always the Stack's first
-  /// child, so a line arriving or going never rebuilds it from scratch (the
-  /// winner's burst plays once, the scroll keeps its place).
-  Widget _withChatLines(
-    BuildContext context,
-    AppLocalizations loc,
-    Widget card,
-  ) {
-    final Map<int, EndCardChatLine> bySeat = <int, EndCardChatLine>{};
-    for (final EndCardChatLine line in widget.chatLines) {
-      final EndCardChatLine? seen = bySeat[line.seat];
-      if (seen == null || seen.serial < line.serial) {
-        bySeat[line.seat] = line;
-      }
-    }
-    final List<EndCardChatLine> lines = bySeat.values.toList()
-      ..sort((EndCardChatLine a, EndCardChatLine b) => a.serial - b.serial);
-    final List<EndCardChatLine> shown = lines.length > 4
-        ? lines.sublist(lines.length - 4)
-        : lines;
-    return Stack(
-      fit: StackFit.passthrough,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        card,
-        if (shown.isNotEmpty)
-          Positioned.fill(
-            child: IgnorePointer(
-              key: const Key('end-card-chat-lines'),
-              child: LayoutBuilder(
-                builder: (BuildContext context, BoxConstraints constraints) {
-                  final double maxWidth = math.max(
-                    0,
-                    math.min(320, constraints.maxWidth - 2 * kSpace4),
-                  );
-                  return Align(
-                    alignment: Alignment.topCenter,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: kSpace3),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          for (int i = 0; i < shown.length; i++) ...<Widget>[
-                            if (i > 0) const SizedBox(height: kSpace2),
-                            EndCardChatBubble(
-                              seat: shown[i].seat,
-                              name: shown[i].name,
-                              text: shown[i].text,
-                              label: loc.chatSaid(shown[i].name, shown[i].text),
-                              serial: shown[i].serial,
-                              maxWidth: maxWidth,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  );
-                },
+        Expanded(
+          child: NotificationListener<ScrollMetricsNotification>(
+            onNotification: (ScrollMetricsNotification notification) {
+              _noteContentUnderAction(notification.metrics);
+              return false;
+            },
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(kSpace4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  _panel(key: panelKey, child: upper),
+                  if (replies != null) ...<Widget>[
+                    const SizedBox(height: kSpace3),
+                    replies,
+                  ],
+                  if (scrolledNewTable != null) ...<Widget>[
+                    const SizedBox(height: kSpace3),
+                    scrolledNewTable,
+                  ],
+                  frame.trailing,
+                ],
               ),
             ),
           ),
+        ),
+        _actionDock(_actionArea(context, loc, includeSecondaryNewTable: false)),
       ],
     );
   }
