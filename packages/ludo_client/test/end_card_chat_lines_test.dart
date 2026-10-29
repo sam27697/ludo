@@ -213,6 +213,11 @@ const Key _panelKey = Key('end-card-lose');
 const double _rowDp = 48;
 const double _inset = kSpace2 + _rowDp + kSpace1;
 
+/// Seat 0's name in the short-line cases, and how far under the maximum width
+/// its bubble must stay.
+const String _shortName = 'Jo';
+const double _shortMargin = 40;
+
 /// The header row: the widest ancestor of the leave button whose height is
 /// the 48 dp row. Its rect is in the same space as [WidgetTester.getRect].
 Rect _headerRow(WidgetTester tester) {
@@ -277,6 +282,13 @@ bool _near(Color a, Color b, int tolerance) =>
     ((a.g - b.g).abs() * 255) <= tolerance &&
     ((a.b - b.b).abs() * 255) <= tolerance;
 
+/// True when [inner] lies inside [outer], edges included.
+bool _within(Rect inner, Rect outer) =>
+    inner.left >= outer.left - 0.01 &&
+    inner.top >= outer.top - 0.01 &&
+    inner.right <= outer.right + 0.01 &&
+    inner.bottom <= outer.bottom + 0.01;
+
 /// True when [target] is [ancestor] or sits below it in the render tree.
 bool _isUnder(RenderObject target, RenderObject ancestor) {
   RenderObject? walker = target;
@@ -287,6 +299,42 @@ bool _isUnder(RenderObject target, RenderObject ancestor) {
     walker = walker.parent;
   }
   return false;
+}
+
+/// A short line in a header-band case: seat 0 gets a two-letter name and says
+/// the shortest preset in either locale ("Oops", "أوبس"), so the bubble is its
+/// own width. Asserts it is clearly under [maxWidth] and under the long
+/// bubble [longWidth], with both measured widths in the reason.
+Future<void> _expectShortIsShort(
+  WidgetTester tester,
+  EndGame g, {
+  required bool ar,
+  required double maxWidth,
+  required double longWidth,
+}) async {
+  await g.emote(0, 'oops');
+  await g.at(400);
+  final Rect row = _headerRow(tester);
+  final Rect short = tester.getRect(find.byKey(chatLineKey(0)));
+  _expectLine(g, 0, _shortName, endLine('oops', ar: ar));
+  expect(
+    short.width,
+    lessThan(maxWidth - _shortMargin),
+    reason: g.why(
+      'a short line is its own width, not the maximum: short bubble '
+      '${short.width} dp, long bubble $longWidth dp, max $maxWidth dp, '
+      'margin $_shortMargin dp',
+    ),
+  );
+  expect(
+    short.width,
+    lessThan(longWidth - _shortMargin),
+    reason: g.why(
+      'the short bubble ${short.width} dp is narrower than the long one '
+      '$longWidth dp by at least $_shortMargin dp',
+    ),
+  );
+  _expectInsideInsets(g, short, row);
 }
 
 /// C-492 decision 6 at text scale 1.0: the whole bubble sits in the row,
@@ -1221,7 +1269,7 @@ void main() {
             final EndGame g = await openFinished(
               tester,
               'inset $width ${ar ? 'ar' : 'en'}',
-              names: <int, String>{1: 'M' * 40},
+              names: <int, String>{0: _shortName, 1: 'M' * 40},
               size: Size(width, width == 411 ? 891 : 800),
               locale: Locale(ar ? 'ar' : 'en'),
             );
@@ -1245,15 +1293,13 @@ void main() {
                 closeTo(row.center.dx, 1),
                 reason: g.why('centred on the row'),
               );
-              await g.emote(0, 'hi');
-              await g.at(400);
-              final Rect short = tester.getRect(find.byKey(chatLineKey(0)));
-              expect(
-                short.width,
-                lessThan(maxWidth - 40),
-                reason: g.why('a short line is its own width, not the maximum'),
+              await _expectShortIsShort(
+                tester,
+                g,
+                ar: ar,
+                maxWidth: maxWidth,
+                longWidth: bubble.width,
               );
-              _expectInsideInsets(g, short, _headerRow(tester));
             } finally {
               await g.done();
             }
@@ -1268,7 +1314,7 @@ void main() {
         final EndGame g = await openFinished(
           tester,
           'width $width',
-          names: <int, String>{1: 'M' * 40},
+          names: <int, String>{0: _shortName, 1: 'M' * 40},
           size: Size(width, 800),
         );
         try {
@@ -1283,12 +1329,12 @@ void main() {
             reason: g.why('bubble $bubble, row $row, max $maxWidth'),
           );
           _expectInsideInsets(g, bubble, row);
-          await g.emote(0, 'hi');
-          await g.at(400);
-          expect(
-            tester.getRect(find.byKey(chatLineKey(0))).width,
-            lessThan(maxWidth - 40),
-            reason: g.why('a short line is its own width'),
+          await _expectShortIsShort(
+            tester,
+            g,
+            ar: false,
+            maxWidth: maxWidth,
+            longWidth: bubble.width,
           );
         } finally {
           await g.done();
@@ -1442,9 +1488,36 @@ void main() {
     });
 
     testWidgets('IgnorePointer: a hit on the bubble misses it, and the '
-        'leave button and the pip strip still take taps', (tester) async {
+        'leave button and the pip dots under it still take taps', (
+      tester,
+    ) async {
       final EndGame g = await openFinished(tester, 'pointer', players: 4);
       try {
+        // The strip's centre is the gap between the second and third dot, so
+        // the hits go to the dot centres. First the control arm, no line up.
+        final List<Key> dotKeys = <Key>[
+          for (int seat = 0; seat < 4; seat++) Key('game-seat-pip-$seat'),
+        ];
+        bool reaches(Key key) {
+          final RenderObject box = tester.renderObject(find.byKey(key));
+          final HitTestResult hit = tester.hitTestOnBinding(
+            tester.getCenter(find.byKey(key)),
+          );
+          return hit.path.any(
+            (HitTestEntry e) =>
+                e.target is RenderObject &&
+                _isUnder(e.target as RenderObject, box),
+          );
+        }
+
+        final Map<Key, bool> before = <Key, bool>{
+          for (final Key key in dotKeys) key: reaches(key),
+        };
+        expect(
+          before.values,
+          everyElement(isTrue),
+          reason: g.why('control arm, no line up: every pip dot takes a hit'),
+        );
         await g.emote(1, 'good_game');
         await g.emote(2, 'oops');
         await g.at(400);
@@ -1468,20 +1541,49 @@ void main() {
           ),
         );
         final Rect bubble = tester.getRect(find.byKey(chatLineKey(2)));
-        final Rect pip = tester.getRect(find.byKey(_pipKey));
-        if (bubble.overlaps(pip)) {
-          final Offset pipAt = tester.getCenter(find.byKey(_pipKey));
-          final HitTestResult onPip = tester.hitTestOnBinding(pipAt);
-          final RenderObject pipBox = tester.renderObject(find.byKey(_pipKey));
-          final bool hitPip = onPip.path.any(
-            (HitTestEntry e) =>
-                e.target is RenderObject &&
-                _isUnder(e.target as RenderObject, pipBox),
+        final List<Key> under = <Key>[
+          for (final Key key in dotKeys)
+            if (_within(tester.getRect(find.byKey(key)), bubble)) key,
+        ];
+        expect(
+          bubble.overlaps(tester.getRect(find.byKey(_pipKey))),
+          isTrue,
+          reason: g.why('geometry: the bubble $bubble covers the pip strip'),
+        );
+        expect(
+          under,
+          isNotEmpty,
+          reason: g.why(
+            'geometry: at least one pip dot lies inside the bubble $bubble; '
+            'dots at ${<Rect>[for (final Key key in dotKeys) tester.getRect(find.byKey(key))]}',
+          ),
+        );
+        for (final Key key in under) {
+          final Offset dotAt = tester.getCenter(find.byKey(key));
+          final RenderObject dotBox = tester.renderObject(find.byKey(key));
+          final HitTestResult onDot = tester.hitTestOnBinding(dotAt);
+          expect(
+            onDot.path.any(
+              (HitTestEntry e) =>
+                  e.target is RenderObject &&
+                  _isUnder(e.target as RenderObject, dotBox),
+            ),
+            isTrue,
+            reason: g.why(
+              'the hit at the centre $dotAt of $key, under the bubble '
+              '$bubble, reaches the dot (control arm: ${before[key]})',
+            ),
           );
           expect(
-            hitPip,
-            isTrue,
-            reason: g.why('the pip strip under the bubble still takes the tap'),
+            onDot.path.any(
+              (HitTestEntry e) =>
+                  e.target is RenderObject &&
+                  _isUnder(e.target as RenderObject, bubbleBox),
+            ),
+            isFalse,
+            reason: g.why(
+              'the hit at $dotAt does not touch the bubble above it',
+            ),
           );
         }
         final Offset leaveAt = tester.getCenter(find.byKey(_leaveKey));
