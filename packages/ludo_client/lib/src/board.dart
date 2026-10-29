@@ -1396,6 +1396,7 @@ class _LudoBoardState extends State<LudoBoard> {
             padding: EdgeInsets.symmetric(horizontal: cellSize * 0.2),
             child: _ChipPop(
               seat: seat,
+              fromTop: edgeIsTop,
               serial: (pop != null && pop.seat == seat) ? pop.serial : null,
               child: DecoratedBox(
                 key: Key('board-seat-name-$seat'),
@@ -3237,15 +3238,19 @@ const double _kChipPopPeak = 1.15;
 /// whenever [serial] is one it has not shown. The root is always a
 /// `Transform.scale` keyed `board-chip-pop-<seat>`, at 1.0 when idle. Under
 /// `MediaQuery.disableAnimations` it never scales: the line in the header
-/// band carries the meaning. C-500 D6.
+/// band carries the meaning. The scale is anchored on the chip's outer edge
+/// ([fromTop]: top-centre, else bottom-centre) because the chip sits flush on
+/// the board's edge and the board clips, so it grows inward. C-500 D6.
 class _ChipPop extends StatefulWidget {
   const _ChipPop({
     required this.seat,
+    required this.fromTop,
     required this.serial,
     required this.child,
   });
 
   final int seat;
+  final bool fromTop;
   final int? serial;
   final Widget child;
 
@@ -3312,6 +3317,9 @@ class _ChipPopState extends State<_ChipPop>
         return Transform.scale(
           key: Key('board-chip-pop-${widget.seat}'),
           scale: reduced ? 1 : _scaleAt(ms),
+          alignment: widget.fromTop
+              ? Alignment.topCenter
+              : Alignment.bottomCenter,
           child: child,
         );
       },
