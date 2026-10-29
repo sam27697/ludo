@@ -5,6 +5,8 @@
 //
 // Nothing here names an API C-485 adds, so this file compiles on a tree that
 // has none of it: the game screen cases read the new widgets by key only.
+// C-500 moves the board's own bubbles into the one header line, so the helper
+// for the board's keys now asserts they are gone.
 // The direct EndCard mounts that need the new quick-reply parameters live in
 // end_card_quick_reply_test.dart, between its BEGIN direct and END direct
 // markers.
@@ -36,11 +38,17 @@ Key chatLineKey(int seat) => Key('end-card-chat-$seat');
 
 Key sheetChipKey(String id) => Key('quick-chat-$id');
 
-Key boardBubbleKey(int seat) => Key('chat-bubble-$seat');
-
 const String _replyPrefix = 'end-card-reply-';
 const String _linePrefix = 'end-card-chat-';
-const String _boardPrefix = 'chat-bubble-';
+
+/// The key names C-500 D6 takes off the board: the old per-seat bubble, the
+/// layer that held them and its slots. The one line is `end-card-chat-<seat>`
+/// in the header layer on every body, so none of these may be in the tree.
+const List<String> kGoneBoardChatKeys = <String>[
+  'chat-bubble-',
+  'board-chat-layer',
+  'board-chat-slot-',
+];
 
 /// The ids D5.1 hands each card variant, in order.
 const List<String> kWinnerReplies = <String>['good_game', 'ha_ha'];
@@ -125,11 +133,13 @@ Map<String, Object?> endRoomData({
 
 /// Seat i is called Sam when it is mine and kNames[i] otherwise.
 /// [names] overrides that for the seats it names; every other seat is
-/// unchanged.
+/// unchanged. [tokens] places the pieces of the seats it names, the rest sit
+/// in the yard.
 List<Map<String, Object?>> namedSeats(
   int players,
   int me, {
   Map<int, String>? names,
+  Map<int, List<int>>? tokens,
 }) {
   return <Map<String, Object?>>[
     for (int seat = 0; seat < players; seat++)
@@ -138,6 +148,7 @@ List<Map<String, Object?>> namedSeats(
         name: names != null && names.containsKey(seat)
             ? names[seat]!
             : (seat == me ? 'Sam' : kNames[seat]!),
+        tokens: tokens?[seat] ?? kYard,
       ),
   ];
 }
@@ -177,16 +188,30 @@ List<int> chatLinesTopDown(WidgetTester tester) {
   return seats;
 }
 
-/// The seats whose `chat-bubble-<seat>` (the board's) is on screen.
-List<int> boardBubbleSeats(WidgetTester tester) => <int>[
+/// The keys in the tree that C-500 D6 removed from the board (see
+/// [kGoneBoardChatKeys]), as their string values, in tree order.
+List<String> boardChatKeys(WidgetTester tester) => <String>[
   for (final Element e in find.byWidgetPredicate((Widget w) {
     final Key? key = w.key;
-    return key is ValueKey<String> && key.value.startsWith(_boardPrefix);
+    return key is ValueKey<String> &&
+        kGoneBoardChatKeys.any(key.value.startsWith);
   }).evaluate())
-    int.parse(
-      (e.widget.key! as ValueKey<String>).value.substring(_boardPrefix.length),
+    (e.widget.key! as ValueKey<String>).value,
+];
+
+/// Fails with the scenario when the board still draws any quick message of
+/// its own: the line is the header's alone.
+void expectNoBoardChat(EndGame g, String what) {
+  expect(
+    boardChatKeys(g.tester),
+    isEmpty,
+    reason: g.why(
+      '$what: the board draws no chat of its own (chat-bubble-*, '
+      'board-chat-layer, board-chat-slot-*), found '
+      '${boardChatKeys(g.tester)}',
     ),
-]..sort();
+  );
+}
 
 /// All the text painted under [key], joined with nothing between spans.
 String textUnder(WidgetTester tester, Finder root) {
@@ -350,6 +375,7 @@ Future<EndGame> _open(
   int? winner,
   Map<String, Object?>? turn,
   Map<int, String>? names,
+  Map<int, List<int>>? tokens,
 }) async {
   phoneSurface(tester);
   tester.view.physicalSize = size;
@@ -357,6 +383,7 @@ Future<EndGame> _open(
     players,
     me,
     names: names,
+    tokens: tokens,
   );
   final RollTrayDrive drive = await connectPlaying(
     tester,
@@ -390,6 +417,7 @@ Future<EndGame> openPlaying(
   bool reduced = false,
   Size size = const Size(360, 800),
   Map<int, String>? names,
+  Map<int, List<int>>? tokens,
 }) => _open(
   tester,
   name,
@@ -403,7 +431,45 @@ Future<EndGame> openPlaying(
   size: size,
   turn: awaitRollTurn(me == 0 ? 1 : 0),
   names: names,
+  tokens: tokens,
 );
+
+/// A held end (C-270): the other seat's last piece walks 51 to 57 and
+/// `game_over` names that seat, so the board stays up with no end card while
+/// the piece is still walking. Fails with the scenario when the screen is not
+/// holding. The winner is seat 1. The caller pushes its own emotes and reads
+/// [EndGame.zero] from them. [beforeEnd] runs while the room is still
+/// PLAYING, before the last move, for a line that is up when the game ends.
+Future<EndGame> openHeldEnd(
+  WidgetTester tester,
+  String name, {
+  Future<void> Function(EndGame g)? beforeEnd,
+}) async {
+  final EndGame g = await openPlaying(
+    tester,
+    name,
+    tokens: <int, List<int>>{
+      1: <int>[51, -1, -1, -1],
+    },
+  );
+  if (beforeEnd != null) {
+    await beforeEnd(g);
+  }
+  await g.s.push('moved', movedFrame(1, 0, 51, 57));
+  await g.gameOver(1);
+  await g.s.pump(const Duration(milliseconds: 20));
+  expect(
+    find.byKey(boardKey),
+    findsOneWidget,
+    reason: g.why('fixture: the board is still the body in the held end'),
+  );
+  expect(
+    find.byKey(const Key('game-screen-winner')),
+    findsNothing,
+    reason: g.why('fixture: no end card while the last piece walks'),
+  );
+  return g;
+}
 
 /// A game that ended on screen: mounted in PLAYING, then `game_over`. The
 /// winner is this seat for [EndKind.winner] and the next seat otherwise.

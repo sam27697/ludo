@@ -1,6 +1,6 @@
-// Screen proof for C-485 D6 items 5, 6, 7 and 8, amended by C-492 (order 494).
-// Written from those contracts and from C-478. The C-492 implementation was
-// being written in another tree and has not been read.
+// Screen proof for C-485 D6 items 5, 6, 7 and 8, amended by C-492 (order 494)
+// and by C-500 (order 503). Written from those contracts and from C-478. The
+// implementations were written in other trees and have not been read.
 //
 // Every case drives a real GameScreen over a real RoomController on
 // FakeTransport (test/support/end_card_chat_harness.dart). State arrives as
@@ -9,7 +9,11 @@
 // 360x800 at pixel ratio 1 unless a case names another size.
 //
 // C-492 moves the one line into the header band and drops the EndCard
-// overlay, so nothing here mounts EndCard(chatLines:). The header row is the
+// overlay, so nothing here mounts EndCard(chatLines:). C-500 then makes that
+// line the only one on every body: the board draws no bubble of its own
+// (expectNoBoardChat), a line up in PLAYING is still up, same seat and text,
+// on the end card and in a held end, and the room going to FINISHED does not
+// clear it. The header row is the
 // widest 48 dp-tall ancestor of game-screen-appbar-leave (the SizedBox under
 // game-felt-edge). Geometry is that row's rect from getRect's own coordinate
 // space, via the render box's localToGlobal.
@@ -18,6 +22,17 @@
 // frames and pumps that led to it, so a red case replays from its message.
 //
 // Ambiguities, reported and not invented around:
+//   - C-500 D4 gives the end-side inset 112 dp "when the header row carries
+//     the chat button (connected and seated, as the button's own
+//     condition)". C-478 D5.1 puts that button in PLAYING only (the sheet
+//     test pins it absent in FINISHED and LOBBY), so the end card and
+//     rematch LOBBY cases here keep C-492's 60 dp both sides. The 112 dp
+//     placement is a PLAYING and held-end geometry and is proved in
+//     quick_chat_board_test.dart; a carried-over line is only read by seat,
+//     text and life here, not by rect while the board is the body.
+//   - C-500 D3 says the PLAYING to FINISHED change does not clear the line
+//     and lists what does clear it. The change to a rematch LOBBY is on
+//     neither list, so no case asserts it either way (as before).
 //   - D5.2 says the name is w700 and the line w500 but not what sits between
 //     them; the text case requires two different spans, the name before the
 //     line, and no particular separator.
@@ -475,11 +490,7 @@ void main() {
         await g.emote(0, 'hi');
         await g.s.pump(const Duration(milliseconds: 300));
         _expectNoLines(g, 'first-game LOBBY');
-        expect(
-          boardBubbleSeats(tester),
-          isEmpty,
-          reason: g.why('and no board bubble either'),
-        );
+        expectNoBoardChat(g, 'first-game LOBBY');
         expect(tester.takeException(), isNull);
       } finally {
         await g.done();
@@ -1027,15 +1038,13 @@ void main() {
           findsOneWidget,
           reason: g.why('fixture: the next game is PLAYING'),
         );
-        _expectNoLines(g, 'while the next game plays');
-        expect(
-          boardBubbleSeats(tester),
-          isEmpty,
-          reason: g.why(
-            'and the end card lines did not turn into board '
-            'bubbles',
-          ),
-        );
+        _expectNoLines(g, 'while the next game plays: game_started cleared it');
+        expectNoBoardChat(g, 'while the next game plays');
+        await g.s.pump(const Duration(milliseconds: 3000));
+        _expectNoLines(g, 'and it does not come back later in the next game');
+        await g.emote(2, 'oops');
+        _expectLine(g, 2, 'Cara', 'Oops');
+        expectNoBoardChat(g, 'a line in the next game');
         await g.gameOver(1);
         await g.s.pump(const Duration(milliseconds: 50));
         expect(
@@ -1043,46 +1052,302 @@ void main() {
           findsOneWidget,
           reason: g.why('fixture: the second game ended, its card is up'),
         );
-        _expectNoLines(g, 'on the second end card, 150 ms after the lines');
+        expect(
+          chatLineSeats(tester),
+          <int>[2],
+          reason: g.why(
+            'the second game\'s own line carried to its card, and the first '
+            'game\'s line (seat 1) did not come back with it',
+          ),
+        );
       } finally {
         await g.done();
       }
     });
 
-    testWidgets('the PLAYING to FINISHED change clears the board bubbles '
-        'and does not turn them into card lines', (tester) async {
-      final EndGame g = await openPlaying(tester, '8 playing to finished');
+    testWidgets('game_started clears a line carried over from PLAYING too: '
+        'the line is gone from the next board and its end card', (
+      tester,
+    ) async {
+      final EndGame g = await openPlaying(tester, '8 carried then rematch');
       try {
         await g.emote(1, 'good_game');
-        expect(boardBubbleSeats(tester), <int>[
-          1,
-        ], reason: g.why('fixture: the board bubble is up in PLAYING'));
-        _expectNoLines(g, 'PLAYING: the lines are the board\'s');
         await g.gameOver(1);
         await g.s.pump(const Duration(milliseconds: 100));
+        expect(chatLineSeats(tester), <int>[
+          1,
+        ], reason: g.why('fixture: the PLAYING line is on the end card'));
+        await g.rematchLobby(by: 1);
+        await g.startRematchGame(turnSeat: 1);
+        await g.s.pump(const Duration(milliseconds: 50));
         expect(
-          find.byKey(const Key('end-card-lose')),
+          find.byKey(kChatButtonKey),
+          findsOneWidget,
+          reason: g.why('fixture: the next game is PLAYING'),
+        );
+        _expectNoLines(g, 'on the next board: game_started cleared it');
+        expectNoBoardChat(g, 'on the next board');
+      } finally {
+        await g.done();
+      }
+    });
+
+    for (final EndKind kind in <EndKind>[EndKind.winner, EndKind.loser]) {
+      for (final bool ar in const <bool>[false, true]) {
+        testWidgets('${kind.name}, ${ar ? 'ar' : 'en'}: a line up in PLAYING '
+            'is still up on the end card after game_over, same seat and text, '
+            'and gone at its own 2500 ms', (tester) async {
+          final EndGame g = await openPlaying(
+            tester,
+            '8 carry ${kind.name} ${ar ? 'ar' : 'en'}',
+            locale: Locale(ar ? 'ar' : 'en'),
+          );
+          try {
+            final String text = endLine('good_game', ar: ar);
+            await g.emote(1, 'good_game');
+            _expectLine(g, 1, 'Bob', text);
+            expect(chatLineSeats(tester), <int>[
+              1,
+            ], reason: g.why('fixture: one line in PLAYING'));
+            expectNoBoardChat(g, 'PLAYING: the line is the header\'s');
+            await g.at(1200);
+            await g.gameOver(kind == EndKind.winner ? 0 : 1);
+            await g.s.pump(const Duration(milliseconds: 100));
+            expect(
+              find.byKey(_winnerKey),
+              findsOneWidget,
+              reason: g.why('fixture: the end card is up'),
+            );
+            expect(
+              chatLineSeats(tester),
+              <int>[1],
+              reason: g.why(
+                'game_over does not clear the line: seat 1 is still the '
+                'one end-card-chat-*',
+              ),
+            );
+            _expectLine(g, 1, 'Bob', text);
+            expect(
+              find.byKey(kChatLinesKey),
+              findsOneWidget,
+              reason: g.why('the header layer is still the one layer'),
+            );
+            expectNoBoardChat(g, 'the end card');
+            final Rect row = _headerRow(tester);
+            final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
+            _expectInsideInsets(g, bubble, row);
+            _expectClearOf(g, bubble, _leaveKey);
+            _expectClearOf(g, bubble, _settingsKey);
+            await g.at(2490);
+            expect(
+              chatLineSeats(tester),
+              <int>[1],
+              reason: g.why(
+                'still up at 2490 ms from its own push, 1290 ms after '
+                'the card came up',
+              ),
+            );
+            await g.at(2510);
+            _expectNoLines(
+              g,
+              'gone 2500 ms from its own push, not 2500 ms from the card',
+            );
+            await g.s.pump(const Duration(milliseconds: 3000));
+            _expectNoLines(g, 'and it does not come back');
+            expect(tester.takeException(), isNull);
+          } finally {
+            await g.done();
+          }
+        });
+      }
+    }
+
+    testWidgets('game_over while the line is already fading (2400 ms in) '
+        'leaves it to finish: up at 2490 ms, gone at 2510 ms', (tester) async {
+      final EndGame g = await openPlaying(tester, '8 carry late');
+      try {
+        await g.emote(1, 'revenge');
+        await g.at(2400);
+        _expectLine(g, 1, 'Bob', 'I\'ll get you back');
+        await g.gameOver(1);
+        await g.s.pump(const Duration(milliseconds: 20));
+        expect(
+          find.byKey(_winnerKey),
           findsOneWidget,
           reason: g.why('fixture: the end card is up'),
         );
-        expect(
-          boardBubbleSeats(tester),
-          isEmpty,
-          reason: g.why('game_over cleared the board bubble'),
+        expect(chatLineSeats(tester), <int>[
+          1,
+        ], reason: g.why('game_over at 2400 ms did not take the line down'));
+        await g.at(2490);
+        expect(chatLineSeats(tester), <int>[
+          1,
+        ], reason: g.why('up at 2490 ms: not restarted, not cut early'));
+        await g.at(2510);
+        _expectNoLines(
+          g,
+          'gone at 2510 ms: game_over did not restart its life',
         );
-        _expectNoLines(g, 'a PLAYING line is not an end card line');
-        await g.s.pump(const Duration(milliseconds: 3000));
-        _expectNoLines(g, 'and none came back');
+      } finally {
+        await g.done();
+      }
+    });
+
+    for (final (int, String, String, String) newer
+        in const <(int, String, String, String)>[
+          (1, 'oops', 'Bob', 'Oops'),
+          (2, 'ha_ha', 'Cara', 'Ha ha ha'),
+          (0, 'lucky', 'Sam', 'So lucky!'),
+        ]) {
+      testWidgets('a line from PLAYING carries over, then a newer card line '
+          'from seat ${newer.$1} replaces it and has its own 2500 ms', (
+        tester,
+      ) async {
+        final EndGame g = await openPlaying(
+          tester,
+          '8 carry then replace ${newer.$1}',
+          players: 4,
+        );
+        try {
+          final int seat = newer.$1 == 1 ? 3 : 1;
+          await g.emote(seat, 'good_game');
+          await g.at(300);
+          await g.gameOver(1);
+          await g.s.pump(const Duration(milliseconds: 100));
+          expect(chatLineSeats(tester), <int>[
+            seat,
+          ], reason: g.why('fixture: seat $seat\'s PLAYING line carried over'));
+          await g.s.pump(const Duration(milliseconds: 1100));
+          await g.emote(newer.$1, newer.$2);
+          expect(
+            chatLineSeats(tester),
+            <int>[newer.$1],
+            reason: g.why(
+              'seat ${newer.$1}\'s line replaces the carried one: one '
+              'end-card-chat-* and it is the newer seat\'s',
+            ),
+          );
+          _expectLine(g, newer.$1, newer.$3, newer.$4);
+          expect(
+            find.byKey(chatLineKey(seat)),
+            findsNothing,
+            reason: g.why('the carried line of seat $seat is gone'),
+          );
+          expectNoBoardChat(g, 'after the replacement');
+          await g.at(1100);
+          expect(
+            chatLineSeats(tester),
+            <int>[newer.$1],
+            reason: g.why(
+              'past the carried line\'s own 2500 ms the newer line is '
+              'still up: the old timer was dropped',
+            ),
+          );
+          await g.at(2490);
+          expect(chatLineSeats(tester), <int>[
+            newer.$1,
+          ], reason: g.why('the newer line is up at 2490 ms from its push'));
+          await g.at(2510);
+          _expectNoLines(g, 'the newer line is gone 2500 ms after its push');
+        } finally {
+          await g.done();
+        }
+      });
+    }
+
+    testWidgets('the same seat saying a second line after game_over replaces '
+        'the carried text', (tester) async {
+      final EndGame g = await openPlaying(tester, '8 carry same seat');
+      try {
+        await g.emote(1, 'hi');
+        await g.gameOver(1);
+        await g.s.pump(const Duration(milliseconds: 100));
+        _expectLine(g, 1, 'Bob', 'Hi all');
         await g.emote(1, 'ha_ha');
+        expect(chatLineSeats(tester), <int>[
+          1,
+        ], reason: g.why('one bubble for seat 1'));
         _expectLine(g, 1, 'Bob', 'Ha ha ha');
         expect(
-          boardBubbleSeats(tester),
-          isEmpty,
+          textUnder(tester, find.byKey(chatLineKey(1))),
+          isNot(contains('Hi all')),
+          reason: g.why('the carried text is gone from the bubble'),
+        );
+      } finally {
+        await g.done();
+      }
+    });
+
+    testWidgets('a line after game_over is the header line, not the '
+        'board\'s', (tester) async {
+      final EndGame g = await openPlaying(tester, '8 after game_over');
+      try {
+        await g.gameOver(1);
+        await g.s.pump(const Duration(milliseconds: 100));
+        _expectNoLines(g, 'nobody has spoken yet');
+        await g.emote(1, 'ha_ha');
+        _expectLine(g, 1, 'Bob', 'Ha ha ha');
+        expectNoBoardChat(g, 'a line after game_over');
+      } finally {
+        await g.done();
+      }
+    });
+
+    testWidgets('a held end shows the line that was up in PLAYING '
+        '(C-500 supersedes C-492 D8)', (tester) async {
+      final EndGame g = await openHeldEnd(
+        tester,
+        '8 held carried',
+        beforeEnd: (EndGame g) => g.emote(1, 'good_game'),
+      );
+      try {
+        expect(
+          chatLineSeats(tester),
+          <int>[1],
           reason: g.why(
-            'a line after game_over is the card\'s, not the '
-            'board\'s',
+            'the board is held for the last piece and the PLAYING line is '
+            'still up',
           ),
         );
+        _expectLine(g, 1, 'Bob', 'Good game');
+        expectNoBoardChat(g, 'the held end');
+        await g.at(2490);
+        expect(chatLineSeats(tester), <int>[
+          1,
+        ], reason: g.why('up at 2490 ms from its push'));
+        await g.at(2510);
+        _expectNoLines(g, 'gone 2500 ms from its push, held end or not');
+      } finally {
+        await g.done();
+      }
+    });
+
+    testWidgets('a held end shows a line that arrives while the piece is '
+        'still walking', (tester) async {
+      final EndGame g = await openHeldEnd(tester, '8 held new line');
+      try {
+        await g.emote(1, 'revenge');
+        expect(
+          find.byKey(const Key('game-screen-winner')),
+          findsNothing,
+          reason: g.why('fixture: still the held board when the line lands'),
+        );
+        expect(chatLineSeats(tester), <int>[
+          1,
+        ], reason: g.why('the held end draws the line (C-492 D8 is gone)'));
+        _expectLine(g, 1, 'Bob', 'I\'ll get you back');
+        expectNoBoardChat(g, 'the held end');
+        await g.emote(0, 'lucky');
+        expect(chatLineSeats(tester), <int>[
+          0,
+        ], reason: g.why('a newer line in the held end replaces it'));
+        _expectLine(g, 0, 'Sam', 'So lucky!');
+        await g.at(2490);
+        expect(chatLineSeats(tester), <int>[
+          0,
+        ], reason: g.why('up at 2490 ms from its push'));
+        await g.at(2510);
+        _expectNoLines(g, 'gone 2500 ms from its push');
       } finally {
         await g.done();
       }
