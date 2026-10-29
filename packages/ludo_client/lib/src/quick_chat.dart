@@ -1,6 +1,6 @@
 // Quick messages: twelve preset lines, sent as ids, never as text. The
-// sheet that offers them lives here; the bubble that shows one on the board
-// is in chat_bubble.dart and GameScreen decides when it exists. Contract
+// sheet that offers them lives here; the bubble that shows one in the header
+// band is in chat_bubble.dart and GameScreen decides when it exists. Contract
 // C-478 D3 to D5, docs/PROTOCOL.md section 25.
 
 import 'package:flutter/material.dart';

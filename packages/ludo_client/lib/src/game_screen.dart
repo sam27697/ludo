@@ -415,18 +415,14 @@ class _GameScreenState extends State<GameScreen> {
   Timer? _gloatLifeTimer;
   final List<_PendingGloat> _pendingGloats = <_PendingGloat>[];
 
-  // C-478 D5: quick messages. One bubble per seat, born from the server's
-  // `emote` frame only (mine included, no optimistic draw), each on its own
-  // [kChatBubbleLife] timer. A resync, a dropped link or the room leaving
-  // PLAYING clears them all, the way it clears the gloat. [_chatMuted] is
-  // owned here and bound both ways to the sheet's switch.
-  final Map<int, _ChatEntry> _chatEntries = <int, _ChatEntry>{};
-  // C-485 D4, C-492 D2 and D7: once the game is over (FINISHED, or a rematch
-  // LOBBY) the room shows one line, the newest, in the header band. Kept
-  // apart so the PLAYING to FINISHED change takes down the board's and leaves
-  // this alone. A line that is shown replaces the one up and its timer.
-  _ChatEntry? _endChat;
-  int? _endChatSeat;
+  // C-478 D5, C-500 D1: quick messages. The screen holds one line, the
+  // newest, born from the server's `emote` frame only (mine included, no
+  // optimistic draw) on its own [kChatBubbleLife] timer. It is drawn in the
+  // header band on every body, and the room leaving PLAYING does not take it
+  // down. A resync, a dropped link, a new game or the screen going clears it,
+  // the way it clears the gloat. [_chatMuted] is owned here and bound both
+  // ways to the sheet's switch.
+  _ChatEntry? _chat;
   int _chatSerial = 0;
   final ValueNotifier<bool> _chatMuted = ValueNotifier<bool>(false);
   bool _chatCooling = false;
@@ -1234,14 +1230,12 @@ class _GameScreenState extends State<GameScreen> {
     _scheduleGloatRebuild();
   }
 
-  /// C-478 D5.4 and C-492 D2. An `emote` push shows a line at its sender's
-  /// seat when the seat is known, the id is one of the twelve and the player
-  /// has not hidden the others (mine are never hidden): a bubble on the board
-  /// while PLAYING, the one line in the header band in FINISHED or a rematch
-  /// LOBBY, nothing in any other state. Anything else shows nothing and says
-  /// nothing. A newer line for a seat replaces that seat's and starts its
-  /// life over; on the end card a newer line from any seat replaces the one
-  /// up.
+  /// C-478 D5.4 and C-500 D1 to D3. An `emote` push shows a line when the
+  /// room is PLAYING, FINISHED or a rematch LOBBY, the seat is known, the id
+  /// is one of the twelve and the player has not hidden the others (mine are
+  /// never hidden). Anything else shows nothing and says nothing. A line that
+  /// is shown replaces the one up, from any seat, and starts its life over; a
+  /// line that is not shown never removes the one up.
   void _onEmoteFrame(Frame frame) {
     final RoomSnapshot? room = widget.controller.room;
     final int? seat = _intAt(frame.data, 'seat');
@@ -1249,18 +1243,17 @@ class _GameScreenState extends State<GameScreen> {
     if (room == null || seat == null || id == null) {
       return;
     }
-    final bool onBoard = room.state == RoomState.playing;
-    final bool onCard =
+    final bool afterGame =
         room.state == RoomState.finished ||
         (room.state == RoomState.lobby && room.rematch != null);
-    if (!onBoard && !onCard) {
+    if (room.state != RoomState.playing && !afterGame) {
       return;
     }
-    // A seat that left after the game still says good game: the card also
-    // knows the seats of the game it is showing.
+    // A seat that left after the game still says good game: the end card and
+    // the held end also know the seats of the game they are showing.
     final bool known =
         room.seats.any((SeatState s) => s.seat == seat) ||
-        (onCard &&
+        (afterGame &&
             (widget.controller.lastFinished?.seats.any(
                   (SeatState s) => s.seat == seat,
                 ) ??
@@ -1273,108 +1266,67 @@ class _GameScreenState extends State<GameScreen> {
     }
     _chatSerial++;
     final int serial = _chatSerial;
-    if (onBoard) {
-      _chatEntries[seat]?.timer.cancel();
-      _chatEntries[seat] = _ChatEntry(
-        id: id,
-        serial: serial,
-        timer: Timer(kChatBubbleLife, () {
-          final _ChatEntry? entry = _chatEntries[seat];
-          if (entry == null || entry.serial != serial) {
-            return;
-          }
-          _chatEntries.remove(seat);
-          _scheduleGloatRebuild();
-        }),
-      );
-    } else {
-      _endChat?.timer.cancel();
-      _endChatSeat = seat;
-      _endChat = _ChatEntry(
-        id: id,
-        serial: serial,
-        timer: Timer(kChatBubbleLife, () {
-          if (_endChat?.serial != serial) {
-            return;
-          }
-          _endChat = null;
-          _endChatSeat = null;
-          _scheduleGloatRebuild();
-        }),
-      );
-    }
+    _chat?.timer.cancel();
+    _chat = _ChatEntry(
+      id: id,
+      seat: seat,
+      serial: serial,
+      // The insets of this line's own moment, kept for its whole life.
+      // C-500 D4.
+      clearOfChatButton: _showsChatButton(widget.controller, room),
+      timer: Timer(kChatBubbleLife, () {
+        if (_chat?.serial != serial) {
+          return;
+        }
+        _chat = null;
+        _scheduleGloatRebuild();
+      }),
+    );
     _scheduleGloatRebuild();
   }
 
-  /// The board's bubbles go, with their timers: the room left PLAYING.
-  void _clearBoardChat() {
-    if (_chatEntries.isEmpty) {
-      return;
-    }
-    for (final _ChatEntry entry in _chatEntries.values) {
-      entry.timer.cancel();
-    }
-    _chatEntries.clear();
-    _scheduleGloatRebuild();
+  /// The chat button's own condition: on the header row while a seated player
+  /// is connected to a table in play. C-500 D4.
+  bool _showsChatButton(RoomController controller, RoomSnapshot? room) {
+    return controller.phase == RoomPhase.connected &&
+        room != null &&
+        room.state == RoomState.playing &&
+        controller.seat != null;
   }
 
-  /// Every bubble and the end-card line go, with their timers. A resync,
-  /// a resume, a new game, dispose. C-478 D5.4, C-492 D7.
+  /// The line goes, with its timer. A resync, a resume, a new game, dispose.
+  /// C-478 D5.4, C-500 D3.
   void _clearChatBubbles() {
-    _clearBoardChat();
-    final _ChatEntry? line = _endChat;
+    final _ChatEntry? line = _chat;
     if (line == null) {
       return;
     }
     line.timer.cancel();
-    _endChat = null;
-    _endChatSeat = null;
+    _chat = null;
     _scheduleGloatRebuild();
   }
 
-  /// Hiding the others takes down the lines of the others that are up.
+  /// Hiding the others takes down another seat's line that is up.
   void _onChatMutedChanged() {
-    if (_chatMuted.value) {
-      final int? mine = widget.controller.seat;
-      final List<int> others = <int>[
-        for (final int seat in _chatEntries.keys)
-          if (seat != mine) seat,
-      ];
-      for (final int seat in others) {
-        _chatEntries.remove(seat)?.timer.cancel();
-      }
-      if (_endChat != null && _endChatSeat != mine) {
-        _endChat?.timer.cancel();
-        _endChat = null;
-        _endChatSeat = null;
-      }
+    if (_chatMuted.value &&
+        _chat != null &&
+        _chat?.seat != widget.controller.seat) {
+      _chat?.timer.cancel();
+      _chat = null;
     }
     _scheduleGloatRebuild();
   }
 
-  List<BoardChatBubble> _chatBubblesOf(AppLocalizations loc) {
-    return <BoardChatBubble>[
-      for (final MapEntry<int, _ChatEntry> entry in _chatEntries.entries)
-        if (quickChatLine(loc, entry.value.id) case final String line)
-          BoardChatBubble(
-            seat: entry.key,
-            text: line,
-            serial: entry.value.serial,
-          ),
-    ];
-  }
-
-  /// C-492 D1 and D2. The one line in the header band, the name resolved
-  /// against the live seats and then the game just finished. A line whose
-  /// seat has no name in either is not drawn.
-  EndCardChatLine? _endChatLineOf(
+  /// C-500 D1. The one line, the name resolved against the live seats and
+  /// then the game just finished. A line whose seat has no name in either is
+  /// not drawn.
+  EndCardChatLine? _chatLineOf(
     AppLocalizations loc,
-    RoomSnapshot room,
+    RoomSnapshot? room,
     RoomSnapshot? finished,
   ) {
-    final _ChatEntry? entry = _endChat;
-    final int? seat = _endChatSeat;
-    if (entry == null || seat == null) {
+    final _ChatEntry? entry = _chat;
+    if (entry == null) {
       return null;
     }
     final String? line = quickChatLine(loc, entry.id);
@@ -1383,9 +1335,9 @@ class _GameScreenState extends State<GameScreen> {
     }
     for (final RoomSnapshot? source in <RoomSnapshot?>[room, finished]) {
       for (final SeatState s in source?.seats ?? const <SeatState>[]) {
-        if (s.seat == seat) {
+        if (s.seat == entry.seat) {
           return EndCardChatLine(
-            seat: seat,
+            seat: entry.seat,
             name: s.name,
             text: line,
             serial: entry.serial,
@@ -2262,9 +2214,6 @@ class _GameScreenState extends State<GameScreen> {
     if (controller.hasDesynced) {
       _removeGloat();
       _clearChatBubbles();
-    }
-    if (controller.room?.state != RoomState.playing) {
-      _clearBoardChat();
     }
     _notePlayingGame();
     if (controller.phase != RoomPhase.connected) {
@@ -3434,21 +3383,14 @@ class _GameScreenState extends State<GameScreen> {
       body = _connectedBody(loc, controller, room);
     }
 
-    // C-492 D8: the quick message line is drawn only while the end card is
-    // the body, the same branches that picked it above. A held end (the board
-    // still shown in FINISHED), the stale table and every other body draw
-    // nothing.
-    final bool endCardIsBody =
-        rematchGone ||
-        isOfflineEndCard ||
-        (room != null &&
-            !isOffline &&
-            ((room.state == RoomState.finished &&
-                    !(_isEndHeld && room.seats.length >= 2)) ||
-                (room.state == RoomState.lobby && room.rematch != null)));
-    final EndCardChatLine? endChatLine = endCardIsBody
-        ? _endChatLineOf(loc, room, controller.lastFinished)
-        : null;
+    // C-500 D1: the one quick message line is drawn on every body, so the
+    // table, the held end, the end card and the rest all get it in one place.
+    final EndCardChatLine? chatLine = _chatLineOf(
+      loc,
+      room,
+      controller.lastFinished,
+    );
+    final bool showsChatButton = _showsChatButton(controller, room);
 
     final SystemUiOverlayStyle overlayStyle =
         Theme.of(context).brightness == Brightness.light
@@ -3510,10 +3452,7 @@ class _GameScreenState extends State<GameScreen> {
                               icon: const Icon(Icons.close),
                             ),
                           ),
-                          if (controller.phase == RoomPhase.connected &&
-                              room != null &&
-                              room.state == RoomState.playing &&
-                              controller.seat != null)
+                          if (showsChatButton)
                             PositionedDirectional(
                               end: kSpace2 + 48 + kSpace1,
                               child: Opacity(
@@ -3551,7 +3490,12 @@ class _GameScreenState extends State<GameScreen> {
                     Expanded(child: body),
                   ],
                 ),
-                if (endChatLine != null) _endChatLayer(loc, endChatLine),
+                if (chatLine != null)
+                  _chatLayer(
+                    loc,
+                    chatLine,
+                    clearOfChatButton: _chat?.clearOfChatButton ?? false,
+                  ),
               ],
             ),
           ),
@@ -3560,12 +3504,18 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// C-492 D1 and D6. The end card's one quick message line, laid over the
-  /// whole screen column so a bubble taller than the header row paints over
-  /// the top of the body instead of under it. It mirrors the column's own top
-  /// (the felt edge, then the 48 dp header row), takes no layout space and
-  /// takes no taps, so the pip strip under it keeps working.
-  Widget _endChatLayer(AppLocalizations loc, EndCardChatLine line) {
+  /// C-500 D1 and D4. The one quick message line, laid over the whole screen
+  /// column so a bubble taller than the header row paints over the top of the
+  /// body instead of under it. It mirrors the column's own top (the felt edge,
+  /// then the 48 dp header row), takes no layout space and takes no taps, so
+  /// the buttons and the pip strip under it keep working. It sits in the span
+  /// between the leave button and the first button at the end side, which is
+  /// the chat button when the row carries it and the settings button when not.
+  Widget _chatLayer(
+    AppLocalizations loc,
+    EndCardChatLine line, {
+    required bool clearOfChatButton,
+  }) {
     return Positioned.fill(
       child: IgnorePointer(
         key: const Key('end-card-chat-lines'),
@@ -3576,20 +3526,29 @@ class _GameScreenState extends State<GameScreen> {
               height: 48,
               child: LayoutBuilder(
                 builder: (BuildContext context, BoxConstraints constraints) {
-                  const double inset = kSpace2 + 48 + kSpace1;
+                  const double startInset = kSpace2 + 48 + kSpace1;
+                  final double endInset = clearOfChatButton
+                      ? kSpace2 + 48 + kSpace1 + 48 + kSpace1
+                      : startInset;
                   final double maxWidth = math.max(
                     0,
-                    math.min(320, constraints.maxWidth - 2 * inset),
+                    math.min(320, constraints.maxWidth - startInset - endInset),
                   );
-                  return CustomSingleChildLayout(
-                    delegate: _HeaderBandLine(maxWidth),
-                    child: EndCardChatBubble(
-                      seat: line.seat,
-                      name: line.name,
-                      text: line.text,
-                      label: loc.chatSaid(line.name, line.text),
-                      serial: line.serial,
-                      maxWidth: maxWidth,
+                  return Padding(
+                    padding: EdgeInsetsDirectional.only(
+                      start: startInset,
+                      end: endInset,
+                    ),
+                    child: CustomSingleChildLayout(
+                      delegate: _HeaderBandLine(maxWidth),
+                      child: EndCardChatBubble(
+                        seat: line.seat,
+                        name: line.name,
+                        text: line.text,
+                        label: loc.chatSaid(line.name, line.text),
+                        serial: line.serial,
+                        maxWidth: maxWidth,
+                      ),
                     ),
                   );
                 },
@@ -4341,7 +4300,9 @@ class _GameScreenState extends State<GameScreen> {
                   seatDice: _seatDiceOf(room),
                   seatRecord: boardRecord,
                   gloat: _gloat,
-                  chatBubbles: _chatBubblesOf(loc),
+                  chatPop: _chat == null
+                      ? null
+                      : BoardChatPop(seat: _chat!.seat, serial: _chat!.serial),
                   hint: _shownHint?.move,
                   hintNamesFace: _shownHint?.namesFace ?? false,
                 ),
@@ -5731,13 +5692,25 @@ class _HeaderBandLine extends SingleChildLayoutDelegate {
   }
 }
 
-/// One quick message on the board: the preset id, the start serial the
-/// board restarts its pop on, and the timer that takes it down.
+/// The quick message line: the preset id, the seat that said it, the start
+/// serial the bubble and the chip pop restart on, and the timer that takes it
+/// down.
 class _ChatEntry {
-  _ChatEntry({required this.id, required this.serial, required this.timer});
+  _ChatEntry({
+    required this.id,
+    required this.seat,
+    required this.serial,
+    required this.clearOfChatButton,
+    required this.timer,
+  });
 
   final String id;
+  final int seat;
   final int serial;
+
+  /// Whether the chat button was on the header row when the line was born, so
+  /// the line keeps clear of it after the button goes. C-500 D4.
+  final bool clearOfChatButton;
   final Timer timer;
 }
 

@@ -37,6 +37,7 @@ import 'package:ludo_client/src/quick_chat.dart';
 import 'package:ludo_client/src/theme.dart';
 
 import 'support/c468_harness.dart';
+import 'support/end_card_chat_harness.dart' show textUnder;
 import 'support/roll_tray_harness.dart';
 
 /// (id, en, ar) exactly as the contract's D3 table gives them.
@@ -988,9 +989,16 @@ void main() {
           'emote',
         ], reason: s.why('nothing else went out'));
         expect(
-          find.byKey(const Key('chat-bubble-0')),
+          find.byKey(const Key('end-card-chat-0')),
           findsNothing,
-          reason: s.why('no optimistic bubble before the server copy'),
+          reason: s.why(
+            'no optimistic line (end-card-chat-0) before the server copy',
+          ),
+        );
+        expect(
+          find.byKey(const Key('end-card-chat-lines')),
+          findsNothing,
+          reason: s.why('and no header line layer at all before the copy'),
         );
       } finally {
         await releaseGame(tester, s.drive);
@@ -1112,10 +1120,14 @@ void main() {
         expect(
           find.byWidgetPredicate((Widget w) {
             final Key? k = w.key;
-            return k is ValueKey<String> && k.value.startsWith('chat-bubble-');
+            return k is ValueKey<String> &&
+                k.value.startsWith('end-card-chat-');
           }),
           findsNothing,
-          reason: s.why('no bubble for a refused send'),
+          reason: s.why(
+            'no line (end-card-chat-0, any seat, or the layer) for a '
+            'refused send',
+          ),
         );
         expect(
           s.drive.controller.phase,
@@ -1163,9 +1175,9 @@ void main() {
       }
     });
 
-    testWidgets('my own bubble appears from the server copy and says the '
+    testWidgets('my own line appears from the server copy and says the '
         'line', (tester) async {
-      final Scn s = await game(tester, 'D5.3 own bubble');
+      final Scn s = await game(tester, 'D5.3 own line');
       try {
         final int before = s.drive.transport.sentRaw.length;
         await openSheet(s);
@@ -1180,12 +1192,16 @@ void main() {
         await s.pushEmote(0, 'oops', re: id);
         await s.pump(const Duration(milliseconds: 300));
         expect(
-          find.descendant(
-            of: find.byKey(const Key('chat-bubble-0')),
-            matching: find.text('Oops'),
-          ),
+          find.byKey(const Key('end-card-chat-0')),
           findsOneWidget,
-          reason: s.why('my bubble shows "Oops" once the server copy lands'),
+          reason: s.why(
+            'my line (end-card-chat-0) shows once the server copy lands',
+          ),
+        );
+        expect(
+          textUnder(tester, find.byKey(const Key('end-card-chat-0'))),
+          contains('Oops'),
+          reason: s.why('my line says "Oops" once the server copy lands'),
         );
       } finally {
         await releaseGame(tester, s.drive);

@@ -304,33 +304,48 @@ class _EndCardState extends State<EndCard> {
     );
   }
 
-  /// C-485 D5.1: the reply chips, one centred Wrap, or null for none.
+  /// C-485 D5.1: the reply chips, one centred Wrap, or null for none. C-498
+  /// D3: normal chips when they fit one row, else compact chips when those
+  /// do, else normal chips wrapping. Widths come from the real chip.
   Widget? _quickReplyChips(AppLocalizations loc) {
     if (widget.quickReplies.isEmpty) {
       return null;
     }
+    final List<(String, String)> chips = <(String, String)>[
+      for (final String id in widget.quickReplies)
+        if (quickChatLine(loc, id) case final String line) (id, line),
+    ];
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
+        double row(bool compact, double gap) {
+          double sum = gap * (chips.length - 1);
+          for (final (String, String) chip in chips) {
+            sum += SpeechChip.naturalWidth(context, chip.$2, compact: compact);
+          }
+          return sum;
+        }
+
+        final double room = constraints.maxWidth;
+        final bool normalFits = row(false, kSpace2) <= room;
+        final bool compact = !normalFits && row(true, kSpace1) <= room;
         return Wrap(
           key: const Key('end-card-quick-replies'),
           alignment: WrapAlignment.center,
-          spacing: kSpace2,
+          spacing: compact ? kSpace1 : kSpace2,
           runSpacing: kSpace2,
           children: <Widget>[
-            for (final String id in widget.quickReplies)
-              if (quickChatLine(loc, id) case final String line)
-                ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: constraints.maxWidth),
-                  child: _ReplyChip(
-                    id: id,
-                    line: line,
-                    dimmed:
-                        widget.quickReplyCooling || widget.onQuickReply == null,
-                    onSend: widget.quickReplyCooling
-                        ? null
-                        : widget.onQuickReply,
-                  ),
+            for (final (String, String) chip in chips)
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: room),
+                child: _ReplyChip(
+                  id: chip.$1,
+                  line: chip.$2,
+                  compact: compact,
+                  dimmed:
+                      widget.quickReplyCooling || widget.onQuickReply == null,
+                  onSend: widget.quickReplyCooling ? null : widget.onQuickReply,
                 ),
+              ),
           ],
         );
       },
@@ -986,12 +1001,16 @@ class _ReplyChip extends StatefulWidget {
   _ReplyChip({
     required this.id,
     required this.line,
+    required this.compact,
     required this.dimmed,
     required this.onSend,
   }) : super(key: Key('end-card-reply-$id'));
 
   final String id;
   final String line;
+
+  /// The tighter chip of C-498 D2.
+  final bool compact;
   final bool dimmed;
 
   /// Null when a tap must be refused.
@@ -1051,7 +1070,11 @@ class _ReplyChipState extends State<_ReplyChip>
           },
           child: Opacity(
             opacity: widget.dimmed ? 0.38 : 1,
-            child: SpeechChip(line: widget.line, onTap: _tap),
+            child: SpeechChip(
+              line: widget.line,
+              onTap: _tap,
+              compact: widget.compact,
+            ),
           ),
         ),
       ),

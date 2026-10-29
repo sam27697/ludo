@@ -779,11 +779,11 @@
   },
   "chatMuteOthers": "Hide the others' messages",
   "@chatMuteOthers": {
-    "description": "Label of the switch in the quick messages sheet that hides other players' bubbles on the board. The player's own are never hidden (C-478 D5.2)."
+    "description": "Label of the switch in the quick messages sheet that hides other players' lines in the header band. The player's own are never hidden (C-478 D5.2)."
   },
   "chatSaid": "{name}: {line}",
   "@chatSaid": {
-    "description": "Semantics label of a quick message bubble on the board: who said it, then the line (C-478 D5.4).",
+    "description": "Semantics label of the quick message line in the header band: who said it, then the line (C-478 D5.4).",
     "placeholders": {
       "name": {
         "type": "String",
