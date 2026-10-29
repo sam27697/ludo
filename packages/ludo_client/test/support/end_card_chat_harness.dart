@@ -18,6 +18,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../net/fake_transport.dart';
@@ -31,6 +32,35 @@ const Key kSheetKey = Key('quick-chat-sheet');
 const Key kMuteKey = Key('quick-chat-mute');
 const Key kRematchKey = Key('end-card-rematch');
 const Key kNewTableKey = Key('game-screen-new-room-button');
+
+/// Loads the app's own fonts (Poppins, Noto Sans Arabic) the way
+/// end_card_large_text_test.dart does. The test framework's default font
+/// draws every glyph one em wide, so "Bob: Good game" overflows the 224 dp a
+/// 360 dp header leaves under C-500 D5 and the name is dropped; on the phone's
+/// Poppins it fits. Cases that assert the name call this once in `setUpAll`.
+Future<void> loadAppFonts() async {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  final FontLoader poppins = FontLoader('Poppins');
+  for (final String asset in const <String>[
+    'fonts/Poppins-Regular.ttf',
+    'fonts/Poppins-Medium.ttf',
+    'fonts/Poppins-SemiBold.ttf',
+    'fonts/Poppins-Bold.ttf',
+  ]) {
+    poppins.addFont(rootBundle.load(asset));
+  }
+  await poppins.load();
+
+  final FontLoader notoSansArabic = FontLoader('Noto Sans Arabic');
+  for (final String asset in const <String>[
+    'fonts/NotoSansArabic-Regular.ttf',
+    'fonts/NotoSansArabic-Bold.ttf',
+  ]) {
+    notoSansArabic.addFont(rootBundle.load(asset));
+  }
+  await notoSansArabic.load();
+}
 
 Key replyKey(String id) => Key('end-card-reply-$id');
 
