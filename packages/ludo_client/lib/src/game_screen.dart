@@ -4716,7 +4716,8 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   /// C-250 rule 3 / amendment run 72 (rule 9): the ring depletes with the
-  /// turn and turns `LudoColors.error` for the last 10s; the Text keyed
+  /// turn and turns `LudoColors.error` for the last 10s (the last 3s when
+  /// the running segment is itself 10s or shorter, C-495); the Text keyed
   /// `game-screen-turn-countdown` shows only the bare seconds so it fits on
   /// one line inside the ring, and the sentence that used to sit there
   /// moves to the `game-header-countdown-semantics` label, with the
@@ -4727,11 +4728,20 @@ class _GameScreenState extends State<GameScreen> {
     TurnState turn,
     Color seatColor,
   ) {
-    final bool lastTenSeconds = _countdownRemainingSeconds <= 10;
-    final Color ringColor = lastTenSeconds ? LudoColors.error : seatColor;
-    final int turnSeconds = room.rules.turnSeconds;
-    final double remainingFraction = turnSeconds > 0
-        ? (_countdownRemainingSeconds / turnSeconds).clamp(0.0, 1.0)
+    // C-495 decision 3: the ring measures the segment that is running (an
+    // away seat's is 10s, not the room's turn length). An old server sends
+    // no segment, so the room's turn length stands in for it.
+    final int? segmentMs = turn.segmentMs;
+    final int budget = (segmentMs != null && segmentMs > 0)
+        ? (segmentMs + 999) ~/ 1000
+        : room.rules.turnSeconds;
+    final bool shortClock = budget <= 10;
+    final bool runningOut = shortClock
+        ? _countdownRemainingSeconds <= 3
+        : _countdownRemainingSeconds <= 10;
+    final Color ringColor = runningOut ? LudoColors.error : seatColor;
+    final double remainingFraction = budget > 0
+        ? (_countdownRemainingSeconds / budget).clamp(0.0, 1.0)
         : 0.0;
 
     return Semantics(
@@ -5397,8 +5407,9 @@ class _CountdownRing extends StatelessWidget {
     required this.remainingFraction,
   });
 
-  /// The turn seat's own colour above 10s left, `LudoColors.error` at 10s
-  /// and below (C-250 rule 8).
+  /// The turn seat's own colour, `LudoColors.error` at 10s left and below
+  /// on a segment longer than 10s, at 3s and below on a segment of 10s or
+  /// less (C-250 rule 8, C-495 decision 3).
   final Color color;
 
   /// 0.0 (deadline reached) to 1.0 (a fresh turn): how much of the turn is
