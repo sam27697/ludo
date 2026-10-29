@@ -1271,6 +1271,9 @@ class _GameScreenState extends State<GameScreen> {
       id: id,
       seat: seat,
       serial: serial,
+      // The insets of this line's own moment, kept for its whole life.
+      // C-500 D4.
+      clearOfChatButton: _showsChatButton(widget.controller, room),
       timer: Timer(kChatBubbleLife, () {
         if (_chat?.serial != serial) {
           return;
@@ -1280,6 +1283,15 @@ class _GameScreenState extends State<GameScreen> {
       }),
     );
     _scheduleGloatRebuild();
+  }
+
+  /// The chat button's own condition: on the header row while a seated player
+  /// is connected to a table in play. C-500 D4.
+  bool _showsChatButton(RoomController controller, RoomSnapshot? room) {
+    return controller.phase == RoomPhase.connected &&
+        room != null &&
+        room.state == RoomState.playing &&
+        controller.seat != null;
   }
 
   /// The line goes, with its timer. A resync, a resume, a new game, dispose.
@@ -3378,13 +3390,7 @@ class _GameScreenState extends State<GameScreen> {
       room,
       controller.lastFinished,
     );
-    // The chat button's own condition, so the line clears it exactly when it
-    // is on the row. C-500 D4.
-    final bool showsChatButton =
-        controller.phase == RoomPhase.connected &&
-        room != null &&
-        room.state == RoomState.playing &&
-        controller.seat != null;
+    final bool showsChatButton = _showsChatButton(controller, room);
 
     final SystemUiOverlayStyle overlayStyle =
         Theme.of(context).brightness == Brightness.light
@@ -3485,7 +3491,11 @@ class _GameScreenState extends State<GameScreen> {
                   ],
                 ),
                 if (chatLine != null)
-                  _chatLayer(loc, chatLine, clearOfChatButton: showsChatButton),
+                  _chatLayer(
+                    loc,
+                    chatLine,
+                    clearOfChatButton: _chat?.clearOfChatButton ?? false,
+                  ),
               ],
             ),
           ),
@@ -5690,12 +5700,17 @@ class _ChatEntry {
     required this.id,
     required this.seat,
     required this.serial,
+    required this.clearOfChatButton,
     required this.timer,
   });
 
   final String id;
   final int seat;
   final int serial;
+
+  /// Whether the chat button was on the header row when the line was born, so
+  /// the line keeps clear of it after the button goes. C-500 D4.
+  final bool clearOfChatButton;
   final Timer timer;
 }
 

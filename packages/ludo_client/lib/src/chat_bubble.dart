@@ -321,8 +321,15 @@ class _EndCardChatBubbleState extends State<EndCardChatBubble>
         LudoColors.seats[widget.seat.clamp(0, LudoColors.seats.length - 1)];
     final TextStyle? base = Theme.of(context).textTheme.labelLarge
         ?.copyWith(color: LudoColors.ink);
-    final TextStyle? nameStyle = base?.copyWith(fontWeight: FontWeight.w700);
-    final TextStyle? lineStyle = base?.copyWith(fontWeight: FontWeight.w500);
+    // Merged over the ambient style here so the measurement below and the
+    // painted Text.rich lay out the same glyphs. C-500 D5.
+    final TextStyle ambient = DefaultTextStyle.of(context).style;
+    final TextStyle nameStyle = ambient.merge(
+      base?.copyWith(fontWeight: FontWeight.w700),
+    );
+    final TextStyle lineStyle = ambient.merge(
+      base?.copyWith(fontWeight: FontWeight.w500),
+    );
     final TextSpan withName = TextSpan(
       children: <InlineSpan>[
         TextSpan(text: '${widget.name}: ', style: nameStyle),
@@ -338,6 +345,7 @@ class _EndCardChatBubbleState extends State<EndCardChatBubble>
           widget.maxWidth - _kChatBubbleChrome,
           Directionality.of(context),
           MediaQuery.textScalerOf(context),
+          Localizations.maybeLocaleOf(context),
         );
     return Semantics(
       container: true,
@@ -399,6 +407,7 @@ bool _fitsOneLine(
   double width,
   TextDirection direction,
   TextScaler scaler,
+  Locale? locale,
 ) {
   if (width <= 0) {
     return false;
@@ -407,7 +416,9 @@ bool _fitsOneLine(
     text: span,
     textDirection: direction,
     textScaler: scaler,
+    locale: locale,
     maxLines: 1,
+    ellipsis: '\u2026',
   )..layout(maxWidth: width);
   final bool fits = !painter.didExceedMaxLines;
   painter.dispose();
