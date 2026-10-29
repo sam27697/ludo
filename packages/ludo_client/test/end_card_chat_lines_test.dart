@@ -235,6 +235,10 @@ const Key _panelKey = Key('end-card-lose');
 const double _rowDp = 48;
 const double _inset = kSpace2 + _rowDp + kSpace1;
 
+/// C-500 D4: `kSpace2 + 48 + kSpace1 + 48 + kSpace1` on the end side while the
+/// row carries the chat button, which is PLAYING only.
+const double _insetWithChat = _inset + _rowDp + kSpace1;
+
 /// Seat 0's name in the short-line cases, and how far under the maximum width
 /// its bubble must stay.
 const String _shortName = 'Jo';
@@ -428,6 +432,52 @@ void _expectInsideInsets(EndGame g, Rect bubble, Rect row) {
     bubble.right,
     lessThanOrEqualTo(row.right - _inset + 0.5),
     reason: g.why('$_inset dp clear of the row\'s right'),
+  );
+}
+
+/// The span between the insets: the start side (the leave button) is
+/// [_inset], the end side [endInset]. In ar the start side is the right.
+Rect _spanOf(Rect row, {required bool ar, required double endInset}) {
+  final double left = ar ? endInset : _inset;
+  final double right = ar ? _inset : endInset;
+  return Rect.fromLTRB(row.left + left, row.top, row.right - right, row.bottom);
+}
+
+void _expectInsideSpan(EndGame g, Rect bubble, Rect span, String what) {
+  expect(
+    bubble.left,
+    greaterThanOrEqualTo(span.left - 0.5),
+    reason: g.why('$what: bubble $bubble inside the span $span on the left'),
+  );
+  expect(
+    bubble.right,
+    lessThanOrEqualTo(span.right + 0.5),
+    reason: g.why('$what: bubble $bubble inside the span $span on the right'),
+  );
+}
+
+/// Two rects equal within 0.5 dp on every side.
+void _expectSameRect(EndGame g, Rect actual, Rect wanted, String what) {
+  final String detail = 'wanted $wanted, got $actual';
+  expect(
+    actual.left,
+    closeTo(wanted.left, 0.5),
+    reason: g.why('$what: left, $detail'),
+  );
+  expect(
+    actual.top,
+    closeTo(wanted.top, 0.5),
+    reason: g.why('$what: top, $detail'),
+  );
+  expect(
+    actual.right,
+    closeTo(wanted.right, 0.5),
+    reason: g.why('$what: right, $detail'),
+  );
+  expect(
+    actual.bottom,
+    closeTo(wanted.bottom, 0.5),
+    reason: g.why('$what: bottom, $detail'),
   );
 }
 
@@ -1232,7 +1282,13 @@ void main() {
             expectNoBoardChat(g, 'the end card');
             final Rect row = _headerRow(tester);
             final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
-            _expectInsideInsets(g, bubble, row);
+            _expectInsideSpan(
+              g,
+              bubble,
+              _spanOf(row, ar: ar, endInset: _insetWithChat),
+              'a line born in PLAYING keeps its 112 dp end inset (C-500 D4 '
+              'as amended in run 117), 60 dp on the start side',
+            );
             _expectClearOf(g, bubble, _leaveKey);
             _expectClearOf(g, bubble, _settingsKey);
             await g.at(2490);
@@ -1506,6 +1562,223 @@ void main() {
       await g.done();
       expect(tester.takeException(), isNull);
     });
+  });
+
+  // -------------------------------------------------------------------
+  // C-500 D4 as amended in run 117: a line keeps the insets it was born with
+  // for its whole life; the next line takes the insets of its own moment.
+  // -------------------------------------------------------------------
+  group('born geometry', () {
+    // Seat 1's name and what the line is. At 360 dp the span is 188 dp with
+    // the chat button (112 + 60) and 240 dp without it (60 + 60); nine "M"
+    // and a preset measure about 225 dp, ten about 238 dp (see group fit),
+    // so the long name is dropped in the 188 dp span and drawn in the 240 dp
+    // one.
+    const String longName = 'MMMMMMMMMM';
+
+    for (final bool ar in const <bool>[false, true]) {
+      for (final (String, String, bool) shape in const <(String, String, bool)>[
+        ('name shown', 'Bob', false),
+        ('name dropped', longName, true),
+      ]) {
+        final String label = shape.$1;
+        final String name = shape.$2;
+        final bool dropped = shape.$3;
+        testWidgets(
+          '360 dp, ${ar ? 'ar' : 'en'}: a line born in PLAYING ($label) '
+          'keeps its rect and its text through game_over',
+          (tester) async {
+            final EndGame g = await openPlaying(
+              tester,
+              'born in PLAYING $label ${ar ? 'ar' : 'en'}',
+              locale: Locale(ar ? 'ar' : 'en'),
+              names: <int, String>{1: name},
+            );
+            try {
+              final String line = endLine('good_game', ar: ar);
+              expect(
+                find.byKey(kChatButtonKey),
+                findsOneWidget,
+                reason: g.why('fixture: the row carries the chat button'),
+              );
+              await g.emote(1, 'good_game');
+              await g.at(400);
+              final Rect row = _headerRow(tester);
+              final Rect before = tester.getRect(find.byKey(chatLineKey(1)));
+              final String textBefore = textUnder(
+                tester,
+                find.byKey(chatLineKey(1)),
+              );
+              _expectInsideSpan(
+                g,
+                before,
+                _spanOf(row, ar: ar, endInset: _insetWithChat),
+                'born with the chat button, so the end inset is 112 dp',
+              );
+              if (dropped) {
+                expect(
+                  textBefore,
+                  line,
+                  reason: g.why(
+                    'fixture: "$name" and the line do not fit the 188 dp '
+                    'span, so the line is alone, reads "$textBefore"',
+                  ),
+                );
+              } else {
+                _expectLine(g, 1, name, line);
+              }
+              await g.gameOver(0);
+              await g.s.pump(const Duration(milliseconds: 50));
+              expect(
+                find.byKey(kChatButtonKey),
+                findsNothing,
+                reason: g.why(
+                  'fixture: game_over took the chat button off the row',
+                ),
+              );
+              expect(
+                _headerRow(tester),
+                row,
+                reason: g.why('fixture: the header row did not move'),
+              );
+              _expectSameRect(
+                g,
+                tester.getRect(find.byKey(chatLineKey(1))),
+                before,
+                '50 ms after game_over the bubble does not move or resize',
+              );
+              expect(
+                textUnder(tester, find.byKey(chatLineKey(1))),
+                textBefore,
+                reason: g.why(
+                  'the text is unchanged 50 ms after game_over '
+                  '(${dropped ? 'the name stays dropped' : 'the name stays'}'
+                  ')',
+                ),
+              );
+              for (final int ms in const <int>[900, 1800, 2400]) {
+                await g.at(ms);
+                _expectSameRect(
+                  g,
+                  tester.getRect(find.byKey(chatLineKey(1))),
+                  before,
+                  'at $ms ms from its push the bubble is where it was born',
+                );
+                expect(
+                  textUnder(tester, find.byKey(chatLineKey(1))),
+                  textBefore,
+                  reason: g.why('the text is unchanged at $ms ms'),
+                );
+              }
+              expect(tester.takeException(), isNull);
+            } finally {
+              await g.done();
+            }
+          },
+        );
+      }
+
+      testWidgets(
+        '360 dp, ${ar ? 'ar' : 'en'}: a line born after game_over takes '
+        '60 dp both sides, centred on the row, name kept when it fits 240 dp',
+        (tester) async {
+          final EndGame g = await openFinished(
+            tester,
+            'born after game_over ${ar ? 'ar' : 'en'}',
+            locale: Locale(ar ? 'ar' : 'en'),
+            names: <int, String>{1: longName},
+          );
+          try {
+            expect(
+              find.byKey(kChatButtonKey),
+              findsNothing,
+              reason: g.why('fixture: no chat button on the end card'),
+            );
+            await g.emote(1, 'good_game');
+            await g.at(400);
+            final Rect row = _headerRow(tester);
+            final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
+            _expectLine(g, 1, longName, endLine('good_game', ar: ar));
+            _expectInsideSpan(
+              g,
+              bubble,
+              _spanOf(row, ar: ar, endInset: _inset),
+              'born without the chat button, so 60 dp both sides',
+            );
+            expect(
+              bubble.width,
+              greaterThan(row.width - _inset - _insetWithChat),
+              reason: g.why(
+                'wider than the 188 dp a chat-button span would allow: '
+                'bubble $bubble, row $row',
+              ),
+            );
+            expect(
+              bubble.center.dx,
+              closeTo(row.center.dx, 1),
+              reason: g.why('centred on the row: bubble $bubble, row $row'),
+            );
+            _expectClearOf(g, bubble, _leaveKey);
+            _expectClearOf(g, bubble, _settingsKey);
+          } finally {
+            await g.done();
+          }
+        },
+      );
+
+      testWidgets(
+        '360 dp, ${ar ? 'ar' : 'en'}: a line born in PLAYING, then the '
+        'next line after game_over: the next one takes the insets of its '
+        'own moment (60 dp both sides, the name back when it fits)',
+        (tester) async {
+          final EndGame g = await openPlaying(
+            tester,
+            'next line after game_over ${ar ? 'ar' : 'en'}',
+            locale: Locale(ar ? 'ar' : 'en'),
+            names: <int, String>{1: longName},
+          );
+          try {
+            final String line = endLine('good_game', ar: ar);
+            await g.emote(1, 'good_game');
+            await g.at(400);
+            final Rect row = _headerRow(tester);
+            final Rect first = tester.getRect(find.byKey(chatLineKey(1)));
+            expect(
+              textUnder(tester, find.byKey(chatLineKey(1))),
+              line,
+              reason: g.why('fixture: the first line is alone at 188 dp'),
+            );
+            await g.gameOver(0);
+            await g.s.pump(const Duration(milliseconds: 100));
+            await g.emote(1, 'good_game');
+            await g.at(400);
+            final Rect next = tester.getRect(find.byKey(chatLineKey(1)));
+            _expectLine(g, 1, longName, line);
+            _expectInsideSpan(
+              g,
+              next,
+              _spanOf(row, ar: ar, endInset: _inset),
+              'the next line is born on the end card: 60 dp both sides',
+            );
+            expect(
+              next.width,
+              greaterThan(first.width),
+              reason: g.why(
+                'the next line is wider than the first (the name is back): '
+                'first $first, next $next',
+              ),
+            );
+            expect(
+              next.center.dx,
+              closeTo(row.center.dx, 1),
+              reason: g.why('centred on the row: next $next, row $row'),
+            );
+          } finally {
+            await g.done();
+          }
+        },
+      );
+    }
   });
 
   group('fit', () {
@@ -1861,9 +2134,20 @@ void main() {
             final Rect bubble = tester.getRect(find.byKey(chatLineKey(2)));
             expect(
               bubble.height,
-              closeTo(short, 0.5),
+              lessThan(short * 1.5),
               reason: g.why(
-                'the long line is as tall as the short one: one line',
+                'the long line is one line tall, under 1.5 lines: the short '
+                'line is $short dp, two lines would be about ${short + 40} '
+                'dp, this bubble is ${bubble.height} dp',
+              ),
+            );
+            expect(
+              bubble.height,
+              closeTo(short, 3),
+              reason: g.why(
+                'the long line is within 3 dp of the short one (presets '
+                'differ by about 1 dp, a second line adds about 40 dp): '
+                'short $short dp, this bubble ${bubble.height} dp',
               ),
             );
             expect(
