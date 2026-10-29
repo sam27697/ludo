@@ -1,14 +1,14 @@
-// The speech bubble a quick message is drawn in: on the board at the
-// sender's seat, as the chips of the quick messages sheet and the end card's
-// reply chips, and as the lines laid over the end card. GameScreen decides
-// when a bubble exists and for how long; this file only paints it. Contract
-// C-478 D5.2 and D5.4, C-485 D5.
+// The speech bubble a quick message is drawn in: the one line GameScreen
+// lays in the header band on every body, and the chips of the quick messages
+// sheet and the end card's reply chips. GameScreen decides when a bubble
+// exists and for how long; this file only paints it. Contract C-478 D5.2,
+// C-485 D5, C-500 D1 and D5.
 
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
 
-/// How long a bubble stays on the board, reduced motion included.
+/// How long a bubble stays up, reduced motion included.
 const Duration kChatBubbleLife = Duration(milliseconds: 2500);
 
 /// Pop-in. C-478 D5.4.
@@ -22,22 +22,7 @@ const double kChatTailHeight = 8;
 
 const double _kChatTailWidth = 14;
 
-/// One line on the board: the seat that said it, the resolved text and a
-/// start serial. A new [serial] is a new message, including one that
-/// replaces another from the same seat still showing. C-478 D5.4.
-class BoardChatBubble {
-  const BoardChatBubble({
-    required this.seat,
-    required this.text,
-    required this.serial,
-  });
-
-  final int seat;
-  final String text;
-  final int serial;
-}
-
-/// The end card's quick message line: the seat that said it, its display name
+/// The quick message line: the seat that said it, its display name
 /// (resolved by the screen), the resolved text and a start serial. A new
 /// [serial] is a new message, including one that replaces the one still
 /// showing. C-485 D5.2, C-492 D2.
@@ -161,130 +146,6 @@ class SpeechBubblePainter extends CustomPainter {
       oldDelegate.shadow != shadow;
 }
 
-/// The bubble the board places at a seat. The root key is
-/// `chat-bubble-<seat>`. The board decides the place; this widget owns the
-/// pop-in and the fade, and starts over when [serial] changes. C-478 D5.4.
-class ChatBubble extends StatefulWidget {
-  ChatBubble({
-    required this.seat,
-    required this.text,
-    required this.label,
-    required this.serial,
-    required this.maxWidth,
-    required this.tailOnTop,
-  }) : super(key: Key('chat-bubble-$seat'));
-
-  final int seat;
-  final String text;
-
-  /// The spoken form: who said it, then the line.
-  final String label;
-  final int serial;
-
-  /// Five cells.
-  final double maxWidth;
-
-  /// True when the body sits below the tail tip (an upper yard).
-  final bool tailOnTop;
-
-  @override
-  State<ChatBubble> createState() => _ChatBubbleState();
-}
-
-class _ChatBubbleState extends State<ChatBubble>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _clock;
-
-  @override
-  void initState() {
-    super.initState();
-    _clock = AnimationController(vsync: this, duration: kChatBubbleLife)
-      ..forward();
-  }
-
-  @override
-  void didUpdateWidget(covariant ChatBubble oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // Same seat keeps this state (the key does not carry the serial). A
-    // replacement has to start its life over. C-478 D5.4.
-    if (oldWidget.serial != widget.serial) {
-      _clock.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _clock.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bool reduced = MediaQuery.disableAnimationsOf(context);
-    final TextDirection direction = Directionality.of(context);
-    final Color seatColor =
-        LudoColors.seats[widget.seat.clamp(0, LudoColors.seats.length - 1)];
-    final TextStyle? style = Theme.of(context).textTheme.labelLarge
-        ?.copyWith(color: LudoColors.ink, fontWeight: FontWeight.w700);
-    return Semantics(
-      container: true,
-      liveRegion: true,
-      label: widget.label,
-      child: ExcludeSemantics(
-        child: IgnorePointer(
-          child: AnimatedBuilder(
-            animation: _clock,
-            builder: (BuildContext context, Widget? child) {
-              final double ms = _clock.value * kChatBubbleLife.inMilliseconds;
-              final double scale = reduced ? 1 : _scaleAt(ms);
-              final double opacity = reduced ? 1 : _opacityAt(ms);
-              return Opacity(
-                opacity: opacity,
-                child: Transform.scale(
-                  scale: scale,
-                  alignment: widget.tailOnTop
-                      ? Alignment.topCenter
-                      : Alignment.bottomCenter,
-                  child: child,
-                ),
-              );
-            },
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: widget.maxWidth),
-              child: CustomPaint(
-                painter: SpeechBubblePainter(
-                  fill: LudoColors.paperElevated,
-                  border: seatColor,
-                  borderWidth: 2,
-                  radius: 12,
-                  textDirection: direction,
-                  tailOnTop: widget.tailOnTop,
-                  shadow: true,
-                ),
-                child: Padding(
-                  padding: EdgeInsetsDirectional.fromSTEB(
-                    8,
-                    6 + (widget.tailOnTop ? kChatTailHeight : 0),
-                    8,
-                    6 + (widget.tailOnTop ? 0 : kChatTailHeight),
-                  ),
-                  child: Text(
-                    widget.text,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: style,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// 0.6 to 1.0 over [kChatBubblePop], easeOutBack. C-478 D5.4.
 double _scaleAt(double ms) {
   final double t = (ms / kChatBubblePop.inMilliseconds).clamp(0.0, 1.0);
@@ -363,11 +224,14 @@ class SpeechChip extends StatelessWidget {
   }
 }
 
-/// The end card's quick message line, drawn by the game screen in the header
-/// band: the board bubble's look without the tail, one line, the name in w700
-/// then the line in w500. The root key is `end-card-chat-<seat>`. Pops in and
-/// fades out like the board bubble and starts over when [serial] changes.
-/// C-485 D5.2, C-492 D1.
+/// The quick message line, drawn by the game screen in the header band on
+/// every body: a rounded paper pill with the seat-colour border, one line, the
+/// name in w700 then the line in w500. When name and line do not both fit
+/// [maxWidth] the line is drawn alone (the border still says who), and when
+/// the line alone does not fit it ends in an ellipsis; the label stays the
+/// spoken form either way. The root key is `end-card-chat-<seat>`. Pops in and
+/// fades out and starts over when [serial] changes. C-485 D5.2, C-492 D1,
+/// C-500 D5.
 class EndCardChatBubble extends StatefulWidget {
   EndCardChatBubble({
     required this.seat,
@@ -423,6 +287,24 @@ class _EndCardChatBubbleState extends State<EndCardChatBubble>
         LudoColors.seats[widget.seat.clamp(0, LudoColors.seats.length - 1)];
     final TextStyle? base = Theme.of(context).textTheme.labelLarge
         ?.copyWith(color: LudoColors.ink);
+    final TextStyle? nameStyle = base?.copyWith(fontWeight: FontWeight.w700);
+    final TextStyle? lineStyle = base?.copyWith(fontWeight: FontWeight.w500);
+    final TextSpan withName = TextSpan(
+      children: <InlineSpan>[
+        TextSpan(text: '${widget.name}: ', style: nameStyle),
+        TextSpan(text: widget.text, style: lineStyle),
+      ],
+    );
+    // The name goes before the line is cut. Measured from the real text at
+    // the real scale, never by counting characters. C-500 D5.
+    final bool showName =
+        widget.name.isNotEmpty &&
+        _fitsOneLine(
+          withName,
+          widget.maxWidth - _kChatBubbleChrome,
+          Directionality.of(context),
+          MediaQuery.textScalerOf(context),
+        );
     return Semantics(
       container: true,
       liveRegion: true,
@@ -458,18 +340,9 @@ class _EndCardChatBubbleState extends State<EndCardChatBubble>
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 child: Text.rich(
-                  TextSpan(
-                    children: <InlineSpan>[
-                      TextSpan(
-                        text: '${widget.name}: ',
-                        style: base?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      TextSpan(
-                        text: widget.text,
-                        style: base?.copyWith(fontWeight: FontWeight.w500),
-                      ),
-                    ],
-                  ),
+                  showName
+                      ? withName
+                      : TextSpan(text: widget.text, style: lineStyle),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
@@ -481,4 +354,28 @@ class _EndCardChatBubbleState extends State<EndCardChatBubble>
       ),
     );
   }
+}
+
+/// The padding either side of the line (the border paints inside it).
+const double _kChatBubbleChrome = 2 * 8;
+
+/// True when [span] lays out on one line inside [width].
+bool _fitsOneLine(
+  TextSpan span,
+  double width,
+  TextDirection direction,
+  TextScaler scaler,
+) {
+  if (width <= 0) {
+    return false;
+  }
+  final TextPainter painter = TextPainter(
+    text: span,
+    textDirection: direction,
+    textScaler: scaler,
+    maxLines: 1,
+  )..layout(maxWidth: width);
+  final bool fits = !painter.didExceedMaxLines;
+  painter.dispose();
+  return fits;
 }
