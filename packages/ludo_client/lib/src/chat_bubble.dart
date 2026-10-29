@@ -37,10 +37,10 @@ class BoardChatBubble {
   final int serial;
 }
 
-/// One line over the end card: the seat that said it, its display name
+/// The end card's quick message line: the seat that said it, its display name
 /// (resolved by the screen), the resolved text and a start serial. A new
-/// [serial] is a new message, including one that replaces another from the
-/// same seat still showing. C-485 D5.2.
+/// [serial] is a new message, including one that replaces the one still
+/// showing. C-485 D5.2, C-492 D2.
 class EndCardChatLine {
   const EndCardChatLine({
     required this.seat,
@@ -363,10 +363,11 @@ class SpeechChip extends StatelessWidget {
   }
 }
 
-/// The line laid over the end card for one seat: the board bubble's look
-/// without the tail, one line, the name in w700 then the line in w500. The
-/// root key is `end-card-chat-<seat>`. Pops in and fades out like the board
-/// bubble and starts over when [serial] changes. C-485 D5.2.
+/// The end card's quick message line, drawn by the game screen in the header
+/// band: the board bubble's look without the tail, one line, the name in w700
+/// then the line in w500. The root key is `end-card-chat-<seat>`. Pops in and
+/// fades out like the board bubble and starts over when [serial] changes.
+/// C-485 D5.2, C-492 D1.
 class EndCardChatBubble extends StatefulWidget {
   EndCardChatBubble({
     required this.seat,
