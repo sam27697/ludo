@@ -459,6 +459,31 @@ void _expectTop(_Fix f, Rect bubble, Rect row) {
   );
 }
 
+/// One line tall, stated so that it separates one line from two. The Arabic
+/// presets differ by about 1 dp in one-line height (the reference "oops" is
+/// 53.0 dp, "good_luck" 52.0 dp) while a second line adds about 40 dp: so
+/// the bubble is under 1.5 lines and within 3 dp of the reference line.
+void _expectOneLineTall(_Fix f, String id, Rect bubble, double oneLine) {
+  expect(
+    bubble.height,
+    lessThan(oneLine * 1.5),
+    reason: f.s.why(
+      '$id: one line tall, under 1.5 lines: the reference one line is '
+      '$oneLine dp, two lines would be about ${oneLine + 40} dp, this '
+      'bubble is ${bubble.height} dp ($bubble)',
+    ),
+  );
+  expect(
+    bubble.height,
+    closeTo(oneLine, 3),
+    reason: f.s.why(
+      '$id: one line tall, within 3 dp of the reference line: one line '
+      'is $oneLine dp (presets differ by about 1 dp), this bubble is '
+      '${bubble.height} dp ($bubble)',
+    ),
+  );
+}
+
 void _expectInSpan(_Fix f, Rect bubble, Rect span, double maxWidth) {
   expect(
     bubble.left,
@@ -634,6 +659,25 @@ double _scaleOf(WidgetTester tester, int seat, String why) {
         '${m.storage[5]}',
   );
   return m.storage[0];
+}
+
+/// The painted rect of the subtree under [root] in global coordinates, after
+/// every transform on the way: the union of each render box's bounds.
+Rect _paintedRect(WidgetTester tester, Finder root) {
+  Rect? painted;
+  void visit(RenderObject object) {
+    if (object is RenderBox && object.hasSize) {
+      final Rect box = MatrixUtils.transformRect(
+        object.getTransformTo(null),
+        Offset.zero & object.size,
+      );
+      painted = painted == null ? box : painted!.expandToInclude(box);
+    }
+    object.visitChildren(visit);
+  }
+
+  visit(tester.renderObject(root));
+  return painted!;
 }
 
 typedef _PopSample = ({int t, double scale});
@@ -1421,11 +1465,7 @@ void main() {
             final Rect bubble = f.rectOf(2);
             _expectInSpan(f, bubble, span, maxWidth);
             _expectTop(f, bubble, row);
-            expect(
-              bubble.height,
-              closeTo(oneLine, 0.5),
-              reason: f.s.why('${row3.$1}: one line tall, $bubble'),
-            );
+            _expectOneLineTall(f, row3.$1, bubble, oneLine);
             _expectClearOf(f, bubble, _leaveKey);
             _expectClearOf(f, bubble, _chatButton);
             _expectClearOf(f, bubble, _settingsKey);
@@ -2344,6 +2384,109 @@ void main() {
       await f.done();
     }
   });
+
+  // C-500 D6 as amended in run 117: the chip is flush on the board's outer
+  // edge and the board clips, so the pill grows inward: its painted rect is
+  // inside the board's and its outer edge stays on the board's edge.
+  for (final bool ar in const <bool>[false, true]) {
+    for (final bool topEdge in const <bool>[true, false]) {
+      final String edge = topEdge ? 'top' : 'bottom';
+      testWidgets('pop: 360 x 640, ${ar ? 'ar' : 'en'}, a $edge-edge seat: the '
+          'painted chip is inside the board and its outer edge stays on the '
+          'board\'s $edge edge from 0 to 300 ms, at 120 ms included', (
+        tester,
+      ) async {
+        final _Fix f = await _fix(
+          tester,
+          'pop inward $edge ${ar ? 'ar' : 'en'}',
+          players: 4,
+          locale: Locale(ar ? 'ar' : 'en'),
+          size: const Size(360, 640),
+        );
+        try {
+          // The board is the square the chips sit on; the LudoBoard widget
+          // is taller than it by the room it leaves round the square.
+          final Rect board = boardSquare(tester);
+          final Map<int, Rect> rest = <int, Rect>{
+            for (int seat = 0; seat < 4; seat++)
+              seat: _paintedRect(tester, find.byKey(chipPopKey(seat))),
+          };
+          final List<int> onEdge = <int>[
+            for (final MapEntry<int, Rect> e in rest.entries)
+              if (topEdge
+                  ? (e.value.top - board.top).abs() <= 0.5
+                  : (e.value.bottom - board.bottom).abs() <= 0.5)
+                e.key,
+          ];
+          expect(
+            onEdge,
+            isNotEmpty,
+            reason: f.s.why(
+              'fixture: some seat\'s chip rests flush on the board\'s '
+              '$edge edge (C-500 D6: the chip sits flush on the outer '
+              'edge); board $board, chips at rest $rest',
+            ),
+          );
+          final int seat = onEdge.first;
+          final Rect resting = rest[seat]!;
+          await f.emote(seat, 'hi');
+          for (final int ms in const <int>[0, 60, 120, 180, 240, 300]) {
+            await f.at(ms);
+            final Rect painted = _paintedRect(
+              tester,
+              find.byKey(chipPopKey(seat)),
+            );
+            final String at =
+                'seat $seat at $ms ms into the pop: painted chip $painted '
+                '(at rest $resting), board $board, scale '
+                '${_scaleOf(tester, seat, f.s.why('read the scale'))}';
+            expect(
+              painted.left,
+              greaterThanOrEqualTo(board.left - 0.5),
+              reason: f.s.why('the chip is inside the board on the left: $at'),
+            );
+            expect(
+              painted.right,
+              lessThanOrEqualTo(board.right + 0.5),
+              reason: f.s.why('the chip is inside the board on the right: $at'),
+            );
+            expect(
+              painted.top,
+              greaterThanOrEqualTo(board.top - 0.5),
+              reason: f.s.why('the chip is inside the board at the top: $at'),
+            );
+            expect(
+              painted.bottom,
+              lessThanOrEqualTo(board.bottom + 0.5),
+              reason: f.s.why(
+                'the chip is inside the board at the bottom: $at',
+              ),
+            );
+            expect(
+              topEdge ? painted.top : painted.bottom,
+              closeTo(topEdge ? board.top : board.bottom, 0.5),
+              reason: f.s.why(
+                'the chip\'s outer edge stays on the board\'s $edge edge '
+                '(the pop is anchored there and grows inward): $at',
+              ),
+            );
+            if (ms == 120) {
+              expect(
+                painted.height,
+                greaterThan(resting.height + 1),
+                reason: f.s.why(
+                  'fixture: the chip is really popped at 120 ms, taller '
+                  'than at rest: $at',
+                ),
+              );
+            }
+          }
+        } finally {
+          await f.done();
+        }
+      });
+    }
+  }
 
   group('pop on a bare LudoBoard', () {
     Future<List<_PopSample>> trace(
