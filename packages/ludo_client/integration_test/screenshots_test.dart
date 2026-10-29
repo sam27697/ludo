@@ -73,6 +73,7 @@ import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/services.dart' show MethodCall, MethodChannel;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6645,6 +6646,7 @@ void main() {
       gameId: '9' * 16,
       seatToken: 'tok-shot-87',
       textScale: 2.0,
+      expectNameDroppedOnPhone: true,
     );
   });
 
@@ -13815,14 +13817,35 @@ String _plainTextUnder(WidgetTester tester, Finder root) {
   return out.toString();
 }
 
-/// Asserts `end-card-chat-<seat>` is on screen and reads [name] then [line].
-void _expectEndCardChat(
+/// Logical width under which a surface counts as a phone for the pinned
+/// name drop in [_expectEndCardChat] (the Material compact breakpoint).
+const double _kPhoneWidth = 600;
+
+/// Asserts `end-card-chat-<seat>` is on screen and obeys C-500 D5: it shows
+/// [line] whole on one line (no ellipsis), it shows [name] before it exactly
+/// when "name: line" fits one line in the bubble's own text width, and its
+/// live region label is `chatSaid(name, line)` either way. The fit is decided
+/// from the painted text, not from a per-capture expectation: the bubble's
+/// plain text either starts with the name or is the line alone, and when the
+/// name was dropped the same two strings are laid out again here, in the
+/// bubble's own style, text scale and width, to prove they really do not fit.
+/// The width is the bubble's max width less the chrome the bubble measures for
+/// itself (its own size minus its text's). The replay uses the line's weight
+/// for the name, the narrowest the name can be, so a drop is only accepted when
+/// even that does not fit. With [expectNameDroppedOnPhone] set the answer is also
+/// pinned, but only on a phone-wide surface (logical width under [_kPhoneWidth]):
+/// capture 87, text scale 2.0 in Arabic, drops the name at 360 dp, while the
+/// headless tester's wider default surface can hold "name: line" in the 320 dp
+/// cap, and there the consistency checks above are the whole assertion.
+/// Returns true when the name is shown.
+bool _expectEndCardChat(
   WidgetTester tester, {
   required int seat,
   required String name,
   required String line,
   required String shotName,
   required String scenario,
+  bool? expectNameDroppedOnPhone,
 }) {
   final Finder bubble = find.byKey(Key('end-card-chat-$seat'));
   expect(
@@ -13833,15 +13856,158 @@ void _expectEndCardChat(
         'seat $seat, in FINISHED must show end-card-chat-$seat',
   );
   final String shown = _plainTextUnder(tester, bubble);
-  final int nameAt = shown.indexOf(name);
-  final int lineAt = shown.indexOf(line);
+  final bool nameShown = shown.startsWith(name);
   expect(
-    nameAt >= 0 && lineAt > nameAt,
-    isTrue,
+    shown,
+    nameShown ? '$name: $line' : line,
     reason:
-        'capture $shotName ($scenario): C-492 D3, end-card-chat-$seat must '
-        'read the name "$name" and then the line "$line", got "$shown"',
+        'capture $shotName ($scenario): C-500 D5, end-card-chat-$seat must '
+        'read the line "$line" whole, with or without "$name: " before it, '
+        'got "$shown"',
   );
+
+  final Finder paragraph = find.descendant(
+    of: bubble,
+    matching: find.byType(RichText),
+  );
+  expect(
+    paragraph,
+    findsOneWidget,
+    reason:
+        'capture $shotName ($scenario): C-500 D5, end-card-chat-$seat must '
+        'paint one paragraph, found ${paragraph.evaluate().length}',
+  );
+  final RenderParagraph rendered = tester.renderObject<RenderParagraph>(
+    paragraph,
+  );
+  expect(
+    rendered.didExceedMaxLines,
+    isFalse,
+    reason:
+        'capture $shotName ($scenario): C-500 D5, the text of '
+        'end-card-chat-$seat must fit its one line with no ellipsis, but '
+        '"$shown" overflowed',
+  );
+  expect(
+    rendered.size.height,
+    lessThan(2 * rendered.getMinIntrinsicHeight(double.infinity)),
+    reason:
+        'capture $shotName ($scenario): C-500 D5, end-card-chat-$seat must '
+        'be one line, its paragraph is ${rendered.size.height} dp tall',
+  );
+
+  final Element element = tester.element(bubble);
+  final double maxWidth = tester
+      .widget<ConstrainedBox>(
+        find
+            .descendant(of: bubble, matching: find.byType(ConstrainedBox))
+            .first,
+      )
+      .constraints
+      .maxWidth;
+  final double chrome = tester.getSize(bubble).width - rendered.size.width;
+  final double textWidth = maxWidth - chrome;
+
+  final TextSpan root = rendered.text as TextSpan;
+  TextSpan? lineSpan;
+  root.visitChildren((InlineSpan span) {
+    if (span is TextSpan && span.text == line) {
+      lineSpan = span;
+    }
+    return true;
+  });
+  expect(
+    lineSpan,
+    isNotNull,
+    reason:
+        'capture $shotName ($scenario): C-500 D5, no span of '
+        'end-card-chat-$seat carries the line "$line"',
+  );
+  final TextPainter painter = TextPainter(
+    text: TextSpan(
+      style: root.style,
+      children: <InlineSpan>[
+        TextSpan(text: '$name: ', style: lineSpan!.style),
+        lineSpan!,
+      ],
+    ),
+    textDirection: Directionality.of(element),
+    textScaler: MediaQuery.textScalerOf(element),
+    locale: Localizations.maybeLocaleOf(element),
+    maxLines: 1,
+    ellipsis: '\u2026',
+  )..layout(maxWidth: textWidth);
+  final bool wouldFit = !painter.didExceedMaxLines;
+  painter.text = TextSpan(
+    style: root.style,
+    children: <InlineSpan>[
+      TextSpan(text: '$name: ', style: lineSpan!.style),
+      lineSpan!,
+    ],
+  );
+  painter
+    ..maxLines = null
+    ..ellipsis = null
+    ..layout();
+  final double wanted = painter.width;
+  painter.dispose();
+  if (nameShown) {
+    expect(
+      wouldFit,
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): C-500 D5, the name is shown in '
+          'end-card-chat-$seat but "$name: $line" does not fit '
+          '$textWidth dp',
+    );
+  } else {
+    expect(
+      wouldFit,
+      isFalse,
+      reason:
+          'capture $shotName ($scenario): C-500 D5, the name was dropped '
+          'from end-card-chat-$seat but "$name: $line" fits $textWidth dp '
+          '(laid out at $wanted dp)',
+    );
+  }
+  final double surfaceWidth =
+      tester.view.physicalSize.width / tester.view.devicePixelRatio;
+  if (expectNameDroppedOnPhone != null && surfaceWidth < _kPhoneWidth) {
+    expect(
+      !nameShown,
+      expectNameDroppedOnPhone,
+      reason:
+          'capture $shotName ($scenario): C-500 D5, expected the name to '
+          'be ${expectNameDroppedOnPhone ? 'dropped' : 'kept'} in '
+          'end-card-chat-$seat on a $surfaceWidth dp wide surface, got '
+          '"$shown" in a text width of $textWidth dp',
+    );
+  }
+
+  final AppLocalizations loc = AppLocalizations.of(element);
+  final SemanticsHandle semantics = tester.ensureSemantics();
+  try {
+    expect(
+      tester.getSemantics(bubble).label,
+      loc.chatSaid(name, line),
+      reason:
+          'capture $shotName ($scenario): C-500 D5, the live region label of '
+          'end-card-chat-$seat must be chatSaid("$name", "$line") whether or '
+          'not the name is drawn',
+    );
+  } finally {
+    semantics.dispose();
+  }
+  // What this run measured, for the record: the name is shown or dropped by
+  // the width of the surface the run has.
+  // ignore: avoid_print
+  print(
+    'capture $shotName ($scenario): end-card-chat-$seat on a $surfaceWidth '
+    'dp surface, text width $textWidth dp, "$name: $line" needs $wanted dp, '
+    'name '
+    '${nameShown ? 'shown' : 'dropped'}',
+  );
+  return nameShown;
 }
 
 /// Asserts the bubble `end-card-chat-<seat>` sits clear of the three things
@@ -13886,7 +14052,9 @@ void _expectChatClearOfHeader(
 /// with no `re`, in order, [emoteGap] apart, and the shot is taken 400 ms after
 /// the last. Before the shot the card's variant, the one line that is up (the
 /// newest, C-492 D2, with no bubble of any other seat) and its place clear of
-/// the title and the header's buttons, and the reply chips are asserted.
+/// the title and the header's buttons, and the reply chips are asserted. The
+/// line is read under C-500 D5 (the name only when it fits); [expectNameDroppedOnPhone]
+/// pins that answer for a capture whose text scale forces it.
 Future<void> _shootEndCardChat(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -13900,6 +14068,7 @@ Future<void> _shootEndCardChat(
   required String gameId,
   required String seatToken,
   double? textScale,
+  bool? expectNameDroppedOnPhone,
   Duration emoteGap = Duration.zero,
 }) async {
   binding.testTextInput.register();
@@ -14079,6 +14248,7 @@ Future<void> _shootEndCardChat(
       line: lines[newestEmote]!,
       shotName: shotName,
       scenario: scenario,
+      expectNameDroppedOnPhone: expectNameDroppedOnPhone,
     );
     for (final int seat in seats) {
       if (seat == newestSeat) {
