@@ -311,15 +311,49 @@ double _opacityAt(double ms) {
 /// by the quick messages sheet and by the end card's reply chips. A button
 /// for TalkBack, labelled with its line.
 class SpeechChip extends StatelessWidget {
-  const SpeechChip({super.key, required this.line, required this.onTap});
+  const SpeechChip({
+    super.key,
+    required this.line,
+    required this.onTap,
+    this.compact = false,
+  });
 
   final String line;
   final VoidCallback onTap;
 
+  /// Start and end padding [kSpace2] instead of [kSpace3], nothing else.
+  /// Only the end card's reply row sets it, when that buys one row. C-498 D2.
+  final bool compact;
+
+  static TextStyle? _lineStyle(BuildContext context) =>
+      Theme.of(context).textTheme.labelLarge?.copyWith(color: LudoColors.ink);
+
+  static double _side(bool compact) => compact ? kSpace2 : kSpace3;
+
+  /// The width a chip for [line] takes with unbounded width: the line's
+  /// natural width in the chip's own style, text scale and direction, plus
+  /// the chip's own side padding. C-498 D3.
+  static double naturalWidth(
+    BuildContext context,
+    String line, {
+    bool compact = false,
+  }) {
+    final TextStyle style = DefaultTextStyle.of(context).style
+        .merge(_lineStyle(context));
+    final TextPainter painter = TextPainter(
+      text: TextSpan(text: line, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+    )..layout();
+    final double width = painter.width;
+    painter.dispose();
+    return width + 2 * _side(compact);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final TextStyle? style = Theme.of(context).textTheme.labelLarge
-        ?.copyWith(color: LudoColors.ink);
+    final TextStyle? style = _lineStyle(context);
     return Semantics(
       button: true,
       container: true,
@@ -339,9 +373,9 @@ class SpeechChip extends StatelessWidget {
               tailAnchor: ChatTailAnchor.start,
             ),
             child: Padding(
-              padding: const EdgeInsetsDirectional.only(
-                start: kSpace3,
-                end: kSpace3,
+              padding: EdgeInsetsDirectional.only(
+                start: _side(compact),
+                end: _side(compact),
                 bottom: kChatTailHeight,
               ),
               child: ConstrainedBox(
