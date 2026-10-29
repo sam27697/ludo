@@ -29,7 +29,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
 import 'capture_gloat.dart';
-import 'chat_bubble.dart' show EndCardChatLine;
+import 'chat_bubble.dart' show EndCardChatBubble, EndCardChatLine;
 import 'die_cube.dart';
 import 'die_mark.dart';
 import 'end_card.dart';
@@ -421,10 +421,12 @@ class _GameScreenState extends State<GameScreen> {
   // PLAYING clears them all, the way it clears the gloat. [_chatMuted] is
   // owned here and bound both ways to the sheet's switch.
   final Map<int, _ChatEntry> _chatEntries = <int, _ChatEntry>{};
-  // C-485 D4: the same, for the lines laid over the end card once the game is
-  // over (FINISHED, or a rematch LOBBY). Kept apart so the PLAYING to
-  // FINISHED change takes down the board's and leaves these alone.
-  final Map<int, _ChatEntry> _endChatEntries = <int, _ChatEntry>{};
+  // C-485 D4, C-492 D2 and D7: once the game is over (FINISHED, or a rematch
+  // LOBBY) the room shows one line, the newest, in the header band. Kept
+  // apart so the PLAYING to FINISHED change takes down the board's and leaves
+  // this alone. A line that is shown replaces the one up and its timer.
+  _ChatEntry? _endChat;
+  int? _endChatSeat;
   int _chatSerial = 0;
   final ValueNotifier<bool> _chatMuted = ValueNotifier<bool>(false);
   bool _chatCooling = false;
@@ -1232,13 +1234,14 @@ class _GameScreenState extends State<GameScreen> {
     _scheduleGloatRebuild();
   }
 
-  /// C-478 D5.4 and C-485 D4. An `emote` push shows a line at its sender's
+  /// C-478 D5.4 and C-492 D2. An `emote` push shows a line at its sender's
   /// seat when the seat is known, the id is one of the twelve and the player
   /// has not hidden the others (mine are never hidden): a bubble on the board
-  /// while PLAYING, a line over the end card in FINISHED or a rematch LOBBY,
-  /// nothing in any other state. Anything else shows nothing and says
+  /// while PLAYING, the one line in the header band in FINISHED or a rematch
+  /// LOBBY, nothing in any other state. Anything else shows nothing and says
   /// nothing. A newer line for a seat replaces that seat's and starts its
-  /// life over.
+  /// life over; on the end card a newer line from any seat replaces the one
+  /// up.
   void _onEmoteFrame(Frame frame) {
     final RoomSnapshot? room = widget.controller.room;
     final int? seat = _intAt(frame.data, 'seat');
@@ -1268,24 +1271,38 @@ class _GameScreenState extends State<GameScreen> {
     if (_chatMuted.value && seat != widget.controller.seat) {
       return;
     }
-    final Map<int, _ChatEntry> entries = onBoard
-        ? _chatEntries
-        : _endChatEntries;
-    entries[seat]?.timer.cancel();
     _chatSerial++;
     final int serial = _chatSerial;
-    entries[seat] = _ChatEntry(
-      id: id,
-      serial: serial,
-      timer: Timer(kChatBubbleLife, () {
-        final _ChatEntry? entry = entries[seat];
-        if (entry == null || entry.serial != serial) {
-          return;
-        }
-        entries.remove(seat);
-        _scheduleGloatRebuild();
-      }),
-    );
+    if (onBoard) {
+      _chatEntries[seat]?.timer.cancel();
+      _chatEntries[seat] = _ChatEntry(
+        id: id,
+        serial: serial,
+        timer: Timer(kChatBubbleLife, () {
+          final _ChatEntry? entry = _chatEntries[seat];
+          if (entry == null || entry.serial != serial) {
+            return;
+          }
+          _chatEntries.remove(seat);
+          _scheduleGloatRebuild();
+        }),
+      );
+    } else {
+      _endChat?.timer.cancel();
+      _endChatSeat = seat;
+      _endChat = _ChatEntry(
+        id: id,
+        serial: serial,
+        timer: Timer(kChatBubbleLife, () {
+          if (_endChat?.serial != serial) {
+            return;
+          }
+          _endChat = null;
+          _endChatSeat = null;
+          _scheduleGloatRebuild();
+        }),
+      );
+    }
     _scheduleGloatRebuild();
   }
 
@@ -1301,17 +1318,17 @@ class _GameScreenState extends State<GameScreen> {
     _scheduleGloatRebuild();
   }
 
-  /// Every bubble and every end-card line goes, with their timers. A resync,
-  /// a resume, a new game, dispose. C-478 D5.4, C-485 D4.
+  /// Every bubble and the end-card line go, with their timers. A resync,
+  /// a resume, a new game, dispose. C-478 D5.4, C-492 D7.
   void _clearChatBubbles() {
     _clearBoardChat();
-    if (_endChatEntries.isEmpty) {
+    final _ChatEntry? line = _endChat;
+    if (line == null) {
       return;
     }
-    for (final _ChatEntry entry in _endChatEntries.values) {
-      entry.timer.cancel();
-    }
-    _endChatEntries.clear();
+    line.timer.cancel();
+    _endChat = null;
+    _endChatSeat = null;
     _scheduleGloatRebuild();
   }
 
@@ -1319,17 +1336,17 @@ class _GameScreenState extends State<GameScreen> {
   void _onChatMutedChanged() {
     if (_chatMuted.value) {
       final int? mine = widget.controller.seat;
-      for (final Map<int, _ChatEntry> entries in <Map<int, _ChatEntry>>[
-        _chatEntries,
-        _endChatEntries,
-      ]) {
-        final List<int> others = <int>[
-          for (final int seat in entries.keys)
-            if (seat != mine) seat,
-        ];
-        for (final int seat in others) {
-          entries.remove(seat)?.timer.cancel();
-        }
+      final List<int> others = <int>[
+        for (final int seat in _chatEntries.keys)
+          if (seat != mine) seat,
+      ];
+      for (final int seat in others) {
+        _chatEntries.remove(seat)?.timer.cancel();
+      }
+      if (_endChat != null && _endChatSeat != mine) {
+        _endChat?.timer.cancel();
+        _endChat = null;
+        _endChatSeat = null;
       }
     }
     _scheduleGloatRebuild();
@@ -1347,36 +1364,36 @@ class _GameScreenState extends State<GameScreen> {
     ];
   }
 
-  /// C-485 D5.2. The lines over the end card, the name resolved against the
-  /// live seats and then the game just finished. A line whose seat has no
-  /// name in either is not drawn.
-  List<EndCardChatLine> _endChatLinesOf(
+  /// C-492 D1 and D2. The one line in the header band, the name resolved
+  /// against the live seats and then the game just finished. A line whose
+  /// seat has no name in either is not drawn.
+  EndCardChatLine? _endChatLineOf(
     AppLocalizations loc,
     RoomSnapshot room,
-    RoomSnapshot finished,
+    RoomSnapshot? finished,
   ) {
-    String? nameOf(int seat) {
-      for (final RoomSnapshot source in <RoomSnapshot>[room, finished]) {
-        for (final SeatState s in source.seats) {
-          if (s.seat == seat) {
-            return s.name;
-          }
-        }
-      }
+    final _ChatEntry? entry = _endChat;
+    final int? seat = _endChatSeat;
+    if (entry == null || seat == null) {
       return null;
     }
-
-    return <EndCardChatLine>[
-      for (final MapEntry<int, _ChatEntry> entry in _endChatEntries.entries)
-        if (quickChatLine(loc, entry.value.id) case final String line)
-          if (nameOf(entry.key) case final String name)
-            EndCardChatLine(
-              seat: entry.key,
-              name: name,
-              text: line,
-              serial: entry.value.serial,
-            ),
-    ];
+    final String? line = quickChatLine(loc, entry.id);
+    if (line == null) {
+      return null;
+    }
+    for (final RoomSnapshot? source in <RoomSnapshot?>[room, finished]) {
+      for (final SeatState s in source?.seats ?? const <SeatState>[]) {
+        if (s.seat == seat) {
+          return EndCardChatLine(
+            seat: seat,
+            name: s.name,
+            text: line,
+            serial: entry.serial,
+          );
+        }
+      }
+    }
+    return null;
   }
 
   /// C-478 D5.1. A tap while the button rests plays the invalid-tap cue and
@@ -3417,6 +3434,22 @@ class _GameScreenState extends State<GameScreen> {
       body = _connectedBody(loc, controller, room);
     }
 
+    // C-492 D8: the quick message line is drawn only while the end card is
+    // the body, the same branches that picked it above. A held end (the board
+    // still shown in FINISHED), the stale table and every other body draw
+    // nothing.
+    final bool endCardIsBody =
+        rematchGone ||
+        isOfflineEndCard ||
+        (room != null &&
+            !isOffline &&
+            ((room.state == RoomState.finished &&
+                    !(_isEndHeld && room.seats.length >= 2)) ||
+                (room.state == RoomState.lobby && room.rematch != null)));
+    final EndCardChatLine? endChatLine = endCardIsBody
+        ? _endChatLineOf(loc, room, controller.lastFinished)
+        : null;
+
     final SystemUiOverlayStyle overlayStyle =
         Theme.of(context).brightness == Brightness.light
         ? SystemUiOverlayStyle.dark
@@ -3435,84 +3468,134 @@ class _GameScreenState extends State<GameScreen> {
         child: Scaffold(
           backgroundColor: Theme.of(context).scaffoldBackgroundColor,
           body: SafeArea(
-            child: Column(
+            child: Stack(
+              fit: StackFit.passthrough,
               children: [
-                // Signature chrome: felt edge frames the seat-pip strip so
-                // every body below (waiting, playing, game-over, and the rest)
-                // inherits the same table cue without each state painting its
-                // own copy.
-                const FeltEdge(key: Key('game-felt-edge')),
-                SizedBox(
-                  height: 48,
-                  child: Stack(
-                    // C-250 rule 1 lets only the play header sit between the
-                    // strip and the board, so the row's spare height goes above
-                    // the strip.
-                    alignment: Alignment.bottomCenter,
-                    children: [
-                      SeatPipStrip(
-                        key: const Key('game-seat-pip-strip'),
-                        seats: room == null ? null : _seatsInPlayOf(room),
-                        turnSeat:
-                            (room != null && room.state == RoomState.playing)
-                            ? room.turn?.seat
-                            : null,
-                      ),
-                      PositionedDirectional(
-                        start: kSpace2,
-                        child: IconButton(
-                          // The key name is historical (the old app bar
-                          // action); tests pin it.
-                          key: const Key('game-screen-appbar-leave'),
-                          style: IconButton.styleFrom(
-                            minimumSize: const Size(48, 48),
+                Column(
+                  children: [
+                    // Signature chrome: felt edge frames the seat-pip strip so
+                    // every body below (waiting, playing, game-over, and the rest)
+                    // inherits the same table cue without each state painting its
+                    // own copy.
+                    const FeltEdge(key: Key('game-felt-edge')),
+                    SizedBox(
+                      height: 48,
+                      child: Stack(
+                        // C-250 rule 1 lets only the play header sit between the
+                        // strip and the board, so the row's spare height goes above
+                        // the strip.
+                        alignment: Alignment.bottomCenter,
+                        children: [
+                          SeatPipStrip(
+                            key: const Key('game-seat-pip-strip'),
+                            seats: room == null ? null : _seatsInPlayOf(room),
+                            turnSeat:
+                                (room != null &&
+                                    room.state == RoomState.playing)
+                                ? room.turn?.seat
+                                : null,
                           ),
-                          tooltip: loc.gameLeaveButton,
-                          onPressed: () => _handleLeaveRequest(context, loc),
-                          icon: const Icon(Icons.close),
-                        ),
-                      ),
-                      if (controller.phase == RoomPhase.connected &&
-                          room != null &&
-                          room.state == RoomState.playing &&
-                          controller.seat != null)
-                        PositionedDirectional(
-                          end: kSpace2 + 48 + kSpace1,
-                          child: Opacity(
-                            opacity: _chatCooling ? 0.38 : 1,
+                          PositionedDirectional(
+                            start: kSpace2,
                             child: IconButton(
-                              key: const Key('game-chat-button'),
+                              // The key name is historical (the old app bar
+                              // action); tests pin it.
+                              key: const Key('game-screen-appbar-leave'),
                               style: IconButton.styleFrom(
                                 minimumSize: const Size(48, 48),
                               ),
-                              tooltip: loc.chatButtonTooltip,
-                              onPressed: _onChatButtonTap,
-                              icon: const Icon(
-                                Icons.chat_bubble_outline_rounded,
-                              ),
+                              tooltip: loc.gameLeaveButton,
+                              onPressed: () =>
+                                  _handleLeaveRequest(context, loc),
+                              icon: const Icon(Icons.close),
                             ),
                           ),
-                        ),
-                      PositionedDirectional(
-                        end: kSpace2,
-                        child: IconButton(
-                          key: const Key('game-settings-button'),
-                          style: IconButton.styleFrom(
-                            minimumSize: const Size(48, 48),
+                          if (controller.phase == RoomPhase.connected &&
+                              room != null &&
+                              room.state == RoomState.playing &&
+                              controller.seat != null)
+                            PositionedDirectional(
+                              end: kSpace2 + 48 + kSpace1,
+                              child: Opacity(
+                                opacity: _chatCooling ? 0.38 : 1,
+                                child: IconButton(
+                                  key: const Key('game-chat-button'),
+                                  style: IconButton.styleFrom(
+                                    minimumSize: const Size(48, 48),
+                                  ),
+                                  tooltip: loc.chatButtonTooltip,
+                                  onPressed: _onChatButtonTap,
+                                  icon: const Icon(
+                                    Icons.chat_bubble_outline_rounded,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          PositionedDirectional(
+                            end: kSpace2,
+                            child: IconButton(
+                              key: const Key('game-settings-button'),
+                              style: IconButton.styleFrom(
+                                minimumSize: const Size(48, 48),
+                              ),
+                              tooltip: loc.settingsTooltip,
+                              onPressed: () =>
+                                  showFeedbackSettingsSheet(context),
+                              icon: const Icon(Icons.tune_rounded),
+                            ),
                           ),
-                          tooltip: loc.settingsTooltip,
-                          onPressed: () => showFeedbackSettingsSheet(context),
-                          icon: const Icon(Icons.tune_rounded),
-                        ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                    if (controller.hasDesynced) _desyncBanner(context, loc),
+                    Expanded(child: body),
+                  ],
                 ),
-                if (controller.hasDesynced) _desyncBanner(context, loc),
-                Expanded(child: body),
+                if (endChatLine != null) _endChatLayer(loc, endChatLine),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// C-492 D1 and D6. The end card's one quick message line, laid over the
+  /// whole screen column so a bubble taller than the header row paints over
+  /// the top of the body instead of under it. It mirrors the column's own top
+  /// (the felt edge, then the 48 dp header row), takes no layout space and
+  /// takes no taps, so the pip strip under it keeps working.
+  Widget _endChatLayer(AppLocalizations loc, EndCardChatLine line) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        key: const Key('end-card-chat-lines'),
+        child: Column(
+          children: [
+            const SizedBox(height: kFeltEdgeThickness),
+            SizedBox(
+              height: 48,
+              child: LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints constraints) {
+                  const double inset = kSpace2 + 48 + kSpace1;
+                  final double maxWidth = math.max(
+                    0,
+                    math.min(320, constraints.maxWidth - 2 * inset),
+                  );
+                  return CustomSingleChildLayout(
+                    delegate: _HeaderBandLine(maxWidth),
+                    child: EndCardChatBubble(
+                      seat: line.seat,
+                      name: line.name,
+                      text: line.text,
+                      label: loc.chatSaid(line.name, line.text),
+                      serial: line.serial,
+                      maxWidth: maxWidth,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -4633,7 +4716,8 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   /// C-250 rule 3 / amendment run 72 (rule 9): the ring depletes with the
-  /// turn and turns `LudoColors.error` for the last 10s; the Text keyed
+  /// turn and turns `LudoColors.error` for the last 10s (the last 3s when
+  /// the running segment is itself 10s or shorter, C-495); the Text keyed
   /// `game-screen-turn-countdown` shows only the bare seconds so it fits on
   /// one line inside the ring, and the sentence that used to sit there
   /// moves to the `game-header-countdown-semantics` label, with the
@@ -4644,11 +4728,20 @@ class _GameScreenState extends State<GameScreen> {
     TurnState turn,
     Color seatColor,
   ) {
-    final bool lastTenSeconds = _countdownRemainingSeconds <= 10;
-    final Color ringColor = lastTenSeconds ? LudoColors.error : seatColor;
-    final int turnSeconds = room.rules.turnSeconds;
-    final double remainingFraction = turnSeconds > 0
-        ? (_countdownRemainingSeconds / turnSeconds).clamp(0.0, 1.0)
+    // C-495 decision 3: the ring measures the segment that is running (an
+    // away seat's is 10s, not the room's turn length). An old server sends
+    // no segment, so the room's turn length stands in for it.
+    final int? segmentMs = turn.segmentMs;
+    final int budget = (segmentMs != null && segmentMs > 0)
+        ? (segmentMs + 999) ~/ 1000
+        : room.rules.turnSeconds;
+    final bool shortClock = budget <= 10;
+    final bool runningOut = shortClock
+        ? _countdownRemainingSeconds <= 3
+        : _countdownRemainingSeconds <= 10;
+    final Color ringColor = runningOut ? LudoColors.error : seatColor;
+    final double remainingFraction = budget > 0
+        ? (_countdownRemainingSeconds / budget).clamp(0.0, 1.0)
         : 0.0;
 
     return Semantics(
@@ -5069,7 +5162,6 @@ class _GameScreenState extends State<GameScreen> {
             : const <String>['good_game', 'revenge', 'lucky'],
         onQuickReply: _onChatPick,
         quickReplyCooling: _chatCooling,
-        chatLines: _endChatLinesOf(loc, room, finished),
       ),
       trailing: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -5315,8 +5407,9 @@ class _CountdownRing extends StatelessWidget {
     required this.remainingFraction,
   });
 
-  /// The turn seat's own colour above 10s left, `LudoColors.error` at 10s
-  /// and below (C-250 rule 8).
+  /// The turn seat's own colour, `LudoColors.error` at 10s left and below
+  /// on a segment longer than 10s, at 3s and below on a segment of 10s or
+  /// less (C-250 rule 8, C-495 decision 3).
   final Color color;
 
   /// 0.0 (deadline reached) to 1.0 (a fresh turn): how much of the turn is
@@ -5609,6 +5702,33 @@ class _PendingSafeCue {
   final int progress;
   final bool star;
   Timer? fallbackTimer;
+}
+
+/// C-492 D6: centres the header band's line on the row. A line that fits is
+/// centred vertically; a taller one starts at the row's top and paints down
+/// over the body. The row's own size is kept, so the line takes no space.
+class _HeaderBandLine extends SingleChildLayoutDelegate {
+  _HeaderBandLine(this.maxWidth);
+
+  final double maxWidth;
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
+    return BoxConstraints(maxWidth: maxWidth);
+  }
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) {
+    return Offset(
+      (size.width - childSize.width) / 2,
+      math.max(0, (size.height - childSize.height) / 2),
+    );
+  }
+
+  @override
+  bool shouldRelayout(_HeaderBandLine oldDelegate) {
+    return oldDelegate.maxWidth != maxWidth;
+  }
 }
 
 /// One quick message on the board: the preset id, the start serial the

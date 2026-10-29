@@ -93,6 +93,7 @@ import 'package:ludo_client/src/room_code.dart'
 import 'package:ludo_client/src/server_config.dart';
 import 'package:ludo_client/src/session_memory.dart'
     show LastGame, SeatRecord, SessionMemory;
+import 'package:ludo_client/src/theme.dart' show LudoColors;
 import 'package:ludo_client/src/verify_rolls_button.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -6572,12 +6573,14 @@ void main() {
   });
 
   // ==========================================================================
-  // 84-87: order 489 (C-485 D7). Emulator frames of the end card's replies and
-  // lines: a FINISHED room reached through a real GameScreen over
-  // FakeTransport the way captures 21 and 22 reach theirs, then `emote`
-  // pushes with no `re` the way captures 81-83 inject them. Frames copied by
-  // hand into this file, no server, no pumpAndSettle once GameScreen is up.
-  // Bodies live at the bottom of the file.
+  // 84-87: order 489 (C-485 D7), re-pointed by order 497 to C-492. Emulator
+  // frames of the end card's replies and lines: a FINISHED room reached
+  // through a real GameScreen over FakeTransport the way captures 21 and 22
+  // reach theirs, then `emote` pushes with no `re` the way captures 81-83
+  // inject them. Since C-492 the line is one bubble, the newest, drawn in the
+  // header band. Frames copied by hand into this file, no server, no
+  // pumpAndSettle once GameScreen is up. Bodies live at the bottom of the
+  // file.
   // ==========================================================================
   testWidgets('capture 84-end-lose-chat-en', (tester) async {
     await _shootEndCardChat(
@@ -6641,6 +6644,58 @@ void main() {
       gameId: '9' * 16,
       seatToken: 'tok-shot-87',
       textScale: 2.0,
+    );
+  });
+
+  // ==========================================================================
+  // 88-90: order 497 (C-492 D2, C-495 D3). Capture 88 is the end card's
+  // replace rule: seat 2's line, 300 ms later my own (the server's copy of it
+  // arrives as an `emote` push like anyone's), and only mine is left. Captures
+  // 89 and 90 are an opponent on a 10 s segment at 8 s and at 2 s left: a
+  // PLAYING room reached the way 79-83 reach theirs, then a `room` push whose
+  // turn carries `segment_ms`, then real time until the digits read the
+  // target. Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 88-end-chat-replace-en', (tester) async {
+    await _shootEndCardChat(
+      tester,
+      binding,
+      shotName: '88-end-chat-replace-en',
+      locale: const Locale('en'),
+      fourSeats: false,
+      winnerSeat: 0,
+      emotes: const <(int, String)>[(2, 'good_game'), (0, 'ha_ha')],
+      expectedReplies: const <String>['good_game', 'ha_ha'],
+      roomCode: 'GG88EN',
+      gameId: 'a' * 16,
+      seatToken: 'tok-shot-88',
+      emoteGap: const Duration(milliseconds: 300),
+    );
+  });
+
+  testWidgets('capture 89-away-ring-8s-en', (tester) async {
+    await _shootAwayRing(
+      tester,
+      binding,
+      shotName: '89-away-ring-8s-en',
+      locale: const Locale('en'),
+      secondsLeft: 8,
+      roomCode: 'AW89EN',
+      gameId: 'b' * 16,
+      seatToken: 'tok-shot-89',
+    );
+  });
+
+  testWidgets('capture 90-away-ring-2s-ar', (tester) async {
+    await _shootAwayRing(
+      tester,
+      binding,
+      shotName: '90-away-ring-2s-ar',
+      locale: const Locale('ar'),
+      secondsLeft: 2,
+      roomCode: 'AW90AR',
+      gameId: 'c' * 16,
+      seatToken: 'tok-shot-90',
     );
   });
 }
@@ -13643,7 +13698,9 @@ Future<void> _shootChatBubblesLarge(
 
 // ============================================================================
 // Order 489 (captures 84-87): the end card's replies and lines (C-485 D5.1,
-// D5.2, D7).
+// D5.2, D7), re-pointed by order 497 to C-492 (one line, the newest, in the
+// header band) and extended with capture 88; captures 89 and 90 are C-495's
+// short clock ring.
 // ============================================================================
 
 /// Every `Text` and `RichText` under [root] flattened to one string, so a
@@ -13673,8 +13730,8 @@ void _expectEndCardChat(
     bubble,
     findsOneWidget,
     reason:
-        'capture $shotName ($scenario): C-485 D5.2, an emote from seat $seat '
-        'in FINISHED must show end-card-chat-$seat',
+        'capture $shotName ($scenario): C-492 D2, the newest emote, from '
+        'seat $seat, in FINISHED must show end-card-chat-$seat',
   );
   final String shown = _plainTextUnder(tester, bubble);
   final int nameAt = shown.indexOf(name);
@@ -13683,17 +13740,54 @@ void _expectEndCardChat(
     nameAt >= 0 && lineAt > nameAt,
     isTrue,
     reason:
-        'capture $shotName ($scenario): C-485 D5.2, end-card-chat-$seat must '
+        'capture $shotName ($scenario): C-492 D3, end-card-chat-$seat must '
         'read the name "$name" and then the line "$line", got "$shown"',
   );
+}
+
+/// Asserts the bubble `end-card-chat-<seat>` sits clear of the three things
+/// C-492 D1 keeps it off: the winner's title and the header's two buttons.
+/// Plain rect intersection (edges that only touch do not count), read after
+/// the pop and the layout are done.
+void _expectChatClearOfHeader(
+  WidgetTester tester, {
+  required int seat,
+  required String shotName,
+  required String scenario,
+}) {
+  final Rect bubble = tester.getRect(find.byKey(Key('end-card-chat-$seat')));
+  for (final String keyName in const <String>[
+    'game-screen-winner',
+    'game-screen-appbar-leave',
+    'game-settings-button',
+  ]) {
+    final Finder other = find.byKey(Key(keyName));
+    expect(
+      other,
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): C-492 D1, $keyName must be on '
+          'screen to be measured against end-card-chat-$seat',
+    );
+    final Rect otherRect = tester.getRect(other);
+    expect(
+      bubble.overlaps(otherRect),
+      isFalse,
+      reason:
+          'capture $shotName ($scenario): C-492 D1, end-card-chat-$seat '
+          '($bubble) must not intersect $keyName ($otherRect)',
+    );
+  }
 }
 
 /// Captures 84-87 (order 489, C-485 D5.1, D5.2, D7). A room walked to
 /// FINISHED through a real GameScreen: two seats `[0, 2]` or, with
 /// [fourSeats], `[0, 1, 2, 3]`, viewer seat 0, `game_over` naming
 /// [winnerSeat]. After the end card has settled the [emotes] land as pushes
-/// with no `re`, in order, and the shot is taken 400 ms after the last. Before
-/// the shot the card's variant, its lines and its reply chips are asserted.
+/// with no `re`, in order, [emoteGap] apart, and the shot is taken 400 ms after
+/// the last. Before the shot the card's variant, the one line that is up (the
+/// newest, C-492 D2, with no bubble of any other seat) and its place clear of
+/// the title and the header's buttons, and the reply chips are asserted.
 Future<void> _shootEndCardChat(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -13707,6 +13801,7 @@ Future<void> _shootEndCardChat(
   required String gameId,
   required String seatToken,
   double? textScale,
+  Duration emoteGap = Duration.zero,
 }) async {
   binding.testTextInput.register();
   _stubScreenshotChannel(tester);
@@ -13840,13 +13935,15 @@ Future<void> _shootEndCardChat(
           '"$expectedTitle", got "$shownTitle"',
     );
 
-    expect(
-      find.byKey(const Key('end-card-chat-lines')),
-      findsNothing,
-      reason:
-          'capture $shotName ($scenario): C-485 D6.1, no line may be up '
-          'before the emote pushes',
-    );
+    for (final int seat in seats) {
+      expect(
+        find.byKey(Key('end-card-chat-$seat')),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario): C-485 D6.1, no line may be up '
+            'before the emote pushes, but end-card-chat-$seat is',
+      );
+    }
     final Finder replies = find.byKey(const Key('end-card-quick-replies'));
     expect(
       replies,
@@ -13859,56 +13956,56 @@ Future<void> _shootEndCardChat(
     final Map<String, String> lines = locale.languageCode == 'ar'
         ? _chatLinesAr
         : _chatLinesEn;
-    for (final (int seat, String emote) in emotes) {
-      await _pushEmote(tester, opened.transport, seat: seat, emote: emote);
+    for (int i = 0; i < emotes.length; i++) {
+      if (i > 0 && emoteGap > Duration.zero) {
+        await tester.pump(emoteGap);
+      }
+      await _pushEmote(
+        tester,
+        opened.transport,
+        seat: emotes[i].$1,
+        emote: emotes[i].$2,
+      );
     }
     await tester.pump(_chatShotPump);
 
-    for (final (int seat, String emote) in emotes) {
-      _expectEndCardChat(
-        tester,
-        seat: seat,
-        name: names[seat]!,
-        line: lines[emote]!,
-        shotName: shotName,
-        scenario: scenario,
-      );
-    }
+    // C-492 D2: one line at a time, the newest. Every other seat's bubble,
+    // the older emotes' included, is gone by now (the replaced line's fade
+    // is 250 ms, shorter than the pump above).
+    final (int newestSeat, String newestEmote) = emotes.last;
+    _expectEndCardChat(
+      tester,
+      seat: newestSeat,
+      name: names[newestSeat]!,
+      line: lines[newestEmote]!,
+      shotName: shotName,
+      scenario: scenario,
+    );
     for (final int seat in seats) {
-      if (emotes.any(((int, String) e) => e.$1 == seat)) {
+      if (seat == newestSeat) {
         continue;
       }
       expect(
         find.byKey(Key('end-card-chat-$seat')),
         findsNothing,
         reason:
-            'capture $shotName ($scenario): seat $seat sent nothing, so '
-            'end-card-chat-$seat must not be on screen',
+            'capture $shotName ($scenario): C-492 D2, the newest line is '
+            "seat $newestSeat's, so end-card-chat-$seat must not be on screen",
       );
     }
     expect(
       find.byKey(const Key('end-card-chat-lines')),
       findsOneWidget,
       reason:
-          'capture $shotName ($scenario): C-485 D5.2, the lines overlay '
-          'must be on screen',
+          'capture $shotName ($scenario): C-492 D4, the header layer '
+          'end-card-chat-lines must be on screen',
     );
-    if (emotes.length > 1) {
-      final double firstTop = tester
-          .getTopLeft(find.byKey(Key('end-card-chat-${emotes.first.$1}')))
-          .dy;
-      final double lastTop = tester
-          .getTopLeft(find.byKey(Key('end-card-chat-${emotes.last.$1}')))
-          .dy;
-      expect(
-        firstTop < lastTop,
-        isTrue,
-        reason:
-            'capture $shotName ($scenario): C-485 D5.2, the older line '
-            '(seat ${emotes.first.$1}, top $firstTop) must sit above the '
-            'newer (seat ${emotes.last.$1}, top $lastTop)',
-      );
-    }
+    _expectChatClearOfHeader(
+      tester,
+      seat: newestSeat,
+      shotName: shotName,
+      scenario: scenario,
+    );
 
     final List<String> shownReplies = tester
         .widgetList(
@@ -13949,5 +14046,240 @@ Future<void> _shootEndCardChat(
     if (textScale != null) {
       tester.platformDispatcher.clearTextScaleFactorTestValue();
     }
+  }
+}
+
+// ============================================================================
+// Order 497 (captures 89 and 90): the countdown ring on a short clock
+// (C-495 D3).
+// ============================================================================
+
+/// Captures 89 and 90 (order 497, C-495 D3). Two seats `[0, 2]`, viewer seat
+/// 0, PLAYING, seat 2 on turn in `await_roll`. The room reaches PLAYING the
+/// way 79-83 reach theirs, then an unsolicited `room` push carries the turn
+/// of an away seat: `segment_ms` 10000 and `deadline_ms` 10000. Real time is
+/// pumped, frame by frame and bounded, until the digits read [secondsLeft];
+/// then the digits, the ring's fraction and its colour are asserted and the
+/// shot is taken. At 8 s left the ring is 0.8 full in the seat's colour; at
+/// 2 s left it is 0.2 full and `LudoColors.error`.
+Future<void> _shootAwayRing(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required int secondsLeft,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  const int segmentMs = 10000;
+  final bool expectRed = secondsLeft <= 3;
+  final double expectedFraction = secondsLeft / (segmentMs ~/ 1000);
+  final String scenario =
+      'room $roomCode, game $gameId, locale ${locale.languageCode}, '
+      'segment ${segmentMs}ms, target $secondsLeft s left';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+
+    opened.transport.pushText(
+      _frame(
+        type: 'room',
+        data: _roomJson(
+          code: roomCode,
+          state: 'PLAYING',
+          hostSeat: 0,
+          players: 2,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Priya'),
+            _seatJson(2, name: 'Karim', connected: false),
+          ],
+          turn: const <String, Object?>{
+            'seat': 2,
+            'phase': 'await_roll',
+            'deadline_ms': segmentMs,
+            'segment_ms': segmentMs,
+            'k': 0,
+          },
+          gameId: gameId,
+          clientSeeds: '0:seed',
+          seq: opened.seq + 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      controller.room!.seq,
+      opened.seq + 1,
+      reason:
+          'capture $shotName ($scenario): expected room seq '
+          '${opened.seq + 1} after the snapshot push, got '
+          '${controller.room!.seq}',
+    );
+    expect(
+      controller.room!.state,
+      RoomState.playing,
+      reason:
+          'capture $shotName ($scenario): the room must be PLAYING, got '
+          '${controller.room!.state}',
+    );
+    expect(
+      controller.room!.seats.map((SeatState s) => s.seat).toList(),
+      <int>[0, 2],
+      reason:
+          'capture $shotName ($scenario): expected seats [0, 2], got '
+          '${controller.room!.seats.map((SeatState s) => s.seat).toList()}',
+    );
+    expect(
+      controller.seat,
+      0,
+      reason: 'capture $shotName ($scenario): viewer seat must be 0',
+    );
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      <Object>[turn.seat, turn.phaseName],
+      <Object>[2, 'awaitRoll'],
+      reason:
+          'capture $shotName ($scenario): expected seat 2 awaiting a roll, '
+          'got seat ${turn.seat} in ${turn.phaseName}',
+    );
+    expect(
+      <Object?>[
+        controller.room!.turn!.segmentMs,
+        controller.room!.turn!.deadlineMs,
+      ],
+      <Object?>[segmentMs, segmentMs],
+      reason:
+          'capture $shotName ($scenario): C-495 D1, expected the turn to '
+          'carry segment_ms $segmentMs and deadline_ms $segmentMs, got '
+          'segmentMs ${controller.room!.turn!.segmentMs}, deadlineMs '
+          '${controller.room!.turn!.deadlineMs}',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName ($scenario): expected locale '
+          '${locale.languageCode}, got ${loc.localeName}',
+    );
+
+    // Only a disconnected seat is ever on a 10 s clock (PROTOCOL.md section
+    // 26), so the screen must be showing its offline notice.
+    expect(
+      find.byKey(const Key('game-screen-turn-seat-offline')),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): seat 2 is on turn and disconnected, '
+          'so game-screen-turn-seat-offline must be on screen',
+    );
+    final Finder digits = find.byKey(const Key('game-screen-turn-countdown'));
+    final Finder ring = find.byKey(const Key('game-header-countdown-ring'));
+    expect(
+      digits,
+      findsOneWidget,
+      reason: 'capture $shotName ($scenario): expected the countdown digits',
+    );
+    expect(
+      ring,
+      findsOneWidget,
+      reason: 'capture $shotName ($scenario): expected the countdown ring',
+    );
+
+    String shownDigits() {
+      final Text text = tester.widget<Text>(digits);
+      return text.data ?? text.textSpan?.toPlainText() ?? '';
+    }
+
+    // The ring starts full on a fresh 10 s segment: against the 45 s turn
+    // length it would open at 10/45, which is the glitch C-495 removes.
+    final String openingDigits = shownDigits();
+    expect(
+      openingDigits,
+      loc.gameTurnCountdownDigits(segmentMs ~/ 1000),
+      reason:
+          'capture $shotName ($scenario): expected the countdown to open at '
+          '${segmentMs ~/ 1000}, got "$openingDigits"',
+    );
+    final dynamic openingRing = tester.widget(ring);
+    expect(
+      openingRing.remainingFraction as double,
+      closeTo(1.0, 1e-9),
+      reason:
+          'capture $shotName ($scenario): C-495 D3, a fresh ${segmentMs}ms '
+          'segment must draw the ring full, got '
+          '${openingRing.remainingFraction}',
+    );
+
+    // Real time, frame by frame, until the digits read the target. Bounded:
+    // the segment's own length plus a margin, so a timer that never ticks
+    // fails with what it last showed instead of hanging the job.
+    final String targetDigits = loc.gameTurnCountdownDigits(secondsLeft);
+    final Stopwatch waited = Stopwatch()..start();
+    final Duration limit = Duration(milliseconds: segmentMs + 5000);
+    while (shownDigits() != targetDigits && waited.elapsed < limit) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(
+      shownDigits(),
+      targetDigits,
+      reason:
+          'capture $shotName ($scenario): expected the countdown digits to '
+          'read "$targetDigits" within ${limit.inSeconds} s, last read '
+          '"${shownDigits()}" after ${waited.elapsedMilliseconds} ms',
+    );
+
+    final dynamic shownRing = tester.widget(ring);
+    final double fraction = shownRing.remainingFraction as double;
+    final Color color = shownRing.color as Color;
+    expect(
+      fraction,
+      closeTo(expectedFraction, 1e-9),
+      reason:
+          'capture $shotName ($scenario): C-495 D3, at $secondsLeft s left '
+          'of a ${segmentMs}ms segment the ring fraction must be '
+          '$expectedFraction, got $fraction',
+    );
+    if (expectRed) {
+      expect(
+        color,
+        LudoColors.error,
+        reason:
+            'capture $shotName ($scenario): C-495 D3, at $secondsLeft s '
+            'left of a ${segmentMs}ms segment the ring must be '
+            'LudoColors.error, got $color',
+      );
+    } else {
+      expect(
+        color,
+        isNot(LudoColors.error),
+        reason:
+            'capture $shotName ($scenario): C-495 D3, at $secondsLeft s '
+            'left of a ${segmentMs}ms segment the ring must keep the '
+            "seat's colour, got LudoColors.error",
+      );
+    }
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
   }
 }

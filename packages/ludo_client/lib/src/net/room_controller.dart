@@ -1274,6 +1274,7 @@ class RoomController extends ChangeNotifier {
       value: null,
       legal: null,
       sixes: null,
+      segmentMs: room.rules.turnSeconds * 1000,
     );
     _room = room.copyWith(
       state: RoomState.playing,
@@ -1361,6 +1362,7 @@ class RoomController extends ChangeNotifier {
       sixes: null,
       queue: queue,
       legalByFace: legalByFace,
+      segmentMs: _asInt(frame.data, 'segment_ms') ?? deadlineMs,
     );
     _room = room.copyWith(turn: turn, seq: seqValue);
     notifyListeners();
@@ -1416,6 +1418,14 @@ class RoomController extends ChangeNotifier {
         : (legalByFace != null ? TurnPhase.awaitMove : TurnPhase.awaitRoll);
     final List<int> queue = queueRaw ?? const <int>[];
 
+    final bool movePending =
+        phase == TurnPhase.awaitMove &&
+        (legal.isNotEmpty ||
+            (legalByFace?.any((FaceLegal f) => f.tokens.isNotEmpty) ?? false));
+    final int? segmentMs =
+        _asInt(frame.data, 'segment_ms') ??
+        (movePending ? deadlineMs : room.turn?.segmentMs);
+
     final TurnState turn = TurnState(
       seat: seatValue,
       phase: phase,
@@ -1426,6 +1436,7 @@ class RoomController extends ChangeNotifier {
       sixes: null,
       queue: queue,
       legalByFace: legalByFace,
+      segmentMs: segmentMs,
     );
     _room = room.copyWith(
       turn: turn,
@@ -1533,6 +1544,7 @@ class RoomController extends ChangeNotifier {
             value: null,
             legal: null,
             sixes: null,
+            segmentMs: currentTurn.segmentMs,
           );
 
     final RoomSnapshot updated = turn == null
@@ -1577,6 +1589,7 @@ class RoomController extends ChangeNotifier {
             value: null,
             legal: null,
             sixes: null,
+            segmentMs: currentTurn.segmentMs,
           );
 
     _room = turn == null
@@ -1618,6 +1631,7 @@ class RoomController extends ChangeNotifier {
             value: null,
             legal: null,
             sixes: null,
+            segmentMs: currentTurn.segmentMs,
           );
 
     _room = turn == null
