@@ -14106,7 +14106,7 @@ Future<void> _shootAwayRing(
           players: 2,
           seats: <Map<String, Object?>>[
             _seatJson(0, name: 'Priya'),
-            _seatJson(2, name: 'Karim'),
+            _seatJson(2, name: 'Karim', connected: false),
           ],
           turn: const <String, Object?>{
             'seat': 2,
@@ -14182,6 +14182,15 @@ Future<void> _shootAwayRing(
           '${locale.languageCode}, got ${loc.localeName}',
     );
 
+    // Only a disconnected seat is ever on a 10 s clock (PROTOCOL.md section
+    // 26), so the screen must be showing its offline notice.
+    expect(
+      find.byKey(const Key('game-screen-turn-seat-offline')),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): seat 2 is on turn and disconnected, '
+          'so game-screen-turn-seat-offline must be on screen',
+    );
     final Finder digits = find.byKey(const Key('game-screen-turn-countdown'));
     final Finder ring = find.byKey(const Key('game-header-countdown-ring'));
     expect(
