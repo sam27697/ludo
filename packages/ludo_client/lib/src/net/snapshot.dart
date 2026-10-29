@@ -185,6 +185,7 @@ class TurnState {
     this.sixes,
     this.queue = const <int>[],
     this.legalByFace,
+    this.segmentMs,
   });
 
   final int seat;
@@ -204,6 +205,13 @@ class TurnState {
   /// roll queue. Null when the wire sends none.
   final List<FaceLegal>? legalByFace;
 
+  /// docs/PROTOCOL.md section 26 rule 4: the budget of the segment
+  /// [deadlineMs] counts down, 10 000 for an away seat and the full
+  /// `rules.turn_seconds * 1000` otherwise. Null when the wire sends none
+  /// (a server built before section 26), and the caller then falls back to
+  /// `rules.turn_seconds`.
+  final int? segmentMs;
+
   factory TurnState.fromJson(Map<String, Object?> json) {
     final int seat = _reqInt(json, 'seat');
     if (seat < 0 || seat > 3) {
@@ -220,6 +228,7 @@ class TurnState {
       json,
       'legal_by_face',
     );
+    final int? segmentMs = _optInt(json, 'segment_ms');
 
     return TurnState(
       seat: seat,
@@ -231,6 +240,7 @@ class TurnState {
       sixes: sixes,
       queue: queue,
       legalByFace: legalByFace,
+      segmentMs: segmentMs,
     );
   }
 }
