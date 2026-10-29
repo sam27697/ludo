@@ -23,7 +23,6 @@ import 'package:flutter/widgets.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board_geometry.dart';
 import 'capture_gloat.dart';
-import 'chat_bubble.dart';
 import 'move_hint.dart';
 import 'safe_cue.dart';
 import 'seat_die.dart';
@@ -32,7 +31,6 @@ import 'theme.dart';
 import 'token_face_picker.dart';
 
 export 'board_geometry.dart';
-export 'chat_bubble.dart' show BoardChatBubble;
 
 /// How long the drawn token dwells on each square of a travel step, contract
 /// C-252 rule 5. [kTokenStepDurationReduced] is the same dwell under
@@ -401,6 +399,17 @@ bool _sameSeats(List<int> a, List<int> b) {
   return true;
 }
 
+/// The quick message line that is up, as the board is told of it: the seat
+/// that said it and the line's serial. A serial a seat's name chip has not
+/// seen pops that chip once. The line itself is drawn by the game screen in
+/// the header band. C-500 D6.
+class BoardChatPop {
+  const BoardChatPop({required this.seat, required this.serial});
+
+  final int seat;
+  final int serial;
+}
+
 /// A Ludo board: the static grid plus every token of every seat in
 /// [seatsInPlay], each placed by [cellFor] then [toView].
 ///
@@ -435,7 +444,7 @@ class LudoBoard extends StatefulWidget {
     this.gloat,
     this.hint,
     this.hintNamesFace = false,
-    this.chatBubbles = const <BoardChatBubble>[],
+    this.chatPop,
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -579,10 +588,11 @@ class LudoBoard extends StatefulWidget {
   /// false draws the marker with no numeral.
   final bool hintNamesFace;
 
-  /// Quick messages showing now, at most one per seat, each drawn as a
-  /// speech bubble at its seat's yard. Empty, the default, adds nothing, so
-  /// a board built without it draws exactly what it drew before. C-478 D5.4.
-  final List<BoardChatBubble> chatBubbles;
+  /// The quick message line that is up, as the seat that said it and its
+  /// serial. A serial this board has not seen pops that seat's name chip once;
+  /// the line itself is drawn in the header band, never here. Null, the
+  /// default, pops nothing. C-500 D6.
+  final BoardChatPop? chatPop;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -1371,7 +1381,11 @@ class _LudoBoardState extends State<LudoBoard> {
     final double nameFontSize = fittedFontSizes.name;
     final double? youFontSize = fittedFontSizes.you;
 
+    final BoardChatPop? pop = widget.chatPop;
     return Positioned(
+      // Keyed so a turn glow coming and going in the list does not hand this
+      // slot to another child and restart the pop. C-500 D6.
+      key: ValueKey<String>('board-name-chip-slot-$seat'),
       left: chipLeft,
       top: chipTop,
       width: chipWidth,
@@ -1380,78 +1394,82 @@ class _LudoBoardState extends State<LudoBoard> {
         child: Center(
           child: Padding(
             padding: EdgeInsets.symmetric(horizontal: cellSize * 0.2),
-            child: DecoratedBox(
-              key: Key('board-seat-name-$seat'),
-              decoration: BoxDecoration(
-                color: seatColor,
-                borderRadius: BorderRadius.circular(chipHeight),
-              ),
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: cellSize * 0.3,
-                  vertical: chipHeight * 0.08,
+            child: _ChipPop(
+              seat: seat,
+              serial: (pop != null && pop.seat == seat) ? pop.serial : null,
+              child: DecoratedBox(
+                key: Key('board-seat-name-$seat'),
+                decoration: BoxDecoration(
+                  color: seatColor,
+                  borderRadius: BorderRadius.circular(chipHeight),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Container(
-                      key: Key('board-seat-name-$seat-mark'),
-                      width: nameDiscSize,
-                      height: nameDiscSize,
-                      decoration: BoxDecoration(
-                        color: seatColor,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Center(
-                        child: SeatMark(seat: seat, size: nameDiscSize * 0.5),
-                      ),
-                    ),
-                    SizedBox(width: cellSize * 0.15),
-                    Flexible(
-                      child: Text(
-                        name,
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.ellipsis,
-                        // C-339 decision 1: pinned to the board's own
-                        // measure, never the system text scale.
-                        textScaler: TextScaler.noScaling,
-                        style: TextStyle(
-                          color: ink,
-                          fontFamily: kLudoFontFamily,
-                          fontFamilyFallback: kLudoFontFallbacks,
-                          fontSize: nameFontSize,
-                          fontWeight: FontWeight.w600,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: cellSize * 0.3,
+                    vertical: chipHeight * 0.08,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Container(
+                        key: Key('board-seat-name-$seat-mark'),
+                        width: nameDiscSize,
+                        height: nameDiscSize,
+                        decoration: BoxDecoration(
+                          color: seatColor,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: SeatMark(seat: seat, size: nameDiscSize * 0.5),
                         ),
                       ),
-                    ),
-                    if (you != null) ...<Widget>[
                       SizedBox(width: cellSize * 0.15),
-                      // Not `Flexible`: `_fittedChipFontSizes` already sized
-                      // this and the name above it to share the chip's
-                      // width honestly (by how wide each actually is at its
-                      // own font size), not by `Flex`'s own equal-by-default
-                      // split of whatever is left -- a plain child takes
-                      // exactly the natural width that sizing computed, and
-                      // the name's own `Flexible` absorbs whatever is left
-                      // over (or, past the 10-character guarantee, still
-                      // ellipsizes).
-                      Text(
-                        you,
-                        key: const Key('board-seat-you'),
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.ellipsis,
-                        textScaler: TextScaler.noScaling,
-                        style: TextStyle(
-                          color: ink,
-                          fontFamily: kLudoFontFamily,
-                          fontFamilyFallback: kLudoFontFallbacks,
-                          fontSize: youFontSize,
+                      Flexible(
+                        child: Text(
+                          name,
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.ellipsis,
+                          // C-339 decision 1: pinned to the board's own
+                          // measure, never the system text scale.
+                          textScaler: TextScaler.noScaling,
+                          style: TextStyle(
+                            color: ink,
+                            fontFamily: kLudoFontFamily,
+                            fontFamilyFallback: kLudoFontFallbacks,
+                            fontSize: nameFontSize,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
+                      if (you != null) ...<Widget>[
+                        SizedBox(width: cellSize * 0.15),
+                        // Not `Flexible`: `_fittedChipFontSizes` already sized
+                        // this and the name above it to share the chip's
+                        // width honestly (by how wide each actually is at its
+                        // own font size), not by `Flex`'s own equal-by-default
+                        // split of whatever is left -- a plain child takes
+                        // exactly the natural width that sizing computed, and
+                        // the name's own `Flexible` absorbs whatever is left
+                        // over (or, past the 10-character guarantee, still
+                        // ellipsizes).
+                        Text(
+                          you,
+                          key: const Key('board-seat-you'),
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.ellipsis,
+                          textScaler: TextScaler.noScaling,
+                          style: TextStyle(
+                            color: ink,
+                            fontFamily: kLudoFontFamily,
+                            fontFamilyFallback: kLudoFontFallbacks,
+                            fontSize: youFontSize,
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -1517,10 +1535,6 @@ class _LudoBoardState extends State<LudoBoard> {
                   // below the thrown die and the face picker. IgnorePointer
                   // so the face never takes a tap.
                   if (widget.gloat != null) _gloatLayer(cellSize),
-                  // C-478 D5.4: above the gloat, below the thrown die, the
-                  // safe cue and the face picker. Keyed so its coming and
-                  // going does not hand the thrown-die overlay's slot to it.
-                  if (widget.chatBubbles.isNotEmpty) _chatLayer(cellSize),
                   if (widget.overlay != null)
                     Positioned.fill(child: widget.overlay!),
                   if (widget.safeCue != null)
@@ -1593,57 +1607,6 @@ class _LudoBoardState extends State<LudoBoard> {
           diameter: diameter,
           cellSize: cellSize,
         ),
-      ),
-    );
-  }
-
-  /// C-478 D5.4. The tail tip stands on the centre of the viewed yard moved
-  /// one cell toward the board's horizontal midline. A yard in the lower
-  /// half gets its body above the tip, one in the upper half below it, the
-  /// body centred on the yard and at most five cells wide.
-  Widget _chatLayer(double cellSize) {
-    final AppLocalizations loc = AppLocalizations.of(context);
-    final double boardSide = cellSize * 15;
-    final double midline = boardSide / 2;
-    final double maxWidth = cellSize * 5;
-    final List<Widget> bubbles = <Widget>[];
-    for (final BoardChatBubble bubble in widget.chatBubbles) {
-      final int seat = bubble.seat;
-      if (seat < 0 || seat > 3) {
-        continue;
-      }
-      final ({double left, double top, double side, BoardCell origin}) yard =
-          _viewedYard(cellSize, seat);
-      final double centerX = yard.left + yard.side / 2;
-      final double centerY = yard.top + yard.side / 2;
-      final bool lowerHalf = centerY > midline;
-      final double tipY = lowerHalf ? centerY - cellSize : centerY + cellSize;
-      final String name = widget.seatNames?[seat] ?? '';
-      bubbles.add(
-        Positioned(
-          key: ValueKey<String>('board-chat-slot-$seat'),
-          left: centerX - maxWidth / 2,
-          width: maxWidth,
-          top: lowerHalf ? null : tipY,
-          bottom: lowerHalf ? boardSide - tipY : null,
-          child: Align(
-            heightFactor: 1,
-            child: ChatBubble(
-              seat: seat,
-              text: bubble.text,
-              label: loc.chatSaid(name, bubble.text),
-              serial: bubble.serial,
-              maxWidth: maxWidth,
-              tailOnTop: !lowerHalf,
-            ),
-          ),
-        ),
-      );
-    }
-    return Positioned.fill(
-      key: const Key('board-chat-layer'),
-      child: IgnorePointer(
-        child: Stack(clipBehavior: Clip.none, children: bubbles),
       ),
     );
   }
@@ -3262,4 +3225,97 @@ class _BoardPainter extends CustomPainter {
   bool shouldRepaint(covariant _BoardPainter oldDelegate) =>
       oldDelegate.mySeat != mySeat ||
       !_sameSeats(oldDelegate.seatsInPlay, seatsInPlay);
+}
+
+/// How long the speaker's name chip takes to swell, and to settle back.
+/// C-500 D6.
+const Duration _kChipPopUp = Duration(milliseconds: 120);
+const Duration _kChipPopDown = Duration(milliseconds: 180);
+const double _kChipPopPeak = 1.15;
+
+/// Scales its child from 1.0 to 1.15 (easeOut) and back to 1.0 (easeIn) once
+/// whenever [serial] is one it has not shown. The root is always a
+/// `Transform.scale` keyed `board-chip-pop-<seat>`, at 1.0 when idle. Under
+/// `MediaQuery.disableAnimations` it never scales: the line in the header
+/// band carries the meaning. C-500 D6.
+class _ChipPop extends StatefulWidget {
+  const _ChipPop({
+    required this.seat,
+    required this.serial,
+    required this.child,
+  });
+
+  final int seat;
+  final int? serial;
+  final Widget child;
+
+  @override
+  State<_ChipPop> createState() => _ChipPopState();
+}
+
+class _ChipPopState extends State<_ChipPop>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _clock;
+  int? _shownSerial;
+
+  @override
+  void initState() {
+    super.initState();
+    _clock = AnimationController(
+      vsync: this,
+      duration: _kChipPopUp + _kChipPopDown,
+    );
+    _pop();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ChipPop oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _pop();
+  }
+
+  void _pop() {
+    final int? serial = widget.serial;
+    if (serial == null || serial == _shownSerial) {
+      return;
+    }
+    _shownSerial = serial;
+    _clock.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _clock.dispose();
+    super.dispose();
+  }
+
+  double _scaleAt(double ms) {
+    final double up = _kChipPopUp.inMilliseconds.toDouble();
+    final double down = _kChipPopDown.inMilliseconds.toDouble();
+    if (ms <= 0 || ms >= up + down) {
+      return 1;
+    }
+    if (ms <= up) {
+      return 1 + (_kChipPopPeak - 1) * Curves.easeOut.transform(ms / up);
+    }
+    return 1 +
+        (_kChipPopPeak - 1) * (1 - Curves.easeIn.transform((ms - up) / down));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    return AnimatedBuilder(
+      animation: _clock,
+      builder: (BuildContext context, Widget? child) {
+        final double ms = _clock.value * _clock.duration!.inMilliseconds;
+        return Transform.scale(
+          key: Key('board-chip-pop-${widget.seat}'),
+          scale: reduced ? 1 : _scaleAt(ms),
+          child: child,
+        );
+      },
+      child: widget.child,
+    );
+  }
 }
