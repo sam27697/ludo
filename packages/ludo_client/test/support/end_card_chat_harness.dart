@@ -5,8 +5,9 @@
 //
 // Nothing here names an API C-485 adds, so this file compiles on a tree that
 // has none of it: the game screen cases read the new widgets by key only.
-// The direct EndCard mounts that need the new parameters live in the two
-// test files, between their BEGIN direct and END direct markers.
+// The direct EndCard mounts that need the new quick-reply parameters live in
+// end_card_quick_reply_test.dart, between its BEGIN direct and END direct
+// markers.
 //
 // Every helper keeps the frames and pumps it ran, so a failure message
 // replays the scenario.
@@ -123,11 +124,23 @@ Map<String, Object?> endRoomData({
 };
 
 /// Seat i is called Sam when it is mine and kNames[i] otherwise.
-List<Map<String, Object?>> namedSeats(int players, int me) =>
-    <Map<String, Object?>>[
-      for (int seat = 0; seat < players; seat++)
-        seatJson(seat, name: seat == me ? 'Sam' : kNames[seat]!),
-    ];
+/// [names] overrides that for the seats it names; every other seat is
+/// unchanged.
+List<Map<String, Object?>> namedSeats(
+  int players,
+  int me, {
+  Map<int, String>? names,
+}) {
+  return <Map<String, Object?>>[
+    for (int seat = 0; seat < players; seat++)
+      seatJson(
+        seat,
+        name: names != null && names.containsKey(seat)
+            ? names[seat]!
+            : (seat == me ? 'Sam' : kNames[seat]!),
+      ),
+  ];
+}
 
 /// The ids of the `end-card-reply-<id>` chips in the tree, in tree order.
 List<String> replyIds(WidgetTester tester) => <String>[
@@ -336,10 +349,15 @@ Future<EndGame> _open(
   required Size size,
   int? winner,
   Map<String, Object?>? turn,
+  Map<int, String>? names,
 }) async {
   phoneSurface(tester);
   tester.view.physicalSize = size;
-  final List<Map<String, Object?>> seats = namedSeats(players, me);
+  final List<Map<String, Object?>> seats = namedSeats(
+    players,
+    me,
+    names: names,
+  );
   final RollTrayDrive drive = await connectPlaying(
     tester,
     turn: turn,
@@ -371,6 +389,7 @@ Future<EndGame> openPlaying(
   double textScale = 1.0,
   bool reduced = false,
   Size size = const Size(360, 800),
+  Map<int, String>? names,
 }) => _open(
   tester,
   name,
@@ -383,6 +402,7 @@ Future<EndGame> openPlaying(
   reduced: reduced,
   size: size,
   turn: awaitRollTurn(me == 0 ? 1 : 0),
+  names: names,
 );
 
 /// A game that ended on screen: mounted in PLAYING, then `game_over`. The
@@ -399,6 +419,7 @@ Future<EndGame> openFinished(
   double textScale = 1.0,
   bool reduced = false,
   Size size = const Size(360, 800),
+  Map<int, String>? names,
 }) async {
   if (kind == EndKind.ended) {
     return _open(
@@ -414,6 +435,7 @@ Future<EndGame> openFinished(
       size: size,
       winner: null,
       turn: _finishedTurn(),
+      names: names,
     );
   }
   final EndGame g = await openPlaying(
@@ -425,6 +447,7 @@ Future<EndGame> openFinished(
     textScale: textScale,
     reduced: reduced,
     size: size,
+    names: names,
   );
   final int winner = kind == EndKind.winner ? me : (me == 0 ? 1 : 0);
   await g.gameOver(winner);
