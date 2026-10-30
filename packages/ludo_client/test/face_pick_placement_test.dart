@@ -39,18 +39,25 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/board_geometry.dart';
 import 'package:ludo_client/src/theme.dart' show kSpace2;
 import 'package:ludo_client/src/token_face_picker.dart'
-    show facePickerBubbleWidth, kFacePickerBubbleHeight, kFacePickerTipGap;
+    show
+        facePickerBubbleWidth,
+        kFacePickerBubbleHeight,
+        kFacePickerOpen,
+        kFacePickerTipGap;
 
 import 'support/roll_tray_harness.dart';
 
 const double _eps = 1e-3;
 
-/// A slid or clamped bubble may be 1 dp off the formula: the board keeps a
-/// bubble 1 dp inside its edge, and the anchor clamps the top the same way.
-const double _rectTolerance = 1.01;
+/// The horizontal clamp keeps a bubble 1 dp inside the board edge, so a
+/// clamped `left` may be 1 dp off the unclamped formula. `top` has no such
+/// slack: C-508 D1 makes `top >= 0` valid and places above and below by the
+/// exact gap, so it is compared within [_eps].
+const double _leftTolerance = 1.01;
 
 /// The pointer's half width (C-508 D1 `m` is this plus `kSpace2`).
 const double _pointerHalf = 8;
@@ -347,7 +354,18 @@ bool _overlaps(Rect a, Rect b) {
 
 /// C-508 D1 to D3 for the scene's picked token, on a board of [cell] pixels
 /// per cell. [centre] is the picked token's measured drawn centre.
-_Plan _plan(_Scene scene, double cell, Offset centre) {
+///
+/// The two flags exist only to prove a scene discriminates: [swapSlides]
+/// exchanges "toward" and "away" in the D1 order, and [countMates] drops the
+/// D2 exclusion of tokens sharing the picked token's cell. The contract's
+/// own answer uses neither.
+_Plan _plan(
+  _Scene scene,
+  double cell,
+  Offset centre, {
+  bool swapSlides = false,
+  bool countMates = false,
+}) {
   final List<_Disc> discs = _discs(scene, cell);
   final _Disc picked = discs.firstWhere(
     (_Disc d) => d.seat == scene.mySeat && d.token == scene.picked,
@@ -357,7 +375,7 @@ _Plan _plan(_Scene scene, double cell, Offset centre) {
   final double w = facePickerBubbleWidth(scene.faces(scene.picked).length);
   final double h = kFacePickerBubbleHeight;
   final double m = kSpace2 + _pointerHalf;
-  final bool towardRight = centre.dx < side / 2;
+  final bool towardRight = (centre.dx < side / 2) != swapSlides;
 
   final double aboveTop = centre.dy - r - kFacePickerTipGap - h;
   final double belowTop = centre.dy + r + kFacePickerTipGap;
@@ -422,7 +440,7 @@ _Plan _plan(_Scene scene, double cell, Offset centre) {
       if (identical(d, picked)) {
         continue;
       }
-      if ((d.center - centre).distance < cell / 2) {
+      if (!countMates && (d.center - centre).distance < cell / 2) {
         continue;
       }
       if (!_overlaps(c.rect, d.rect)) {
@@ -464,6 +482,23 @@ class _Run {
     find.byKey(tokenHitKey(scene.mySeat, scene.picked)),
   );
   late final _Plan plan = _plan(scene, cell, pickedCentre - board.topLeft);
+
+  /// The same scene planned with the toward / away slides exchanged.
+  late final _Plan swappedPlan = _plan(
+    scene,
+    cell,
+    pickedCentre - board.topLeft,
+    swapSlides: true,
+  );
+
+  /// The same scene planned without the D2 exclusion of the picked token's
+  /// cell mates.
+  late final _Plan matesCountedPlan = _plan(
+    scene,
+    cell,
+    pickedCentre - board.topLeft,
+    countMates: true,
+  );
 
   String get tag => '${locale.languageCode} seat ${scene.mySeat}';
 
@@ -551,8 +586,8 @@ class _Run {
     final Rect want = plan.chosen.rect;
     final Rect got = pickerLocal;
     final bool same =
-        (got.left - want.left).abs() <= _rectTolerance &&
-        (got.top - want.top).abs() <= _rectTolerance &&
+        (got.left - want.left).abs() <= _leftTolerance &&
+        (got.top - want.top).abs() <= _eps &&
         (got.width - want.width).abs() <= _eps &&
         (got.height - want.height).abs() <= _eps;
     expect(
@@ -579,9 +614,9 @@ class _Run {
     }
   }
 
-  /// C-508 case 8: inside the board, the pointer aims at the token, every
-  /// option keeps a 48 x 48 hit rect, and the pointer points away from the
-  /// chosen side.
+  /// C-508 case 8: inside the board, the pointer aims at the token (or at
+  /// the end of its range nearest the token), and every option keeps a
+  /// 48 x 48 hit rect.
   void expectSane() {
     final Rect p = picker;
     expect(
@@ -593,22 +628,27 @@ class _Run {
       reason: why('the bubble ${_fmt(pickerLocal)} inside the board square'),
     );
     final double tip = pointer.center.dx;
-    // A bubble pushed against the board edge was moved by the board clamp,
-    // so the pointer cannot be centred on the token there.
-    final bool edgeClamped =
-        pickerLocal.left <= 1 + _eps ||
-        pickerLocal.right >= board.width - 1 - _eps;
-    if (!edgeClamped) {
-      expect(
-        (tip - pickedCentre.dx).abs(),
-        lessThanOrEqualTo(1.0),
-        reason: why(
-          'pointer tip x within 1 dp of the token centre x '
-          '${pickedCentre.dx.toStringAsFixed(1)}, tip at '
-          '${tip.toStringAsFixed(1)}',
-        ),
-      );
-    }
+    // C-462 D5 / C-508 D4: the pointer is centred on the token while the
+    // bubble's pointer range [m, w - m] allows it, and sits at the nearest
+    // end of that range otherwise (a bubble the board clamp moved far from
+    // the token, at the board edge). Where no clamp applies this is exactly
+    // "within 1 dp of the token's drawn centre x".
+    final double m = kSpace2 + _pointerHalf;
+    final double offset = (pickedCentre.dx - p.left)
+        .clamp(m, p.width - m)
+        .toDouble();
+    final double wantTip = p.left + offset;
+    expect(
+      (tip - wantTip).abs(),
+      lessThanOrEqualTo(1.0),
+      reason: why(
+        'pointer tip x within 1 dp of ${wantTip.toStringAsFixed(1)} (token '
+        'centre x ${pickedCentre.dx.toStringAsFixed(1)}, pointer range '
+        '${(p.left + m).toStringAsFixed(1)}..'
+        '${(p.right - m).toStringAsFixed(1)}), tip at '
+        '${tip.toStringAsFixed(1)}',
+      ),
+    );
     expect(
       tip >= p.left && tip <= p.right,
       isTrue,
@@ -631,7 +671,12 @@ class _Run {
   }
 }
 
-Future<_Run> _open(WidgetTester tester, _Scene scene, Locale locale) async {
+Future<_Run> _open(
+  WidgetTester tester,
+  _Scene scene,
+  Locale locale, {
+  bool animate = false,
+}) async {
   tester.view.physicalSize = _phonePhysical;
   tester.view.devicePixelRatio = _phoneRatio;
   addTearDown(tester.view.reset);
@@ -642,7 +687,7 @@ Future<_Run> _open(WidgetTester tester, _Scene scene, Locale locale) async {
     mySeat: scene.mySeat,
     players: scene.players,
   );
-  await mountGame(tester, drive, locale: locale, disableAnimations: true);
+  await mountGame(tester, drive, locale: locale, disableAnimations: !animate);
   final _Run run = _Run(tester, drive, scene, locale);
   run.expectFixture();
   return run;
@@ -660,18 +705,21 @@ const List<(Locale, int)> _matrix = <(Locale, int)>[
 typedef _SceneBuilder = _Scene Function(int mySeat);
 
 /// Runs [body] on a scene opened with the picker showing, for every entry of
-/// [_matrix], inside one `testWidgets` each.
+/// [_matrix], inside one `testWidgets` each. [animate] mounts without
+/// `disableAnimations`, so the open motion runs; [open] false leaves the
+/// first tap to the body.
 void _cases(
   String name,
   _SceneBuilder build,
   Future<void> Function(_Run run) body, {
   List<(Locale, int)> matrix = _matrix,
   bool open = true,
+  bool animate = false,
 }) {
   for (final (Locale locale, int mySeat) in matrix) {
     testWidgets('$name [${locale.languageCode} seat $mySeat]', (tester) async {
       final _Scene scene = build(mySeat);
-      final _Run run = await _open(tester, scene, locale);
+      final _Run run = await _open(tester, scene, locale, animate: animate);
       try {
         if (open) {
           await run.tapPicked();
@@ -792,6 +840,74 @@ _Scene _sceneTopRowCrowded(int mySeat) => _Scene.build(
   mine: <_Pos>[const _Pos(6, 0), const _Pos(8, 2), _home, _home],
 );
 
+/// Right of the board centre, toward the centre is LEFT. The picked token is
+/// at view (11, 8); a ringed token of mine two cells right and two rows up is
+/// in the above-centre block and in the slid-right block, and clear of the
+/// slid-left block, so candidate 2 (slid left) is the only above candidate
+/// that clears it.
+_Scene _sceneRightToward(int mySeat) => _Scene.build(
+  'case2r-right-toward',
+  mySeat,
+  queue: <int>[3, 2],
+  picked: 2,
+  mine: <_Pos>[const _Pos(13, 6), _home, const _Pos(11, 8), _home],
+);
+
+/// Right of the board centre, away from the centre is RIGHT. Same picked
+/// token; a ringed token of mine two cells left and two rows up blocks the
+/// centred and the slid-left (toward) candidates, so candidate 3 (slid right,
+/// away) is the one that clears it.
+_Scene _sceneRightAway(int mySeat) => _Scene.build(
+  'case3r-right-away',
+  mySeat,
+  queue: <int>[3, 2],
+  picked: 2,
+  mine: <_Pos>[const _Pos(9, 6), _home, const _Pos(11, 8), _home],
+);
+
+/// The picked token on view column 14, nothing else near: the board clamp
+/// moves the bubble and the pointer's own range ends before the token.
+_Scene _sceneEdgeRight(int mySeat) => _Scene.build(
+  'edge-right-col14',
+  mySeat,
+  queue: <int>[3, 2],
+  picked: 3,
+  mine: <_Pos>[_home, _home, _home, const _Pos(14, 8)],
+);
+
+/// The picked token on view column 13: the board clamp moves the bubble but
+/// the token is still inside the pointer's range.
+_Scene _sceneEdgeNear(int mySeat) => _Scene.build(
+  'edge-right-col13',
+  mySeat,
+  queue: <int>[3, 2],
+  picked: 2,
+  mine: <_Pos>[_home, _home, const _Pos(13, 8), _home],
+);
+
+/// The picked token on view column 0, nothing else near.
+_Scene _sceneEdgeLeft(int mySeat) => _Scene.build(
+  'edge-left-col0',
+  mySeat,
+  queue: <int>[3, 2],
+  picked: 2,
+  mine: <_Pos>[_home, _home, const _Pos(0, 8), _home],
+);
+
+/// C-508 D2: tokens 0 and 2 of mine on one track cell, both ringed by the
+/// queued 3 and 2, the picker on token 0 (a tap on a stacked cell resolves to
+/// its lowest legal index, so the upper disc of the pair is the one picked).
+/// Token 1, ringed, is straight above and blocks every above candidate, so
+/// the choice falls to the candidates below, where the mate's lower disc
+/// reaches up into the bubble's block.
+_Scene _sceneMates(int mySeat) => _Scene.build(
+  'd2-mates',
+  mySeat,
+  queue: <int>[3, 2],
+  picked: 0,
+  mine: <_Pos>[const _Pos(11, 8), const _Pos(11, 6), const _Pos(11, 8), _home],
+);
+
 void main() {
   group('case 1: nothing in the above block', () {
     // C-508 case 1: must PASS on origin/main (pins what stays: above centre,
@@ -816,8 +932,8 @@ void main() {
       );
       final Rect got = run.pickerLocal;
       expect(
-        (got.left - today.left).abs() <= _rectTolerance &&
-            (got.top - today.top).abs() <= _rectTolerance &&
+        (got.left - today.left).abs() <= _leftTolerance &&
+            (got.top - today.top).abs() <= _eps &&
             (got.width - today.width).abs() <= _eps &&
             (got.height - today.height).abs() <= _eps,
         isTrue,
@@ -855,30 +971,53 @@ void main() {
         reason: run.why('the bubble slid right of the centred position'),
       );
       // The uncovered ringed token can be played through the normal path:
-      // face 3 and face 2 both move it, so its own picker opens.
-      await run.tester.tapAt(run.board.topLeft + ringed.center);
-      await run.tester.pump();
-      await run.tester.pump(const Duration(milliseconds: 16));
-      expect(
-        run.moves,
-        isEmpty,
-        reason: run.why('no move while token ${ringed.token} opens a picker'),
-      );
-      expect(
-        run.tester.any(find.byKey(facePickerKey)),
-        isTrue,
-        reason: run.why('token ${ringed.token} (two faces) opened its picker'),
-      );
-      expect(
-        (run.pointer.center.dx - (run.board.left + ringed.center.dx)).abs(),
-        lessThanOrEqualTo(1.0),
-        reason: run.why(
-          'the new bubble is anchored on token ${ringed.token} (pointer x '
-          '${run.pointer.center.dx.toStringAsFixed(1)} on '
-          '${(run.board.left + ringed.center.dx).toStringAsFixed(1)}), not '
-          'still on the picked one',
-        ),
-      );
+      // face 3 and face 2 both move it, so its own picker opens, anchored on
+      // it, and nothing is sent.
+      final SemanticsHandle semantics = run.tester.ensureSemantics();
+      try {
+        await run.tester.pump();
+        final int frames = run.drive.transport.sentRaw.length;
+        await run.tester.tapAt(run.board.topLeft + ringed.center);
+        await run.tester.pump();
+        await run.tester.pump(const Duration(milliseconds: 16));
+        expect(
+          run.drive.transport.sentRaw.length,
+          frames,
+          reason: run.why(
+            'nothing sent while token ${ringed.token} opens a picker',
+          ),
+        );
+        expect(
+          find.byKey(facePickerKey),
+          findsOneWidget,
+          reason: run.why(
+            'exactly one picker, the one of token ${ringed.token}',
+          ),
+        );
+        final String wantLabel = AppLocalizations.of(
+          run.tester.element(find.byKey(facePickerKey)),
+        ).facePickerLabel(ringed.token + 1);
+        expect(
+          run.tester.getSemantics(find.byKey(facePickerKey)).label,
+          wantLabel,
+          reason: run.why(
+            'the open picker is token ${ringed.token}\'s (semantics label '
+            '"$wantLabel"), not the picked token ${run.scene.picked}\'s '
+            'left open by a swallowed tap',
+          ),
+        );
+        expect(
+          (run.pointer.center.dx - (run.board.left + ringed.center.dx)).abs(),
+          lessThanOrEqualTo(1.0),
+          reason: run.why(
+            'the new bubble is anchored on token ${ringed.token} (pointer x '
+            '${run.pointer.center.dx.toStringAsFixed(1)} on '
+            '${(run.board.left + ringed.center.dx).toStringAsFixed(1)})',
+          ),
+        );
+      } finally {
+        semantics.dispose();
+      }
     });
   });
 
@@ -907,7 +1046,7 @@ void main() {
         final Rect disc = run.plan.picked.rect;
         expect(
           below.top,
-          greaterThanOrEqualTo(disc.bottom - _rectTolerance),
+          greaterThanOrEqualTo(disc.bottom - _eps),
           reason: run.why(
             'the bubble top ${below.top.toStringAsFixed(1)} is below the '
             'token bottom ${disc.bottom.toStringAsFixed(1)}',
@@ -941,26 +1080,30 @@ void main() {
         run.expectChosenRect('above, slid right');
         expect(run.pointsUp, isFalse, reason: run.why('pointer down (above)'));
 
-        final int before = run.moves.length;
+        final int frames = run.drive.transport.sentRaw.length;
         await run.tester.tapAt(run.board.topLeft + yardDisc.center);
         await run.tester.pump();
         await run.tester.pump(const Duration(milliseconds: 16));
-        final List<Map<String, Object?>> sent = run.moves.sublist(before);
-        final bool ownPicker = run.tester.any(find.byKey(facePickerKey));
-        final bool playedOrPicked =
-            (sent.length == 1 &&
-                sent.single['token'] == 2 &&
-                sent.single['face'] == 6) ||
-            (sent.isEmpty && ownPicker);
+        // The yard token has one face (the 6), so its tap is a move at once:
+        // exactly one frame, a move of token 2 with face 6, nothing else.
+        final List<String> sent = run.drive.transport.sentRaw.sublist(frames);
+        final List<Map<String, Object?>> moves = <Map<String, Object?>>[
+          for (final String text in sent)
+            if (frameType(text) == 'move') frameData(text),
+        ];
         expect(
-          playedOrPicked,
+          sent.length == 1 &&
+              moves.length == 1 &&
+              moves.single['token'] == 2 &&
+              moves.single['face'] == 6,
           isTrue,
           reason: run.why(
             'a tap on the yard token centre '
             '${yardDisc.center.dx.toStringAsFixed(1)},'
-            '${yardDisc.center.dy.toStringAsFixed(1)} sends move token 2 '
-            'face 6 (its only face) or opens its own picker; moves sent: '
-            '$sent, picker open: $ownPicker',
+            '${yardDisc.center.dy.toStringAsFixed(1)} sends exactly one '
+            'frame, move token 2 face 6; frames sent: '
+            '${sent.map(frameType).toList()}, moves: $moves, picker open: '
+            '${run.tester.any(find.byKey(facePickerKey))}',
           ),
         );
       },
@@ -1036,7 +1179,7 @@ void main() {
       final Rect disc = run.plan.picked.rect;
       expect(
         run.pickerLocal.top,
-        greaterThanOrEqualTo(disc.bottom - _rectTolerance),
+        greaterThanOrEqualTo(disc.bottom - _eps),
         reason: run.why('bubble top below the token bottom ${disc.bottom}'),
       );
       run.expectChosenRect('below centre');
@@ -1064,13 +1207,353 @@ void main() {
         final Rect disc = run.plan.picked.rect;
         expect(
           run.pickerLocal.top,
-          greaterThanOrEqualTo(disc.bottom - _rectTolerance),
+          greaterThanOrEqualTo(disc.bottom - _eps),
           reason: run.why('bubble top below the token bottom ${disc.bottom}'),
         );
         run.expectChosenRect('below, slid away');
         expect(run.pointsUp, isTrue, reason: run.why('pointer up (below)'));
       },
     );
+  });
+
+  group('cases 2 and 3 right of the centre: toward is left, away is right', () {
+    // C-508 case 2, right half: must FAIL on origin/main (main stays above
+    // centre over the ringed token).
+    _cases('candidate 2, slid left toward the centre, wins', _sceneRightToward, (
+      _Run run,
+    ) async {
+      final Offset c = run.pickedCentre - run.board.topLeft;
+      expect(
+        c.dx,
+        greaterThan(run.board.width / 2),
+        reason: 'fixture is broken: ${run.why('picked token right of centre')}',
+      );
+      expect(
+        run.plan.byOrder(1).a,
+        greaterThanOrEqualTo(1),
+        reason: 'fixture is broken: ${run.why('candidate 1 covers a ringed')}',
+      );
+      expect(
+        run.swappedPlan.chosen.order,
+        isNot(2),
+        reason:
+            'fixture is broken: with toward and away swapped the contract '
+            'would also choose candidate 2. ${run.why('a discriminating scene')}',
+      );
+      run.expectChosen(2, 'slid LEFT (toward the centre) is the first clear');
+      run.expectChosenRect('candidate 2, above slid left');
+      expect(
+        run.pickerLocal.left,
+        lessThan(run.plan.byOrder(1).left),
+        reason: run.why('candidate 2 slid left of the centred position'),
+      );
+      expect(run.pointsUp, isFalse, reason: run.why('pointer down (above)'));
+      run.expectSane();
+    });
+
+    // C-508 case 3 shape, right half: must FAIL on origin/main (main stays
+    // above centre over the ringed token).
+    _cases(
+      'candidate 2 blocked, candidate 3 slid right away from the centre wins',
+      _sceneRightAway,
+      (_Run run) async {
+        final Offset c = run.pickedCentre - run.board.topLeft;
+        expect(
+          c.dx,
+          greaterThan(run.board.width / 2),
+          reason:
+              'fixture is broken: ${run.why('picked token right of centre')}',
+        );
+        expect(
+          run.plan.byOrder(1).a >= 1 && run.plan.byOrder(2).a >= 1,
+          isTrue,
+          reason:
+              'fixture is broken: ${run.why('candidates 1 and 2 are blocked')}',
+        );
+        expect(
+          run.plan.byOrder(3).a,
+          0,
+          reason: 'fixture is broken: ${run.why('candidate 3 is clear')}',
+        );
+        expect(
+          run.swappedPlan.chosen.order,
+          isNot(3),
+          reason:
+              'fixture is broken: with toward and away swapped the contract '
+              'would also choose candidate 3. '
+              '${run.why('a discriminating scene')}',
+        );
+        run.expectChosen(
+          3,
+          'candidate 2 is blocked, slid RIGHT (away) is clear',
+        );
+        run.expectChosenRect('candidate 3, above slid right');
+        expect(
+          run.pickerLocal.left,
+          greaterThan(run.plan.byOrder(1).left),
+          reason: run.why('candidate 3 slid right of the centred position'),
+        );
+        expect(run.pointsUp, isFalse, reason: run.why('pointer down (above)'));
+        run.expectSane();
+      },
+    );
+  });
+
+  group('C-508 D2: a ringed mate on the picked token\'s own cell', () {
+    // Must FAIL on origin/main (main stays above centre over the ringed token
+    // above). It also fails an implementation that counts the mate: the
+    // mate's disc reaches into every below block, so all six candidates would
+    // score a=1 and the earliest, above centre, would win.
+    _cases('the mate is excluded, a candidate below wins', _sceneMates, (
+      _Run run,
+    ) async {
+      for (final int order in <int>[1, 2, 3]) {
+        expect(
+          run.plan.byOrder(order).a,
+          greaterThanOrEqualTo(1),
+          reason:
+              'fixture is broken: above candidate $order covers no ringed '
+              'token. ${run.why('all above candidates blocked')}',
+        );
+      }
+      expect(
+        run.plan.chosen.below && run.plan.chosen.a == 0,
+        isTrue,
+        reason:
+            'fixture is broken: a below candidate must clear every ringed '
+            'token. ${run.why('a clear below candidate')}',
+      );
+      expect(
+        run.matesCountedPlan
+            .byOrder(run.plan.chosen.order)
+            .coveredMine
+            .map((_Disc d) => d.token),
+        <int>[2],
+        reason:
+            'fixture is broken: the mate (token 2) must reach into the '
+            'below-centre block. ${run.why('mate counted covers it')}',
+      );
+      expect(
+        run.matesCountedPlan.chosen.order,
+        isNot(run.plan.chosen.order),
+        reason:
+            'fixture is broken: counting the mate must change the choice. '
+            '${run.why('a discriminating scene')}',
+      );
+      run.expectChosenRect('a below candidate with the mate excluded');
+      expect(run.pointsUp, isTrue, reason: run.why('pointer up (below)'));
+      run.expectSane();
+    });
+  });
+
+  group('the board edge clamp and the pointer clamp (C-462 D5, C-508 D4)', () {
+    // Must PASS on origin/main: the horizontal clamp and the pointer's own
+    // range are C-462 D5 behaviour the new placement keeps.
+    _cases(
+      'column 14: bubble inside, pointer at the end of its range',
+      (int mySeat) {
+        return _sceneEdgeRight(mySeat);
+      },
+      (_Run run) async {
+        final double w = run.pickerLocal.width;
+        final double m = kSpace2 + _pointerHalf;
+        final Offset c = run.pickedCentre - run.board.topLeft;
+        expect(
+          c.dx - run.plan.chosen.left,
+          greaterThan(w - m + 1),
+          reason:
+              'fixture is broken: the pointer range must end more than 1 dp '
+              'short of the token. ${run.why('pointer clamp engaged')}',
+        );
+        run.expectChosenRect('the clamped chosen candidate');
+        run.expectSane();
+        expect(
+          (run.pointer.center.dx - (run.picker.left + w - m)).abs(),
+          lessThanOrEqualTo(1.0),
+          reason: run.why(
+            'pointer tip at the far end of its range '
+            '${(run.picker.left + w - m).toStringAsFixed(1)}, got '
+            '${run.pointer.center.dx.toStringAsFixed(1)}',
+          ),
+        );
+      },
+    );
+
+    _cases(
+      'column 13: bubble moved by the board clamp, pointer still on '
+      'the token',
+      _sceneEdgeNear,
+      (_Run run) async {
+        expect(
+          run.plan.chosen.clamped,
+          isTrue,
+          reason: 'fixture is broken: ${run.why('the board clamp moved it')}',
+        );
+        run.expectChosenRect('the clamped chosen candidate');
+        run.expectSane();
+        expect(
+          (run.pointer.center.dx - run.pickedCentre.dx).abs(),
+          lessThanOrEqualTo(1.0),
+          reason: run.why(
+            'pointer tip within 1 dp of the token centre x '
+            '${run.pickedCentre.dx.toStringAsFixed(1)}, got '
+            '${run.pointer.center.dx.toStringAsFixed(1)}',
+          ),
+        );
+      },
+    );
+
+    _cases(
+      'column 0: bubble inside, pointer at the near end of its range',
+      (int mySeat) {
+        return _sceneEdgeLeft(mySeat);
+      },
+      (_Run run) async {
+        final double m = kSpace2 + _pointerHalf;
+        final Offset c = run.pickedCentre - run.board.topLeft;
+        expect(
+          c.dx - run.plan.chosen.left,
+          lessThan(m - 1),
+          reason:
+              'fixture is broken: the pointer range must start more than 1 dp '
+              'past the token. ${run.why('pointer clamp engaged')}',
+        );
+        run.expectChosenRect('the clamped chosen candidate');
+        run.expectSane();
+        expect(
+          (run.pointer.center.dx - (run.picker.left + m)).abs(),
+          lessThanOrEqualTo(1.0),
+          reason: run.why(
+            'pointer tip at the near end of its range '
+            '${(run.picker.left + m).toStringAsFixed(1)}, got '
+            '${run.pointer.center.dx.toStringAsFixed(1)}',
+          ),
+        );
+      },
+    );
+  });
+
+  group('C-508 D4: the open scale grows out of the pointer tip', () {
+    // C-508 D4: the slid scenes pass on origin/main only because main never
+    // slides (its pointer is centred, so its bottom-centre origin is the
+    // tip); the board-edge scene has an off-centre pointer on main too and
+    // must FAIL there (main scales about the bubble's bottom centre, so the
+    // tip drifts while it opens).
+    const List<(Locale, int)> matrix = <(Locale, int)>[
+      (Locale('en'), 0),
+      (Locale('ar'), 2),
+    ];
+    for (final (String name, _SceneBuilder build) in <(String, _SceneBuilder)>[
+      ('above, slid right (candidate 3)', _sceneRightAway),
+      ('below, slid away (candidate 6)', _sceneTopRowCrowded),
+      ('above, pointer off centre at the board edge', _sceneEdgeRight),
+    ]) {
+      _cases(
+        'the pointer tip holds still half way through the open: $name',
+        build,
+        (_Run run) async {
+          final bool below = run.plan.chosen.below;
+          final double w = run.plan.chosen.width;
+          final double centred = run.plan.chosen.rawLeft + w / 2;
+          expect(
+            (run.plan.picked.center.dx - run.plan.chosen.left - w / 2).abs(),
+            greaterThan(10),
+            reason:
+                'fixture is broken: the pointer must be well off the '
+                'bubble centre. ${run.why('a slid candidate')} (centred '
+                '${centred.toStringAsFixed(1)})',
+          );
+
+          Offset tip() {
+            final Rect pointer = run.pointer;
+            final Finder box = find.descendant(
+              of: find.byKey(facePickerKey),
+              matching: find.byWidgetPredicate(
+                (Widget widget) => widget is SizedBox && widget.width == w,
+              ),
+            );
+            expect(box, findsOneWidget, reason: run.why('one bubble box'));
+            final Rect bubble = run.tester.getRect(box);
+            return Offset(
+              pointer.center.dx,
+              below ? bubble.top : bubble.bottom,
+            );
+          }
+
+          Transform scaling() {
+            final List<Transform> found = run.tester
+                .widgetList<Transform>(
+                  find.descendant(
+                    of: find.byKey(facePickerKey),
+                    matching: find.byType(Transform),
+                  ),
+                )
+                .where((Transform t) => t.transform.entry(0, 0) < 0.999)
+                .toList();
+            expect(
+              found,
+              hasLength(1),
+              reason: run.why('exactly one scaling Transform mid-open'),
+            );
+            return found.single;
+          }
+
+          await run.tester.tapAt(run.pickedCentre);
+          await run.tester.pump();
+          await run.tester.pump(kFacePickerOpen ~/ 2);
+          expect(
+            run.tester.any(find.byKey(facePickerKey)),
+            isTrue,
+            reason: run.why('picker open half way'),
+          );
+          final Transform mid = scaling();
+          final double scale = mid.transform.entry(0, 0);
+          expect(
+            scale > 0.1 && scale < 0.9,
+            isTrue,
+            reason: run.why('a scale below 1 half way, got $scale'),
+          );
+          final Offset halfTip = tip();
+
+          await run.tester.pump(kFacePickerOpen);
+          await run.tester.pump(kFacePickerOpen);
+          final Offset fullTip = tip();
+          final Rect settled = run.picker;
+          expect(
+            (settled.width - w).abs() < _eps,
+            isTrue,
+            reason: run.why('settled bubble width $w, got ${settled.width}'),
+          );
+          expect(
+            (halfTip - fullTip).distance,
+            lessThanOrEqualTo(1.0),
+            reason: run.why(
+              'the pointer tip stays put while the bubble grows: tip at '
+              'scale ${scale.toStringAsFixed(2)} is $halfTip, settled $fullTip',
+            ),
+          );
+          // The origin is the tip: x is the pointer's place in the bubble
+          // mapped to -1..1 across the width, y the bubble edge the pointer
+          // is on (bottom when above, top when below).
+          final double wantX =
+              (run.pointer.center.dx - settled.left) / w * 2 - 1;
+          final Alignment origin = mid.alignment! as Alignment;
+          expect(
+            (origin.x - wantX).abs() < 0.02 &&
+                (origin.y - (below ? -1.0 : 1.0)).abs() < _eps,
+            isTrue,
+            reason: run.why(
+              'Transform alignment (${wantX.toStringAsFixed(3)}, '
+              '${below ? -1 : 1}), got (${origin.x.toStringAsFixed(3)}, '
+              '${origin.y})',
+            ),
+          );
+        },
+        matrix: matrix,
+        open: false,
+        animate: true,
+      );
+    }
   });
 
   group('case 8: the bubble is inside the board, aimed, and tappable', () {
@@ -1087,6 +1570,9 @@ void main() {
       ('case 6', _sceneEveryCovers),
       ('case 7', _sceneTopRow),
       ('case 7 extra', _sceneTopRowCrowded),
+      ('case 2 right half', _sceneRightToward),
+      ('case 3 right half', _sceneRightAway),
+      ('mates', _sceneMates),
     ];
     for (final (String name, _SceneBuilder build) in scenes) {
       _cases(
