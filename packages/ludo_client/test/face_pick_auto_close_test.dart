@@ -217,13 +217,15 @@ Future<void> _dropSocket(WidgetTester tester, RollTrayDrive drive) async {
   );
 }
 
-/// A manual reconnect on a second socket, answered by a snapshot of the very
-/// decision the fixture opens on (same k, queue and legal_by_face).
+/// A manual reconnect on a second socket, answered by a snapshot of [turn]
+/// (by default the very decision the fixture opens on: same k, queue and
+/// legal_by_face).
 Future<void> _resume(
   WidgetTester tester,
   RollTrayDrive drive,
-  _Probe probe,
-) async {
+  _Probe probe, {
+  Map<String, Object?>? turn,
+}) async {
   final FakeTransport second = FakeTransport();
   drive.enqueueTransport(second);
   probe.adopt(second);
@@ -242,7 +244,7 @@ Future<void> _resume(
     roomReplyFrame(
       re: requestIdOf(resumes.single),
       seats: twoSeats(mine: _mine),
-      turn: _pickTurn(),
+      turn: turn ?? _pickTurn(),
       seq: drive.lastSeq + 1,
     ),
   );
@@ -254,11 +256,13 @@ Future<void> _resume(
     RoomPhase.connected,
     reason: 'fixture is broken: the resume succeeded. $_fixtureText',
   );
-  expect(
-    _describe(drive),
-    _fixtureText,
-    reason: 'fixture is broken: the snapshot is the same decision',
-  );
+  if (turn == null) {
+    expect(
+      _describe(drive),
+      _fixtureText,
+      reason: 'fixture is broken: the snapshot is the same decision',
+    );
+  }
 }
 
 void main() {
@@ -546,18 +550,39 @@ void main() {
       },
     );
 
+    // C-282 keeps the stale table under the connection-lost card, dimmed and
+    // untappable, and D4 sends a resume through the same checks as any other
+    // frame, so a half-made choice survives a short drop (P4).
     testWidgets(
-      'D4 the playing body leaves the screen: while the socket is down and '
-      'the connection-lost card is up the picker is closed',
+      'D4 the socket drops with the picker open: a tap on option 6 while '
+      'the connection-lost card is up sends nothing and plays no cue',
       (tester) async {
         final RollTrayDrive drive = await _mount(tester);
         try {
-          final _Probe p = _Probe(tester, drive, 'D4 socket down');
+          final _Probe p = _Probe(tester, drive, 'D4 tap while down');
           await p.openOnTokenTwo();
           await _dropSocket(tester, drive);
           await _settle(tester);
-          p.expectClosedQuietly(
-            'picker closed while the connection-lost card is up',
+          expect(
+            find.byKey(facePickerOptionKey(6)),
+            findsOneWidget,
+            reason: p.why('option 6 still drawn on the stale table'),
+          );
+          final Offset where = tester.getCenter(
+            find.byKey(facePickerOptionKey(6)),
+          );
+          await tester.tapAt(where);
+          await tester.pump();
+          await _settle(tester);
+          expect(
+            p.moves,
+            isEmpty,
+            reason: p.why('a tap while down sends nothing'),
+          );
+          expect(
+            p.cues,
+            isEmpty,
+            reason: p.why('a tap while down plays no cue'),
           );
         } finally {
           await releaseGame(tester, drive);
@@ -566,32 +591,64 @@ void main() {
     );
 
     testWidgets(
-      'D4 the playing body leaves the screen: a resume snapshot on the same '
-      'k, queue and legal_by_face does not bring the picker back, and a '
-      'fresh tap opens it',
+      'D4 a resume snapshot on the same k, queue and legal_by_face keeps '
+      'the picker open, and one tap on option 4 sends one move token 2 '
+      'face 4 and one tap cue',
       (tester) async {
         final RollTrayDrive drive = await _mount(tester);
         try {
-          final _Probe p = _Probe(tester, drive, 'D4 drop and resume');
+          final _Probe p = _Probe(tester, drive, 'D4 resume same decision');
           await p.openOnTokenTwo();
           await _dropSocket(tester, drive);
           await _resume(tester, drive, p);
           await _settle(tester);
-          p.expectClosedQuietly('picker not back after the resume');
-          expect(ringedTokens(tester), <int>[
-            0,
-            1,
-            2,
-          ], reason: p.why('the rings are back, the picker is not'));
+          p.expectPicker(
+            'picker still open after a resume of the same decision',
+          );
+          expect(p.moves, isEmpty, reason: p.why('the resume sends no move'));
+          expect(p.cues, isEmpty, reason: p.why('the resume plays no cue'));
 
-          await p.tapToken(2);
-          p.expectPicker('a fresh tap on token 2 opens it again');
+          expect(
+            find.byKey(facePickerOptionKey(4)),
+            findsOneWidget,
+            reason: p.why('option 4 on screen before the tap'),
+          );
+          await tester.tap(find.byKey(facePickerOptionKey(4)));
+          await tester.pump();
+          await _settle(tester);
+          expect(p.moves, hasLength(1), reason: p.why('exactly one move'));
+          expect(p.moves.single['token'], 2, reason: p.why('token 2'));
+          expect(p.moves.single['face'], 4, reason: p.why('face 4'));
           expect(
             p.cueCount(FeedbackCue.tap),
             1,
-            reason: p.why('one tap cue for the fresh open'),
+            reason: p.why('one tap cue for the pick'),
           );
-          expect(p.moves, isEmpty, reason: p.why('opening sends nothing'));
+          p.expectNoPicker('picker closed by the pick');
+        } finally {
+          await releaseGame(tester, drive);
+        }
+      },
+    );
+
+    testWidgets(
+      'D4 a resume snapshot with a new k (the server played for me while I '
+      'was away) leaves the picker closed, nothing sent, no cue',
+      (tester) async {
+        final RollTrayDrive drive = await _mount(tester);
+        try {
+          final _Probe p = _Probe(tester, drive, 'D4 resume new k');
+          await p.openOnTokenTwo();
+          await _dropSocket(tester, drive);
+          await _resume(tester, drive, p, turn: _pickTurn(k: 3));
+          expect(
+            drive.controller.room!.turn!.k,
+            3,
+            reason:
+                'fixture is broken: the snapshot carries k 3. $_fixtureText',
+          );
+          await _settle(tester);
+          p.expectClosedQuietly('picker closed by the resume with k 3');
         } finally {
           await releaseGame(tester, drive);
         }
