@@ -21,6 +21,8 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart'
+    show BoxParentData, RenderBox, RenderShiftedBox;
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
@@ -30,6 +32,7 @@ import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
 import 'capture_gloat.dart';
 import 'chat_bubble.dart' show EndCardChatBubble, EndCardChatLine;
+import 'dead_mark.dart' show deadBadgeRect;
 import 'die_cube.dart';
 import 'die_mark.dart';
 import 'end_card.dart';
@@ -3876,9 +3879,10 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   /// C-471 D3. The die's row, with the hint control overlaid on its
-  /// leading edge so the die and the tray keep the rects they have. The
-  /// control is absent unless the room is PLAYING and this device holds
-  /// a seat.
+  /// leading edge. The control is absent unless the room is PLAYING and
+  /// this device holds a seat. C-511 D1/D2: the die, its no-move mark and
+  /// the tray keep clear of the control's box plus [kSpace2], and the
+  /// tray is handed the width that band leaves it (D3).
   Widget _dieRow(
     RoomSnapshot room,
     int? seat,
@@ -3895,37 +3899,50 @@ class _GameScreenState extends State<GameScreen> {
     SeatRollRecord? boardRecord,
     bool trayOwnMove,
   ) {
-    final Widget row = Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+    final HintControlState? hintState = _hintControlState(room, seat);
+    final bool hinted = hintState != null && seat != null;
+    // C-511 D1: the control's own 48 dp box and the gap after it.
+    final double reserved = hinted ? kHintHitWidth + kSpace2 : 0;
+    // C-511 D1: the no-move mark hangs off the die's physical right
+    // (deadBadgeRect). In RTL that is the side facing the hint.
+    final bool rtl = Directionality.of(context) == TextDirection.rtl;
+    final double overhang = hinted && rtl && _noMoveVisible
+        ? deadBadgeRect(const Size.square(_dieRowHeight)).right - _dieRowHeight
+        : 0;
+    Widget rowFor(double cap) => Row(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: <Widget>[
-        _boardDieSlot(
-          loc,
-          turn,
-          // C-468 D7: Opacity is an ancestor of the die's art.
-          // The key on the die is unchanged.
-          Opacity(
-            opacity: fadeIdleDie ? 0.45 : 1,
-            child: GameDie(
-              face: dieFace,
-              seatColor: dieSeatColor,
-              enabled: rollEnabled,
-              tumbling: _rollWaitK != null,
-              noAnswer: _rollNoAnswer,
-              noMove: _noMoveVisible,
-              // C-404: the die's top sits exactly at the row's own
-              // top (it is the tallest thing in the row), which
-              // sits `metrics.boardGap` below the board -- the
-              // same number board_floor_nav_inset_test.dart
-              // measures as die.top - board.bottom. Handing that
-              // straight to the die is what lets its badge clamp
-              // itself without this column's gaps, clamp or floor
-              // changing at all.
-              badgeHeadroom: metrics.boardGap,
-              onTap: rollEnabled ? _onDieTap : null,
-              onInvalidTap: () {
-                FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-              },
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: cap),
+          child: _boardDieSlot(
+            loc,
+            turn,
+            // C-468 D7: Opacity is an ancestor of the die's art.
+            // The key on the die is unchanged.
+            Opacity(
+              opacity: fadeIdleDie ? 0.45 : 1,
+              child: GameDie(
+                face: dieFace,
+                seatColor: dieSeatColor,
+                enabled: rollEnabled,
+                tumbling: _rollWaitK != null,
+                noAnswer: _rollNoAnswer,
+                noMove: _noMoveVisible,
+                // C-404: the die's top sits exactly at the row's own
+                // top (it is the tallest thing in the row), which
+                // sits `metrics.boardGap` below the board -- the
+                // same number board_floor_nav_inset_test.dart
+                // measures as die.top - board.bottom. Handing that
+                // straight to the die is what lets its badge clamp
+                // itself without this column's gaps, clamp or floor
+                // changing at all.
+                badgeHeadroom: metrics.boardGap,
+                onTap: rollEnabled ? _onDieTap : null,
+                onInvalidTap: () {
+                  FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+                },
+              ),
             ),
           ),
         ),
@@ -3943,17 +3960,35 @@ class _GameScreenState extends State<GameScreen> {
         ],
       ],
     );
-    final HintControlState? hintState = _hintControlState(room, seat);
-    if (hintState == null || seat == null) {
-      return Center(child: row);
+    // C-511 D1/D2: a Row hands its die slot an unbounded width, so the slot
+    // (die plus the no-answer line) is capped at what the band leaves it.
+    final bool withTray = trayFaces != null && boardRecord == null;
+    final Widget band = LayoutBuilder(
+      builder: (BuildContext _, BoxConstraints box) {
+        final double cap = box.hasBoundedWidth
+            ? math.max(
+                0.0,
+                box.maxWidth - reserved - overhang - (withTray ? kSpace2 : 0),
+              )
+            : double.infinity;
+        return _DieBand(
+          reserved: reserved,
+          overhang: overhang,
+          textDirection: Directionality.of(context),
+          child: rowFor(cap),
+        );
+      },
+    );
+    if (!hinted) {
+      return band;
     }
-    // The row stays full width and centred, the same as the Centre that
-    // held it. The bulb is a positioned child, not a new child of the row
+    // The band is the full row width, the same as the Centre that held
+    // it. The bulb is a positioned child, not a new child of the row
     // (C-471 D3).
     return Stack(
       clipBehavior: Clip.none,
       children: <Widget>[
-        row,
+        band,
         PositionedDirectional(
           start: 0,
           top: 0,
@@ -5663,6 +5698,119 @@ class _PendingSafeCue {
   final int progress;
   final bool star;
   Timer? fallbackTimer;
+}
+
+/// C-511 D2. Places the die row's content in the row's own width: where
+/// it, centred, stays clear of the hint's reserved extent, exactly as the
+/// `Center` it replaces; otherwise its start edge sits at the extent's
+/// end. [reserved] is the hint's box plus the gap; [overhang] is how far
+/// the no-move mark hangs past the die on the start side (RTL only), which
+/// counts as content. The child is laid out in what the band leaves, so
+/// the tray's `Flexible` is handed the width after the extent, the die and
+/// the gap (D3).
+class _DieBand extends SingleChildRenderObjectWidget {
+  const _DieBand({
+    required this.reserved,
+    required this.overhang,
+    required this.textDirection,
+    required super.child,
+  });
+
+  final double reserved;
+  final double overhang;
+  final TextDirection textDirection;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderDieBand(reserved, overhang, textDirection);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderDieBand renderObject) {
+    renderObject
+      ..reserved = reserved
+      ..overhang = overhang
+      ..textDirection = textDirection;
+  }
+}
+
+class _RenderDieBand extends RenderShiftedBox {
+  _RenderDieBand(this._reserved, this._overhang, this._textDirection)
+    : super(null);
+
+  double _reserved;
+  double _overhang;
+  TextDirection _textDirection;
+
+  set reserved(double value) {
+    if (value != _reserved) {
+      _reserved = value;
+      markNeedsLayout();
+    }
+  }
+
+  set overhang(double value) {
+    if (value != _overhang) {
+      _overhang = value;
+      markNeedsLayout();
+    }
+  }
+
+  set textDirection(TextDirection value) {
+    if (value != _textDirection) {
+      _textDirection = value;
+      markNeedsLayout();
+    }
+  }
+
+  double get _lead => _reserved + _overhang;
+
+  BoxConstraints _childConstraints(BoxConstraints constraints) {
+    if (!constraints.hasBoundedWidth) {
+      return constraints.loosen();
+    }
+    return BoxConstraints(
+      maxWidth: math.max(0, constraints.maxWidth - _lead),
+      maxHeight: constraints.maxHeight,
+    );
+  }
+
+  Size _sizeFor(BoxConstraints constraints, Size childSize) {
+    if (!constraints.hasBoundedWidth) {
+      return constraints.constrain(childSize);
+    }
+    return constraints.constrain(Size(constraints.maxWidth, childSize.height));
+  }
+
+  @override
+  Size computeDryLayout(BoxConstraints constraints) {
+    final RenderBox? child = this.child;
+    if (child == null) {
+      return constraints.smallest;
+    }
+    return _sizeFor(
+      constraints,
+      child.getDryLayout(_childConstraints(constraints)),
+    );
+  }
+
+  @override
+  void performLayout() {
+    final RenderBox? child = this.child;
+    if (child == null) {
+      size = constraints.smallest;
+      return;
+    }
+    child.layout(_childConstraints(constraints), parentUsesSize: true);
+    size = _sizeFor(constraints, child.size);
+    double start = (size.width - child.size.width) / 2;
+    if (start < _lead) {
+      start = _lead;
+    }
+    final double dx = _textDirection == TextDirection.ltr
+        ? start
+        : size.width - start - child.size.width;
+    (child.parentData! as BoxParentData).offset = Offset(dx, 0);
+  }
 }
 
 /// C-492 D6: centres the header band's line on the row. A line that fits is
