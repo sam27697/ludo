@@ -43,6 +43,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
+import 'package:ludo_client/src/theme.dart' show kSpace2;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/roll_tray_harness.dart';
@@ -1035,10 +1036,15 @@ void main() {
           // (or, with a tray, the die + gap + tray group) off the board's
           // axis. C-471 A2: without a tray the die itself is centred; with a
           // tray the row centres the union of the die's and the tray's rects.
+          // C-511 D2: when that centred content would reach into the hint's
+          // reserved extent (its box plus kSpace2 on the end side), the
+          // content's start edge sits at the extent's end instead. Which of
+          // the two applies is decided from the measured rects, not per case.
           hintTest(
             tray
-                ? 'die and tray union centre equals board centre within 1 px: '
-                      '$code, with a tray, ${size.key}'
+                ? 'die and tray centred on the board, or starting at the '
+                      'hint\'s reserved extent when centring would not clear '
+                      'it: $code, with a tray, ${size.key}'
                 : 'die centre equals board centre within 1 px: $code, '
                       'without a tray, ${size.key}',
             (HintCase c) async {
@@ -1052,18 +1058,60 @@ void main() {
               );
               final double board = c.tester.getCenter(find.byKey(boardKey)).dx;
               if (tray) {
+                final bool rtl = code == 'ar';
+                final Rect hint = c.tester.getRect(find.byKey(hintButtonKey));
                 final Rect union = c.tester
                     .getRect(find.byKey(bigDieKey))
                     .expandToInclude(c.tester.getRect(find.byKey(rollTrayKey)));
-                expect(
-                  (union.center.dx - board).abs(),
-                  lessThanOrEqualTo(1.0),
-                  reason: c.why(
-                    'centre x ${union.center.dx} of the union $union of '
-                    'game-die and game-roll-tray within 1 px of '
-                    'game-screen-board centre x $board (${size.key}, $code)',
-                  ),
+                // C-511 A3: the content for the clear test is the die, its
+                // no-move mark when shown, and the tray; the centring measure
+                // stays the die + tray union.
+                Rect content = union;
+                final Finder mark = find.byKey(noMoveMarkKey);
+                if (c.tester.any(mark)) {
+                  content = content.expandToInclude(c.tester.getRect(mark));
+                }
+                // The reserved extent's end: right of the box in en, left of
+                // it in ar, kSpace2 further out.
+                final double extentEnd = rtl
+                    ? hint.left - kSpace2
+                    : hint.right + kSpace2;
+                // Where the content would stand if the union were centred on
+                // the board.
+                final Rect centred = content.shift(
+                  Offset(board - union.center.dx, 0),
                 );
+                final bool clear = rtl
+                    ? centred.right <= extentEnd + 1e-3
+                    : centred.left >= extentEnd - 1e-3;
+                if (clear) {
+                  expect(
+                    (union.center.dx - board).abs(),
+                    lessThanOrEqualTo(1.0),
+                    reason: c.why(
+                      'centred content $centred is clear of the reserved '
+                      'extent end $extentEnd (game-hint-button $hint + '
+                      '$kSpace2), so the centre x ${union.center.dx} of the '
+                      'union $union of game-die and game-roll-tray must be '
+                      'within 1 px of game-screen-board centre x $board '
+                      '(${size.key}, $code)',
+                    ),
+                  );
+                } else {
+                  final double start = rtl ? content.right : content.left;
+                  expect(
+                    (start - extentEnd).abs(),
+                    lessThanOrEqualTo(1.0),
+                    reason: c.why(
+                      'centred content $centred reaches into the reserved '
+                      'extent end $extentEnd (game-hint-button $hint + '
+                      '$kSpace2), so the content $content (union $union) '
+                      'must start at it: ${rtl ? 'right' : 'left'} edge '
+                      '$start within 1 px of $extentEnd (${size.key}, $code; '
+                      'board centre x $board)',
+                    ),
+                  );
+                }
               } else {
                 final double die = c.tester.getCenter(find.byKey(bigDieKey)).dx;
                 expect(
