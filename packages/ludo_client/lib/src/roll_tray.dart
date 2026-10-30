@@ -307,19 +307,26 @@ class _RollTrayState extends State<RollTray> {
         }
         // C-462 D6: one pill behind the whole row. No padding, so the
         // C-420 widths are the widget's widths.
+        final Widget pill = DecoratedBox(
+          decoration: BoxDecoration(
+            color: widget.seatColor.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: children,
+          ),
+        );
+        // C-511 D3: a grouped row wider than the width it is offered is
+        // scaled down as one piece to exactly that width (pill, tiles and
+        // count marks together). It is the same size when it fits, and the
+        // ghosts of exiting tiles are inside it, so no frame overflows.
+        // The on-board record passes [fitWidth] and does its own scaling.
+        final bool compact = !natural && widget.fitWidth == null;
         return Semantics(
           container: true,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: widget.seatColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: children,
-            ),
-          ),
+          child: compact ? FittedBox(fit: BoxFit.scaleDown, child: pill) : pill,
         );
       },
     );
