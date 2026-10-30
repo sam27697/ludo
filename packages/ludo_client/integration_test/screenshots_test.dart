@@ -6735,6 +6735,40 @@ void main() {
       textScale: 2.0,
     );
   });
+
+  // ==========================================================================
+  // 93-94: order 513 (C-511 D3). The compact tray: my turn in await_move on
+  // the queue [3, 6, 6, 2, 6, 6, 4] (the longest queue 12q lets a turn
+  // build, four distinct faces) with the hint ready, so the tray has to fit
+  // in the band the hint leaves beside the die. 93 is English at text scale
+  // 1.0, 94 is Arabic at 2.0. Captures 43 and 63 carry the same
+  // die-row-clear-of-the-hint check. Body lives with the capture 43 body at
+  // the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 93-game-tray-compact-en', (tester) async {
+    await _shootCompactTray(
+      tester,
+      binding,
+      shotName: '93-game-tray-compact-en',
+      locale: const Locale('en'),
+      roomCode: 'TC93EN',
+      gameId: '93' * 8,
+      seatToken: 'tok-shot-93',
+    );
+  });
+
+  testWidgets('capture 94-game-tray-compact-ar-large-text', (tester) async {
+    await _shootCompactTray(
+      tester,
+      binding,
+      shotName: '94-game-tray-compact-ar-large-text',
+      locale: const Locale('ar'),
+      roomCode: 'TC94AR',
+      gameId: '94' * 8,
+      seatToken: 'tok-shot-94',
+      textScale: 2.0,
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -9255,6 +9289,27 @@ const List<Map<String, Object?>> _traySixAndThreeLegal = <Map<String, Object?>>[
   },
 ];
 
+/// Every face of order 513's seven-face queue [3, 6, 6, 2, 6, 6, 4] can
+/// move token 0 (on square 0); the 6 can also leave the yard.
+const List<Map<String, Object?>> _trayAllFacesLegal = <Map<String, Object?>>[
+  <String, Object?>{
+    'face': 3,
+    'tokens': <int>[0],
+  },
+  <String, Object?>{
+    'face': 6,
+    'tokens': <int>[0, 1, 2, 3],
+  },
+  <String, Object?>{
+    'face': 2,
+    'tokens': <int>[0],
+  },
+  <String, Object?>{
+    'face': 4,
+    'tokens': <int>[0],
+  },
+];
+
 class _OpenedTrayGame {
   _OpenedTrayGame({
     required this.controller,
@@ -9623,6 +9678,100 @@ void _expectTrayBesideDie(
   );
 }
 
+String _viewText(WidgetTester tester) {
+  final Size size = tester.view.physicalSize / tester.view.devicePixelRatio;
+  return '${size.width.toStringAsFixed(0)}x${size.height.toStringAsFixed(0)} dp';
+}
+
+/// C-420 D3/D5 as C-511 D3 keeps them for every mode the tray can be in
+/// (natural, grouped, compact): the count each tile reads out in its
+/// TalkBack label adds up to the queue length. A tile with no count
+/// suffix stands for one face. The tile keys stay `game-roll-tray-die-<i>`
+/// with `i` the queue index of the group's first member, so only those
+/// indices are probed, never one tile per queue entry.
+Future<void> _expectTrayCountsSum(
+  WidgetTester tester, {
+  required int queueLength,
+  required Locale locale,
+  required String shotName,
+  required String scenario,
+}) async {
+  final SemanticsHandle semantics = tester.ensureSemantics();
+  try {
+    await tester.pump();
+    final RegExp suffix = locale.languageCode == 'ar'
+        ? RegExp(r'، العدد (\d+)$')
+        : RegExp(r', (\d+) of them$');
+    final List<int> indices = <int>[
+      for (int i = 0; i < queueLength; i++)
+        if (find.byKey(Key('game-roll-tray-die-$i')).evaluate().isNotEmpty) i,
+    ];
+    final List<String> labels = <String>[
+      for (final int i in indices)
+        tester.getSemantics(find.byKey(Key('game-roll-tray-die-$i'))).label,
+    ];
+    final List<int> counts = <int>[
+      for (final String label in labels)
+        suffix.firstMatch(label) == null
+            ? 1
+            : int.parse(suffix.firstMatch(label)!.group(1)!),
+    ];
+    final int sum = counts.fold(0, (int a, int b) => a + b);
+    expect(
+      sum,
+      queueLength,
+      reason:
+          'capture $shotName ($scenario): C-420 D5 / C-511 D3, the tile '
+          'counts read from the TalkBack labels must sum to the queue '
+          'length $queueLength; tiles at queue indices $indices read '
+          '$labels, counts $counts, sum $sum',
+    );
+  } finally {
+    semantics.dispose();
+  }
+}
+
+/// C-511 D1: nothing in the die row sits under the hint control. The die,
+/// its no-move mark when it is up, and the tray each stay clear of the
+/// `game-hint-button` rect. The hint must be on screen for the check to
+/// mean anything, so its absence is a failure of its own.
+void _expectDieRowClearOfHint(
+  WidgetTester tester, {
+  required String shotName,
+  required String scenario,
+}) {
+  final Finder hintFinder = find.byKey(const Key('game-hint-button'));
+  expect(
+    hintFinder,
+    findsOneWidget,
+    reason:
+        'capture $shotName ($scenario): C-511 D1, game-hint-button must be '
+        'on screen for the die row to be measured against it',
+  );
+  final Rect hint = tester.getRect(hintFinder);
+  final Rect die = tester.getRect(find.byKey(const Key('game-die')));
+  final Finder markFinder = find.byKey(const Key('game-die-no-move-mark'));
+  final Rect? mark = markFinder.evaluate().isEmpty
+      ? null
+      : tester.getRect(markFinder);
+  final Rect tray = tester.getRect(find.byKey(const Key('game-roll-tray')));
+  final List<String> hits = <String>[
+    if (die.overlaps(hint)) 'game-die',
+    if (mark != null && mark.overlaps(hint)) 'game-die-no-move-mark',
+    if (tray.overlaps(hint)) 'game-roll-tray',
+  ];
+  expect(
+    hits,
+    isEmpty,
+    reason:
+        'capture $shotName ($scenario): C-511 D1, nothing in the die row '
+        'may intersect game-hint-button ${_rectText(hint)}; '
+        'intersecting: $hits; game-die ${_rectText(die)}, '
+        'game-die-no-move-mark ${mark == null ? 'absent' : _rectText(mark)}, '
+        'game-roll-tray ${_rectText(tray)}',
+  );
+}
+
 int _progressOf(RoomController controller, int seat, int token) {
   for (final SeatState seatState in controller.room!.seats) {
     if (seatState.seat == seat) {
@@ -9738,11 +9887,15 @@ Future<void> _shootLiveTray(
       present: false,
       reason: 'capture $shotName: K3 die 0 is not dead',
     );
-    _expectChildKey(
+    // C-511 D3: the tray may be grouped at this size, and then die 1 does
+    // not exist (the group keeps its first member's index). The two 6s
+    // are checked by the count sum below instead.
+    await _expectTrayCountsSum(
       tester,
-      const Key('game-roll-tray-die-1'),
-      const Key('game-roll-tray-face-1-6'),
-      'capture $shotName: K2 die 1 draws the other 6',
+      queueLength: 3,
+      locale: locale,
+      shotName: shotName,
+      scenario: 'queue [6, 6, 3], ${_viewText(tester)}',
     );
     _expectKey(
       tester,
@@ -9963,11 +10116,14 @@ Future<void> _shootPickedTray(
       present: false,
       reason: 'capture $shotName: K3 die 0 is live',
     );
-    _expectChildKey(
+    // C-511 D3: grouped or compact, die 1 does not exist (the group keeps
+    // its first member's index). The two 6s are checked by the count sum.
+    await _expectTrayCountsSum(
       tester,
-      const Key('game-roll-tray-die-1'),
-      const Key('game-roll-tray-face-1-6'),
-      'capture $shotName: K2 die 1 still draws 6',
+      queueLength: 4,
+      locale: locale,
+      shotName: shotName,
+      scenario: 'queue [6, 6, 3, 2], ${_viewText(tester)}',
     );
     _expectKey(
       tester,
@@ -10032,10 +10188,203 @@ Future<void> _shootPickedTray(
           'capture $shotName: K1 the tray sits after the big die in '
           'reading order',
     );
+    _expectDieRowClearOfHint(
+      tester,
+      shotName: shotName,
+      scenario: 'queue [6, 6, 3, 2], ${_viewText(tester)}',
+    );
 
     await binding.takeScreenshot(shotName);
   } finally {
     await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Captures 93 and 94 (order 513, C-511 D3). My turn, `await_move`, queue
+/// [3, 6, 6, 2, 6, 6, 4] with every face legal for at least one token and
+/// the hint `ready`. Grouped, that is 6x4, 3, 2, 4: wider than the band the
+/// hint leaves beside the die on a phone, so the tray scales down as one
+/// piece. Which mode the tray is in is not asserted (it follows the size);
+/// what holds in every mode is the count sum, the first-member keys, and a
+/// die row clear of the hint. With [textScale] the system scale is set the
+/// way capture 75 sets it.
+Future<void> _shootCompactTray(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+  double? textScale,
+}) async {
+  const List<int> queue = <int>[3, 6, 6, 2, 6, 6, 4];
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  if (textScale != null) {
+    tester.platformDispatcher.textScaleFactorTestValue = textScale;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  } else {
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+  }
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    int seq = await _pushMyMoved(
+      tester,
+      opened.transport,
+      opened.seq,
+      from: -1,
+      to: 0,
+    );
+    seq = await _pushSixSixThen(
+      tester,
+      opened.transport,
+      seq,
+      finalValue: 4,
+      finalQueue: queue,
+      legalByFace: _trayAllFacesLegal,
+    );
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    final String scenario =
+        'queue $queue, ${locale.languageCode}, '
+        'text scale ${textScale ?? 1.0}, ${_viewText(tester)}';
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName ($scenario): a pushed frame was dropped; room '
+          'seq is ${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      turn.seat,
+      0,
+      reason: 'capture $shotName ($scenario): the turn stays mine',
+    );
+    expect(
+      turn.phaseName,
+      'awaitMove',
+      reason: 'capture $shotName ($scenario): the last roll leaves a move',
+    );
+    expect(
+      turn.queue,
+      queue,
+      reason: 'capture $shotName ($scenario): the queue is $queue',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName ($scenario): expected locale '
+          '${locale.languageCode}, got ${loc.localeName}',
+    );
+    if (textScale != null) {
+      final Finder banner = find.byKey(const Key('game-screen-turn-banner'));
+      expect(
+        banner,
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario): game-screen-turn-banner must be '
+            'on screen',
+      );
+      final double scaledTen = MediaQuery.textScalerOf(tester.element(banner))
+          .scale(10);
+      expect(
+        scaledTen,
+        10.0 * textScale,
+        reason:
+            'capture $shotName ($scenario): expected MediaQuery.textScalerOf '
+            'at game-screen-turn-banner to scale 10 to ${10.0 * textScale}, '
+            'got $scaledTen',
+      );
+    }
+
+    _expectKey(
+      tester,
+      const Key('game-hint-ready'),
+      present: true,
+      reason:
+          'capture $shotName ($scenario): C-471 D3, game-hint-ready must be '
+          'shown',
+    );
+    _expectKey(
+      tester,
+      const Key('game-roll-tray'),
+      present: true,
+      reason: 'capture $shotName ($scenario): K1 game-roll-tray',
+    );
+    // The first member of each distinct face keeps its queue index in every
+    // mode (C-420 D2): 3 at 0, 6 at 1, 2 at 3, 4 at 6.
+    for (final (int index, int face) in <(int, int)>[
+      (0, 3),
+      (1, 6),
+      (3, 2),
+      (6, 4),
+    ]) {
+      _expectChildKey(
+        tester,
+        Key('game-roll-tray-die-$index'),
+        Key('game-roll-tray-face-$index-$face'),
+        'capture $shotName ($scenario): K2 the first $face is die $index',
+      );
+    }
+    for (int index = 0; index < queue.length; index++) {
+      _expectKey(
+        tester,
+        Key('game-roll-tray-dead-$index'),
+        present: false,
+        reason:
+            'capture $shotName ($scenario): K3 every face is legal, so '
+            'no tile is dead',
+      );
+    }
+    _expectKey(
+      tester,
+      const Key('game-die-face-4'),
+      present: true,
+      reason:
+          'capture $shotName ($scenario): C-462 D7 the big die shows '
+          'turn.value 4',
+    );
+    await _expectTrayCountsSum(
+      tester,
+      queueLength: queue.length,
+      locale: locale,
+      shotName: shotName,
+      scenario: scenario,
+    );
+    _expectTrayBesideDie(
+      tester,
+      onTheRight: locale.languageCode == 'en',
+      reason:
+          'capture $shotName ($scenario): K1 the tray sits after the big '
+          'die in reading order',
+    );
+    _expectDieRowClearOfHint(tester, shotName: shotName, scenario: scenario);
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+    if (textScale != null) {
+      tester.platformDispatcher.clearTextScaleFactorTestValue();
+    }
   }
 }
 
