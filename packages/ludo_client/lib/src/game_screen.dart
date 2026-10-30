@@ -3909,37 +3909,40 @@ class _GameScreenState extends State<GameScreen> {
     final double overhang = hinted && rtl && _noMoveVisible
         ? deadBadgeRect(const Size.square(_dieRowHeight)).right - _dieRowHeight
         : 0;
-    final Widget row = Row(
+    Widget rowFor(double cap) => Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: <Widget>[
-        _boardDieSlot(
-          loc,
-          turn,
-          // C-468 D7: Opacity is an ancestor of the die's art.
-          // The key on the die is unchanged.
-          Opacity(
-            opacity: fadeIdleDie ? 0.45 : 1,
-            child: GameDie(
-              face: dieFace,
-              seatColor: dieSeatColor,
-              enabled: rollEnabled,
-              tumbling: _rollWaitK != null,
-              noAnswer: _rollNoAnswer,
-              noMove: _noMoveVisible,
-              // C-404: the die's top sits exactly at the row's own
-              // top (it is the tallest thing in the row), which
-              // sits `metrics.boardGap` below the board -- the
-              // same number board_floor_nav_inset_test.dart
-              // measures as die.top - board.bottom. Handing that
-              // straight to the die is what lets its badge clamp
-              // itself without this column's gaps, clamp or floor
-              // changing at all.
-              badgeHeadroom: metrics.boardGap,
-              onTap: rollEnabled ? _onDieTap : null,
-              onInvalidTap: () {
-                FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-              },
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: cap),
+          child: _boardDieSlot(
+            loc,
+            turn,
+            // C-468 D7: Opacity is an ancestor of the die's art.
+            // The key on the die is unchanged.
+            Opacity(
+              opacity: fadeIdleDie ? 0.45 : 1,
+              child: GameDie(
+                face: dieFace,
+                seatColor: dieSeatColor,
+                enabled: rollEnabled,
+                tumbling: _rollWaitK != null,
+                noAnswer: _rollNoAnswer,
+                noMove: _noMoveVisible,
+                // C-404: the die's top sits exactly at the row's own
+                // top (it is the tallest thing in the row), which
+                // sits `metrics.boardGap` below the board -- the
+                // same number board_floor_nav_inset_test.dart
+                // measures as die.top - board.bottom. Handing that
+                // straight to the die is what lets its badge clamp
+                // itself without this column's gaps, clamp or floor
+                // changing at all.
+                badgeHeadroom: metrics.boardGap,
+                onTap: rollEnabled ? _onDieTap : null,
+                onInvalidTap: () {
+                  FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+                },
+              ),
             ),
           ),
         ),
@@ -3957,11 +3960,24 @@ class _GameScreenState extends State<GameScreen> {
         ],
       ],
     );
-    final Widget band = _DieBand(
-      reserved: reserved,
-      overhang: overhang,
-      textDirection: Directionality.of(context),
-      child: row,
+    // C-511 D1/D2: a Row hands its die slot an unbounded width, so the slot
+    // (die plus the no-answer line) is capped at what the band leaves it.
+    final bool withTray = trayFaces != null && boardRecord == null;
+    final Widget band = LayoutBuilder(
+      builder: (BuildContext _, BoxConstraints box) {
+        final double cap = box.hasBoundedWidth
+            ? math.max(
+                0.0,
+                box.maxWidth - reserved - overhang - (withTray ? kSpace2 : 0),
+              )
+            : double.infinity;
+        return _DieBand(
+          reserved: reserved,
+          overhang: overhang,
+          textDirection: Directionality.of(context),
+          child: rowFor(cap),
+        );
+      },
     );
     if (!hinted) {
       return band;
