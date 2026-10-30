@@ -13,9 +13,11 @@ import 'theme.dart';
 /// [used] is spent for this game.
 enum HintControlState { ready, waiting, used }
 
-/// Visual disc is 40 dp. The hit box is 48 dp (C-471 D3).
+/// Visual disc is 40 dp. The hit box is 48 dp (C-471 D3). The die row
+/// reads the box width to keep clear of it (C-511 D1).
 const double _kHintVisual = 40;
-const double _kHintHit = 48;
+const double kHintHitWidth = 48;
+const double _kHintHit = kHintHitWidth;
 
 /// Hints per game, and the numeral on the badge while one is unspent
 /// (C-471 D3).
