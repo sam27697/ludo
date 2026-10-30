@@ -24,7 +24,11 @@ const double kFacePickerPointer = 8;
 /// Gap between the pointer tip and the token's drawn edge (C-462 D5).
 const double kFacePickerTipGap = 2;
 
-const double _kPointerWidth = 16;
+/// Half the pointer's width. [LudoBoard] reads it to know how far from the
+/// bubble's edge the pointer can reach (C-508 D1).
+const double kFacePickerPointerHalfWidth = 8;
+
+const double _kPointerWidth = kFacePickerPointerHalfWidth * 2;
 
 /// Body padding plus the option row plus the pointer. [LudoBoard] uses
 /// this to decide above versus below before the bubble is laid out, so
@@ -145,9 +149,11 @@ class _TokenFacePickerBubbleState extends State<TokenFacePickerBubble>
             alwaysIncludeSemantics: true,
             child: Transform.scale(
               scale: t,
-              alignment: widget.placeBelow
-                  ? Alignment.topCenter
-                  : Alignment.bottomCenter,
+              // C-508 D4: the bubble grows out of the pointer's tip.
+              alignment: Alignment(
+                _pointerCentre(width) / width * 2 - 1,
+                widget.placeBelow ? -1 : 1,
+              ),
               child: child,
             ),
           );
@@ -252,12 +258,21 @@ class _TokenFacePickerBubbleState extends State<TokenFacePickerBubble>
     );
   }
 
-  Widget _pointer(double width, {required bool pointsDown}) {
+  /// The pointer's left edge in the bubble, after the clamp that keeps it
+  /// [kSpace2] clear of both ends.
+  double _pointerLeft(double width) {
     final double rawLeft = widget.pointerDx - _kPointerWidth / 2;
     final double maxLeft = width - _kPointerWidth - kSpace2;
-    final double left = maxLeft <= kSpace2
+    return maxLeft <= kSpace2
         ? (width - _kPointerWidth) / 2
         : rawLeft.clamp(kSpace2, maxLeft).toDouble();
+  }
+
+  double _pointerCentre(double width) =>
+      _pointerLeft(width) + kFacePickerPointerHalfWidth;
+
+  Widget _pointer(double width, {required bool pointsDown}) {
+    final double left = _pointerLeft(width);
     // The base stroke would draw a line across the bubble, so the
     // triangle overlaps the edge by the border width. Layout height
     // stays [kFacePickerPointer] (C-462 D5).

@@ -2194,9 +2194,9 @@ class _LudoBoardState extends State<LudoBoard> {
     return hint.face;
   }
 
-  /// C-462 D5: the bubble on the drawn centre of (mySeat, token), the same
-  /// layout the disc is painted at. Above the token, or below when that
-  /// would cross the board's top edge, then clamped inside the board.
+  /// C-462 D5, C-508: the bubble on the drawn centre of (mySeat, token), the
+  /// same layout the disc is painted at. [_chooseFacePickSpot] picks the
+  /// placement that hides the fewest other tokens.
   Widget _anchoredFacePick(double cellSize) {
     final TokenFacePick pick = widget.facePick!;
     final int seat = widget.mySeat!;
@@ -2206,43 +2206,72 @@ class _LudoBoardState extends State<LudoBoard> {
         pick.token >= progresses.length) {
       return const SizedBox.shrink();
     }
-    final int progress = _drawnProgress(seat, pick.token);
-    final _TokenLayout layout = _tokenLayout(
-      seat: seat,
-      tokenIndex: pick.token,
-      progress: progress,
-      cellSize: cellSize,
-      mySeat: seat,
-      tokens: widget.tokens,
-      seatsInPlay: widget.seatsInPlay,
-      progressOf: _drawnProgress,
-    );
+    final _TokenLayout layout = _drawnLayout(seat, pick.token, cellSize);
     final double boardSide = cellSize * 15;
     final double width = facePickerBubbleWidth(pick.faces.length);
-    final double aboveTop =
-        layout.center.dy -
-        layout.size / 2 -
-        kFacePickerTipGap -
-        kFacePickerBubbleHeight;
-    final bool placeBelow = aboveTop < 0;
-    final double left = _clampOrigin(
-      layout.center.dx - width / 2,
-      width,
-      boardSide,
-    );
+    final double radius = layout.size / 2;
+
+    // C-508 D2: every other drawn disc, finished ones excluded, and any
+    // that shares the picked token's cell (the pointer sits on those).
+    final List<_PickObstacle> others = <_PickObstacle>[];
+    for (final int s in widget.seatsInPlay) {
+      final List<int>? theirs = widget.tokens[s];
+      if (theirs == null) {
+        continue;
+      }
+      for (int t = 0; t < theirs.length; t++) {
+        if ((s == seat && t == pick.token) || _drawnProgress(s, t) == 57) {
+          continue;
+        }
+        final _TokenLayout other = _drawnLayout(s, t, cellSize);
+        if ((other.center - layout.center).distance < cellSize / 2) {
+          continue;
+        }
+        others.add(
+          _PickObstacle(
+            rect: Rect.fromCenter(
+              center: other.center,
+              width: other.size,
+              height: other.size,
+            ),
+            ringedMine: s == seat && widget.legal.contains(t),
+          ),
+        );
+      }
+    }
+
+    final _FacePickSpot spot =
+        _chooseFacePickSpot(
+          center: layout.center,
+          radius: radius,
+          width: width,
+          boardSide: boardSide,
+          others: others,
+        ) ??
+        _oldFacePickSpot(layout.center, radius, width, boardSide);
     return CustomSingleChildLayout(
-      delegate: _FacePickAnchorDelegate(
-        center: layout.center,
-        tokenRadius: layout.size / 2,
-        placeBelow: placeBelow,
-      ),
+      delegate: _FacePickAnchorDelegate(origin: Offset(spot.left, spot.top)),
       child: TokenFacePickerBubble(
         key: ValueKey<int>(pick.token),
         pick: pick,
-        placeBelow: placeBelow,
-        pointerDx: layout.center.dx - left,
+        placeBelow: spot.below,
+        pointerDx: layout.center.dx - spot.left,
         hintedFace: _hintedPickerFace(pick),
       ),
+    );
+  }
+
+  /// The layout the disc of (seat, token) is painted with right now.
+  _TokenLayout _drawnLayout(int seat, int token, double cellSize) {
+    return _tokenLayout(
+      seat: seat,
+      tokenIndex: token,
+      progress: _drawnProgress(seat, token),
+      cellSize: cellSize,
+      mySeat: widget.mySeat,
+      tokens: widget.tokens,
+      seatsInPlay: widget.seatsInPlay,
+      progressOf: _drawnProgress,
     );
   }
 
@@ -2270,19 +2299,113 @@ class _LudoBoardState extends State<LudoBoard> {
   }
 }
 
-/// Places the face-picker bubble on the token (C-462 D5). [placeBelow] is
-/// decided from the bubble's fixed height before layout; the position
-/// itself uses the child's measured size, which matches that height.
-class _FacePickAnchorDelegate extends SingleChildLayoutDelegate {
-  _FacePickAnchorDelegate({
-    required this.center,
-    required this.tokenRadius,
-    required this.placeBelow,
-  });
+/// Where the face-picker bubble goes: its top-left in the board square and
+/// whether the pointer is on top (bubble below the token).
+class _FacePickSpot {
+  const _FacePickSpot(this.left, this.top, this.below);
 
-  final Offset center;
-  final double tokenRadius;
-  final bool placeBelow;
+  final double left;
+  final double top;
+  final bool below;
+}
+
+/// One drawn disc the bubble could hide (C-508 D2): its bounding square, and
+/// whether it is one of my own tokens that carries a ring.
+class _PickObstacle {
+  const _PickObstacle({required this.rect, required this.ringedMine});
+
+  final Rect rect;
+  final bool ringedMine;
+}
+
+/// C-462 D5 as it was: above the token, below when above would cross the
+/// top edge, both clamped. Kept for a board with no valid C-508 candidate.
+_FacePickSpot _oldFacePickSpot(
+  Offset center,
+  double radius,
+  double width,
+  double boardSide,
+) {
+  final double aboveTop =
+      center.dy - radius - kFacePickerTipGap - kFacePickerBubbleHeight;
+  final bool below = aboveTop < 0;
+  final double rawTop = below
+      ? center.dy + radius + kFacePickerTipGap
+      : aboveTop;
+  return _FacePickSpot(
+    _clampOrigin(center.dx - width / 2, width, boardSide),
+    _clampOrigin(rawTop, kFacePickerBubbleHeight, boardSide),
+    below,
+  );
+}
+
+/// C-508 D1, D3: the candidate that covers the fewest of my ringed tokens,
+/// then the fewest of any other, then comes first. Order: above centre,
+/// above toward the board centre, above away, then the same three below.
+/// Null when no candidate fits the board.
+_FacePickSpot? _chooseFacePickSpot({
+  required Offset center,
+  required double radius,
+  required double width,
+  required double boardSide,
+  required List<_PickObstacle> others,
+}) {
+  const double h = kFacePickerBubbleHeight;
+  const double m = kSpace2 + kFacePickerPointerHalfWidth;
+  final double slidRight = center.dx - m;
+  final double slidLeft = center.dx - (width - m);
+  final bool leftHalf = center.dx < boardSide / 2;
+  final List<double> lefts = <double>[
+    center.dx - width / 2,
+    leftHalf ? slidRight : slidLeft,
+    leftHalf ? slidLeft : slidRight,
+  ].map((double l) => _clampOrigin(l, width, boardSide)).toList();
+
+  final double aboveTop = center.dy - radius - kFacePickerTipGap - h;
+  final double belowTop = center.dy + radius + kFacePickerTipGap;
+  final List<(bool, double)> verticals = <(bool, double)>[
+    if (aboveTop >= 0) (false, aboveTop),
+    if (belowTop + h <= boardSide) (true, belowTop),
+  ];
+
+  _FacePickSpot? best;
+  int bestA = 0;
+  int bestB = 0;
+  for (final (bool below, double top) in verticals) {
+    final Set<double> seen = <double>{};
+    for (final double left in lefts) {
+      if (!seen.add(left)) {
+        continue;
+      }
+      final Rect rect = Rect.fromLTWH(left, top, width, h);
+      int a = 0;
+      int b = 0;
+      for (final _PickObstacle o in others) {
+        if (!rect.overlaps(o.rect)) {
+          continue;
+        }
+        if (o.ringedMine) {
+          a++;
+        } else {
+          b++;
+        }
+      }
+      if (best == null || a < bestA || (a == bestA && b < bestB)) {
+        best = _FacePickSpot(left, top, below);
+        bestA = a;
+        bestB = b;
+      }
+    }
+  }
+  return best;
+}
+
+/// Puts the face-picker bubble at the origin [_chooseFacePickSpot] chose
+/// (C-462 D5, C-508 D1). It does not centre or clamp the child again.
+class _FacePickAnchorDelegate extends SingleChildLayoutDelegate {
+  _FacePickAnchorDelegate({required this.origin});
+
+  final Offset origin;
 
   @override
   BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
@@ -2293,22 +2416,11 @@ class _FacePickAnchorDelegate extends SingleChildLayoutDelegate {
   }
 
   @override
-  Offset getPositionForChild(Size size, Size childSize) {
-    final double rawLeft = center.dx - childSize.width / 2;
-    final double rawTop = placeBelow
-        ? center.dy + tokenRadius + kFacePickerTipGap
-        : center.dy - tokenRadius - kFacePickerTipGap - childSize.height;
-    return Offset(
-      _clampOrigin(rawLeft, childSize.width, size.width),
-      _clampOrigin(rawTop, childSize.height, size.height),
-    );
-  }
+  Offset getPositionForChild(Size size, Size childSize) => origin;
 
   @override
   bool shouldRelayout(covariant _FacePickAnchorDelegate oldDelegate) {
-    return oldDelegate.center != center ||
-        oldDelegate.tokenRadius != tokenRadius ||
-        oldDelegate.placeBelow != placeBelow;
+    return oldDelegate.origin != origin;
   }
 }
 
