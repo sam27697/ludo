@@ -53,16 +53,24 @@ String? quickChatLine(AppLocalizations loc, String id) {
 /// Opens the sheet over [context]. A chip tap pops the sheet, then calls
 /// [onPick] once with the id. The switch is bound to [muted] both ways: the
 /// screen reads it to hide the others' bubbles, the sheet writes it.
+///
+/// C-518 D1: [onRoute], when given, is handed the sheet's own route so the
+/// caller can close that route and no other.
 Future<void> showQuickChatSheet(
   BuildContext context, {
   required void Function(String id) onPick,
   required ValueNotifier<bool> muted,
+  void Function(Route<void> route)? onRoute,
 }) {
   return showModalBottomSheet<void>(
     context: context,
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
     builder: (BuildContext sheetContext) {
+      final Route<void>? route = ModalRoute.of<void>(sheetContext);
+      if (route != null) {
+        onRoute?.call(route);
+      }
       return _QuickChatSheet(
         muted: muted,
         onPick: (String id) {

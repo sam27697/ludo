@@ -153,6 +153,30 @@ class _HintButtonState extends State<HintButton>
   }
 }
 
+/// D2. The glyph colour of the hint control for [seatColor]. The filled
+/// disc (ready and waiting) takes the contrasting ink of the seat colour.
+/// The spent bulb is an outline on the page, so it takes the seat colour
+/// itself when that reads at 3:1 on [LudoColors.paper], else the seat colour
+/// pulled toward [LudoColors.ink] by the smallest tenth that reaches 3:1.
+/// Contrast is measured at full opacity; the waiting 0.45 is not applied
+/// here (C-518).
+Color hintGlyphColor(Color seatColor, {required bool used}) {
+  if (!used) {
+    return contrastingInk(seatColor);
+  }
+  if (contrastRatio(seatColor, LudoColors.paper) >= 3.0) {
+    return seatColor;
+  }
+  Color pulled = seatColor;
+  for (var step = 1; step <= 10; step++) {
+    pulled = Color.lerp(seatColor, LudoColors.ink, step / 10)!;
+    if (contrastRatio(pulled, LudoColors.paper) >= 3.0) {
+      break;
+    }
+  }
+  return pulled;
+}
+
 class _HintArt extends StatelessWidget {
   const _HintArt({
     required this.state,
@@ -167,13 +191,7 @@ class _HintArt extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool used = state == HintControlState.used;
-    final bool lightDisc = seatColor.computeLuminance() > 0.6;
-    // A filled disc needs a glyph that reads on the seat colour. The
-    // spent bulb is an outline on the page, so it takes the seat colour
-    // itself (C-471 D3).
-    final Color glyph = used
-        ? seatColor
-        : (lightDisc ? LudoColors.ink : LudoColors.paper);
+    final Color glyph = hintGlyphColor(seatColor, used: used);
     // Depth on the disc uses the paintbox near-white and ink (C-471 D3).
     final Color highlight = Color.lerp(seatColor, LudoColors.actionOn, 0.30)!;
     final Color shade = Color.lerp(seatColor, LudoColors.ink, 0.22)!;
