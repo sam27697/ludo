@@ -7,6 +7,7 @@ import '../l10n/gen/app_localizations.dart';
 import 'deep_link.dart';
 import 'feedback.dart';
 import 'home_screen.dart';
+import 'locale_preference.dart';
 import 'theme.dart';
 
 export 'theme.dart' show buildAppTheme, LudoBrand, LudoColors, LudoColorsDark;
@@ -24,6 +25,7 @@ class LudoApp extends StatefulWidget {
     this.initialLocale = const Locale('en'),
     this.initialLinkReader = noInitialLink,
     this.linkStream = noLinkStream,
+    this.persistLocale = false,
   });
 
   /// The locale the app starts in. Defaults to English; exposed so tests can
@@ -36,6 +38,12 @@ class LudoApp extends StatefulWidget {
 
   /// Passed straight down to [HomeScreen]. See its own doc comment.
   final LinkStreamOpener linkStream;
+
+  /// When true, a tap on the language toggle is also written to
+  /// SharedPreferences (C-516 D3) so the next launch starts in that
+  /// language. `main` turns it on; it defaults to off so the widget tests
+  /// that pump [LudoApp] never touch storage.
+  final bool persistLocale;
 
   @override
   State<LudoApp> createState() => _LudoAppState();
@@ -92,11 +100,25 @@ class _LudoAppState extends State<LudoApp> {
   }
 
   void _toggleLocale() {
+    final Locale next = _locale.languageCode == 'en'
+        ? const Locale('ar')
+        : const Locale('en');
     setState(() {
-      _locale = _locale.languageCode == 'en'
-          ? const Locale('ar')
-          : const Locale('en');
+      _locale = next;
     });
+    if (widget.persistLocale) {
+      unawaited(_storeLocale(next));
+    }
+  }
+
+  Future<void> _storeLocale(Locale locale) async {
+    try {
+      await LocalePreference.store(locale);
+    } catch (_) {
+      // The session is already in the language just picked; a failed write
+      // only means the next launch follows the phone again, not worth a
+      // message over the game.
+    }
   }
 
   @override
