@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 /// Brand colours for Ludo RNG. Felt-table teal and cool mint paper — not the
@@ -43,6 +45,27 @@ abstract final class LudoColors {
     Color(0xFFFBC02D),
     Color(0xFF1976D2),
   ];
+}
+
+/// WCAG contrast ratio of two colours, the larger luminance over the
+/// smaller, both offset by 0.05 per the standard formula.
+double contrastRatio(Color a, Color b) {
+  final double la = a.computeLuminance();
+  final double lb = b.computeLuminance();
+  final double lighter = math.max(la, lb);
+  final double darker = math.min(la, lb);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/// Whichever of [LudoColors.actionOn] (this paintbox's existing near-white,
+/// the ink every action-coloured surface already sits on) or [LudoColors.ink]
+/// contrasts more against [background] -- C-248 rule 1's "contrasting ink",
+/// with no new literal white: the order's "use an existing colour" applies
+/// here even though actionOn needs no opacity change to read.
+Color contrastingInk(Color background) {
+  final double lightContrast = contrastRatio(background, LudoColors.actionOn);
+  final double darkContrast = contrastRatio(background, LudoColors.ink);
+  return lightContrast >= darkContrast ? LudoColors.actionOn : LudoColors.ink;
 }
 
 /// Dark-mode brand colours. Sample ink/paper and action/paper pairs meet

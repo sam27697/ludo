@@ -363,27 +363,6 @@ Rect _tokenDrawnRect({
   );
 }
 
-/// WCAG contrast ratio of two colours, the larger luminance over the
-/// smaller, both offset by 0.05 per the standard formula.
-double _contrastRatio(Color a, Color b) {
-  final double la = a.computeLuminance();
-  final double lb = b.computeLuminance();
-  final double lighter = math.max(la, lb);
-  final double darker = math.min(la, lb);
-  return (lighter + 0.05) / (darker + 0.05);
-}
-
-/// Whichever of [LudoColors.actionOn] (this paintbox's existing near-white,
-/// the ink every action-coloured surface already sits on) or [LudoColors.ink]
-/// contrasts more against [background] -- C-248 rule 1's "contrasting ink",
-/// with no new literal white: the order's "use an existing colour" applies
-/// here even though actionOn needs no opacity change to read.
-Color _contrastingInk(Color background) {
-  final double lightContrast = _contrastRatio(background, LudoColors.actionOn);
-  final double darkContrast = _contrastRatio(background, LudoColors.ink);
-  return lightContrast >= darkContrast ? LudoColors.actionOn : LudoColors.ink;
-}
-
 /// Same seats, same order -- [_BoardPainter.shouldRepaint]'s way of asking
 /// whether [LudoBoard.seatsInPlay] actually changed without pulling in a
 /// collection-equality package for one list.
@@ -1334,7 +1313,7 @@ class _LudoBoardState extends State<LudoBoard> {
     final double chipLeft = origin.col * cellSize;
 
     final Color seatColor = LudoColors.seats[seat];
-    final Color ink = _contrastingInk(seatColor);
+    final Color ink = contrastingInk(seatColor);
     final bool isMine = widget.mySeat == seat;
     final String? you = isMine ? widget.youLabel : null;
     // A2: about 60% of the chip height, never below 10 logical px -- the

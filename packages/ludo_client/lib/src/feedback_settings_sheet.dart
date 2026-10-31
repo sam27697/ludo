@@ -15,12 +15,22 @@ import 'theme.dart';
 /// context, and handed to the sheet directly -- not re-read from the sheet
 /// route's context -- so the toggle a player sees is unambiguously the
 /// scope already wired above the screen that opened it.
-Future<void> showFeedbackSettingsSheet(BuildContext context) {
+///
+/// C-518 D1: [onRoute], when given, is handed the sheet's own route so the
+/// caller can close that route and no other.
+Future<void> showFeedbackSettingsSheet(
+  BuildContext context, {
+  void Function(Route<void> route)? onRoute,
+}) {
   final FeedbackSettings settings = FeedbackScope.settingsOf(context);
   return showModalBottomSheet<void>(
     context: context,
     backgroundColor: Colors.transparent,
     builder: (BuildContext sheetContext) {
+      final Route<void>? route = ModalRoute.of<void>(sheetContext);
+      if (route != null) {
+        onRoute?.call(route);
+      }
       return _FeedbackSettingsSheet(settings: settings);
     },
   );
