@@ -375,6 +375,12 @@ class _GameScreenState extends State<GameScreen> {
   // is announced once however many times the room is replaced under it.
   int? _yourTurnPlayedK;
 
+  // C-518 D1: the routes of the quick-message and settings sheets this
+  // screen opened, so my turn can close those and nothing else. Never the
+  // leave confirm, the face picker, or a sheet another screen opened.
+  Route<void>? _chatSheetRoute;
+  Route<void>? _settingsSheetRoute;
+
   // C-442 D5: the `game_id` of the last room this screen saw PLAYING and
   // whose `game_over` it has not received. A FINISHED snapshot naming this
   // same game is a game that ended while the screen was not listening.
@@ -826,9 +832,39 @@ class _GameScreenState extends State<GameScreen> {
     RoomSnapshot? snapshot,
   }) {
     feedback.play(cue);
+    if (cue == FeedbackCue.yourTurn) {
+      // C-518 D1: my turn closes the sheets I opened, silently.
+      _closeOwnSheets();
+    }
     final String? message = _announcementFor(cue, snapshot: snapshot);
     if (message != null) {
       _announce(message);
+    }
+  }
+
+  /// C-518 D1. Closes the quick-message and settings sheets this screen
+  /// opened, if either is still up. Only the sheet's own route is closed:
+  /// on top it pops with its exit motion, under a dialog it is removed in
+  /// place, and a route that already left is left alone.
+  void _closeOwnSheets() {
+    _closeSheetRoute(_chatSheetRoute);
+    _closeSheetRoute(_settingsSheetRoute);
+    _chatSheetRoute = null;
+    _settingsSheetRoute = null;
+  }
+
+  void _closeSheetRoute(Route<void>? route) {
+    if (route == null || !route.isActive) {
+      return;
+    }
+    final NavigatorState? navigator = route.navigator;
+    if (navigator == null) {
+      return;
+    }
+    if (route.isCurrent) {
+      navigator.pop();
+    } else {
+      navigator.removeRoute(route);
     }
   }
 
@@ -1358,7 +1394,29 @@ class _GameScreenState extends State<GameScreen> {
       FeedbackScope.of(context).play(FeedbackCue.invalidTap);
       return;
     }
-    showQuickChatSheet(context, onPick: _onChatPick, muted: _chatMuted);
+    showQuickChatSheet(
+      context,
+      onPick: _onChatPick,
+      muted: _chatMuted,
+      onRoute: (Route<void> route) => _chatSheetRoute = route,
+    ).whenComplete(() {
+      if (_chatSheetRoute?.isActive != true) {
+        _chatSheetRoute = null;
+      }
+    });
+  }
+
+  /// The in-game settings sheet, opened through the same shared function
+  /// the home and lobby screens use; the route handle is only for C-518 D1.
+  void _onSettingsButtonTap() {
+    showFeedbackSettingsSheet(
+      context,
+      onRoute: (Route<void> route) => _settingsSheetRoute = route,
+    ).whenComplete(() {
+      if (_settingsSheetRoute?.isActive != true) {
+        _settingsSheetRoute = null;
+      }
+    });
   }
 
   /// C-478 D5.3. No optimistic bubble: the server's copy of the message
@@ -3481,8 +3539,7 @@ class _GameScreenState extends State<GameScreen> {
                                 minimumSize: const Size(48, 48),
                               ),
                               tooltip: loc.settingsTooltip,
-                              onPressed: () =>
-                                  showFeedbackSettingsSheet(context),
+                              onPressed: _onSettingsButtonTap,
                               icon: const Icon(Icons.tune_rounded),
                             ),
                           ),
@@ -4314,6 +4371,10 @@ class _GameScreenState extends State<GameScreen> {
                         );
                       });
                       FeedbackScope.of(context).play(FeedbackCue.tap);
+                      // C-518 D3: the picker's own label, once per open.
+                      _announce(
+                        AppLocalizations.of(context).facePickerLabel(index + 1),
+                      );
                       return;
                     }
                     if (faces.length == 1) {
