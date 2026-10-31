@@ -1,0 +1,220 @@
+name: device-matrix
+
+# minSdk is 24 (Android 7.0) and, until this workflow, no build of the app had
+# been started below API 34: screenshots.yml runs on 34 and device-smoke.yml
+# on 36. This starts the real app on 24, 26, 28, 30 and 33 and reports what it
+# did, because a tester on Android 9 to 11 should not be the first to find out
+# what the Flutter engine does without Vulkan, what MainActivity.kt's
+# pre-O/pre-S paths (Vibrator without VibratorManager, SoundPool loading its
+# clips at start) do, or how Arabic shapes on an old system font. A red level
+# here is the result, not a defect of the workflow.
+#
+# Triggers: workflow_dispatch, a weekly schedule, and a pull_request filter on
+# this file alone so the PR that adds or edits it measures itself. Not push:
+# every order is judged against verify.yml, and five emulator boots have no
+# place in that loop (device-smoke.yml spells the same argument out). The cron
+# is off the hour and off minute 0 for the queueing reason given there, and on
+# a different minute from device-smoke's daily 37.
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "11 4 * * 2"
+  pull_request:
+    paths:
+      - ".github/workflows/device-matrix.yml"
+
+jobs:
+  device-matrix:
+    name: device-matrix (api ${{ matrix.api }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      # One level failing says nothing about the others; the point is the
+      # whole table.
+      fail-fast: false
+      matrix:
+        api: [24, 26, 28, 30, 33]
+    defaults:
+      run:
+        working-directory: packages/ludo_client
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.47.1"
+          channel: "stable"
+
+      - name: flutter pub get (api ${{ matrix.api }})
+        run: |
+          echo "device-matrix: api ${{ matrix.api }}: flutter pub get"
+          flutter pub get
+
+      - name: confirm the drive script and target exist (api ${{ matrix.api }})
+        run: |
+          set -euo pipefail
+          echo "device-matrix: api ${{ matrix.api }}: checking driver and target paths"
+          test -f test_driver/integration_test.dart || { echo "missing packages/ludo_client/test_driver/integration_test.dart" >&2; exit 1; }
+          test -f integration_test/launch_smoke_test.dart || { echo "missing packages/ludo_client/integration_test/launch_smoke_test.dart" >&2; exit 1; }
+
+      # Same KVM boilerplate as device-smoke.yml and screenshots.yml.
+      - name: enable KVM group perms (api ${{ matrix.api }})
+        run: |
+          echo "device-matrix: api ${{ matrix.api }}: enabling KVM"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # target google_apis, arch x86_64, profile "Nexus 5": the values
+      # device-smoke.yml uses, with only api-level varying. google_apis rather
+      # than google_apis_playstore matters below: only the former lets adbd
+      # run as root, which the locale switch needs. Nothing here substitutes
+      # another target or arch when an image is missing for a level; if the
+      # runner cannot fetch google_apis x86_64 at a level, this step fails
+      # with sdkmanager's own error and that level reports red. Not boot-tested
+      # by the worker that wrote it (no Android SDK in its container); the
+      # first pull_request run is the measurement.
+      - name: boot the emulator, launch the app, and measure (api ${{ matrix.api }})
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          profile: "Nexus 5"
+          disable-animations: true
+          # This whole block folds to a single line (YAML `>-`), for the
+          # reason device-smoke.yml documents at length: android-emulator-
+          # runner hands each line of `script:` to its own `sh -c`, so the
+          # `cd`, the captured exit codes and the final decision all have to
+          # share one physical line. Every source line below must sit at this
+          # same indentation, because a line indented further keeps its
+          # newline instead of folding and would get its own `sh -c`; the
+          # `if`, `else` and `for` bodies are unindented for that reason.
+          # POSIX sh only: no `pipefail`, no `[[`. `set +e` stays off for the
+          # rest of the script, so nothing after it ends the run early; the
+          # only exit is the decision at the bottom.
+          #
+          # Sequence:
+          #  1. flutter drive of the launch smoke test, exit code in
+          #     DRIVE_EXIT, exactly as device-smoke.yml runs it (--profile
+          #     because release strips the VM service the driver needs).
+          #  2. flutter build apk --profile from lib/main.dart, then install
+          #     it; flutter drive uninstalls its own apk when it finishes, and
+          #     its entry point is the test's main(), not the app's.
+          #  3. am start -W, wait 15 s, then record: is the process alive
+          #     (pidof; the numeric check also rejects an error string), a
+          #     screenshot, and the FATAL EXCEPTION and E/flutter counts of
+          #     logcat -d. Both the threadtime form ("E flutter :") and the
+          #     brief form ("E/flutter") are counted. The en logcat is saved,
+          #     then cleared, and the Arabic phase is appended, so the one
+          #     file holds each line once and survives anything the zygote
+          #     restart does to the buffer.
+          #  4. Arabic: adb root, persist.sys.locale=ar, restart zygote, wait
+          #     for a new system_server and a working package manager, settle,
+          #     then read the configuration back from dumpsys. Only a
+          #     configuration that shows ar (or ldrtl) counts as switched, and
+          #     only then is the app relaunched and home-ar-api<N>.png taken.
+          #     Anything else prints plainly that no Arabic frame exists and
+          #     does not fail the job: the locale alone is never a gate.
+          #  5. the gate: fail on a nonzero drive exit, a process not alive
+          #     after 15 s (a failed build or install lands here too, with
+          #     their exit codes printed), or a FATAL EXCEPTION whose Process
+          #     line is app.fayad.ludo. Each cause prints with the level.
+          script: >-
+            cd packages/ludo_client &&
+            echo "device-matrix: api-level ${{ matrix.api }}, device emulator-5554, profile Nexus 5, target google_apis, arch x86_64" &&
+            set +e;
+            API=${{ matrix.api }};
+            flutter drive --profile --driver=test_driver/integration_test.dart --target=integration_test/launch_smoke_test.dart -d emulator-5554;
+            DRIVE_EXIT=$?;
+            echo "device-matrix: api $API: flutter drive exit code $DRIVE_EXIT";
+            echo "device-matrix: api $API: building app.fayad.ludo from lib/main.dart";
+            flutter build apk --profile;
+            BUILD_EXIT=$?;
+            echo "device-matrix: api $API: flutter build apk --profile exit code $BUILD_EXIT";
+            INSTALL_EXIT=1;
+            if [ "$BUILD_EXIT" -eq 0 ]; then
+            adb install -r build/app/outputs/flutter-apk/app-profile.apk;
+            INSTALL_EXIT=$?;
+            fi;
+            echo "device-matrix: api $API: install exit code $INSTALL_EXIT";
+            adb shell am start -W -n app.fayad.ludo/.MainActivity;
+            echo "device-matrix: api $API: am start exit code $?, waiting 15 s";
+            sleep 15;
+            PIDOF_OUT=$(adb shell pidof app.fayad.ludo 2>&1);
+            PIDOF_EXIT=$?;
+            PID=$(printf '%s' "$PIDOF_OUT" | tr -d '\r');
+            if [ "$PIDOF_EXIT" -eq 127 ]; then
+            echo "device-matrix: api $API: pidof is missing on this image, falling back to ps";
+            PID=$(adb shell ps 2>&1 | tr -d '\r' | grep ' app.fayad.ludo$' | awk '{print $2}');
+            fi;
+            ALIVE=0;
+            if printf '%s' "$PID" | grep -qE '^[0-9 ]+$'; then ALIVE=1; fi;
+            echo "device-matrix: api $API: process app.fayad.ludo alive=$ALIVE pid=[$PID]";
+            adb exec-out screencap -p > home-api${API}.png;
+            echo "device-matrix: api $API: home-api${API}.png screencap exit code $?, $(wc -c < home-api${API}.png) bytes";
+            adb logcat -d > logcat-api${API}.txt;
+            echo "device-matrix: api $API: en run logcat has $(grep -c 'FATAL EXCEPTION' logcat-api${API}.txt) FATAL EXCEPTION lines and $(grep -cE 'E/flutter|E flutter +:' logcat-api${API}.txt) E/flutter lines";
+            adb logcat -c;
+            AR_OK=0;
+            adb shell am force-stop app.fayad.ludo;
+            ROOT_OUT=$(adb root 2>&1);
+            echo "device-matrix: api $API: adb root said: $ROOT_OUT";
+            adb wait-for-device;
+            if printf '%s' "$ROOT_OUT" | grep -q 'cannot run as root'; then
+            echo "device-matrix: api $API: locale NOT switched, adbd refuses root on this image, no Arabic frame will be taken";
+            else
+            SS_BEFORE=$(adb shell pidof system_server | tr -d '\r');
+            adb shell "setprop persist.sys.locale ar; setprop ctl.restart zygote";
+            echo "device-matrix: api $API: locale property set and zygote restarted, system_server was pid [$SS_BEFORE], waiting for the framework";
+            for i in $(seq 1 90); do SS_NOW=$(adb shell pidof system_server | tr -d '\r'); if [ -n "$SS_NOW" ] && [ "$SS_NOW" != "$SS_BEFORE" ]; then break; fi; sleep 2; done;
+            for i in $(seq 1 90); do if adb shell pm path android 2>/dev/null | grep -q '^package:'; then break; fi; sleep 2; done;
+            sleep 20;
+            adb shell input keyevent 82;
+            CONFIG_LINE=$(adb shell dumpsys activity 2>&1 | tr -d '\r' | grep -m1 -E 'mGlobalConfiguration|mConfiguration');
+            echo "device-matrix: api $API: configuration after the switch: $CONFIG_LINE";
+            if printf '%s' "$CONFIG_LINE" | grep -qE ' ldrtl|[ \[]ar([_-]|\]| )'; then AR_OK=1; fi;
+            if [ "$AR_OK" -eq 1 ]; then
+            echo "device-matrix: api $API: locale switch confirmed from the configuration, relaunching";
+            adb shell am start -W -n app.fayad.ludo/.MainActivity;
+            sleep 15;
+            adb exec-out screencap -p > home-ar-api${API}.png;
+            echo "device-matrix: api $API: home-ar-api${API}.png screencap exit code $?, $(wc -c < home-ar-api${API}.png) bytes";
+            else
+            echo "device-matrix: api $API: locale NOT switched, the configuration does not show ar, no Arabic frame was taken";
+            fi;
+            fi;
+            echo "=== device-matrix: api $API: logcat from the Arabic phase on ===" >> logcat-api${API}.txt;
+            adb logcat -d >> logcat-api${API}.txt;
+            FATAL_APP=$(grep -A6 'FATAL EXCEPTION' logcat-api${API}.txt | grep -c 'Process: app.fayad.ludo');
+            echo "device-matrix: api $API: whole run logcat has $(grep -c 'FATAL EXCEPTION' logcat-api${API}.txt) FATAL EXCEPTION lines ($FATAL_APP for app.fayad.ludo) and $(grep -cE 'E/flutter|E flutter +:' logcat-api${API}.txt) E/flutter lines";
+            FAIL=0;
+            if [ "$DRIVE_EXIT" -ne 0 ]; then
+            echo "device-matrix: FAIL api $API: flutter drive of the launch smoke test exited $DRIVE_EXIT" >&2;
+            FAIL=1;
+            fi;
+            if [ "$ALIVE" -ne 1 ]; then
+            echo "device-matrix: FAIL api $API: app.fayad.ludo was not alive 15 s after am start (build exit $BUILD_EXIT, install exit $INSTALL_EXIT)" >&2;
+            FAIL=1;
+            fi;
+            if [ "$FATAL_APP" -ne 0 ]; then
+            echo "device-matrix: FAIL api $API: logcat holds $FATAL_APP FATAL EXCEPTION for app.fayad.ludo" >&2;
+            FAIL=1;
+            fi;
+            if [ "$FAIL" -ne 0 ]; then
+            exit 1;
+            fi;
+            echo "device-matrix: api $API: launch smoke test, process alive and no FATAL EXCEPTION all passed"
+
+      # Always, and one artifact per level. warn rather than error: a level
+      # whose emulator never booted has no files, and the boot step above
+      # already reported that failure.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: device-matrix-api${{ matrix.api }}
+          path: |
+            packages/ludo_client/home-api${{ matrix.api }}.png
+            packages/ludo_client/home-ar-api${{ matrix.api }}.png
+            packages/ludo_client/logcat-api${{ matrix.api }}.txt
+          if-no-files-found: warn
