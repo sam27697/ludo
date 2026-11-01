@@ -9,17 +9,17 @@ import '../l10n/gen/app_localizations.dart';
 import 'deep_link.dart';
 import 'die_mark.dart';
 import 'directional_icon.dart';
-import 'feedback_settings_sheet.dart';
 import 'game_screen.dart' show GameScreenResult;
 import 'lobby_screen.dart' show LobbyAction;
 import 'net/connection.dart' show RoomToggles;
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
+import 'player_count_icon.dart';
 import 'room_code.dart';
 import 'room_route.dart';
-import 'rule_off_strike.dart';
 import 'server_config.dart';
 import 'session_memory.dart';
+import 'sound_toggle.dart';
 import 'theme.dart';
 import 'verify_rolls_button.dart';
 
@@ -92,8 +92,6 @@ class _HomeScreenState extends State<HomeScreen>
   SessionMemory? _autoResumeWaiting;
   Timer? _autoResumeTimer;
   int _players = 4;
-  bool _playersSelectorOpen = false;
-  bool _rulesCaptureBonus = true;
   String? _nameLocaleDefault;
   StreamSubscription<Uri>? _linkSubscription;
   late final AnimationController _enter;
@@ -151,10 +149,6 @@ class _HomeScreenState extends State<HomeScreen>
   // KeyedSubtree, one layer up.
   final GlobalKey _joinButtonScrollKey = GlobalKey();
   final GlobalKey _codeFieldScrollKey = GlobalKey();
-  // Order 209: reach create-room-button's render object from the players
-  // disclosure's onPressed the same way, without disturbing
-  // Key('create-room-button').
-  final GlobalKey _createButtonScrollKey = GlobalKey();
   // C-398: focusing the code field brings join-room-button up with it,
   // the same pair the room-link scroll already moves together.
   final FocusNode _codeFocusNode = FocusNode();
@@ -466,43 +460,27 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
-  /// Scrolls create-room-button back into the home scroll view's viewport
-  /// when opening the players/rules disclosure has pushed it below the
-  /// bottom edge (order 209). keepVisibleAtEnd only moves the scroll
-  /// position when the button's bottom already sits past the viewport's
-  /// bottom, and then only as far as bringing it to that edge, so a button
-  /// that is already visible is left alone rather than pushed further up.
-  /// A null context is a silent no-op, same as [_scrollLinkTargetIntoView].
-  ///
-  /// Instant, not animated (order 209 respec 1): a scroll with a nonzero
-  /// duration runs as a DrivenScrollActivity, and that activity's
-  /// shouldIgnorePointer is true for as long as it is running, so the whole
-  /// Home content stops accepting taps for the length of the animation. A
-  /// player who opens the rules and immediately taps a player count would
-  /// lose that tap. jumpTo has no activity and ignores nothing, and the
-  /// disclosure itself already opens with no animation, so an instant
-  /// scroll matches it.
-  void _scrollCreateButtonIntoView() {
-    final BuildContext? targetContext = _createButtonScrollKey.currentContext;
-    if (targetContext == null) {
-      return;
-    }
-    Scrollable.ensureVisible(
-      targetContext,
-      alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
-      duration: Duration.zero,
-    );
-  }
-
-  /// Rebuilds on every keystroke so Create/Join emphasis can follow the
+  /// Rebuilds on every keystroke so Join's entry and the Create/Join emphasis can follow the
   /// code field, and clears a standing error so a message raised by a bad
   /// link or a failed Join tap does not sit under a code the player has
   /// since corrected.
   void _clearErrorOnEdit() {
+    final bool joinWasShown = _joinShown;
     setState(() {
       _errorText = null;
     });
+    // C-523 D3: Join enters when the sixth character does; with the keyboard
+    // up it has to come into view with it.
+    if (!joinWasShown && _joinShown) {
+      _scrollJoinIntoViewWithField();
+    }
   }
+
+  /// C-523 D3: Join is in the tree only while the field holds a full-length
+  /// code. A full-length code that is not valid still shows it; the tap says
+  /// why it will not go.
+  bool get _joinShown =>
+      normalizeRoomCode(_codeController.text).length == roomCodeLength;
 
   /// Restores a stored name (from a create or a join), last successful-create
   /// seats, the last-table chip, recent join codes, a seat record held
@@ -901,7 +879,8 @@ class _HomeScreenState extends State<HomeScreen>
     final AppLocalizations loc = AppLocalizations.of(context);
     final String name = _resolvedName(loc);
     final int players = _players;
-    final RoomToggles toggles = RoomToggles(captureBonus: _rulesCaptureBonus);
+    // C-523 D1: every room is created with the fixed rules.
+    const RoomToggles toggles = RoomToggles();
     final RoomController controller = widget.controllerFactory();
     _watchOwnedController(controller);
     // LobbyScreen/RoomRoute must not take a store dependency. Listen here
@@ -1239,9 +1218,10 @@ class _HomeScreenState extends State<HomeScreen>
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton(
-                        key: const Key('home-settings-button'),
-                        onPressed: () => showFeedbackSettingsSheet(context),
+                      // C-523 D7: the one sound switch, in the frame the
+                      // settings button had.
+                      SoundToggleButton(
+                        key: const Key('home-sound-toggle'),
                         style: IconButton.styleFrom(
                           backgroundColor: LudoColors.paperElevated,
                           foregroundColor: LudoColors.ink,
@@ -1257,8 +1237,6 @@ class _HomeScreenState extends State<HomeScreen>
                             width: 1,
                           ),
                         ),
-                        tooltip: loc.settingsTooltip,
-                        icon: const Icon(Icons.tune_rounded),
                       ),
                       const SizedBox(width: kSpace2),
                       TextButton(
@@ -1513,87 +1491,13 @@ class _HomeScreenState extends State<HomeScreen>
                                         ),
                                   ),
                                   SizedBox(height: compact ? kSpace3 : kSpace5),
-                                  if (!_playersSelectorOpen)
-                                    Center(
-                                      child: TextButton.icon(
-                                        key: const Key(
-                                          'home-players-disclosure',
-                                        ),
-                                        onPressed: () {
-                                          setState(
-                                            () => _playersSelectorOpen = true,
-                                          );
-                                          WidgetsBinding.instance
-                                              .addPostFrameCallback((_) {
-                                                if (!mounted) {
-                                                  return;
-                                                }
-                                                _scrollCreateButtonIntoView();
-                                              });
-                                        },
-                                        style: TextButton.styleFrom(
-                                          foregroundColor: LudoColors.inkMuted,
-                                          minimumSize: const Size(48, 48),
-                                          shape: StadiumBorder(
-                                            side: BorderSide(
-                                              color: LudoColors.inkMuted
-                                                  .withValues(alpha: 0.4),
-                                              width: 1,
-                                            ),
-                                          ),
-                                          side: BorderSide(
-                                            color: LudoColors.inkMuted
-                                                .withValues(alpha: 0.4),
-                                            width: 1,
-                                          ),
-                                        ),
-                                        icon: const Icon(Icons.tune),
-                                        label: Text(
-                                          loc.homePlayersDisclosureClosed,
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                    )
-                                  else ...[
-                                    Text(
-                                      loc.homePlayersSelectorLabel,
-                                      textAlign: TextAlign.center,
-                                      style: textTheme.labelLarge?.copyWith(
-                                        color: LudoColors.inkMuted,
-                                      ),
-                                    ),
-                                    const SizedBox(height: kSpace2),
-                                    _PlayersSelector(
-                                      key: const Key('home-players-selector'),
-                                      value: _players,
-                                      onChanged: (value) =>
-                                          setState(() => _players = value),
-                                    ),
-                                    SizedBox(
-                                      height: compact ? kSpace2 : kSpace3,
-                                    ),
-                                    HomeRuleToggle(
-                                      key: const Key('home-rule-capture-bonus'),
-                                      value: _rulesCaptureBonus,
-                                      onChanged: (value) => setState(
-                                        () => _rulesCaptureBonus = value,
-                                      ),
-                                      icon: Icons.replay_rounded,
-                                      title: loc.homeRuleCaptureBonus,
-                                      hint: loc.homeRuleCaptureBonusHint,
-                                    ),
-                                    SizedBox(
-                                      height: compact ? kSpace2 : kSpace3,
-                                    ),
-                                    Text(
-                                      loc.houseRulesLine,
-                                      key: const Key('home-house-rules'),
-                                      textAlign: TextAlign.center,
-                                      style: textTheme.bodySmall?.copyWith(
-                                        color: LudoColors.inkMuted,
-                                      ),
-                                    ),
-                                  ],
+                                  // C-523 D2: one question, one control, always
+                                  // visible.
+                                  _PlayersQuestionRow(
+                                    value: _players,
+                                    onChanged: (int value) =>
+                                        setState(() => _players = value),
+                                  ),
                                   if (_hasLastTable &&
                                       _lastTableName != null &&
                                       _lastTableSeats != null) ...[
@@ -1606,15 +1510,12 @@ class _HomeScreenState extends State<HomeScreen>
                                     ),
                                   ],
                                   SizedBox(height: compact ? kSpace3 : kSpace6),
-                                  KeyedSubtree(
-                                    key: _createButtonScrollKey,
-                                    child: _weightedButton(
-                                      key: const Key('create-room-button'),
-                                      onPressed: _createRoom,
-                                      label: loc.homeCreateRoomButton,
-                                      icon: const Icon(Icons.add_rounded),
-                                      primary: !joinPrimary,
-                                    ),
+                                  _weightedButton(
+                                    key: const Key('create-room-button'),
+                                    onPressed: _createRoom,
+                                    label: loc.homeCreateRoomButton,
+                                    icon: const Icon(Icons.add_rounded),
+                                    primary: !joinPrimary,
                                   ),
                                   Padding(
                                     padding: EdgeInsets.symmetric(
@@ -1687,7 +1588,6 @@ class _HomeScreenState extends State<HomeScreen>
                                               ?.copyWith(
                                                 color: LudoColors.inkMuted,
                                               ),
-                                          helperText: loc.homeRoomCodeFieldHint,
                                           errorText: _errorText,
                                           // Unset, InputDecoration truncates errorText
                                           // to one line with an ellipsis.
@@ -1747,18 +1647,38 @@ class _HomeScreenState extends State<HomeScreen>
                                       ),
                                     ),
                                   ),
-                                  SizedBox(height: compact ? kSpace2 : kSpace3),
-                                  KeyedSubtree(
-                                    key: _joinButtonScrollKey,
-                                    child: _weightedButton(
-                                      key: const Key('join-room-button'),
-                                      onPressed: _joinRoom,
-                                      label: loc.homeJoinRoomButton,
-                                      icon: const DirectionalIcon(
-                                        Icons.login_rounded,
-                                      ),
-                                      primary: joinPrimary,
-                                    ),
+                                  // C-523 D3: Join exists only while there is a
+                                  // full-length code to join.
+                                  AnimatedSize(
+                                    duration:
+                                        MediaQuery.disableAnimationsOf(context)
+                                        ? Duration.zero
+                                        : kMotionShort,
+                                    curve: Curves.easeOut,
+                                    alignment: Alignment.topCenter,
+                                    child: _joinShown
+                                        ? Padding(
+                                            padding: EdgeInsets.only(
+                                              top: compact ? kSpace2 : kSpace3,
+                                            ),
+                                            child: KeyedSubtree(
+                                              key: _joinButtonScrollKey,
+                                              child: _weightedButton(
+                                                key: const Key(
+                                                  'join-room-button',
+                                                ),
+                                                onPressed: _joinRoom,
+                                                label: loc.homeJoinRoomButton,
+                                                icon: const DirectionalIcon(
+                                                  Icons.login_rounded,
+                                                ),
+                                                primary: joinPrimary,
+                                              ),
+                                            ),
+                                          )
+                                        : const SizedBox(
+                                            width: double.infinity,
+                                          ),
                                   ),
                                   if (_recentCodes.isNotEmpty) ...[
                                     SizedBox(
@@ -1983,6 +1903,8 @@ class _HomeNoticeState extends State<_HomeNotice> {
 }
 
 /// Last successful table, shown when [SessionMemory.hasLastTable] is true.
+/// C-523 D2: the name and the seat count as person figures; the spoken label
+/// still carries the count in words.
 /// Visual weight stays below Create (muted paper, not action fill) so
 /// Create still outweighs Join with the chip on screen.
 class _LastTableChip extends StatelessWidget {
@@ -1990,10 +1912,6 @@ class _LastTableChip extends StatelessWidget {
 
   final String name;
   final int seats;
-
-  /// U+00A0, spelled as an escape so the character can never be mistaken
-  /// for a plain space by a reader or silently normalised by an editor.
-  static const String _noBreakSpace = '\u00A0';
 
   @override
   Widget build(BuildContext context) {
@@ -2005,24 +1923,19 @@ class _LastTableChip extends StatelessWidget {
       _ => loc.homePlayersFour,
     };
     final String label = '$name · $seatsLabel';
-    // C-351: at a system text scale of 1.5 and above the label may wrap to
-    // a second line; below that nothing changes (one line, ellipsis). The
+    // C-351: at a system text scale of 1.5 and above the name may wrap to a
+    // second line; below that nothing changes (one line, ellipsis). The
     // scale is read off the ambient TextScaler at this chip's own font
     // size, never off the platform directly, so it answers "how much
     // bigger is this text actually drawn", not "what did the OS report".
     final double scaleAtLabel =
         MediaQuery.textScalerOf(context).scale(kTypeLabel) / kTypeLabel;
     final int maxLines = scaleAtLabel >= 1.5 ? 2 : 1;
-    // The break may only fall between the name and the seat count: the
-    // space that glues name to "·" is non-breaking, and every space inside
-    // the seat label is made non-breaking too, leaving the single plain
-    // space after "·" as the only place Flutter's line breaker can act.
-    final String seatsNoBreak = seatsLabel.replaceAll(' ', _noBreakSpace);
-    final String painted = '$name$_noBreakSpace· $seatsNoBreak';
     return Center(
       child: Semantics(
         container: true,
         label: label,
+        excludeSemantics: true,
         child: DecoratedBox(
           key: const Key('home-last-table-chip'),
           decoration: BoxDecoration(
@@ -2037,15 +1950,24 @@ class _LastTableChip extends StatelessWidget {
               horizontal: kSpace3,
               vertical: kSpace2,
             ),
-            child: Text(
-              painted,
-              maxLines: maxLines,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: textTheme.labelLarge?.copyWith(
-                color: LudoColors.ink,
-                fontSize: kTypeLabel,
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    name,
+                    maxLines: maxLines,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: textTheme.labelLarge?.copyWith(
+                      color: LudoColors.ink,
+                      fontSize: kTypeLabel,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: kSpace2),
+                PlayerCountIcon(count: seats),
+              ],
             ),
           ),
         ),
@@ -2182,175 +2104,178 @@ class _RecentCodeChip extends StatelessWidget {
   }
 }
 
-/// The 2/3/4 seat-count selector on the home screen. A separate widget
-/// rather than inline builder code so the key required on it sits on the
-/// one widget that represents the whole control, not on whichever segment
-/// happens to be first.
-class _PlayersSelector extends StatelessWidget {
-  const _PlayersSelector({
-    super.key,
-    required this.value,
-    required this.onChanged,
-  });
+/// C-523 D2: the one question home asks about the table. The label takes the
+/// row's slack and wraps (never clips) at large text scales or in a longer
+/// language; the control sits at the end edge and mirrors with the locale.
+class _PlayersQuestionRow extends StatelessWidget {
+  const _PlayersQuestionRow({required this.value, required this.onChanged});
 
   final int value;
   final ValueChanged<int> onChanged;
 
+  static String _spoken(AppLocalizations loc, int count) => switch (count) {
+    2 => loc.homePlayersTwo,
+    3 => loc.homePlayersThree,
+    _ => loc.homePlayersFour,
+  };
+
   @override
   Widget build(BuildContext context) {
-    final loc = AppLocalizations.of(context);
-    return SegmentedButton<int>(
-      // SegmentedButton defaults showSelectedIcon to true, which draws a
-      // leading check inside the selected segment only. That icon and its
-      // gap come out of the same fixed segment width the label has to fit
-      // in, so whichever segment is selected loses width the other two
-      // keep, and its label wraps where theirs does not (work/ludo/orders/
-      // 146-players-selector-wrap.md). Turning the icon off gives every
-      // segment the same width regardless of selection, instead of shrinking
-      // or truncating the label to fit the width the icon left behind.
-      // Selection stays visible without it: segmentedButtonTheme
-      // (lib/src/theme.dart) already paints the selected segment with its
-      // own container colour and foreground colour by WidgetState.selected,
-      // independently of the icon.
-      showSelectedIcon: false,
-      segments: [
-        ButtonSegment(value: 2, label: Text(loc.homePlayersTwo)),
-        ButtonSegment(value: 3, label: Text(loc.homePlayersThree)),
-        ButtonSegment(value: 4, label: Text(loc.homePlayersFour)),
+    final AppLocalizations loc = AppLocalizations.of(context);
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            loc.homePlayersQuestion,
+            style: textTheme.titleMedium?.copyWith(
+              color: LudoColors.ink,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const SizedBox(width: kSpace3),
+        PopupMenuButton<int>(
+          tooltip: '',
+          initialValue: value,
+          onSelected: onChanged,
+          position: PopupMenuPosition.under,
+          color: LudoColors.paperElevated,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(kRadiusControl),
+            side: const BorderSide(color: LudoColors.feltMid),
+          ),
+          padding: EdgeInsets.zero,
+          borderRadius: BorderRadius.circular(999),
+          itemBuilder: (BuildContext context) => <PopupMenuEntry<int>>[
+            for (final int count in const <int>[2, 3, 4])
+              PopupMenuItem<int>(
+                key: Key('home-players-option-$count'),
+                value: count,
+                padding: EdgeInsets.zero,
+                child: Semantics(
+                  label: _spoken(loc, count),
+                  selected: count == value,
+                  child: ExcludeSemantics(
+                    child: _PlayersOption(
+                      count: count,
+                      selected: count == value,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+          child: Semantics(
+            button: true,
+            label: '${loc.homePlayersQuestion} ${_spoken(loc, value)}',
+            child: ExcludeSemantics(child: _PlayersControlFace(value: value)),
+          ),
+        ),
       ],
-      selected: <int>{value},
-      onSelectionChanged: (selection) => onChanged(selection.first),
     );
   }
 }
 
-/// C-276 rule 3: toggle card for a game rule (Capture bonus) on the home
-/// screen, matching the lobby screen rule chips instead of a settings page
-/// switch. Off state displays a diagonal strike over the icon and removes
-/// the check badge (doctrine P9).
-class HomeRuleToggle extends StatelessWidget {
-  const HomeRuleToggle({
-    super.key,
-    required this.value,
-    required this.onChanged,
-    required this.icon,
-    required this.title,
-    required this.hint,
-  });
+/// The closed control: the count as a numeral, its person figures and a small
+/// expand glyph, in the register of the locale toggle (paper, felt edge, ink).
+class _PlayersControlFace extends StatelessWidget {
+  const _PlayersControlFace({required this.value});
 
-  final bool value;
-  final ValueChanged<bool> onChanged;
-  final IconData icon;
-  final String title;
-  final String hint;
+  final int value;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme textTheme = Theme.of(context).textTheme;
-    final bool disableAnimations = MediaQuery.disableAnimationsOf(context);
-
-    return Semantics(
-      button: true,
-      toggled: value,
-      label: title,
-      hint: hint,
-      excludeSemantics: true,
-      // The InkWell's own tap action is excluded with the children, so the
-      // node carries it, or TalkBack's double tap would do nothing.
-      onTap: () => onChanged(!value),
-      child: AnimatedContainer(
-        duration: disableAnimations
-            ? Duration.zero
-            : const Duration(milliseconds: 150),
-        decoration: BoxDecoration(
-          color: value
-              ? LudoColors.action.withValues(alpha: 0.12)
-              : LudoColors.inkMuted.withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(kRadiusControl),
-          border: Border.all(
-            color: value
-                ? LudoColors.action
-                : LudoColors.inkMuted.withValues(alpha: 0.4),
-            width: value ? 2 : 1,
+    return DecoratedBox(
+      key: const Key('home-players-button'),
+      decoration: ShapeDecoration(
+        color: LudoColors.paperElevated,
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: LudoColors.inkMuted.withValues(alpha: 0.3),
+            width: 1,
           ),
         ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(kRadiusControl),
-            onTap: () => onChanged(!value),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 48),
-              child: Stack(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(kSpace3),
-                    child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: kSpace6,
-                            height: kSpace6,
-                            child: value
-                                ? Icon(
-                                    icon,
-                                    size: kSpace6,
-                                    color: LudoColors.action,
-                                  )
-                                : Stack(
-                                    alignment: Alignment.center,
-                                    children: [
-                                      Icon(
-                                        icon,
-                                        size: kSpace6,
-                                        color: LudoColors.inkMuted,
-                                      ),
-                                      CustomPaint(
-                                        size: const Size(kSpace6, kSpace6),
-                                        painter: const RuleOffStrikePainter(
-                                          color: LudoColors.inkMuted,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                          ),
-                          const SizedBox(height: kSpace2),
-                          Text(
-                            title,
-                            textAlign: TextAlign.center,
-                            style: textTheme.labelLarge?.copyWith(
-                              color: LudoColors.ink,
-                            ),
-                          ),
-                          const SizedBox(height: kSpace1),
-                          Text(
-                            hint,
-                            textAlign: TextAlign.center,
-                            style: textTheme.bodySmall?.copyWith(
-                              color: LudoColors.inkMuted,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (value)
-                    PositionedDirectional(
-                      top: kSpace2,
-                      end: kSpace2,
-                      child: const IgnorePointer(
-                        child: Icon(
-                          Icons.check_circle,
-                          size: kSpace5,
-                          color: LudoColors.action,
-                        ),
-                      ),
-                    ),
-                ],
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        child: Padding(
+          padding: const EdgeInsetsDirectional.only(
+            start: kSpace4,
+            end: kSpace2,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '$value',
+                style: textTheme.titleMedium?.copyWith(
+                  color: LudoColors.ink,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
+              const SizedBox(width: kSpace2),
+              PlayerCountIcon(count: value),
+              const SizedBox(width: kSpace1),
+              const Icon(
+                Icons.expand_more_rounded,
+                size: 20,
+                color: LudoColors.inkMuted,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One entry of the open menu. The current count has a filled background and
+/// a check glyph, so colour is never the only mark (doctrine P9); the check
+/// slot is always reserved so the figures do not shift between entries.
+class _PlayersOption extends StatelessWidget {
+  const _PlayersOption({required this.count, required this.selected});
+
+  final int count;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: selected ? LudoColors.paperWashTop : Colors.transparent,
+        borderRadius: BorderRadius.circular(kRadiusControl),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 112, minHeight: 48),
+        child: Padding(
+          padding: const EdgeInsetsDirectional.symmetric(horizontal: kSpace3),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 20,
+                child: selected
+                    ? const Icon(
+                        Icons.check_rounded,
+                        size: 20,
+                        color: LudoColors.action,
+                      )
+                    : null,
+              ),
+              const SizedBox(width: kSpace2),
+              Text(
+                '$count',
+                style: textTheme.titleMedium?.copyWith(
+                  color: LudoColors.ink,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: kSpace2),
+              PlayerCountIcon(count: count),
+            ],
           ),
         ),
       ),

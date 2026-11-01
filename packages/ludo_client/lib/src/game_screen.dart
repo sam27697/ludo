@@ -38,7 +38,6 @@ import 'die_cube.dart';
 import 'die_mark.dart';
 import 'end_card.dart';
 import 'feedback.dart';
-import 'feedback_settings_sheet.dart';
 import 'game_die.dart';
 import 'game_stats.dart';
 import 'hint_button.dart';
@@ -54,6 +53,7 @@ import 'roll_tray.dart';
 import 'safe_cue.dart';
 import 'seat_die.dart';
 import 'session_memory.dart';
+import 'sound_toggle.dart';
 import 'theme.dart';
 import 'token_face_picker.dart';
 
@@ -377,11 +377,10 @@ class _GameScreenState extends State<GameScreen> {
   // is announced once however many times the room is replaced under it.
   int? _yourTurnPlayedK;
 
-  // C-518 D1: the routes of the quick-message and settings sheets this
-  // screen opened, so my turn can close those and nothing else. Never the
-  // leave confirm, the face picker, or a sheet another screen opened.
+  // C-518 D1: the route of the quick-message sheet this screen opened, so
+  // my turn can close it and nothing else. Never the leave confirm, the face
+  // picker, or a sheet another screen opened.
   Route<void>? _chatSheetRoute;
-  Route<void>? _settingsSheetRoute;
 
   // C-442 D5: the `game_id` of the last room this screen saw PLAYING and
   // whose `game_over` it has not received. A FINISHED snapshot naming this
@@ -852,7 +851,7 @@ class _GameScreenState extends State<GameScreen> {
   }) {
     feedback.play(cue);
     if (cue == FeedbackCue.yourTurn) {
-      // C-518 D1: my turn closes the sheets I opened, silently.
+      // C-518 D1: my turn closes the sheet I opened, silently.
       _closeOwnSheets();
     }
     final String? message = _announcementFor(cue, snapshot: snapshot);
@@ -861,15 +860,13 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
-  /// C-518 D1. Closes the quick-message and settings sheets this screen
-  /// opened, if either is still up. Only the sheet's own route is closed:
+  /// C-518 D1. Closes the quick-message sheet this screen opened, if it is
+  /// still up. Only the sheet's own route is closed:
   /// on top it pops with its exit motion, under a dialog it is removed in
   /// place, and a route that already left is left alone.
   void _closeOwnSheets() {
     _closeSheetRoute(_chatSheetRoute);
-    _closeSheetRoute(_settingsSheetRoute);
     _chatSheetRoute = null;
-    _settingsSheetRoute = null;
   }
 
   void _closeSheetRoute(Route<void>? route) {
@@ -1463,19 +1460,6 @@ class _GameScreenState extends State<GameScreen> {
     ).whenComplete(() {
       if (_chatSheetRoute?.isActive != true) {
         _chatSheetRoute = null;
-      }
-    });
-  }
-
-  /// The in-game settings sheet, opened through the same shared function
-  /// the home and lobby screens use; the route handle is only for C-518 D1.
-  void _onSettingsButtonTap() {
-    showFeedbackSettingsSheet(
-      context,
-      onRoute: (Route<void> route) => _settingsSheetRoute = route,
-    ).whenComplete(() {
-      if (_settingsSheetRoute?.isActive != true) {
-        _settingsSheetRoute = null;
       }
     });
   }
@@ -3648,14 +3632,12 @@ class _GameScreenState extends State<GameScreen> {
                             ),
                           PositionedDirectional(
                             end: kSpace2,
-                            child: IconButton(
-                              key: const Key('game-settings-button'),
+                            // C-523 D7: the one sound switch.
+                            child: SoundToggleButton(
+                              key: const Key('game-sound-toggle'),
                               style: IconButton.styleFrom(
                                 minimumSize: const Size(48, 48),
                               ),
-                              tooltip: loc.settingsTooltip,
-                              onPressed: _onSettingsButtonTap,
-                              icon: const Icon(Icons.tune_rounded),
                             ),
                           ),
                         ],
