@@ -41,6 +41,7 @@ class GameDie extends StatefulWidget {
     this.onTap,
     this.onInvalidTap,
     this.badgeHeadroom = double.infinity,
+    this.idleOpacity = 1,
   });
 
   /// The last known roll, straight from `turn.value`. Null when none is
@@ -83,6 +84,12 @@ class GameDie extends StatefulWidget {
   /// never paints over the board. The default leaves it alone: a die
   /// mounted outside the play column gets today's placement.
   final double badgeHeadroom;
+
+  /// C-468 D7: how strongly the die (face, cube and badge) paints. The idle
+  /// die of a seat that is not rolling passes 0.45. It lives here, below the
+  /// `game-die` key, so C-520 A2's refusal mark can sit outside it at full
+  /// strength.
+  final double idleOpacity;
 
   /// Fires on a tap while [enabled]. The widget itself still guards this:
   /// a tap while disabled never calls it, even if a caller passes one.
@@ -284,25 +291,32 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     // delayed or hidden by the die's own animation state. It hangs off the
     // top-right corner (C-380 D1). Clip.none keeps the overhang; the badge
     // is positioned, so the die's 72dp box does not grow.
-    final Widget dieFace = widget.noMove || _marked
-        ? Stack(
-            alignment: Alignment.topLeft,
-            clipBehavior: Clip.none,
-            children: <Widget>[
-              die,
-              if (widget.noMove) _noMoveBadge(),
-              if (_marked)
-                const Positioned.fill(
-                  child: RefusalMark(
-                    shape: BoxShape.rectangle,
-                    borderRadius: BorderRadius.all(
-                      Radius.circular(_kDieSize * 0.16),
-                    ),
-                  ),
-                ),
-            ],
-          )
-        : die;
+    // The stacks are always built and `die` is always their first child, so
+    // the die's element keeps its slot when the badge or the mark comes and
+    // goes. Passthrough hands `die` the same tight box it had before.
+    final Widget dieArt = Stack(
+      alignment: Alignment.topLeft,
+      fit: StackFit.passthrough,
+      clipBehavior: Clip.none,
+      children: <Widget>[die, if (widget.noMove) _noMoveBadge()],
+    );
+    // C-468 D7: the Opacity is an ancestor of the die's art. C-520 A2: the
+    // refusal mark is a sibling of it, never under it.
+    final Widget dieFace = Stack(
+      alignment: Alignment.topLeft,
+      fit: StackFit.passthrough,
+      clipBehavior: Clip.none,
+      children: <Widget>[
+        Opacity(opacity: widget.idleOpacity, child: dieArt),
+        if (_marked)
+          const Positioned.fill(
+            child: RefusalMark(
+              shape: BoxShape.rectangle,
+              borderRadius: BorderRadius.all(Radius.circular(_kDieSize * 0.16)),
+            ),
+          ),
+      ],
+    );
 
     // The key sits on the Semantics widget itself, not on the SizedBox
     // beneath it: getSemantics(find.byKey('game-die')) must return this

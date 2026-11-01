@@ -1411,7 +1411,7 @@ class _GameScreenState extends State<GameScreen> {
   /// semantics hint says it too. D3: the refusal shake or mark wraps it.
   Widget _chatButton(AppLocalizations loc) {
     final bool resting = _chatCooling;
-    Widget button = Stack(
+    final Widget button = Stack(
       clipBehavior: Clip.none,
       children: <Widget>[
         MergeSemantics(
@@ -1442,10 +1442,9 @@ class _GameScreenState extends State<GameScreen> {
           const Positioned.fill(child: RefusalMark(shape: BoxShape.circle)),
       ],
     );
-    if (_chatShakeSerial > 0) {
-      button = _ChatShake(key: ValueKey<int>(_chatShakeSerial), child: button);
-    }
-    return button;
+    // Always mounted, driven by the serial, so the ring's element is never
+    // rebuilt by a refusal.
+    return _ChatShake(serial: _chatShakeSerial, child: button);
   }
 
   /// C-478 D5.1. A tap while the button rests plays the invalid-tap cue and
@@ -1524,7 +1523,7 @@ class _GameScreenState extends State<GameScreen> {
     }
     setState(() {
       _chatRestUntil = until;
-      if (until != null && (begin || !_chatCooling)) {
+      if (until != null && begin) {
         _chatRestSpan = until.difference(now);
         _chatRestSerial += 1;
       }
@@ -1545,16 +1544,18 @@ class _GameScreenState extends State<GameScreen> {
   /// C-478 D5.3. No optimistic bubble: the server's copy of the message
   /// comes back as an `emote` frame like everyone else's. The rest starts
   /// when that copy has come back (C-520 D1: and lasts as long as rule 3
-  /// says). A refusal while connected plays the invalid-tap cue, refuses the
-  /// button and rests it 3000 ms; while not connected the reconnect UI owns
-  /// the state and nothing new happens.
+  /// says). A refusal (the server answered with an error frame, C-520 A3)
+  /// plays the invalid-tap cue, refuses the button and rests it 3000 ms; a
+  /// dropped socket, a timeout or a lost connection leaves the reconnect UI
+  /// to own the state and nothing new happens.
   Future<void> _onChatPick(String id) async {
-    final bool sent = await widget.controller.sendEmote(id);
+    final EmoteOutcome outcome = await widget.controller.sendEmoteOutcome(id);
     if (!mounted || _screenDisposed) {
       return;
     }
-    if (!sent) {
-      if (widget.controller.phase == RoomPhase.connected) {
+    if (outcome != EmoteOutcome.admitted) {
+      // C-520 A3: only an error frame from the server is a refusal.
+      if (outcome == EmoteOutcome.refused) {
         FeedbackScope.of(context).play(FeedbackCue.invalidTap);
         _chatForcedUntil = clock.now().add(kQuickChatCooldown);
         _refuseChatButton();
@@ -4089,31 +4090,30 @@ class _GameScreenState extends State<GameScreen> {
           child: _boardDieSlot(
             loc,
             turn,
-            // C-468 D7: Opacity is an ancestor of the die's art.
-            // The key on the die is unchanged.
-            Opacity(
-              opacity: fadeIdleDie ? 0.45 : 1,
-              child: GameDie(
-                face: dieFace,
-                seatColor: dieSeatColor,
-                enabled: rollEnabled,
-                tumbling: _rollWaitK != null,
-                noAnswer: _rollNoAnswer,
-                noMove: _noMoveVisible,
-                // C-404: the die's top sits exactly at the row's own
-                // top (it is the tallest thing in the row), which
-                // sits `metrics.boardGap` below the board -- the
-                // same number board_floor_nav_inset_test.dart
-                // measures as die.top - board.bottom. Handing that
-                // straight to the die is what lets its badge clamp
-                // itself without this column's gaps, clamp or floor
-                // changing at all.
-                badgeHeadroom: metrics.boardGap,
-                onTap: rollEnabled ? _onDieTap : null,
-                onInvalidTap: () {
-                  FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-                },
-              ),
+            // C-468 D7: the die fades its own art (idleOpacity); the key on
+            // the die is unchanged. C-520 A2: the fade lives inside GameDie
+            // so the refusal mark stays outside it.
+            GameDie(
+              face: dieFace,
+              seatColor: dieSeatColor,
+              enabled: rollEnabled,
+              tumbling: _rollWaitK != null,
+              noAnswer: _rollNoAnswer,
+              noMove: _noMoveVisible,
+              // C-404: the die's top sits exactly at the row's own
+              // top (it is the tallest thing in the row), which
+              // sits `metrics.boardGap` below the board -- the
+              // same number board_floor_nav_inset_test.dart
+              // measures as die.top - board.bottom. Handing that
+              // straight to the die is what lets its badge clamp
+              // itself without this column's gaps, clamp or floor
+              // changing at all.
+              badgeHeadroom: metrics.boardGap,
+              idleOpacity: fadeIdleDie ? 0.45 : 1,
+              onTap: rollEnabled ? _onDieTap : null,
+              onInvalidTap: () {
+                FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+              },
             ),
           ),
         ),
@@ -6067,26 +6067,57 @@ class _PendingLandingCues {
 
 /// C-520 D3. The 300 ms horizontal shake a refused tap on the chat button
 /// gets: the hint control's rule (sin(t * 4 pi), 0.18 of the visual size,
-/// decaying). Motion off holds still; the mark carries it then.
-class _ChatShake extends StatelessWidget {
-  const _ChatShake({super.key, required this.child});
+/// decaying). Always mounted; a new [serial] starts one shake. Motion off
+/// holds still; the mark carries it then.
+class _ChatShake extends StatefulWidget {
+  const _ChatShake({required this.serial, required this.child});
 
+  final int serial;
   final Widget child;
 
   @override
-  Widget build(BuildContext context) {
-    if (MediaQuery.disableAnimationsOf(context)) {
-      return child;
-    }
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0, end: 1),
+  State<_ChatShake> createState() => _ChatShakeState();
+}
+
+class _ChatShakeState extends State<_ChatShake>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shake;
+
+  @override
+  void initState() {
+    super.initState();
+    _shake = AnimationController(
+      vsync: this,
       duration: const Duration(milliseconds: 300),
-      curve: Curves.linear,
-      builder: (BuildContext context, double t, Widget? staticChild) {
+      value: 1,
+    );
+  }
+
+  @override
+  void didUpdateWidget(_ChatShake oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.serial != oldWidget.serial &&
+        !MediaQuery.disableAnimationsOf(context)) {
+      _shake.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _shake.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _shake,
+      child: widget.child,
+      builder: (BuildContext context, Widget? staticChild) {
+        final double t = _shake.value;
         final double dx = math.sin(t * math.pi * 4) * 48 * 0.18 * (1 - t);
         return Transform.translate(offset: Offset(dx, 0), child: staticChild);
       },
-      child: child,
     );
   }
 }
@@ -6108,6 +6139,9 @@ class _ChatRestRing extends StatefulWidget {
 class _ChatRestRingState extends State<_ChatRestRing>
     with SingleTickerProviderStateMixin {
   late final AnimationController _drain;
+  // The share of the rest still to run; the painter repaints on it.
+  final ValueNotifier<double> _left = ValueNotifier<double>(1);
+  late final _RestRingPainter _painter = _RestRingPainter(_left);
   Timer? _step;
   int _steps = 0;
   bool? _reduced;
@@ -6116,6 +6150,18 @@ class _ChatRestRingState extends State<_ChatRestRing>
   void initState() {
     super.initState();
     _drain = AnimationController(vsync: this, duration: widget.span);
+    _drain.addListener(() {
+      if (_reduced != true) {
+        _left.value = _share(1 - _drain.value);
+      }
+    });
+  }
+
+  double _share(double left) => widget.span.inMilliseconds <= 0 ? 0 : left;
+
+  void _pushSteps() {
+    final int spanMs = widget.span.inMilliseconds;
+    _left.value = _share(math.max(0, spanMs - _steps * 1000) / spanMs);
   }
 
   @override
@@ -6132,14 +6178,14 @@ class _ChatRestRingState extends State<_ChatRestRing>
           ? 0
           : (_drain.value * widget.span.inMilliseconds / 1000).floor();
       _drain.stop();
+      _pushSteps();
       _step?.cancel();
       _step = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
         if (!mounted) {
           return;
         }
-        setState(() {
-          _steps += 1;
-        });
+        _steps += 1;
+        _pushSteps();
         if (_steps * 1000 >= widget.span.inMilliseconds) {
           timer.cancel();
         }
@@ -6157,36 +6203,31 @@ class _ChatRestRingState extends State<_ChatRestRing>
   void dispose() {
     _step?.cancel();
     _drain.dispose();
+    _left.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final int spanMs = widget.span.inMilliseconds;
-    return AnimatedBuilder(
-      animation: _drain,
-      builder: (BuildContext context, Widget? child) {
-        final double left = _reduced == true
-            ? (math.max(0, spanMs - _steps * 1000) / spanMs)
-            : 1 - _drain.value;
-        return CustomPaint(
-          key: const Key('game-chat-rest-ring'),
-          size: const Size.square(48),
-          painter: _RestRingPainter(left: spanMs <= 0 ? 0 : left),
-        );
-      },
+    return RepaintBoundary(
+      child: CustomPaint(
+        key: const Key('game-chat-rest-ring'),
+        size: const Size.square(48),
+        painter: _painter,
+      ),
     );
   }
 }
 
 class _RestRingPainter extends CustomPainter {
-  const _RestRingPainter({required this.left});
+  _RestRingPainter(this.share) : super(repaint: share);
 
   /// The share of the rest still to run, 1 down to 0.
-  final double left;
+  final ValueNotifier<double> share;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final double left = share.value;
     if (left <= 0) {
       return;
     }
@@ -6207,5 +6248,5 @@ class _RestRingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RestRingPainter oldDelegate) =>
-      oldDelegate.left != left;
+      oldDelegate.share != share;
 }

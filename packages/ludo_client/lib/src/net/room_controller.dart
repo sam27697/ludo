@@ -31,6 +31,13 @@ import 'transport.dart';
 /// later state carries that history forward instead of discarding it.
 enum RoomPhase { idle, connecting, connected, closed, failed }
 
+/// C-520 A3. How one quick-message send ended.
+///
+/// admitted: the server's copy came back. refused: the server answered with
+/// an error frame ([ProtocolErrorException]). failed: anything else (not
+/// connected, disposed, closed, timeout).
+enum EmoteOutcome { admitted, refused, failed }
+
 /// docs/PROTOCOL.md section 5's "Carrying seq" list: every frame type this
 /// controller reduces. `error`, `pong` and `seat_assigned` are not on it.
 const Set<String> _stateChangingTypes = <String>{
@@ -761,16 +768,28 @@ class RoomController extends ChangeNotifier {
   /// (RATE_LIMITED, a timeout, a closed connection). Unlike [roll] and
   /// [move] this never goes through [_failFromRollOrMove]: a refused
   /// message blocks nothing and starts no reconnect.
+  ///
+  /// C-520 A3: defined through [sendEmoteOutcome].
   Future<bool> sendEmote(String id) async {
+    return (await sendEmoteOutcome(id)) == EmoteOutcome.admitted;
+  }
+
+  /// C-520 A3. [sendEmote] with the reason it did not go through: refused
+  /// only when the server answered the `emote` with an error frame, whatever
+  /// its code. Not connected, disposed, a closed connection and a timeout
+  /// are all [EmoteOutcome.failed]; the reconnect UI owns those.
+  Future<EmoteOutcome> sendEmoteOutcome(String id) async {
     final RoomConnection? connection = _connection;
     if (_disposed || _phase != RoomPhase.connected || connection == null) {
-      return false;
+      return EmoteOutcome.failed;
     }
     try {
       await connection.emote(id);
-      return true;
+      return EmoteOutcome.admitted;
+    } on ProtocolErrorException {
+      return EmoteOutcome.refused;
     } catch (_) {
-      return false;
+      return EmoteOutcome.failed;
     }
   }
 
