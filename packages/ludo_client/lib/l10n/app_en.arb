@@ -773,6 +773,10 @@
   "@chatButtonTooltip": {
     "description": "Tooltip and semantics label for the game header button that opens the quick messages sheet (C-478 D5.1)."
   },
+  "chatResting": "Available again in a moment",
+  "@chatResting": {
+    "description": "Semantics hint read after the label of the quick messages button and of an end card reply chip while they rest between sends (C-520 D2)."
+  },
   "chatSheetTitle": "Quick messages",
   "@chatSheetTitle": {
     "description": "Title of the quick messages sheet (C-478 D5.2)."

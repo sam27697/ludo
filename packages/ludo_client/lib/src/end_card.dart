@@ -14,6 +14,7 @@
 // depth and an iconic stat row, not a Material form -- every colour on
 // this card is a named `LudoColors` token, never a raw literal.
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -24,6 +25,7 @@ import 'feedback.dart';
 import 'game_stats.dart';
 import 'net/snapshot.dart' show RematchState;
 import 'quick_chat.dart';
+import 'refusal_mark.dart';
 import 'theme.dart';
 import 'verify_rolls_button.dart';
 
@@ -343,6 +345,7 @@ class _EndCardState extends State<EndCard> {
                   compact: compact,
                   dimmed:
                       widget.quickReplyCooling || widget.onQuickReply == null,
+                  resting: widget.quickReplyCooling,
                   onSend: widget.quickReplyCooling ? null : widget.onQuickReply,
                 ),
               ),
@@ -996,7 +999,8 @@ class _EndCardState extends State<EndCard> {
 /// One reply chip on the end card (C-485 D5.1): the sheet's speech bubble at
 /// full strength, or at 38 % while it cannot send. A tap that cannot send
 /// shakes the chip a little and plays the invalid-tap cue; under reduced
-/// motion the cue still plays and the chip stays still.
+/// motion the cue still plays, the chip stays still and wears a
+/// [RefusalMark] for 300 ms (C-520 D3).
 class _ReplyChip extends StatefulWidget {
   _ReplyChip({
     required this.id,
@@ -1004,6 +1008,7 @@ class _ReplyChip extends StatefulWidget {
     required this.compact,
     required this.dimmed,
     required this.onSend,
+    this.resting = false,
   }) : super(key: Key('end-card-reply-$id'));
 
   final String id;
@@ -1012,6 +1017,10 @@ class _ReplyChip extends StatefulWidget {
   /// The tighter chip of C-498 D2.
   final bool compact;
   final bool dimmed;
+
+  /// C-520 D2: resting between sends, so TalkBack hears `chatResting` after
+  /// the line. Dimmed for any other reason carries no hint.
+  final bool resting;
 
   /// Null when a tap must be refused.
   final void Function(String id)? onSend;
@@ -1025,6 +1034,8 @@ class _ReplyChipState extends State<_ReplyChip>
   static const Duration _shakeLife = Duration(milliseconds: 260);
 
   late final AnimationController _shake;
+  Timer? _markTimer;
+  bool _marked = false;
 
   @override
   void initState() {
@@ -1034,6 +1045,7 @@ class _ReplyChipState extends State<_ReplyChip>
 
   @override
   void dispose() {
+    _markTimer?.cancel();
     _shake.dispose();
     super.dispose();
   }
@@ -1047,7 +1059,23 @@ class _ReplyChipState extends State<_ReplyChip>
     FeedbackScope.of(context).play(FeedbackCue.invalidTap);
     if (!MediaQuery.disableAnimationsOf(context)) {
       _shake.forward(from: 0);
+      return;
     }
+    // C-520 D3: motion off, the refusal is a mark for 300 ms; a second tap
+    // inside it restarts the 300 ms.
+    _markTimer?.cancel();
+    setState(() {
+      _marked = true;
+    });
+    _markTimer = Timer(kRefusalMarkLife, () {
+      _markTimer = null;
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _marked = false;
+      });
+    });
   }
 
   @override
@@ -1059,6 +1087,7 @@ class _ReplyChipState extends State<_ReplyChip>
       container: true,
       button: true,
       label: widget.line,
+      hint: widget.resting ? AppLocalizations.of(context).chatResting : null,
       onTap: _tap,
       child: ExcludeSemantics(
         child: AnimatedBuilder(
@@ -1068,13 +1097,26 @@ class _ReplyChipState extends State<_ReplyChip>
                 6 * math.sin(_shake.value * math.pi * 4) * (1 - _shake.value);
             return Transform.translate(offset: Offset(dx, 0), child: child);
           },
-          child: Opacity(
-            opacity: widget.dimmed ? 0.38 : 1,
-            child: SpeechChip(
-              line: widget.line,
-              onTap: _tap,
-              compact: widget.compact,
-            ),
+          child: Stack(
+            children: <Widget>[
+              Opacity(
+                opacity: widget.dimmed ? 0.38 : 1,
+                child: SpeechChip(
+                  line: widget.line,
+                  onTap: _tap,
+                  compact: widget.compact,
+                ),
+              ),
+              // The bubble's body, not its tail, is the painted shape.
+              if (_marked)
+                const Positioned.fill(
+                  bottom: kChatTailHeight,
+                  child: RefusalMark(
+                    shape: BoxShape.rectangle,
+                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
