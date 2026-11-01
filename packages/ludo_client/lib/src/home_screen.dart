@@ -1125,6 +1125,22 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  Widget _joinButton(bool compact, bool joinPrimary, AppLocalizations loc) {
+    return Padding(
+      padding: EdgeInsets.only(top: compact ? kSpace2 : kSpace3),
+      child: KeyedSubtree(
+        key: _joinButtonScrollKey,
+        child: _weightedButton(
+          key: const Key('join-room-button'),
+          onPressed: _joinRoom,
+          label: loc.homeJoinRoomButton,
+          icon: const DirectionalIcon(Icons.login_rounded),
+          primary: joinPrimary,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -1647,39 +1663,28 @@ class _HomeScreenState extends State<HomeScreen>
                                       ),
                                     ),
                                   ),
-                                  // C-523 D3: Join exists only while there is a
-                                  // full-length code to join.
-                                  AnimatedSize(
-                                    duration:
-                                        MediaQuery.disableAnimationsOf(context)
-                                        ? Duration.zero
-                                        : kMotionShort,
-                                    curve: Curves.easeOut,
-                                    alignment: Alignment.topCenter,
-                                    child: _joinShown
-                                        ? Padding(
-                                            padding: EdgeInsets.only(
-                                              top: compact ? kSpace2 : kSpace3,
+                                  // C-523 D3 / A1: Join exists only while there is a
+                                  // full-length code to join. Under reduced motion it
+                                  // is inserted directly, with no AnimatedSize.
+                                  if (MediaQuery.disableAnimationsOf(context))
+                                    _joinShown
+                                        ? _joinButton(compact, joinPrimary, loc)
+                                        : const SizedBox.shrink()
+                                  else
+                                    AnimatedSize(
+                                      duration: kMotionShort,
+                                      curve: Curves.easeOut,
+                                      alignment: Alignment.topCenter,
+                                      child: _joinShown
+                                          ? _joinButton(
+                                              compact,
+                                              joinPrimary,
+                                              loc,
+                                            )
+                                          : const SizedBox(
+                                              width: double.infinity,
                                             ),
-                                            child: KeyedSubtree(
-                                              key: _joinButtonScrollKey,
-                                              child: _weightedButton(
-                                                key: const Key(
-                                                  'join-room-button',
-                                                ),
-                                                onPressed: _joinRoom,
-                                                label: loc.homeJoinRoomButton,
-                                                icon: const DirectionalIcon(
-                                                  Icons.login_rounded,
-                                                ),
-                                                primary: joinPrimary,
-                                              ),
-                                            ),
-                                          )
-                                        : const SizedBox(
-                                            width: double.infinity,
-                                          ),
-                                  ),
+                                    ),
                                   if (_recentCodes.isNotEmpty) ...[
                                     SizedBox(
                                       height: compact ? kSpace2 : kSpace3,
