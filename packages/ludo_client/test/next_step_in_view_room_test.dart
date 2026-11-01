@@ -665,6 +665,20 @@ Future<void> _mountHome(
         'decision 3, $where: HomeScreen is the mounted screen. Catches a '
         'mount that painted a different route.',
   );
+  // Join is in the tree only with a full-length code (C-523 D3), and every
+  // fit claim in this file is about Join, so each mount types one. The home
+  // with the longest content is the one measured.
+  expect(
+    find.byKey(_joinKey),
+    findsNothing,
+    reason:
+        'decision 3, $where: join-room-button is absent while the code '
+        'field is empty (C-523 D3).',
+  );
+  await tester.enterText(find.byKey(_codeKey), 'K7M2QP');
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 250));
+  await tester.pumpAndSettle();
   expect(
     find.byKey(_createKey),
     findsOneWidget,

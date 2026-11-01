@@ -26,6 +26,12 @@
 // silently measuring the unchanged baseline twice), never that a number
 // clears 84.00dp.
 //
+// Retargeted for C-523: the segmented selector and its "4 لاعبين" label are
+// gone from home. The Arabic text this file measures is now the players row's
+// question (AppLocalizations.homePlayersQuestion), and the selected versus
+// unselected comparison reads the numerals of home-players-option-4 and
+// home-players-option-2 in the open menu. The font axes below are unchanged.
+//
 // Font manager mechanics cited in comments below (TestFontManager's
 // "unmatched family name falls back to the first test font family",
 // FontCollection::RegisterTestFonts calling DisableFontFallback,
@@ -216,64 +222,73 @@ Widget _harness(Locale locale) {
   );
 }
 
-/// Mounts HomeScreen at [locale] and opens the seat-count selector, matching
-/// test/home_screen_players_fit_test.dart's `_mount` /
-/// `_openPlayersDisclosure` (bounded pumps only, no pumpAndSettle -- see that
-/// file's comment for why).
+/// Mounts HomeScreen at [locale] and opens the player-count menu behind
+/// `home-players-button` (C-523 D2; the disclosure and the segmented selector
+/// this file used to open are gone). Bounded pumps only, no pumpAndSettle,
+/// the same way the file did before.
 Future<void> _mount(WidgetTester tester, Locale locale) async {
   await tester.pumpWidget(_harness(locale));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 1000));
 
-  final Finder disclosure = find.byKey(const Key('home-players-disclosure'));
+  final Finder button = find.byKey(const Key('home-players-button'));
   expect(
-    disclosure,
+    button,
     findsOneWidget,
     reason:
-        'fixture is broken: home-players-disclosure must be on screen so '
-        'this file can open the seat-count selector it measures',
+        'fixture is broken: home-players-button must be on screen so '
+        'this file can open the player-count menu it measures',
   );
-  await tester.tap(disclosure);
+  await tester.tap(button);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
   expect(
-    _selectorFinder,
+    _optionFinder(4),
     findsOneWidget,
-    reason: 'tapping home-players-disclosure must reveal home-players-selector',
+    reason: 'tapping home-players-button must open home-players-option-4',
   );
 }
 
-final Finder _selectorFinder = find.byKey(const Key('home-players-selector'));
+Finder _optionFinder(int count) =>
+    find.byKey(Key('home-players-option-$count'));
 
-Finder _segmentLabelFinder(String label) =>
-    find.descendant(of: _selectorFinder, matching: find.text(label));
-
-Future<void> _selectByTap(WidgetTester tester, String label) async {
-  final Finder finder = _segmentLabelFinder(label);
+/// The numeral Text inside one menu option, and the live paragraph behind it.
+RenderParagraph _paragraphOfOptionNumeral(WidgetTester tester, int count) {
+  final Finder numeral = find.descendant(
+    of: _optionFinder(count),
+    matching: find.text('$count'),
+  );
   expect(
-    finder,
+    numeral,
     findsOneWidget,
     reason:
-        'fixture is broken: no segment in the player-count selector '
-        'carries the label "$label"',
+        'fixture is broken: no numeral "$count" inside '
+        'home-players-option-$count',
   );
-  await tester.tap(finder);
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
+  final Finder textFinder = find.descendant(
+    of: numeral,
+    matching: find.byType(RichText),
+  );
+  expect(
+    textFinder,
+    findsOneWidget,
+    reason:
+        'fixture is broken: expected exactly one RichText under the '
+        '"$count" numeral of its option',
+  );
+  return tester.renderObject<RenderParagraph>(textFinder);
 }
 
-/// Finds the single `RichText` painting the label of the segment carrying
-/// [label], and returns the live `RenderParagraph` behind it -- same
-/// technique as test/home_screen_players_fit_test.dart's
-/// `_paragraphOfSegmentLabel`.
-RenderParagraph _paragraphOfSegmentLabel(WidgetTester tester, String label) {
-  final Finder labelFinder = _segmentLabelFinder(label);
+/// The live paragraph behind the row's Arabic question, the one painted
+/// Arabic word group in the players row.
+RenderParagraph _paragraphOfQuestion(WidgetTester tester, String question) {
+  final Finder labelFinder = find.text(question);
   expect(
     labelFinder,
     findsOneWidget,
     reason:
-        'fixture is broken: no segment in the player-count selector '
-        'carries the label "$label"',
+        'fixture is broken: the question "$question" must be painted '
+        'exactly once on home',
   );
   final Finder textFinder = find.descendant(
     of: labelFinder,
@@ -284,7 +299,7 @@ RenderParagraph _paragraphOfSegmentLabel(WidgetTester tester, String label) {
     findsOneWidget,
     reason:
         'fixture is broken: expected exactly one RichText under the '
-        '"$label" segment label',
+        '"$question" label',
   );
   return tester.renderObject<RenderParagraph>(textFinder);
 }
@@ -346,51 +361,57 @@ void main() {
   late TextDirection labelDirection;
   late TextScaler mountedTextScaler;
 
-  group('baseline: the selector\'s real resolved TextStyle for "4 لاعبين", '
+  group('baseline: the real resolved TextStyle of the Arabic players row, '
       'captured off the live mount rather than assumed (order 152)', () {
     testWidgets('captures fontFamily/fontFamilyFallback/fontWeight/fontSize/'
         'letterSpacing/height/textDirection/textScaler off the '
-        '4-players Arabic segment\'s RenderParagraph, in both selection '
-        'states', (tester) async {
+        'Arabic question label\'s RenderParagraph, and the option numerals in '
+        'both selection states', (tester) async {
       final double logicalWidth = _pinPhoneView(tester);
       await _mount(tester, const Locale('ar'));
       final BuildContext context = tester.element(find.byType(Scaffold));
       final AppLocalizations loc = AppLocalizations.of(context);
-      label = loc.homePlayersFour;
-      final String otherLabel = loc.homePlayersTwo;
+      label = loc.homePlayersQuestion;
 
-      // Select 4 players so the 4-players segment is the selected one.
-      await _selectByTap(tester, label);
-      final RenderParagraph selectedParagraph = _paragraphOfSegmentLabel(
+      // The menu is open with 4 selected (the default), so option 4 is the
+      // selected entry and option 2 an unselected one.
+      final RenderParagraph questionParagraph = _paragraphOfQuestion(
         tester,
         label,
       );
-      final TextStyle? selectedStyle = selectedParagraph.text.style;
+      final TextStyle? selectedStyle = _paragraphOfOptionNumeral(
+        tester,
+        4,
+      ).text.style;
       expect(
         selectedStyle,
         isNotNull,
         reason:
-            'fixture is broken: the 4-players segment label\'s '
-            'RenderParagraph carries a null style while selected',
+            'fixture is broken: the selected option numeral\'s '
+            'RenderParagraph carries a null style',
       );
-
-      // Select 2 players so the 4-players segment becomes unselected.
-      await _selectByTap(tester, otherLabel);
-      final RenderParagraph unselectedParagraph = _paragraphOfSegmentLabel(
+      final TextStyle? unselectedStyle = _paragraphOfOptionNumeral(
         tester,
-        label,
-      );
-      final TextStyle? unselectedStyle = unselectedParagraph.text.style;
+        2,
+      ).text.style;
       expect(
         unselectedStyle,
         isNotNull,
         reason:
-            'fixture is broken: the 4-players segment label\'s '
-            'RenderParagraph carries a null style while unselected',
+            'fixture is broken: the unselected option numeral\'s '
+            'RenderParagraph carries a null style',
+      );
+      final TextStyle? questionStyle = questionParagraph.text.style;
+      expect(
+        questionStyle,
+        isNotNull,
+        reason:
+            'fixture is broken: the question label\'s RenderParagraph '
+            'carries a null style',
       );
 
-      labelDirection = unselectedParagraph.textDirection;
-      mountedTextScaler = unselectedParagraph.textScaler;
+      labelDirection = questionParagraph.textDirection;
+      mountedTextScaler = questionParagraph.textScaler;
 
       final _CapturedStyle capturedSelected = _capture(selectedStyle!);
       final _CapturedStyle capturedUnselected = _capture(unselectedStyle!);
@@ -438,8 +459,8 @@ void main() {
         capturedSelected.fontFamily,
         capturedUnselected.fontFamily,
         reason:
-            'expected the 4-players segment\'s resolved fontFamily to '
-            'be identical whether the segment is selected or not',
+            'expected the option numeral\'s resolved fontFamily to '
+            'be identical whether the option is selected or not',
       );
       expect(
         listEquals(
@@ -448,8 +469,8 @@ void main() {
         ),
         isTrue,
         reason:
-            'expected the 4-players segment\'s resolved '
-            'fontFamilyFallback to be identical whether the segment is '
+            'expected the option numeral\'s resolved '
+            'fontFamilyFallback to be identical whether the option is '
             'selected (${capturedSelected.fontFamilyFallback}) or not '
             '(${capturedUnselected.fontFamilyFallback})',
       );
@@ -457,29 +478,29 @@ void main() {
         capturedSelected.fontWeight,
         capturedUnselected.fontWeight,
         reason:
-            'expected the 4-players segment\'s resolved fontWeight to '
-            'be identical whether the segment is selected or not',
+            'expected the option numeral\'s resolved fontWeight to '
+            'be identical whether the option is selected or not',
       );
       expect(
         capturedSelected.fontSize,
         capturedUnselected.fontSize,
         reason:
-            'expected the 4-players segment\'s resolved fontSize to be '
-            'identical whether the segment is selected or not',
+            'expected the option numeral\'s resolved fontSize to be '
+            'identical whether the option is selected or not',
       );
       expect(
         capturedSelected.letterSpacing,
         capturedUnselected.letterSpacing,
         reason:
-            'expected the 4-players segment\'s resolved letterSpacing '
-            'to be identical whether the segment is selected or not',
+            'expected the option numeral\'s resolved letterSpacing '
+            'to be identical whether the option is selected or not',
       );
       expect(
         capturedSelected.height,
         capturedUnselected.height,
         reason:
-            'expected the 4-players segment\'s resolved height to be '
-            'identical whether the segment is selected or not',
+            'expected the option numeral\'s resolved height to be '
+            'identical whether the option is selected or not',
       );
       // lib/src/theme.dart's segmentedButtonTheme only varies
       // foregroundColor/backgroundColor by WidgetState.selected, never
@@ -508,10 +529,29 @@ void main() {
         labelDirection,
         textScaler: mountedTextScaler,
       );
-      _record('baseline (selected)', 'theme default', naturalWidthSelected);
-      _record('baseline (unselected)', 'theme default', naturalWidthUnselected);
+      final double naturalWidthQuestion = _naturalWidthOf(
+        label,
+        questionStyle!,
+        labelDirection,
+        textScaler: mountedTextScaler,
+      );
+      _record(
+        'baseline (selected option style)',
+        'theme default',
+        naturalWidthSelected,
+      );
+      _record(
+        'baseline (unselected option style)',
+        'theme default',
+        naturalWidthUnselected,
+      );
+      _record(
+        'baseline (question label style)',
+        'theme default',
+        naturalWidthQuestion,
+      );
 
-      baselineStyle = capturedUnselected;
+      baselineStyle = _capture(questionStyle);
 
       expect(
         naturalWidthSelected.isFinite && naturalWidthSelected > 0,

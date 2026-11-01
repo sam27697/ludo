@@ -350,6 +350,10 @@ _joinSuccessfully(
   required String token,
 }) async {
   await tester.enterText(find.byKey(_codeKey), code);
+  // Join enters with a full code (C-523 D3), through a 200 ms AnimatedSize at
+  // most: let it reach its final rect before the tap.
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 250));
   await _tapAndAwaitPushedRoute(tester, _joinKey);
 
   final RoomController controller = factory.controllers.single;

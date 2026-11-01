@@ -311,10 +311,7 @@ void main() {
       );
 
       final RenderParagraph paragraph = tester.renderObject<RenderParagraph>(
-        find.descendant(
-          of: find.byKey(_lastTableKey),
-          matching: find.byType(RichText),
-        ),
+        find.descendant(of: labelFinder, matching: find.byType(RichText)),
       );
       expect(
         paragraph.maxLines,

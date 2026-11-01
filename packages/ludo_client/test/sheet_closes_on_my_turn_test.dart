@@ -12,7 +12,8 @@
 // buttons, then pushes the frame under test.
 //
 //   positive arms: a `turn` frame naming seat 0 closes the quick-message
-//     sheet or the in-game settings sheet, and the die is hit-testable.
+//     sheet, and the die is hit-testable. (The in-game settings sheet arms
+//     went with the sheet, C-523 D7.)
 //   negative arms: a `turn` frame naming seat 1, a `rolled` frame, an `emote`
 //     from seat 1, and the leave confirm all leave what is open in place.
 //
@@ -32,13 +33,10 @@ import 'support/c468_harness.dart';
 import 'support/roll_tray_harness.dart';
 
 const Key _chatButtonKey = Key('game-chat-button');
-const Key _settingsButtonKey = Key('game-settings-button');
 const Key _chatSheetKey = Key('quick-chat-sheet');
-const Key _settingsSheetKey = Key('feedback-settings-sheet');
 const Key _leaveButtonKey = Key('game-screen-appbar-leave');
 const Key _leaveConfirmKey = Key('game-leave-confirm');
 const Key _leaveStayKey = Key('game-leave-confirm-stay');
-const Key _hapticsSwitchKey = Key('feedback-settings-haptics');
 const Key _hostOpenKey = Key('test-open-game');
 const Key _hostPageKey = Key('test-host-page');
 
@@ -56,7 +54,6 @@ class _Case {
   WidgetTester get tester => s.tester;
 
   Finder get chatSheet => find.byKey(_chatSheetKey);
-  Finder get settingsSheet => find.byKey(_settingsSheetKey);
   Finder get leaveConfirm => find.byKey(_leaveConfirmKey);
   Finder get die => find.byKey(bigDieKey);
 
@@ -66,7 +63,6 @@ class _Case {
 
   String _open() => <String>[
     if (tester.any(chatSheet)) 'quick-chat-sheet',
-    if (tester.any(settingsSheet)) 'feedback-settings-sheet',
     if (tester.any(leaveConfirm)) 'game-leave-confirm',
   ].join(', ');
 
@@ -83,8 +79,6 @@ class _Case {
   }
 
   Future<void> openChat() => tapAndOpen(_chatButtonKey, chatSheet);
-
-  Future<void> openSettings() => tapAndOpen(_settingsButtonKey, settingsSheet);
 
   Future<void> openLeaveConfirm() => tapAndOpen(_leaveButtonKey, leaveConfirm);
 
@@ -258,61 +252,6 @@ void main() {
           }
         },
       );
-
-      testWidgets(
-        'feedback-settings-sheet open on Bob\'s turn is gone when my turn '
-        'frame arrives, the die is reachable and the screen is still mounted',
-        (tester) async {
-          final _Case c = await _start(
-            tester,
-            'settings-then-my-turn $lang',
-            locale: locale,
-          );
-          try {
-            await c.openSettings();
-            expect(
-              c.die.hitTestable(),
-              findsNothing,
-              reason: c.why(
-                'the open sheet hides game-die (fixture: the hit test is '
-                'meaningful)',
-              ),
-            );
-            final int cuesBefore = c.s.drive.feedback.recorded.length;
-            final int heardBefore = c.heard.length;
-
-            await c.myTurn();
-
-            expect(
-              c.settingsSheet,
-              findsNothing,
-              reason: c.why(
-                'feedback-settings-sheet closed by the turn frame naming '
-                'seat 0',
-              ),
-            );
-            c.expectDieReachable('once the sheet is closed');
-            c.expectGameMounted('after the sheet closes');
-            expect(
-              c.s.drive.feedback.recorded.skip(cuesBefore).toList(),
-              <FeedbackCue>[FeedbackCue.yourTurn],
-              reason: c.why(
-                'closing is silent: the only cue is the your_turn one',
-              ),
-            );
-            expect(
-              c.heard.skip(heardBefore).length,
-              1,
-              reason: c.why(
-                'closing is silent: the only announcement is the your_turn '
-                'one',
-              ),
-            );
-          } finally {
-            await _release(tester, c);
-          }
-        },
-      );
     });
   }
 
@@ -335,27 +274,6 @@ void main() {
       }
     });
 
-    testWidgets(
-      'a turn frame for Bob leaves the feedback-settings-sheet open',
-      (tester) async {
-        final _Case c = await _start(tester, 'settings-then-bobs-turn');
-        try {
-          await c.openSettings();
-          await c.bobsTurn();
-          expect(
-            c.settingsSheet,
-            findsOneWidget,
-            reason: c.why(
-              'feedback-settings-sheet stays open on a turn frame for 1',
-            ),
-          );
-          c.expectGameMounted('with the sheet open');
-        } finally {
-          await _release(tester, c);
-        }
-      },
-    );
-
     testWidgets('a rolled frame leaves the quick-chat-sheet open', (
       tester,
     ) async {
@@ -367,24 +285,6 @@ void main() {
           c.chatSheet,
           findsOneWidget,
           reason: c.why('quick-chat-sheet stays open on a rolled frame'),
-        );
-        c.expectGameMounted('with the sheet open');
-      } finally {
-        await _release(tester, c);
-      }
-    });
-
-    testWidgets('a rolled frame leaves the feedback-settings-sheet open', (
-      tester,
-    ) async {
-      final _Case c = await _start(tester, 'settings-then-rolled');
-      try {
-        await c.openSettings();
-        await c.bobRolls();
-        expect(
-          c.settingsSheet,
-          findsOneWidget,
-          reason: c.why('feedback-settings-sheet stays open on a rolled frame'),
         );
         c.expectGameMounted('with the sheet open');
       } finally {
@@ -409,27 +309,6 @@ void main() {
         await _release(tester, c);
       }
     });
-
-    testWidgets(
-      'a quick message from Bob leaves the feedback-settings-sheet open',
-      (tester) async {
-        final _Case c = await _start(tester, 'settings-then-emote');
-        try {
-          await c.openSettings();
-          await c.bobSays('good_luck');
-          expect(
-            c.settingsSheet,
-            findsOneWidget,
-            reason: c.why(
-              'feedback-settings-sheet stays open when an emote arrives',
-            ),
-          );
-          c.expectGameMounted('with the sheet open');
-        } finally {
-          await _release(tester, c);
-        }
-      },
-    );
 
     testWidgets(
       'the leave confirm stays open when my turn frame arrives, and Stay '
@@ -473,7 +352,6 @@ void main() {
       try {
         await c.myTurn();
         expect(c.chatSheet, findsNothing, reason: c.why('no chat sheet'));
-        expect(c.settingsSheet, findsNothing, reason: c.why('no settings'));
         expect(c.leaveConfirm, findsNothing, reason: c.why('no confirm'));
         c.expectGameMounted('on a turn frame with nothing open');
         c.expectDieReachable('on my turn');
@@ -481,47 +359,5 @@ void main() {
         await _release(tester, c);
       }
     });
-  });
-
-  group('D1 what was set in the sheet stays set', () {
-    testWidgets(
-      'a haptics switch flipped in the settings sheet stays off after my '
-      'turn closes the sheet',
-      (tester) async {
-        final _Case c = await _start(tester, 'settings-toggle-then-my-turn');
-        try {
-          await c.openSettings();
-          expect(
-            c.settings.haptics,
-            isTrue,
-            reason: c.why('haptics starts on (fixture)'),
-          );
-          c.s.steps.add('tap feedback-settings-haptics');
-          await tester.tap(find.byKey(_hapticsSwitchKey));
-          await tester.pump();
-          await c.s.pump(const Duration(milliseconds: 100));
-          expect(
-            c.settings.haptics,
-            isFalse,
-            reason: c.why('the tap applies at once (fixture)'),
-          );
-
-          await c.myTurn();
-
-          expect(
-            c.settingsSheet,
-            findsNothing,
-            reason: c.why('the sheet closed on my turn'),
-          );
-          expect(
-            c.settings.haptics,
-            isFalse,
-            reason: c.why('haptics is still off after the sheet closed'),
-          );
-        } finally {
-          await _release(tester, c);
-        }
-      },
-    );
   });
 }

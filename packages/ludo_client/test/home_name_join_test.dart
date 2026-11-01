@@ -31,7 +31,6 @@ const String _dividerAr = 'أو انضم برمز';
 const String _nameEn = 'Your name';
 const String _nameAr = 'اسمك';
 const String _codeLabelEn = 'Room code';
-const String _codeHintEn = '6 characters, letters and numbers';
 
 const Size _phone = Size(360, 800);
 
@@ -319,8 +318,8 @@ void main() {
   );
 
   testWidgets(
-    'code slot has no floating label, hints "Room code", helps with the '
-    '6-character line, and shows Icons.tag',
+    'code slot has no floating label, hints "Room code", has no helper '
+    'line (C-523 D3), and shows Icons.tag',
     (WidgetTester tester) async {
       await _pumpHome(tester);
 
@@ -330,11 +329,6 @@ void main() {
         loc.homeRoomCodeFieldLabel,
         _codeLabelEn,
         reason: 'fixture: homeRoomCodeFieldLabel must be "$_codeLabelEn"',
-      );
-      expect(
-        loc.homeRoomCodeFieldHint,
-        _codeHintEn,
-        reason: 'fixture: homeRoomCodeFieldHint must be "$_codeHintEn"',
       );
 
       final InputDecoration? decoration = _field(tester, _codeKey).decoration;
@@ -348,10 +342,9 @@ void main() {
           '"${loc.homeRoomCodeFieldLabel}"',
         );
       }
-      if (decoration?.helperText != loc.homeRoomCodeFieldHint) {
+      if (decoration?.helperText != null) {
         problems.add(
-          'helperText is "${decoration?.helperText}", expected '
-          '"${loc.homeRoomCodeFieldHint}"',
+          'helperText is "${decoration?.helperText}", expected null',
         );
       }
       if (_iconIn(_codeKey, Icons.tag).evaluate().isEmpty) {
@@ -362,12 +355,15 @@ void main() {
   );
 
   testWidgets(
-    'control: typing k7m2 and tapping Join still sets homeRoomCodeInvalid',
+    'control: typing k7m2o0 and tapping Join still sets homeRoomCodeInvalid',
     (WidgetTester tester) async {
       await _pumpHome(tester);
 
-      await tester.enterText(find.byKey(_codeKey), 'k7m2');
+      // A full-length code that fails isValidRoomCode: Join is in the tree
+      // for it (C-523 D3), and a shorter one would have no Join to tap.
+      await tester.enterText(find.byKey(_codeKey), 'k7m2o0');
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
       await tester.tap(find.byKey(_joinKey));
       await tester.pump();
 
@@ -375,7 +371,7 @@ void main() {
         _field(tester, _codeKey).decoration?.errorText,
         _loc(tester).homeRoomCodeInvalid,
         reason:
-            'an invalid code k7m2 must still set errorText to '
+            'an invalid code k7m2o0 must still set errorText to '
             'homeRoomCodeInvalid',
       );
     },
@@ -397,6 +393,10 @@ void main() {
     WidgetTester tester,
   ) async {
     await _pumpHome(tester);
+    // Join is in the tree only with a full-length code (C-523 D3).
+    await tester.enterText(find.byKey(_codeKey), 'K7M2QP');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
     expect(
       _iconIn(_joinKey, Icons.login_rounded),
@@ -433,8 +433,8 @@ void main() {
   );
 
   testWidgets(
-    'control: an empty code keeps elevated Create and outlined Join, and '
-    'a valid code swaps them',
+    'control: an empty code keeps elevated Create and no Join, and a valid '
+    'code brings Join in elevated with Create outlined',
     (WidgetTester tester) async {
       await _pumpHome(tester);
 
@@ -452,16 +452,16 @@ void main() {
             '${tester.widget(find.byKey(_createKey)).runtimeType}',
       );
       expect(
-        tester.widget(find.byKey(_joinKey)),
-        isA<OutlinedButton>(),
+        find.byKey(_joinKey, skipOffstage: false),
+        findsNothing,
         reason:
-            'join-room-button must be an OutlinedButton while the code '
-            'is empty; found '
-            '${tester.widget(find.byKey(_joinKey)).runtimeType}',
+            'join-room-button must be absent while the code is empty '
+            '(C-523 D3)',
       );
 
       await tester.enterText(find.byKey(_codeKey), 'AB23CD');
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
 
       expect(
         tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
@@ -497,8 +497,10 @@ void main() {
         textScale: 1.3,
       );
 
-      await tester.enterText(find.byKey(_codeKey), 'k7m2');
+      // Full length, so Join is in the tree to tap (C-523 D3).
+      await tester.enterText(find.byKey(_codeKey), 'k7m2o0');
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
       await tester.ensureVisible(find.byKey(_joinKey));
       await tester.tap(find.byKey(_joinKey));
       await tester.pump();

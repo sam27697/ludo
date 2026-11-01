@@ -35,7 +35,7 @@
 //     rounding of 1.15 + (1.0 - 1.15) is exactly 1.0 to the eye and to
 //     the pixel.
 //   - In ar the inset on the start side (60 dp, the leave button) is on
-//     the right and the 112 dp end side (chat and settings) on the left.
+//     the right and the 112 dp end side (chat and sound) on the left.
 //   - The decision 5 fit rule is checked from the real text, with the
 //     bubble's chrome (2 dp border, 8 dp padding) read as 20 dp and a band
 //     either side of the boundary where no verdict is asserted: below the
@@ -89,7 +89,7 @@ const Key _muteKey = Key('quick-chat-mute');
 const Key _sheetKey = Key('quick-chat-sheet');
 const Key _layerKey = Key('end-card-chat-lines');
 const Key _leaveKey = Key('game-screen-appbar-leave');
-const Key _settingsKey = Key('game-settings-button');
+const Key _soundKey = Key('game-sound-toggle');
 const Key _bannerKey = Key('game-screen-turn-banner');
 const Key _winnerKey = Key('game-screen-winner');
 
@@ -1413,7 +1413,7 @@ void main() {
             );
             _expectClearOf(f, bubble, _leaveKey);
             _expectClearOf(f, bubble, _chatButton);
-            _expectClearOf(f, bubble, _settingsKey);
+            _expectClearOf(f, bubble, _soundKey);
           } finally {
             await f.done();
           }
@@ -1468,7 +1468,7 @@ void main() {
             _expectOneLineTall(f, row3.$1, bubble, oneLine);
             _expectClearOf(f, bubble, _leaveKey);
             _expectClearOf(f, bubble, _chatButton);
-            _expectClearOf(f, bubble, _settingsKey);
+            _expectClearOf(f, bubble, _soundKey);
             final TextStyle style = _styleOf(
               tester,
               find.byKey(lineKey(2)),
@@ -1577,7 +1577,7 @@ void main() {
         'banner': tester.getRect(find.byKey(_bannerKey)),
         'leave': tester.getRect(find.byKey(_leaveKey)),
         'chat': tester.getRect(find.byKey(_chatButton)),
-        'settings': tester.getRect(find.byKey(_settingsKey)),
+        'sound': tester.getRect(find.byKey(_soundKey)),
       };
       await f.emote(2, 'revenge');
       await f.at(400);
@@ -1589,7 +1589,7 @@ void main() {
         'banner': tester.getRect(find.byKey(_bannerKey)),
         'leave': tester.getRect(find.byKey(_leaveKey)),
         'chat': tester.getRect(find.byKey(_chatButton)),
-        'settings': tester.getRect(find.byKey(_settingsKey)),
+        'sound': tester.getRect(find.byKey(_soundKey)),
       };
       expect(
         after,
@@ -1782,7 +1782,7 @@ void main() {
     for (final double width in const <double>[360, 411]) {
       testWidgets(
         'need: ${width.toInt()} dp, ${ar ? 'ar' : 'en'}: the line never '
-        'meets the leave, chat or settings button, short or long, at 1.0 '
+        'meets the leave, chat or sound button, short or long, at 1.0 '
         'and 2.0',
         (tester) async {
           for (final double scale in const <double>[1.0, 2.0]) {
@@ -1800,7 +1800,7 @@ void main() {
                 final Rect bubble = f.rectOf(2);
                 _expectClearOf(f, bubble, _leaveKey);
                 _expectClearOf(f, bubble, _chatButton);
-                _expectClearOf(f, bubble, _settingsKey);
+                _expectClearOf(f, bubble, _soundKey);
               }
             } finally {
               await f.done();

@@ -226,7 +226,7 @@ void _expectMotion(List<_Sample> trace, String Function(String) why) {
 }
 
 const Key _leaveKey = Key('game-screen-appbar-leave');
-const Key _settingsKey = Key('game-settings-button');
+const Key _soundKey = Key('game-sound-toggle');
 const Key _winnerKey = Key('game-screen-winner');
 const Key _pipKey = Key('game-seat-pip-strip');
 const Key _panelKey = Key('end-card-lose');
@@ -1290,7 +1290,7 @@ void main() {
               'as amended in run 117), 60 dp on the start side',
             );
             _expectClearOf(g, bubble, _leaveKey);
-            _expectClearOf(g, bubble, _settingsKey);
+            _expectClearOf(g, bubble, _soundKey);
             await g.at(2490);
             expect(
               chatLineSeats(tester),
@@ -1719,7 +1719,7 @@ void main() {
               reason: g.why('centred on the row: bubble $bubble, row $row'),
             );
             _expectClearOf(g, bubble, _leaveKey);
-            _expectClearOf(g, bubble, _settingsKey);
+            _expectClearOf(g, bubble, _soundKey);
           } finally {
             await g.done();
           }
@@ -2013,7 +2013,7 @@ void main() {
               _expectInRow(g, bubble, row);
               _expectInsideInsets(g, bubble, row);
               _expectClearOf(g, bubble, _leaveKey);
-              _expectClearOf(g, bubble, _settingsKey);
+              _expectClearOf(g, bubble, _soundKey);
               _expectClearOf(g, bubble, _winnerKey);
             } finally {
               await g.done();
