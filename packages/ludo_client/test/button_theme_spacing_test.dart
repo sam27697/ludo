@@ -415,6 +415,13 @@ void main() {
     (WidgetTester tester) async {
       await tester.pumpWidget(_homeApp());
       await tester.pump();
+      // Join is in the tree only with a full-length code (C-523 D3).
+      await tester.enterText(
+        find.byKey(const Key('room-code-field')),
+        'K7M2QP',
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
 
       final EdgeInsets themed = _resolvedThemePadding(
         tester,

@@ -22,6 +22,13 @@ Future<void> _mountHome(WidgetTester tester, Locale locale) async {
   await tester.pumpAndSettle();
 }
 
+/// Join is in the tree only with a full-length code (C-523 D3), so the cases
+/// that look inside it type one first.
+Future<void> _typeCode(WidgetTester tester) async {
+  await tester.enterText(find.byKey(const Key('room-code-field')), 'K7M2QP');
+  await tester.pumpAndSettle();
+}
+
 Finder _iconUnder(Key buttonKey, IconData icon) {
   return find.descendant(
     of: find.byKey(buttonKey),
@@ -92,6 +99,7 @@ void main() {
       TextDirection.rtl,
       reason: 'ar fixture: HomeScreen must be rtl',
     );
+    await _typeCode(tester);
     _expectMirror(tester, _joinKey, Icons.login_rounded, true);
   });
 
@@ -105,6 +113,7 @@ void main() {
       TextDirection.ltr,
       reason: 'en fixture: HomeScreen must be ltr',
     );
+    await _typeCode(tester);
     _expectMirror(tester, _joinKey, Icons.login_rounded, false);
   });
 

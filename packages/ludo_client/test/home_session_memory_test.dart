@@ -26,8 +26,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'net/fake_transport.dart';
 
 const Key _nameKey = Key('home-name-field');
-const Key _selectorKey = Key('home-players-selector');
-const Key _disclosureKey = Key('home-players-disclosure');
+const Key _playersButtonKey = Key('home-players-button');
 const Key _createKey = Key('create-room-button');
 const Key _joinKey = Key('join-room-button');
 const Key _codeKey = Key('room-code-field');
@@ -138,10 +137,6 @@ Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
   await tester.pump(const Duration(milliseconds: 400));
 }
 
-AppLocalizations _loc(WidgetTester tester) {
-  return AppLocalizations.of(tester.element(find.byType(Scaffold)));
-}
-
 String _nameFieldText(WidgetTester tester) {
   expect(find.byKey(_nameKey), findsOneWidget);
   return tester.widget<TextField>(find.byKey(_nameKey)).controller!.text;
@@ -164,47 +159,29 @@ Widget _keyedButton(WidgetTester tester, Key key) {
   return tester.widget(find.byKey(key));
 }
 
-Future<void> _openPlayersDisclosure(WidgetTester tester) async {
+/// Opens the players menu (C-523 D2), picks [count] and checks the closed
+/// control shows it before Create Room.
+Future<void> _selectPlayers(WidgetTester tester, int count) async {
   expect(
-    find.byKey(_disclosureKey),
+    find.byKey(_playersButtonKey),
     findsOneWidget,
     reason:
-        'home-players-disclosure must be on screen so the player can '
-        'open the seat-count selector',
+        'home-players-button must be on screen so the player can '
+        'open the seat-count menu',
   );
-  await tester.ensureVisible(find.byKey(_disclosureKey));
-  await tester.tap(find.byKey(_disclosureKey));
+  await tester.ensureVisible(find.byKey(_playersButtonKey));
+  await tester.tap(find.byKey(_playersButtonKey));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(Key('home-players-option-$count')));
   await tester.pumpAndSettle();
   expect(
-    find.byKey(_selectorKey),
-    findsOneWidget,
-    reason: 'tapping home-players-disclosure must reveal home-players-selector',
-  );
-}
-
-Future<void> _selectPlayers(WidgetTester tester, int count) async {
-  final AppLocalizations loc = _loc(tester);
-  final String label = switch (count) {
-    2 => loc.homePlayersTwo,
-    3 => loc.homePlayersThree,
-    4 => loc.homePlayersFour,
-    _ => throw ArgumentError.value(count, 'count', 'must be 2, 3 or 4'),
-  };
-  await tester.ensureVisible(find.byKey(_selectorKey));
-  await tester.tap(
-    find.descendant(of: find.byKey(_selectorKey), matching: find.text(label)),
-  );
-  await tester.pump();
-
-  final SegmentedButton<int> segmented = tester.widget<SegmentedButton<int>>(
     find.descendant(
-      of: find.byKey(_selectorKey),
-      matching: find.byType(SegmentedButton<int>),
+      of: find.byKey(_playersButtonKey),
+      matching: find.text('$count'),
     ),
+    findsOneWidget,
+    reason: 'selecting $count must show it on the control before Create Room',
   );
-  expect(segmented.selected, <int>{
-    count,
-  }, reason: 'selecting $count must select that segment before Create Room');
 }
 
 Future<void> _completeSuccessfulCreate(
@@ -287,7 +264,6 @@ Future<void> _hostThenRelaunchHome(
 
   await tester.enterText(find.byKey(_nameKey), name);
   await tester.pump();
-  await _openPlayersDisclosure(tester);
   await _selectPlayers(tester, seats);
   await _tapAndAwaitPushedRoute(tester, _createKey);
 
@@ -413,12 +389,11 @@ void main() {
           '${_keyedButton(tester, _createKey).runtimeType}',
     );
     expect(
-      _keyedButton(tester, _joinKey),
-      isA<OutlinedButton>(),
+      find.byKey(_joinKey, skipOffstage: false),
+      findsNothing,
       reason:
           'with home-last-table-chip visible and an empty code field, '
-          'join-room-button must still be an OutlinedButton; found '
-          '${_keyedButton(tester, _joinKey).runtimeType}',
+          'join-room-button must be absent (C-523 D3)',
     );
   });
 }

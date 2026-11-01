@@ -41,8 +41,7 @@ const Key _chipKey = Key('home-last-table-chip');
 const Key _aboveHomeKey = Key('above-home-probe');
 const Key _createKey = Key('create-room-button');
 const Key _joinKey = Key('join-room-button');
-const Key _disclosureKey = Key('home-players-disclosure');
-const Key _selectorKey = Key('home-players-selector');
+const Key _playersButtonKey = Key('home-players-button');
 const Key _lobbyRoomCodeKey = Key('lobby-room-code');
 
 const String _testUrl = 'wss://link-join-returning-guest-test.invalid/ws';
@@ -374,6 +373,10 @@ AppLocalizations _loc(WidgetTester tester) {
 }
 
 Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
+  // Join enters with a full code (C-523 D3), through a 200 ms AnimatedSize at
+  // most: let it reach its final rect before the tap.
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 250));
   await tester.ensureVisible(find.byKey(buttonKey));
   await tester.tap(find.byKey(buttonKey));
   await tester.pump();
@@ -404,32 +407,20 @@ Future<void> _letStoreWriteSettle(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 50));
 }
 
-Future<void> _openPlayersDisclosure(WidgetTester tester) async {
-  await tester.ensureVisible(find.byKey(_disclosureKey));
-  await tester.tap(find.byKey(_disclosureKey));
+/// Opens the players menu (C-523 D2) and picks [count].
+Future<void> _selectPlayers(WidgetTester tester, int count) async {
+  await tester.ensureVisible(find.byKey(_playersButtonKey));
+  await tester.tap(find.byKey(_playersButtonKey));
   await tester.pumpAndSettle();
   expect(
-    find.byKey(_selectorKey),
+    find.byKey(Key('home-players-option-$count')),
     findsOneWidget,
     reason:
-        'fixture is broken: tapping home-players-disclosure must reveal '
-        'home-players-selector',
+        'fixture is broken: tapping home-players-button must open '
+        'home-players-option-$count',
   );
-}
-
-Future<void> _selectPlayers(WidgetTester tester, int count) async {
-  final AppLocalizations loc = _loc(tester);
-  final String label = switch (count) {
-    2 => loc.homePlayersTwo,
-    3 => loc.homePlayersThree,
-    4 => loc.homePlayersFour,
-    _ => throw ArgumentError.value(count, 'count', 'must be 2, 3 or 4'),
-  };
-  await tester.ensureVisible(find.byKey(_selectorKey));
-  await tester.tap(
-    find.descendant(of: find.byKey(_selectorKey), matching: find.text(label)),
-  );
-  await tester.pump();
+  await tester.tap(find.byKey(Key('home-players-option-$count')));
+  await tester.pumpAndSettle();
 }
 
 /// Types [name] and [seats], taps Create, and answers the wire so the create
@@ -446,7 +437,6 @@ Future<String> _completeSuccessfulCreate(
 }) async {
   await tester.enterText(find.byKey(_nameKey), name);
   await tester.pump();
-  await _openPlayersDisclosure(tester);
   await _selectPlayers(tester, seats);
   await _tapAndAwaitPushedRoute(tester, _createKey);
 

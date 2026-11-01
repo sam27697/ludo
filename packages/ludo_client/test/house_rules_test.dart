@@ -9,19 +9,16 @@
 // part of what run against base must show (see the acceptance-run note
 // below).
 //
-// Five groups below, one per C-356 acceptance bullet:
-//   1. no widget with any of the four removed keys (home-rule-blocks,
-//      lobby-rule-blocks, lobby-rule-blocks-chip) exists on home with the
-//      rules disclosure open, or in the lobby, host or guest;
-//   2. home-house-rules and lobby-house-rules show exactly the en and ar
-//      literals the contract quotes, in a 2-player lobby as host and guest;
-//   3. the capture-bonus hint reads the contract's new en/ar strings;
-//   4. RoomToggles().toJson() == {'capture_bonus': true}, and a host's
-//      create frame after turning capture bonus off carries
-//      rules == {'capture_bonus': false};
+// Amended for C-523 (D1, D6, D9): groups 2 and 3 (the house-rules line and the
+// capture-bonus hint) and the host-turns-capture-bonus-off case of group 4
+// went with houseRulesLine, HomeRuleToggle and the lobby line. What remains:
+//   1. no widget with any of the removed keys (home-rule-blocks,
+//      lobby-rule-blocks, lobby-rule-blocks-chip) exists on home, or in the
+//      lobby, host or guest;
+//   4. RoomToggles().toJson() == {'capture_bonus': true};
 //   5. at text scale 2.0 on 360x640 the lobby still passes C-347's own
-//      large-text claim (seat names whole, no FlutterError) with the new
-//      line present.
+//      large-text claim (seat names whole, no FlutterError), and
+//      lobby-house-rules is no longer on screen.
 //
 // Mounting follows test/lobby_seat_cards_test.dart (a real RoomController
 // over a FakeTransport, never a mock) for the lobby, and
@@ -60,26 +57,10 @@ import 'net/fake_transport.dart';
 
 const String _testUrl = 'wss://house-rules-test.invalid/ws';
 
-// The contract's own literals (work/ludo/orders/C-356-house-rules-client.md,
-// decisions 4 and 5), quoted verbatim, never looked up through
-// AppLocalizations.
-const String _houseRulesLineEn =
-    'Two tokens on one square are safe from capture. A token reaching home '
-    'earns another roll.';
-const String _houseRulesLineAr =
-    'قطعتان على مربع واحد لا تُؤكلان. وصول قطعة إلى البيت يمنحك رمية أخرى.';
-const String _captureBonusHintEn = 'Capturing a token earns another roll';
-const String _captureBonusHintAr = 'أكل قطعة خصم يمنحك رمية أخرى';
-
 const Key _blocksSwitchKey = Key('home-rule-blocks');
-const Key _captureSwitchKey = Key('home-rule-capture-bonus');
-const Key _homeHouseRulesKey = Key('home-house-rules');
 const Key _lobbyHouseRulesKey = Key('lobby-house-rules');
 const Key _lobbyRuleBlocksKey = Key('lobby-rule-blocks');
 const Key _lobbyRuleBlocksChipKey = Key('lobby-rule-blocks-chip');
-const Key _disclosureKey = Key('home-players-disclosure');
-const Key _createButtonKey = Key('create-room-button');
-
 // ---------------------------------------------------------------------------
 // Small JSON helpers, copied from test/lobby_start_with_present_test.dart.
 // ---------------------------------------------------------------------------
@@ -261,24 +242,6 @@ Future<RoomController> _mountTwoSeatLobby(
 // Home mounting, copied from test/home_rule_toggles_test.dart's own idiom.
 // ---------------------------------------------------------------------------
 
-class _LiveControllerFactory {
-  final List<RoomController> controllers = <RoomController>[];
-  final List<FakeTransport> transports = <FakeTransport>[];
-
-  RoomController call() {
-    final RoomController created = RoomController(
-      serverUrl: Uri.parse(_testUrl),
-      connect: (Uri url) async {
-        final FakeTransport transport = FakeTransport();
-        transports.add(transport);
-        return transport;
-      },
-    );
-    controllers.add(created);
-    return created;
-  }
-}
-
 RoomController _throwingFactory() {
   return RoomController(
     serverUrl: Uri.parse(_testUrl),
@@ -312,52 +275,6 @@ Widget _homeScreenApp({
   );
 }
 
-Future<void> _openPlayersDisclosure(WidgetTester tester) async {
-  final Finder disclosure = find.byKey(_disclosureKey);
-  expect(
-    disclosure,
-    findsOneWidget,
-    reason:
-        'home-players-disclosure must be on screen to open the rules '
-        'under it',
-  );
-  await tester.ensureVisible(disclosure);
-  await tester.tap(disclosure);
-  await tester.pumpAndSettle();
-}
-
-Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
-  await tester.tap(find.byKey(buttonKey));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
-}
-
-List<Map<String, Object?>> _decodeSent(FakeTransport transport) => transport
-    .sentRaw
-    .map((String raw) => jsonDecode(raw) as Map<String, Object?>)
-    .toList();
-
-/// Reads the Text found at [key], whether the key sits directly on the Text
-/// widget or on an ancestor of it (matchRoot: true covers both), the same
-/// defensive idiom test/board_test.dart and test/token_travel_test.dart
-/// already use for "this key shows this text" claims without assuming which
-/// widget the key is actually painted on.
-void _expectKeyShowsText(
-  WidgetTester tester,
-  Key key,
-  String expected, {
-  required String reason,
-}) {
-  final Finder root = find.byKey(key);
-  expect(root, findsOneWidget, reason: '$reason (key not found at all)');
-  final Finder textMatch = find.descendant(
-    of: root,
-    matching: find.text(expected),
-    matchRoot: true,
-  );
-  expect(textMatch, findsOneWidget, reason: reason);
-}
-
 void main() {
   // ===========================================================================
   // 1: no widget with any of the four removed keys exists on home (rules
@@ -366,26 +283,21 @@ void main() {
   group(
     'C-356 acceptance 1: the four removed keys have no widget anywhere',
     () {
-      testWidgets('home, rules disclosure open: no home-rule-blocks', (
-        tester,
-      ) async {
+      testWidgets('home: no home-rule-blocks', (tester) async {
         await tester.pumpWidget(_homeScreenApp(locale: const Locale('en')));
         await tester.pumpAndSettle();
-        await _openPlayersDisclosure(tester);
 
         expect(
           find.byKey(_blocksSwitchKey),
           findsNothing,
-          reason:
-              'C-356: home-rule-blocks must not exist anywhere on home, '
-              'including with the rules disclosure open',
+          reason: 'C-356: home-rule-blocks must not exist anywhere on home',
         );
         expect(
-          find.byKey(_captureSwitchKey),
+          find.byKey(const Key('create-room-button')),
           findsOneWidget,
           reason:
-              'fixture: home-rule-capture-bonus must still exist, or this '
-              'case is not actually looking at the open rules disclosure',
+              'fixture: create-room-button must exist, or this case is not '
+              'actually looking at the home screen',
         );
       });
 
@@ -422,104 +334,8 @@ void main() {
   );
 
   // ===========================================================================
-  // 2: home-house-rules and lobby-house-rules show exactly the en and ar
-  // strings the contract quotes, in a 2-player lobby as host and as guest.
-  // ===========================================================================
-  group('C-356 acceptance 2: the house-rules line, literal text', () {
-    for (final (String localeName, Locale locale, String expected)
-        in <(String, Locale, String)>[
-          ('en', Locale('en'), _houseRulesLineEn),
-          ('ar', Locale('ar'), _houseRulesLineAr),
-        ]) {
-      testWidgets('home, $localeName: home-house-rules reads the literal', (
-        tester,
-      ) async {
-        await tester.pumpWidget(_homeScreenApp(locale: locale));
-        await tester.pumpAndSettle();
-        await _openPlayersDisclosure(tester);
-
-        _expectKeyShowsText(
-          tester,
-          _homeHouseRulesKey,
-          expected,
-          reason:
-              '$localeName: home-house-rules must show exactly '
-              '"$expected"',
-        );
-      });
-
-      testWidgets(
-        'lobby host, $localeName: lobby-house-rules reads the literal',
-        (tester) async {
-          await _mountTwoSeatLobby(tester, mySeat: 0, locale: locale);
-
-          _expectKeyShowsText(
-            tester,
-            _lobbyHouseRulesKey,
-            expected,
-            reason:
-                '$localeName (host): lobby-house-rules must show exactly '
-                '"$expected"',
-          );
-        },
-      );
-
-      testWidgets(
-        'lobby guest, $localeName: lobby-house-rules reads the literal',
-        (tester) async {
-          await _mountTwoSeatLobby(tester, mySeat: 1, locale: locale);
-
-          _expectKeyShowsText(
-            tester,
-            _lobbyHouseRulesKey,
-            expected,
-            reason:
-                '$localeName (guest): lobby-house-rules must show exactly '
-                '"$expected"',
-          );
-        },
-      );
-    }
-  });
-
-  // ===========================================================================
-  // 3: the capture-bonus hint reads the new strings in both locales.
-  // ===========================================================================
-  group('C-356 acceptance 3: the reworded capture-bonus hint', () {
-    for (final (String localeName, Locale locale, String expected)
-        in <(String, Locale, String)>[
-          ('en', Locale('en'), _captureBonusHintEn),
-          ('ar', Locale('ar'), _captureBonusHintAr),
-        ]) {
-      testWidgets(
-        '$localeName: home-rule-capture-bonus.hint reads the new string',
-        (tester) async {
-          await tester.pumpWidget(_homeScreenApp(locale: locale));
-          await tester.pumpAndSettle();
-          await _openPlayersDisclosure(tester);
-
-          final Finder captureSwitch = find.byKey(_captureSwitchKey);
-          expect(captureSwitch, findsOneWidget);
-          final HomeRuleToggle card = tester.widget<HomeRuleToggle>(
-            captureSwitch,
-          );
-          expect(
-            card.hint,
-            expected,
-            reason:
-                '$localeName: homeRuleCaptureBonusHint must now read '
-                '"$expected" (no more "home" meaning the yard), got '
-                '"${card.hint}"',
-          );
-        },
-      );
-    }
-  });
-
-  // ===========================================================================
-  // 4: RoomToggles().toJson() == {'capture_bonus': true}, and the create
-  // frame a host sends after turning capture bonus off carries
-  // rules == {'capture_bonus': false}.
+  // 4: RoomToggles().toJson() == {'capture_bonus': true}. The create frame a
+  // host sent after turning capture bonus off went with the toggle (C-523 D1).
   // ===========================================================================
   group('C-356 acceptance 4: RoomToggles on the wire', () {
     test("RoomToggles().toJson() equals {'capture_bonus': true}", () {
@@ -528,47 +344,6 @@ void main() {
         equals(<String, Object?>{'capture_bonus': true}),
       );
     });
-
-    testWidgets('a host turning capture bonus off before Create sends rules == '
-        "{'capture_bonus': false}", (tester) async {
-      final _LiveControllerFactory factory = _LiveControllerFactory();
-      await tester.pumpWidget(
-        _homeScreenApp(
-          controllerFactory: factory.call,
-          locale: const Locale('en'),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await _openPlayersDisclosure(tester);
-
-      await tester.tap(find.byKey(_captureSwitchKey));
-      await tester.pump();
-
-      await _tapAndAwaitPushedRoute(tester, _createButtonKey);
-
-      expect(factory.transports, hasLength(1));
-      final List<Map<String, Object?>> sent = _decodeSent(
-        factory.transports.single,
-      );
-      expect(sent, hasLength(1));
-      expect(sent.single['t'], 'create_room');
-      final Map<String, Object?> data =
-          sent.single['d']! as Map<String, Object?>;
-      expect(
-        data['rules'],
-        equals(<String, Object?>{'capture_bonus': false}),
-        reason:
-            'expected the create_room frame\'s rules to be exactly '
-            "{'capture_bonus': false}; got ${data['rules']}",
-      );
-
-      // Drain the still-open request's timeout so flutter_test does not
-      // find a pending timer at teardown, the same reasoning
-      // test/home_rule_toggles_test.dart's own
-      // _drainPendingRequestTimeout documents.
-      await tester.pump(const Duration(seconds: 11));
-      await tester.pump();
-    });
   });
 
   // ===========================================================================
@@ -576,7 +351,7 @@ void main() {
   // large-text claim (seat names whole, no FlutterError), with the new line
   // present. Harness copied from test/large_text_lobby_names_test.dart.
   // ===========================================================================
-  group('C-356 acceptance 5: large text 2.0 on 360x640, line present', () {
+  group('C-356 acceptance 5: large text 2.0 on 360x640, no rules line', () {
     const String mySeatName = 'Karim12345';
     const String otherSeatName = 'Samantha12';
 
@@ -625,7 +400,7 @@ void main() {
     for (final Locale locale in const <Locale>[Locale('en'), Locale('ar')]) {
       testWidgets(
         '${locale.languageCode} 360x640 scale 2.0: seat names whole, no '
-        'FlutterError, lobby-house-rules present',
+        'FlutterError, lobby-house-rules absent',
         (tester) async {
           tester.view.physicalSize = const Size(360, 640);
           tester.view.devicePixelRatio = 1.0;
@@ -706,7 +481,7 @@ void main() {
             isEmpty,
             reason:
                 '${locale.languageCode}: mounting the lobby at scale 2.0 '
-                'on 360x640 with the house-rules line present must raise '
+                'on 360x640 with no house-rules line must raise '
                 'no FlutterError, got ${captured.length}: '
                 '${captured.map((e) => e.exceptionAsString()).join('; ')}',
           );
@@ -739,16 +514,16 @@ void main() {
               reason:
                   '${locale.languageCode}: C-347 still holds -- seat $seat '
                   'name "$name" must not be ellipsized at scale 2.0 on '
-                  '360x640 with the new house-rules line on screen',
+                  '360x640 with no house-rules line on screen',
             );
           }
 
           expect(
             find.byKey(_lobbyHouseRulesKey),
-            findsOneWidget,
+            findsNothing,
             reason:
-                '${locale.languageCode}: lobby-house-rules must still be '
-                'on screen at scale 2.0 on 360x640',
+                '${locale.languageCode}: C-523 D6 removed lobby-house-rules; '
+                'it must not be on screen at scale 2.0 on 360x640',
           );
         },
       );

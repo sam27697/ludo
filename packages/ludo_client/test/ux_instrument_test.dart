@@ -196,6 +196,9 @@ void main() {
 
     expect(find.byType(HomeScreen), findsOneWidget);
     expect(find.byKey(const Key('create-room-button')), findsOneWidget);
+    // Join is in the tree only with a full-length code (C-523 D3).
+    await tester.enterText(find.byKey(const Key('room-code-field')), 'K7M2QP');
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('join-room-button')), findsOneWidget);
 
     _printSize(tester, const Key('create-room-button'), 'create-room');
@@ -203,7 +206,7 @@ void main() {
     _printSize(tester, const Key('locale-toggle-button'), 'locale-toggle');
     _printSize(tester, const Key('home-name-field'), 'name-field');
     _printSize(tester, const Key('room-code-field'), 'code-field');
-    _printSize(tester, const Key('home-players-selector'), 'players-selector');
+    _printSize(tester, const Key('home-players-button'), 'players-button');
 
     await _printGuideline(
       tester,

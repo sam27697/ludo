@@ -518,20 +518,20 @@ void main() {
   });
 
   testWidgets(
-    'home compact players-disclosure-to-create gap is kSpace3 or kSpace4',
+    'home compact players-control-to-create gap is kSpace3 or kSpace4',
     (WidgetTester tester) async {
       await _pumpHome(tester, size: const Size(390, 600));
 
-      final Rect disclosure = tester.getRect(
-        find.byKey(const Key('home-players-disclosure')),
+      final Rect players = tester.getRect(
+        find.byKey(const Key('home-players-button')),
       );
       final Rect create = tester.getRect(
         find.byKey(const Key('create-room-button')),
       );
-      _expectGapIn(create.top - disclosure.bottom, <double>{
+      _expectGapIn(create.top - players.bottom, <double>{
         kSpace3,
         kSpace4,
-      }, 'compact HomeScreen players-disclosure-to-create gap');
+      }, 'compact HomeScreen players-control-to-create gap');
     },
   );
 
