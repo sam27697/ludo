@@ -146,6 +146,10 @@ void main() {
       findsOneWidget,
       reason: 'Create Room must remain after enter',
     );
+    // Join is in the tree only with a full-length code (C-523 D3).
+    await tester.enterText(find.byKey(const Key('room-code-field')), 'K7M2QP');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
     expect(
       find.byKey(const Key('join-room-button')),
       findsOneWidget,

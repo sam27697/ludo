@@ -4,7 +4,7 @@
   "@appTitle": {
     "description": "The application name, shown as the window/task title and on the home screen."
   },
-  "homeTagline": "Private rooms. Every roll can be checked.",
+  "homeTagline": "Every roll can be checked: independent random rolls, open source code.",
   "@homeTagline": {
     "description": "One short supporting sentence under the brand name on the home screen."
   },
@@ -32,10 +32,6 @@
   "homeRoomCodeFieldLabel": "Room code",
   "@homeRoomCodeFieldLabel": {
     "description": "Label of the text field where the player types a room code to join."
-  },
-  "homeRoomCodeFieldHint": "6 characters, letters and numbers",
-  "@homeRoomCodeFieldHint": {
-    "description": "Hint text under the room code field describing the expected shape of a code."
   },
   "homeRoomCodeInvalid": "That does not look like a room code. Check the letters and numbers and try again.",
   "@homeRoomCodeInvalid": {
@@ -73,37 +69,21 @@
   "@homeDefaultPlayerName": {
     "description": "Name sent to the server when the player leaves the name field empty."
   },
-  "homePlayersSelectorLabel": "Number of players",
-  "@homePlayersSelectorLabel": {
-    "description": "Caption above the 2/3/4 seat-count selector on the home screen."
-  },
-  "homePlayersDisclosureClosed": "4 players, standard rules",
-  "@homePlayersDisclosureClosed": {
-    "description": "Closed disclosure on the home screen that names the default four-seat table before the selector is opened."
-  },
-  "homeRuleCaptureBonus": "Capture bonus",
-  "@homeRuleCaptureBonus": {
-    "description": "Title of the switch, under the open player-count disclosure on the home screen, that turns the capture bonus rule on or off for the room being created."
-  },
-  "homeRuleCaptureBonusHint": "Capturing a token earns another roll",
-  "@homeRuleCaptureBonusHint": {
-    "description": "Subtitle under the capture bonus switch on the home screen, explaining what the rule does."
-  },
-  "houseRulesLine": "Two tokens on one square are safe from capture. A token reaching home earns another roll.",
-  "@houseRulesLine": {
-    "description": "One line stating the two fixed house rules that are no longer switches: a pair of tokens on one square cannot be captured, and a token reaching home earns another roll. Shown under the capture-bonus switch on the home screen and under the rule chips on the lobby screen."
-  },
   "homePlayersTwo": "2 players",
   "@homePlayersTwo": {
-    "description": "Label of the segment that selects a two-seat room."
+    "description": "Spoken label (screen reader only) for a two-seat room in the player count control and the last-table chip."
   },
   "homePlayersThree": "3 players",
   "@homePlayersThree": {
-    "description": "Label of the segment that selects a three-seat room."
+    "description": "Spoken label (screen reader only) for a three-seat room in the player count control and the last-table chip."
   },
   "homePlayersFour": "4 players",
   "@homePlayersFour": {
-    "description": "Label of the segment that selects a four-seat room."
+    "description": "Spoken label (screen reader only) for a four-seat room in the player count control and the last-table chip."
+  },
+  "homePlayersQuestion": "How many players?",
+  "@homePlayersQuestion": {
+    "description": "Label at the start of the single row on the home screen that asks how many players the new room is for; the count control sits at the row's end."
   },
   "lobbyConnecting": "Connecting to the room...",
   "@lobbyConnecting": {
@@ -177,10 +157,6 @@
         "type": "int"
       }
     }
-  },
-  "lobbyRuleCaptureBonusOn": "Capture bonus: on",
-  "@lobbyRuleCaptureBonusOn": {
-    "description": "Line under the seat list on the lobby screen naming the state of the capture bonus rule for this room, shown to host and guests alike."
   },
   "lobbyRuleCaptureBonusOff": "Capture bonus: off",
   "@lobbyRuleCaptureBonusOff": {
@@ -653,22 +629,6 @@
   "@endOffline": {
     "description": "Shown on the end card in place of rematch status when the connection is offline or reconnecting."
   },
-  "settingsTooltip": "Sound and vibration",
-  "@settingsTooltip": {
-    "description": "Tooltip and semantics label for the icon button on home and game screens that opens the sound/vibration settings sheet."
-  },
-  "settingsTitle": "Sound and vibration",
-  "@settingsTitle": {
-    "description": "Title of the sound/vibration settings sheet."
-  },
-  "settingsHaptics": "Vibration",
-  "@settingsHaptics": {
-    "description": "Label of the vibration switch in the sound/vibration settings sheet."
-  },
-  "settingsSound": "Sound",
-  "@settingsSound": {
-    "description": "Label of the sound switch in the sound/vibration settings sheet."
-  },
   "lobbyShareButton": "Invite friends",
   "@lobbyShareButton": {
     "description": "Main lobby button. Opens the phone's share sheet with the room link and a short invite line."
@@ -798,5 +758,9 @@
         "example": "Good luck"
       }
     }
+  },
+  "soundToggleLabel": "Sound and vibration",
+  "@soundToggleLabel": {
+    "description": "Tooltip and spoken label of the one sound button in the home, lobby and game headers; one tap mutes or unmutes both sound and vibration."
   }
 }

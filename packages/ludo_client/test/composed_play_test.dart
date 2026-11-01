@@ -188,14 +188,15 @@ Widget _homeScreenApp(RoomControllerFactory controllerFactory) {
 /// LobbyScreen.initState's synchronous createRoom/joinRoom call to have put
 /// its request on the wire by the time this returns.
 Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
+  // Join enters with a code (C-523 D3), through a 200 ms AnimatedSize at
+  // most: let it reach its final rect before the tap.
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 250));
   await tester.tap(find.byKey(buttonKey));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
 }
 
-/// Opens the seat-count selector. It stays hidden until the player taps
-/// home-players-disclosure; tests that pick a non-default count must open
-/// it first. Bounded pumps only: nothing here mounts a LobbyScreen yet.
 /// Pumps past C-270's end hold for the C1 move below (4 to 9, five
 /// squares): five bounded ticks of kTokenStepDuration (board.dart) land the
 /// move, then kEndCardDwell (game_screen.dart) more, in bounded chunks
@@ -217,17 +218,24 @@ Future<void> _pumpPastEndCardHold(WidgetTester tester) async {
   }
 }
 
-Future<void> _openPlayersDisclosure(WidgetTester tester) async {
-  final Finder disclosure = find.byKey(const Key('home-players-disclosure'));
+/// Picks [count] seats through the players menu (C-523 D2): a tap on
+/// home-players-button opens it, a tap on home-players-option-$count picks
+/// and closes it. Bounded pumps only: nothing here mounts a LobbyScreen yet.
+Future<void> _pickPlayers(WidgetTester tester, int count) async {
+  final Finder control = find.byKey(const Key('home-players-button'));
   expect(
-    disclosure,
+    control,
     findsOneWidget,
     reason:
-        'home-players-disclosure must be on screen so the player can '
-        'open the seat-count selector',
+        'home-players-button must be on screen so the player can '
+        'open the seat-count menu',
   );
-  await tester.tap(disclosure);
+  await tester.tap(control);
   await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+  await tester.tap(find.byKey(Key('home-players-option-$count')));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
 }
 
 void main() {
@@ -246,19 +254,10 @@ void main() {
         await tester.pumpWidget(_homeScreenApp(factory.call));
         await tester.pumpAndSettle();
 
-        // A non-default player count (3, not the selector's default of 4):
+        // A non-default player count (3, not the menu's default of 4):
         // standing lesson 6 says a forwarding claim proved only at the
         // default value proves nothing.
-        await _openPlayersDisclosure(tester);
-        final homeContext = tester.element(find.byType(Scaffold));
-        final homeLoc = AppLocalizations.of(homeContext);
-        await tester.tap(
-          find.descendant(
-            of: find.byKey(const Key('home-players-selector')),
-            matching: find.text(homeLoc.homePlayersThree),
-          ),
-        );
-        await tester.pump();
+        await _pickPlayers(tester, 3);
 
         await tester.enterText(
           find.byKey(const Key('home-name-field')),

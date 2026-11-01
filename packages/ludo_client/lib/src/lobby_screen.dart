@@ -11,13 +11,13 @@ import 'package:share_plus/share_plus.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'die_mark.dart';
-import 'feedback_settings_sheet.dart' show showFeedbackSettingsSheet;
 import 'game_screen.dart' show GameScreenResult;
 import 'net/connection.dart' show RoomToggles;
 import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'seat_card.dart';
+import 'sound_toggle.dart';
 import 'rule_off_strike.dart';
 import 'session_memory.dart' show SeatRecord;
 import 'theme.dart';
@@ -437,17 +437,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       ),
                       // C-335 rule 1: the mirror of lobby-leave-button, at
                       // the end corner, so a player waiting on friends can
-                      // mute sound and vibration without leaving.
+                      // mute sound and vibration without leaving. C-523 D7:
+                      // the one sound switch.
                       PositionedDirectional(
                         end: kSpace2,
-                        child: IconButton(
-                          key: const Key('lobby-settings-button'),
+                        child: SoundToggleButton(
+                          key: const Key('lobby-sound-toggle'),
                           style: IconButton.styleFrom(
                             minimumSize: const Size(48, 48),
                           ),
-                          tooltip: loc.settingsTooltip,
-                          onPressed: () => showFeedbackSettingsSheet(context),
-                          icon: const Icon(Icons.tune_rounded),
                         ),
                       ),
                     ],
@@ -778,32 +776,25 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   ),
                   SizedBox(height: compact ? kSpace1 : kSpace6),
                   _seatGrid(loc, room, controller),
-                  SizedBox(height: compact ? kSpace1 : kSpace3),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: kSpace2,
-                    runSpacing: kSpace2,
-                    children: [
-                      _ruleChip(
-                        chipKey: const Key('lobby-rule-capture-bonus-chip'),
-                        icon: Icons.replay_rounded,
-                        on: room.rules.captureBonus,
-                        textKey: const Key('lobby-rule-capture-bonus'),
-                        text: room.rules.captureBonus
-                            ? loc.lobbyRuleCaptureBonusOn
-                            : loc.lobbyRuleCaptureBonusOff,
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: compact ? kSpace1 : kSpace2),
-                  Text(
-                    loc.houseRulesLine,
-                    key: const Key('lobby-house-rules'),
-                    textAlign: TextAlign.center,
-                    style: textTheme.bodySmall?.copyWith(
-                      color: LudoColors.inkMuted,
+                  // C-523 D6: a default room shows no rule chip; only a room
+                  // an older client created with the bonus off says so.
+                  if (!room.rules.captureBonus) ...[
+                    SizedBox(height: compact ? kSpace1 : kSpace3),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: kSpace2,
+                      runSpacing: kSpace2,
+                      children: [
+                        _ruleChip(
+                          chipKey: const Key('lobby-rule-capture-bonus-chip'),
+                          icon: Icons.replay_rounded,
+                          on: room.rules.captureBonus,
+                          textKey: const Key('lobby-rule-capture-bonus'),
+                          text: loc.lobbyRuleCaptureBonusOff,
+                        ),
+                      ],
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

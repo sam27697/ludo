@@ -1,5 +1,6 @@
-// Home chrome for C-276: no title bar, the locale toggle in the body's top
-// end corner, and the closed players disclosure carrying a tune icon.
+// Home chrome for C-276: no title bar and the locale toggle in the body's top
+// end corner. The closed players disclosure case went with the disclosure
+// (C-523 D2).
 //
 // HomeScreen is mounted the way test/locale_toggle_contrast_test.dart
 // mounts it (LudoApp, one mount per case). Nothing here names a type
@@ -18,7 +19,6 @@ import 'package:ludo_client/src/theme.dart' show kSpace2;
 
 const Size _phone = Size(360, 800);
 const Key _localeKey = Key('locale-toggle-button');
-const Key _disclosureKey = Key('home-players-disclosure');
 
 void _usePhone(WidgetTester tester) {
   tester.view.physicalSize = _phone;
@@ -163,35 +163,4 @@ void main() {
       _expectLocaleCorner(tester, 'ar');
     },
   );
-
-  testWidgets('closed disclosure shows Icons.tune and the text '
-      '"4 players, standard rules"', (tester) async {
-    _usePhone(tester);
-    await tester.pumpWidget(const LudoApp());
-    await tester.pumpAndSettle();
-
-    final Finder disclosure = find.byKey(_disclosureKey);
-    expect(
-      disclosure,
-      findsOneWidget,
-      reason:
-          'fixture: home-players-disclosure must be on screen while '
-          'the players selector is closed',
-    );
-    expect(
-      find.descendant(of: disclosure, matching: find.byIcon(Icons.tune)),
-      findsOneWidget,
-      reason: 'home-players-disclosure must contain a leading Icons.tune',
-    );
-    expect(
-      find.descendant(
-        of: disclosure,
-        matching: find.text('4 players, standard rules'),
-      ),
-      findsOneWidget,
-      reason:
-          'home-players-disclosure must still show the text '
-          '"4 players, standard rules"',
-    );
-  });
 }

@@ -249,6 +249,14 @@ void main() {
 
       _expectInsetInEffect(tester, 'IN-END', _kBottomInset);
 
+      // Join is in the tree only with a full-length code (C-523 D3), and it
+      // is then the last control home renders.
+      await tester.enterText(
+        find.byKey(const Key('room-code-field')),
+        'K7M2QP',
+      );
+      await _settle(tester);
+
       // Read: with no link delivered and no platform storage available in
       // a widget test (SessionMemory.load's own documented empty-snapshot
       // fallback), _recentCodes stays empty and the seat-rejoin chip never
@@ -269,7 +277,7 @@ void main() {
         caseId: 'IN-END',
         elementLabel:
             'join-room-button (the last control home_screen.dart renders '
-            'with no recent codes stored)',
+            'with a full code typed and no recent codes stored)',
         bottomInset: _kBottomInset,
       );
     },

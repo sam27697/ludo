@@ -45,10 +45,6 @@
 //                    real players who joined it
 //   04-game-en.png   game board mid-game, English
 //   05-game-ar.png   game board mid-game, Arabic
-//   35-settings-sheet-en.png  the sound and vibration settings sheet,
-//                             English, both switches on
-//   36-settings-sheet-ar.png  the sound and vibration settings sheet,
-//                             Arabic, sound switched off
 //   37-game-large-en.png      game board mid-game, English, system text
 //                             scale 2.0, the host's turn
 //   38-game-large-ar.png      same board, Arabic, system text scale 2.0,
@@ -57,6 +53,16 @@
 //                             scale 2.0
 //   40-end-loser-large-ar.png the loser's end card, Arabic, system text
 //                             scale 2.0
+//   99-home-plain-en.png      home, English, default state, top of the list
+//   100-home-plain-ar.png     home, Arabic, default state, top of the list
+//   101-home-players-menu-en.png  home, English, the players menu open
+//   102-home-players-menu-ar.png  home, Arabic, the players menu open
+//   103-home-join-shown-en.png    home, English, six characters typed, Join
+//                                 shown
+//   104-home-large-text-ar.png    home, Arabic, system text scale 2.0,
+//                                 scrolled to the players row
+//   105-game-muted-ar.png     game header, Arabic, after one tap on the
+//                             sound toggle (crossed speaker)
 //
 // Two workflow runs (33183494414, 33185182659) each produced a room-screen
 // capture that was not a room screen at all: a silently dropped enterText
@@ -81,6 +87,8 @@ import 'package:integration_test/integration_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart'
     show appSupportedLocales, buildAppTheme;
+import 'package:ludo_client/src/feedback.dart'
+    show FeedbackCue, FeedbackScope, FeedbackService, FeedbackSettings;
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/game_stats.dart';
 import 'package:ludo_client/src/home_screen.dart';
@@ -90,7 +98,7 @@ import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart'
     show RoomSnapshot, RoomState, SeatState;
 import 'package:ludo_client/src/room_code.dart'
-    show isValidRoomCode, normalizeRoomCode;
+    show isValidRoomCode, normalizeRoomCode, roomCodeLength;
 import 'package:ludo_client/src/server_config.dart';
 import 'package:ludo_client/src/session_memory.dart'
     show LastGame, SeatRecord, SessionMemory;
@@ -346,6 +354,21 @@ Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
   await tester.tap(find.byKey(buttonKey));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
+}
+
+/// Taps Create Room on the home screen. Under a system text scale above 1.0
+/// the plain home (C-523) is taller than this rig's 800 x 600 view and
+/// Create sits below the fold (measured at scale 2.0: centre y 622), so a
+/// player would scroll to it; this scrolls to it first. At scale 1.0 nothing
+/// is scrolled, and a Create left below the fold still fails the tap.
+/// Home only, so the pumpAndSettle is safe.
+Future<void> _tapCreateRoom(WidgetTester tester) async {
+  const Key createKey = Key('create-room-button');
+  if (tester.platformDispatcher.textScaleFactor > 1.0) {
+    await tester.ensureVisible(find.byKey(createKey));
+    await tester.pumpAndSettle();
+  }
+  await _tapAndAwaitPushedRoute(tester, createKey);
 }
 
 /// Pumps fixed, bounded 16ms frames until [finder] finds something, and
@@ -1128,6 +1151,9 @@ void main() {
       joinerName,
     );
     await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    // Join is in the tree only once the field holds a full code (C-523 D3);
+    // let its entry finish before the tap. Home only, so this settles.
+    await tester.pumpAndSettle();
     await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
 
     expect(factory.controllers, hasLength(1));
@@ -1992,6 +2018,9 @@ void main() {
       joinerName,
     );
     await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    // Join is in the tree only once the field holds a full code (C-523 D3);
+    // let its entry finish before the tap. Home only, so this settles.
+    await tester.pumpAndSettle();
     await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
 
     expect(
@@ -2199,32 +2228,22 @@ void main() {
   });
 
   // ==========================================================================
-  // 13, 14: order 207's two screen changes PR #75 shipped that nobody had
-  // looked at on a device (standing lesson 28) -- Home's open players
-  // disclosure (home-players-disclosure, home-rule-blocks,
-  // home-rule-capture-bonus, home_screen.dart around lines 830-900), and the
-  // host's "start with N" button in a lobby that is not full
-  // (lobby-start-with-present-button, lobby-rule-blocks,
-  // lobby-rule-capture-bonus, lobby_screen.dart around lines 395-452).
-  // Captures 01 and 02 show the disclosure closed; capture 03 is a full
-  // room, so lobby-start-with-present-button never appears in any capture
-  // before this one. One mount, one flow, Arabic throughout (standing
-  // lesson 35): the same route capture 12 walks -- HomeScreen -> RoomRoute
-  // -> LobbyScreen -- stopped short of ever tapping Start.
+  // 14: the host's "start with N" button in a lobby that is not full
+  // (lobby-start-with-present-button, lobby_screen.dart), which no capture
+  // before this one shows: capture 03 is a full room. One mount, one flow,
+  // Arabic throughout (standing lesson 35): the same route capture 12 walks
+  // -- HomeScreen -> RoomRoute -> LobbyScreen -- stopped short of ever
+  // tapping Start.
   //
-  // C-356 (run 90, order 357, the 10-15 rule ruling): home-rule-blocks,
-  // lobby-rule-blocks and lobby-rule-blocks-chip are gone outright. This
-  // flow is re-pointed at home-rule-capture-bonus: the single tap that used
-  // to turn Blocks off now turns Capture bonus off instead (the only switch
-  // left to show in an off state on the picture), and capture 14's
-  // lobby-rule-blocks read is replaced by an absence assertion plus the new
-  // lobby-rule-capture-bonus-off text, now that the home tap carries through
-  // to the room. lobby-house-rules is asserted on screen in capture 14, per
-  // the order.
+  // Capture 13 (Home's open players disclosure with the Capture bonus card
+  // switched off) went with C-523 D1 and D2: neither the disclosure nor the
+  // card exists. Capture 14 keeps its number. Home can no longer turn
+  // Capture bonus off, so the create_room frame now carries it on (D1); the
+  // fake server's room reply still says off, which is what a room an older
+  // client created looks like, and D6 shows the "off" chip for exactly that
+  // room and no house-rules line (D6).
   // ==========================================================================
-  testWidgets('capture 13-home-rules-ar, 14-lobby-host-start-with-ar', (
-    tester,
-  ) async {
+  testWidgets('capture 14-lobby-host-start-with-ar', (tester) async {
     binding.testTextInput.register();
     _stubScreenshotChannel(tester);
     await binding.convertFlutterSurfaceToImage();
@@ -2260,7 +2279,7 @@ void main() {
       find.byKey(const Key('home-rejoin-button')),
       findsNothing,
       reason:
-          'capture 13: expected no home-rejoin-button on a freshly mounted '
+          'capture 14: expected no home-rejoin-button on a freshly mounted '
           'HomeScreen after clearing SharedPreferences above; found one, so '
           'a SessionMemory seat record from an earlier capture in this '
           'suite run (written through home_screen.dart\'s '
@@ -2286,7 +2305,7 @@ void main() {
       tester.widget<EditableText>(nameFieldEditableFinder).focusNode.hasFocus,
       isFalse,
       reason:
-          'capture 13: expected home-name-field to have lost focus right '
+          'capture 14: expected home-name-field to have lost focus right '
           'after FocusManager.instance.primaryFocus?.unfocus() above, so no '
           'text cursor handle is painted under it in the screenshot; it '
           'still has focus',
@@ -2295,74 +2314,19 @@ void main() {
       tester.widget<EditableText>(nameFieldEditableFinder).controller.text,
       hostName,
       reason:
-          'capture 13: expected home-name-field to still read "$hostName" '
+          'capture 14: expected home-name-field to still read "$hostName" '
           'right after the unfocus above; the create_room assertions below '
           'depend on the typed name surviving the unfocus',
     );
 
-    // Open the players disclosure: home-players-selector and the Capture
-    // bonus HomeRuleToggle card mount, starting on (home_screen.dart's own
-    // _rulesCaptureBonus default). home-rule-blocks does not exist to mount
-    // alongside it (C-356).
-    await tester.tap(find.byKey(const Key('home-players-disclosure')));
-    await tester.pump();
-
-    // C-356: home-rule-blocks is gone, so the one tap that used to turn
-    // Blocks off now turns the only remaining switch, Capture bonus, off --
-    // one switch shown off on the picture, per the order.
-    await tester.tap(find.byKey(const Key('home-rule-capture-bonus')));
-    await tester.pump();
-
-    _expectHomeRulesOpen(
-      tester,
-      captureBonusExpected: false,
-      momentDescription:
-          'immediately after the home-rule-capture-bonus tap, before the '
-          'screenshot settle',
-    );
-
-    // Home has no LobbyScreen yet (nothing has tapped Create Room), so
-    // _settleForScreenshot's own trailing pumpAndSettle() is safe here, the
-    // same reasoning 01-home-en and 08/09-home-rejoin rely on above.
-    final Finder rulesSettledFinder = find.byWidgetPredicate(
-      (Widget widget) =>
-          widget is HomeRuleToggle &&
-          widget.key == const Key('home-rule-capture-bonus') &&
-          widget.value == false,
-    );
-    await _settleForScreenshot(
-      tester,
-      rulesSettledFinder,
-      'home-rule-capture-bonus reading off (HomeRuleToggle.value == false) '
-      'after the tap, before capture 13',
-    );
-
-    _expectHomeRulesOpen(
-      tester,
-      captureBonusExpected: false,
-      momentDescription:
-          'after the screenshot settle, immediately before capture 13',
-    );
-
-    expect(
-      tester.widget<EditableText>(nameFieldEditableFinder).focusNode.hasFocus,
-      isFalse,
-      reason:
-          'capture 13: expected home-name-field to still have no focus '
-          'immediately before the screenshot, so no text cursor handle is '
-          'painted under it; it has focus again',
-    );
-
-    await binding.takeScreenshot('13-home-rules-ar');
-
-    // Order 207 step 4: after the screenshot, so the picture exists either
-    // way -- a create-room-button left below the fold with the rules open
-    // is a finding for the master, not something this test scrolls around.
+    // Order 207 step 4: the Create button of a plain home must be on screen
+    // without scrolling; a create-room-button left below the fold is a
+    // finding for the master, not something this test scrolls around.
     _expectRectInsideView(
       tester,
       find.byKey(const Key('create-room-button')),
       label: 'create-room-button',
-      context: 'with the home rules open (home-rule-capture-bonus off)',
+      context: 'on the plain home before capture 14',
     );
 
     await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
@@ -2391,7 +2355,7 @@ void main() {
     );
     final String createId = _idOf(createMessages.single);
 
-    // Order 207 step 5: the switch reaching the wire, not only the widget --
+    // Order 207 step 5: the rules reaching the wire, not only the widget --
     // read straight off the create_room frame this client actually sent
     // (test/net/fake_transport.dart's sentRaw), the same idiom _idOf/_typeOf
     // already read frames with above.
@@ -2409,11 +2373,11 @@ void main() {
     );
     expect(
       sentRules['capture_bonus'],
-      isFalse,
+      isTrue,
       reason:
-          'expected the create_room frame\'s rules.capture_bonus to be '
-          'false after the home-rule-capture-bonus tap; frame data was '
-          '$createData',
+          'C-523 D1: expected the create_room frame\'s rules.capture_bonus '
+          'to be true, home has no rule control left to turn it off; frame '
+          'data was $createData',
     );
     expect(
       sentRules.containsKey('turn_seconds'),
@@ -2434,7 +2398,7 @@ void main() {
       isValidRoomCode(normalizeRoomCode(roomCode)),
       isTrue,
       reason:
-          'capture 13/14 fixture is broken: "$roomCode" must be a '
+          'capture 14 fixture is broken: "$roomCode" must be a '
           'syntactically valid room code (room_code.dart\'s '
           'roomCodeAlphabet)',
     );
@@ -2449,9 +2413,10 @@ void main() {
     // order: build its map, then replace the rules entry on the result with
     // the fake server's own answer for this capture -- blocks false (C-356:
     // the server now creates every room with blocks off, regardless of what
-    // the client asked), capture_bonus false (this host turned it off on
-    // home), turn_seconds 90 -- host_seat 0, players 4, and two seats taken
-    // (this host, and Karim at seat 1).
+    // the client asked), capture_bonus false (the answer for a room an older
+    // client created, C-523 D6; this client asked for true above),
+    // turn_seconds 90 -- host_seat 0, players 4, and two seats taken (this
+    // host, and Karim at seat 1).
     final Map<String, Object?> roomJson = _roomJson(
       code: roomCode,
       players: 4,
@@ -4157,6 +4122,9 @@ void main() {
       joinerName,
     );
     await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    // Join is in the tree only once the field holds a full code (C-523 D3);
+    // let its entry finish before the tap. Home only, so this settles.
+    await tester.pumpAndSettle();
     await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
 
     expect(factory.controllers, hasLength(1));
@@ -4989,235 +4957,6 @@ void main() {
   });
 
   // ==========================================================================
-  // 35, 36: C-329's sound/vibration settings sheet (order 334). X46 (C-329)
-  // closed in run 86 with the sheet proven by
-  // test/feedback_settings_sheet_test.dart but never seen: this rig never
-  // opened it. Fresh SharedPreferences (cleared, as the 33/34 block above),
-  // home in English, then Arabic, the sheet opened from
-  // home-settings-button both times.
-  //
-  // _ScreenshotHarness (this file's own) wraps HomeScreen in a bare
-  // MaterialApp with no FeedbackScope above it. showFeedbackSettingsSheet
-  // reads FeedbackScope.settingsOf(context), which falls back to a brand
-  // new FeedbackSettings.forTest() (haptics: true, sound: true,
-  // lib/src/feedback.dart) on every call when there is no scope above it --
-  // never a shared instance. So each of the two taps on
-  // home-settings-button below opens its own fresh settings object:
-  // capture 35's sheet starts at the forTest() default (haptics true,
-  // sound true) and is never touched; capture 36's sheet, opened fresh a
-  // second time after the first sheet closes and the locale toggles,
-  // starts at that same default and is then flipped off by this test's own
-  // tap on the sound row's label. There is no state carried from the first
-  // sheet to the second.
-  //
-  // Closing the sheet: the order asks for whichever of "tap outside it" or
-  // Navigator.pop this rig's other captures use for a modal. This rig
-  // opens no other modal anywhere in this file -- 01 through 34 above
-  // never show one -- so there is no in-rig precedent to follow.
-  // Navigator.pop is used here, the same way the sheet's own contract test
-  // (test/feedback_settings_sheet_test.dart's _closeSheet) pops the
-  // sheet's own route, rather than guessing at a barrier tap point that
-  // would have to be hand-picked clear of every on-screen control across
-  // two locales and two screen sizes.
-  // ==========================================================================
-  testWidgets('capture 35-settings-sheet-en, 36-settings-sheet-ar', (
-    tester,
-  ) async {
-    binding.testTextInput.register();
-    _stubScreenshotChannel(tester);
-    await binding.convertFlutterSurfaceToImage();
-
-    await (await SharedPreferences.getInstance()).clear();
-
-    final factory = _ScreenshotControllerFactory();
-    await tester.pumpWidget(
-      _ScreenshotHarness(controllerFactory: factory.call),
-    );
-    await tester.pumpAndSettle();
-    await _expectHomeScreen(tester, localeName: 'en');
-
-    const Key sheetKey = Key('feedback-settings-sheet');
-    const Key hapticsSwitchKey = Key('feedback-settings-haptics');
-    const Key soundSwitchKey = Key('feedback-settings-sound');
-
-    await tester.tap(find.byKey(const Key('home-settings-button')));
-    await tester.pumpAndSettle();
-
-    final AppLocalizations enSheetLoc = AppLocalizations.of(
-      tester.element(find.byKey(sheetKey)),
-    );
-    await _settleForScreenshot(
-      tester,
-      find.descendant(
-        of: find.byKey(sheetKey),
-        matching: find.text(enSheetLoc.settingsTitle),
-      ),
-      'capture 35-settings-sheet-en: the English settingsTitle text '
-      '("${enSheetLoc.settingsTitle}") laid out inside '
-      'feedback-settings-sheet before the shot',
-    );
-
-    expect(
-      find.byKey(sheetKey),
-      findsOneWidget,
-      reason:
-          'capture 35-settings-sheet-en: expected feedback-settings-sheet '
-          'on screen before the shot',
-    );
-    expect(
-      find.byKey(hapticsSwitchKey),
-      findsOneWidget,
-      reason:
-          'capture 35-settings-sheet-en: expected feedback-settings-haptics '
-          'on screen before the shot',
-    );
-    expect(
-      find.byKey(soundSwitchKey),
-      findsOneWidget,
-      reason:
-          'capture 35-settings-sheet-en: expected feedback-settings-sound '
-          'on screen before the shot',
-    );
-    final Switch enHapticsSwitch = tester.widget<Switch>(
-      find.byKey(hapticsSwitchKey),
-    );
-    expect(
-      enHapticsSwitch.value,
-      isTrue,
-      reason:
-          'capture 35-settings-sheet-en: expected feedback-settings-haptics '
-          'to show value: true before the shot, showed '
-          '${enHapticsSwitch.value}',
-    );
-    final Switch enSoundSwitch = tester.widget<Switch>(
-      find.byKey(soundSwitchKey),
-    );
-    expect(
-      enSoundSwitch.value,
-      isTrue,
-      reason:
-          'capture 35-settings-sheet-en: expected feedback-settings-sound '
-          'to show value: true before the shot, showed '
-          '${enSoundSwitch.value}',
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(sheetKey),
-        matching: find.text(enSheetLoc.settingsTitle),
-      ),
-      findsOneWidget,
-      reason:
-          'capture 35-settings-sheet-en: expected the sheet\'s title text '
-          'to read the English settingsTitle '
-          '("${enSheetLoc.settingsTitle}") before the shot',
-    );
-    await binding.takeScreenshot('35-settings-sheet-en');
-
-    // Close the sheet by popping its own route -- see this block's own
-    // header for why Navigator.pop, not a barrier tap, is used here.
-    Navigator.of(tester.element(find.byKey(sheetKey))).pop();
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(sheetKey),
-      findsNothing,
-      reason:
-          'capture 36-settings-sheet-ar fixture is broken: '
-          'feedback-settings-sheet must be gone from the tree after '
-          'Navigator.pop and the settle above',
-    );
-
-    await tester.tap(find.byKey(const Key('locale-toggle-button')));
-    await tester.pumpAndSettle();
-    await _expectHomeScreen(tester, localeName: 'ar');
-
-    await tester.tap(find.byKey(const Key('home-settings-button')));
-    await tester.pumpAndSettle();
-
-    final AppLocalizations arSheetLoc = AppLocalizations.of(
-      tester.element(find.byKey(sheetKey)),
-    );
-    final String soundLabelAr = arSheetLoc.settingsSound;
-    final Finder soundLabelFinderAr = find.descendant(
-      of: find.byKey(sheetKey),
-      matching: find.text(soundLabelAr),
-    );
-    expect(
-      soundLabelFinderAr,
-      findsOneWidget,
-      reason:
-          'capture 36-settings-sheet-ar fixture is broken: expected the '
-          'Arabic settingsSound label ("$soundLabelAr") inside the '
-          'reopened sheet before tapping it',
-    );
-    await tester.tap(soundLabelFinderAr);
-    await tester.pump();
-
-    await _settleForScreenshot(
-      tester,
-      find.descendant(
-        of: find.byKey(sheetKey),
-        matching: find.byIcon(Icons.volume_off_rounded),
-      ),
-      'capture 36-settings-sheet-ar: Icons.volume_off_rounded laid out '
-      'inside feedback-settings-sheet after tapping the '
-      'feedback-settings-sound row\'s label, before the shot',
-    );
-
-    expect(
-      find.byKey(sheetKey),
-      findsOneWidget,
-      reason:
-          'capture 36-settings-sheet-ar: expected feedback-settings-sheet '
-          'on screen before the shot',
-    );
-    final Switch arHapticsSwitch = tester.widget<Switch>(
-      find.byKey(hapticsSwitchKey),
-    );
-    expect(
-      arHapticsSwitch.value,
-      isTrue,
-      reason:
-          'capture 36-settings-sheet-ar: expected feedback-settings-haptics '
-          'to still show value: true before the shot, showed '
-          '${arHapticsSwitch.value}',
-    );
-    final Switch arSoundSwitch = tester.widget<Switch>(
-      find.byKey(soundSwitchKey),
-    );
-    expect(
-      arSoundSwitch.value,
-      isFalse,
-      reason:
-          'capture 36-settings-sheet-ar: expected feedback-settings-sound '
-          'to show value: false (tapped off above) before the shot, '
-          'showed ${arSoundSwitch.value}',
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(sheetKey),
-        matching: find.text(arSheetLoc.settingsTitle),
-      ),
-      findsOneWidget,
-      reason:
-          'capture 36-settings-sheet-ar: expected the sheet\'s title text '
-          'to read the Arabic settingsTitle '
-          '("${arSheetLoc.settingsTitle}") before the shot',
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(sheetKey),
-        matching: find.byIcon(Icons.volume_off_rounded),
-      ),
-      findsOneWidget,
-      reason:
-          'capture 36-settings-sheet-ar: expected Icons.volume_off_rounded '
-          'inside feedback-settings-sheet before the shot, with '
-          'feedback-settings-sound switched off',
-    );
-    await binding.takeScreenshot('36-settings-sheet-ar');
-  });
-
-  // ==========================================================================
   // 37-40: order 342, follow-up to X48 (C-339, order 339). C-339 proved the
   // game screen holds system text scale 1.3 and 2.0 in
   // test/large_text_fit_test.dart, but that file mounts GameScreen directly
@@ -5327,7 +5066,7 @@ void main() {
         find.byKey(const Key('home-name-field')),
         hostName,
       );
-      await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+      await _tapCreateRoom(tester);
 
       expect(
         factory37.controllers,
@@ -5551,7 +5290,7 @@ void main() {
         find.byKey(const Key('home-name-field')),
         hostName,
       );
-      await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+      await _tapCreateRoom(tester);
 
       expect(
         factory38.controllers,
@@ -5769,7 +5508,7 @@ void main() {
         find.byKey(const Key('home-name-field')),
         hostName,
       );
-      await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+      await _tapCreateRoom(tester);
 
       expect(
         factory39.controllers,
@@ -5908,7 +5647,7 @@ void main() {
         find.byKey(const Key('home-name-field')),
         hostName,
       );
-      await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+      await _tapCreateRoom(tester);
 
       expect(
         factory40.controllers,
@@ -6827,6 +6566,80 @@ void main() {
       refuseDie: true,
     );
   });
+
+  // ==========================================================================
+  // 99-105: order 526 (C-523). The plain home and the one sound switch. 99
+  // and 100 are home in its default state, top of the list; 101 and 102 have
+  // the players menu open over home-players-button; 103 has six characters
+  // typed so Join is in the tree; 104 is Arabic at system text scale 2.0,
+  // scrolled so the players row is on screen; 105 is the game header after
+  // one tap on game-sound-toggle. Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 99-home-plain-en', (tester) async {
+    await _shootHomePlain(
+      tester,
+      binding,
+      shotName: '99-home-plain-en',
+      locale: const Locale('en'),
+    );
+  });
+
+  testWidgets('capture 100-home-plain-ar', (tester) async {
+    await _shootHomePlain(
+      tester,
+      binding,
+      shotName: '100-home-plain-ar',
+      locale: const Locale('ar'),
+    );
+  });
+
+  testWidgets('capture 101-home-players-menu-en', (tester) async {
+    await _shootHomePlayersMenu(
+      tester,
+      binding,
+      shotName: '101-home-players-menu-en',
+      locale: const Locale('en'),
+    );
+  });
+
+  testWidgets('capture 102-home-players-menu-ar', (tester) async {
+    await _shootHomePlayersMenu(
+      tester,
+      binding,
+      shotName: '102-home-players-menu-ar',
+      locale: const Locale('ar'),
+    );
+  });
+
+  testWidgets('capture 103-home-join-shown-en', (tester) async {
+    await _shootHomeJoinShown(
+      tester,
+      binding,
+      shotName: '103-home-join-shown-en',
+      locale: const Locale('en'),
+    );
+  });
+
+  testWidgets('capture 104-home-large-text-ar', (tester) async {
+    await _shootHomeLargeText(
+      tester,
+      binding,
+      shotName: '104-home-large-text-ar',
+      locale: const Locale('ar'),
+    );
+  });
+
+  testWidgets('capture 105-game-muted-ar', (tester) async {
+    await _shootGameMuted(
+      tester,
+      binding,
+      shotName: '105-game-muted-ar',
+      locale: const Locale('ar'),
+      roomCode: 'SM105A',
+      gameId: '105' * 5 + '1',
+      seatToken: 'tok-shot-105',
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -6850,72 +6663,8 @@ Widget _reconnectingCaptureHarness(Widget child, {required Locale locale}) {
   );
 }
 
-/// Order 207, capture 13, amended for C-356 (run 90, order 357, the 10-15
-/// rule ruling): asserts home-players-selector is on screen, that
-/// home-rule-blocks does not exist at all (it is gone outright, not merely
-/// re-labelled), that the surviving home-rule-capture-bonus.value reads
-/// [captureBonusExpected], and that its title reads its own literal straight
-/// out of app_ar.arb (homeRuleCaptureBonus) -- quoted here, not looked up
-/// through AppLocalizations, per the order. [momentDescription] names which
-/// of the two calls (before or after the screenshot settle) failed, so a
-/// failure does not have to be re-run to know which one it was.
-void _expectHomeRulesOpen(
-  WidgetTester tester, {
-  required bool captureBonusExpected,
-  required String momentDescription,
-}) {
-  expect(
-    find.byKey(const Key('home-players-selector')),
-    findsOneWidget,
-    reason:
-        'capture 13 ($momentDescription): expected home-players-selector '
-        'on screen once the players disclosure is open',
-  );
-
-  expect(
-    find.byKey(const Key('home-rule-blocks')),
-    findsNothing,
-    reason:
-        'capture 13 ($momentDescription): C-356: home-rule-blocks must not '
-        'exist, even with the players disclosure open',
-  );
-
-  final Finder captureBonusFinder = find.byKey(
-    const Key('home-rule-capture-bonus'),
-  );
-  expect(
-    captureBonusFinder,
-    findsOneWidget,
-    reason:
-        'capture 13 ($momentDescription): expected '
-        'home-rule-capture-bonus on screen once the players disclosure is '
-        'open',
-  );
-  final HomeRuleToggle captureBonusTile = tester.widget<HomeRuleToggle>(
-    captureBonusFinder,
-  );
-  expect(
-    captureBonusTile.value,
-    captureBonusExpected,
-    reason:
-        'capture 13 ($momentDescription): expected '
-        'home-rule-capture-bonus\'s HomeRuleToggle.value to be '
-        '$captureBonusExpected, got ${captureBonusTile.value}',
-  );
-  const String expectedCaptureBonusTitle = 'مكافأة الأكل';
-  expect(
-    captureBonusTile.title,
-    expectedCaptureBonusTitle,
-    reason:
-        'capture 13 ($momentDescription): expected '
-        'home-rule-capture-bonus\'s title to read the app_ar.arb '
-        'homeRuleCaptureBonus literal "$expectedCaptureBonusTitle", got '
-        '"${captureBonusTile.title}"',
-  );
-}
-
-/// Order 207, captures 13 and 14: asserts [finder]'s rect lies entirely
-/// inside the current view (no scrolling attempted, in either capture). On
+/// Order 207, capture 14 (and 99, 100): asserts [finder]'s rect lies entirely
+/// inside the current view (no scrolling attempted, in any capture). On
 /// failure the reason names [label], says it is off screen, and gives both
 /// rects -- [label]'s own and the view's -- so a widget left below the fold
 /// on some device is a reproducible finding for the master, not something
@@ -6974,9 +6723,9 @@ void _expectRectInsideView(
 /// lobby-rule-blocks-chip both absent outright (C-356: gone, not merely
 /// re-labelled), lobby-rule-capture-bonus reading its own app_ar.arb literal
 /// for the off state (quoted here, not looked up through AppLocalizations,
-/// per the order -- this capture's room carries capture_bonus: false, since
-/// capture 13's home tap turned it off), lobby-house-rules on screen per the
-/// order, and lobby-leave-button's rect inside the view. Two lobby-seat-*
+/// per the order -- this capture's room carries capture_bonus: false, the
+/// reply for a room an older client created, C-523 D6), lobby-house-rules
+/// absent (C-523 D6), and lobby-leave-button's rect inside the view. Two lobby-seat-*
 /// rows are asserted by the caller's own
 /// _expectLobbyScreen(expectedSeatCount: 2) immediately before each call
 /// here, not repeated inside this helper. [momentDescription] names which of
@@ -7086,16 +6835,16 @@ void _expectLobbyHostStartWith(
         'lobby-rule-capture-bonus\'s Text to read the app_ar.arb '
         'lobbyRuleCaptureBonusOff literal "$expectedRuleCaptureBonusText" '
         '(the fake server\'s room reply carries rules.capture_bonus: '
-        'false, since capture 13\'s home tap turned it off), got '
+        'false, the answer for a room an older client created), got '
         '"${ruleCaptureBonusText.data}"',
   );
 
   expect(
     find.byKey(const Key('lobby-house-rules')),
-    findsOneWidget,
+    findsNothing,
     reason:
-        'capture 14 ($momentDescription): C-356 (order 357): expected '
-        'lobby-house-rules on screen in the lobby alongside the rule chips',
+        'capture 14 ($momentDescription): C-523 D6: lobby-house-rules is '
+        'removed, the lobby no longer repeats the rules',
   );
 
   _expectRectInsideView(
@@ -9402,11 +9151,13 @@ Future<_OpenedTrayGame> _openHostGame(
   required Locale locale,
   required String gameId,
   required String seatToken,
+  FeedbackSettings? feedbackSettings,
+  FeedbackService? feedbackService,
 }) async {
   final _ScreenshotControllerFactory trayFactory =
       _ScreenshotControllerFactory();
   try {
-    final Widget home;
+    Widget home;
     if (locale.languageCode == 'ar') {
       home = _reconnectingCaptureHarness(
         HomeScreen(controllerFactory: trayFactory.call, onToggleLocale: () {}),
@@ -9415,13 +9166,24 @@ Future<_OpenedTrayGame> _openHostGame(
     } else {
       home = _ScreenshotHarness(controllerFactory: trayFactory.call);
     }
+    // The harnesses carry no FeedbackScope, and without one the sound
+    // toggle flips a throwaway settings object nothing listens to. A caller
+    // that wants to see the toggle move passes its own pair, above the
+    // MaterialApp the way app.dart puts them.
+    if (feedbackSettings != null && feedbackService != null) {
+      home = FeedbackScope(
+        settings: feedbackSettings,
+        service: feedbackService,
+        child: home,
+      );
+    }
     await tester.pumpWidget(home);
     await tester.pumpAndSettle();
     await _expectHomeScreen(tester, localeName: locale.languageCode);
 
     const String hostName = 'Priya';
     await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
-    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
+    await _tapCreateRoom(tester);
 
     expect(
       trayFactory.controllers,
@@ -10803,6 +10565,9 @@ Future<_OpenedTrayGame> _openGuestSeat(
     const String guestName = 'Karim';
     await tester.enterText(find.byKey(const Key('home-name-field')), guestName);
     await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    // Join is in the tree only once the field holds a full code (C-523 D3);
+    // let its entry finish before the tap. Home only, so this settles.
+    await tester.pumpAndSettle();
     await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
 
     expect(
@@ -11892,6 +11657,9 @@ Future<_OpenedTrayGame> _openFourSeatGuestGame(
 
     await tester.enterText(find.byKey(const Key('home-name-field')), 'Karim');
     await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    // Join is in the tree only once the field holds a full code (C-523 D3);
+    // let its entry finish before the tap. Home only, so this settles.
+    await tester.pumpAndSettle();
     await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
 
     expect(
@@ -13951,7 +13719,7 @@ Finder _keysStartingWith(String prefix) => find.byWidgetPredicate((Widget w) {
 /// `end-card-chat-lines`, and it shows [line] (C-500 D5 may drop the name, so
 /// the name is not asserted). No `chat-bubble-*` or `board-chat-*` key exists
 /// anywhere (C-500 D6), and the bubble's rect intersects none of the leave
-/// button, the chat button, the settings button, the board and the turn
+/// button, the chat button, the sound toggle, the board and the turn
 /// banner (C-500 D4, P3). Plain rect intersection, edges that only touch do
 /// not count. Returns the bubble's rect.
 Rect _expectHeaderChat(
@@ -14019,7 +13787,7 @@ Rect _expectHeaderChat(
   for (final String keyName in const <String>[
     'game-screen-appbar-leave',
     'game-chat-button',
-    'game-settings-button',
+    'game-sound-toggle',
     'ludo-board',
     'game-screen-turn-banner',
   ]) {
@@ -14431,7 +14199,7 @@ void _expectChatClearOfHeader(
   for (final String keyName in const <String>[
     'game-screen-winner',
     'game-screen-appbar-leave',
-    'game-settings-button',
+    'game-sound-toggle',
   ]) {
     final Finder other = find.byKey(Key(keyName));
     expect(
@@ -15446,5 +15214,606 @@ Future<void> _shootRefusalReduced(
   } finally {
     await _releaseTrayGame(tester, controller);
     tester.platformDispatcher.clearAccessibilityFeaturesTestValue();
+  }
+}
+
+// --- order 526: the plain home and the one sound switch (C-523) -------------
+
+const String _plainTaglineEn =
+    'Every roll can be checked: independent random rolls, open source code.';
+const String _plainTaglineAr =
+    'كل رمية يمكن التحقق منها: رميات عشوائية مستقلة وكود مفتوح المصدر.';
+const String _playersQuestionEn = 'How many players?';
+const String _playersQuestionAr = 'كم لاعب؟';
+
+/// Keys C-523 removes from home (D1, D2, D7). None may be in the tree in any
+/// plain-home capture, offstage included.
+const List<String> _removedHomeKeys = <String>[
+  'home-players-disclosure',
+  'home-players-selector',
+  'home-rule-capture-bonus',
+  'home-house-rules',
+  'home-settings-button',
+  'feedback-settings-sheet',
+  'feedback-settings-haptics',
+  'feedback-settings-sound',
+];
+
+/// The icons D2 lets stand for "a check glyph" on the selected option; the
+/// contract names the role, not the IconData.
+const List<IconData> _menuCheckIcons = <IconData>[
+  Icons.check,
+  Icons.check_rounded,
+  Icons.check_circle,
+  Icons.check_circle_rounded,
+  Icons.check_circle_outline,
+  Icons.check_circle_outline_rounded,
+  Icons.done,
+  Icons.done_rounded,
+];
+
+/// Records what the game asked the feedback service to play, so a capture
+/// can say what a tap on the sound toggle did and did not play.
+class _CueLog implements FeedbackService {
+  final List<FeedbackCue> played = <FeedbackCue>[];
+
+  @override
+  void play(FeedbackCue cue) {
+    played.add(cue);
+  }
+}
+
+/// Home mounted directly in [locale], clean store, no seat record, system
+/// text scale 1.0 or [textScale]. Home only, so the trailing pumpAndSettle
+/// in _settleForScreenshot is safe (no LobbyScreen ticker exists yet).
+Future<void> _mountPlainHome(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  double? textScale,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+  if (textScale != null) {
+    tester.platformDispatcher.textScaleFactorTestValue = textScale;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  }
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+      locale: locale,
+    ),
+  );
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(HomeScreen)),
+  );
+  await _settleForScreenshot(
+    tester,
+    find.text(loc.homeCreateRoomButton),
+    'capture $shotName: the ${locale.languageCode} Create Room button label '
+    '("${loc.homeCreateRoomButton}") laid out on the home screen',
+  );
+  expect(
+    find.byKey(const Key('home-rejoin-button')),
+    findsNothing,
+    reason:
+        'capture $shotName: expected no home-rejoin-button on a home '
+        'mounted after clearing SharedPreferences; found one, so a seat '
+        'record survived the clear',
+  );
+}
+
+void _expectAtLeast48(WidgetTester tester, Finder finder, String label) {
+  final Size size = tester.getSize(finder);
+  expect(
+    size.width,
+    greaterThanOrEqualTo(48.0),
+    reason:
+        '$label must be at least 48 dp wide (C-523 D2/D7), is ${size.width}',
+  );
+  expect(
+    size.height,
+    greaterThanOrEqualTo(48.0),
+    reason:
+        '$label must be at least 48 dp high (C-523 D2/D7), is ${size.height}',
+  );
+}
+
+/// What a plain home says in every capture 99-104: no removed key, the one
+/// painted "players" being the row's label (en), the D5 tagline, the
+/// players control showing 4 by default at 48 x 48 or more, the sound
+/// toggle showing the speaker on at 48 x 48 or more, and Join only when
+/// [joinShown].
+void _expectPlainHome(
+  WidgetTester tester, {
+  required String shotName,
+  required Locale locale,
+  bool joinShown = false,
+}) {
+  final bool en = locale.languageCode == 'en';
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(HomeScreen)),
+  );
+
+  for (final String key in _removedHomeKeys) {
+    expect(
+      find.byKey(Key(key), skipOffstage: false),
+      findsNothing,
+      reason:
+          'capture $shotName: C-523 removes the key "$key" from home; it is '
+          'still in the tree',
+    );
+  }
+
+  final String question = en ? _playersQuestionEn : _playersQuestionAr;
+  expect(
+    loc.homePlayersQuestion,
+    question,
+    reason:
+        'capture $shotName: C-523 D9 homePlayersQuestion for '
+        '${locale.languageCode} is "$question", the arb says '
+        '"${loc.homePlayersQuestion}"',
+  );
+  expect(
+    find.text(question, skipOffstage: false),
+    findsOneWidget,
+    reason:
+        'capture $shotName: expected the row label "$question" painted '
+        'exactly once on home (C-523 D2, A1)',
+  );
+  if (en) {
+    expect(
+      find.textContaining('players', skipOffstage: false),
+      findsOneWidget,
+      reason:
+          'capture $shotName: C-523 D2/A1, the only painted "players" on '
+          'home is the row label "$question"; found '
+          '${find.textContaining('players', skipOffstage: false).evaluate().length}',
+    );
+  } else {
+    for (final String word in const <String>['لاعبين', 'لاعبان']) {
+      expect(
+        find.textContaining(word, skipOffstage: false),
+        findsNothing,
+        reason:
+            'capture $shotName: C-523 D2, "$word" is not painted anywhere '
+            'on home',
+      );
+    }
+  }
+  expect(
+    find.text(en ? _plainTaglineEn : _plainTaglineAr, skipOffstage: false),
+    findsOneWidget,
+    reason:
+        'capture $shotName: expected the D5 tagline '
+        '"${en ? _plainTaglineEn : _plainTaglineAr}" on home',
+  );
+
+  final Finder players = find.byKey(
+    const Key('home-players-button'),
+    skipOffstage: false,
+  );
+  expect(
+    players,
+    findsOneWidget,
+    reason: 'capture $shotName: expected home-players-button on home (D2)',
+  );
+  _expectAtLeast48(tester, players, 'capture $shotName: home-players-button');
+  final List<String> shown = tester
+      .widgetList<Text>(
+        find.descendant(
+          of: players,
+          matching: find.byType(Text, skipOffstage: false),
+        ),
+      )
+      .map((Text t) => (t.data ?? t.textSpan?.toPlainText() ?? '').trim())
+      .toList();
+  expect(
+    shown.any(const <String>['4', '٤'].contains),
+    isTrue,
+    reason:
+        'capture $shotName: C-523 D2, home-players-button reads 4 by '
+        'default; the Text under it read $shown',
+  );
+
+  final Finder sound = find.byKey(
+    const Key('home-sound-toggle'),
+    skipOffstage: false,
+  );
+  expect(
+    sound,
+    findsOneWidget,
+    reason: 'capture $shotName: expected home-sound-toggle on home (D7)',
+  );
+  _expectAtLeast48(tester, sound, 'capture $shotName: home-sound-toggle');
+  expect(
+    find.descendant(
+      of: sound,
+      matching: find.byIcon(Icons.volume_up_rounded, skipOffstage: false),
+    ),
+    findsOneWidget,
+    reason:
+        'capture $shotName: a fresh store is not muted, so home-sound-toggle '
+        'shows Icons.volume_up_rounded (D7, D8)',
+  );
+
+  expect(
+    find.byKey(const Key('join-room-button'), skipOffstage: false),
+    joinShown ? findsOneWidget : findsNothing,
+    reason:
+        'capture $shotName: C-523 D3, join-room-button is in the tree only '
+        'with a full-length code in the field; expected it '
+        '${joinShown ? 'present' : 'absent'}',
+  );
+}
+
+/// 99, 100: default state, the list at its top.
+Future<void> _shootHomePlain(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  await _mountPlainHome(tester, binding, shotName: shotName, locale: locale);
+
+  final ScrollableState? scroll = Scrollable.maybeOf(
+    tester.element(find.byKey(const Key('home-name-field'))),
+  );
+  expect(
+    scroll,
+    isNotNull,
+    reason:
+        'capture $shotName: expected home-name-field inside the home scroll '
+        'view',
+  );
+  expect(
+    scroll!.position.pixels,
+    0.0,
+    reason:
+        'capture $shotName: expected the home list at its top, it sits at '
+        '${scroll.position.pixels}',
+  );
+
+  _expectPlainHome(tester, shotName: shotName, locale: locale);
+  for (final (String key, String label) in const <(String, String)>[
+    ('home-players-button', 'home-players-button'),
+    ('home-sound-toggle', 'home-sound-toggle'),
+    ('create-room-button', 'create-room-button'),
+  ]) {
+    _expectRectInsideView(
+      tester,
+      find.byKey(Key(key)),
+      label: label,
+      context: 'on the plain home before capture $shotName',
+    );
+  }
+  await binding.takeScreenshot(shotName);
+}
+
+/// 101, 102: the players menu open over home-players-button, 4 selected.
+Future<void> _shootHomePlayersMenu(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  await _mountPlainHome(tester, binding, shotName: shotName, locale: locale);
+
+  await tester.tap(find.byKey(const Key('home-players-button')));
+  await tester.pump();
+  for (final int n in const <int>[2, 3, 4]) {
+    await _pumpUntilFound(
+      tester,
+      find.byKey(Key('home-players-option-$n')),
+      'capture $shotName: home-players-option-$n after a tap on '
+      'home-players-button',
+    );
+  }
+  await _settleForScreenshot(
+    tester,
+    find.byKey(const Key('home-players-option-4')),
+    'capture $shotName: home-players-option-4 laid out in the open menu',
+  );
+
+  _expectPlainHome(tester, shotName: shotName, locale: locale);
+  for (final int n in const <int>[2, 3, 4]) {
+    final Finder option = find.byKey(Key('home-players-option-$n'));
+    expect(
+      option,
+      findsOneWidget,
+      reason:
+          'capture $shotName: expected home-players-option-$n in the open '
+          'menu (C-523 D2)',
+    );
+    _expectRectInsideView(
+      tester,
+      option,
+      label: 'home-players-option-$n',
+      context: 'in the open players menu before capture $shotName',
+    );
+    final Finder check = find.descendant(
+      of: option,
+      matching: find.byWidgetPredicate(
+        (Widget w) => w is Icon && _menuCheckIcons.contains(w.icon),
+      ),
+    );
+    expect(
+      check,
+      n == 4 ? findsOneWidget : findsNothing,
+      reason:
+          'capture $shotName: C-523 D2, the current count (4) carries a '
+          'check glyph and no other option does; home-players-option-$n '
+          '${n == 4 ? 'has none' : 'has one'}',
+    );
+  }
+  await binding.takeScreenshot(shotName);
+}
+
+/// 103: six characters typed, Join in the tree.
+Future<void> _shootHomeJoinShown(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  await _mountPlainHome(tester, binding, shotName: shotName, locale: locale);
+
+  const String code = 'K7M2QP';
+  expect(
+    normalizeRoomCode(code).length,
+    roomCodeLength,
+    reason:
+        'capture $shotName fixture is broken: "$code" must be '
+        '$roomCodeLength characters once normalised',
+  );
+  expect(
+    find.byKey(const Key('join-room-button'), skipOffstage: false),
+    findsNothing,
+    reason:
+        'capture $shotName: C-523 D3, join-room-button is absent before a '
+        'code is typed',
+  );
+
+  await tester.enterText(find.byKey(const Key('room-code-field')), code);
+  await tester.pumpAndSettle();
+  // A store screenshot with the caret handle up shows the typing, not the
+  // screen; take focus off the field the way capture 14 does for the name.
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pump();
+  await tester.ensureVisible(find.byKey(const Key('join-room-button')));
+  await _settleForScreenshot(
+    tester,
+    find.byKey(const Key('join-room-button')),
+    'capture $shotName: join-room-button laid out after six characters',
+  );
+
+  _expectPlainHome(tester, shotName: shotName, locale: locale, joinShown: true);
+  final Finder field = find.descendant(
+    of: find.byKey(const Key('room-code-field')),
+    matching: find.byType(EditableText),
+  );
+  expect(
+    tester.widget<EditableText>(field).controller.text,
+    code,
+    reason:
+        'capture $shotName: expected room-code-field to still read "$code" '
+        'before the shot',
+  );
+  expect(
+    find.text('6 characters, letters and numbers', skipOffstage: false),
+    findsNothing,
+    reason: 'capture $shotName: C-523 D3, the field has no helper text',
+  );
+  _expectRectInsideView(
+    tester,
+    find.byKey(const Key('room-code-field')),
+    label: 'room-code-field',
+    context: 'with Join shown before capture $shotName',
+  );
+  _expectRectInsideView(
+    tester,
+    find.byKey(const Key('join-room-button')),
+    label: 'join-room-button',
+    context: 'with Join shown before capture $shotName',
+  );
+  await binding.takeScreenshot(shotName);
+}
+
+/// 104: system text scale 2.0, the players row scrolled onto the screen.
+Future<void> _shootHomeLargeText(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  await _mountPlainHome(
+    tester,
+    binding,
+    shotName: shotName,
+    locale: locale,
+    textScale: 2.0,
+  );
+
+  final double scaledTen = MediaQuery.textScalerOf(
+    tester.element(find.byType(HomeScreen)),
+  ).scale(10);
+  expect(
+    scaledTen,
+    20.0,
+    reason:
+        'capture $shotName: expected MediaQuery.textScalerOf at HomeScreen '
+        'to scale 10 to 20 under '
+        'tester.platformDispatcher.textScaleFactorTestValue = 2.0, got '
+        '$scaledTen',
+  );
+
+  await tester.ensureVisible(find.byKey(const Key('home-players-button')));
+  await tester.pumpAndSettle();
+
+  expect(
+    tester.takeException(),
+    isNull,
+    reason:
+        'capture $shotName: home laid out at text scale 2.0 without a '
+        'layout exception (${_viewText(tester)})',
+  );
+  _expectPlainHome(tester, shotName: shotName, locale: locale);
+  _expectRectInsideView(
+    tester,
+    find.byKey(const Key('home-players-button')),
+    label: 'home-players-button',
+    context: 'at text scale 2.0 before capture $shotName',
+  );
+  final Finder label = find.text(
+    locale.languageCode == 'en' ? _playersQuestionEn : _playersQuestionAr,
+  );
+  _expectRectInsideView(
+    tester,
+    label,
+    label: 'the players question',
+    context: 'at text scale 2.0 before capture $shotName',
+  );
+  final RenderParagraph paragraph = tester.renderObject<RenderParagraph>(label);
+  expect(
+    paragraph.didExceedMaxLines,
+    isFalse,
+    reason:
+        'capture $shotName: the players question is clipped at text scale '
+        '2.0 (${_viewText(tester)}); it exceeds its line limit',
+  );
+  await binding.takeScreenshot(shotName);
+}
+
+/// 105: the game header after one tap on game-sound-toggle.
+Future<void> _shootGameMuted(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final FeedbackSettings settings = FeedbackSettings.forTest();
+  final _CueLog cues = _CueLog();
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+      feedbackSettings: settings,
+      feedbackService: cues,
+    );
+    controller = opened.controller;
+
+    final Finder toggle = find.byKey(const Key('game-sound-toggle'));
+    expect(
+      toggle,
+      findsOneWidget,
+      reason: 'capture $shotName: expected game-sound-toggle in the header',
+    );
+    _expectAtLeast48(tester, toggle, 'capture $shotName: game-sound-toggle');
+    expect(
+      find.descendant(
+        of: toggle,
+        matching: find.byIcon(Icons.volume_up_rounded),
+      ),
+      findsOneWidget,
+      reason:
+          'capture $shotName: before the tap the game is not muted, so '
+          'game-sound-toggle shows Icons.volume_up_rounded (D7)',
+    );
+    expect(
+      settings.muted,
+      isFalse,
+      reason: 'capture $shotName: fixture is broken, settings start muted',
+    );
+    final int cuesBefore = cues.played.length;
+
+    await tester.tap(toggle);
+    await tester.pump();
+    await tester.pump();
+    await _pumpRealDurationFrames(tester);
+
+    expect(
+      settings.haptics,
+      isFalse,
+      reason: 'capture $shotName: one tap mutes, haptics must read false (D7)',
+    );
+    expect(
+      settings.sound,
+      isFalse,
+      reason: 'capture $shotName: one tap mutes, sound must read false (D7)',
+    );
+    expect(
+      cues.played.length,
+      cuesBefore,
+      reason:
+          'capture $shotName: C-523 D7, turning sound off plays nothing; '
+          'cues played after the tap: '
+          '${cues.played.sublist(cuesBefore)}',
+    );
+    expect(
+      find.descendant(
+        of: toggle,
+        matching: find.byIcon(Icons.volume_off_rounded),
+      ),
+      findsOneWidget,
+      reason:
+          'capture $shotName: after one tap game-sound-toggle shows the '
+          'crossed speaker, Icons.volume_off_rounded (D7)',
+    );
+    expect(
+      find.descendant(
+        of: toggle,
+        matching: find.byIcon(Icons.volume_up_rounded),
+      ),
+      findsNothing,
+      reason:
+          'capture $shotName: after one tap game-sound-toggle no longer '
+          'shows Icons.volume_up_rounded',
+    );
+    expect(
+      find.byKey(const Key('game-settings-button')),
+      findsNothing,
+      reason: 'capture $shotName: C-523 D7 removes game-settings-button',
+    );
+    _expectRectInsideView(
+      tester,
+      toggle,
+      label: 'game-sound-toggle',
+      context: 'in the game header before capture $shotName',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, got '
+          '${loc.localeName}',
+    );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
   }
 }

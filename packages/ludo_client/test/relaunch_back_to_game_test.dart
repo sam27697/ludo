@@ -1192,6 +1192,10 @@ void main() {
       _expectGoneNotice(tester, expected: _enGone, scenario: scenario);
 
       await tester.enterText(find.byKey(_codeKey), _otherCode);
+      // Join enters with a full code (C-523 D3), through a 200 ms
+      // AnimatedSize at most: let it reach its final rect before the tap.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
       await tester.ensureVisible(find.byKey(_joinKey));
       await tester.tap(find.byKey(_joinKey));
       await tester.pump();
@@ -1423,6 +1427,10 @@ void main() {
         await _mount(tester, _app(factory.call, locale: variant.locale));
 
         await tester.enterText(find.byKey(_codeKey), _otherCode);
+        // Join enters with a full code (C-523 D3), through a 200 ms
+        // AnimatedSize at most: let it reach its final rect before the tap.
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
         await tester.ensureVisible(find.byKey(_joinKey));
         await tester.tap(find.byKey(_joinKey));
         await tester.pump();

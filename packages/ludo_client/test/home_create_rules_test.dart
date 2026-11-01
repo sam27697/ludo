@@ -1,16 +1,16 @@
-// Widget-level conformance tests for order 202's Home rule toggles (Blocks,
-// Capture bonus) and the rules they must put on the wire, written from the
-// spec quoted verbatim in work/ludo/orders/201-prove-create-room-toggles.md
-// against no implementation of the switches, RoomToggles or the new ARB
-// getters this file's author has read. None of Key('home-rule-blocks'),
-// Key('home-rule-capture-bonus'), RoomToggles or homeRuleBlocks/
-// homeRuleCaptureBonus exists on the branch this file was written on.
+// Widget-level conformance tests for the rules Home puts on the create_room
+// wire (originally order 202's Home rule toggles, written from
+// work/ludo/orders/201-prove-create-room-toggles.md).
 //
-// T1 and T2 never tap Create or Join, so they pump the real LudoApp (its
-// locale toggle is what T1/T2 need to see both languages from one mount,
-// per the standing "one mount per test case" rule) and never touch a real
-// socket. T3-T8 all drive Create Room past its local validation, so each of
-// those pumps HomeScreen directly with an injected controllerFactory whose
+// C-523 D1 removed the rule control from home: every room is created with
+// const RoomToggles(), capture bonus on, and the client keeps sending the
+// rules field exactly as before. The cases that drove the toggle (T1, T2,
+// T5) went with it, and T7 and T8 now run with the default rules. T3 is
+// unchanged. T4 and T6 stay dropped, for the C-356 reasons recorded in the
+// comments below.
+//
+// Every case drives Create Room past its local validation, so each pumps
+// HomeScreen directly with an injected controllerFactory whose
 // connect function hands out a fresh FakeTransport per attempt (never a
 // real WebSocket), the same fixture idiom test/home_screen_test.dart
 // already uses for its own live-controller scenarios, extended here to
@@ -21,29 +21,7 @@
 // has already been closed once must never be reused as if it were still
 // open.
 //
-// Each test's name starts with its id (T1..T8), per the order.
-//
-// Amended for C-356 (the 10-15 rule ruling, work/ludo/orders/C-356-house-
-// rules-client.md): the Blocks switch (home-rule-blocks, _rulesBlocks) is
-// gone outright, not merely re-labelled. T1 needed no change: it already
-// only asserted both switches' absence while the disclosure is closed, which
-// still holds. T2's presence/value/title assertions for home-rule-blocks are
-// replaced with one absence assertion (findsNothing, disclosure open or not,
-// survives a locale toggle too); its capture-bonus assertions are unchanged.
-// T3, T7 and T8 are re-pointed: the rules map T3 checks drops the blocks key
-// entirely (exactly {capture_bonus: true} now, not {blocks, capture_bonus});
-// T7 and T8, which each needed *a* switch toggled off before Create to prove
-// something else (player-count survival, retry resending the same rules),
-// now toggle home-rule-capture-bonus instead of home-rule-blocks, since it is
-// the only switch left to toggle. T4 ("turning Blocks off...") and T6
-// ("turning both off...") are dropped rather than kept as degenerate
-// duplicates: every assertion either of them made was about the now-absent
-// Blocks switch or about the wire rules map once it was turned off, and the
-// per-assertion absence/re-pointed form of both collapses to content T2 and
-// the re-pointed T5 (turning the one remaining switch off) already prove
-// verbatim -- keeping them as separately named tests would only assert the
-// same thing twice under an old name. Flagged here as a judgement call, not
-// invented around silently.
+// Each test's name starts with its id (T3, T7, T8), per the order.
 
 import 'dart:convert';
 
@@ -59,12 +37,8 @@ import 'package:ludo_client/src/server_config.dart';
 
 import 'net/fake_transport.dart';
 
-const Key _disclosureKey = Key('home-players-disclosure');
-const Key _selectorKey = Key('home-players-selector');
-const Key _blocksSwitchKey = Key('home-rule-blocks');
-const Key _captureSwitchKey = Key('home-rule-capture-bonus');
+const Key _playersButtonKey = Key('home-players-button');
 const Key _createButtonKey = Key('create-room-button');
-const Key _localeToggleKey = Key('locale-toggle-button');
 const Key _retryButtonKey = Key('lobby-retry-button');
 
 /// Hands out a fresh [RoomController] on every call, each wired to a
@@ -140,27 +114,22 @@ LobbyScreen _pushedLobbyScreen(WidgetTester tester) {
   return tester.widget<LobbyScreen>(finder);
 }
 
-/// Opens the seat-count disclosure, which per the spec also reveals the two
-/// rule switches underneath the selector. Fails loudly if the disclosure or
-/// the selector it must reveal is not where every other test in this suite
-/// expects it.
-Future<void> _openPlayersDisclosure(WidgetTester tester) async {
-  final Finder disclosure = find.byKey(_disclosureKey);
+/// Picks [count] seats through the players menu (C-523 D2): a tap on
+/// home-players-button opens it, a tap on home-players-option-$count picks
+/// and closes it. Bounded pumps only: nothing here mounts a LobbyScreen yet.
+Future<void> _pickPlayers(WidgetTester tester, int count) async {
+  final Finder control = find.byKey(_playersButtonKey);
   expect(
-    disclosure,
+    control,
     findsOneWidget,
-    reason:
-        'home-players-disclosure must be on screen to open the '
-        'selector and the rule switches under it',
+    reason: 'home-players-button must be on screen to open the seat-count menu',
   );
-  await tester.ensureVisible(disclosure);
-  await tester.tap(disclosure);
-  await tester.pumpAndSettle();
-  expect(
-    find.byKey(_selectorKey),
-    findsOneWidget,
-    reason: 'tapping home-players-disclosure must reveal home-players-selector',
-  );
+  await tester.tap(control);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+  await tester.tap(find.byKey(Key('home-players-option-$count')));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
 }
 
 /// Every frame a [FakeTransport] has captured so far, decoded. Assumes every
@@ -212,176 +181,6 @@ Future<void> _drainPendingRequestTimeout(WidgetTester tester) async {
 
 void main() {
   testWidgets(
-    'T1: disclosure closed shows neither switch, and the closed label is '
-    'exactly the localised homePlayersDisclosureClosed, in English and in '
-    'Arabic',
-    (tester) async {
-      await tester.pumpWidget(const LudoApp());
-      await tester.pumpAndSettle();
-
-      expect(
-        find.byKey(_blocksSwitchKey),
-        findsNothing,
-        reason:
-            'the Blocks switch must not exist while the disclosure is '
-            'closed',
-      );
-      expect(
-        find.byKey(_captureSwitchKey),
-        findsNothing,
-        reason:
-            'the Capture bonus switch must not exist while the '
-            'disclosure is closed',
-      );
-
-      final AppLocalizations enLoc = AppLocalizations.of(
-        tester.element(find.byType(Scaffold)),
-      );
-      expect(
-        enLoc.homePlayersDisclosureClosed,
-        '4 players, standard rules',
-        reason:
-            'fixture is broken: order 202\'s spec pins this exact English '
-            'string for homePlayersDisclosureClosed',
-      );
-      expect(
-        find.text(enLoc.homePlayersDisclosureClosed),
-        findsOneWidget,
-        reason:
-            'the closed disclosure must show homePlayersDisclosureClosed '
-            'verbatim in English',
-      );
-
-      await tester.tap(find.byKey(_localeToggleKey));
-      await tester.pumpAndSettle();
-
-      expect(
-        find.byKey(_blocksSwitchKey),
-        findsNothing,
-        reason:
-            'the Blocks switch must still not exist after a locale '
-            'toggle, with the disclosure still closed',
-      );
-      expect(
-        find.byKey(_captureSwitchKey),
-        findsNothing,
-        reason:
-            'the Capture bonus switch must still not exist after a '
-            'locale toggle, with the disclosure still closed',
-      );
-
-      final AppLocalizations arLoc = AppLocalizations.of(
-        tester.element(find.byType(Scaffold)),
-      );
-      expect(
-        arLoc.homePlayersDisclosureClosed,
-        '4 لاعبين، القواعد العادية',
-        reason:
-            'fixture is broken: order 202\'s spec pins this exact Arabic '
-            'string for homePlayersDisclosureClosed',
-      );
-      expect(
-        find.text(arLoc.homePlayersDisclosureClosed),
-        findsOneWidget,
-        reason:
-            'the closed disclosure must show homePlayersDisclosureClosed '
-            'verbatim in Arabic',
-      );
-    },
-  );
-
-  testWidgets(
-    'T2: disclosure opened shows no Blocks switch at all and the Capture '
-    'bonus switch on by default with its localised title, in English and in '
-    'Arabic (Directionality rtl)',
-    (tester) async {
-      await tester.pumpWidget(const LudoApp());
-      await tester.pumpAndSettle();
-
-      await _openPlayersDisclosure(tester);
-
-      final Finder blocksSwitch = find.byKey(_blocksSwitchKey);
-      final Finder captureSwitch = find.byKey(_captureSwitchKey);
-      expect(
-        blocksSwitch,
-        findsNothing,
-        reason:
-            'C-356: home-rule-blocks must not exist anywhere on home, '
-            'including with the disclosure open',
-      );
-      expect(
-        captureSwitch,
-        findsOneWidget,
-        reason: 'opening the disclosure must reveal home-rule-capture-bonus',
-      );
-
-      expect(
-        tester.widget<HomeRuleToggle>(captureSwitch).value,
-        isTrue,
-        reason: 'Capture bonus must be on when Home first builds',
-      );
-
-      final AppLocalizations enLoc = AppLocalizations.of(
-        tester.element(find.byType(Scaffold)),
-      );
-      expect(
-        find.descendant(
-          of: captureSwitch,
-          matching: find.text(enLoc.homeRuleCaptureBonus),
-        ),
-        findsOneWidget,
-        reason:
-            'the Capture bonus switch title must read the localised '
-            'homeRuleCaptureBonus string in English',
-      );
-
-      await tester.tap(find.byKey(_localeToggleKey));
-      await tester.pumpAndSettle();
-
-      expect(
-        blocksSwitch,
-        findsNothing,
-        reason:
-            'C-356: home-rule-blocks must still not exist after a locale '
-            'toggle, with the disclosure still open',
-      );
-      expect(
-        captureSwitch,
-        findsOneWidget,
-        reason:
-            'the Capture bonus switch must survive a locale toggle '
-            'without the disclosure re-closing',
-      );
-      expect(
-        tester.widget<HomeRuleToggle>(captureSwitch).value,
-        isTrue,
-        reason: 'Capture bonus must still read on after a locale toggle alone',
-      );
-
-      final AppLocalizations arLoc = AppLocalizations.of(
-        tester.element(find.byType(Scaffold)),
-      );
-      expect(
-        find.descendant(
-          of: captureSwitch,
-          matching: find.text(arLoc.homeRuleCaptureBonus),
-        ),
-        findsOneWidget,
-        reason:
-            'the Capture bonus switch title must read the localised '
-            'homeRuleCaptureBonus string in Arabic',
-      );
-      expect(
-        Directionality.of(tester.element(captureSwitch)),
-        TextDirection.rtl,
-        reason:
-            'the ambient Directionality over the switch must be rtl '
-            'once Arabic is the active locale',
-      );
-    },
-  );
-
-  testWidgets(
     'T3: tapping Create with the switch at its default sends rules with '
     'exactly capture_bonus true, no blocks key and no turn_seconds key',
     (tester) async {
@@ -420,73 +219,29 @@ void main() {
   // exists for anything to tap. Collapsed into T2's absence check plus T3's
   // default-rules case; see the file header for the full note.
 
-  testWidgets('T5: turning Capture bonus off before Create sends exactly '
-      'capture_bonus false, no blocks key', (tester) async {
-    final _LiveControllerFactory factory = _LiveControllerFactory();
-    await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
-    await tester.pumpAndSettle();
-
-    await _openPlayersDisclosure(tester);
-    await tester.tap(find.byKey(_captureSwitchKey));
-    await tester.pump();
-    expect(
-      tester.widget<HomeRuleToggle>(find.byKey(_captureSwitchKey)).value,
-      isFalse,
-      reason:
-          'fixture is broken: tapping home-rule-capture-bonus must '
-          'turn it off before Create is even tapped',
-    );
-
-    await _tapAndAwaitPushedRoute(tester, _createButtonKey);
-
-    final Map<String, Object?> rules = _singleCreateRoomRules(
-      factory.transports.single,
-    );
-    expect(rules, equals(<String, Object?>{'capture_bonus': false}));
-
-    await _drainPendingRequestTimeout(tester);
-  });
-
   // T6 ("turning both Blocks and Capture bonus off...") is dropped for the
   // same reason as T4: with only one switch left, "both off" is identical to
   // T5's "the one switch off", and keeping it would assert the same wire
   // content twice under a name that no longer describes two switches.
 
   testWidgets(
-    'T7: the toggle survives changing the player count: Capture bonus off, '
-    'then 2 players, then Create sends players 2 and capture_bonus false',
+    'T7: the chosen player count reaches the wire: 2 players, then Create '
+    'sends players 2 and the default rules',
     (tester) async {
       final _LiveControllerFactory factory = _LiveControllerFactory();
       await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
       await tester.pumpAndSettle();
 
-      await _openPlayersDisclosure(tester);
-      await tester.tap(find.byKey(_captureSwitchKey));
-      await tester.pump();
-
-      final AppLocalizations loc = AppLocalizations.of(
-        tester.element(find.byType(Scaffold)),
-      );
-      await tester.tap(
-        find.descendant(
-          of: find.byKey(_selectorKey),
-          matching: find.text(loc.homePlayersTwo),
-        ),
-      );
-      await tester.pump();
-      final SegmentedButton<int> segmented = tester
-          .widget<SegmentedButton<int>>(
-            find.descendant(
-              of: find.byKey(_selectorKey),
-              matching: find.byType(SegmentedButton<int>),
-            ),
-          );
+      await _pickPlayers(tester, 2);
       expect(
-        segmented.selected,
-        <int>{2},
+        find.descendant(
+          of: find.byKey(_playersButtonKey),
+          matching: find.text('2'),
+        ),
+        findsOneWidget,
         reason:
-            'fixture is broken: selecting 2 must select it before '
-            'Create Room is even tapped',
+            'fixture is broken: picking 2 must show 2 on home-players-button '
+            'before Create Room is even tapped',
       );
 
       await _tapAndAwaitPushedRoute(tester, _createButtonKey);
@@ -494,9 +249,7 @@ void main() {
       expect(
         _pushedLobbyScreen(tester).players,
         2,
-        reason:
-            'the chosen player count must still reach LobbyScreen after '
-            'Capture bonus was toggled off',
+        reason: 'the chosen player count must still reach LobbyScreen',
       );
 
       final List<Map<String, Object?>> sent = _decodeSent(
@@ -518,10 +271,10 @@ void main() {
       );
       expect(
         rules['capture_bonus'],
-        isFalse,
+        isTrue,
         reason:
-            'Capture bonus toggled off before Create must still read false '
-            'on the wire after changing the player count',
+            'C-523 D1: every room is created with capture bonus on, so the '
+            'wire must read true after changing the player count',
       );
 
       await _drainPendingRequestTimeout(tester);
@@ -530,15 +283,11 @@ void main() {
 
   testWidgets(
     'T8: Retry after a failed create resends the same rules the first '
-    'attempt did, with Capture bonus off going in',
+    'attempt did',
     (tester) async {
       final _LiveControllerFactory factory = _LiveControllerFactory();
       await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
       await tester.pumpAndSettle();
-
-      await _openPlayersDisclosure(tester);
-      await tester.tap(find.byKey(_captureSwitchKey));
-      await tester.pump();
 
       await _tapAndAwaitPushedRoute(tester, _createButtonKey);
 
@@ -560,11 +309,11 @@ void main() {
           firstData['rules']! as Map<String, Object?>;
       expect(
         firstRules,
-        equals(<String, Object?>{'capture_bonus': false}),
+        equals(<String, Object?>{'capture_bonus': true}),
         reason:
-            'fixture is broken: the first create_room must already carry '
-            'Capture bonus off, or this test proves nothing about Retry '
-            'preserving it',
+            'fixture is broken: the first create_room must carry the '
+            'default rules (C-523 D1), or this test proves nothing about '
+            'Retry preserving them',
       );
 
       firstTransport.pushText(
@@ -620,7 +369,7 @@ void main() {
       );
       expect(
         secondData['rules'],
-        equals(<String, Object?>{'capture_bonus': false}),
+        equals(<String, Object?>{'capture_bonus': true}),
       );
 
       await _drainPendingRequestTimeout(tester);

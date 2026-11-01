@@ -461,59 +461,60 @@ void main() {
       expect(settings.sound, isTrue);
     });
 
-    test(
-      'feedback.haptics=false gives haptics false, sound still true',
-      () async {
-        SharedPreferences.setMockInitialValues(<String, Object>{
-          'feedback.haptics': false,
-        });
-        final settings = await FeedbackSettings.load();
-        expect(settings.haptics, isFalse);
-        expect(settings.sound, isTrue);
-      },
-    );
-
-    test(
-      'feedback.sound=false gives sound false, haptics still true',
-      () async {
-        SharedPreferences.setMockInitialValues(<String, Object>{
-          'feedback.sound': false,
-        });
-        final settings = await FeedbackSettings.load();
-        expect(settings.sound, isFalse);
-        expect(settings.haptics, isTrue);
-      },
-    );
-
-    test('setting sound=false persists: a second load() reads false, and '
-        'notifies listeners exactly once', () async {
+    test('feedback.haptics=false alone gives haptics true and sound true '
+        '(C-523 D8: only both false starts muted)', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'feedback.haptics': false,
+      });
       final settings = await FeedbackSettings.load();
-      var notifications = 0;
-      settings.addListener(() => notifications += 1);
-
-      settings.sound = false;
-      expect(
-        notifications,
-        1,
-        reason:
-            'assigning settings.sound must notify listeners exactly '
-            'once; got $notifications',
-      );
-
-      await pumpEventQueue();
-
-      final relaunched = await FeedbackSettings.load();
-      expect(
-        relaunched.sound,
-        isFalse,
-        reason:
-            'a later FeedbackSettings.load() must read the sound=false '
-            'written by the previous instance\'s setter',
-      );
+      expect(settings.haptics, isTrue);
+      expect(settings.sound, isTrue);
     });
 
-    test('setting haptics=false persists: a second load() reads false, and '
-        'notifies listeners exactly once', () async {
+    test('feedback.sound=false alone gives sound true and haptics true '
+        '(C-523 D8: only both false starts muted)', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'feedback.sound': false,
+      });
+      final settings = await FeedbackSettings.load();
+      expect(settings.sound, isTrue);
+      expect(settings.haptics, isTrue);
+    });
+
+    test(
+      'setting sound=false notifies listeners exactly once, and a second '
+      'load() reads both on because only one key is false (C-523 D8)',
+      () async {
+        final settings = await FeedbackSettings.load();
+        var notifications = 0;
+        settings.addListener(() => notifications += 1);
+
+        settings.sound = false;
+        expect(
+          notifications,
+          1,
+          reason:
+              'assigning settings.sound must notify listeners exactly '
+              'once; got $notifications',
+        );
+
+        await pumpEventQueue();
+
+        final relaunched = await FeedbackSettings.load();
+        expect(
+          relaunched.sound,
+          isTrue,
+          reason:
+              'a later FeedbackSettings.load() sees only feedback.sound=false '
+              'stored, which D8 reads as not muted, so sound starts on',
+        );
+        expect(relaunched.haptics, isTrue);
+      },
+    );
+
+    test('setting haptics=false notifies listeners exactly once, and a '
+        'second load() reads both on because only one key is false '
+        '(C-523 D8)', () async {
       final settings = await FeedbackSettings.load();
       var notifications = 0;
       settings.addListener(() => notifications += 1);
@@ -524,7 +525,8 @@ void main() {
       await pumpEventQueue();
 
       final relaunched = await FeedbackSettings.load();
-      expect(relaunched.haptics, isFalse);
+      expect(relaunched.haptics, isTrue);
+      expect(relaunched.sound, isTrue);
     });
   });
 

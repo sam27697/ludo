@@ -1,12 +1,12 @@
 // Conformance tests for work/ludo/orders/C-335-lobby-settings-entry.md,
-// rules 1 and 2: `lobby-settings-button` in the lobby's chrome row
-// (lib/src/lobby_screen.dart, the SizedBox(height: 48) Stack that already
-// holds game-seat-pip-strip and lobby-leave-button), built in parallel by
-// order 335, in a tree this file's author has not read. `lobby-settings-
-// button` does not exist on this branch's base (origin/main 2830ed7), so
-// every case below that looks for it is expected to fail here, on "found 0
-// widgets" or the equivalent, never on anything else. This file never
-// builds a stub of the button: that is left for 335's own hand.
+// carried over to C-523 D7 (this file was lobby_settings_button_test.dart):
+// `lobby-sound-toggle` in the lobby's chrome row (lib/src/lobby_screen.dart,
+// the SizedBox(height: 48) Stack that already holds game-seat-pip-strip and
+// lobby-leave-button) replaced the settings button and its sheet. Rule 1
+// (size, tooltip, mirrored placement, pip strip centred, present in the
+// stale state) now measures the toggle. The cases that opened the sheet are
+// gone with the sheet; the same-instance and not-cached cases are driven by
+// the toggle instead.
 //
 // LobbyScreen is driven the way test/lobby_leave_corner_test.dart and
 // test/lobby_signature_chrome_test.dart drive it: a real RoomController
@@ -14,18 +14,16 @@
 // small connector double copied by hand from that shared idiom, per this
 // project's standing instruction never to import across test files. The
 // FeedbackScope harness (settings + service passed down to a screen built
-// directly, without LudoApp) is the same idiom test/feedback_settings_sheet
-// _test.dart's own Home and Game harnesses use, so a case can pin an exact
-// FeedbackSettings instance without racing FeedbackSettings.load()'s
-// SharedPreferences read, and so rule 2 ("same object") is something this
-// file can actually hold a reference to and inspect.
+// directly, without LudoApp) lets a case pin an exact FeedbackSettings
+// instance without racing FeedbackSettings.load()'s SharedPreferences read,
+// and so rule 2 ("same object") is something this file can actually hold a
+// reference to and inspect.
 //
 // One LobbyScreen mount per case. No pumpAndSettle once a LobbyScreen is
 // mounted (it may run a live countdown); every pump after that point is a
-// bounded one, the same bounded pumps test/feedback_settings_sheet_test.dart
-// uses for a bottom sheet's enter/exit transition (250ms + 50ms margin).
-// Every controller is disposed in the test body itself (a try/finally),
-// never only through addTearDown, per this order's own instruction.
+// bounded one. Every controller is disposed in the test body itself (a
+// try/finally), never only through addTearDown, per this order's own
+// instruction.
 //
 // Ambiguities, reported rather than invented around:
 //
@@ -66,17 +64,14 @@ import 'net/fake_transport.dart';
 
 // --- shared keys -------------------------------------------------------
 
-const Key _settingsButtonKey = Key('lobby-settings-button');
+const Key _settingsButtonKey = Key('lobby-sound-toggle');
 const Key _leaveKey = Key('lobby-leave-button');
 const Key _pipStripKey = Key('game-seat-pip-strip');
 const Key _staleRoomKey = Key('lobby-stale-room');
-const Key _sheetKey = Key('feedback-settings-sheet');
-const Key _soundSwitchKey = Key('feedback-settings-sound');
-
 const String _tooltipEn = 'Sound and vibration';
 const String _tooltipAr = 'الصوت والاهتزاز';
 
-const String _testUrl = 'wss://lobby-settings-button-test.invalid/ws';
+const String _testUrl = 'wss://lobby-sound-toggle-test.invalid/ws';
 
 // --- wire helpers, copied by hand from the sibling lobby suites' own
 // --- idiom, per this project's standing instruction never to import
@@ -326,31 +321,11 @@ Future<(RoomController, FakeTransport)> _mountGuestLobby(
   return (controller, transport);
 }
 
-/// Taps [buttonKey] and pumps just long enough for the modal bottom sheet's
-/// 250ms enter transition to finish. No pumpAndSettle, per this file's own
-/// header.
-Future<void> _openSheet(WidgetTester tester, Key buttonKey) async {
-  await tester.tap(find.byKey(buttonKey));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 250));
-  await tester.pump(const Duration(milliseconds: 50));
-}
-
-/// Pops the sheet's own route and pumps just long enough for its exit
-/// transition to finish.
-Future<void> _closeSheet(WidgetTester tester) async {
-  final BuildContext context = tester.element(find.byKey(_sheetKey));
-  Navigator.of(context).pop();
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 250));
-  await tester.pump(const Duration(milliseconds: 50));
-}
-
 void main() {
   // ==========================================================================
   // Rule 1: the connected lobby entry, host and guest, en and ar.
   // ==========================================================================
-  group('rule 1: lobby-settings-button, connected lobby', () {
+  group('rule 1: lobby-sound-toggle, connected lobby', () {
     testWidgets(
       'host, en: exists, >=48x48, tooltip "Sound and vibration", sits '
       'right of lobby-leave-button, same centre y, pip strip stays centred',
@@ -377,28 +352,27 @@ void main() {
             button,
             findsOneWidget,
             reason:
-                'lobby-settings-button must exist in the connected host '
+                'lobby-sound-toggle must exist in the connected host '
                 'lobby',
           );
           final Size size = tester.getSize(button);
           expect(
             size.width,
             greaterThanOrEqualTo(48.0),
-            reason:
-                'lobby-settings-button width must be >=48, was ${size.width}',
+            reason: 'lobby-sound-toggle width must be >=48, was ${size.width}',
           );
           expect(
             size.height,
             greaterThanOrEqualTo(48.0),
             reason:
-                'lobby-settings-button height must be >=48, was '
+                'lobby-sound-toggle height must be >=48, was '
                 '${size.height}',
           );
           expect(
             find.descendant(of: button, matching: find.byTooltip(_tooltipEn)),
             findsOneWidget,
             reason:
-                'lobby-settings-button must carry the tooltip "$_tooltipEn" '
+                'lobby-sound-toggle must carry the tooltip "$_tooltipEn" '
                 '(settingsTooltip, en)',
           );
 
@@ -410,7 +384,7 @@ void main() {
             settingsCentre.dx,
             greaterThan(leaveCentre.dx),
             reason:
-                'en: lobby-settings-button centre x (${settingsCentre.dx}) '
+                'en: lobby-sound-toggle centre x (${settingsCentre.dx}) '
                 'must sit right of lobby-leave-button centre x '
                 '(${leaveCentre.dx})',
           );
@@ -418,7 +392,7 @@ void main() {
             (settingsCentre.dy - leaveCentre.dy).abs(),
             lessThanOrEqualTo(1.0),
             reason:
-                'lobby-settings-button centre y (${settingsCentre.dy}) must '
+                'lobby-sound-toggle centre y (${settingsCentre.dy}) must '
                 'equal lobby-leave-button centre y (${leaveCentre.dy}) '
                 'within 1 logical pixel',
           );
@@ -434,7 +408,7 @@ void main() {
             reason:
                 'game-seat-pip-strip centre x ($pipCentre) must still equal '
                 'the screen centre x ($screenMid) within 1 logical pixel '
-                'once lobby-settings-button is added',
+                'once lobby-sound-toggle is added',
           );
         } finally {
           controller.dispose();
@@ -466,7 +440,7 @@ void main() {
             find.descendant(of: button, matching: find.byTooltip(_tooltipAr)),
             findsOneWidget,
             reason:
-                'lobby-settings-button must carry the tooltip "$_tooltipAr" '
+                'lobby-sound-toggle must carry the tooltip "$_tooltipAr" '
                 '(settingsTooltip, ar) under Locale(ar)',
           );
 
@@ -478,7 +452,7 @@ void main() {
             settingsX,
             lessThan(leaveX),
             reason:
-                'ar: lobby-settings-button centre x ($settingsX) must sit '
+                'ar: lobby-sound-toggle centre x ($settingsX) must sit '
                 'left of lobby-leave-button centre x ($leaveX)',
           );
         } finally {
@@ -508,7 +482,7 @@ void main() {
             button,
             findsOneWidget,
             reason:
-                'lobby-settings-button must exist in the connected guest '
+                'lobby-sound-toggle must exist in the connected guest '
                 'lobby, not only the host\'s',
           );
           final Size size = tester.getSize(button);
@@ -523,7 +497,7 @@ void main() {
             settingsX,
             greaterThan(leaveX),
             reason:
-                'en: guest lobby-settings-button centre x ($settingsX) '
+                'en: guest lobby-sound-toggle centre x ($settingsX) '
                 'must sit right of lobby-leave-button centre x ($leaveX)',
           );
         } finally {
@@ -558,7 +532,7 @@ void main() {
             settingsX,
             lessThan(leaveX),
             reason:
-                'ar: guest lobby-settings-button centre x ($settingsX) '
+                'ar: guest lobby-sound-toggle centre x ($settingsX) '
                 'must sit left of lobby-leave-button centre x ($leaveX)',
           );
         } finally {
@@ -572,10 +546,10 @@ void main() {
   // Rule 1, item 2: the stale lobby (room held, socket down) keeps the
   // button too.
   // ==========================================================================
-  group('rule 1: lobby-settings-button, stale lobby', () {
+  group('rule 1: lobby-sound-toggle, stale lobby', () {
     testWidgets(
       'a dropped socket with a room held (lobby_stale_room_test.dart\'s own '
-      'recipe) still shows lobby-settings-button, outside the dimmed '
+      'recipe) still shows lobby-sound-toggle, outside the dimmed '
       'wrapper',
       // Catches: the button built only inside the `connected` branch of
       // `if (connected || stale)` rather than both, which would strand a
@@ -609,14 +583,14 @@ void main() {
             button,
             findsOneWidget,
             reason:
-                'lobby-settings-button must still be present once the '
+                'lobby-sound-toggle must still be present once the '
                 'lobby goes stale',
           );
           expect(
             find.descendant(of: find.byKey(_staleRoomKey), matching: button),
             findsNothing,
             reason:
-                'lobby-settings-button must sit outside the dimmed '
+                'lobby-sound-toggle must sit outside the dimmed '
                 'lobby-stale-room wrapper, so it stays tappable while '
                 'stale, exactly as lobby-leave-button already does',
           );
@@ -628,48 +602,18 @@ void main() {
   });
 
   // ==========================================================================
-  // Rule 2: no new sheet, no new row, no copy of the switches -- the same
-  // FeedbackSettings the FeedbackScope above the lobby already holds.
+  // The toggle writes the FeedbackSettings the FeedbackScope above the lobby
+  // holds, and the effect is immediate, never cached, from the lobby entry.
   // ==========================================================================
-  group('rule 2: same sheet, same settings', () {
+  group('rule 2: same settings, from the lobby', () {
     testWidgets(
-      'tapping lobby-settings-button shows feedback-settings-sheet',
-      // Catches: the button present but wired to nothing (onPressed never
-      // calls showFeedbackSettingsSheet).
-      (tester) async {
-        final (RoomController controller, _) = await _mountHostLobby(
-          tester,
-          settings: FeedbackSettings.forTest(),
-        );
-        try {
-          expect(
-            find.byKey(_sheetKey),
-            findsNothing,
-            reason: 'fixture is broken',
-          );
-          await _openSheet(tester, _settingsButtonKey);
-          expect(
-            find.byKey(_sheetKey),
-            findsOneWidget,
-            reason:
-                'tapping lobby-settings-button must show '
-                'feedback-settings-sheet',
-          );
-        } finally {
-          controller.dispose();
-        }
-      },
-    );
-
-    testWidgets(
-      'tapping feedback-settings-sound in the sheet opened from the lobby '
-      'flips the same FeedbackSettings instance the FeedbackScope above '
-      'the lobby holds',
-      // Catches: the sheet (or the lobby's own call site) building a fresh
+      'tapping lobby-sound-toggle flips the same FeedbackSettings instance '
+      'the FeedbackScope above the lobby holds',
+      // Catches: the control (or the lobby's own call site) building a fresh
       // FeedbackSettings instead of reading FeedbackScope.settingsOf(context)
-      // -- if it did, the switch would still flip visually but this test's
-      // own `settings.sound` reference, the one object the FeedbackScope
-      // above this LobbyScreen actually holds, would stay unchanged.
+      // -- if it did, the icon would still flip visually but this test's
+      // own `settings` reference, the one object the FeedbackScope above
+      // this LobbyScreen actually holds, would stay unchanged.
       (tester) async {
         final FeedbackSettings settings = FeedbackSettings.forTest(
           haptics: true,
@@ -680,29 +624,31 @@ void main() {
           settings: settings,
         );
         try {
-          await _openSheet(tester, _settingsButtonKey);
-
-          await tester.tap(find.byKey(_soundSwitchKey));
+          await tester.tap(find.byKey(_settingsButtonKey));
           await tester.pump();
 
           expect(
             settings.sound,
             isFalse,
             reason:
-                'tapping feedback-settings-sound from the lobby-opened '
-                'sheet must flip the FeedbackScope\'s own settings.sound '
-                'to false through the existing setter; it is still '
-                '${settings.sound}',
-          );
-          final Switch soundSwitch = tester.widget<Switch>(
-            find.byKey(_soundSwitchKey),
+                'tapping lobby-sound-toggle must flip the FeedbackScope\'s '
+                'own settings.sound to false; it is still ${settings.sound}',
           );
           expect(
-            soundSwitch.value,
+            settings.haptics,
             isFalse,
             reason:
-                'feedback-settings-sound must show the new value (false) '
-                'at once; it still shows ${soundSwitch.value}',
+                'tapping lobby-sound-toggle must flip the FeedbackScope\'s '
+                'own settings.haptics to false; it is still '
+                '${settings.haptics}',
+          );
+          expect(
+            find.descendant(
+              of: find.byKey(_settingsButtonKey),
+              matching: find.byIcon(Icons.volume_off_rounded),
+            ),
+            findsOneWidget,
+            reason: 'lobby-sound-toggle must show the muted icon at once',
           );
         } finally {
           controller.dispose();
@@ -712,17 +658,18 @@ void main() {
   });
 
   // ==========================================================================
-  // Rule 2's effect is immediate, never cached, from the lobby entry too.
+  // The effect is immediate, never cached, from the lobby entry too.
   // ==========================================================================
   group('rule 2: the effect is immediate, not cached, from the lobby', () {
     testWidgets(
-      'switching Sound off in the sheet opened from the lobby, then '
-      'closing it, makes the next cue call haptic only, never sound',
-      // Catches: the service reading settings.sound once at construction
+      'muting with lobby-sound-toggle makes the next cue call neither '
+      'haptic nor sound',
+      // Catches: the service reading the flags once at construction
       // instead of at play() time, so a switch flipped from the lobby's
       // own entry would have no effect until the app restarts -- the same
       // caching mutation C-329's rule-5 test catches from the game screen,
-      // proven here from the lobby's own entry point instead.
+      // proven here from the lobby's own entry point instead. C-523 D7: the
+      // one toggle mutes both channels, so the old haptic-only call is gone.
       (tester) async {
         final List<MethodCall> calls = <MethodCall>[];
         const MethodChannel channel = MethodChannel('app.fayad.ludo/feedback');
@@ -754,15 +701,13 @@ void main() {
           service: service,
         );
         try {
-          await _openSheet(tester, _settingsButtonKey);
-          await tester.tap(find.byKey(_soundSwitchKey));
+          await tester.tap(find.byKey(_settingsButtonKey));
           await tester.pump();
           expect(
-            settings.sound,
-            isFalse,
-            reason: 'fixture is broken: the sound switch must have flipped off',
+            settings.muted,
+            isTrue,
+            reason: 'fixture is broken: one tap on the toggle must mute',
           );
-          await _closeSheet(tester);
 
           service.play(FeedbackCue.yourTurn);
           await tester.runAsync(() => pumpEventQueue());
@@ -770,18 +715,17 @@ void main() {
 
           expect(
             calls.where((MethodCall c) => c.method == 'haptic').length,
-            1,
+            0,
             reason:
-                'with sound switched off from the lobby entry and haptics '
-                'still on, the next cue must still make exactly one '
-                'haptic call; got $calls',
+                'with the toggle muted from the lobby entry, the next cue '
+                'must make no haptic call; got $calls',
           );
           expect(
             calls.where((MethodCall c) => c.method == 'sound').length,
             0,
             reason:
-                'with sound switched off from the lobby entry, the next '
-                'cue must make no sound call at all; got $calls',
+                'with the toggle muted from the lobby entry, the next cue '
+                'must make no sound call; got $calls',
           );
         } finally {
           controller.dispose();

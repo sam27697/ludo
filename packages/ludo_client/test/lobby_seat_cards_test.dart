@@ -901,7 +901,8 @@ void main() {
     // to read an icon or a strike from.
 
     testWidgets(
-      'capture bonus on: lobby-rule-capture-bonus-chip shows no strike',
+      'capture bonus on: no lobby-rule-capture-bonus-chip for a default room '
+      '(C-523 D6)',
       (tester) async {
         await _mountConnectedLobby(
           tester,
@@ -911,21 +912,12 @@ void main() {
           seats: oneSeat(),
           captureBonus: true,
         );
-        final IconData onIcon = _iconInChip(
-          tester,
-          'lobby-rule-capture-bonus-chip',
-        );
-        final bool onHasStrike = _hasStrikeInChip(
-          tester,
-          'lobby-rule-capture-bonus-chip',
-        );
         expect(
-          onHasStrike,
-          isFalse,
+          find.byKey(const Key('lobby-rule-capture-bonus-chip')),
+          findsNothing,
           reason:
-              'amendment run 72 rule 8: lobby-rule-capture-bonus-chip must '
-              'show no strike while capture bonus is on; icon read was '
-              '$onIcon',
+              'C-523 D6: a room with the default rules shows no rule chip, '
+              'so there is no strike to look for either',
         );
       },
     );

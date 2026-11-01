@@ -81,11 +81,14 @@ const String _kCode = 'K7M2QP';
 const int _kSeat = 2;
 const String _kToken = 'tok-home-notice-001';
 
-// Create Room's top edge on the base commit (integrate/run107-relaunch at
-// 9daed5b), no notice, no stored seat, locale en, the default 800 x 600 test
-// surface. Measured by running the N8 case on that commit: the first run
-// printed "create-room-button top is 330.0".
-const double _kCreateTopOnBase = 330.0;
+// Create Room's top edge with no notice, no stored seat, locale en, the
+// default 800 x 600 test surface. It was 330.0 on integrate/run107-relaunch at
+// 9daed5b; C-523 replaced the players disclosure, the rule card and the house
+// rules line with one question row and changed the tagline (D1, D2, D5), and
+// the first run on integrate/run123 30fa383 printed "create-room-button top
+// is 382.0". The cases still compare against this one measured value, and
+// N8b still compares the dismissed-notice layout against it.
+const double _kCreateTopOnBase = 382.0;
 
 enum _Notice { removed, gone }
 
@@ -1182,7 +1185,7 @@ void main() {
         _kCreateTopOnBase,
         reason:
             '$scenario: create-room-button top is $top; on the base commit '
-            '(9daed5b) it is $_kCreateTopOnBase',
+            '(re-measured at 30fa383 for C-523) it is $_kCreateTopOnBase',
       );
     });
   });

@@ -165,23 +165,27 @@ bool _fullyInView(Rect rect, double viewHeight) =>
     rect.top >= 0 && rect.bottom <= viewHeight;
 
 /// The fixture check every case in this file runs before delivering its
-/// link: join-room-button must not already be fully in the viewport, or
-/// the case that follows measures nothing (this order's own requirement).
+/// link. Join is in the tree only once a full code is in the field (C-523
+/// D3), so before the link it cannot be measured; it always sits below
+/// room-code-field, so the field itself not being fully in the viewport
+/// puts the button below the fold as well (measured at the surface below:
+/// the field at 464..516 of 420, Join at 524..572 once a code is typed).
+/// Without this, the case that follows measures nothing.
 void _expectButtonBelowFold(WidgetTester tester, String caseId) {
-  final Rect rect = tester.getRect(find.byKey(const Key('join-room-button')));
+  final Rect rect = tester.getRect(find.byKey(const Key('room-code-field')));
   final double viewHeight = _viewHeight(tester);
   expect(
     _fullyInView(rect, viewHeight),
     isFalse,
     reason:
-        '$caseId fixture check: join-room-button must not already be fully '
-        'in view before any link is delivered, or this case measures '
-        'nothing; got rect $rect against a viewport $viewHeight logical '
-        'pixels tall. This file mounts at $_kSurfaceSize (devicePixelRatio '
-        '$_kSurfaceDevicePixelRatio) specifically to keep the button below '
-        'the fold -- if lib/ has changed the default layout enough that '
-        'this no longer holds, that size needs to shrink further, not this '
-        'check removed.',
+        '$caseId fixture check: room-code-field (and so the join-room-button '
+        'under it) must not already be fully in view before any link is '
+        'delivered, or this case measures nothing; got rect $rect against a '
+        'viewport $viewHeight logical pixels tall. This file mounts at '
+        '$_kSurfaceSize (devicePixelRatio $_kSurfaceDevicePixelRatio) '
+        'specifically to keep the button below the fold -- if lib/ has '
+        'changed the default layout enough that this no longer holds, that '
+        'size needs to shrink further, not this check removed.',
   );
 }
 

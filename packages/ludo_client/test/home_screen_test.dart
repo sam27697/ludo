@@ -110,6 +110,10 @@ Widget _homeScreenApp({
 /// code, playerName), not anything that depends on which RoomPhase the
 /// controller has reached, so nothing here needs the tree to fully settle.
 Future<void> _tapAndAwaitPushedRoute(WidgetTester tester, Key buttonKey) async {
+  // Join enters with a full code (C-523 D3), through a 200 ms AnimatedSize at
+  // most: let it reach its final rect before the tap.
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 250));
   await tester.tap(find.byKey(buttonKey));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
@@ -280,23 +284,21 @@ Future<void> _flushAnyOutstandingRequestTimeout(WidgetTester tester) async {
 
 /// Opens the seat-count selector. It stays hidden until the player taps
 /// home-players-disclosure; tests that need the selector must open it first.
-Future<void> _openPlayersDisclosure(WidgetTester tester) async {
-  final Finder disclosure = find.byKey(const Key('home-players-disclosure'));
+/// Picks [count] seats through the players menu (C-523 D2).
+Future<void> _pickPlayers(WidgetTester tester, int count) async {
+  final Finder control = find.byKey(const Key('home-players-button'));
   expect(
-    disclosure,
+    control,
     findsOneWidget,
     reason:
-        'home-players-disclosure must be on screen so the player can '
-        'open the seat-count selector',
+        'home-players-button must be on screen so the player can '
+        'open the seat-count menu',
   );
-  await tester.ensureVisible(disclosure);
-  await tester.tap(disclosure);
+  await tester.ensureVisible(control);
+  await tester.tap(control);
   await tester.pumpAndSettle();
-  expect(
-    find.byKey(const Key('home-players-selector')),
-    findsOneWidget,
-    reason: 'tapping home-players-disclosure must reveal home-players-selector',
-  );
+  await tester.tap(find.byKey(Key('home-players-option-$count')));
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -310,6 +312,9 @@ void main() {
     expect(find.text(loc.appTitle), findsOneWidget);
     expect(find.byKey(const Key('create-room-button')), findsOneWidget);
     expect(find.text(loc.homeCreateRoomButton), findsOneWidget);
+    // Join is in the tree only with a full-length code (C-523 D3).
+    await tester.enterText(find.byKey(const Key('room-code-field')), 'K7M2QP');
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('join-room-button')), findsOneWidget);
     expect(find.text(loc.homeJoinRoomButton), findsOneWidget);
     expect(find.byKey(const Key('room-code-field')), findsOneWidget);
@@ -388,6 +393,7 @@ void main() {
         find.byKey(const Key('room-code-field')),
         'AB01CD',
       );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('join-room-button')));
       await tester.pumpAndSettle();
 
@@ -517,27 +523,21 @@ void main() {
     );
   });
 
-  group('the players selector, order 080 rule 12', () {
-    testWidgets('is present, keyed home-players-selector, defaulting to 4', (
+  group('the players control, order 080 rule 12 (C-523 D2)', () {
+    testWidgets('is present, keyed home-players-button, defaulting to 4', (
       tester,
     ) async {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
-      await _openPlayersDisclosure(tester);
 
-      final Finder selectorKey = find.byKey(const Key('home-players-selector'));
-      expect(selectorKey, findsOneWidget);
+      final Finder control = find.byKey(const Key('home-players-button'));
+      expect(control, findsOneWidget);
 
-      final SegmentedButton<int> segmented = tester
-          .widget<SegmentedButton<int>>(
-            find.descendant(
-              of: selectorKey,
-              matching: find.byType(SegmentedButton<int>),
-            ),
-          );
-      expect(segmented.selected, <int>{
-        4,
-      }, reason: 'the players selector must default to 4');
+      expect(
+        find.descendant(of: control, matching: find.text('4')),
+        findsOneWidget,
+        reason: 'the players control must default to 4',
+      );
     });
 
     testWidgets(
@@ -545,32 +545,17 @@ void main() {
       (tester) async {
         await tester.pumpWidget(_homeScreenApp());
         await tester.pumpAndSettle();
-        await _openPlayersDisclosure(tester);
+        await _pickPlayers(tester, 2);
 
-        final context = tester.element(find.byType(Scaffold));
-        final loc = AppLocalizations.of(context);
-
-        await tester.tap(
-          find.descendant(
-            of: find.byKey(const Key('home-players-selector')),
-            matching: find.text(loc.homePlayersTwo),
-          ),
-        );
-        await tester.pumpAndSettle();
-
-        final SegmentedButton<int> segmented = tester
-            .widget<SegmentedButton<int>>(
-              find.descendant(
-                of: find.byKey(const Key('home-players-selector')),
-                matching: find.byType(SegmentedButton<int>),
-              ),
-            );
         expect(
-          segmented.selected,
-          <int>{2},
+          find.descendant(
+            of: find.byKey(const Key('home-players-button')),
+            matching: find.text('2'),
+          ),
+          findsOneWidget,
           reason:
-              'fixture is broken: selecting 2 must select it before '
-              'Create Room is even tapped',
+              'fixture is broken: selecting 2 must show it on the control '
+              'before Create Room is even tapped',
         );
 
         await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
