@@ -1164,6 +1164,16 @@ class _HomeScreenState extends State<HomeScreen>
     final double dieSize = dieMarkSize(compact);
     final double afterBrand = compact ? kSpace3 : kSpace6;
     final double afterDie = compact ? kSpace4 : kSpace7;
+    // The D5 tagline wraps to more lines in the side-by-side hero's narrow
+    // text column, so the sections below it close up a step between 640 and
+    // 800 dp of safe height to keep the join step in view at text scale 1.3.
+    final double afterName = compact
+        ? kSpace3
+        : (stackedHero ? kSpace5 : kSpace4);
+    final double beforeCreate = compact
+        ? kSpace3
+        : (stackedHero ? kSpace6 : kSpace5);
+    final double aroundDivider = compact || !stackedHero ? kSpace1 : kSpace2;
 
     final Animation<double> brandOpacity = CurvedAnimation(
       parent: _enter,
@@ -1506,7 +1516,7 @@ class _HomeScreenState extends State<HomeScreen>
                                           },
                                         ),
                                   ),
-                                  SizedBox(height: compact ? kSpace3 : kSpace5),
+                                  SizedBox(height: afterName),
                                   // C-523 D2: one question, one control, always
                                   // visible.
                                   _PlayersQuestionRow(
@@ -1525,7 +1535,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       seats: _lastTableSeats!,
                                     ),
                                   ],
-                                  SizedBox(height: compact ? kSpace3 : kSpace6),
+                                  SizedBox(height: beforeCreate),
                                   _weightedButton(
                                     key: const Key('create-room-button'),
                                     onPressed: _createRoom,
@@ -1535,7 +1545,7 @@ class _HomeScreenState extends State<HomeScreen>
                                   ),
                                   Padding(
                                     padding: EdgeInsets.symmetric(
-                                      vertical: compact ? kSpace1 : kSpace2,
+                                      vertical: aroundDivider,
                                     ),
                                     child: Row(
                                       key: const Key('home-join-divider'),
@@ -2141,7 +2151,7 @@ class _PlayersQuestionRow extends StatelessWidget {
         ),
         const SizedBox(width: kSpace3),
         PopupMenuButton<int>(
-          tooltip: '',
+          tooltip: loc.homePlayersQuestion,
           initialValue: value,
           onSelected: onChanged,
           position: PopupMenuPosition.under,
@@ -2214,7 +2224,7 @@ class _PlayersControlFace extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '$value',
+                MaterialLocalizations.of(context).formatDecimal(value),
                 style: textTheme.titleMedium?.copyWith(
                   color: LudoColors.ink,
                   fontWeight: FontWeight.w700,
@@ -2261,7 +2271,7 @@ class _PlayersOption extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               SizedBox(
-                width: 20,
+                width: kSpace5,
                 child: selected
                     ? const Icon(
                         Icons.check_rounded,
@@ -2272,7 +2282,7 @@ class _PlayersOption extends StatelessWidget {
               ),
               const SizedBox(width: kSpace2),
               Text(
-                '$count',
+                MaterialLocalizations.of(context).formatDecimal(count),
                 style: textTheme.titleMedium?.copyWith(
                   color: LudoColors.ink,
                   fontWeight: FontWeight.w700,
