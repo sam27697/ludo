@@ -13,6 +13,7 @@
 // spectator still sees whose roll it is. While my own roll is in flight
 // the same pips are on a cube (die_cube.dart) instead of this flat face.
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -20,6 +21,7 @@ import 'package:flutter/material.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'dead_mark.dart';
 import 'die_cube.dart';
+import 'refusal_mark.dart';
 import 'theme.dart';
 
 /// The die's fixed footprint, face and hit target both. C-223: "at least
@@ -100,6 +102,10 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
   late final AnimationController _tumble;
   late final AnimationController _shake;
 
+  // C-520 D3: a refused tap under reduced motion wears a mark for 300 ms.
+  Timer? _markTimer;
+  bool _marked = false;
+
   @override
   void initState() {
     super.initState();
@@ -168,9 +174,30 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     if (!widget.enabled) {
       widget.onInvalidTap?.call();
       _shake.forward(from: 0);
+      if (_reducedMotion) {
+        _showRefusalMark();
+      }
       return;
     }
     widget.onTap?.call();
+  }
+
+  /// C-520 D3. The 300 ms mark; a second refused tap inside it restarts the
+  /// 300 ms.
+  void _showRefusalMark() {
+    _markTimer?.cancel();
+    setState(() {
+      _marked = true;
+    });
+    _markTimer = Timer(kRefusalMarkLife, () {
+      _markTimer = null;
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _marked = false;
+      });
+    });
   }
 
   /// C-238: wraps a painted face with `game-die-idle-art` exactly when that
@@ -196,6 +223,7 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _markTimer?.cancel();
     _pulse.dispose();
     _tumble.dispose();
     _shake.dispose();
@@ -256,11 +284,23 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     // delayed or hidden by the die's own animation state. It hangs off the
     // top-right corner (C-380 D1). Clip.none keeps the overhang; the badge
     // is positioned, so the die's 72dp box does not grow.
-    final Widget dieFace = widget.noMove
+    final Widget dieFace = widget.noMove || _marked
         ? Stack(
             alignment: Alignment.topLeft,
             clipBehavior: Clip.none,
-            children: <Widget>[die, _noMoveBadge()],
+            children: <Widget>[
+              die,
+              if (widget.noMove) _noMoveBadge(),
+              if (_marked)
+                const Positioned.fill(
+                  child: RefusalMark(
+                    shape: BoxShape.rectangle,
+                    borderRadius: BorderRadius.all(
+                      Radius.circular(_kDieSize * 0.16),
+                    ),
+                  ),
+                ),
+            ],
           )
         : die;
 

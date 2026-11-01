@@ -20,6 +20,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
     show BoxParentData, RenderBox, RenderShiftedBox;
@@ -48,6 +49,7 @@ import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'no_move_reason.dart';
 import 'quick_chat.dart';
+import 'refusal_mark.dart';
 import 'roll_tray.dart';
 import 'safe_cue.dart';
 import 'seat_die.dart';
@@ -434,8 +436,24 @@ class _GameScreenState extends State<GameScreen> {
   _ChatEntry? _chat;
   int _chatSerial = 0;
   final ValueNotifier<bool> _chatMuted = ValueNotifier<bool>(false);
-  bool _chatCooling = false;
+  // C-520 D1: the device keeps the whole cadence. [_chatAdmitted] holds the
+  // instants this seat's sends came back acknowledged, oldest first, the
+  // newest [kQuickChatPerWindow] only, read from clock.now(). One timer sits
+  // on [quickChatRestsUntil]; the button and the end card chips rest while
+  // [_chatRestUntil] is set.
+  final List<DateTime> _chatAdmitted = <DateTime>[];
+  DateTime? _chatForcedUntil;
+  DateTime? _chatRestUntil;
+  Duration _chatRestSpan = Duration.zero;
+  int _chatRestSerial = 0;
   Timer? _chatCoolTimer;
+  bool get _chatCooling => _chatRestUntil != null;
+
+  // C-520 D3: the chat button's own refusal. Motion on, a 300 ms shake keyed
+  // by [_chatShakeSerial]; motion off, a [RefusalMark] for 300 ms.
+  int _chatShakeSerial = 0;
+  bool _chatRefusalMark = false;
+  Timer? _chatRefusalTimer;
 
   // C-384: at most one safe-landing pill. Held like a landing cue until
   // the mover's onMoveLanded (or kLandingCueFallback, or a travel snap),
@@ -579,6 +597,7 @@ class _GameScreenState extends State<GameScreen> {
     // C-468 D5: disposing before the 250 ms cancels the captured seat's sound.
     _removeGloat();
     _chatCoolTimer?.cancel();
+    _chatRefusalTimer?.cancel();
     _clearChatBubbles();
     _chatMuted.removeListener(_onChatMutedChanged);
     // Not disposed: an open quick messages sheet can still write the switch.
@@ -1387,11 +1406,54 @@ class _GameScreenState extends State<GameScreen> {
     return null;
   }
 
+  /// The header chat button. C-520 D2: while it rests the button keeps its
+  /// 0.38 opacity and a ring outside the faded art says for how long; the
+  /// semantics hint says it too. D3: the refusal shake or mark wraps it.
+  Widget _chatButton(AppLocalizations loc) {
+    final bool resting = _chatCooling;
+    Widget button = Stack(
+      clipBehavior: Clip.none,
+      children: <Widget>[
+        MergeSemantics(
+          child: Semantics(
+            hint: resting ? loc.chatResting : null,
+            child: Opacity(
+              opacity: resting ? 0.38 : 1,
+              child: IconButton(
+                key: const Key('game-chat-button'),
+                style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+                tooltip: loc.chatButtonTooltip,
+                onPressed: _onChatButtonTap,
+                icon: const Icon(Icons.chat_bubble_outline_rounded),
+              ),
+            ),
+          ),
+        ),
+        if (resting)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: _ChatRestRing(
+                key: ValueKey<int>(_chatRestSerial),
+                span: _chatRestSpan,
+              ),
+            ),
+          ),
+        if (_chatRefusalMark)
+          const Positioned.fill(child: RefusalMark(shape: BoxShape.circle)),
+      ],
+    );
+    if (_chatShakeSerial > 0) {
+      button = _ChatShake(key: ValueKey<int>(_chatShakeSerial), child: button);
+    }
+    return button;
+  }
+
   /// C-478 D5.1. A tap while the button rests plays the invalid-tap cue and
-  /// opens nothing.
+  /// opens nothing. C-520 D3: and it is seen, a shake or a mark.
   void _onChatButtonTap() {
     if (_chatCooling) {
       FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+      _refuseChatButton();
       return;
     }
     showQuickChatSheet(
@@ -1419,27 +1481,92 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
-  /// C-478 D5.3. No optimistic bubble: the server's copy of the message
-  /// comes back as an `emote` frame like everyone else's. The rest starts
-  /// when that copy has come back, and a refusal shows and plays nothing.
-  Future<void> _onChatPick(String id) async {
-    final bool sent = await widget.controller.sendEmote(id);
-    if (!sent || !mounted || _screenDisposed) {
+  /// C-520 D3. The resting chat button was tapped, or the server refused a
+  /// line. Motion on: the hint's 300 ms shake. Motion off: a mark over the
+  /// button for 300 ms; a second refusal inside it restarts the 300 ms.
+  void _refuseChatButton() {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _chatRefusalTimer?.cancel();
+      setState(() {
+        _chatRefusalMark = true;
+      });
+      _chatRefusalTimer = Timer(kRefusalMarkLife, () {
+        _chatRefusalTimer = null;
+        if (!mounted || _screenDisposed) {
+          return;
+        }
+        setState(() {
+          _chatRefusalMark = false;
+        });
+      });
       return;
     }
-    _chatCoolTimer?.cancel();
     setState(() {
-      _chatCooling = true;
+      _chatShakeSerial += 1;
     });
-    _chatCoolTimer = Timer(kQuickChatCooldown, () {
+  }
+
+  /// C-520 D1. Works out how long the button and chips rest from now, from
+  /// the admitted list and any 3000 ms a server refusal added, and keeps one
+  /// timer on that instant. [begin] starts a new rest (and a new ring).
+  void _settleChatRest({bool begin = false}) {
+    _chatCoolTimer?.cancel();
+    _chatCoolTimer = null;
+    final DateTime now = clock.now();
+    DateTime? until = quickChatRestsUntil(_chatAdmitted, now);
+    final DateTime? forced = _chatForcedUntil;
+    if (forced != null && forced.isAfter(now)) {
+      if (until == null || forced.isAfter(until)) {
+        until = forced;
+      }
+    } else {
+      _chatForcedUntil = null;
+    }
+    setState(() {
+      _chatRestUntil = until;
+      if (until != null && (begin || !_chatCooling)) {
+        _chatRestSpan = until.difference(now);
+        _chatRestSerial += 1;
+      }
+    });
+    if (until == null) {
+      return;
+    }
+    final DateTime due = until;
+    _chatCoolTimer = Timer(due.difference(now), () {
       _chatCoolTimer = null;
       if (!mounted || _screenDisposed) {
         return;
       }
-      setState(() {
-        _chatCooling = false;
-      });
+      _settleChatRest();
     });
+  }
+
+  /// C-478 D5.3. No optimistic bubble: the server's copy of the message
+  /// comes back as an `emote` frame like everyone else's. The rest starts
+  /// when that copy has come back (C-520 D1: and lasts as long as rule 3
+  /// says). A refusal while connected plays the invalid-tap cue, refuses the
+  /// button and rests it 3000 ms; while not connected the reconnect UI owns
+  /// the state and nothing new happens.
+  Future<void> _onChatPick(String id) async {
+    final bool sent = await widget.controller.sendEmote(id);
+    if (!mounted || _screenDisposed) {
+      return;
+    }
+    if (!sent) {
+      if (widget.controller.phase == RoomPhase.connected) {
+        FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+        _chatForcedUntil = clock.now().add(kQuickChatCooldown);
+        _refuseChatButton();
+        _settleChatRest(begin: true);
+      }
+      return;
+    }
+    _chatAdmitted.add(clock.now());
+    if (_chatAdmitted.length > kQuickChatPerWindow) {
+      _chatAdmitted.removeRange(0, _chatAdmitted.length - kQuickChatPerWindow);
+    }
+    _settleChatRest(begin: true);
   }
 
   /// C-384 S1 and S2. A `moved` frame with an empty `captured`, a
@@ -3516,20 +3643,7 @@ class _GameScreenState extends State<GameScreen> {
                           if (showsChatButton)
                             PositionedDirectional(
                               end: kSpace2 + 48 + kSpace1,
-                              child: Opacity(
-                                opacity: _chatCooling ? 0.38 : 1,
-                                child: IconButton(
-                                  key: const Key('game-chat-button'),
-                                  style: IconButton.styleFrom(
-                                    minimumSize: const Size(48, 48),
-                                  ),
-                                  tooltip: loc.chatButtonTooltip,
-                                  onPressed: _onChatButtonTap,
-                                  icon: const Icon(
-                                    Icons.chat_bubble_outline_rounded,
-                                  ),
-                                ),
-                              ),
+                              child: _chatButton(loc),
                             ),
                           PositionedDirectional(
                             end: kSpace2,
@@ -5949,4 +6063,149 @@ class _PendingLandingCues {
   final int token;
   final List<FeedbackCue> cues;
   Timer? fallbackTimer;
+}
+
+/// C-520 D3. The 300 ms horizontal shake a refused tap on the chat button
+/// gets: the hint control's rule (sin(t * 4 pi), 0.18 of the visual size,
+/// decaying). Motion off holds still; the mark carries it then.
+class _ChatShake extends StatelessWidget {
+  const _ChatShake({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return child;
+    }
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.linear,
+      builder: (BuildContext context, double t, Widget? staticChild) {
+        final double dx = math.sin(t * math.pi * 4) * 48 * 0.18 * (1 - t);
+        return Transform.translate(offset: Offset(dx, 0), child: staticChild);
+      },
+      child: child,
+    );
+  }
+}
+
+/// C-520 D2. The ring around the resting chat button: full when the rest
+/// starts, empty when it ends. [span] is the rest's whole length. The screen
+/// mounts it for one rest under a new key each time and drops it when the
+/// button is ready. Motion on, the arc drains smoothly; under
+/// `disableAnimations` it steps once a second.
+class _ChatRestRing extends StatefulWidget {
+  const _ChatRestRing({super.key, required this.span});
+
+  final Duration span;
+
+  @override
+  State<_ChatRestRing> createState() => _ChatRestRingState();
+}
+
+class _ChatRestRingState extends State<_ChatRestRing>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _drain;
+  Timer? _step;
+  int _steps = 0;
+  bool? _reduced;
+
+  @override
+  void initState() {
+    super.initState();
+    _drain = AnimationController(vsync: this, duration: widget.span);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    if (reduced == _reduced) {
+      return;
+    }
+    final bool first = _reduced == null;
+    _reduced = reduced;
+    if (reduced) {
+      _steps = first
+          ? 0
+          : (_drain.value * widget.span.inMilliseconds / 1000).floor();
+      _drain.stop();
+      _step?.cancel();
+      _step = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _steps += 1;
+        });
+        if (_steps * 1000 >= widget.span.inMilliseconds) {
+          timer.cancel();
+        }
+      });
+    } else {
+      _step?.cancel();
+      _step = null;
+      _drain.forward(
+        from: first ? 0 : _steps * 1000 / widget.span.inMilliseconds,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _step?.cancel();
+    _drain.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final int spanMs = widget.span.inMilliseconds;
+    return AnimatedBuilder(
+      animation: _drain,
+      builder: (BuildContext context, Widget? child) {
+        final double left = _reduced == true
+            ? (math.max(0, spanMs - _steps * 1000) / spanMs)
+            : 1 - _drain.value;
+        return CustomPaint(
+          key: const Key('game-chat-rest-ring'),
+          size: const Size.square(48),
+          painter: _RestRingPainter(left: spanMs <= 0 ? 0 : left),
+        );
+      },
+    );
+  }
+}
+
+class _RestRingPainter extends CustomPainter {
+  const _RestRingPainter({required this.left});
+
+  /// The share of the rest still to run, 1 down to 0.
+  final double left;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (left <= 0) {
+      return;
+    }
+    const double width = 2.5;
+    final Rect box = (Offset.zero & size).deflate(width / 2);
+    canvas.drawArc(
+      box,
+      -math.pi / 2,
+      2 * math.pi * left,
+      false,
+      Paint()
+        ..color = LudoColors.inkMuted
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = width
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RestRingPainter oldDelegate) =>
+      oldDelegate.left != left;
 }

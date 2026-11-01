@@ -2,11 +2,13 @@
 // seat colour, not a labelled button. The screen decides the state and
 // plays the cue; this widget only draws, shakes, and reports the tap.
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'refusal_mark.dart';
 import 'theme.dart';
 
 /// C-471 D3. [ready] can be spent. [waiting] still has its one use.
@@ -52,6 +54,10 @@ class _HintButtonState extends State<HintButton>
   bool _glowArmed = false;
   int _shakeSerial = 0;
 
+  // C-520 D3: reduced motion has no shake, so a refused tap wears a mark.
+  Timer? _markTimer;
+  bool _marked = false;
+
   @override
   void initState() {
     super.initState();
@@ -90,6 +96,7 @@ class _HintButtonState extends State<HintButton>
 
   @override
   void dispose() {
+    _markTimer?.cancel();
     _glow.dispose();
     super.dispose();
   }
@@ -97,6 +104,22 @@ class _HintButtonState extends State<HintButton>
   void _handleTap() {
     final bool spent = widget.onTap();
     if (spent || !mounted) {
+      return;
+    }
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _markTimer?.cancel();
+      setState(() {
+        _marked = true;
+      });
+      _markTimer = Timer(kRefusalMarkLife, () {
+        _markTimer = null;
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _marked = false;
+        });
+      });
       return;
     }
     setState(() {
@@ -145,7 +168,20 @@ class _HintButtonState extends State<HintButton>
           width: _kHintHit,
           height: _kHintHit,
           child: ExcludeSemantics(
-            child: Opacity(opacity: ready ? 1 : 0.45, child: art),
+            child: Stack(
+              fit: StackFit.expand,
+              children: <Widget>[
+                Opacity(opacity: ready ? 1 : 0.45, child: art),
+                if (_marked)
+                  const Center(
+                    child: SizedBox(
+                      width: _kHintVisual,
+                      height: _kHintVisual,
+                      child: RefusalMark(shape: BoxShape.circle),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
