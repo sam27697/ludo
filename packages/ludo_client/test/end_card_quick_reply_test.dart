@@ -648,12 +648,13 @@ void main() {
       }
     });
 
-    testWidgets('a refused send (RATE_LIMITED) starts no cooling, plays '
-        'nothing, shows no line', (tester) async {
+    testWidgets('a refused send (RATE_LIMITED) rests the chips 3000 ms, '
+        'plays invalidTap once, shows no line', (tester) async {
       final EndGame g = await openFinished(tester, '3 refused');
       try {
         final int before = g.sentCount;
         final int cues = g.s.drive.feedback.recorded.length;
+        final int taps = g.s.count(FeedbackCue.invalidTap);
         await tapReply(g, 'revenge');
         final String id = requestIdOf(
           g.drive.transport.sentRaw
@@ -667,17 +668,23 @@ void main() {
           errorReplyFrame(re: id, code: 'RATE_LIMITED'),
         );
         await g.s.pump(const Duration(milliseconds: 100));
+        final int refusedAt = g.s.clockMs - 100;
         for (final String chip in kLoserReplies) {
           expect(
             chipAlphaOf(g, chip),
-            closeTo(1.0, 0.03),
-            reason: g.why('a refused send leaves chip $chip live'),
+            closeTo(0.38, 0.03),
+            reason: g.why('C-520 D1: a refused send rests chip $chip'),
           );
         }
         expect(
+          g.s.count(FeedbackCue.invalidTap),
+          taps + 1,
+          reason: g.why('C-520 D1: the refusal plays invalidTap exactly once'),
+        );
+        expect(
           g.s.drive.feedback.recorded.length,
-          cues,
-          reason: g.why('nothing played for a refused send'),
+          cues + 1,
+          reason: g.why('and nothing else is played for a refused send'),
         );
         expect(chatLineSeats(tester), isEmpty, reason: g.why('no line'));
         expect(
@@ -685,6 +692,22 @@ void main() {
           RoomPhase.connected,
           reason: g.why('a refused emote leaves the screen connected'),
         );
+        await g.s.pump(Duration(milliseconds: refusedAt + 2900 - g.s.clockMs));
+        for (final String chip in kLoserReplies) {
+          expect(
+            chipAlphaOf(g, chip),
+            closeTo(0.38, 0.03),
+            reason: g.why('chip $chip still resting 2900 ms after the refusal'),
+          );
+        }
+        await g.s.pump(Duration(milliseconds: refusedAt + 3100 - g.s.clockMs));
+        for (final String chip in kLoserReplies) {
+          expect(
+            chipAlphaOf(g, chip),
+            closeTo(1.0, 0.03),
+            reason: g.why('chip $chip is live 3100 ms after the refusal'),
+          );
+        }
         await tapReply(g, 'lucky');
         expect(
           g.emotesSent(before).map((Map<String, Object?> f) => f['d']),
@@ -692,12 +715,12 @@ void main() {
             <String, Object?>{'emote': 'revenge'},
             <String, Object?>{'emote': 'lucky'},
           ],
-          reason: g.why('the next tap sends at once: no cooling started'),
+          reason: g.why('after the 3000 ms rest the next tap sends'),
         );
         expect(
           g.s.count(FeedbackCue.invalidTap),
-          0,
-          reason: g.why('and plays no invalidTap'),
+          taps + 1,
+          reason: g.why('and plays no further invalidTap'),
         );
       } finally {
         await g.done();
