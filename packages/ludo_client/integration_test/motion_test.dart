@@ -2031,15 +2031,14 @@ Future<void> _runHostSeat0(
 ) async {
   const String hostName = 'Priya';
   await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
-  await tester.tap(find.byKey(const Key('home-players-disclosure')));
+  await tester.tap(find.byKey(const Key('home-players-button')));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
-  final Finder selector = find.byKey(const Key('home-players-selector'));
-  expect(selector, findsOneWidget);
-  await tester.tap(
-    find.descendant(of: selector, matching: find.text(homeLoc.homePlayersTwo)),
-  );
+  final Finder twoPlayers = find.byKey(const Key('home-players-option-2'));
+  expect(twoPlayers, findsOneWidget);
+  await tester.tap(twoPlayers);
   await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
 
   await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
   expect(factory.controllers, hasLength(1));
@@ -2234,6 +2233,9 @@ Future<void> _runJoinerSeat2(
 
   await tester.enterText(find.byKey(const Key('home-name-field')), joinerName);
   await tester.enterText(find.byKey(const Key('room-code-field')), _roomCode);
+  // Join is in the tree only once the field holds a full code (C-523 D3);
+  // let its entry finish before the tap.
+  await tester.pumpAndSettle();
   await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
 
   expect(factory.controllers, hasLength(1));
