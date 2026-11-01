@@ -6769,6 +6769,64 @@ void main() {
       textScale: 2.0,
     );
   });
+
+  // ==========================================================================
+  // 95-98: order 520 (C-520 D2, D3). 95 and 96 are the chat button resting
+  // about a second after an acknowledged send, with the ring part drained
+  // (en, ar). 97 and 98 are a refused tap with animations off, captured
+  // inside the 300 ms the RefusalMark lives: a token with no legal move (en)
+  // and the die on the other seat's turn (ar). Bodies live at the bottom of
+  // the file.
+  // ==========================================================================
+  testWidgets('capture 95-chat-resting-en', (tester) async {
+    await _shootChatResting(
+      tester,
+      binding,
+      shotName: '95-chat-resting-en',
+      locale: const Locale('en'),
+      roomCode: 'CR95EN',
+      gameId: '95' * 8,
+      seatToken: 'tok-shot-95',
+    );
+  });
+
+  testWidgets('capture 96-chat-resting-ar', (tester) async {
+    await _shootChatResting(
+      tester,
+      binding,
+      shotName: '96-chat-resting-ar',
+      locale: const Locale('ar'),
+      roomCode: 'CR96AR',
+      gameId: '96' * 8,
+      seatToken: 'tok-shot-96',
+    );
+  });
+
+  testWidgets('capture 97-refusal-token-reduced-en', (tester) async {
+    await _shootRefusalReduced(
+      tester,
+      binding,
+      shotName: '97-refusal-token-reduced-en',
+      locale: const Locale('en'),
+      roomCode: 'RF97EN',
+      gameId: '97' * 8,
+      seatToken: 'tok-shot-97',
+      refuseDie: false,
+    );
+  });
+
+  testWidgets('capture 98-refusal-die-reduced-ar', (tester) async {
+    await _shootRefusalReduced(
+      tester,
+      binding,
+      shotName: '98-refusal-die-reduced-ar',
+      locale: const Locale('ar'),
+      roomCode: 'RF98AR',
+      gameId: '98' * 8,
+      seatToken: 'tok-shot-98',
+      refuseDie: true,
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -15078,5 +15136,315 @@ Future<void> _shootAwayRing(
     await binding.takeScreenshot(shotName);
   } finally {
     await _releaseTrayGame(tester, controller);
+  }
+}
+
+// ============================================================================
+// Order 520 (captures 95-98): a resting control says for how long, and a
+// refused tap is felt with animations off (C-520 D2, D3).
+// ============================================================================
+
+const Key _chatRestRingKey = Key('game-chat-rest-ring');
+
+/// Every `RefusalMark` on screen. Found by type name so this file compiles on
+/// a tree that does not have lib/src/refusal_mark.dart yet; the captures then
+/// fail on their own assertions instead of breaking every other capture here.
+Finder _refusalMarks() => find.byWidgetPredicate(
+  (Widget w) => w.runtimeType.toString() == 'RefusalMark',
+);
+
+/// Captures 95 and 96 (order 520, C-520 D2). Two seats `[0, 2]`, viewer seat
+/// 0, PLAYING. Taps `game-chat-button`, picks `hi`, and has the server's copy
+/// of the message come back (an `emote` carrying `re`, which is what
+/// acknowledges the send). The shot is taken 992 ms after that copy: the
+/// button rests at 38 % and `game-chat-rest-ring` is on screen, about a third
+/// drained.
+Future<void> _shootChatResting(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final String scenario =
+      'room $roomCode, game $gameId, locale '
+      '${locale.languageCode}';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    await _pumpRealDurationFrames(tester, frameCount: 4);
+
+    _expectChatFixture(
+      tester,
+      controller,
+      shotName: shotName,
+      scenario: scenario,
+      locale: locale,
+      seats: <int>[0, 2],
+    );
+    expect(
+      find.byKey(_chatRestRingKey),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): C-520 D2, no ring while the '
+          'button is ready',
+    );
+
+    final int sentBefore = opened.transport.sentRaw.length;
+    await tester.tap(find.byKey(const Key('game-chat-button')));
+    await tester.pump();
+    await _pumpRealDurationFrames(tester, frameCount: 12);
+    expect(
+      find.byKey(const Key('quick-chat-sheet')),
+      findsOneWidget,
+      reason: 'capture $shotName ($scenario): the sheet must be open to pick',
+    );
+    await tester.tap(find.byKey(const Key('quick-chat-hi')));
+    await tester.pump();
+    await _pumpRealDurationFrames(tester, frameCount: 12);
+
+    final List<String> emotes = opened.transport.sentRaw
+        .skip(sentBefore)
+        .where((String s) => _typeOf(s) == 'emote')
+        .toList();
+    expect(
+      emotes,
+      hasLength(1),
+      reason:
+          'capture $shotName ($scenario): picking hi must send one emote, '
+          'sent ${opened.transport.sentRaw.skip(sentBefore).map(_typeOf).toList()}',
+    );
+    opened.transport.pushText(
+      _frame(
+        type: 'emote',
+        re: _idOf(emotes.single),
+        data: <String, Object?>{'seat': 0, 'emote': 'hi'},
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(
+      find.byKey(_chatRestRingKey),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): C-520 D2, the server copy '
+          'acknowledged the send, so game-chat-rest-ring must be on screen',
+    );
+
+    // 31 frames of 32 ms: 992 ms after the copy, the ring part drained.
+    await _pumpRealDurationFrames(tester, frameCount: 31);
+    expect(
+      find.byKey(_chatRestRingKey),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): C-520 D2, the rest lasts 3000 ms, '
+          'so the ring must still be on screen at 992 ms',
+    );
+    expect(
+      find.byKey(const Key('quick-chat-sheet')),
+      findsNothing,
+      reason: 'capture $shotName ($scenario): the sheet closed after the pick',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Captures 97 and 98 (order 520, C-520 D3). Animations off, the way Android's
+/// "remove animations" reaches `MediaQuery.disableAnimationsOf`. Two seats
+/// `[0, 2]`, viewer seat 0, PLAYING. With [refuseDie] false seat 0 rolls a 6
+/// with legal `[0, 1]`, every token in its yard, and the tap goes to token 2
+/// (`board-token-hit-0-2`), which has no legal move. With [refuseDie] true the
+/// turn passes to seat 2 awaiting a roll and the tap goes to `game-die`. The
+/// shot is taken 96 ms after the tap, inside the 300 ms: exactly one
+/// RefusalMark is on screen and its rect contains the tapped object's centre.
+Future<void> _shootRefusalReduced(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+  required bool refuseDie,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+  tester.platformDispatcher.accessibilityFeaturesTestValue =
+      const FakeAccessibilityFeatures(disableAnimations: true);
+  addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+
+  final String scenario =
+      'room $roomCode, game $gameId, locale '
+      '${locale.languageCode}, animations off';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    await _pumpRealDurationFrames(tester, frameCount: 4);
+
+    _expectChatFixture(
+      tester,
+      controller,
+      shotName: shotName,
+      scenario: scenario,
+      locale: locale,
+      seats: <int>[0, 2],
+    );
+    expect(
+      MediaQuery.disableAnimationsOf(tester.element(find.byType(GameScreen))),
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): the screen must read '
+          'disableAnimations as true',
+    );
+
+    final Finder target;
+    if (refuseDie) {
+      final int seq = await _pushTraySeq(
+        tester,
+        opened.transport,
+        opened.seq,
+        type: 'turn',
+        data: <String, Object?>{
+          'seat': 2,
+          'phase': 'await_roll',
+          'deadline_ms': _trayDeadlineMs,
+          'queue': <int>[],
+        },
+      );
+      await _pumpRealDurationFrames(tester, frameCount: 4);
+      final TurnStateSnapshot turn = _turnOf(controller);
+      expect(
+        controller.room!.seq,
+        seq,
+        reason:
+            'capture $shotName ($scenario): a pushed frame was dropped; room '
+            'seq is ${controller.room!.seq}, last push was $seq',
+      );
+      expect(
+        <Object>[turn.seat, turn.phaseName],
+        <Object>[2, 'awaitRoll'],
+        reason:
+            'capture $shotName ($scenario): expected seat 2 awaiting a roll '
+            'so the die is not mine, got seat ${turn.seat} in '
+            '${turn.phaseName}',
+      );
+      target = find.byKey(const Key('game-die'));
+    } else {
+      final int seq = await _pushTraySeq(
+        tester,
+        opened.transport,
+        opened.seq,
+        type: 'rolled',
+        data: <String, Object?>{
+          'seat': 0,
+          'value': 6,
+          'legal': <int>[0, 1],
+          'deadline_ms': _trayDeadlineMs,
+          'k': 1,
+          'reveal': _trayReveal,
+        },
+      );
+      await _pumpRealDurationFrames(tester, frameCount: 4);
+      final TurnStateSnapshot turn = _turnOf(controller);
+      expect(
+        controller.room!.seq,
+        seq,
+        reason:
+            'capture $shotName ($scenario): a pushed frame was dropped; room '
+            'seq is ${controller.room!.seq}, last push was $seq',
+      );
+      expect(
+        <Object>[turn.seat, turn.phaseName],
+        <Object>[0, 'awaitMove'],
+        reason:
+            'capture $shotName ($scenario): expected seat 0 in awaitMove '
+            'after rolling 6, got seat ${turn.seat} in ${turn.phaseName}',
+      );
+      for (final int token in <int>[0, 1]) {
+        expect(
+          find.byKey(Key('board-legal-ring-0-$token')),
+          findsOneWidget,
+          reason:
+              'capture $shotName ($scenario): token $token must carry a '
+              'legal ring',
+        );
+      }
+      for (final int token in <int>[2, 3]) {
+        expect(
+          find.byKey(Key('board-legal-ring-0-$token')),
+          findsNothing,
+          reason:
+              'capture $shotName ($scenario): token $token has no legal '
+              'move and must carry no ring',
+        );
+      }
+      target = find.byKey(const Key('board-token-hit-0-2'));
+    }
+    expect(
+      target,
+      findsOneWidget,
+      reason: 'capture $shotName ($scenario): the refused object is on screen',
+    );
+    expect(
+      _refusalMarks(),
+      findsNothing,
+      reason: 'capture $shotName ($scenario): no mark before the tap',
+    );
+
+    final Offset centre = tester.getCenter(target);
+    await tester.tap(target, warnIfMissed: false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 96));
+
+    expect(
+      _refusalMarks(),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): C-520 D3, exactly one RefusalMark '
+          '96 ms after a refused tap with animations off',
+    );
+    final Rect mark = tester.getRect(_refusalMarks());
+    expect(
+      mark.contains(centre),
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): C-520 D3, the mark $mark must '
+          'cover the tapped object, whose centre is $centre',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+    tester.platformDispatcher.clearAccessibilityFeaturesTestValue();
   }
 }

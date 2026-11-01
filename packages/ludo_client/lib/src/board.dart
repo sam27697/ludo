@@ -24,6 +24,7 @@ import '../l10n/gen/app_localizations.dart';
 import 'board_geometry.dart';
 import 'capture_gloat.dart';
 import 'move_hint.dart';
+import 'refusal_mark.dart';
 import 'safe_cue.dart';
 import 'seat_die.dart';
 import 'seat_mark.dart';
@@ -2681,7 +2682,8 @@ class _CaptureFlightState extends State<_CaptureFlight>
 /// moment it is built (this widget only exists in the tree for the
 /// duration of the shake; see `board-token-shake-S-I` in C-223's key
 /// table) and holds still under reduced motion, per the same rule the die
-/// and the legal ring follow: meaning stays, motion goes.
+/// and the legal ring follow: meaning stays, motion goes. Held still it
+/// wears a [RefusalMark] instead (C-520 D3).
 class _ShakeOnce extends StatelessWidget {
   const _ShakeOnce({super.key, required this.size, required this.child});
 
@@ -2692,7 +2694,15 @@ class _ShakeOnce extends StatelessWidget {
   Widget build(BuildContext context) {
     final bool reduced = MediaQuery.disableAnimationsOf(context);
     if (reduced) {
-      return child;
+      // C-520 D3: still, and marked for as long as the board keeps this
+      // widget in the tree (300 ms, restarted by a second refused tap).
+      return Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          child,
+          const RefusalMark(shape: BoxShape.circle),
+        ],
+      );
     }
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: 1),

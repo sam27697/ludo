@@ -1089,13 +1089,14 @@ void main() {
       }
     });
 
-    testWidgets('a refused send (error reply) shows nothing, plays nothing '
-        'and leaves the button ready', (tester) async {
+    testWidgets('a refused send (error reply) shows no line, plays '
+        'invalidTap exactly once and rests the button 3000 ms', (tester) async {
       final Scn s = await game(tester, 'D5.3 refused');
       try {
         final double ready = drawn(tester);
         final int before = s.drive.transport.sentRaw.length;
         final int cues = s.drive.feedback.recorded.length;
+        final int taps = s.count(FeedbackCue.invalidTap);
         await openSheet(s);
         await tester.tap(find.byKey(chipKey('revenge')));
         await tester.pump();
@@ -1112,10 +1113,16 @@ void main() {
           errorReplyFrame(re: id, code: 'RATE_LIMITED'),
         );
         await s.pump(const Duration(milliseconds: 100));
+        final int refusedAt = s.clockMs - 100;
+        expect(
+          s.count(FeedbackCue.invalidTap),
+          taps + 1,
+          reason: s.why('C-520 D1: the refusal plays invalidTap exactly once'),
+        );
         expect(
           s.drive.feedback.recorded.length,
-          cues,
-          reason: s.why('nothing played for a refused send'),
+          cues + 1,
+          reason: s.why('and nothing else is played for a refused send'),
         );
         expect(
           find.byWidgetPredicate((Widget w) {
@@ -1135,16 +1142,35 @@ void main() {
           reason: s.why('a refused emote leaves the screen connected'),
         );
         expect(button(), findsOneWidget, reason: s.why('button still there'));
+        expect(
+          drawn(tester) / ready,
+          closeTo(0.38, 0.03),
+          reason: s.why(
+            'C-520 D1: the refusal rests the button, drawn at 38 %',
+          ),
+        );
+        await s.pump(Duration(milliseconds: refusedAt + 2900 - s.clockMs));
+        expect(
+          drawn(tester) / ready,
+          closeTo(0.38, 0.03),
+          reason: s.why('still resting 2900 ms after the refusal'),
+        );
+        await s.pump(Duration(milliseconds: refusedAt + 3100 - s.clockMs));
+        expect(
+          drawn(tester) / ready,
+          closeTo(1.0, 0.03),
+          reason: s.why('the icon is drawn at full opacity after 3000 ms'),
+        );
         await openSheet(s);
         expect(
           find.byKey(kSheetKey),
           findsOneWidget,
-          reason: s.why('no cooling after a refused send: the sheet opens'),
+          reason: s.why('the rest is 3000 ms and no longer: the sheet opens'),
         );
         expect(
-          drawn(tester) / ready,
-          closeTo(1.0, 0.03),
-          reason: s.why('the icon is drawn at full opacity'),
+          s.count(FeedbackCue.invalidTap),
+          taps + 1,
+          reason: s.why('and the open tap plays no further invalidTap'),
         );
       } finally {
         await releaseGame(tester, s.drive);

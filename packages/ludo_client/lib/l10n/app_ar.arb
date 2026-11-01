@@ -209,6 +209,7 @@
   "chatNoWay": "مستحيل!",
   "chatGoodGame": "لعبة حلوة",
   "chatButtonTooltip": "رسايل سريعة",
+  "chatResting": "بترجع بعد لحظات",
   "chatSheetTitle": "رسايل سريعة",
   "chatMuteOthers": "خبّي رسايل الباقين",
   "chatSaid": "{name}: {line}"

@@ -67,6 +67,10 @@ dependencies:
   # in the plugin's own manifest and merge in automatically.
   share_plus: ^13.3.0
 
+  # lib/src/game_screen.dart: the quick message cadence reads clock.now(),
+  # the clock flutter_test's fake time moves (C-520 D1).
+  clock: ^1.1.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

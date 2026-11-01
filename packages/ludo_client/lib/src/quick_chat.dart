@@ -30,6 +30,29 @@ const List<String> kQuickChatIds = <String>[
 /// How long this device's own button rests after a send that came back.
 const Duration kQuickChatCooldown = Duration(milliseconds: 3000);
 
+/// Section 25 rule 3's second bound: at most this many in [kQuickChatWindow].
+const int kQuickChatPerWindow = 10;
+const Duration kQuickChatWindow = Duration(milliseconds: 60000);
+
+/// C-520 D1. The instant until which a send after [admitted] would be
+/// refused by PROTOCOL.md section 25 rule 3, or null when a send at [now]
+/// would be admitted. [admitted] is this seat's acknowledged sends,
+/// oldest first, on the device clock.
+DateTime? quickChatRestsUntil(List<DateTime> admitted, DateTime now) {
+  if (admitted.isEmpty) {
+    return null;
+  }
+  DateTime until = admitted.last.add(kQuickChatCooldown);
+  if (admitted.length >= kQuickChatPerWindow) {
+    final DateTime tenth = admitted[admitted.length - kQuickChatPerWindow];
+    final DateTime windowEnd = tenth.add(kQuickChatWindow);
+    if (windowEnd.isAfter(until)) {
+      until = windowEnd;
+    }
+  }
+  return until.isAfter(now) ? until : null;
+}
+
 /// The line for [id] in [loc]'s language, or null for an id not in
 /// [kQuickChatIds].
 String? quickChatLine(AppLocalizations loc, String id) {

@@ -13,6 +13,7 @@
 // spectator still sees whose roll it is. While my own roll is in flight
 // the same pips are on a cube (die_cube.dart) instead of this flat face.
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -20,6 +21,7 @@ import 'package:flutter/material.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'dead_mark.dart';
 import 'die_cube.dart';
+import 'refusal_mark.dart';
 import 'theme.dart';
 
 /// The die's fixed footprint, face and hit target both. C-223: "at least
@@ -39,6 +41,7 @@ class GameDie extends StatefulWidget {
     this.onTap,
     this.onInvalidTap,
     this.badgeHeadroom = double.infinity,
+    this.idleOpacity = 1,
   });
 
   /// The last known roll, straight from `turn.value`. Null when none is
@@ -82,6 +85,12 @@ class GameDie extends StatefulWidget {
   /// mounted outside the play column gets today's placement.
   final double badgeHeadroom;
 
+  /// C-468 D7: how strongly the die (face, cube and badge) paints. The idle
+  /// die of a seat that is not rolling passes 0.45. It lives here, below the
+  /// `game-die` key, so C-520 A2's refusal mark can sit outside it at full
+  /// strength.
+  final double idleOpacity;
+
   /// Fires on a tap while [enabled]. The widget itself still guards this:
   /// a tap while disabled never calls it, even if a caller passes one.
   final VoidCallback? onTap;
@@ -99,6 +108,10 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
   late final AnimationController _pulse;
   late final AnimationController _tumble;
   late final AnimationController _shake;
+
+  // C-520 D3: a refused tap under reduced motion wears a mark for 300 ms.
+  Timer? _markTimer;
+  bool _marked = false;
 
   @override
   void initState() {
@@ -168,9 +181,30 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     if (!widget.enabled) {
       widget.onInvalidTap?.call();
       _shake.forward(from: 0);
+      if (_reducedMotion) {
+        _showRefusalMark();
+      }
       return;
     }
     widget.onTap?.call();
+  }
+
+  /// C-520 D3. The 300 ms mark; a second refused tap inside it restarts the
+  /// 300 ms.
+  void _showRefusalMark() {
+    _markTimer?.cancel();
+    setState(() {
+      _marked = true;
+    });
+    _markTimer = Timer(kRefusalMarkLife, () {
+      _markTimer = null;
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _marked = false;
+      });
+    });
   }
 
   /// C-238: wraps a painted face with `game-die-idle-art` exactly when that
@@ -196,6 +230,7 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _markTimer?.cancel();
     _pulse.dispose();
     _tumble.dispose();
     _shake.dispose();
@@ -256,13 +291,32 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     // delayed or hidden by the die's own animation state. It hangs off the
     // top-right corner (C-380 D1). Clip.none keeps the overhang; the badge
     // is positioned, so the die's 72dp box does not grow.
-    final Widget dieFace = widget.noMove
-        ? Stack(
-            alignment: Alignment.topLeft,
-            clipBehavior: Clip.none,
-            children: <Widget>[die, _noMoveBadge()],
-          )
-        : die;
+    // The stacks are always built and `die` is always their first child, so
+    // the die's element keeps its slot when the badge or the mark comes and
+    // goes. Passthrough hands `die` the same tight box it had before.
+    final Widget dieArt = Stack(
+      alignment: Alignment.topLeft,
+      fit: StackFit.passthrough,
+      clipBehavior: Clip.none,
+      children: <Widget>[die, if (widget.noMove) _noMoveBadge()],
+    );
+    // C-468 D7: the Opacity is an ancestor of the die's art. C-520 A2: the
+    // refusal mark is a sibling of it, never under it.
+    final Widget dieFace = Stack(
+      alignment: Alignment.topLeft,
+      fit: StackFit.passthrough,
+      clipBehavior: Clip.none,
+      children: <Widget>[
+        Opacity(opacity: widget.idleOpacity, child: dieArt),
+        if (_marked)
+          const Positioned.fill(
+            child: RefusalMark(
+              shape: BoxShape.rectangle,
+              borderRadius: BorderRadius.all(Radius.circular(_kDieSize * 0.16)),
+            ),
+          ),
+      ],
+    );
 
     // The key sits on the Semantics widget itself, not on the SizedBox
     // beneath it: getSemantics(find.byKey('game-die')) must return this
