@@ -515,6 +515,8 @@ void main() {
         'AB0234',
       );
       await tester.pump();
+      // Join's entry is a 200 ms AnimatedSize at most (C-523 D3).
+      await tester.pump(const Duration(milliseconds: 250));
       await tester.tap(find.byKey(const Key('join-room-button')));
       await tester.pump();
 

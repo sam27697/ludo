@@ -99,6 +99,26 @@ void _expectCreateElevatedJoinOutlined(WidgetTester tester) {
   );
 }
 
+/// C-523 D3: with an empty or short code Join is not in the tree at all
+/// (absent, not disabled and not invisible), so the outlined Join of the
+/// older rule has nothing to stand on; Create stays the elevated action.
+void _expectCreateElevatedJoinAbsent(WidgetTester tester) {
+  expect(
+    _keyedButton(tester, _createKey),
+    isA<ElevatedButton>(),
+    reason:
+        'create-room-button must be an ElevatedButton; found '
+        '${_keyedButton(tester, _createKey).runtimeType}',
+  );
+  expect(
+    find.byKey(_joinKey, skipOffstage: false),
+    findsNothing,
+    reason:
+        'join-room-button must be absent while the code is shorter than '
+        'the full length (C-523 D3)',
+  );
+}
+
 void _expectJoinElevatedCreateOutlined(WidgetTester tester) {
   expect(
     _keyedButton(tester, _joinKey),
@@ -117,7 +137,7 @@ void _expectJoinElevatedCreateOutlined(WidgetTester tester) {
 }
 
 void main() {
-  testWidgets('empty code field uses elevated Create and outlined Join', (
+  testWidgets('empty code field uses elevated Create and no Join', (
     tester,
   ) async {
     await tester.pumpWidget(_homeScreenApp());
@@ -126,7 +146,7 @@ void main() {
     expect(find.byKey(_codeKey), findsOneWidget);
     expect(tester.widget<TextField>(find.byKey(_codeKey)).controller?.text, '');
 
-    _expectCreateElevatedJoinOutlined(tester);
+    _expectCreateElevatedJoinAbsent(tester);
   });
 
   testWidgets('valid code AB23CD uses elevated Join and outlined Create', (
@@ -158,7 +178,7 @@ void main() {
     },
   );
 
-  testWidgets('invalid short code ABC uses elevated Create and outlined Join', (
+  testWidgets('invalid short code ABC uses elevated Create and no Join', (
     tester,
   ) async {
     await tester.pumpWidget(_homeScreenApp());
@@ -171,7 +191,7 @@ void main() {
       tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
       'ABC',
     );
-    _expectCreateElevatedJoinOutlined(tester);
+    _expectCreateElevatedJoinAbsent(tester);
   });
 
   testWidgets(
@@ -239,6 +259,8 @@ void main() {
 
     await tester.enterText(find.byKey(_codeKey), 'AB23CD');
     await tester.pump();
+    // Join's entry is a 200 ms AnimatedSize at most (C-523 D3).
+    await tester.pump(const Duration(milliseconds: 250));
 
     await _tapAndAwaitPushedRoute(tester, _joinKey);
 

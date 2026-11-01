@@ -804,72 +804,62 @@ void main() {
   // still parses it) and every capture-bonus assertion exactly as it was,
   // and turns the removed widget check into an absence assertion.
   group('L7/L8/L9: the rules lines under the seat list', () {
-    testWidgets('L7: guest view, blocks off / capture bonus on, en', (
+    testWidgets(
+      'L7: guest view, blocks off / capture bonus on, en: no rule line',
+      (tester) async {
+        final connector = _Connector();
+        final transport = FakeTransport();
+        connector.enqueue(transport);
+        final controller = _newController(connector);
+        addTearDown(controller.dispose);
+
+        final id = await _mountAndCaptureRequest(
+          tester,
+          LobbyScreen(
+            controller: controller,
+            action: LobbyAction.join,
+            code: 'ABC234',
+            playerName: 'p1',
+          ),
+          transport,
+        );
+        // Seat 1, host seat 0: this client is not the host.
+        await _resolveConnected(
+          tester,
+          transport,
+          id,
+          seatForThisClient: 1,
+          hostSeat: 0,
+          players: 4,
+          seats: _seats(2),
+          blocks: false,
+          captureBonus: true,
+        );
+
+        expect(controller.isHost, isFalse, reason: 'L7 fixture: guest view');
+        expect(controller.room!.rules.blocks, isFalse);
+        expect(controller.room!.rules.captureBonus, isTrue);
+
+        expect(
+          find.byKey(const Key('lobby-rule-blocks')),
+          findsNothing,
+          reason:
+              'C-356: lobby-rule-blocks must not exist, even though the '
+              'room\'s own rules carry blocks: false',
+        );
+        expect(
+          find.byKey(const Key('lobby-rule-capture-bonus')),
+          findsNothing,
+          reason:
+              'L7 (C-523 D6): a room with capture bonus on shows no rule '
+              'line; lobbyRuleCaptureBonusOn is gone',
+        );
+      },
+    );
+
+    testWidgets('L8: the same room in ar shows no rule line either', (
       tester,
     ) async {
-      final connector = _Connector();
-      final transport = FakeTransport();
-      connector.enqueue(transport);
-      final controller = _newController(connector);
-      addTearDown(controller.dispose);
-
-      final id = await _mountAndCaptureRequest(
-        tester,
-        LobbyScreen(
-          controller: controller,
-          action: LobbyAction.join,
-          code: 'ABC234',
-          playerName: 'p1',
-        ),
-        transport,
-      );
-      // Seat 1, host seat 0: this client is not the host.
-      await _resolveConnected(
-        tester,
-        transport,
-        id,
-        seatForThisClient: 1,
-        hostSeat: 0,
-        players: 4,
-        seats: _seats(2),
-        blocks: false,
-        captureBonus: true,
-      );
-
-      expect(controller.isHost, isFalse, reason: 'L7 fixture: guest view');
-      expect(controller.room!.rules.blocks, isFalse);
-      expect(controller.room!.rules.captureBonus, isTrue);
-
-      final context = tester.element(find.byType(LobbyScreen));
-      final loc = AppLocalizations.of(context);
-      expect(
-        loc.lobbyRuleCaptureBonusOn,
-        'Capture bonus: on',
-        reason:
-            'L7 pins the exact en string from order 206\'s ARB table for '
-            'lobbyRuleCaptureBonusOn',
-      );
-
-      expect(
-        find.byKey(const Key('lobby-rule-blocks')),
-        findsNothing,
-        reason:
-            'C-356: lobby-rule-blocks must not exist, even though the '
-            'room\'s own rules carry blocks: false',
-      );
-      final captureText = tester.widget<Text>(
-        find.byKey(const Key('lobby-rule-capture-bonus')),
-      );
-      expect(
-        captureText.data,
-        'Capture bonus: on',
-        reason:
-            'L7: lobby-rule-capture-bonus must read "Capture bonus: on" '
-            'for rules.captureBonus == true; got "${captureText.data}"',
-      );
-    });
-
-    testWidgets('L8: the same room in ar reads the ar strings', (tester) async {
       final connector = _Connector();
       final transport = FakeTransport();
       connector.enqueue(transport);
@@ -900,16 +890,6 @@ void main() {
         captureBonus: true,
       );
 
-      final context = tester.element(find.byType(LobbyScreen));
-      final loc = AppLocalizations.of(context);
-      expect(
-        loc.lobbyRuleCaptureBonusOn,
-        'مكافأة الأكل: مفعّلة',
-        reason:
-            'L8 pins the exact ar string from order 206\'s ARB table for '
-            'lobbyRuleCaptureBonusOn',
-      );
-
       expect(
         find.byKey(const Key('lobby-rule-blocks')),
         findsNothing,
@@ -917,19 +897,18 @@ void main() {
             'C-356: lobby-rule-blocks must not exist, even though the '
             'room\'s own rules carry blocks: false, in Arabic too',
       );
-      final captureText = tester.widget<Text>(
-        find.byKey(const Key('lobby-rule-capture-bonus')),
-      );
       expect(
-        captureText.data,
-        'مكافأة الأكل: مفعّلة',
+        find.byKey(const Key('lobby-rule-capture-bonus')),
+        findsNothing,
         reason:
-            'L8: lobby-rule-capture-bonus must read the ar string for '
-            'capture bonus on; got "${captureText.data}"',
+            'L8 (C-523 D6): a room with capture bonus on shows no rule '
+            'line in Arabic either',
       );
     });
 
-    testWidgets('L9: defaults (both on) for the host view, en', (tester) async {
+    testWidgets('L9: defaults (both on) for the host view, en: no rule line', (
+      tester,
+    ) async {
       final connector = _Connector();
       final transport = FakeTransport();
       connector.enqueue(transport);
@@ -960,10 +939,6 @@ void main() {
       expect(controller.room!.rules.blocks, isTrue);
       expect(controller.room!.rules.captureBonus, isTrue);
 
-      final context = tester.element(find.byType(LobbyScreen));
-      final loc = AppLocalizations.of(context);
-      expect(loc.lobbyRuleCaptureBonusOn, 'Capture bonus: on');
-
       expect(
         find.byKey(const Key('lobby-rule-blocks')),
         findsNothing,
@@ -971,16 +946,12 @@ void main() {
             'C-356: lobby-rule-blocks must not exist for the host view '
             'either, even with the room\'s own default rules (blocks: true)',
       );
-      final captureText = tester.widget<Text>(
-        find.byKey(const Key('lobby-rule-capture-bonus')),
-      );
       expect(
-        captureText.data,
-        'Capture bonus: on',
+        find.byKey(const Key('lobby-rule-capture-bonus')),
+        findsNothing,
         reason:
-            'L9: lobby-rule-capture-bonus must read "Capture bonus: on" '
-            'for the default rules, for the host too; got '
-            '"${captureText.data}"',
+            'L9 (C-523 D6): the default rules show no rule line for the '
+            'host either',
       );
     });
   });

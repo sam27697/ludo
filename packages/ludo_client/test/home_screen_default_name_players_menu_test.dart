@@ -1,7 +1,7 @@
 // Widget tests for the home screen's default player name and the
 // seat-count control: the name field shows the localised default on
-// first paint, the 2/3/4 selector stays hidden until the player opens
-// it, and Create Room still forwards the chosen (or default) seat count.
+// first paint, the 2/3/4 menu stays closed until the player opens
+// it (C-523 D2), and Create Room still forwards the chosen (or default) seat count.
 //
 // Create Room builds a RoomController from widget.controllerFactory().
 // The default factory opens a real WebSocket, so every test that taps
@@ -25,8 +25,8 @@ import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
 
 const Key _nameKey = Key('home-name-field');
-const Key _selectorKey = Key('home-players-selector');
-const Key _disclosureKey = Key('home-players-disclosure');
+Key _optionKey(int count) => Key('home-players-option-$count');
+const Key _playersButtonKey = Key('home-players-button');
 const Key _createKey = Key('create-room-button');
 const Key _localeKey = Key('locale-toggle-button');
 
@@ -35,7 +35,7 @@ RoomController _neverConnectsControllerFactory() {
     serverUrl: Uri.parse('wss://home-screen-test.invalid/ws'),
     connect: (Uri url) async {
       throw StateError(
-        'home_screen_default_name_players_disclosure_test.dart: this '
+        'home_screen_default_name_players_menu_test.dart: this '
         'connector must never open a real or fake transport; '
         'RoomController only needs something to fail against without '
         'constructing one',
@@ -90,47 +90,41 @@ LobbyScreen _pushedLobbyScreen(WidgetTester tester) {
   return tester.widget<LobbyScreen>(finder);
 }
 
-Future<void> _openPlayersDisclosure(WidgetTester tester) async {
+/// Opens the players menu behind home-players-button (C-523 D2) and checks
+/// that its options are there.
+Future<void> _openPlayersMenu(WidgetTester tester) async {
   expect(
-    find.byKey(_disclosureKey),
+    find.byKey(_playersButtonKey),
     findsOneWidget,
     reason:
-        'home-players-disclosure must be on screen so the player can '
-        'open the seat-count selector',
+        'home-players-button must be on screen so the player can '
+        'open the seat-count menu',
   );
-  await tester.ensureVisible(find.byKey(_disclosureKey));
-  await tester.tap(find.byKey(_disclosureKey));
+  await tester.ensureVisible(find.byKey(_playersButtonKey));
+  await tester.tap(find.byKey(_playersButtonKey));
   await tester.pumpAndSettle();
   expect(
-    find.byKey(_selectorKey),
+    find.byKey(_optionKey(4)),
     findsOneWidget,
-    reason: 'tapping home-players-disclosure must reveal home-players-selector',
+    reason: 'tapping home-players-button must open home-players-option-4',
   );
 }
 
+/// Opens the menu, picks [count] and checks the closed control shows it.
 Future<void> _selectPlayers(WidgetTester tester, int count) async {
-  final AppLocalizations loc = _loc(tester);
-  final String label = switch (count) {
-    2 => loc.homePlayersTwo,
-    3 => loc.homePlayersThree,
-    4 => loc.homePlayersFour,
-    _ => throw ArgumentError.value(count, 'count', 'must be 2, 3 or 4'),
-  };
-  await tester.ensureVisible(find.byKey(_selectorKey));
-  await tester.tap(
-    find.descendant(of: find.byKey(_selectorKey), matching: find.text(label)),
-  );
-  await tester.pump();
-
-  final SegmentedButton<int> segmented = tester.widget<SegmentedButton<int>>(
+  await _openPlayersMenu(tester);
+  await tester.tap(find.byKey(_optionKey(count)));
+  await tester.pumpAndSettle();
+  expect(
     find.descendant(
-      of: find.byKey(_selectorKey),
-      matching: find.byType(SegmentedButton<int>),
+      of: find.byKey(_playersButtonKey),
+      matching: find.text('$count'),
     ),
+    findsOneWidget,
+    reason:
+        'picking $count must show $count on home-players-button before '
+        'Create Room',
   );
-  expect(segmented.selected, <int>{
-    count,
-  }, reason: 'selecting $count must select that segment before Create Room');
 }
 
 void main() {
@@ -179,87 +173,77 @@ void main() {
     );
   });
 
-  testWidgets('closed home-players-disclosure names the default four seats', (
+  testWidgets('closed home-players-button names the default four seats', (
     tester,
   ) async {
     await tester.pumpWidget(_homeScreenApp());
     await tester.pumpAndSettle();
 
     expect(
-      find.byKey(_selectorKey),
+      find.byKey(_optionKey(4)),
       findsNothing,
       reason:
-          'fixture is broken: home-players-selector must stay closed '
-          'so this assertion reads the disclosure label only',
+          'fixture is broken: the menu must stay closed so this assertion '
+          'reads the control only',
     );
     expect(
-      find.byKey(_disclosureKey),
+      find.byKey(_playersButtonKey),
       findsOneWidget,
       reason:
-          'fixture is broken: home-players-disclosure must be on '
+          'fixture is broken: home-players-button must be on '
           'screen on first paint',
     );
 
-    final AppLocalizations loc = _loc(tester);
-    expect(
-      loc.homePlayersFour,
-      isNotEmpty,
-      reason: 'fixture is broken: homePlayersFour must not be empty',
-    );
-
-    final Finder disclosureTexts = find.descendant(
-      of: find.byKey(_disclosureKey),
+    final Finder controlTexts = find.descendant(
+      of: find.byKey(_playersButtonKey),
       matching: find.byType(Text),
     );
     expect(
-      disclosureTexts,
+      controlTexts,
       findsWidgets,
       reason:
-          'home-players-disclosure must expose Text so the closed '
-          'label can be read',
+          'home-players-button must expose Text so the closed '
+          'count can be read',
     );
 
     final String closedLabel = tester
-        .widgetList<Text>(disclosureTexts)
+        .widgetList<Text>(controlTexts)
         .map((Text text) => text.data ?? '')
         .join();
-    final bool namesFour =
-        closedLabel.contains('4') || closedLabel.contains(loc.homePlayersFour);
     expect(
-      namesFour,
+      closedLabel.contains('4'),
       isTrue,
       reason:
-          'on first paint the closed home-players-disclosure text '
-          'must include the digit 4 or the localised '
-          'homePlayersFour ("${loc.homePlayersFour}"); got '
-          '"$closedLabel"',
+          'on first paint the closed home-players-button text '
+          'must include the digit 4; got "$closedLabel"',
     );
   });
 
   testWidgets(
-    'home-players-selector is absent until home-players-disclosure is tapped',
+    'the players menu options are absent until home-players-button is tapped',
     (tester) async {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(_selectorKey),
-        findsNothing,
-        reason:
-            'home-players-selector must be absent on first paint until '
-            'home-players-disclosure is tapped',
-      );
+      for (final int count in const <int>[2, 3, 4]) {
+        expect(
+          find.byKey(_optionKey(count)),
+          findsNothing,
+          reason:
+              'home-players-option-$count must be absent on first paint '
+              'until home-players-button is tapped',
+        );
+      }
 
-      await _openPlayersDisclosure(tester);
+      await _openPlayersMenu(tester);
     },
   );
 
-  testWidgets('after opening the players disclosure, selecting 2 then Create '
+  testWidgets('after opening the players menu, selecting 2 then Create '
       'carries players 2', (tester) async {
     await tester.pumpWidget(_homeScreenApp());
     await tester.pumpAndSettle();
 
-    await _openPlayersDisclosure(tester);
     await _selectPlayers(tester, 2);
     await _tapAndAwaitPushedRoute(tester, _createKey);
 
@@ -270,12 +254,11 @@ void main() {
     );
   });
 
-  testWidgets('after opening the players disclosure, selecting 3 then Create '
+  testWidgets('after opening the players menu, selecting 3 then Create '
       'carries players 3', (tester) async {
     await tester.pumpWidget(_homeScreenApp());
     await tester.pumpAndSettle();
 
-    await _openPlayersDisclosure(tester);
     await _selectPlayers(tester, 3);
     await _tapAndAwaitPushedRoute(tester, _createKey);
 
@@ -286,12 +269,11 @@ void main() {
     );
   });
 
-  testWidgets('after opening the players disclosure, selecting 4 then Create '
+  testWidgets('after opening the players menu, selecting 4 then Create '
       'carries players 4', (tester) async {
     await tester.pumpWidget(_homeScreenApp());
     await tester.pumpAndSettle();
 
-    await _openPlayersDisclosure(tester);
     // 4 is the default; leave it and return so "selectable" is a real
     // tap, not leftover state.
     await _selectPlayers(tester, 2);
@@ -376,23 +358,22 @@ void main() {
     },
   );
 
-  testWidgets(
-    'Create without opening the players disclosure still uses players 4',
-    (tester) async {
-      await tester.pumpWidget(_homeScreenApp());
-      await tester.pumpAndSettle();
+  testWidgets('Create without opening the players menu still uses players 4', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_homeScreenApp());
+    await tester.pumpAndSettle();
 
-      await _tapAndAwaitPushedRoute(tester, _createKey);
+    await _tapAndAwaitPushedRoute(tester, _createKey);
 
-      expect(
-        _pushedLobbyScreen(tester).players,
-        4,
-        reason:
-            'Create Room with the seat-count control never opened must '
-            'still request 4 players',
-      );
-    },
-  );
+    expect(
+      _pushedLobbyScreen(tester).players,
+      4,
+      reason:
+          'Create Room with the seat-count control never opened must '
+          'still request 4 players',
+    );
+  });
 
   testWidgets('a custom typed name is not overwritten by a locale toggle', (
     tester,

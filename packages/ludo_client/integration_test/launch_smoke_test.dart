@@ -150,11 +150,25 @@ Future<void> _expectHomeScreenOn(
         'HomeScreen is on screen but its room-code field is not '
         '($localeName)',
   );
+  // C-523 D3: Join enters with a full-length code, so a fresh launch with
+  // an empty field has none.
   expect(
     find.byKey(const Key('join-room-button')),
+    findsNothing,
+    reason:
+        'HomeScreen shows Join Room with an empty room-code field '
+        '($localeName)',
+  );
+  expect(
+    find.byKey(const Key('home-players-button')),
     findsOneWidget,
     reason:
-        'HomeScreen is on screen but its Join Room button is not '
+        'HomeScreen is on screen but its player-count control is not '
         '($localeName)',
+  );
+  expect(
+    find.byKey(const Key('home-sound-toggle')),
+    findsOneWidget,
+    reason: 'HomeScreen is on screen but its sound toggle is not ($localeName)',
   );
 }

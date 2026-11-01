@@ -74,7 +74,7 @@ const List<String> kIds = <String>[
 const Key kSheetKey = Key('quick-chat-sheet');
 const Key kMuteKey = Key('quick-chat-mute');
 const Key kChatButtonKey = Key('game-chat-button');
-const Key kSettingsButtonKey = Key('game-settings-button');
+const Key kSoundToggleKey = Key('game-sound-toggle');
 const Key _openKey = Key('test-open-sheet');
 
 Key chipKey(String id) => Key('quick-chat-$id');
@@ -812,42 +812,48 @@ void main() {
       );
     }
 
-    testWidgets('sits at the end of the header, one gap before the settings '
-        'button, mirrored in Arabic', (tester) async {
-      for (final Locale locale in const <Locale>[Locale('en'), Locale('ar')]) {
-        final Scn s = await game(
-          tester,
-          'D5.1 place ${locale.languageCode}',
-          locale: locale,
-        );
-        try {
-          final Rect chat = tester.getRect(button());
-          final Rect settings = tester.getRect(find.byKey(kSettingsButtonKey));
-          expect(
-            (chat.center.dy - settings.center.dy).abs(),
-            lessThan(1.0),
-            reason: s.why('same header row'),
+    testWidgets(
+      'sits at the end of the header, one gap before the sound toggle '
+      'button, mirrored in Arabic',
+      (tester) async {
+        for (final Locale locale in const <Locale>[
+          Locale('en'),
+          Locale('ar'),
+        ]) {
+          final Scn s = await game(
+            tester,
+            'D5.1 place ${locale.languageCode}',
+            locale: locale,
           );
-          if (locale.languageCode == 'en') {
+          try {
+            final Rect chat = tester.getRect(button());
+            final Rect sound = tester.getRect(find.byKey(kSoundToggleKey));
             expect(
-              chat.right,
-              closeTo(settings.left - kSpace1, 1.0),
-              reason: s.why(
-                'chat ends kSpace1 before settings: $chat $settings',
-              ),
+              (chat.center.dy - sound.center.dy).abs(),
+              lessThan(1.0),
+              reason: s.why('same header row'),
             );
-          } else {
-            expect(
-              chat.left,
-              closeTo(settings.right + kSpace1, 1.0),
-              reason: s.why('mirrored: $chat $settings'),
-            );
+            if (locale.languageCode == 'en') {
+              expect(
+                chat.right,
+                closeTo(sound.left - kSpace1, 1.0),
+                reason: s.why(
+                  'chat ends kSpace1 before the sound toggle: $chat $sound',
+                ),
+              );
+            } else {
+              expect(
+                chat.left,
+                closeTo(sound.right + kSpace1, 1.0),
+                reason: s.why('mirrored: $chat $sound'),
+              );
+            }
+          } finally {
+            await releaseGame(tester, s.drive);
           }
-        } finally {
-          await releaseGame(tester, s.drive);
         }
-      }
-    });
+      },
+    );
 
     testWidgets('Arabic tooltip', (tester) async {
       final Scn s = await game(

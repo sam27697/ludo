@@ -1,3 +1,10 @@
+// Retargeted for C-523 D2 (this file was home_screen_players_fit_test.dart):
+// the segmented selector and its disclosure are gone, so the one-line proofs
+// now read the row's question label and the numeral of each option in the
+// open menu behind home-players-button; the selected flag is read off the
+// option's Semantics node instead of the segment's. The font-loading sanity
+// cases are unchanged apart from the label they resolve the theme off.
+//
 // A proof, independent of lib/src/home_screen.dart's own author, that every
 // segment of the player-count selector on HomeScreen
 // (work/ludo/orders/147-players-selector-fit-proof.md, respec'd by
@@ -190,7 +197,7 @@ RoomController _neverConnectsControllerFactory() {
     serverUrl: Uri.parse('wss://home-screen-players-fit-test.invalid/ws'),
     connect: (Uri url) async {
       throw StateError(
-        'home_screen_players_fit_test.dart: this connector must never be '
+        'home_screen_players_row_fit_test.dart: this connector must never be '
         'asked to open a real or fake transport; this file never taps '
         'Create Room or Join Room, so nothing should ever call it',
       );
@@ -235,95 +242,97 @@ Future<void> _mount(WidgetTester tester, Locale locale) async {
   await tester.pumpWidget(_harness(locale));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 1000));
-  await _openPlayersDisclosure(tester);
 }
 
-/// Opens the seat-count selector. It stays hidden until the player taps
-/// home-players-disclosure; every measurement in this file is of that
-/// selector, so the mount must open it. Bounded pumps only, matching
-/// [_mount] (see that comment for why not pumpAndSettle).
-Future<void> _openPlayersDisclosure(WidgetTester tester) async {
-  final Finder disclosure = find.byKey(const Key('home-players-disclosure'));
+/// Opens the player-count menu behind home-players-button (C-523 D2); every
+/// measurement of an option in this file is taken with it open.
+Future<void> _openPlayersMenu(WidgetTester tester) async {
+  final Finder button = find.byKey(const Key('home-players-button'));
   expect(
-    disclosure,
+    button,
     findsOneWidget,
     reason:
-        'fixture is broken: home-players-disclosure must be on screen '
-        'so this file can open the seat-count selector it measures',
+        'fixture is broken: home-players-button must be on screen so '
+        'this file can open the seat-count menu it measures',
   );
-  await tester.tap(disclosure);
+  await tester.tap(button);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
   expect(
-    _selectorFinder,
+    _optionFinder(4),
     findsOneWidget,
-    reason: 'tapping home-players-disclosure must reveal home-players-selector',
+    reason: 'tapping home-players-button must open home-players-option-4',
   );
 }
 
-final Finder _selectorFinder = find.byKey(const Key('home-players-selector'));
+Finder _optionFinder(int count) =>
+    find.byKey(Key('home-players-option-$count'));
 
-/// The mounted `Text` widget carrying [label], scoped to descend from the
-/// player-count selector. [label] is always read off `AppLocalizations` by
-/// the caller, never typed as a literal in this file (see the file header).
-Finder _segmentLabelFinder(String label) =>
-    find.descendant(of: _selectorFinder, matching: find.text(label));
-
-/// Taps the segment carrying [label] the way a player does -- a real tap
-/// on the label text inside the selector -- rather than by reaching into
-/// `_HomeScreenState`'s private `_players` field.
-Future<void> _selectByTap(WidgetTester tester, String label) async {
-  final Finder finder = _segmentLabelFinder(label);
+/// Taps option [count] in the open menu the way a player does, which closes
+/// the menu and sets the count.
+Future<void> _pickOption(WidgetTester tester, int count) async {
+  final Finder option = _optionFinder(count);
   expect(
-    finder,
+    option,
     findsOneWidget,
-    reason:
-        'fixture is broken: no segment in the player-count selector '
-        'carries the label "$label"',
+    reason: 'fixture is broken: home-players-option-$count is not open',
   );
-  await tester.tap(finder);
+  await tester.tap(option);
   await tester.pump();
-  // SegmentedButton's own selection-change animation; 400ms is comfortably
-  // past it without reaching for pumpAndSettle (see _mount).
+  // The menu's exit transition; 400ms is comfortably past it without
+  // reaching for pumpAndSettle (see _mount).
   await tester.pump(const Duration(milliseconds: 400));
 }
 
-/// Whether the segment carrying [label] is the selected one, read off the
-/// merged Semantics node `SegmentedButton` wraps every segment in
-/// (flutter/src/material/segmented_button.dart:632-638:
-/// `MergeSemantics(child: Semantics(selected: segmentSelected, ...))`,
-/// computed directly off the widget's own `selected` set). This is the
-/// property this file asserts the selected segment is distinguishable by:
-/// it belongs to `SegmentedButton` itself, is set independently of whichever
-/// icon a fix does or does not show for the selected segment, and is not a
-/// restatement of any one specific fix to the label-wrapping defect this
-/// file exists to prove.
-bool _isSelectedSegment(WidgetTester tester, String label) {
-  final SemanticsNode node = tester.getSemantics(_segmentLabelFinder(label));
+/// Whether option [count]'s Semantics node carries the selected flag.
+bool _isSelectedOption(WidgetTester tester, int count) {
+  final SemanticsNode node = tester.getSemantics(_optionFinder(count));
   final bool? isSelected = node.flagsCollection.isSelected.toBoolOrNull();
   expect(
     isSelected,
     isNotNull,
     reason:
-        'fixture is broken: the "$label" segment\'s merged Semantics '
-        'node does not carry an isSelected flag at all (Tristate.none); '
-        'SegmentedButton always sets Semantics(selected: ...) explicitly '
-        '(flutter/src/material/segmented_button.dart:634), so this means '
-        'something upstream of this file changed',
+        'fixture is broken: option $count\'s Semantics node does not carry '
+        'an isSelected flag at all (Tristate.none)',
   );
   return isSelected!;
 }
 
-/// Finds the single `RichText` painting the label of the segment carrying
-/// [label], and returns the live `RenderParagraph` behind it.
-RenderParagraph _paragraphOfSegmentLabel(WidgetTester tester, String label) {
-  final Finder labelFinder = _segmentLabelFinder(label);
+/// The mounted `Text` carrying the numeral of option [count], and the live
+/// paragraph behind it.
+RenderParagraph _paragraphOfOptionNumeral(WidgetTester tester, int count) {
+  final Finder numeral = find.descendant(
+    of: _optionFinder(count),
+    matching: find.text('$count'),
+  );
+  expect(
+    numeral,
+    findsOneWidget,
+    reason: 'fixture is broken: no numeral "$count" inside option $count',
+  );
+  final Finder textFinder = find.descendant(
+    of: numeral,
+    matching: find.byType(RichText),
+  );
+  expect(
+    textFinder,
+    findsOneWidget,
+    reason:
+        'fixture is broken: expected exactly one RichText under the '
+        '"$count" numeral of its option',
+  );
+  return tester.renderObject<RenderParagraph>(textFinder);
+}
+
+/// The live paragraph behind the row's question label.
+RenderParagraph _paragraphOfQuestion(WidgetTester tester, String question) {
+  final Finder labelFinder = find.text(question);
   expect(
     labelFinder,
     findsOneWidget,
     reason:
-        'fixture is broken: no segment in the player-count selector '
-        'carries the label "$label"',
+        'fixture is broken: the question "$question" must be painted '
+        'exactly once on home',
   );
   final Finder textFinder = find.descendant(
     of: labelFinder,
@@ -334,22 +343,12 @@ RenderParagraph _paragraphOfSegmentLabel(WidgetTester tester, String label) {
     findsOneWidget,
     reason:
         'fixture is broken: expected exactly one RichText under the '
-        '"$label" segment label',
+        '"$question" label',
   );
   return tester.renderObject<RenderParagraph>(textFinder);
 }
 
-/// How many lines dart:ui actually broke the label of the segment carrying
-/// [label] into, at the width the segment laid it out at.
-///
-/// Copied technique from test/game_screen_token_label_fit_test.dart:296-348
-/// (`RenderParagraph` exposes no line-count accessor of its own on this
-/// SDK): every input that fed the real `RenderParagraph`'s layout is read
-/// straight off that render object and replayed into a fresh `TextPainter`,
-/// because that is the only way to ask dart:ui how many lines it actually
-/// broke the on-screen paragraph into.
-int _lineCountOfSegmentLabel(WidgetTester tester, String label) {
-  final RenderParagraph paragraph = _paragraphOfSegmentLabel(tester, label);
+int _lineCountOf(RenderParagraph paragraph) {
   final TextPainter probe = TextPainter(
     text: paragraph.text,
     textAlign: paragraph.textAlign,
@@ -368,18 +367,8 @@ int _lineCountOfSegmentLabel(WidgetTester tester, String label) {
   }
 }
 
-/// The natural, unbounded single-line width of the label of the segment
-/// carrying [label] -- the width it would occupy laid out with no width
-/// limit at all, independent of the box the real segment happens to give
-/// it right now. Same technique as `_lineCountOfSegmentLabel`, every input
-/// read off the live `RenderParagraph`, except laid out under no
-/// `maxWidth`. Reported for order 148's requirement 7 (the Arabic
-/// selected-label tie-breaker): this is the same "natural width against
-/// the box's own allowed width" pair order 146's worker reported headless
-/// (51.7dp inside 60.91dp), now measured under the real render tree with
-/// the real font loaded, rather than inferred.
-double _naturalSegmentLabelWidth(WidgetTester tester, String label) {
-  final RenderParagraph paragraph = _paragraphOfSegmentLabel(tester, label);
+/// The natural (unbounded) width of [paragraph]'s text.
+double _naturalWidthOfParagraph(RenderParagraph paragraph) {
   final TextPainter probe = TextPainter(
     text: paragraph.text,
     textAlign: paragraph.textAlign,
@@ -396,22 +385,6 @@ double _naturalSegmentLabelWidth(WidgetTester tester, String label) {
   } finally {
     probe.dispose();
   }
-}
-
-/// The localised label for [players], read off [loc] rather than typed as a
-/// literal anywhere a test body can see it directly.
-String _playersLabel(AppLocalizations loc, int players) {
-  return switch (players) {
-    2 => loc.homePlayersTwo,
-    3 => loc.homePlayersThree,
-    4 => loc.homePlayersFour,
-    _ => throw ArgumentError.value(
-      players,
-      'players',
-      'home_screen_players_fit_test.dart only knows the three player '
-          'counts the selector offers (2, 3, 4)',
-    ),
-  };
 }
 
 void main() {
@@ -448,7 +421,7 @@ void main() {
         // report rather than assumed.
         // ignore: avoid_print
         print(
-          'home_screen_players_fit_test sanity (Poppins, fontSize '
+          'home_screen_players_row_fit_test sanity (Poppins, fontSize '
           '$fontSize): "$narrow" natural width = ${narrowWidth}dp, '
           '"$wide" natural width = ${wideWidth}dp; the Ahem-predicted '
           'width for any 10-character string at this size would be '
@@ -518,7 +491,7 @@ void main() {
 
         // ignore: avoid_print
         print(
-          'home_screen_players_fit_test sanity (Noto Sans Arabic, '
+          'home_screen_players_row_fit_test sanity (Noto Sans Arabic, '
           'fontSize $fontSize): "$narrow" natural width = '
           '${narrowWidth}dp, "$wide" natural width = ${wideWidth}dp; the '
           'Ahem-predicted width for any 5-character string at this size '
@@ -553,7 +526,7 @@ void main() {
     );
 
     testWidgets(
-      'the mounted selector resolves its segment labels to fontFamily '
+      'the mounted players row resolves its question label to fontFamily '
       'Poppins with fontFamilyFallback containing Noto Sans Arabic, off '
       'the real theme (the check order 146\'s worker used, applied here)',
       (tester) async {
@@ -562,23 +535,23 @@ void main() {
         final BuildContext context = tester.element(find.byType(Scaffold));
         final AppLocalizations loc = AppLocalizations.of(context);
 
-        final RenderParagraph paragraph = _paragraphOfSegmentLabel(
+        final RenderParagraph paragraph = _paragraphOfQuestion(
           tester,
-          _playersLabel(loc, 4),
+          loc.homePlayersQuestion,
         );
         final TextStyle? style = paragraph.text.style;
         expect(
           style,
           isNotNull,
           reason:
-              'fixture is broken: the 4-players segment label\'s '
+              'fixture is broken: the question label\'s '
               'RenderParagraph carries a null style',
         );
 
         // ignore: avoid_print
         print(
-          'home_screen_players_fit_test sanity (theme wiring): the '
-          '4-players segment label\'s resolved TextStyle carries '
+          'home_screen_players_row_fit_test sanity (theme wiring): the '
+          'question label\'s resolved TextStyle carries '
           'fontFamily=${style!.fontFamily}, '
           'fontFamilyFallback=${style.fontFamilyFallback}',
         );
@@ -587,7 +560,7 @@ void main() {
           style.fontFamily,
           'Poppins',
           reason:
-              'expected the segment label\'s resolved TextStyle.fontFamily '
+              'expected the question label\'s resolved TextStyle.fontFamily '
               'to be "Poppins" (lib/src/theme.dart kLudoFontFamily), got '
               '"${style.fontFamily}" -- this file is not mounted inside '
               'the app\'s real theme, or the theme changed which family it '
@@ -597,7 +570,7 @@ void main() {
           style.fontFamilyFallback,
           contains('Noto Sans Arabic'),
           reason:
-              'expected the segment label\'s resolved '
+              'expected the question label\'s resolved '
               'TextStyle.fontFamilyFallback to contain "Noto Sans Arabic" '
               '(lib/src/theme.dart kLudoFontFallbacks), got '
               '${style.fontFamilyFallback}',
@@ -608,10 +581,11 @@ void main() {
     );
   });
 
-  group('the player-count selector renders every segment label on one line at '
-      'phone width, for every selection state, under the real fonts and '
-      'the real theme '
-      '(work/ludo/orders/148-players-selector-fit-proof-real-fonts.md)', () {
+  group('the players row renders its question and every option numeral on one '
+      'line at phone width, for every selection state, under the real fonts '
+      'and the real theme '
+      '(work/ludo/orders/148-players-selector-fit-proof-real-fonts.md, '
+      'retargeted for C-523 D2)', () {
     for (final Locale locale in const <Locale>[Locale('en'), Locale('ar')]) {
       group('${locale.languageCode}:', () {
         for (final int selected in const <int>[2, 3, 4]) {
@@ -621,9 +595,9 @@ void main() {
                   ? 'selected'
                   : 'unselected';
               testWidgets(
-                'the $measured-players segment ($role) renders its label '
-                'on exactly one line at the 1080x1848@2.75 phone geometry '
-                'the overflow was photographed at',
+                'the $measured-players option ($role) and the question '
+                'render on exactly one line at the 1080x1848@2.75 phone '
+                'geometry the overflow was photographed at',
                 (tester) async {
                   final double logicalWidth = _pinPhoneView(tester);
 
@@ -633,36 +607,15 @@ void main() {
                   );
                   final AppLocalizations loc = AppLocalizations.of(context);
 
-                  final String selectedLabel = _playersLabel(loc, selected);
-                  await _selectByTap(tester, selectedLabel);
+                  await _openPlayersMenu(tester);
+                  await _pickOption(tester, selected);
+                  await _openPlayersMenu(tester);
 
-                  // Rule 6 (order 147, kept): the segment under test must
-                  // be distinguishable as selected or not, read off
-                  // SegmentedButton's own Semantics(selected: ...), before
-                  // the line-count assertion runs -- a fixture where the
-                  // tap silently failed to move the selection must not be
-                  // mistaken for a passing or failing line-count case
-                  // below.
-                  //
-                  // The handle is disposed with an explicit try/finally
-                  // right around its one use, not via addTearDown: on this
-                  // Flutter SDK, flutter_test's own "was a SemanticsHandle
-                  // left active" check
-                  // (flutter_test/src/widget_tester.dart,
-                  // WidgetTester._endOfTestVerifications) runs while the
-                  // test body is still executing, before any addTearDown
-                  // callback fires, so a handle only ever released via
-                  // addTearDown reads as leaked on every case that reaches
-                  // this point without throwing first (order 147's file
-                  // confirmed this by running with addTearDown instead and
-                  // recorded exactly which cases turned red because of it,
-                  // not because of a real leak).
-                  final String measuredLabel = _playersLabel(loc, measured);
                   final SemanticsHandle semanticsHandle = tester
                       .ensureSemantics();
                   final bool isSelected;
                   try {
-                    isSelected = _isSelectedSegment(tester, measuredLabel);
+                    isSelected = _isSelectedOption(tester, measured);
                   } finally {
                     semanticsHandle.dispose();
                   }
@@ -670,74 +623,70 @@ void main() {
                     isSelected,
                     measured == selected,
                     reason:
-                        'home-players-selector (${locale.languageCode}): '
-                        'after tapping "$selectedLabel", the '
-                        '$measured-players segment\'s merged Semantics '
-                        'node reports isSelected=$isSelected (expected '
-                        '${measured == selected}); SegmentedButton sets '
-                        'Semantics(selected: ...) directly off its own '
-                        'selection set '
-                        '(flutter/src/material/segmented_button.dart:'
-                        '632-638), so this not matching means the tap did '
-                        'not actually move the control\'s selection',
+                        'home-players-button (${locale.languageCode}): '
+                        'after picking $selected, option $measured\'s '
+                        'Semantics node reports isSelected=$isSelected '
+                        '(expected ${measured == selected}); this not '
+                        'matching means the pick did not move the '
+                        'control\'s selection',
                   );
 
-                  final int lines = _lineCountOfSegmentLabel(
+                  final RenderParagraph numeral = _paragraphOfOptionNumeral(
                     tester,
-                    measuredLabel,
+                    measured,
                   );
-                  final double naturalWidth = _naturalSegmentLabelWidth(
+                  final RenderParagraph question = _paragraphOfQuestion(
                     tester,
-                    measuredLabel,
+                    loc.homePlayersQuestion,
                   );
-                  final RenderParagraph paragraph = _paragraphOfSegmentLabel(
-                    tester,
-                    measuredLabel,
+                  final int numeralLines = _lineCountOf(numeral);
+                  final int questionLines = _lineCountOf(question);
+                  final double naturalWidth = _naturalWidthOfParagraph(
+                    question,
                   );
-                  final double boxMaxWidth = paragraph.constraints.maxWidth;
+                  final double boxMaxWidth = question.constraints.maxWidth;
 
-                  // Proof for the record, not decoration: this is the real
-                  // per-(locale, selection state, measured segment) line
-                  // count and width pair this run measured under the real
-                  // fonts and the real theme, quoted verbatim in this
-                  // file's own run report for order 148's requirement 6
-                  // (the table) and requirement 7 (the Arabic tie-breaker),
-                  // rather than assumed from order 146's headless numbers.
                   // ignore: avoid_print
                   print(
-                    'home_screen_players_fit_test table row: locale='
+                    'home_screen_players_row_fit_test table row: locale='
                     '${locale.languageCode} selected=$selected '
-                    'measured=$measured role=$role lines=$lines '
-                    'naturalWidth=${naturalWidth}dp '
-                    'boxMaxWidth=${boxMaxWidth}dp',
+                    'measured=$measured role=$role '
+                    'numeralLines=$numeralLines '
+                    'questionLines=$questionLines '
+                    'questionNaturalWidth=${naturalWidth}dp '
+                    'questionBoxMaxWidth=${boxMaxWidth}dp',
                   );
 
                   expect(
-                    lines,
+                    numeralLines,
                     1,
                     reason:
-                        'home-players-selector (${locale.languageCode}, '
+                        'home-players-button (${locale.languageCode}, '
                         '$selected players selected): the $role '
-                        '$measured-players segment wrapped its label onto '
-                        '$lines lines at a logical width of '
+                        '$measured-players option wrapped its numeral onto '
+                        '$numeralLines lines at a logical width of '
                         '${logicalWidth.toStringAsFixed(2)}dp (physical '
                         '${_devicePhysicalSize.width.toStringAsFixed(0)}x'
                         '${_devicePhysicalSize.height.toStringAsFixed(0)}, '
-                        'dpr $_devicePixelRatio); measured under the real '
+                        'dpr $_devicePixelRatio), measured under the real '
                         'Poppins/Noto Sans Arabic fonts and the real app '
-                        'theme, the label\'s natural (unbounded) width is '
+                        'theme',
+                  );
+                  expect(
+                    questionLines,
+                    1,
+                    reason:
+                        'home-players-button (${locale.languageCode}, '
+                        '$selected players selected): the question wrapped '
+                        'onto $questionLines lines at a logical width of '
+                        '${logicalWidth.toStringAsFixed(2)}dp; its natural '
+                        '(unbounded) width is '
                         '${naturalWidth.toStringAsFixed(2)}dp against a '
-                        'box of ${boxMaxWidth.toStringAsFixed(2)}dp; every '
-                        'segment of the player-count selector must render '
-                        'its label on a single line at a real phone '
-                        'width, whichever segment is currently selected',
+                        'box of ${boxMaxWidth.toStringAsFixed(2)}dp; under '
+                        'the real fonts it must read on a single line at a '
+                        'real phone width, whichever count is selected',
                   );
 
-                  // Requirement 1 (order 147, kept): restore the view in
-                  // the case body, not only in addTearDown. Reached only
-                  // on the all-pass path; addTearDown(tester.view.reset)
-                  // inside _pinPhoneView still covers every path that
-                  // throws before here.
                   tester.view.reset();
                 },
               );

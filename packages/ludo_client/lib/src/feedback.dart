@@ -12,9 +12,9 @@
 // [FeedbackScope.of] hands back to a widget tree that never wired one in,
 // so existing screen tests that build a bare `GameScreen` keep working.
 //
-// Wiring this service into the screens (order 236) and the settings
-// switches themselves (order 329, lib/src/feedback_settings_sheet.dart)
-// both build on the instrument this file provides.
+// Wiring this service into the screens (order 236) and the one sound switch
+// (C-523, lib/src/sound_toggle.dart) both build on the instrument this file
+// provides.
 
 import 'dart:async';
 
@@ -226,7 +226,8 @@ class NoopFeedbackService implements FeedbackService {
 /// The in-app switches, one per channel (doctrine P9: "haptics and sound
 /// each have an in-app toggle and follow the system settings"). The system
 /// settings themselves are honoured on the Android side, in `haptic` and
-/// `sound`; this class only carries the player's own two switches.
+/// `sound`; this class only carries the player's own two switches. The UI
+/// flips them together through [muted] (C-523 D7, D8).
 ///
 /// [load] reads the persisted value and future writes through the setters
 /// persist back; [forTest] never touches a platform channel, so a widget
@@ -267,6 +268,21 @@ class FeedbackSettings extends ChangeNotifier {
     }
   }
 
+  /// C-523 D8: true when both channels are off, the one state the sound
+  /// switch shows as muted.
+  bool get muted => !_haptics && !_sound;
+
+  /// C-523 D8: both channels together, one notification, both keys written.
+  set muted(bool value) {
+    _haptics = !value;
+    _sound = !value;
+    notifyListeners();
+    if (_persist) {
+      unawaited(_write(_hapticsKey, !value));
+      unawaited(_write(_soundKey, !value));
+    }
+  }
+
   static Future<void> _write(String key, bool value) async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setBool(key, value);
@@ -274,13 +290,14 @@ class FeedbackSettings extends ChangeNotifier {
 
   /// Reads `feedback.haptics` and `feedback.sound`; either absent reads as
   /// on, matching the "on by default" the doctrine's toggles start from.
+  /// C-523 D8: both stored false starts muted; one stored false and the
+  /// other not starts with both on. Nothing is written back here.
   static Future<FeedbackSettings> load() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    return FeedbackSettings._(
-      prefs.getBool(_hapticsKey) ?? true,
-      prefs.getBool(_soundKey) ?? true,
-      true,
-    );
+    final bool muted =
+        prefs.getBool(_hapticsKey) == false &&
+        prefs.getBool(_soundKey) == false;
+    return FeedbackSettings._(!muted, !muted, true);
   }
 }
 
