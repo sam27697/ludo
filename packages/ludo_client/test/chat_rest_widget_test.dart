@@ -40,9 +40,11 @@
 //     not stated, so the drain is read as a count of ink pixels outside the
 //     icon area, with wide bands: about half at half time, strictly less at
 //     each later reading, and still some at 2700 ms.
-//   - The hint is read from the SemanticsNode of the keyed control
-//     (`game-chat-button`, `end-card-reply-<id>`). A hint carried by a node
-//     that does not merge into the keyed one would not be seen.
+//   - The hint is read from getSemanticsData() of the keyed control
+//     (`game-chat-button`, `end-card-reply-<id>`), which is what TalkBack
+//     speaks once the control's nodes are merged; the node's own fields are
+//     not enough, the chat button's label and hint can sit on a merged
+//     descendant.
 //   - "A ready control carries no hint" is read as: the node's hint does not
 //     contain the chatResting text.
 //   - The refusal while not connected: the reconnect UI owns that state, so
@@ -135,14 +137,19 @@ double _opacityAbove(Element element) {
   return alpha;
 }
 
-String _hintOf(WidgetTester tester, Key key) =>
-    tester.getSemantics(find.byKey(key)).hint;
+/// What TalkBack speaks for the keyed control is the merged semantics data,
+/// not the one node's own fields: the button sits under a MergeSemantics, so
+/// its label, tooltip and hint belong to the data of the merged node.
+SemanticsData _spoken(WidgetTester tester, Key key) =>
+    tester.getSemantics(find.byKey(key)).getSemanticsData();
 
-/// What TalkBack reads first: the node's label, or for an IconButton the
-/// tooltip it carries in place of one.
+String _hintOf(WidgetTester tester, Key key) => _spoken(tester, key).hint;
+
+/// What TalkBack reads first: the label, or for an IconButton the tooltip it
+/// carries in place of one.
 String _labelOf(WidgetTester tester, Key key) {
-  final SemanticsNode node = tester.getSemantics(find.byKey(key));
-  return node.label.isNotEmpty ? node.label : node.tooltip;
+  final SemanticsData data = _spoken(tester, key);
+  return data.label.isNotEmpty ? data.label : data.tooltip;
 }
 
 /// Dark-teal (LudoColors.inkMuted) pixels in the ring's rect, outside the
@@ -742,6 +749,50 @@ void main() {
         cues,
         reason: g.why('still no invalidTap after the resume'),
       );
+    } finally {
+      await g.done();
+    }
+  });
+
+  testWidgets('a send that never gets an answer (request timeout) plays no '
+      'invalidTap, shows no ring and leaves the button ready', (tester) async {
+    final EndGame g = await openPlaying(tester, 'A3 request timeout');
+    try {
+      final _Chat chat = _Chat(g);
+      await _pick(g, 'hi');
+      final int cues = g.s.count(FeedbackCue.invalidTap);
+      final int sent = g.sentCount;
+      await _goTo(g, g.s.clockMs + 1000);
+      chat.expectReady('1000 ms into an unanswered send');
+      // The connection's request timeout is 10 s; nothing answers.
+      await _goTo(g, g.s.clockMs + 10500);
+      expect(
+        g.s.count(FeedbackCue.invalidTap),
+        cues,
+        reason: g.why(
+          'C-520 A3: a timeout is not a server answer, the refusal path '
+          'does not run, no invalidTap',
+        ),
+      );
+      expect(
+        g.sentCount,
+        sent,
+        reason: g.why('a timeout sends nothing, no retry'),
+      );
+      expect(
+        find.byKey(_ringKey),
+        findsNothing,
+        reason: g.why('no ring after a timeout: the send was not refused'),
+      );
+      expect(
+        chatLineSeats(tester),
+        isEmpty,
+        reason: g.why('a message nobody confirmed shows no line'),
+      );
+      if (g.drive.controller.phase == RoomPhase.connected) {
+        chat.expectReady('after the request timed out');
+        await chat.expectTapOpens('after the request timed out');
+      }
     } finally {
       await g.done();
     }
