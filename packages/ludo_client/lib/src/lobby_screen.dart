@@ -530,9 +530,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
         widget.action == LobbyAction.join &&
         controller.errorCode == 'NO_SUCH_ROOM';
     // C-529 D4: no retry for a refusal a retry cannot change, typed or link.
-    final bool retryable = !_unretryableLobbyErrorCodes.contains(
-      controller.errorCode,
-    );
+    // A1.4: a lobby that held a room retries by resuming its seat, so a seat
+    // taken back (BAD_SEAT_TOKEN) or a missing seat token has nothing to retry.
+    final bool retryable =
+        !_unretryableLobbyErrorCodes.contains(controller.errorCode) &&
+        (controller.room == null ||
+            (controller.errorCode != 'BAD_SEAT_TOKEN' &&
+                controller.seatToken != null));
+    // A1.3: only a create or join that never held a room has nothing to
+    // leave. A resume lobby holds a stored seat, which Leave discards.
+    final bool backToHome =
+        widget.action != LobbyAction.resume && controller.room == null;
     return Center(
       key: const Key('lobby-error'),
       child: Padding(
@@ -561,9 +569,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               // C-529 D4: a lobby that never held a seat has nothing to
               // leave; the way out says where it goes.
               child: Text(
-                controller.room == null
-                    ? loc.lobbyBackToHomeButton
-                    : loc.gameLeaveButton,
+                backToHome ? loc.lobbyBackToHomeButton : loc.gameLeaveButton,
               ),
             ),
           ],

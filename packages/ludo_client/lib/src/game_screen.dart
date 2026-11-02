@@ -2423,7 +2423,27 @@ class _GameScreenState extends State<GameScreen> {
     if (_roomGoneWhilePlaying && !_roomGonePopHandled) {
       _roomGonePopHandled = true;
       _clearSafeCue();
-      Navigator.of(context).pop(GameScreenResult.gameGone);
+      _leaveGameRoute(GameScreenResult.gameGone);
+    }
+  }
+
+  /// A1.1: hands [result] to Home whatever sits above this route. A bare pop
+  /// would close the leave confirm, the quick chat or the face picker instead
+  /// and strand the player on the dimmed table, so everything above this
+  /// route is dismissed first and this route itself is what leaves.
+  void _leaveGameRoute(GameScreenResult result) {
+    final NavigatorState navigator = Navigator.of(context);
+    final Route<dynamic> route = ModalRoute.of(context)!;
+    if (!route.isActive) {
+      return;
+    }
+    if (!route.isCurrent) {
+      navigator.popUntil((Route<dynamic> r) => r == route);
+    }
+    if (route.isCurrent) {
+      navigator.pop(result);
+    } else {
+      navigator.removeRoute(route, result);
     }
   }
 

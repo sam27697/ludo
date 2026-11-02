@@ -919,12 +919,15 @@ class _HomeScreenState extends State<HomeScreen>
 
   /// C-529 D4: a join that came back refused NO_SUCH_ROOM or ROOM_STARTED
   /// leaves a code that can never work. Clearing it makes Create primary
-  /// again and drops any link-filled state with it.
-  void _clearDeadJoinCode(RoomController controller) {
+  /// again and drops any link-filled state with it. A1.2: only when the field
+  /// still holds [joinedCode]; a code typed or filled by a link while the
+  /// route was up stays, with its link state.
+  void _clearDeadJoinCode(RoomController controller, String joinedCode) {
     if (!mounted ||
         controller.phase != RoomPhase.failed ||
         !(controller.errorCode == 'NO_SUCH_ROOM' ||
-            controller.errorCode == 'ROOM_STARTED')) {
+            controller.errorCode == 'ROOM_STARTED') ||
+        normalizeRoomCode(_codeController.text) != joinedCode) {
       return;
     }
     _linkFilledCode = null;
@@ -1100,7 +1103,7 @@ class _HomeScreenState extends State<HomeScreen>
     // matching comment in _createRoom.
     _showNoticeFor(result);
     // C-529 D4: read before the retire below, which ends the controller.
-    _clearDeadJoinCode(controller);
+    _clearDeadJoinCode(controller, normalized);
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
