@@ -81,6 +81,14 @@
 //                             into a room that is gone (Back to home filled)
 //   118-end-lose-some-zero-en.png  loser's end card, English, rolls and sixes
 //                             tiles only
+//   119-lobby-same-names-en.png  host lobby, English, seats 0 and 2 both
+//                             "Player", seat 1 "Karim": Player, Karim,
+//                             Player 2
+//   120-game-same-names-ar.png  game, Arabic, seats 0 and 2 both the default
+//                             name: the board chips read the name and the
+//                             name plus the numeral 2
+//   121-end-same-names-en.png  loser's end card, English, seat 2 (the second
+//                             "Player") won: the title names "Player 2"
 //   (114 stays unused: dropped in run 124, a 360 x 640 surface hung the
 //   emulator. 117, the lobby closed card with no room held, is not built:
 //   the controller cannot be left in that state by any frame sequence.)
@@ -6801,6 +6809,47 @@ void main() {
       seatToken: 'tok-shot-118',
     );
   });
+
+  // ==========================================================================
+  // 119-121: order 538 (C-536). Two seats that carry the same name are told
+  // apart: 119 is the host's three-seat lobby, 120 an Arabic game's board
+  // chips, 121 the end card of a game the second "Player" won. Bodies live at
+  // the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 119-lobby-same-names-en', (tester) async {
+    await _shootLobbySameNames(
+      tester,
+      binding,
+      shotName: '119-lobby-same-names-en',
+      locale: const Locale('en'),
+      roomCode: 'SN9L3E',
+      seatToken: 'tok-shot-119',
+    );
+  });
+
+  testWidgets('capture 120-game-same-names-ar', (tester) async {
+    await _shootGameSameNames(
+      tester,
+      binding,
+      shotName: '120-game-same-names-ar',
+      locale: const Locale('ar'),
+      roomCode: 'SN2G4A',
+      gameId: '120' * 5 + '1',
+      seatToken: 'tok-shot-120',
+    );
+  });
+
+  testWidgets('capture 121-end-same-names-en', (tester) async {
+    await _shootEndSameNames(
+      tester,
+      binding,
+      shotName: '121-end-same-names-en',
+      locale: const Locale('en'),
+      roomCode: 'SN1E5W',
+      gameId: '121' * 5 + '1',
+      seatToken: 'tok-shot-121',
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -9326,6 +9375,8 @@ Future<_OpenedTrayGame> _openHostGame(
   required String seatToken,
   FeedbackSettings? feedbackSettings,
   FeedbackService? feedbackService,
+  String hostName = 'Priya',
+  String opponentName = 'Karim',
 }) async {
   final _ScreenshotControllerFactory trayFactory =
       _ScreenshotControllerFactory();
@@ -9354,7 +9405,6 @@ Future<_OpenedTrayGame> _openHostGame(
     await tester.pumpAndSettle();
     await _expectHomeScreen(tester, localeName: locale.languageCode);
 
-    const String hostName = 'Priya';
     await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
     await _tapCreateRoom(tester);
 
@@ -9412,7 +9462,7 @@ Future<_OpenedTrayGame> _openHostGame(
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': opponentName, 'seq': 2},
       ),
     );
     await tester.pump();
@@ -17770,6 +17820,402 @@ Future<void> _shootEndLoseSomeZero(
       captures: 0,
       home: 0,
       momentDescription: 'capture $shotName ($scenario), before the shot',
+    );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+// --- captures 119-121: seats that share a name (order 538, C-536) ----------
+
+/// The default name a first-timer is given, which two strangers can both be
+/// holding when they sit down.
+String _defaultPlayerName(Locale locale) =>
+    locale.languageCode == 'ar' ? 'لاعب' : 'Player';
+
+/// Every string a `Text` under [root] draws, in tree order.
+List<String> _textsOf(WidgetTester tester, Finder root) => <String>[
+  for (final Text t in tester.widgetList<Text>(
+    find.descendant(of: root, matching: find.byType(Text)),
+  ))
+    t.data ?? t.textSpan?.toPlainText() ?? '',
+];
+
+/// Asserts that [root] draws [label] exactly, and that none of the strings in
+/// [notShown] stands on its own among its texts.
+void _expectNameLabel(
+  WidgetTester tester,
+  Finder root, {
+  required String label,
+  List<String> notShown = const <String>[],
+  required String what,
+  required String scenario,
+}) {
+  expect(
+    root,
+    findsOneWidget,
+    reason: '$scenario: expected $what on screen, found none or several',
+  );
+  final List<String> texts = _textsOf(tester, root);
+  expect(
+    texts,
+    contains(label),
+    reason: '$scenario: expected $what to read "$label", it shows $texts',
+  );
+  for (final String other in notShown) {
+    expect(
+      texts,
+      isNot(contains(other)),
+      reason:
+          '$scenario: expected $what to read "$label" and not "$other", '
+          'it shows $texts',
+    );
+  }
+}
+
+/// 119 (order 538, C-536). The host's lobby with three seats: seats 0 and 2
+/// both joined as the default name, seat 1 as Karim. The cards read the name,
+/// "Karim" and the name with the numeral 2.
+Future<void> _shootLobbySameNames(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final String player = _defaultPlayerName(locale);
+  final String scenario =
+      'capture $shotName (room $roomCode, locale ${locale.languageCode}, '
+      'seats 0 and 2 "$player", seat 1 "Karim")';
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  RoomController? controller;
+  try {
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+        locale: locale,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+    await tester.enterText(find.byKey(const Key('home-name-field')), player);
+    await _tapCreateRoom(tester);
+
+    expect(
+      factory.controllers,
+      hasLength(1),
+      reason:
+          '$scenario: tapping Create Room must build exactly one controller',
+    );
+    controller = factory.controllers.single;
+    final FakeTransport transport = factory.transports.single;
+    final List<String> createMessages = transport.sentRaw
+        .where((s) => _typeOf(s) == 'create_room')
+        .toList();
+    expect(
+      createMessages,
+      hasLength(1),
+      reason:
+          '$scenario: expected one create_room, sent '
+          '${transport.sentRaw.map(_typeOf).toList()}',
+    );
+    final String createId = _idOf(createMessages.single);
+
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: roomCode,
+          players: 3,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[_seatJson(0, name: player)],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      '$scenario: LobbyScreen after the create_room reply',
+    );
+
+    transport.pushText(
+      _frame(
+        type: 'player_joined',
+        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+      ),
+    );
+    await tester.pump();
+    transport.pushText(
+      _frame(
+        type: 'player_joined',
+        data: <String, Object?>{'seat': 2, 'name': player, 'seq': 3},
+      ),
+    );
+    await tester.pump();
+    await _pumpRealDurationFrames(tester);
+
+    await _expectLobbyScreen(
+      tester,
+      localeName: locale.languageCode,
+      code: roomCode,
+      expectedSeatCount: 3,
+    );
+    expect(
+      controller.room!.seats.map((SeatState s) => s.name).toList(),
+      <String>[player, 'Karim', player],
+      reason:
+          '$scenario: fixture: the server sent the same name for seats 0 '
+          'and 2, got ${controller.room!.seats.map((SeatState s) => s.name)}',
+    );
+    final MaterialLocalizations material = MaterialLocalizations.of(
+      tester.element(find.byType(LobbyScreen)),
+    );
+    final String second = '$player ${material.formatDecimal(2)}';
+    _expectNameLabel(
+      tester,
+      find.byKey(const Key('lobby-seat-0')),
+      label: player,
+      notShown: <String>[second],
+      what: 'lobby-seat-0',
+      scenario: scenario,
+    );
+    _expectNameLabel(
+      tester,
+      find.byKey(const Key('lobby-seat-1')),
+      label: 'Karim',
+      notShown: <String>[player, second],
+      what: 'lobby-seat-1',
+      scenario: scenario,
+    );
+    _expectNameLabel(
+      tester,
+      find.byKey(const Key('lobby-seat-2')),
+      label: second,
+      notShown: <String>[player],
+      what: 'lobby-seat-2',
+      scenario: scenario,
+    );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// 120 (order 538, C-536). A game in progress, Arabic, seats 0 and 2 both the
+/// default name. The board chip of seat 0 reads the name, the chip of seat 2
+/// reads the name, a space and the numeral the framework draws for 2 in this
+/// locale, read here from MaterialLocalizations.
+Future<void> _shootGameSameNames(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final String player = _defaultPlayerName(locale);
+  final String scenario =
+      'capture $shotName (room $roomCode, game $gameId, locale '
+      '${locale.languageCode}, seats 0 and 2 "$player")';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+      hostName: player,
+      opponentName: player,
+    );
+    controller = opened.controller;
+    await _pumpRealDurationFrames(tester);
+
+    await _expectGameScreenBoard(
+      tester,
+      controller: controller,
+      localeName: locale.languageCode,
+      scenario: scenario,
+    );
+    expect(
+      controller.room!.seats.map((SeatState s) => s.name).toList(),
+      <String>[player, player],
+      reason:
+          '$scenario: fixture: the server sent the same name for seats 0 '
+          'and 2, got ${controller.room!.seats.map((SeatState s) => s.name)}',
+    );
+    final MaterialLocalizations material = MaterialLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    final String second = '$player ${material.formatDecimal(2)}';
+    _expectNameLabel(
+      tester,
+      find.byKey(const Key('board-seat-name-0')),
+      label: player,
+      notShown: <String>[second],
+      what: 'board-seat-name-0',
+      scenario: scenario,
+    );
+    _expectNameLabel(
+      tester,
+      find.byKey(const Key('board-seat-name-2')),
+      label: second,
+      notShown: <String>[player],
+      what: 'board-seat-name-2',
+      scenario: scenario,
+    );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Asserts the game screen is up in [localeName] with the board drawn and the
+/// room still playing. [_expectGameScreenMidGame] also wants five tokens out
+/// of their yards, which the opening position 120 photographs does not have.
+Future<void> _expectGameScreenBoard(
+  WidgetTester tester, {
+  required RoomController controller,
+  required String localeName,
+  required String scenario,
+}) async {
+  expect(
+    find.byType(GameScreen),
+    findsOneWidget,
+    reason: '$scenario: expected the game screen on screen',
+  );
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+  expect(
+    loc.localeName,
+    localeName,
+    reason:
+        '$scenario: expected the game screen locale "$localeName", got '
+        '"${loc.localeName}"',
+  );
+  expect(
+    find.byKey(const Key('game-screen-board')),
+    findsOneWidget,
+    reason: '$scenario: expected the board on screen',
+  );
+  expect(
+    controller.room!.state,
+    RoomState.playing,
+    reason:
+        '$scenario: fixture: the room must be playing, got '
+        '${controller.room!.state}',
+  );
+}
+
+/// 121 (order 538, C-536). The loser's end card for seat 0 when seat 2 won and
+/// both seats carry the default name: the title names the winner with the
+/// numeral 2, so the card does not say that "Player" took it.
+Future<void> _shootEndSameNames(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final String player = _defaultPlayerName(locale);
+  final String scenario =
+      'capture $shotName (room $roomCode, game $gameId, locale '
+      '${locale.languageCode}, seats 0 and 2 "$player", seat 2 won)';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+      hostName: player,
+      opponentName: player,
+    );
+    controller = opened.controller;
+    final int gameOverSeq = await _playLoseZeroScript(
+      tester,
+      opened.transport,
+      controller,
+      gameStartedSeq: opened.seq,
+    );
+    opened.transport.pushText(
+      _frame(
+        type: 'game_over',
+        data: <String, Object?>{
+          'winner': 2,
+          'verify_url': 'https://verify.example.invalid/shot121',
+          'seq': gameOverSeq,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpRealDurationFrames(tester);
+
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          '$scenario: expected locale ${locale.languageCode}, got '
+          '${loc.localeName}',
+    );
+    expect(
+      controller.room!.seats.map((SeatState s) => s.name).toList(),
+      <String>[player, player],
+      reason:
+          '$scenario: fixture: the server sent the same name for seats 0 '
+          'and 2, got ${controller.room!.seats.map((SeatState s) => s.name)}',
+    );
+    final MaterialLocalizations material = MaterialLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    _expectGameOverWinnerText(
+      tester,
+      controller: controller,
+      expectedWinner: 2,
+      expectedText: loc.endLoseTitle('$player ${material.formatDecimal(2)}'),
+      momentDescription: scenario,
     );
     await binding.takeScreenshot(shotName);
   } finally {
