@@ -1922,11 +1922,9 @@ class _NameInputFormatter extends TextInputFormatter {
     if (units >= value.length) {
       return value;
     }
-    if (units <= 0) {
-      return '';
-    }
-    int end = units;
-    if (_isHighSurrogate(value.codeUnitAt(end - 1)) &&
+    int end = units < 0 ? 0 : units;
+    if (end > 0 &&
+        _isHighSurrogate(value.codeUnitAt(end - 1)) &&
         _isLowSurrogate(value.codeUnitAt(end))) {
       end--;
     }
