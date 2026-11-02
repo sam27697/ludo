@@ -489,7 +489,8 @@ void main() {
 
   testWidgets(
     'X-E1: lobby-error carries an enabled lobby-leave-button labelled '
-    'loc.gameLeaveButton, alongside lobby-retry-button',
+    '"Back to home" (C-529 D4: this lobby never held a seat), alongside '
+    'lobby-retry-button',
     (WidgetTester tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transport = FakeTransport();
@@ -545,17 +546,17 @@ void main() {
             'onPressed) (contract X-E1)',
       );
 
-      final BuildContext context = tester.element(find.byType(LobbyScreen));
-      final AppLocalizations loc = AppLocalizations.of(context);
+      // C-529 D4: a lobby that failed before any room snapshot never held a
+      // seat for the player, so the way out reads "Back to home". The words
+      // are the contract's own; the ARB getter is the implementation's to
+      // name.
       expect(
-        find.descendant(
-          of: leaveFinder,
-          matching: find.text(loc.gameLeaveButton),
-        ),
+        find.descendant(of: leaveFinder, matching: find.text('Back to home')),
         findsOneWidget,
         reason:
-            'X-E1: lobby-leave-button must be labelled loc.gameLeaveButton, '
-            'which reads "${loc.gameLeaveButton}" (contract X-E1)',
+            'X-E1: lobby-leave-button must be labelled "Back to home" for a '
+            'create that failed before a room snapshot (contract X-E1, '
+            'C-529 D4)',
       );
       expect(
         find.byKey(_retryKey),

@@ -41,6 +41,7 @@ import 'feedback.dart';
 import 'game_die.dart';
 import 'game_stats.dart';
 import 'hint_button.dart';
+import 'lobby_screen.dart' show lobbyErrorMessage;
 import 'move_hint.dart';
 import 'net/connection.dart';
 import 'net/frame.dart';
@@ -62,7 +63,18 @@ import 'token_face_picker.dart';
 /// because the room or the seat is gone (C-447 D4). The corner leave control
 /// pops with no result, so the screen that pushed this route can leave()
 /// and dispose the old controller without opening another table.
-enum GameScreenResult { newTable, removed, gameGone }
+///
+/// C-529 D3: [roomClosedHost] and [roomClosedGuest] are what a lobby route
+/// pops with when its room was reaped while the player was away; the two
+/// differ only in which line Home shows (the host is told to make a new room,
+/// everyone else to ask for a new link).
+enum GameScreenResult {
+  newTable,
+  removed,
+  gameGone,
+  roomClosedHost,
+  roomClosedGuest,
+}
 
 /// C-432 D4: what a snapshot's own-seat `timer_steps` asks of the C-426 D3
 /// notice. `none` is an older server's absent field, a seat that is not in
@@ -474,6 +486,10 @@ class _GameScreenState extends State<GameScreen> {
   // game_over arrives while travel is still in flight.
   int _travelCount = 0;
   bool _isEndHeld = false;
+
+  /// C-529 D3: set once a NO_SUCH_ROOM on a PLAYING room has started popping
+  /// this route, so a second notification cannot pop twice.
+  bool _roomGonePopHandled = false;
   final List<FeedbackCue> _heldGameOverCues = <FeedbackCue>[];
   Timer? _endHoldDwellTimer;
   Timer? _endHoldLimitTimer;
@@ -2404,6 +2420,31 @@ class _GameScreenState extends State<GameScreen> {
     });
     _syncConnectionLostAnnouncement();
     _maybeFetchGameLog();
+    if (_roomGoneWhilePlaying && !_roomGonePopHandled) {
+      _roomGonePopHandled = true;
+      _clearSafeCue();
+      _leaveGameRoute(GameScreenResult.gameGone);
+    }
+  }
+
+  /// A1.1: hands [result] to Home whatever sits above this route. A bare pop
+  /// would close the leave confirm, the quick chat or the face picker instead
+  /// and strand the player on the dimmed table, so everything above this
+  /// route is dismissed first and this route itself is what leaves.
+  void _leaveGameRoute(GameScreenResult result) {
+    final NavigatorState navigator = Navigator.of(context);
+    final Route<dynamic> route = ModalRoute.of(context)!;
+    if (!route.isActive) {
+      return;
+    }
+    if (!route.isCurrent) {
+      navigator.popUntil((Route<dynamic> r) => r == route);
+    }
+    if (route.isCurrent) {
+      navigator.pop(result);
+    } else {
+      navigator.removeRoute(route, result);
+    }
   }
 
   /// C-442 D6: the connection is no longer `connected`, so nothing this
@@ -2729,6 +2770,19 @@ class _GameScreenState extends State<GameScreen> {
     _announce(AppLocalizations.of(context).lobbyConnectionLost);
   }
 
+  /// C-529 D3: the server answered NO_SUCH_ROOM for a room this screen held
+  /// as PLAYING. Nobody can finish that game, so it is not drawn as an end
+  /// card: the route goes home with [GameScreenResult.gameGone]. FINISHED and
+  /// rematch-LOBBY rooms keep the gone end card (C-316 rule 4).
+  bool get _roomGoneWhilePlaying {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    return controller.phase == RoomPhase.failed &&
+        controller.errorCode == 'NO_SUCH_ROOM' &&
+        room != null &&
+        room.state == RoomState.playing;
+  }
+
   /// Mirrors [build]'s own decision of when [_connectionLostBody] is the
   /// body drawn, without rebuilding the widget tree: the end card (a gone
   /// rematch, or an offline end card) always wins over it, same priority
@@ -2741,7 +2795,7 @@ class _GameScreenState extends State<GameScreen> {
         controller.phase == RoomPhase.failed &&
         controller.errorCode == 'NO_SUCH_ROOM' &&
         room != null;
-    if (rematchGone) {
+    if (rematchGone || _roomGoneWhilePlaying) {
       return false;
     }
 
@@ -3483,10 +3537,12 @@ class _GameScreenState extends State<GameScreen> {
     // whatever this controller held before the failed request -- `_fail`
     // never touches it -- so it is still the finished (or rematch-LOBBY)
     // snapshot the end card was already showing.
+    final bool roomGonePlaying = _roomGoneWhilePlaying;
     final bool rematchGone =
         controller.phase == RoomPhase.failed &&
         controller.errorCode == 'NO_SUCH_ROOM' &&
-        room != null;
+        room != null &&
+        !roomGonePlaying;
 
     // C-316 rule 4: when the room is FINISHED or a rematch LOBBY with
     // lastFinished, and the connection is failed, closed or connecting, the
@@ -3507,6 +3563,7 @@ class _GameScreenState extends State<GameScreen> {
     _syncFacePick(
       playingOnScreen:
           !rematchGone &&
+          !roomGonePlaying &&
           !isOfflineEndCard &&
           room != null &&
           _showsPlayingBody(room),
@@ -3514,7 +3571,23 @@ class _GameScreenState extends State<GameScreen> {
     _syncShownHint();
 
     final Widget body;
-    if (rematchGone) {
+    if (roomGonePlaying) {
+      // C-529 D3: the route is already leaving with gameGone. The frames of
+      // the pop keep the last table, dimmed, and never a card that says the
+      // connection was lost or the game is over.
+      body = KeyedSubtree(
+        key: const Key('game-screen-stale-table'),
+        child: IgnorePointer(
+          ignoring: true,
+          child: ExcludeSemantics(
+            child: Opacity(
+              opacity: 0.35,
+              child: _connectedBody(loc, controller, room!, stale: true),
+            ),
+          ),
+        ),
+      );
+    } else if (rematchGone) {
       body = _gameOverBody(loc, controller, room, rematchGone: true);
     } else if (isOfflineEndCard) {
       body = _gameOverBody(loc, controller, room, isOffline: true);
@@ -3748,7 +3821,13 @@ class _GameScreenState extends State<GameScreen> {
   /// and reconnecting line without a Reconnect button; given up shows the
   /// Reconnect button; Leave is always last.
   Widget _connectionLostBody(AppLocalizations loc, RoomController controller) {
-    final String? errorMessage = controller.errorMessage;
+    // C-529 D5: the server's own `message` is English and aimed at a log, so
+    // it is never drawn. A mapped code gets its localised line; the generic
+    // line says nothing the title does not, so it gets no widget and no gap.
+    final String mappedError = lobbyErrorMessage(loc, controller.errorCode);
+    final String? errorLine = mappedError == loc.lobbyErrorGeneric
+        ? null
+        : mappedError;
     final bool isRetrying =
         controller.autoReconnectPending ||
         controller.phase == RoomPhase.connecting;
@@ -3779,10 +3858,10 @@ class _GameScreenState extends State<GameScreen> {
                   style: Theme.of(context).textTheme.titleMedium
                       ?.copyWith(color: LudoColors.ink),
                 ),
-                if (errorMessage != null) ...[
+                if (errorLine != null) ...[
                   const SizedBox(height: kSpace2),
                   Text(
-                    errorMessage,
+                    errorLine,
                     key: const Key('game-screen-error-message'),
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall
@@ -5339,11 +5418,22 @@ class _GameScreenState extends State<GameScreen> {
               ),
             ),
           ],
-          const SizedBox(height: kSpace4),
-          _rollHistory(loc, finished),
+          if (_showsRollHistory(finished)) ...[
+            const SizedBox(height: kSpace4),
+            _rollHistory(loc, finished),
+          ],
         ],
       ),
     );
+  }
+
+  /// C-529 D6: a snapshot carries no recent rolls, so an end card reached by
+  /// a resume has none to list. Under a game that was played, "No rolls to
+  /// show yet." is false; the block is absent and the verify link is the way
+  /// to the rolls. A room still PLAYING keeps the line, true before the
+  /// first roll.
+  bool _showsRollHistory(RoomSnapshot room) {
+    return room.recentRolls.isNotEmpty || room.state == RoomState.playing;
   }
 
   /// Last faces with their `k` on the finished board. Empty when no `rolled`

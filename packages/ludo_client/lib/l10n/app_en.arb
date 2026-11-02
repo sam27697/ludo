@@ -45,6 +45,14 @@
   "@homeGameGoneNotice": {
     "description": "Quiet notice on the home screen shown after Back to game, or a relaunch that resumed on its own, found the room reaped or the seat gone."
   },
+  "homeRoomClosedHostNotice": "Your room closed while you were away. Create a new one and send the new link.",
+  "@homeRoomClosedHostNotice": {
+    "description": "Quiet notice on the home screen shown to the host after the lobby's room was reaped by the server while the phone was away."
+  },
+  "homeRoomClosedGuestNotice": "That room closed while you were away. Ask your friend for a new link.",
+  "@homeRoomClosedGuestNotice": {
+    "description": "Quiet notice on the home screen shown to a guest after the lobby's room was reaped by the server while the phone was away."
+  },
   "homeNoticeDismiss": "Dismiss",
   "@homeNoticeDismiss": {
     "description": "Tooltip and screen reader label of the close control on the notice card at the top of the home screen."
@@ -178,13 +186,17 @@
   "@lobbyErrorLinkRoomGone": {
     "description": "Error shown on the lobby screen when a join started from a room link is answered NO_SUCH_ROOM. No retry is offered."
   },
+  "lobbyBackToHomeButton": "Back to home",
+  "@lobbyBackToHomeButton": {
+    "description": "The button that leaves the lobby error body when this lobby never held a seat for the player."
+  },
   "lobbyErrorRoomFull": "That room is already full.",
   "@lobbyErrorRoomFull": {
     "description": "Error shown on the lobby screen when the server reports ROOM_FULL."
   },
-  "lobbyErrorRoomStarted": "That room has already started its game.",
+  "lobbyErrorRoomStarted": "That room is no longer taking players.",
   "@lobbyErrorRoomStarted": {
-    "description": "Error shown on the lobby screen when the server reports ROOM_STARTED."
+    "description": "Error shown on the lobby screen when the server reports ROOM_STARTED. The room may be playing or finished; either way it takes no more players."
   },
   "lobbyErrorRateLimited": "Too many tries from this network. Try again later.",
   "@lobbyErrorRateLimited": {
