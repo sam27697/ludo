@@ -36,6 +36,9 @@
 //      about -- lands on the correct body too, which lobby_screen_test.dart
 //      never exercises (nothing in that file ever passes a non-empty
 //      autoReconnectDelays to RoomController). Kept for that reason.
+//      Order 530 (C-529 D3): a held room answered NO_SUCH_ROOM no longer
+//      draws the error body, so both cases now answer RATE_LIMITED and the
+//      (failed, room set) state they pin is unchanged.
 //
 //   2. R-P and N1. Written in the belief that it would fail if
 //      _scheduleNextAttempt's notifyListeners() (order 177's N1) were
@@ -636,7 +639,7 @@ void main() {
   // ==========================================================================
   testWidgets(
     'L-2 (control): the same room, an *automatic* reconnect attempt answered '
-    'NO_SUCH_ROOM with the room set -> lobby-error, not lobby-closed (see '
+    'RATE_LIMITED with the room set -> lobby-error, not lobby-closed (see '
     'this file\'s header comment, ambiguity 1, for how this differs from '
     'test/lobby_screen_test.dart:720-742)',
     (tester) async {
@@ -690,7 +693,7 @@ void main() {
         _frame(
           type: 'error',
           re: resumeId,
-          data: <String, Object?>{'code': 'NO_SUCH_ROOM', 'message': ''},
+          data: <String, Object?>{'code': 'RATE_LIMITED', 'message': ''},
         ),
       );
       await tester.pump();
@@ -699,16 +702,16 @@ void main() {
       expect(
         controller.phase,
         RoomPhase.failed,
-        reason: 'L2 fixture: NO_SUCH_ROOM on the automatic resume must fail',
+        reason: 'L2 fixture: RATE_LIMITED on the automatic resume must fail',
       );
       expect(controller.room, isNotNull, reason: 'L2 is gated on room set');
-      expect(controller.errorCode, 'NO_SUCH_ROOM');
+      expect(controller.errorCode, 'RATE_LIMITED');
 
       expect(
         find.byKey(const Key('lobby-error')),
         findsOneWidget,
         reason:
-            'L2: a non-retryable code (NO_SUCH_ROOM) with room set must '
+            'L2: a non-retryable code (RATE_LIMITED) with room set must '
             'render lobby-error, exactly as every other failed state does',
       );
       expect(
@@ -722,7 +725,7 @@ void main() {
         reason: 'L2: lobby-error must carry lobby-retry-button',
       );
 
-      // No pending timer: NO_SUCH_ROOM is not retryable, so
+      // No pending timer: RATE_LIMITED is not retryable, so
       // _afterReconnectAttemptFailure ends the sequence without scheduling
       // another attempt.
       expect(controller.autoReconnectPending, isFalse);

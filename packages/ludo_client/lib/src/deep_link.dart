@@ -25,12 +25,19 @@ const String kAppLinkHost = 'ludo.provefair.app';
 /// plain launch; a link that passes this predicate but still comes back
 /// `null` from [roomCodeFromUri] genuinely carried a bad code.
 ///
+/// One trailing empty segment is accepted, so `/r/<CODE>/` is a room link
+/// as much as `/r/<CODE>` is (C-529 D7). Any further segment is refused.
+///
 /// The query string and the fragment are never inspected.
 bool isAppRoomLinkUri(Uri uri) {
+  final List<String> segments = uri.pathSegments;
+  final int count = segments.length == 3 && segments[2].isEmpty
+      ? 2
+      : segments.length;
   return uri.scheme == 'https' &&
       uri.host == kAppLinkHost &&
-      uri.pathSegments.length == 2 &&
-      uri.pathSegments[0] == 'r';
+      count == 2 &&
+      segments[0] == 'r';
 }
 
 /// Extracts a room code from an incoming link, or returns `null` if the link

@@ -765,6 +765,9 @@ void main() {
 
         // Fail the resume: an error reply lands the controller in failed,
         // with hasDesynced still untouched (only success clears it).
+        // C-529 D3: NO_SUCH_ROOM with a room held now sends the route home
+        // instead of drawing the error body, so this case answers with a
+        // code the error body still draws.
         await tester.pump();
         final resumeId = _idOf(resumeTransport.sentRaw.last);
         expect(_typeOf(resumeTransport.sentRaw.last), 'resume');
@@ -772,7 +775,7 @@ void main() {
           _frame(
             type: 'error',
             re: resumeId,
-            data: <String, Object?>{'code': 'NO_SUCH_ROOM', 'message': ''},
+            data: <String, Object?>{'code': 'RATE_LIMITED', 'message': ''},
           ),
         );
         await tester.pump();
@@ -1669,7 +1672,9 @@ void main() {
           ),
           transport,
         );
-        await _resolveFailed(tester, transport, id, code: 'NO_SUCH_ROOM');
+        // C-529 D4: Retry is absent for NO_SUCH_ROOM, so the failure that
+        // still offers it (ROOM_FULL) carries this case.
+        await _resolveFailed(tester, transport, id, code: 'ROOM_FULL');
         expect(controller.phase, RoomPhase.failed);
 
         final retryTransport = FakeTransport();

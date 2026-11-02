@@ -1417,7 +1417,8 @@ void main() {
   ]) {
     testWidgets(
       'R12 (D4b control, ${variant.name}): a join from a typed code answered '
-      'NO_SUCH_ROOM keeps lobbyErrorNoSuchRoom and Retry',
+      'NO_SUCH_ROOM keeps lobbyErrorNoSuchRoom and, since C-529 D4, offers '
+      'no Retry',
       (tester) async {
         final String scenario =
             'R12 typed code $_otherCode answered NO_SUCH_ROOM, locale '
@@ -1458,8 +1459,10 @@ void main() {
         );
         expect(
           find.byKey(_retryKey),
-          findsOneWidget,
-          reason: '$scenario: a typed code keeps Retry',
+          findsNothing,
+          reason:
+              '$scenario: C-529 D4: no retry of a reaped room can succeed, '
+              'typed code or link',
         );
         expect(
           find.byKey(_goneNoticeKey, skipOffstage: false),

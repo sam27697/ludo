@@ -41,6 +41,14 @@ const Set<String> _retryableLobbyErrorCodes = <String>{
   'closed',
 };
 
+/// The codes where asking the server again changes nothing: the room is gone,
+/// the room takes no more players, or the name itself is refused (C-529 D4).
+const Set<String> _unretryableLobbyErrorCodes = <String>{
+  'NO_SUCH_ROOM',
+  'ROOM_STARTED',
+  'BAD_FIELD',
+};
+
 /// Maps a RoomController error code to a localised message. Pure and
 /// top-level so it can be tested without pumping a widget.
 String lobbyErrorMessage(AppLocalizations loc, String? code) {
@@ -140,7 +148,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   StreamSubscription<Frame>? _framesSubscription;
 
   /// C-447 D4: set once a refused resume has started popping this route, so
-  /// a second notification cannot pop twice.
+  /// a second notification cannot pop twice. C-529 D3 shares it for a room
+  /// that closed while the player was away.
   bool _resumeRefusalHandled = false;
 
   @override
@@ -161,22 +170,32 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   void _onControllerChanged() {
     setState(() {});
-    if (_resumeRefused && !_resumeRefusalHandled) {
+    if (_resumeRefusalHandled) {
+      return;
+    }
+    if (_resumeRefused) {
       _resumeRefusalHandled = true;
-      _leaveRefusedResume();
+      _leaveWith(GameScreenResult.gameGone);
+    } else if (_roomClosedWhileAway) {
+      _resumeRefusalHandled = true;
+      _leaveWith(
+        widget.controller.isHost
+            ? GameScreenResult.roomClosedHost
+            : GameScreenResult.roomClosedGuest,
+      );
     }
   }
 
-  /// Hands [GameScreenResult.gameGone] to Home. A popup above this route
-  /// (the settings sheet) must not be the thing a plain pop closes, so a
-  /// route that is not on top is removed by identity instead.
-  void _leaveRefusedResume() {
+  /// Hands [result] to Home. A popup above this route (the settings sheet)
+  /// must not be the thing a plain pop closes, so a route that is not on top
+  /// is removed by identity instead.
+  void _leaveWith(GameScreenResult result) {
     final Route<dynamic> route = ModalRoute.of(context)!;
     if (route.isCurrent) {
-      _leaveLobby(GameScreenResult.gameGone);
+      _leaveLobby(result);
       return;
     }
-    Navigator.of(context).removeRoute(route, GameScreenResult.gameGone);
+    Navigator.of(context).removeRoute(route, result);
   }
 
   /// C-447 D4: a resume answered NO_SUCH_ROOM (the room was reaped) or
@@ -189,6 +208,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
         controller.phase == RoomPhase.failed &&
         (controller.errorCode == 'NO_SUCH_ROOM' ||
             controller.errorCode == 'BAD_SEAT_TOKEN');
+  }
+
+  /// C-529 D3: a create or join lobby that held a room, and whose room the
+  /// server reaped while the phone was away, comes back NO_SUCH_ROOM. The
+  /// player typed no code and asked for no new room, so the route goes home
+  /// with the line that says what happened; the error body's typed-code text
+  /// and its Retry would be false here.
+  bool get _roomClosedWhileAway {
+    final RoomController controller = widget.controller;
+    return widget.action != LobbyAction.resume &&
+        controller.phase == RoomPhase.failed &&
+        controller.errorCode == 'NO_SUCH_ROOM' &&
+        controller.room != null;
   }
 
   // C-316 rule 3: a player_left naming this seat while in lobby pops with
@@ -212,6 +244,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// retry button. Never awaited here; RoomController's own contract is that
   /// neither future ever throws.
   void _issueRequest() {
+    // C-529 D3: once a room code was issued to this lobby, Retry resumes that
+    // seat. Sending createRoom or joinRoom again would open a second room, or
+    // take a second seat, that nobody asked for.
+    if (widget.controller.room != null) {
+      widget.controller.reconnect();
+      return;
+    }
     switch (widget.action) {
       case LobbyAction.create:
         widget.controller.createRoom(
@@ -383,7 +422,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
         RoomPhase.connected => _connectedBody(loc, controller),
         // A refused resume is already leaving with gameGone; the frames of
         // the pop transition keep the waiting body, never the error body.
-        RoomPhase.failed when _resumeRefused => _connectingBody(loc),
+        RoomPhase.failed when _resumeRefused || _roomClosedWhileAway =>
+          _connectingBody(loc),
         RoomPhase.failed => _errorBody(loc, controller),
         RoomPhase.closed => _closedBody(loc, controller),
       };
@@ -484,12 +524,23 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   Widget _errorBody(AppLocalizations loc, RoomController controller) {
     // C-447 D4b: a join that came from a link and found no such room says so
-    // in the link's terms and offers no retry; a typed code keeps its text
-    // and Retry.
+    // in the link's terms; a typed code keeps its text.
     final bool linkRoomGone =
         widget.fromLink &&
         widget.action == LobbyAction.join &&
         controller.errorCode == 'NO_SUCH_ROOM';
+    // C-529 D4: no retry for a refusal a retry cannot change, typed or link.
+    // A1.4: a lobby that held a room retries by resuming its seat, so a seat
+    // taken back (BAD_SEAT_TOKEN) or a missing seat token has nothing to retry.
+    final bool retryable =
+        !_unretryableLobbyErrorCodes.contains(controller.errorCode) &&
+        (controller.room == null ||
+            (controller.errorCode != 'BAD_SEAT_TOKEN' &&
+                controller.seatToken != null));
+    // A1.3: only a create or join that never held a room has nothing to
+    // leave. A resume lobby holds a stored seat, which Leave discards.
+    final bool backToHome =
+        widget.action != LobbyAction.resume && controller.room == null;
     return Center(
       key: const Key('lobby-error'),
       child: Padding(
@@ -504,7 +555,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: kSpace4),
-            if (!linkRoomGone) ...[
+            if (retryable) ...[
               ElevatedButton(
                 key: const Key('lobby-retry-button'),
                 onPressed: _issueRequest,
@@ -515,7 +566,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
             OutlinedButton(
               key: const Key('lobby-leave-button'),
               onPressed: _leaveLobby,
-              child: Text(loc.gameLeaveButton),
+              // C-529 D4: a lobby that never held a seat has nothing to
+              // leave; the way out says where it goes.
+              child: Text(
+                backToHome ? loc.lobbyBackToHomeButton : loc.gameLeaveButton,
+              ),
             ),
           ],
         ),

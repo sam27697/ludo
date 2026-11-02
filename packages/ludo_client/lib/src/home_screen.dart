@@ -78,6 +78,12 @@ class _HomeScreenState extends State<HomeScreen>
   // C-447 D4: shown in the same slot as [_removedNotice] after a resume the
   // server refused (the room was reaped or the seat taken back).
   bool _gameGoneNotice = false;
+  // C-529 D3: the lobby's room closed while the player was away. Null when
+  // there is no such notice, otherwise which of the two lines it carries.
+  GameScreenResult? _roomClosedNotice;
+  // C-529 D4: the code a room link filled into the code field, kept only
+  // while the field still holds exactly it. A Join tap on it is a link join.
+  String? _linkFilledCode;
   // C-447 D3: the one automatic resume this screen state ever starts.
   bool _autoResumeStarted = false;
   // C-447 D3b: the initial link reader has answered (a link, null or an
@@ -240,6 +246,7 @@ class _HomeScreenState extends State<HomeScreen>
     final bool codeIsValid = code != null;
     setState(() {
       if (codeIsValid) {
+        _linkFilledCode = code;
         _codeController.text = code;
         _errorText = null;
       } else {
@@ -466,6 +473,10 @@ class _HomeScreenState extends State<HomeScreen>
   /// since corrected.
   void _clearErrorOnEdit() {
     final bool joinWasShown = _joinShown;
+    if (_linkFilledCode != null &&
+        normalizeRoomCode(_codeController.text) != _linkFilledCode) {
+      _linkFilledCode = null;
+    }
     setState(() {
       _errorText = null;
     });
@@ -860,20 +871,93 @@ class _HomeScreenState extends State<HomeScreen>
     return typed.isEmpty ? loc.homeDefaultPlayerName : typed;
   }
 
+  bool get _hasNotice =>
+      _removedNotice || _gameGoneNotice || _roomClosedNotice != null;
+
   /// D2 of C-449: the player closes the notice by hand. Every other event
   /// that hides it (create, join, rejoin) is handled where it starts.
   void _dismissNotice() {
     setState(() {
       _removedNotice = false;
       _gameGoneNotice = false;
+      _roomClosedNotice = null;
     });
   }
 
+  /// Shows the home notice a pushed route's [result] asks for, and no other.
+  /// A null or `newTable` result leaves whatever notice is up alone. C-529
+  /// D3 adds the room-closed lines, and [GameScreenResult.gameGone] now also
+  /// arrives from a create or join route whose game was reaped.
+  void _showNoticeFor(Object? result) {
+    if (!mounted) {
+      return;
+    }
+    switch (result) {
+      case GameScreenResult.removed:
+        setState(() {
+          _removedNotice = true;
+          _gameGoneNotice = false;
+          _roomClosedNotice = null;
+        });
+      case GameScreenResult.gameGone:
+        setState(() {
+          _removedNotice = false;
+          _gameGoneNotice = true;
+          _roomClosedNotice = null;
+        });
+      case GameScreenResult.roomClosedHost:
+      case GameScreenResult.roomClosedGuest:
+        setState(() {
+          _removedNotice = false;
+          _gameGoneNotice = false;
+          _roomClosedNotice = result as GameScreenResult;
+        });
+      default:
+        break;
+    }
+  }
+
+  /// C-529 D4: a join that came back refused NO_SUCH_ROOM or ROOM_STARTED
+  /// leaves a code that can never work. Clearing it makes Create primary
+  /// again and drops any link-filled state with it. A1.2: only when the field
+  /// still holds [joinedCode]; a code typed or filled by a link while the
+  /// route was up stays, with its link state.
+  void _clearDeadJoinCode(RoomController controller, String joinedCode) {
+    if (!mounted ||
+        controller.phase != RoomPhase.failed ||
+        !(controller.errorCode == 'NO_SUCH_ROOM' ||
+            controller.errorCode == 'ROOM_STARTED') ||
+        normalizeRoomCode(_codeController.text) != joinedCode) {
+      return;
+    }
+    _linkFilledCode = null;
+    _codeController.clear();
+  }
+
+  /// Whether the code in the field is the one a room link filled in and the
+  /// player has not touched since (C-529 D4).
+  bool get _codeIsFromLink =>
+      _linkFilledCode != null &&
+      normalizeRoomCode(_codeController.text) == _linkFilledCode;
+
+  /// The one thing the primary button on screen does: Join when the code
+  /// field holds a full valid code, Create otherwise. The name field's Go
+  /// does this, so a friend arriving from a link who edits the name and
+  /// presses Go joins their friend's room (C-529 D1).
+  void _submitPrimary() {
+    if (isValidRoomCode(normalizeRoomCode(_codeController.text))) {
+      _joinRoom(fromLink: _codeIsFromLink);
+    } else {
+      _createRoom();
+    }
+  }
+
   Future<void> _createRoom() async {
-    if (_removedNotice || _gameGoneNotice) {
+    if (_hasNotice) {
       setState(() {
         _removedNotice = false;
         _gameGoneNotice = false;
+        _roomClosedNotice = null;
       });
     }
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -930,12 +1014,7 @@ class _HomeScreenState extends State<HomeScreen>
     // as the route returns, not after the controller has retired. Set the
     // notice here, before the retire below, which can sit for up to the
     // 10 second request timeout on a dead socket.
-    if (result == GameScreenResult.removed && mounted) {
-      setState(() {
-        _removedNotice = true;
-        _gameGoneNotice = false;
-      });
-    }
+    _showNoticeFor(result);
     // Rule 2 of order 080: LobbyScreen never disposes a controller it did
     // not create. This screen created it, so this screen retires it once
     // the player has walked away from the pushed route.
@@ -956,9 +1035,10 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// [fromLink] is true only for a join a room link started: the lobby then
-  /// words a vanished room in the link's terms and offers no retry (C-447
-  /// D4b). A join from a typed code leaves it false.
+  /// [fromLink] is true only for a join of the code a room link filled in and
+  /// the player has not changed: the lobby then words a vanished room in the
+  /// link's terms (C-447 D4b, C-529 D4). A join from a typed code leaves it
+  /// false.
   Future<void> _joinRoom({bool fromLink = false}) async {
     final AppLocalizations loc = AppLocalizations.of(context);
     final String normalized = normalizeRoomCode(_codeController.text);
@@ -972,6 +1052,7 @@ class _HomeScreenState extends State<HomeScreen>
       _errorText = null;
       _removedNotice = false;
       _gameGoneNotice = false;
+      _roomClosedNotice = null;
     });
     final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
@@ -1020,12 +1101,9 @@ class _HomeScreenState extends State<HomeScreen>
     }
     // C-316 rule 3: set the notice before the retire below; see the
     // matching comment in _createRoom.
-    if (result == GameScreenResult.removed && mounted) {
-      setState(() {
-        _removedNotice = true;
-        _gameGoneNotice = false;
-      });
-    }
+    _showNoticeFor(result);
+    // C-529 D4: read before the retire below, which ends the controller.
+    _clearDeadJoinCode(controller, normalized);
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
@@ -1046,10 +1124,11 @@ class _HomeScreenState extends State<HomeScreen>
   /// this watches, is what records the seat again once the resume lands;
   /// nothing here writes [SessionMemory] directly.
   Future<void> _rejoinRoom(SeatRecord record) async {
-    if (_removedNotice || _gameGoneNotice) {
+    if (_hasNotice) {
       setState(() {
         _removedNotice = false;
         _gameGoneNotice = false;
+        _roomClosedNotice = null;
       });
     }
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -1070,11 +1149,8 @@ class _HomeScreenState extends State<HomeScreen>
     // C-447 D4: a resume the server refused (room reaped, seat taken back)
     // goes home with its own true line, set before the retire like the
     // removed notice in _createRoom.
-    if (result == GameScreenResult.gameGone && mounted) {
-      setState(() {
-        _gameGoneNotice = true;
-        _removedNotice = false;
-      });
+    if (result == GameScreenResult.gameGone) {
+      _showNoticeFor(result);
     }
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
@@ -1087,10 +1163,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (result == GameScreenResult.newTable) {
       await _createRoom();
     } else if (result == GameScreenResult.removed) {
-      setState(() {
-        _removedNotice = true;
-        _gameGoneNotice = false;
-      });
+      _showNoticeFor(result);
     }
   }
 
@@ -1132,7 +1205,7 @@ class _HomeScreenState extends State<HomeScreen>
         key: _joinButtonScrollKey,
         child: _weightedButton(
           key: const Key('join-room-button'),
-          onPressed: _joinRoom,
+          onPressed: () => _joinRoom(fromLink: _codeIsFromLink),
           label: loc.homeJoinRoomButton,
           icon: const DirectionalIcon(Icons.login_rounded),
           primary: joinPrimary,
@@ -1389,15 +1462,24 @@ class _HomeScreenState extends State<HomeScreen>
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
-                                  if (_removedNotice || _gameGoneNotice) ...[
+                                  if (_hasNotice) ...[
                                     _HomeNotice(
                                       cardKey: const Key('home-notice'),
-                                      textKey: _gameGoneNotice
+                                      textKey: _roomClosedNotice != null
+                                          ? const Key('home-room-closed-notice')
+                                          : _gameGoneNotice
                                           ? const Key('home-game-gone-notice')
                                           : const Key('home-removed-notice'),
-                                      text: _gameGoneNotice
-                                          ? loc.homeGameGoneNotice
-                                          : loc.homeRemovedNotice,
+                                      text: switch (_roomClosedNotice) {
+                                        GameScreenResult.roomClosedHost =>
+                                          loc.homeRoomClosedHostNotice,
+                                        GameScreenResult.roomClosedGuest =>
+                                          loc.homeRoomClosedGuestNotice,
+                                        _ =>
+                                          _gameGoneNotice
+                                              ? loc.homeGameGoneNotice
+                                              : loc.homeRemovedNotice,
+                                      },
                                       dismissLabel: loc.homeNoticeDismiss,
                                       onDismiss: _dismissNotice,
                                     ),
@@ -1437,9 +1519,12 @@ class _HomeScreenState extends State<HomeScreen>
                                               textAlign: TextAlign.center,
                                               textInputAction:
                                                   TextInputAction.go,
-                                              onSubmitted: (_) {
-                                                _createRoom();
-                                              },
+                                              onSubmitted: (_) =>
+                                                  _submitPrimary(),
+                                              inputFormatters:
+                                                  const <TextInputFormatter>[
+                                                    _NameInputFormatter(),
+                                                  ],
                                               style: textTheme.titleMedium
                                                   ?.copyWith(
                                                     fontWeight: FontWeight.w600,
@@ -1597,7 +1682,9 @@ class _HomeScreenState extends State<HomeScreen>
                                         textInputAction: TextInputAction.go,
                                         onSubmitted: (_) {
                                           if (joinPrimary) {
-                                            _joinRoom();
+                                            _joinRoom(
+                                              fromLink: _codeIsFromLink,
+                                            );
                                           }
                                         },
                                         inputFormatters:
@@ -1728,6 +1815,120 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     );
+  }
+}
+
+/// The longest name the server takes: a trimmed 1 to 24 UTF-16 code units
+/// (`_validName` in the server's registry).
+const int kNameMaxUnits = 24;
+
+final RegExp _nameControlChars = RegExp(r'[\x00-\x1f\x7f-\x9f]');
+
+bool _isHighSurrogate(int unit) => unit >= 0xD800 && unit <= 0xDBFF;
+bool _isLowSurrogate(int unit) => unit >= 0xDC00 && unit <= 0xDFFF;
+
+/// Keeps the name field to what the server accepts (C-529 D2): the control
+/// characters it refuses are dropped as they are typed or pasted, and input
+/// past [kNameMaxUnits] is refused. A paste that does not fit is cut where it
+/// was inserted and never inside a surrogate pair, so a trailing emoji is
+/// kept or dropped whole.
+class _NameInputFormatter extends TextInputFormatter {
+  const _NameInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    String text = newValue.text;
+    int base = newValue.selection.baseOffset;
+    int extent = newValue.selection.extentOffset;
+    if (text.contains(_nameControlChars)) {
+      final String raw = text;
+      int mapped(int offset) {
+        if (offset <= 0) {
+          return offset;
+        }
+        final int end = offset < raw.length ? offset : raw.length;
+        return raw.substring(0, end).replaceAll(_nameControlChars, '').length;
+      }
+
+      text = raw.replaceAll(_nameControlChars, '');
+      base = mapped(base);
+      extent = mapped(extent);
+    }
+    if (text.length > kNameMaxUnits) {
+      final String old = oldValue.text;
+      // The edit is the stretch of [text] between the part it shares with
+      // the old value at the front and the part it shares at the back.
+      int front = 0;
+      final int shortest = old.length < text.length ? old.length : text.length;
+      while (front < shortest &&
+          old.codeUnitAt(front) == text.codeUnitAt(front)) {
+        front++;
+      }
+      if (front > 0 &&
+          front < text.length &&
+          _isHighSurrogate(text.codeUnitAt(front - 1)) &&
+          _isLowSurrogate(text.codeUnitAt(front))) {
+        front--;
+      }
+      int back = 0;
+      while (back < shortest - front &&
+          old.codeUnitAt(old.length - 1 - back) ==
+              text.codeUnitAt(text.length - 1 - back)) {
+        back++;
+      }
+      final int backStart = text.length - back;
+      if (back > 0 &&
+          backStart > 0 &&
+          _isHighSurrogate(text.codeUnitAt(backStart - 1)) &&
+          _isLowSurrogate(text.codeUnitAt(backStart))) {
+        back--;
+      }
+      final String inserted = text.substring(front, text.length - back);
+      final int room = kNameMaxUnits - (text.length - inserted.length);
+      String kept = _cutUnits(inserted, room < 0 ? 0 : room);
+      String result =
+          text.substring(0, front) + kept + text.substring(text.length - back);
+      int caret = front + kept.length;
+      if (result.length > kNameMaxUnits) {
+        // An old value already past the limit (set in code, not typed).
+        result = _cutUnits(result, kNameMaxUnits);
+        caret = caret < result.length ? caret : result.length;
+      }
+      return TextEditingValue(
+        text: result,
+        selection: TextSelection.collapsed(offset: caret),
+      );
+    }
+    if (text == newValue.text) {
+      return newValue;
+    }
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection(
+        baseOffset: base,
+        extentOffset: extent,
+        affinity: newValue.selection.affinity,
+        isDirectional: newValue.selection.isDirectional,
+      ),
+    );
+  }
+
+  /// The first [units] code units of [value], backed off by one when the cut
+  /// would fall between the halves of a surrogate pair.
+  static String _cutUnits(String value, int units) {
+    if (units >= value.length) {
+      return value;
+    }
+    int end = units < 0 ? 0 : units;
+    if (end > 0 &&
+        _isHighSurrogate(value.codeUnitAt(end - 1)) &&
+        _isLowSurrogate(value.codeUnitAt(end))) {
+      end--;
+    }
+    return value.substring(0, end);
   }
 }
 
@@ -2152,9 +2353,9 @@ class _PlayersQuestionRow extends StatelessWidget {
         const SizedBox(width: kSpace3),
         PopupMenuButton<int>(
           tooltip: loc.homePlayersQuestion,
-          initialValue: value,
           onSelected: onChanged,
           position: PopupMenuPosition.under,
+          clipBehavior: Clip.antiAlias,
           color: LudoColors.paperElevated,
           surfaceTintColor: Colors.transparent,
           shape: RoundedRectangleBorder(
@@ -2248,7 +2449,11 @@ class _PlayersControlFace extends StatelessWidget {
 
 /// One entry of the open menu. The current count has a filled background and
 /// a check glyph, so colour is never the only mark (doctrine P9); the check
-/// slot is always reserved so the figures do not shift between entries.
+/// slot is always reserved so the figures do not shift between entries. The
+/// fill is the only selection paint: the menu is opened without an
+/// initialValue, so Flutter lays no highlight band under it, and the row
+/// stretches to the item's full width so the fill reaches both menu edges
+/// (the menu's clip rounds the first and last corners).
 class _PlayersOption extends StatelessWidget {
   const _PlayersOption({required this.count, required this.selected});
 
@@ -2261,14 +2466,12 @@ class _PlayersOption extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: selected ? LudoColors.paperWashTop : Colors.transparent,
-        borderRadius: BorderRadius.circular(kRadiusControl),
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 112, minHeight: 48),
         child: Padding(
           padding: const EdgeInsetsDirectional.symmetric(horizontal: kSpace3),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
               SizedBox(
                 width: kSpace5,
