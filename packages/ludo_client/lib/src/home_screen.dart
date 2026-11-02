@@ -2152,9 +2152,9 @@ class _PlayersQuestionRow extends StatelessWidget {
         const SizedBox(width: kSpace3),
         PopupMenuButton<int>(
           tooltip: loc.homePlayersQuestion,
-          initialValue: value,
           onSelected: onChanged,
           position: PopupMenuPosition.under,
+          clipBehavior: Clip.antiAlias,
           color: LudoColors.paperElevated,
           surfaceTintColor: Colors.transparent,
           shape: RoundedRectangleBorder(
@@ -2248,7 +2248,11 @@ class _PlayersControlFace extends StatelessWidget {
 
 /// One entry of the open menu. The current count has a filled background and
 /// a check glyph, so colour is never the only mark (doctrine P9); the check
-/// slot is always reserved so the figures do not shift between entries.
+/// slot is always reserved so the figures do not shift between entries. The
+/// fill is the only selection paint: the menu is opened without an
+/// initialValue, so Flutter lays no highlight band under it, and the row
+/// stretches to the item's full width so the fill reaches both menu edges
+/// (the menu's clip rounds the first and last corners).
 class _PlayersOption extends StatelessWidget {
   const _PlayersOption({required this.count, required this.selected});
 
@@ -2261,14 +2265,12 @@ class _PlayersOption extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: selected ? LudoColors.paperWashTop : Colors.transparent,
-        borderRadius: BorderRadius.circular(kRadiusControl),
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 112, minHeight: 48),
         child: Padding(
           padding: const EdgeInsetsDirectional.symmetric(horizontal: kSpace3),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
               SizedBox(
                 width: kSpace5,
