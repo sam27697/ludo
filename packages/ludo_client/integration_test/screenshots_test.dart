@@ -63,6 +63,19 @@
 //                                 scrolled to the players row
 //   105-game-muted-ar.png     game header, Arabic, after one tap on the
 //                             sound toggle (crossed speaker)
+//   106-refusal-die-my-turn-en.png  game, English, the die refused on my own
+//                             turn under the legal-token halo
+//   107-home-room-closed-host-en.png  home, English, the host's room closed
+//   108-home-room-closed-guest-ar.png home, Arabic, a guest's room closed
+//   109-lobby-link-gone-first-time-ar.png  lobby error, Arabic, a first-time
+//                             link join into a room that is gone
+//   110-lobby-room-started-en.png  lobby error, English, room not taking
+//                             players
+//   111-game-connection-lost-ar.png  game, Arabic, connection-lost card
+//   112-end-resumed-no-rolls-en.png  end card, English, reached by a resume
+//   113-end-lose-zero-ar.png  loser's end card, Arabic, every tile at zero
+//   114-home-link-first-time-short-en.png  home, English, first-time link
+//                             guest on a 360 x 640 dp surface
 //
 // Two workflow runs (33183494414, 33185182659) each produced a room-screen
 // capture that was not a room screen at all: a silently dropped enterText
@@ -87,6 +100,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart'
     show appSupportedLocales, buildAppTheme;
+import 'package:ludo_client/src/end_card.dart' show EndCard;
 import 'package:ludo_client/src/feedback.dart'
     show FeedbackCue, FeedbackScope, FeedbackService, FeedbackSettings;
 import 'package:ludo_client/src/game_screen.dart';
@@ -6638,6 +6652,121 @@ void main() {
       roomCode: 'SM105A',
       gameId: '105' * 5 + '1',
       seatToken: 'tok-shot-105',
+    );
+  });
+
+  // ==========================================================================
+  // 106-114: order 531 (C-529 and A1). 106 is the die refused on my own turn
+  // (the residue from run 122); 107 and 108 are home after a lobby whose room
+  // closed under it; 109 and 110 are the lobby error body of a join that
+  // cannot succeed; 111 is the connection-lost card in a PLAYING game; 112 is
+  // the end card reached by a resume; 113 is a real loser's end card with
+  // every tile at zero (X120); 114 is a first-time link guest on a 360 x 640
+  // dp surface (X121). Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 106-refusal-die-my-turn-en', (tester) async {
+    await _shootRefusalDieMyTurn(
+      tester,
+      binding,
+      shotName: '106-refusal-die-my-turn-en',
+      locale: const Locale('en'),
+      roomCode: 'RD6M3E',
+      gameId: '106' * 5 + '1',
+      seatToken: 'tok-shot-106',
+    );
+  });
+
+  testWidgets('capture 107-home-room-closed-host-en', (tester) async {
+    await _shootHomeRoomClosed(
+      tester,
+      binding,
+      shotName: '107-home-room-closed-host-en',
+      locale: const Locale('en'),
+      roomCode: 'HC4K7E',
+      seatToken: 'tok-shot-107',
+      host: true,
+    );
+  });
+
+  testWidgets('capture 108-home-room-closed-guest-ar', (tester) async {
+    await _shootHomeRoomClosed(
+      tester,
+      binding,
+      shotName: '108-home-room-closed-guest-ar',
+      locale: const Locale('ar'),
+      roomCode: 'HG5M8A',
+      seatToken: 'tok-shot-108',
+      host: false,
+    );
+  });
+
+  testWidgets('capture 109-lobby-link-gone-first-time-ar', (tester) async {
+    await _shootLobbyJoinRefused(
+      tester,
+      binding,
+      shotName: '109-lobby-link-gone-first-time-ar',
+      locale: const Locale('ar'),
+      code: 'LK9M3P',
+      fromLink: true,
+      errorCode: 'NO_SUCH_ROOM',
+    );
+  });
+
+  testWidgets('capture 110-lobby-room-started-en', (tester) async {
+    await _shootLobbyJoinRefused(
+      tester,
+      binding,
+      shotName: '110-lobby-room-started-en',
+      locale: const Locale('en'),
+      code: 'RS2N6Q',
+      fromLink: false,
+      errorCode: 'ROOM_STARTED',
+    );
+  });
+
+  testWidgets('capture 111-game-connection-lost-ar', (tester) async {
+    await _shootGameConnectionLost(
+      tester,
+      binding,
+      shotName: '111-game-connection-lost-ar',
+      locale: const Locale('ar'),
+      roomCode: 'CL8P4A',
+      gameId: '111' * 5 + '1',
+      seatToken: 'tok-shot-111',
+    );
+  });
+
+  testWidgets('capture 112-end-resumed-no-rolls-en', (tester) async {
+    await _shootEndResumedNoRolls(
+      tester,
+      binding,
+      shotName: '112-end-resumed-no-rolls-en',
+      locale: const Locale('en'),
+      roomCode: 'EN6R3W',
+      gameId: '112' * 5 + '1',
+      seatToken: 'tok-shot-112',
+    );
+  });
+
+  testWidgets('capture 113-end-lose-zero-ar', (tester) async {
+    await _shootEndLoseZero(
+      tester,
+      binding,
+      shotName: '113-end-lose-zero-ar',
+      locale: const Locale('ar'),
+      roomCode: 'ZR5T9A',
+      gameId: '113' * 5 + '1',
+      seatToken: 'tok-shot-113',
+    );
+  });
+
+  testWidgets('capture 114-home-link-first-time-short-en', (tester) async {
+    await _shootHomeLinkShort(
+      tester,
+      binding,
+      shotName: '114-home-link-first-time-short-en',
+      locale: const Locale('en'),
+      code: 'FL7Q2M',
     );
   });
 }
@@ -15815,5 +15944,1359 @@ Future<void> _shootGameMuted(
     await binding.takeScreenshot(shotName);
   } finally {
     await _releaseTrayGame(tester, controller);
+  }
+}
+
+// --- order 531: dead rooms, first launch and the refused die (C-529) --------
+
+const String _closedHostEn =
+    'Your room closed while you were away. Create a new one and send the new '
+    'link.';
+const String _closedGuestAr =
+    'أُغلقت الغرفة أثناء غيابك. اطلب من صديقك رابطاً جديداً.';
+const String _roomStartedEn = 'That room is no longer taking players.';
+const String _roomStartedAr = 'هذه الغرفة لم تعد تستقبل لاعبين.';
+const String _backHomeEn = 'Back to home';
+const String _backHomeAr = 'العودة إلى الرئيسية';
+const String _serverWords = 'seat token does not match a live seat';
+
+Map<String, Object?> _dataOfSent(String sentText) =>
+    _decode(sentText)['d']! as Map<String, Object?>;
+
+/// A [RoomController] that remembers whether [dispose] has run. Home retires
+/// the controllers it owns when a route pops, and a ChangeNotifier refuses a
+/// second dispose.
+class _ShotController extends RoomController {
+  _ShotController({required super.serverUrl, required super.connect});
+
+  bool wasDisposed = false;
+
+  @override
+  void dispose() {
+    wasDisposed = true;
+    super.dispose();
+  }
+}
+
+/// Hands out a fresh controller per call, and a fresh [FakeTransport] on
+/// every connect any of them makes, so a Reconnect after a drop is answered
+/// on its own socket. No automatic reconnect: the Reconnect button is what
+/// the player taps.
+class _ShotFactory {
+  final List<_ShotController> controllers = <_ShotController>[];
+  final List<FakeTransport> transports = <FakeTransport>[];
+
+  RoomController call() {
+    final _ShotController created = _ShotController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: (Uri url) async {
+        final FakeTransport transport = FakeTransport();
+        transports.add(transport);
+        return transport;
+      },
+    );
+    controllers.add(created);
+    return created;
+  }
+
+  FakeTransport get last => transports.last;
+
+  /// Every frame of [type] sent on any transport, in order.
+  List<String> sent(String type) => <String>[
+    for (final FakeTransport t in transports)
+      for (final String s in t.sentRaw)
+        if (_typeOf(s) == type) s,
+  ];
+
+  List<String> get allTypes => <String>[
+    for (final FakeTransport t in transports)
+      for (final String s in t.sentRaw) _typeOf(s),
+  ];
+
+  /// Answers every leave_room still open, the way capture 61 does, so a
+  /// retired controller is not left waiting on its ten second timeout.
+  Future<void> answerLeaves(WidgetTester tester) async {
+    for (final FakeTransport transport in transports) {
+      if (transport.isClosed) {
+        continue;
+      }
+      for (final String leave in _sentOfType(transport, 'leave_room')) {
+        transport.pushText(
+          _frame(
+            type: 'player_left',
+            re: _idOf(leave),
+            data: const <String, Object?>{'seat': 0, 'host_seat': 0, 'seq': 2},
+          ),
+        );
+      }
+    }
+    await tester.pump();
+  }
+
+  void disposeAll() {
+    for (final _ShotController controller in controllers) {
+      if (!controller.wasDisposed) {
+        controller.dispose();
+      }
+    }
+  }
+}
+
+/// Unmounts the tree so no listener outlives its controller, then disposes
+/// whatever Home did not already retire.
+Future<void> _finishShot(WidgetTester tester, _ShotFactory factory) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump();
+  factory.disposeAll();
+  await tester.pump();
+}
+
+/// Clean store, no seat record, system text scale 1.0, then HomeScreen mounted
+/// in [locale] on [factory]. [coldLink] is delivered as the link the app was
+/// opened with. Home only, so the trailing pumpAndSettle is safe (no
+/// LobbyScreen ticker exists yet).
+Future<void> _mountShotHome(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required _ShotFactory factory,
+  Uri? coldLink,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      HomeScreen(
+        controllerFactory: factory.call,
+        onToggleLocale: () {},
+        initialLinkReader: () async => coldLink,
+      ),
+      locale: locale,
+    ),
+  );
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+  expect(
+    find.byKey(const Key('home-rejoin-button')),
+    findsNothing,
+    reason:
+        'capture $shotName: expected no home-rejoin-button on a home '
+        'mounted after clearing SharedPreferences; found one, so a seat '
+        'record survived the clear',
+  );
+}
+
+/// Types [code] into the code field, waits for Join to be in the tree and
+/// taps it, as a player does.
+Future<void> _typeCodeAndJoin(
+  WidgetTester tester, {
+  required String code,
+  required String shotName,
+}) async {
+  await tester.enterText(find.byKey(const Key('room-code-field')), code);
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('join-room-button')),
+    'capture $shotName: join-room-button after "$code" was typed',
+  );
+  // Join arrives inside a 200 ms AnimatedSize; let it reach its final rect.
+  await _pumpRealDurationFrames(tester, frameCount: 8);
+  await tester.ensureVisible(find.byKey(const Key('join-room-button')));
+  await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
+}
+
+/// 106 (order 531). The die refused on my own turn: two seats `[0, 2]`,
+/// viewer seat 0, animations off, seat 0 has rolled a 6 with legal `[0, 1]`
+/// (capture 97's setup), and the tap goes to `game-die`, which has nothing to
+/// roll. The shot is taken 96 ms after the tap, inside the 300 ms window:
+/// exactly one RefusalMark is on screen, its rect contains the die's centre,
+/// and tokens 0 and 1 still carry their legal rings, so the mark reads under
+/// the halo. No `roll` request went out.
+Future<void> _shootRefusalDieMyTurn(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+  tester.platformDispatcher.accessibilityFeaturesTestValue =
+      const FakeAccessibilityFeatures(disableAnimations: true);
+  addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+
+  final String scenario =
+      'room $roomCode, game $gameId, locale ${locale.languageCode}, '
+      'animations off, seat 0 rolled 6 legal [0, 1], tap on game-die';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    await _pumpRealDurationFrames(tester, frameCount: 4);
+
+    _expectChatFixture(
+      tester,
+      controller,
+      shotName: shotName,
+      scenario: scenario,
+      locale: locale,
+      seats: <int>[0, 2],
+    );
+    expect(
+      MediaQuery.disableAnimationsOf(tester.element(find.byType(GameScreen))),
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): the screen must read '
+          'disableAnimations as true',
+    );
+
+    final int seq = await _pushTraySeq(
+      tester,
+      opened.transport,
+      opened.seq,
+      type: 'rolled',
+      data: <String, Object?>{
+        'seat': 0,
+        'value': 6,
+        'legal': <int>[0, 1],
+        'deadline_ms': _trayDeadlineMs,
+        'k': 1,
+        'reveal': _trayReveal,
+      },
+    );
+    await _pumpRealDurationFrames(tester, frameCount: 4);
+    final TurnStateSnapshot turn = _turnOf(controller);
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName ($scenario): a pushed frame was dropped; room '
+          'seq is ${controller.room!.seq}, last push was $seq',
+    );
+    expect(
+      <Object>[turn.seat, turn.phaseName],
+      <Object>[0, 'awaitMove'],
+      reason:
+          'capture $shotName ($scenario): expected seat 0 in awaitMove '
+          'after rolling 6, got seat ${turn.seat} in ${turn.phaseName}',
+    );
+    for (final int token in <int>[0, 1]) {
+      expect(
+        find.byKey(Key('board-legal-ring-0-$token')),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario): token $token must carry a '
+            'legal ring',
+      );
+    }
+
+    final Finder die = find.byKey(const Key('game-die'));
+    expect(
+      die,
+      findsOneWidget,
+      reason: 'capture $shotName ($scenario): the die is on screen',
+    );
+    expect(
+      _refusalMarks(),
+      findsNothing,
+      reason: 'capture $shotName ($scenario): no mark before the tap',
+    );
+    final int rollsBefore = _sentOfType(opened.transport, 'roll').length;
+
+    final Offset centre = tester.getCenter(die);
+    await tester.tap(die, warnIfMissed: false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 96));
+
+    expect(
+      _refusalMarks(),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): C-520 D3, exactly one RefusalMark '
+          '96 ms after a refused tap on my own die with animations off',
+    );
+    final Rect mark = tester.getRect(_refusalMarks());
+    expect(
+      mark.contains(centre),
+      isTrue,
+      reason:
+          'capture $shotName ($scenario): the mark $mark must cover the '
+          'die, whose centre is $centre',
+    );
+    for (final int token in <int>[0, 1]) {
+      expect(
+        find.byKey(Key('board-legal-ring-0-$token')),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario): the legal ring on token $token '
+            'must still be up under the mark',
+      );
+    }
+    expect(
+      _sentOfType(opened.transport, 'roll').length,
+      rollsBefore,
+      reason:
+          'capture $shotName ($scenario): a refused tap sends nothing; '
+          'sent ${opened.transport.sentRaw.map(_typeOf).toList()}',
+    );
+
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+    tester.platformDispatcher.clearAccessibilityFeaturesTestValue();
+  }
+}
+
+/// 107, 108 (order 531, C-529 D3). A create ([host] true) or join lobby that
+/// held a two-seat room, the socket dropped, Reconnect tapped, and the resume
+/// answered `NO_SUCH_ROOM`. The route goes home and shows
+/// `home-room-closed-notice` with the host line or the guest line, in the
+/// card above Create. No lobby-error, no Retry, no second create_room.
+Future<void> _shootHomeRoomClosed(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String seatToken,
+  required bool host,
+}) async {
+  final bool en = locale.languageCode == 'en';
+  final String expected = host
+      ? (en
+            ? _closedHostEn
+            : 'أُغلقت غرفتك أثناء غيابك. أنشئ غرفة جديدة وأرسل الرابط '
+                  'الجديد.')
+      : (en
+            ? 'That room closed while you were away. Ask your friend for a '
+                  'new link.'
+            : _closedGuestAr);
+  final String scenario =
+      '${host ? 'create' : 'join'} lobby for room $roomCode, locale '
+      '${locale.languageCode}, socket drop, Reconnect, resume answered '
+      'NO_SUCH_ROOM';
+  final _ShotFactory factory = _ShotFactory();
+  try {
+    await _mountShotHome(
+      tester,
+      binding,
+      shotName: shotName,
+      locale: locale,
+      factory: factory,
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('home-name-field')),
+      host ? 'Priya' : 'Karim',
+    );
+    final String request = host ? 'create_room' : 'join_room';
+    if (host) {
+      await _tapCreateRoom(tester);
+    } else {
+      await _typeCodeAndJoin(tester, code: roomCode, shotName: shotName);
+    }
+    expect(
+      factory.controllers,
+      hasLength(1),
+      reason:
+          'capture $shotName ($scenario): the tap must build exactly one '
+          'controller',
+    );
+    expect(
+      factory.sent(request),
+      hasLength(1),
+      reason:
+          'capture $shotName ($scenario): expected one $request, sent '
+          '${factory.allTypes}',
+    );
+    final FakeTransport first = factory.transports.single;
+    first.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': host ? 0 : 2, 'seat_token': seatToken},
+      ),
+    );
+    first.pushText(
+      _frame(
+        type: 'room',
+        re: _idOf(factory.sent(request).single),
+        data: _roomJson(
+          code: roomCode,
+          players: 2,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'Priya'),
+            _seatJson(2, name: 'Karim'),
+          ],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      'capture $shotName ($scenario): LobbyScreen after the $request reply',
+    );
+    await _expectLobbyScreen(
+      tester,
+      localeName: locale.languageCode,
+      code: roomCode,
+      expectedSeatCount: 2,
+    );
+    final RoomController controller = factory.controllers.single;
+    expect(
+      <Object>[controller.phase, controller.isHost],
+      <Object>[RoomPhase.connected, host],
+      reason:
+          'capture $shotName ($scenario): expected a connected controller '
+          'with isHost $host, got phase ${controller.phase}, isHost '
+          '${controller.isHost}, error ${controller.errorCode}',
+    );
+
+    first.endFromFarSide();
+    await tester.pump();
+    await tester.pump();
+    expect(
+      controller.phase,
+      RoomPhase.closed,
+      reason:
+          'capture $shotName ($scenario): the far side vanishing must '
+          'close the phase, got ${controller.phase}',
+    );
+    final Finder reconnect = find.byKey(const Key('lobby-reconnect-button'));
+    expect(
+      reconnect,
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): the dropped lobby must offer '
+          'Reconnect (${_viewText(tester)})',
+    );
+    await tester.ensureVisible(reconnect);
+    await tester.tap(reconnect);
+    await tester.pump();
+    await _pumpUntilReady(
+      tester,
+      () =>
+          factory.transports.length == 2 &&
+          _sentOfType(factory.last, 'resume').length == 1,
+      'capture $shotName ($scenario): one resume on a second transport '
+      'after Reconnect; transports ${factory.transports.length}, sent '
+      '${factory.allTypes}',
+    );
+    final int createsBefore = factory.sent('create_room').length;
+
+    factory.last.pushText(
+      _frame(
+        type: 'error',
+        re: _idOf(_sentOfType(factory.last, 'resume').single),
+        data: const <String, Object?>{'code': 'NO_SUCH_ROOM', 'message': ''},
+      ),
+    );
+    await tester.pump();
+    await _pumpUntilReady(
+      tester,
+      () => find.byType(LobbyScreen, skipOffstage: false).evaluate().isEmpty,
+      'capture $shotName ($scenario): the lobby route popped to Home',
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('home-room-closed-notice')),
+      'capture $shotName ($scenario): home-room-closed-notice on Home',
+    );
+    await factory.answerLeaves(tester);
+    await _pumpRealDurationFrames(tester);
+
+    expect(
+      find.byKey(const Key('lobby-error'), skipOffstage: false),
+      findsNothing,
+      reason: 'capture $shotName ($scenario): lobby-error must never show',
+    );
+    expect(
+      find.byKey(const Key('lobby-retry-button'), skipOffstage: false),
+      findsNothing,
+      reason: 'capture $shotName ($scenario): no Retry',
+    );
+    expect(
+      factory.sent('create_room'),
+      hasLength(createsBefore),
+      reason:
+          'capture $shotName ($scenario): no path may create a room the '
+          'player did not ask for; sent ${factory.allTypes}',
+    );
+    expect(
+      find.byKey(const Key('home-game-gone-notice'), skipOffstage: false),
+      findsNothing,
+      reason: 'capture $shotName ($scenario): only the closed notice shows',
+    );
+    expect(
+      find.byKey(const Key('home-removed-notice'), skipOffstage: false),
+      findsNothing,
+      reason: 'capture $shotName ($scenario): only the closed notice shows',
+    );
+    expect(
+      find.byKey(const Key('home-notice')),
+      findsOneWidget,
+      reason: 'capture $shotName ($scenario): the notice sits in its card',
+    );
+    final Finder notice = find.byKey(const Key('home-room-closed-notice'));
+    expect(
+      notice,
+      findsOneWidget,
+      reason: 'capture $shotName ($scenario): home-room-closed-notice shows',
+    );
+    expect(
+      tester.widget<Text>(notice).data,
+      expected,
+      reason:
+          'capture $shotName ($scenario): the ${host ? 'host' : 'guest'} '
+          'line must read "$expected", it reads '
+          '"${tester.widget<Text>(notice).data}"',
+    );
+    expect(
+      tester.getTopLeft(notice).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const Key('create-room-button'))).dy,
+      ),
+      reason:
+          'capture $shotName ($scenario): the notice takes the slot above '
+          'create-room-button',
+    );
+    _expectRectInsideView(
+      tester,
+      notice,
+      label: 'home-room-closed-notice',
+      context: 'on Home before capture $shotName',
+    );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _finishShot(tester, factory);
+  }
+}
+
+/// 109, 110 (order 531, C-529 D4). A first-time player's Join answered with
+/// [errorCode]: the lobby's error body, no `lobby-retry-button`, and
+/// `lobby-leave-button` reading "Back to home" because this lobby never held
+/// a seat. [fromLink] true delivers [code] as a cold room link on a first
+/// launch, so the Join tap carries the link and the line is the link wording;
+/// false types the code, so the line is the typed one.
+Future<void> _shootLobbyJoinRefused(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String code,
+  required bool fromLink,
+  required String errorCode,
+}) async {
+  final bool en = locale.languageCode == 'en';
+  final String scenario =
+      '${fromLink ? 'link-filled' : 'typed'} code $code, locale '
+      '${locale.languageCode}, join answered $errorCode';
+  final _ShotFactory factory = _ShotFactory();
+  try {
+    await _mountShotHome(
+      tester,
+      binding,
+      shotName: shotName,
+      locale: locale,
+      factory: factory,
+      coldLink: fromLink
+          ? Uri.parse('https://ludo.provefair.app/r/$code')
+          : null,
+    );
+    if (fromLink) {
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const Key('join-room-button')),
+        'capture $shotName ($scenario): join-room-button once the cold '
+        'link filled the code field',
+      );
+      await _pumpRealDurationFrames(tester, frameCount: 8);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('room-code-field')))
+            .controller!
+            .text,
+        code,
+        reason:
+            'capture $shotName ($scenario): the link must fill the code '
+            'field',
+      );
+      expect(
+        factory.controllers,
+        isEmpty,
+        reason:
+            'capture $shotName ($scenario): a first-time player is never '
+            'joined by the link alone; a controller was built',
+      );
+      await tester.ensureVisible(find.byKey(const Key('join-room-button')));
+      await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
+    } else {
+      await _typeCodeAndJoin(tester, code: code, shotName: shotName);
+    }
+
+    expect(
+      factory.sent('join_room'),
+      hasLength(1),
+      reason:
+          'capture $shotName ($scenario): expected one join_room, sent '
+          '${factory.allTypes}',
+    );
+    final String joinRaw = factory.sent('join_room').single;
+    expect(
+      _dataOfSent(joinRaw)['code'],
+      code,
+      reason:
+          'capture $shotName ($scenario): join_room must carry "$code", it '
+          'carries ${_dataOfSent(joinRaw)}',
+    );
+    factory.last.pushText(
+      _frame(
+        type: 'error',
+        re: _idOf(joinRaw),
+        data: <String, Object?>{'code': errorCode, 'message': ''},
+      ),
+    );
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('lobby-error')),
+      'capture $shotName ($scenario): lobby-error after the refused join',
+    );
+    await _pumpRealDurationFrames(tester);
+
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(LobbyScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName ($scenario): expected locale '
+          '${locale.languageCode}, got ${loc.localeName}',
+    );
+    final Finder error = find.byKey(const Key('lobby-error'));
+    final String line;
+    if (fromLink) {
+      line = loc.lobbyErrorLinkRoomGone;
+      expect(
+        line,
+        isNotEmpty,
+        reason:
+            'capture $shotName ($scenario): the link line must be written '
+            'out in ${locale.languageCode}',
+      );
+      expect(
+        line,
+        isNot(loc.lobbyErrorNoSuchRoom),
+        reason:
+            'capture $shotName ($scenario): the link line must not be the '
+            'typed-code line "${loc.lobbyErrorNoSuchRoom}"',
+      );
+    } else {
+      line = en ? _roomStartedEn : _roomStartedAr;
+    }
+    expect(
+      find.descendant(of: error, matching: find.text(line)),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): lobby-error must read "$line"; '
+          'the texts on screen are ${_viewText(tester)}',
+    );
+    expect(
+      find.byKey(const Key('lobby-retry-button'), skipOffstage: false),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): $errorCode can never succeed on '
+          'a retry, so lobby-retry-button must be absent',
+    );
+    final Finder leave = find.byKey(const Key('lobby-leave-button'));
+    expect(
+      leave,
+      findsOneWidget,
+      reason: 'capture $shotName ($scenario): lobby-leave-button is on screen',
+    );
+    final String leaveText = en ? _backHomeEn : _backHomeAr;
+    expect(
+      find.descendant(of: leave, matching: find.text(leaveText)),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): lobby-leave-button must read '
+          '"$leaveText" (no seat was ever held); the texts on screen are '
+          '${_viewText(tester)}',
+    );
+    _expectRectInsideView(
+      tester,
+      leave,
+      label: 'lobby-leave-button',
+      context: 'in the lobby error body before capture $shotName',
+    );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _finishShot(tester, factory);
+  }
+}
+
+/// 111 (order 531, C-529 D5). A PLAYING game, seat 0 to roll, the die tapped,
+/// and the roll answered `BAD_SEAT_TOKEN` with the server's English message.
+/// The connection-lost card shows with the Arabic title; the server's words
+/// and the English title are nowhere in the tree and
+/// `game-screen-error-message` is absent.
+Future<void> _shootGameConnectionLost(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final String scenario =
+      'room $roomCode, game $gameId, locale ${locale.languageCode}, roll '
+      'answered BAD_SEAT_TOKEN "$_serverWords"';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    await _pumpRealDurationFrames(tester, frameCount: 4);
+    expect(
+      controller.room!.state,
+      RoomState.playing,
+      reason:
+          'capture $shotName ($scenario): the room must be PLAYING before '
+          'the failure, got ${controller.room!.state}',
+    );
+
+    final Finder die = find.byKey(const Key('game-die'));
+    expect(
+      die,
+      findsOneWidget,
+      reason: 'capture $shotName ($scenario): the die is on screen',
+    );
+    await tester.tap(die);
+    await tester.pump();
+    final List<String> rolls = _sentOfType(opened.transport, 'roll');
+    expect(
+      rolls,
+      hasLength(1),
+      reason:
+          'capture $shotName ($scenario): the tap on my own die must send '
+          'one roll, sent ${opened.transport.sentRaw.map(_typeOf).toList()}',
+    );
+    opened.transport.pushText(
+      _frame(
+        type: 'error',
+        re: _idOf(rolls.single),
+        data: const <String, Object?>{
+          'code': 'BAD_SEAT_TOKEN',
+          'message': _serverWords,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('game-screen-connection-lost')),
+      'capture $shotName ($scenario): the connection-lost card',
+    );
+    await _pumpRealDurationFrames(tester, frameCount: 8);
+
+    expect(
+      <Object?>[
+        controller.phase,
+        controller.errorCode,
+        controller.errorMessage,
+      ],
+      <Object?>[RoomPhase.failed, 'BAD_SEAT_TOKEN', _serverWords],
+      reason:
+          'capture $shotName ($scenario): fixture: the controller must hold '
+          'the failure with the server\'s message in hand',
+    );
+    expect(
+      controller.room!.state,
+      RoomState.playing,
+      reason:
+          'capture $shotName ($scenario): the failure leaves the room '
+          'PLAYING, got ${controller.room!.state}',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName ($scenario): expected locale '
+          '${locale.languageCode}, got ${loc.localeName}',
+    );
+    final AppLocalizations english = await AppLocalizations.delegate.load(
+      const Locale('en'),
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('game-screen-connection-lost')),
+        matching: find.text(loc.lobbyConnectionLost),
+      ),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): the card must carry its title in '
+          '${locale.languageCode}: "${loc.lobbyConnectionLost}"; the texts '
+          'on screen are ${_viewText(tester)}',
+    );
+    for (final String englishText in <String>[
+      english.lobbyConnectionLost,
+      english.lobbyReconnectButton,
+      english.gameLeaveButton,
+    ]) {
+      expect(
+        find.text(englishText, skipOffstage: false),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario): English text "$englishText" is '
+            'on a ${locale.languageCode} screen; the texts on screen are '
+            '${_viewText(tester)}',
+      );
+    }
+    expect(
+      find.textContaining(_serverWords, skipOffstage: false),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): the server\'s own words must be '
+          'rendered nowhere; the texts on screen are ${_viewText(tester)}',
+    );
+    expect(
+      find.byKey(const Key('game-screen-error-message'), skipOffstage: false),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): BAD_SEAT_TOKEN maps to the '
+          'generic line, so game-screen-error-message and its gap are absent',
+    );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// 112 (order 531, C-529 D6). A seat record with no saved time, the Back to
+/// game button on Home tapped, and the resume answered with a FINISHED room.
+/// The snapshot carries no rolls, so the end card shows neither the roll
+/// heading nor the empty line. The verify link stays.
+Future<void> _shootEndResumedNoRolls(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  final String scenario =
+      'room $roomCode, game $gameId, locale ${locale.languageCode}, '
+      'FINISHED snapshot from a resume, no rolls seen';
+  final _ShotFactory factory = _ShotFactory();
+  try {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+    await (await SharedPreferences.getInstance()).clear();
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+    await _seedSeatWithoutSavedTime(
+      SeatRecord(code: roomCode, seat: 0, seatToken: seatToken),
+    );
+
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+        locale: locale,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: locale.languageCode);
+    expect(
+      find.byKey(const Key('home-rejoin-button')),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): the seat record without a saved '
+          'time must show home-rejoin-button',
+    );
+    await tester.ensureVisible(find.byKey(const Key('home-rejoin-button')));
+    await _tapAndAwaitPushedRoute(tester, const Key('home-rejoin-button'));
+
+    expect(
+      factory.sent('resume'),
+      hasLength(1),
+      reason:
+          'capture $shotName ($scenario): the tap must send one resume, sent '
+          '${factory.allTypes}',
+    );
+    final FakeTransport transport = factory.last;
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: _idOf(factory.sent('resume').single),
+        data: <String, Object?>{
+          ..._roomJson(
+            code: roomCode,
+            state: 'FINISHED',
+            players: 2,
+            hostSeat: 0,
+            gameId: gameId,
+            clientSeeds: '0:seed|1:seed',
+            winner: 1,
+            turn: const <String, Object?>{
+              'seat': 1,
+              'phase': 'finished',
+              'deadline_ms': 0,
+              'k': 8,
+            },
+            seats: <Map<String, Object?>>[
+              _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 12, -1]),
+              _seatJson(1, name: 'Karim', tokens: const <int>[57, 57, 57, 57]),
+            ],
+            seq: 9,
+          ),
+          'verify_url': 'https://verify.example.invalid/shot112',
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byType(GameScreen),
+      'capture $shotName ($scenario): GameScreen after the resume reply',
+    );
+    await _pumpRealDurationFrames(tester, frameCount: 8);
+    // The end card asks for the game log; nothing here is in it.
+    for (final String raw in _sentOfType(transport, 'game_log')) {
+      transport.pushText(
+        _frame(
+          type: 'error',
+          re: _idOf(raw),
+          data: const <String, Object?>{
+            'code': 'RATE_LIMITED',
+            'message': 'game_log',
+          },
+        ),
+      );
+    }
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byType(EndCard),
+      'capture $shotName ($scenario): the end card from the FINISHED '
+      'snapshot',
+    );
+    await _pumpRealDurationFrames(tester);
+
+    final RoomController controller = factory.controllers.single;
+    expect(
+      <Object?>[controller.room!.state, controller.room!.winner],
+      <Object?>[RoomState.finished, 1],
+      reason:
+          'capture $shotName ($scenario): the snapshot must land FINISHED '
+          'with winner 1, got ${controller.room!.state}, winner '
+          '${controller.room!.winner}',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName ($scenario): expected locale '
+          '${locale.languageCode}, got ${loc.localeName}',
+    );
+    expect(
+      find.byKey(const Key('end-card-lose')),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected the loser card; the '
+          'texts on screen are ${_viewText(tester)}',
+    );
+    expect(
+      find.text(loc.gameRollHistoryHeading, skipOffstage: false),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): C-529 D6, "'
+          '${loc.gameRollHistoryHeading}" heads a block with nothing to list',
+    );
+    expect(
+      find.text(loc.gameRollHistoryEmpty, skipOffstage: false),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): C-529 D6, "'
+          '${loc.gameRollHistoryEmpty}" is false of a game that was played',
+    );
+    expect(
+      find.byType(VerifyRollsButton),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): the verify link stays the way to '
+          'the rolls',
+    );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _finishShot(tester, factory);
+  }
+}
+
+/// Plays the two-seat game capture 113 photographs, from `game_started` at
+/// [gameStartedSeq], on [transport]. Seat 0 (this device) rolls 2, 5 and 3
+/// and none of them can move: no six, no capture, nothing home. Seat 2
+/// (Karim) enters on a 6 and takes all four tokens to 57. Every frame is
+/// pushed before the two pumps, as [_playEndCardScript] does, and `seq` is
+/// continuous so the stats stay complete. Returns the seq `game_over` must
+/// carry.
+Future<int> _playLoseZeroScript(
+  WidgetTester tester,
+  FakeTransport transport,
+  RoomController controller, {
+  required int gameStartedSeq,
+}) async {
+  expect(
+    controller.room?.seq,
+    gameStartedSeq,
+    reason:
+        'zero-stats script: room seq is ${controller.room?.seq}, expected '
+        '$gameStartedSeq',
+  );
+  var seq = gameStartedSeq;
+  var k = 0;
+
+  void rolled(int seat, int face, List<int> legal) {
+    k += 1;
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'rolled',
+        data: <String, Object?>{
+          'seat': seat,
+          'value': face,
+          'legal': legal,
+          'deadline_ms': _endCardDeadlineMs,
+          'k': k,
+          'reveal': _endCardReveal(k),
+          'seq': seq,
+        },
+      ),
+    );
+  }
+
+  void moved(int token, int from, int to, {required bool extra}) {
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'moved',
+        data: <String, Object?>{
+          'seat': 2,
+          'token': token,
+          'from': from,
+          'to': to,
+          'captured': <Object?>[],
+          'extra_roll': extra,
+          'seq': seq,
+        },
+      ),
+    );
+  }
+
+  void turn(int seat) {
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'turn',
+        data: <String, Object?>{
+          'seat': seat,
+          'deadline_ms': _endCardDeadlineMs,
+          'seq': seq,
+        },
+      ),
+    );
+  }
+
+  rolled(0, 2, const <int>[]);
+  turn(2);
+  rolled(2, 6, const <int>[0]);
+  moved(0, -1, 0, extra: true);
+  turn(2);
+  rolled(2, 4, const <int>[0]);
+  moved(0, 0, 4, extra: false);
+  turn(0);
+  rolled(0, 5, const <int>[]);
+  turn(2);
+  rolled(2, 1, const <int>[1]);
+  moved(1, -1, 57, extra: false);
+  turn(0);
+  rolled(0, 3, const <int>[]);
+  turn(2);
+  rolled(2, 1, const <int>[2]);
+  moved(2, -1, 57, extra: false);
+  turn(2);
+  rolled(2, 1, const <int>[3]);
+  moved(3, -1, 57, extra: false);
+  turn(2);
+  rolled(2, 1, const <int>[0]);
+  moved(0, 4, 57, extra: false);
+
+  await tester.pump();
+  await tester.pump();
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason:
+        'zero-stats script: seq gap (room seq ${controller.room?.seq}, last '
+        'pushed seq $seq)',
+  );
+  expect(
+    controller.room?.state,
+    RoomState.playing,
+    reason: 'zero-stats script must still be in play when it returns',
+  );
+  expect(
+    <List<int>>[_endCardTokens(controller, 0), _endCardTokens(controller, 2)],
+    <List<int>>[
+      <int>[-1, -1, -1, -1],
+      <int>[57, 57, 57, 57],
+    ],
+    reason:
+        'zero-stats script: seat 0 must still have every token in its yard '
+        'and seat 2 every token home, got '
+        '${_endCardTokens(controller, 0)} and ${_endCardTokens(controller, 2)}',
+  );
+  return seq + 1;
+}
+
+/// 113 (order 531, X120). A real loser's end card: seat 0 played the whole
+/// game on this device, so the stats are complete, and rolled 2, 5 and 3. The
+/// four tiles show 3 rolls, 0 sixes, 0 captures and 0 tokens home.
+Future<void> _shootEndLoseZero(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final String scenario =
+      'room $roomCode, game $gameId, locale ${locale.languageCode}, seat 0 '
+      'rolled 2, 5, 3, seat 2 won';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    final int gameOverSeq = await _playLoseZeroScript(
+      tester,
+      opened.transport,
+      controller,
+      gameStartedSeq: opened.seq,
+    );
+    opened.transport.pushText(
+      _frame(
+        type: 'game_over',
+        data: <String, Object?>{
+          'winner': 2,
+          'verify_url': 'https://verify.example.invalid/shot113',
+          'seq': gameOverSeq,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpRealDurationFrames(tester);
+
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName ($scenario): expected locale '
+          '${locale.languageCode}, got ${loc.localeName}',
+    );
+    _expectGameOverWinnerText(
+      tester,
+      controller: controller,
+      expectedWinner: 2,
+      expectedText: loc.endLoseTitle('Karim'),
+      momentDescription: 'capture $shotName ($scenario), before the shot',
+    );
+    expect(
+      controller.hasDesynced,
+      isFalse,
+      reason: 'capture $shotName ($scenario): a seq gap makes the stats gap',
+    );
+    _expectEndCardStatTiles(
+      tester,
+      rolls: 3,
+      sixes: 0,
+      captures: 0,
+      home: 0,
+      momentDescription: 'capture $shotName ($scenario), before the shot',
+    );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// 114 (order 531, X121). First launch, storage cleared, a room link for
+/// [code] delivered cold, on a 360 x 640 dp surface: Join is primary with the
+/// code filled. The measured rects of the name field, the code field and Join
+/// are printed, not asserted: whether the name field is still on screen is the
+/// question the frame answers.
+Future<void> _shootHomeLinkShort(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String code,
+}) async {
+  const Size logical = Size(360, 640);
+  final double ratio = tester.view.devicePixelRatio;
+  tester.view.physicalSize = logical * ratio;
+  addTearDown(tester.view.resetPhysicalSize);
+
+  final String scenario =
+      'first launch, cold link for $code, ${logical.width.toInt()} x '
+      '${logical.height.toInt()} dp, locale ${locale.languageCode}';
+  final _ShotFactory factory = _ShotFactory();
+  try {
+    await _mountShotHome(
+      tester,
+      binding,
+      shotName: shotName,
+      locale: locale,
+      factory: factory,
+      coldLink: Uri.parse('https://ludo.provefair.app/r/$code'),
+    );
+    final Size seen = MediaQuery.sizeOf(
+      tester.element(find.byType(HomeScreen)),
+    );
+    expect(
+      seen,
+      logical,
+      reason:
+          'capture $shotName ($scenario): the rig could not set the logical '
+          'size; the home sees $seen',
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('join-room-button')),
+      'capture $shotName ($scenario): join-room-button once the cold link '
+      'filled the code field',
+    );
+    await _pumpRealDurationFrames(tester, frameCount: 12);
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('room-code-field')))
+          .controller!
+          .text,
+      code,
+      reason: 'capture $shotName ($scenario): the link must fill the code',
+    );
+    expect(
+      factory.controllers,
+      isEmpty,
+      reason:
+          'capture $shotName ($scenario): a first-time player is never '
+          'joined by the link alone; a controller was built',
+    );
+    expect(
+      find.byKey(const Key('home-rejoin-button'), skipOffstage: false),
+      findsNothing,
+      reason: 'capture $shotName ($scenario): a first launch has no seat',
+    );
+    final Finder join = find.byKey(const Key('join-room-button'));
+    expect(
+      join,
+      findsOneWidget,
+      reason: 'capture $shotName ($scenario): Join is primary with the code',
+    );
+    expect(
+      tester.widget(find.byKey(const Key('create-room-button'))),
+      isNot(isA<ElevatedButton>()),
+      reason:
+          'capture $shotName ($scenario): with a full code Join is primary '
+          'and Create is not',
+    );
+    String rect(Finder f) {
+      if (f.evaluate().isEmpty) {
+        return 'absent';
+      }
+      final Rect r = tester.getRect(f);
+      return '${r.left.toStringAsFixed(1)},${r.top.toStringAsFixed(1)},'
+          '${r.right.toStringAsFixed(1)},${r.bottom.toStringAsFixed(1)}';
+    }
+
+    // ignore: avoid_print
+    print(
+      'capture $shotName ($scenario): view 0,0,${logical.width},'
+      '${logical.height}; name field ${rect(find.byKey(const Key('home-name-field')))}; '
+      'code field ${rect(find.byKey(const Key('room-code-field')))}; join '
+      '${rect(join)}',
+    );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _finishShot(tester, factory);
   }
 }
