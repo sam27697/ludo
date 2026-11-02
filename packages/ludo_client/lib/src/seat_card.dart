@@ -73,12 +73,17 @@ class SeatCard extends StatelessWidget {
     required this.isMine,
     required this.isHost,
     required this.youLabel,
+    this.displayName,
   });
 
   final SeatState seat;
   final bool isMine;
   final bool isHost;
   final String youLabel;
+
+  /// C-536: what the card draws instead of `seat.name` when the room holds
+  /// two seats of one name. Null draws the seat's own name.
+  final String? displayName;
 
   @override
   Widget build(BuildContext context) {
@@ -177,7 +182,7 @@ class SeatCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  seat.name,
+                  displayName ?? seat.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: seatCardNameStyle(context, offline: offline),
