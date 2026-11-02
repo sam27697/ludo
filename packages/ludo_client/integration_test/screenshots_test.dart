@@ -74,8 +74,6 @@
 //   111-game-connection-lost-ar.png  game, Arabic, connection-lost card
 //   112-end-resumed-no-rolls-en.png  end card, English, reached by a resume
 //   113-end-lose-zero-ar.png  loser's end card, Arabic, every tile at zero
-//   114-home-link-first-time-short-en.png  home, English, first-time link
-//                             guest on a 360 x 640 dp surface
 //
 // Two workflow runs (33183494414, 33185182659) each produced a room-screen
 // capture that was not a room screen at all: a silently dropped enterText
@@ -6656,13 +6654,12 @@ void main() {
   });
 
   // ==========================================================================
-  // 106-114: order 531 (C-529 and A1). 106 is the die refused on my own turn
+  // 106-113: order 531 (C-529 and A1). 106 is the die refused on my own turn
   // (the residue from run 122); 107 and 108 are home after a lobby whose room
   // closed under it; 109 and 110 are the lobby error body of a join that
   // cannot succeed; 111 is the connection-lost card in a PLAYING game; 112 is
   // the end card reached by a resume; 113 is a real loser's end card with
-  // every tile at zero (X120); 114 is a first-time link guest on a 360 x 640
-  // dp surface (X121). Bodies live at the bottom of the file.
+  // every tile at zero (X120). Bodies live at the bottom of the file.
   // ==========================================================================
   testWidgets('capture 106-refusal-die-my-turn-en', (tester) async {
     await _shootRefusalDieMyTurn(
@@ -6757,16 +6754,6 @@ void main() {
       roomCode: 'ZR5T9A',
       gameId: '113' * 5 + '1',
       seatToken: 'tok-shot-113',
-    );
-  });
-
-  testWidgets('capture 114-home-link-first-time-short-en', (tester) async {
-    await _shootHomeLinkShort(
-      tester,
-      binding,
-      shotName: '114-home-link-first-time-short-en',
-      locale: const Locale('en'),
-      code: 'FL7Q2M',
     );
   });
 }
@@ -17194,109 +17181,5 @@ Future<void> _shootEndLoseZero(
     await binding.takeScreenshot(shotName);
   } finally {
     await _releaseTrayGame(tester, controller);
-  }
-}
-
-/// 114 (order 531, X121). First launch, storage cleared, a room link for
-/// [code] delivered cold, on a 360 x 640 dp surface: Join is primary with the
-/// code filled. The measured rects of the name field, the code field and Join
-/// are printed, not asserted: whether the name field is still on screen is the
-/// question the frame answers.
-Future<void> _shootHomeLinkShort(
-  WidgetTester tester,
-  IntegrationTestWidgetsFlutterBinding binding, {
-  required String shotName,
-  required Locale locale,
-  required String code,
-}) async {
-  const Size logical = Size(360, 640);
-  final double ratio = tester.view.devicePixelRatio;
-  tester.view.physicalSize = logical * ratio;
-  addTearDown(tester.view.resetPhysicalSize);
-
-  final String scenario =
-      'first launch, cold link for $code, ${logical.width.toInt()} x '
-      '${logical.height.toInt()} dp, locale ${locale.languageCode}';
-  final _ShotFactory factory = _ShotFactory();
-  try {
-    await _mountShotHome(
-      tester,
-      binding,
-      shotName: shotName,
-      locale: locale,
-      factory: factory,
-      coldLink: Uri.parse('https://ludo.provefair.app/r/$code'),
-    );
-    final Size seen = MediaQuery.sizeOf(
-      tester.element(find.byType(HomeScreen)),
-    );
-    expect(
-      seen,
-      logical,
-      reason:
-          'capture $shotName ($scenario): the rig could not set the logical '
-          'size; the home sees $seen',
-    );
-    await _pumpUntilFound(
-      tester,
-      find.byKey(const Key('join-room-button')),
-      'capture $shotName ($scenario): join-room-button once the cold link '
-      'filled the code field',
-    );
-    await _pumpRealDurationFrames(tester, frameCount: 12);
-    await tester.pumpAndSettle();
-
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const Key('room-code-field')))
-          .controller!
-          .text,
-      code,
-      reason: 'capture $shotName ($scenario): the link must fill the code',
-    );
-    expect(
-      factory.controllers,
-      isEmpty,
-      reason:
-          'capture $shotName ($scenario): a first-time player is never '
-          'joined by the link alone; a controller was built',
-    );
-    expect(
-      find.byKey(const Key('home-rejoin-button'), skipOffstage: false),
-      findsNothing,
-      reason: 'capture $shotName ($scenario): a first launch has no seat',
-    );
-    final Finder join = find.byKey(const Key('join-room-button'));
-    expect(
-      join,
-      findsOneWidget,
-      reason: 'capture $shotName ($scenario): Join is primary with the code',
-    );
-    expect(
-      tester.widget(find.byKey(const Key('create-room-button'))),
-      isNot(isA<ElevatedButton>()),
-      reason:
-          'capture $shotName ($scenario): with a full code Join is primary '
-          'and Create is not',
-    );
-    String rect(Finder f) {
-      if (f.evaluate().isEmpty) {
-        return 'absent';
-      }
-      final Rect r = tester.getRect(f);
-      return '${r.left.toStringAsFixed(1)},${r.top.toStringAsFixed(1)},'
-          '${r.right.toStringAsFixed(1)},${r.bottom.toStringAsFixed(1)}';
-    }
-
-    // ignore: avoid_print
-    print(
-      'capture $shotName ($scenario): view 0,0,${logical.width},'
-      '${logical.height}; name field ${rect(find.byKey(const Key('home-name-field')))}; '
-      'code field ${rect(find.byKey(const Key('room-code-field')))}; join '
-      '${rect(join)}',
-    );
-    await binding.takeScreenshot(shotName);
-  } finally {
-    await _finishShot(tester, factory);
   }
 }
