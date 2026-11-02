@@ -87,7 +87,8 @@ const List<int> _yardTokens = <int>[-1, -1, -1, -1];
 //   one moved frame captures seat 1's token 0. captures 1.
 //   final tokens [57, 57, 57, 57]. home 4.
 // Seq runs 2 through 19 with no hole, so the transcript is complete and
-// all four tiles render. The jumps to 57 are not a legal single roll;
+// every tile with a number above 0 renders (C-533 D3: the loser's captures
+// is 0, so it has three). The jumps to 57 are not a legal single roll;
 // the client does not re-check that, and the board snaps them.
 const int _loserRolls = 4;
 const int _loserSixes = 1;
@@ -507,10 +508,19 @@ void _expectTile(
   required String state,
   required String name,
 }) {
+  // C-533 D3: a tile is built only for a value above 0.
+  if (expected == 0) {
+    expect(
+      find.byKey(key),
+      findsNothing,
+      reason: _where(seat, state, '$name is 0, so no $name tile'),
+    );
+    return;
+  }
   expect(
     find.byKey(key),
     findsOneWidget,
-    reason: _where(seat, state, 'four tiles, $name tile present'),
+    reason: _where(seat, state, 'tiles above 0, $name tile present'),
   );
   final String blob = _blobUnder(tester, find.byKey(key));
   expect(
@@ -888,7 +898,7 @@ void main() {
   });
 
   group('case 1: FINISHED loser card', () {
-    testWidgets('case 1: FINISHED shows end-card-lose, four tiles, home 3, '
+    testWidgets('case 1: FINISHED shows end-card-lose, three tiles, home 3, '
         'the near line, and Check enabled', (WidgetTester tester) async {
       await _playToFinished(tester, mySeat: 1);
       final AppLocalizations loc = _locOf(tester);

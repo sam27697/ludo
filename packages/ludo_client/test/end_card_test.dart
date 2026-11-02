@@ -1562,7 +1562,8 @@ void main() {
       // same word under any number ("other" is the only plural branch
       // the contract gives it), so the count argument below is this
       // script's own tile values (rolls 1, sixes 0, captures 0, home 1)
-      // and not a free choice.
+      // and not a free choice. The sixes and captures tiles are not built
+      // at 0 (C-533 D3); their messages are still read.
       expect(
         loc.endStatRolls(1),
         'الرميات',
@@ -1589,14 +1590,24 @@ void main() {
       final String blob = _blobUnder(tester, find.byType(GameScreen));
       for (final String label in <String>[
         loc.endStatRolls(1),
-        loc.endStatSixes(0),
-        loc.endStatCaptures(0),
         loc.endStatHome(1),
       ]) {
         expect(
           blob.contains(label),
           isTrue,
           reason: 'label "$label" must appear somewhere on the ar end card',
+        );
+      }
+      // C-533 D3: this script has no sixes and no captures, and a tile with
+      // 0 is not built.
+      for (final String label in <String>[
+        loc.endStatSixes(0),
+        loc.endStatCaptures(0),
+      ]) {
+        expect(
+          blob.contains(label),
+          isFalse,
+          reason: 'label "$label" must not appear: its count is 0',
         );
       }
     });

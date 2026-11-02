@@ -762,12 +762,20 @@ void main() {
 
         expect(find.byKey(_winKey), findsOneWidget);
         // rolls 1, sixes 0, captures 0, home 1. Not game one's 2, 1, 1, 4.
-        _expectCompleteNumbers(
-          tester,
-          rolls: 1,
-          sixes: 0,
-          captures: 0,
-          home: 1,
+        // C-533 D3: a tile with 0 is not built, so only rolls and home show.
+        expect(find.byKey(_rollsKey), findsOneWidget);
+        expect(_tileShowsNumber(tester, _rollsKey, 1), isTrue);
+        expect(find.byKey(_homeKey), findsOneWidget);
+        expect(_tileShowsNumber(tester, _homeKey, 1), isTrue);
+        expect(
+          find.byKey(_sixesKey),
+          findsNothing,
+          reason: 'game two has no sixes, so no end-card-stat-sixes',
+        );
+        expect(
+          find.byKey(_capturesKey),
+          findsNothing,
+          reason: 'game two has no captures, so no end-card-stat-captures',
         );
       } finally {
         if (controller != null) {

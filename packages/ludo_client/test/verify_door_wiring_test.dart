@@ -383,18 +383,35 @@ void main() {
     });
 
     testWidgets('en count 0 reads the plural', (tester) async {
+      // C-533 D3: a tile with 0 is never built, so the card shows no stat
+      // tile at count 0 and the plural is read off the message itself.
       await _pumpEndCard(
         tester,
         _endCardHarness(locale: const Locale('en'), stats: stats(0)),
       );
+      for (final String keyName in const <String>[
+        'end-card-stat-rolls',
+        'end-card-stat-sixes',
+        'end-card-stat-captures',
+        'end-card-stat-home',
+      ]) {
+        expect(
+          find.byKey(Key(keyName)),
+          findsNothing,
+          reason: 'C-533 D3: $keyName must not be built for a count of 0',
+        );
+      }
       // Mutation this catches: =1 written loosely enough to also catch
       // 0 (for example a `count <= 1` branch instead of ICU's exact
       // =1), which would show the singular on a game with no rolls,
       // sixes or captures at all.
-      await expectTileWord(tester, 'end-card-stat-rolls', 'rolls');
-      await expectTileWord(tester, 'end-card-stat-sixes', 'sixes');
-      await expectTileWord(tester, 'end-card-stat-captures', 'captures');
-      await expectTileWord(tester, 'end-card-stat-home', 'home');
+      final AppLocalizations loc = await AppLocalizations.delegate.load(
+        const Locale('en'),
+      );
+      expect(loc.endStatRolls(0), 'rolls');
+      expect(loc.endStatSixes(0), 'sixes');
+      expect(loc.endStatCaptures(0), 'captures');
+      expect(loc.endStatHome(0), 'home');
     });
 
     for (final int count in const <int>[0, 1, 2, 11]) {
@@ -410,6 +427,25 @@ void main() {
           // ضربات instead of الرميات/الستّات/الضربات), or an =1/=2
           // branch added to a message the contract specifies as
           // other-only, which would only show at this one count.
+          if (count == 0) {
+            // C-533 D3: no tile is built for 0, so the forms are read off
+            // the messages themselves.
+            expect(find.byKey(const Key('end-card-stat-rolls')), findsNothing);
+            expect(find.byKey(const Key('end-card-stat-sixes')), findsNothing);
+            expect(
+              find.byKey(const Key('end-card-stat-captures')),
+              findsNothing,
+            );
+            expect(find.byKey(const Key('end-card-stat-home')), findsNothing);
+            final AppLocalizations loc = await AppLocalizations.delegate.load(
+              const Locale('ar'),
+            );
+            expect(loc.endStatRolls(0), 'الرميات');
+            expect(loc.endStatSixes(0), 'الستّات');
+            expect(loc.endStatCaptures(0), 'الضربات');
+            expect(loc.endStatHome(0), 'في البيت');
+            return;
+          }
           await expectTileWord(tester, 'end-card-stat-rolls', 'الرميات');
           await expectTileWord(tester, 'end-card-stat-sixes', 'الستّات');
           await expectTileWord(tester, 'end-card-stat-captures', 'الضربات');

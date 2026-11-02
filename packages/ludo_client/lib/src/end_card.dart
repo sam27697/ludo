@@ -409,6 +409,7 @@ class _EndCardState extends State<EndCard> {
     final Color seatColor = _seatColor(widget.mySeat ?? widget.winnerSeat!);
     final TextStyle? titleStyle = Theme.of(context).textTheme.headlineLarge
         ?.copyWith(color: LudoColors.gold);
+    final Widget? statRow = _statRow(loc, widget.stats);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -452,9 +453,9 @@ class _EndCardState extends State<EndCard> {
             ),
           ],
         ),
-        if (widget.stats != null) ...<Widget>[
+        if (statRow != null) ...<Widget>[
           const SizedBox(height: kSpace3),
-          _statRow(loc, widget.stats!),
+          statRow,
         ],
         const SizedBox(height: kSpace3),
         _fairness(context, loc),
@@ -479,6 +480,7 @@ class _EndCardState extends State<EndCard> {
         ? loc.endLoseNear(stepsLeft)
         : loc.endLoseNudge;
     final String titleText = loc.endLoseTitle(name);
+    final Widget? statRow = _statRow(loc, widget.stats);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -513,9 +515,9 @@ class _EndCardState extends State<EndCard> {
           key: const Key('end-card-lose-line'),
           textAlign: TextAlign.center,
         ),
-        if (widget.stats != null) ...<Widget>[
+        if (statRow != null) ...<Widget>[
           const SizedBox(height: kSpace3),
-          _statRow(loc, widget.stats!),
+          statRow,
         ],
         const SizedBox(height: kSpace3),
         _fairness(context, loc),
@@ -554,37 +556,46 @@ class _EndCardState extends State<EndCard> {
 
   /// Rule 5: four tiles when [GameStats.complete] is true, only
   /// `end-card-stat-home` when it is false (C-232: a wrong number reads
-  /// worse than none).
-  Widget _statRow(AppLocalizations loc, GameStats stats) {
-    final Widget homeTile = _statTile(
-      key: const Key('end-card-stat-home'),
-      icon: Icons.home,
-      value: stats.tokensHome,
-      label: loc.endStatHome(stats.tokensHome),
-    );
-    final List<Widget> tiles = stats.complete
-        ? <Widget>[
-            _statTile(
-              key: const Key('end-card-stat-rolls'),
-              icon: Icons.casino,
-              value: stats.rolls,
-              label: loc.endStatRolls(stats.rolls),
-            ),
-            _statTile(
-              key: const Key('end-card-stat-sixes'),
-              icon: Icons.star,
-              value: stats.sixes,
-              label: loc.endStatSixes(stats.sixes),
-            ),
-            _statTile(
-              key: const Key('end-card-stat-captures'),
-              icon: Icons.flash_on,
-              value: stats.capturesMade,
-              label: loc.endStatCaptures(stats.capturesMade),
-            ),
-            homeTile,
-          ]
-        : <Widget>[homeTile];
+  /// worse than none). C-533 D3: a tile is built only for a value above
+  /// zero, so a loser never reads a row of zeros as a verdict; null when
+  /// no tile is left, and the caller then builds neither the row nor its gap.
+  Widget? _statRow(AppLocalizations loc, GameStats? stats) {
+    if (stats == null) {
+      return null;
+    }
+    final List<Widget> tiles = <Widget>[
+      if (stats.complete && stats.rolls > 0)
+        _statTile(
+          key: const Key('end-card-stat-rolls'),
+          icon: Icons.casino,
+          value: stats.rolls,
+          label: loc.endStatRolls(stats.rolls),
+        ),
+      if (stats.complete && stats.sixes > 0)
+        _statTile(
+          key: const Key('end-card-stat-sixes'),
+          icon: Icons.star,
+          value: stats.sixes,
+          label: loc.endStatSixes(stats.sixes),
+        ),
+      if (stats.complete && stats.capturesMade > 0)
+        _statTile(
+          key: const Key('end-card-stat-captures'),
+          icon: Icons.flash_on,
+          value: stats.capturesMade,
+          label: loc.endStatCaptures(stats.capturesMade),
+        ),
+      if (stats.tokensHome > 0)
+        _statTile(
+          key: const Key('end-card-stat-home'),
+          icon: Icons.home,
+          value: stats.tokensHome,
+          label: loc.endStatHome(stats.tokensHome),
+        ),
+    ];
+    if (tiles.isEmpty) {
+      return null;
+    }
     // Four tiles (or one, on the gap case) share the card's own width evenly
     // via `Expanded`. Each tile's text scales down on a single line under a
     // wide locale or a large text scale, never breaking inside a word or
