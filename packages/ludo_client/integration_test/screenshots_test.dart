@@ -73,7 +73,17 @@
 //                             players
 //   111-game-connection-lost-ar.png  game, Arabic, connection-lost card
 //   112-end-resumed-no-rolls-en.png  end card, English, reached by a resume
-//   113-end-lose-zero-ar.png  loser's end card, Arabic, every tile at zero
+//   113-end-lose-zero-ar.png  loser's end card, Arabic, every count at zero
+//                             but the rolls, so only the rolls tile shows
+//   115-lobby-error-transport-en.png  lobby error card, English, a typed join
+//                             that never reached the server (Retry filled)
+//   116-lobby-error-link-gone-ar.png  lobby error card, Arabic, a link join
+//                             into a room that is gone (Back to home filled)
+//   118-end-lose-some-zero-en.png  loser's end card, English, rolls and sixes
+//                             tiles only
+//   (114 stays unused: dropped in run 124, a 360 x 640 surface hung the
+//   emulator. 117, the lobby closed card with no room held, is not built:
+//   the controller cannot be left in that state by any frame sequence.)
 //
 // Two workflow runs (33183494414, 33185182659) each produced a room-screen
 // capture that was not a room screen at all: a silently dropped enterText
@@ -85,7 +95,7 @@
 // getting photographed and called a success.
 
 import 'dart:convert';
-import 'dart:io' show Platform;
+import 'dart:io' show Platform, SocketException;
 import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -3907,7 +3917,7 @@ void main() {
       momentDescription:
           'after the post-game-over settle, immediately before capture 21',
     );
-    // rolls 2, sixes 1, captures 0, home 0.
+    // rolls 2, sixes 1, captures 0, home 0: the last two tiles are absent.
     _expectEndCardStatTiles(
       tester,
       rolls: 2,
@@ -4086,7 +4096,7 @@ void main() {
       momentDescription:
           'after the post-game-over settle, immediately before capture 22',
     );
-    // rolls 2, sixes 1, captures 0, home 0.
+    // rolls 2, sixes 1, captures 0, home 0: the last two tiles are absent.
     _expectEndCardStatTiles(
       tester,
       rolls: 2,
@@ -5838,7 +5848,8 @@ void main() {
             'capture 40: after the post-game-over settle, immediately '
             'before the shot',
       );
-      // rolls 2, sixes 1, captures 0, home 0 -- capture 22's own numbers.
+      // rolls 2, sixes 1, captures 0, home 0 -- capture 22's own numbers,
+      // so the captures and home tiles are absent.
       _expectEndCardStatTiles(
         tester,
         rolls: 2,
@@ -6756,6 +6767,40 @@ void main() {
       seatToken: 'tok-shot-113',
     );
   });
+
+  testWidgets('capture 115-lobby-error-transport-en', (tester) async {
+    await _shootLobbyJoinTransport(
+      tester,
+      binding,
+      shotName: '115-lobby-error-transport-en',
+      locale: const Locale('en'),
+      code: 'TP5N8K',
+    );
+  });
+
+  testWidgets('capture 116-lobby-error-link-gone-ar', (tester) async {
+    await _shootLobbyJoinRefused(
+      tester,
+      binding,
+      shotName: '116-lobby-error-link-gone-ar',
+      locale: const Locale('ar'),
+      code: 'LG6W4B',
+      fromLink: true,
+      errorCode: 'NO_SUCH_ROOM',
+    );
+  });
+
+  testWidgets('capture 118-end-lose-some-zero-en', (tester) async {
+    await _shootEndLoseSomeZero(
+      tester,
+      binding,
+      shotName: '118-end-lose-some-zero-en',
+      locale: const Locale('en'),
+      roomCode: 'LS9R2A',
+      gameId: '118' * 5 + '1',
+      seatToken: 'tok-shot-118',
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -7098,7 +7143,8 @@ int _scriptedHome(RoomController controller, int seat) {
 
 /// Captures 23 and 24, immediately before the shot: the rolls tile shows
 /// [rolls], which the script left non-zero, and the home tile shows [home],
-/// the device seat's tokens on 57 after that same script.
+/// the device seat's tokens on 57 after that same script. A [home] of 0 (the
+/// loser in capture 23) means the home tile is absent (C-533 D3).
 void _expectScriptedEndCardTiles(
   WidgetTester tester, {
   required String capture,
@@ -7130,16 +7176,11 @@ void _expectScriptedEndCardCount(
   required String keyName,
   required int count,
 }) {
-  final Finder tile = find.byKey(Key(keyName));
-  expect(
-    tile,
-    findsOneWidget,
-    reason: '$capture: expected $keyName on screen before the shot',
-  );
-  expect(
-    find.descendant(of: tile, matching: find.text('$count')),
-    findsOneWidget,
-    reason: '$capture: expected $keyName to show the script\'s count $count',
+  _expectStatTileForCount(
+    tester,
+    keyName: keyName,
+    count: count,
+    context: '$capture, before the shot, the script\'s count',
   );
 }
 
@@ -7400,9 +7441,9 @@ Future<int> _playEndCardScript(
   return seq + 1;
 }
 
-/// Captures 19-22: the four stat tiles are on screen and each shows the
-/// count passed in. Callers pass literals and name the same counts in a
-/// comment beside the call.
+/// Captures 19-22 and 40: each stat tile with a positive count is on screen
+/// and shows it; a tile whose count is 0 is absent (C-533 D3). Callers pass
+/// literals and name the same counts in a comment beside the call.
 void _expectEndCardStatTiles(
   WidgetTester tester, {
   required int rolls,
@@ -7443,20 +7484,43 @@ void _expectOneEndCardStat(
   required int count,
   required String momentDescription,
 }) {
+  _expectStatTileForCount(
+    tester,
+    keyName: keyName,
+    count: count,
+    context: 'capture 19/20/21/22 ($momentDescription)',
+  );
+}
+
+/// C-533 D3 for one tile: a count above 0 puts [keyName] on screen reading
+/// that number, a count of 0 leaves the tile out of the tree altogether,
+/// offstage included.
+void _expectStatTileForCount(
+  WidgetTester tester, {
+  required String keyName,
+  required int count,
+  required String context,
+}) {
+  if (count == 0) {
+    expect(
+      find.byKey(Key(keyName), skipOffstage: false),
+      findsNothing,
+      reason:
+          '$context: C-533 D3, $keyName counts 0 so the tile must be '
+          'absent, it is in the tree',
+    );
+    return;
+  }
   final Finder tile = find.byKey(Key(keyName));
   expect(
     tile,
     findsOneWidget,
-    reason:
-        'capture 19/20/21/22 ($momentDescription): expected $keyName on '
-        'screen',
+    reason: '$context: expected $keyName on screen for a count of $count',
   );
   expect(
     find.descendant(of: tile, matching: find.text('$count')),
     findsOneWidget,
-    reason:
-        'capture 19/20/21/22 ($momentDescription): expected $keyName to '
-        'show $count',
+    reason: '$context: expected $keyName to show $count',
   );
 }
 
@@ -8128,18 +8192,11 @@ void _expectReconnectLoserTiles(
     ('end-card-stat-home', home),
   ];
   for (final (String keyName, int count) in tiles) {
-    final Finder tile = find.byKey(Key(keyName));
-    expect(
-      tile,
-      findsOneWidget,
-      reason: 'capture 25/26 ($momentDescription): expected $keyName on screen',
-    );
-    expect(
-      find.descendant(of: tile, matching: find.text('$count')),
-      findsOneWidget,
-      reason:
-          'capture 25/26 ($momentDescription): expected $keyName to show '
-          '$count',
+    _expectStatTileForCount(
+      tester,
+      keyName: keyName,
+      count: count,
+      context: 'capture 25/26 ($momentDescription)',
     );
   }
 }
@@ -15973,10 +16030,21 @@ class _ShotFactory {
   final List<_ShotController> controllers = <_ShotController>[];
   final List<FakeTransport> transports = <FakeTransport>[];
 
+  /// True: every connect is refused the way an unreachable server refuses
+  /// it, so the controller fails with `transport` and no frame is ever sent.
+  bool refuseConnects = false;
+
+  /// Connects asked for, refused ones included.
+  int connectAttempts = 0;
+
   RoomController call() {
     final _ShotController created = _ShotController(
       serverUrl: Uri.parse(_testUrl),
       connect: (Uri url) async {
+        connectAttempts += 1;
+        if (refuseConnects) {
+          throw const SocketException('connection refused');
+        }
         final FakeTransport transport = FakeTransport();
         transports.add(transport);
         return transport;
@@ -16638,6 +16706,285 @@ Future<void> _shootLobbyJoinRefused(
       label: 'lobby-leave-button',
       context: 'in the lobby error body before capture $shotName',
     );
+    _expectLobbyErrorCard(
+      tester,
+      shotName: shotName,
+      scenario: scenario,
+      locale: locale,
+      icon: errorCode == 'NO_SUCH_ROOM'
+          ? Icons.link_off_rounded
+          : Icons.info_outline_rounded,
+      line: line,
+      retry: false,
+      leaveText: leaveText,
+    );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _finishShot(tester, factory);
+  }
+}
+
+/// C-533 D2 for the lobby error body, read in the tree before the shot: the
+/// card sits on the felt inside `lobby-error`, carries [icon] and [line], and
+/// holds exactly one filled button. With [retry] that button is
+/// `lobby-retry-button` and `lobby-leave-button` is the outlined one under
+/// it; without, `lobby-leave-button` is the filled one and nothing is
+/// outlined. Both tap targets are at least 48 dp and the direction is the
+/// locale's own.
+void _expectLobbyErrorCard(
+  WidgetTester tester, {
+  required String shotName,
+  required String scenario,
+  required Locale locale,
+  required IconData icon,
+  required String line,
+  required bool retry,
+  required String leaveText,
+}) {
+  final String who = 'capture $shotName ($scenario)';
+  final Finder error = find.byKey(const Key('lobby-error'));
+  final Finder card = find.byKey(const Key('lobby-error-card'));
+  expect(
+    find.descendant(of: error, matching: card),
+    findsOneWidget,
+    reason:
+        '$who: C-533 D2, lobby-error-card must be the card inside '
+        'lobby-error; the texts on screen are ${_viewText(tester)}',
+  );
+  final Widget cardWidget = tester.widget(card);
+  expect(
+    cardWidget,
+    isA<Material>(),
+    reason:
+        '$who: lobby-error-card must be a Material, it is '
+        '${cardWidget.runtimeType}',
+  );
+  final Material material = cardWidget as Material;
+  expect(
+    <Object?>[material.color, material.elevation],
+    <Object?>[LudoColors.paperElevated, 6.0],
+    reason:
+        '$who: the card takes the game screen\'s connection-lost shape, '
+        'paperElevated at elevation 6; it reads color ${material.color}, '
+        'elevation ${material.elevation}',
+  );
+  expect(
+    tester.getSize(card).width,
+    lessThanOrEqualTo(320),
+    reason:
+        '$who: the card is at most 320 dp wide, it is '
+        '${tester.getSize(card).width.toStringAsFixed(1)}',
+  );
+  _expectRectInsideView(
+    tester,
+    card,
+    label: 'lobby-error-card',
+    context: 'in the lobby error body before capture $shotName',
+  );
+  expect(
+    Directionality.of(tester.element(card)),
+    locale.languageCode == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+    reason: '$who: the card must lay out in the locale\'s own direction',
+  );
+
+  final Finder iconFinder = find.descendant(
+    of: card,
+    matching: find.byIcon(icon),
+  );
+  expect(
+    iconFinder,
+    findsOneWidget,
+    reason: '$who: the card must carry the $icon icon on top',
+  );
+  expect(
+    tester.widget<Icon>(iconFinder).size,
+    32,
+    reason: '$who: the icon is 32 dp',
+  );
+  expect(
+    find.descendant(of: card, matching: find.byType(Icon)),
+    findsOneWidget,
+    reason: '$who: the card carries the one icon and no other',
+  );
+  expect(
+    find.descendant(of: card, matching: find.text(line)),
+    findsOneWidget,
+    reason:
+        '$who: the card must read "$line"; the texts on screen are '
+        '${_viewText(tester)}',
+  );
+
+  final Finder leave = find.descendant(
+    of: card,
+    matching: find.byKey(const Key('lobby-leave-button')),
+  );
+  expect(
+    leave,
+    findsOneWidget,
+    reason: '$who: lobby-leave-button must sit inside the card',
+  );
+  expect(
+    find.descendant(of: leave, matching: find.text(leaveText)),
+    findsOneWidget,
+    reason: '$who: lobby-leave-button must read "$leaveText"',
+  );
+  expect(
+    find.descendant(of: card, matching: find.byType(ElevatedButton)),
+    findsOneWidget,
+    reason: '$who: C-533 D2, exactly one filled button in the card',
+  );
+  final Finder retryButton = find.descendant(
+    of: card,
+    matching: find.byKey(const Key('lobby-retry-button')),
+  );
+  if (retry) {
+    expect(
+      retryButton,
+      findsOneWidget,
+      reason: '$who: a retryable failure must show lobby-retry-button',
+    );
+    expect(
+      tester.widget(retryButton),
+      isA<ElevatedButton>(),
+      reason:
+          '$who: Retry is the filled button, it is '
+          '${tester.widget(retryButton).runtimeType}',
+    );
+    expect(
+      tester.widget(leave),
+      isA<OutlinedButton>(),
+      reason:
+          '$who: with Retry shown, lobby-leave-button is outlined, it is '
+          '${tester.widget(leave).runtimeType}',
+    );
+    expect(
+      find.descendant(of: card, matching: find.byType(OutlinedButton)),
+      findsOneWidget,
+      reason: '$who: one outlined button, the way out',
+    );
+    expect(
+      tester.getTopLeft(retryButton).dy,
+      lessThan(tester.getTopLeft(leave).dy),
+      reason: '$who: Retry sits above the way out',
+    );
+  } else {
+    expect(
+      retryButton,
+      findsNothing,
+      reason: '$who: this failure can never succeed on a retry',
+    );
+    expect(
+      tester.widget(leave),
+      isA<ElevatedButton>(),
+      reason:
+          '$who: without Retry, lobby-leave-button is the filled button, it '
+          'is ${tester.widget(leave).runtimeType}',
+    );
+    expect(
+      find.descendant(of: card, matching: find.byType(OutlinedButton)),
+      findsNothing,
+      reason: '$who: nothing outlined remains when the way out is filled',
+    );
+  }
+  final List<(String, Finder)> targets = <(String, Finder)>[
+    if (retry) ('lobby-retry-button', retryButton),
+    ('lobby-leave-button', leave),
+  ];
+  for (final (String name, Finder button) in targets) {
+    final Size size = tester.getSize(button);
+    expect(
+      <bool>[size.width >= 48, size.height >= 48],
+      <bool>[true, true],
+      reason:
+          '$who: a tap target is at least 48 x 48 dp, $name is '
+          '${size.width.toStringAsFixed(1)} x '
+          '${size.height.toStringAsFixed(1)}',
+    );
+  }
+}
+
+/// 115 (order 535, C-533 D2). A typed join whose connection is refused: the
+/// controller fails with `transport` before any frame is sent, the lobby
+/// shows its error card, Retry is the filled button and Back to home the
+/// outlined one under it.
+Future<void> _shootLobbyJoinTransport(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String code,
+}) async {
+  final String scenario =
+      'typed code $code, locale ${locale.languageCode}, connect refused';
+  final _ShotFactory factory = _ShotFactory()..refuseConnects = true;
+  try {
+    await _mountShotHome(
+      tester,
+      binding,
+      shotName: shotName,
+      locale: locale,
+      factory: factory,
+    );
+    await _typeCodeAndJoin(tester, code: code, shotName: shotName);
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('lobby-error')),
+      'capture $shotName ($scenario): lobby-error after the refused connect',
+    );
+    await _pumpRealDurationFrames(tester);
+
+    expect(
+      <Object?>[
+        factory.controllers.length,
+        factory.controllers.single.phase,
+        factory.controllers.single.errorCode,
+      ],
+      <Object?>[1, RoomPhase.failed, 'transport'],
+      reason:
+          'capture $shotName ($scenario): fixture: the controller must be '
+          'failed with transport, it holds '
+          '${factory.controllers.map((c) => '${c.phase}/${c.errorCode}').toList()}',
+    );
+    expect(
+      <Object?>[factory.connectAttempts, factory.allTypes],
+      <Object?>[1, <String>[]],
+      reason:
+          'capture $shotName ($scenario): one refused connect and no frame '
+          'sent; connects ${factory.connectAttempts}, sent '
+          '${factory.allTypes}',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(LobbyScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName ($scenario): expected locale '
+          '${locale.languageCode}, got ${loc.localeName}',
+    );
+    expect(
+      loc.lobbyErrorTransport,
+      isNotEmpty,
+      reason:
+          'capture $shotName ($scenario): the transport line must be '
+          'written out in ${locale.languageCode}',
+    );
+    _expectLobbyErrorCard(
+      tester,
+      shotName: shotName,
+      scenario: scenario,
+      locale: locale,
+      icon: Icons.wifi_off_rounded,
+      line: loc.lobbyErrorTransport,
+      retry: true,
+      leaveText: loc.lobbyBackToHomeButton,
+    );
+    expect(
+      find.byKey(const Key('lobby-closed'), skipOffstage: false),
+      findsNothing,
+      reason: 'capture $shotName ($scenario): only the error card is built',
+    );
     await binding.takeScreenshot(shotName);
   } finally {
     await _finishShot(tester, factory);
@@ -17098,7 +17445,8 @@ Future<int> _playLoseZeroScript(
 
 /// 113 (order 531, X120). A real loser's end card: seat 0 played the whole
 /// game on this device, so the stats are complete, and rolled 2, 5 and 3. The
-/// four tiles show 3 rolls, 0 sixes, 0 captures and 0 tokens home.
+/// counts are 3 rolls, 0 sixes, 0 captures and 0 tokens home, so under C-533
+/// D3 only the rolls tile is on the card.
 Future<void> _shootEndLoseZero(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -17174,6 +17522,251 @@ Future<void> _shootEndLoseZero(
       tester,
       rolls: 3,
       sixes: 0,
+      captures: 0,
+      home: 0,
+      momentDescription: 'capture $shotName ($scenario), before the shot',
+    );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Plays the nine-roll game capture 118 photographs, from `game_started` at
+/// [gameStartedSeq], on [transport]. Seat 0 (this device) rolls 2, 6, 3, 5,
+/// 4, 6, 2, 1 and 3: two sixes, each one entering a token, no capture, and
+/// its two tokens end on squares 12 and 6, so nothing is home. Seat 2
+/// (Karim) takes all four tokens to 57 and wins. Every frame is pushed
+/// before the two pumps and `seq` is continuous, so the stats stay
+/// complete. Returns the seq `game_over` must carry.
+Future<int> _playLoseSomeScript(
+  WidgetTester tester,
+  FakeTransport transport,
+  RoomController controller, {
+  required int gameStartedSeq,
+}) async {
+  expect(
+    controller.room?.seq,
+    gameStartedSeq,
+    reason:
+        'some-zero script: room seq is ${controller.room?.seq}, expected '
+        '$gameStartedSeq',
+  );
+  var seq = gameStartedSeq;
+  var k = 0;
+
+  void rolled(int seat, int face, List<int> legal) {
+    k += 1;
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'rolled',
+        data: <String, Object?>{
+          'seat': seat,
+          'value': face,
+          'legal': legal,
+          'deadline_ms': _endCardDeadlineMs,
+          'k': k,
+          'reveal': _endCardReveal(k),
+          'seq': seq,
+        },
+      ),
+    );
+  }
+
+  void moved(int seat, int token, int from, int to, {required bool extra}) {
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'moved',
+        data: <String, Object?>{
+          'seat': seat,
+          'token': token,
+          'from': from,
+          'to': to,
+          'captured': <Object?>[],
+          'extra_roll': extra,
+          'seq': seq,
+        },
+      ),
+    );
+  }
+
+  void turn(int seat) {
+    seq += 1;
+    transport.pushText(
+      _frame(
+        type: 'turn',
+        data: <String, Object?>{
+          'seat': seat,
+          'deadline_ms': _endCardDeadlineMs,
+          'seq': seq,
+        },
+      ),
+    );
+  }
+
+  void play(
+    int seat,
+    int face,
+    int token,
+    int from,
+    int to, {
+    bool extra = false,
+    int? turnSeat,
+  }) {
+    rolled(seat, face, <int>[token]);
+    moved(seat, token, from, to, extra: extra);
+    if (turnSeat != null) {
+      turn(turnSeat);
+    }
+  }
+
+  rolled(0, 2, const <int>[]);
+  turn(2);
+  play(2, 6, 0, -1, 0, extra: true, turnSeat: 2);
+  play(2, 4, 0, 0, 4, turnSeat: 0);
+  play(0, 6, 0, -1, 0, extra: true, turnSeat: 0);
+  play(0, 3, 0, 0, 3, turnSeat: 2);
+  play(2, 1, 1, -1, 57, turnSeat: 0);
+  play(0, 5, 0, 3, 8, turnSeat: 2);
+  play(2, 1, 2, -1, 57, turnSeat: 0);
+  play(0, 4, 0, 8, 12, turnSeat: 2);
+  play(2, 1, 3, -1, 57, turnSeat: 0);
+  play(0, 6, 1, -1, 0, extra: true, turnSeat: 0);
+  play(0, 2, 1, 0, 2, turnSeat: 2);
+  play(2, 3, 0, 4, 7, turnSeat: 0);
+  play(0, 1, 1, 2, 3, turnSeat: 2);
+  play(2, 2, 0, 7, 9, turnSeat: 0);
+  play(0, 3, 1, 3, 6, turnSeat: 2);
+  play(2, 1, 0, 9, 57);
+
+  await tester.pump();
+  await tester.pump();
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason:
+        'some-zero script: seq gap (room seq ${controller.room?.seq}, last '
+        'pushed seq $seq)',
+  );
+  expect(
+    controller.room?.state,
+    RoomState.playing,
+    reason: 'some-zero script must still be in play when it returns',
+  );
+  expect(
+    <List<int>>[_endCardTokens(controller, 0), _endCardTokens(controller, 2)],
+    <List<int>>[
+      <int>[12, 6, -1, -1],
+      <int>[57, 57, 57, 57],
+    ],
+    reason:
+        'some-zero script: seat 0 must hold squares 12 and 6 with two '
+        'tokens in its yard and seat 2 every token home, got '
+        '${_endCardTokens(controller, 0)} and ${_endCardTokens(controller, 2)}',
+  );
+  return seq + 1;
+}
+
+/// 118 (order 535, X120). A real loser's end card with complete stats: seat 0
+/// played the whole game on this device and rolled nine times, two of them
+/// sixes, captured nothing and has no token home. Under C-533 D3 the card
+/// shows the rolls and sixes tiles and neither of the other two.
+Future<void> _shootEndLoseSomeZero(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final String scenario =
+      'room $roomCode, game $gameId, locale ${locale.languageCode}, seat 0 '
+      'rolled 9 with two sixes, no capture, none home, seat 2 won';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    final int gameOverSeq = await _playLoseSomeScript(
+      tester,
+      opened.transport,
+      controller,
+      gameStartedSeq: opened.seq,
+    );
+    opened.transport.pushText(
+      _frame(
+        type: 'game_over',
+        data: <String, Object?>{
+          'winner': 2,
+          'verify_url': 'https://verify.example.invalid/shot118',
+          'seq': gameOverSeq,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpRealDurationFrames(tester);
+
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName ($scenario): expected locale '
+          '${locale.languageCode}, got ${loc.localeName}',
+    );
+    _expectGameOverWinnerText(
+      tester,
+      controller: controller,
+      expectedWinner: 2,
+      expectedText: loc.endLoseTitle('Karim'),
+      momentDescription: 'capture $shotName ($scenario), before the shot',
+    );
+    expect(
+      controller.hasDesynced,
+      isFalse,
+      reason: 'capture $shotName ($scenario): a seq gap makes the stats gap',
+    );
+    final GameStats stats = computeGameStats(
+      frames: controller.gameTranscript,
+      seat: 0,
+      finalTokens: _endCardTokens(controller, 0),
+    );
+    expect(
+      <Object?>[
+        stats.complete,
+        stats.rolls,
+        stats.sixes,
+        stats.capturesMade,
+        stats.tokensHome,
+      ],
+      <Object?>[true, 9, 2, 0, 0],
+      reason:
+          'capture $shotName ($scenario): fixture: the device transcript '
+          'must hold complete stats of 9 rolls, 2 sixes, 0 captures, 0 '
+          'home, it computes $stats',
+    );
+    _expectEndCardStatTiles(
+      tester,
+      rolls: 9,
+      sixes: 2,
       captures: 0,
       home: 0,
       momentDescription: 'capture $shotName ($scenario), before the shot',
