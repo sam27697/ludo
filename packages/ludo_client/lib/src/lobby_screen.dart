@@ -17,6 +17,7 @@ import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'seat_card.dart';
+import 'seat_names.dart';
 import 'sound_toggle.dart';
 import 'rule_off_strike.dart';
 import 'session_memory.dart' show SeatRecord;
@@ -48,6 +49,23 @@ const Set<String> _unretryableLobbyErrorCodes = <String>{
   'ROOM_STARTED',
   'BAD_FIELD',
 };
+
+/// C-536 D1: the label each seat in [seats] is drawn and spoken with,
+/// keyed by `seat`. Recomputed from the snapshot at hand every time it is
+/// asked, so a seat that leaves frees its name. The number is formatted for
+/// the locale the way the home screen formats its counts.
+Map<int, String> seatLabelsFor(
+  BuildContext context,
+  Iterable<SeatState> seats,
+) {
+  final AppLocalizations loc = AppLocalizations.of(context);
+  final MaterialLocalizations material = MaterialLocalizations.of(context);
+  return seatDisplayNames(
+    seats,
+    (String name, int number) =>
+        loc.seatNameNumbered(name, material.formatDecimal(number)),
+  );
+}
 
 /// Maps a RoomController error code to a localised message. Pure and
 /// top-level so it can be tested without pumping a widget.
@@ -1072,10 +1090,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
     RoomController controller,
   ) {
     final int openCount = room.players - room.seats.length;
+    final Map<int, String> labels = seatLabelsFor(context, room.seats);
     final List<Widget> cards = [
       for (final SeatState seat in room.seats)
         SeatCard(
           seat: seat,
+          displayName: labels[seat.seat],
           isMine: controller.seat == seat.seat,
           isHost: seat.seat == room.hostSeat,
           youLabel: loc.seatYou,
@@ -1089,6 +1109,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         final bool twoColumns = _seatedNamesFitTwoUp(
           context,
           room,
+          labels,
           constraints,
         );
         final List<Widget> rows = [];
@@ -1142,6 +1163,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   bool _seatedNamesFitTwoUp(
     BuildContext context,
     RoomSnapshot room,
+    Map<int, String> labels,
     BoxConstraints constraints,
   ) {
     final double halfCardWidth = (constraints.maxWidth - kSpace2) / 2;
@@ -1153,7 +1175,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       final bool offline = !seat.connected;
       final TextPainter painter = TextPainter(
         text: TextSpan(
-          text: seat.name,
+          text: labels[seat.seat] ?? seat.name,
           style: seatCardNameStyle(context, offline: offline),
         ),
         textDirection: textDirection,

@@ -39,6 +39,7 @@
   "lobbyStartWithPresent": "{count, plural, =2{ابدأ بلاعبَين} other{ابدأ بـ {count} لاعبين}}",
   "lobbyRuleCaptureBonusOff": "مكافأة الأكل: معطّلة",
   "lobbyOpenSeat": "بانتظار صديق",
+  "seatNameNumbered": "{name} {number}",
   "seatYou": "أنت",
   "lobbyErrorNoSuchRoom": "هذه الغرفة غير موجودة. تحقق من الرمز وحاول مرة أخرى.",
   "lobbyErrorLinkRoomGone": "هذه اللعبة لم تعد مفتوحة. اطلب من صديقك رابطاً جديداً.",

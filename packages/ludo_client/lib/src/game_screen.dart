@@ -41,7 +41,7 @@ import 'feedback.dart';
 import 'game_die.dart';
 import 'game_stats.dart';
 import 'hint_button.dart';
-import 'lobby_screen.dart' show lobbyErrorMessage;
+import 'lobby_screen.dart' show lobbyErrorMessage, seatLabelsFor;
 import 'move_hint.dart';
 import 'net/connection.dart';
 import 'net/frame.dart';
@@ -959,9 +959,10 @@ class _GameScreenState extends State<GameScreen> {
     final RoomSnapshot? room = snapshot ?? widget.controller.room;
     final int? winner = room?.winner;
     if (room != null && winner != null) {
+      final Map<int, String> names = seatLabelsFor(context, room.seats);
       for (final SeatState seatState in room.seats) {
         if (seatState.seat == winner) {
-          return loc.gameOverPlayerWins(seatState.name);
+          return loc.gameOverPlayerWins(names[seatState.seat]!);
         }
       }
     }
@@ -1415,11 +1416,13 @@ class _GameScreenState extends State<GameScreen> {
       return null;
     }
     for (final RoomSnapshot? source in <RoomSnapshot?>[room, finished]) {
-      for (final SeatState s in source?.seats ?? const <SeatState>[]) {
+      final List<SeatState> seats = source?.seats ?? const <SeatState>[];
+      final Map<int, String> names = seatLabelsFor(context, seats);
+      for (final SeatState s in seats) {
         if (s.seat == entry.seat) {
           return EndCardChatLine(
             seat: entry.seat,
-            name: s.name,
+            name: names[s.seat]!,
             text: line,
             serial: entry.serial,
           );
@@ -1963,7 +1966,7 @@ class _GameScreenState extends State<GameScreen> {
     if (seatState == null || !seatState.connected) {
       return;
     }
-    final String name = seatState.name;
+    final String name = seatLabelsFor(context, room!.seats)[seatState.seat]!;
     _timerPlayedOtherTimer?.cancel();
     _timerPlayedOtherTimer = Timer(
       _timerPlayedOtherHold,
@@ -4395,6 +4398,7 @@ class _GameScreenState extends State<GameScreen> {
     final TurnState? turn = room.turn;
     final int? seat = controller.seat;
     final SeatState? offlineTurnSeat = _offlineTurnSeat(room);
+    final Map<int, String> names = seatLabelsFor(context, room.seats);
 
     final bool rollEnabled =
         !_isEndHeld &&
@@ -4504,7 +4508,7 @@ class _GameScreenState extends State<GameScreen> {
                   key: const Key('game-screen-board'),
                   tokens: _tokensOf(room),
                   seatsInPlay: _seatsInPlayOf(room),
-                  seatNames: _seatNamesOf(room),
+                  seatNames: names,
                   youLabel: loc.seatYou,
                   turnSeat: turn?.seat,
                   mySeat: seat,
@@ -4613,6 +4617,7 @@ class _GameScreenState extends State<GameScreen> {
               _belowDieNoticeSlot(
                 loc,
                 offlineTurnSeat,
+                names,
                 clampScale: metrics.textScaleClamp,
               ),
               SizedBox(height: metrics.noticeGap),
@@ -4875,6 +4880,7 @@ class _GameScreenState extends State<GameScreen> {
       loc,
       room,
       seat,
+      seatLabelsFor(context, room.seats),
       stale: stale,
       autoMoveVisible: autoMoveVisible,
     );
@@ -5039,7 +5045,8 @@ class _GameScreenState extends State<GameScreen> {
   /// lines are untouched.
   Widget _belowDieNoticeSlot(
     AppLocalizations loc,
-    SeatState? offlineTurnSeat, {
+    SeatState? offlineTurnSeat,
+    Map<int, String> names, {
     required double clampScale,
   }) {
     // C-391 decision 2: this slot's own texts (the live notice and the
@@ -5140,7 +5147,7 @@ class _GameScreenState extends State<GameScreen> {
         else if (offlineTurnSeat != null)
           Positioned.fill(
             child: Text(
-              loc.gameSeatOffline(offlineTurnSeat.name),
+              loc.gameSeatOffline(names[offlineTurnSeat.seat]!),
               key: const Key('game-screen-turn-seat-offline'),
               textAlign: TextAlign.center,
               textScaler: scaler,
@@ -5265,9 +5272,10 @@ class _GameScreenState extends State<GameScreen> {
       final List<SeatState> pastSeats = List<SeatState>.from(
         departedBaseline.seats,
       )..sort((SeatState a, SeatState b) => a.seat.compareTo(b.seat));
+      final Map<int, String> pastNames = seatLabelsFor(context, pastSeats);
       for (final SeatState s in pastSeats) {
         if (s.seat != controller.seat && !liveSeats.contains(s.seat)) {
-          departedNames.add(s.name);
+          departedNames.add(pastNames[s.seat]!);
         }
       }
       final bool otherSeatPresent = liveSeats.any(
@@ -5288,11 +5296,15 @@ class _GameScreenState extends State<GameScreen> {
     // as no winner at all (H7.21's own fallback, carried forward).
     // C-310 rule 2: the winner's name comes from finished.seats, so a winner
     // who left after asking is still named.
+    final Map<int, String> finishedNames = seatLabelsFor(
+      context,
+      finished.seats,
+    );
     String? winnerName;
     if (finished.winner != null) {
       for (final SeatState seatState in finished.seats) {
         if (seatState.seat == finished.winner) {
-          winnerName = seatState.name;
+          winnerName = finishedNames[seatState.seat];
           break;
         }
       }
@@ -5305,16 +5317,17 @@ class _GameScreenState extends State<GameScreen> {
     final RematchState? rematch = room.rematch;
     String? rematchByName;
     if (rematch != null) {
+      final Map<int, String> roomNames = seatLabelsFor(context, room.seats);
       for (final SeatState seatState in room.seats) {
         if (seatState.seat == rematch.by) {
-          rematchByName = seatState.name;
+          rematchByName = roomNames[seatState.seat];
           break;
         }
       }
       if (rematchByName == null) {
         for (final SeatState seatState in finished.seats) {
           if (seatState.seat == rematch.by) {
-            rematchByName = seatState.name;
+            rematchByName = finishedNames[seatState.seat];
             break;
           }
         }
@@ -5416,7 +5429,7 @@ class _GameScreenState extends State<GameScreen> {
                 key: const Key('game-screen-board'),
                 tokens: _tokensOf(finished),
                 seatsInPlay: _seatsInPlayOf(finished),
-                seatNames: _seatNamesOf(finished),
+                seatNames: finishedNames,
                 youLabel: loc.seatYou,
                 turnSeat: null,
                 mySeat: mySeat,
@@ -5744,16 +5757,6 @@ List<int> _seatsInPlayOf(RoomSnapshot room) {
   return <int>[for (final SeatState seatState in room.seats) seatState.seat];
 }
 
-/// C-257 rule 1/3: each occupied seat's own `name` from `room.seats`,
-/// keyed by seat. `LudoBoard` decides who gets a chip from this and
-/// `seatsInPlay` together; this function only reports what the room said.
-Map<int, String> _seatNamesOf(RoomSnapshot room) {
-  return <int, String>{
-    for (final SeatState seatState in room.seats)
-      seatState.seat: seatState.name,
-  };
-}
-
 /// H2, decided in the order given there, first match wins.
 /// C-290 rule 2: finished beats every other case, including stale.
 /// C-417 D4: inside the awaitMove branch, stale still beats the auto-move
@@ -5763,7 +5766,8 @@ Map<int, String> _seatNamesOf(RoomSnapshot room) {
 String _turnBannerText(
   AppLocalizations loc,
   RoomSnapshot room,
-  int? seat, {
+  int? seat,
+  Map<int, String> names, {
   bool stale = false,
   bool autoMoveVisible = false,
 }) {
@@ -5789,7 +5793,7 @@ String _turnBannerText(
       return loc.gameYourTurnMove;
     }
   }
-  return _waitingForSeatText(loc, room, turn.seat);
+  return _waitingForSeatText(loc, room, turn.seat, names);
 }
 
 /// Names the seat `turnSeat` the same way [_turnBannerText] does once it
@@ -5800,10 +5804,11 @@ String _waitingForSeatText(
   AppLocalizations loc,
   RoomSnapshot room,
   int turnSeat,
+  Map<int, String> names,
 ) {
   for (final SeatState seatState in room.seats) {
     if (seatState.seat == turnSeat) {
-      return loc.gameWaitingForPlayer(seatState.name);
+      return loc.gameWaitingForPlayer(names[seatState.seat]!);
     }
   }
   return loc.gameWaitingForTurn;
