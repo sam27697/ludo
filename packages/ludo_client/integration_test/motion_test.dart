@@ -2828,6 +2828,27 @@ class _Playback {
     expect(tester.widget<Text>(notice).data, loc.gameNoMoveNeedSix);
   }
 
+  /// The die lands and the no-move mark and notice draw after the rolled
+  /// push, so on a slow emulator the frame right after [_expectTray] can
+  /// still lack them. Pumps in short real-time steps (the live binding's
+  /// `pump(duration)` is real time) until both are found, for at most 3s.
+  /// Returns the ms waited. When the bound runs out it returns and
+  /// [_expectNoMove] fails as it always has; nothing here asserts.
+  Future<int> _waitForNoMove() async {
+    const Duration limit = Duration(milliseconds: 3000);
+    const Duration poll = Duration(milliseconds: 32);
+    final Finder mark = find.byKey(const Key('game-die-no-move-mark'));
+    final Finder notice = find.byKey(const Key('game-no-move-notice'));
+    final Stopwatch clock = Stopwatch()..start();
+    while (mark.evaluate().isEmpty || notice.evaluate().isEmpty) {
+      if (clock.elapsed >= limit) {
+        break;
+      }
+      await tester.pump(poll);
+    }
+    return clock.elapsedMilliseconds;
+  }
+
   void _expectFrom(int seat, _MoveStep step) {
     expect(
       _tokens(seat)[step.token],
@@ -2905,7 +2926,8 @@ class _Playback {
     }
     if (step.passTo != null) {
       if (mine && step.noMoveBeat) {
-        _motion('3 no move');
+        final int waited = await _waitForNoMove();
+        _motion('3 no move after $waited ms');
         _expectNoMove();
       }
       await _push('turn_passed', <String, Object?>{
