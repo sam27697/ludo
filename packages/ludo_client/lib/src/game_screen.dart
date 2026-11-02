@@ -490,6 +490,10 @@ class _GameScreenState extends State<GameScreen> {
   /// C-529 D3: set once a NO_SUCH_ROOM on a PLAYING room has started popping
   /// this route, so a second notification cannot pop twice.
   bool _roomGonePopHandled = false;
+
+  /// C-533 D1: set once a `player_left` naming this seat has started leaving
+  /// the route, so a second such frame does nothing.
+  bool _removedLeaveHandled = false;
   final List<FeedbackCue> _heldGameOverCues = <FeedbackCue>[];
   Timer? _endHoldDwellTimer;
   Timer? _endHoldLimitTimer;
@@ -822,11 +826,17 @@ class _GameScreenState extends State<GameScreen> {
 
     // C-246 rule 6, C-316 rule 3: a seat removed by a host-forced start receives
     // a `player_left` naming its own seat and nothing further from the room
-    // (docs/PROTOCOL.md section 16.9 rule 1). Pops with GameScreenResult.removed.
+    // (docs/PROTOCOL.md section 16.9 rule 1). Leaves with
+    // GameScreenResult.removed through the route, not a bare pop, so a sheet
+    // above the table (C-533 D1) is dismissed with it.
     if (frame.type == 'player_left') {
       final int? seatValue = _intAt(frame.data, 'seat');
-      if (seatValue != null && seatValue == widget.controller.seat) {
-        Navigator.of(context).pop(GameScreenResult.removed);
+      if (seatValue != null &&
+          seatValue == widget.controller.seat &&
+          !_removedLeaveHandled) {
+        _removedLeaveHandled = true;
+        _clearSafeCue();
+        _leaveGameRoute(GameScreenResult.removed);
       }
     }
 
