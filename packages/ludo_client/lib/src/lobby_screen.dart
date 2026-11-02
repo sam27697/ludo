@@ -152,6 +152,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// that closed while the player was away.
   bool _resumeRefusalHandled = false;
 
+  /// C-533 D1: set once a `player_left` naming this seat has started leaving
+  /// the route, so a second such frame does nothing.
+  bool _removedLeaveHandled = false;
+
   @override
   void initState() {
     super.initState();
@@ -187,15 +191,26 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   /// Hands [result] to Home. A popup above this route (the settings sheet)
-  /// must not be the thing a plain pop closes, so a route that is not on top
-  /// is removed by identity instead.
+  /// must not be the thing a plain pop closes, and must not be left standing
+  /// over Home either, so everything above this route is dismissed first and
+  /// this route itself is what leaves (C-533 D1, the shape of
+  /// `GameScreen._leaveGameRoute`).
   void _leaveWith(GameScreenResult result) {
+    final NavigatorState navigator = Navigator.of(context);
     final Route<dynamic> route = ModalRoute.of(context)!;
+    if (!route.isActive) {
+      return;
+    }
     if (route.isCurrent) {
       _leaveLobby(result);
       return;
     }
-    Navigator.of(context).removeRoute(route, result);
+    navigator.popUntil((Route<dynamic> r) => r == route);
+    if (route.isCurrent) {
+      _leaveLobby(result);
+    } else {
+      navigator.removeRoute(route, result);
+    }
   }
 
   /// C-447 D4: a resume answered NO_SUCH_ROOM (the room was reaped) or
@@ -223,17 +238,20 @@ class _LobbyScreenState extends State<LobbyScreen> {
         controller.room != null;
   }
 
-  // C-316 rule 3: a player_left naming this seat while in lobby pops with
-  // GameScreenResult.removed.
+  // C-316 rule 3: a player_left naming this seat while in lobby leaves with
+  // GameScreenResult.removed (C-533 D1: through _leaveWith, once).
   void _onFrame(Frame frame) {
     if (frame.type == 'player_left') {
       final dynamic seatValue = frame.data['seat'];
       final int? seat = seatValue is int
           ? seatValue
           : (seatValue is num ? seatValue.toInt() : null);
-      if (seat != null && seat == widget.controller.seat) {
+      if (seat != null &&
+          seat == widget.controller.seat &&
+          !_removedLeaveHandled) {
         if (mounted) {
-          _leaveLobby(GameScreenResult.removed);
+          _removedLeaveHandled = true;
+          _leaveWith(GameScreenResult.removed);
         }
       }
     }
@@ -541,73 +559,145 @@ class _LobbyScreenState extends State<LobbyScreen> {
     // leave. A resume lobby holds a stored seat, which Leave discards.
     final bool backToHome =
         widget.action != LobbyAction.resume && controller.room == null;
+    // C-533 D2: the card shape of the game screen's connection-lost body.
+    // The icon says what kind of refusal this is; the text is unchanged.
+    final IconData icon = linkRoomGone || controller.errorCode == 'NO_SUCH_ROOM'
+        ? Icons.link_off_rounded
+        : controller.errorCode == 'transport'
+        ? Icons.wifi_off_rounded
+        : Icons.info_outline_rounded;
+    final Widget leaveLabel = Text(
+      backToHome ? loc.lobbyBackToHomeButton : loc.gameLeaveButton,
+    );
     return Center(
       key: const Key('lobby-error'),
-      child: Padding(
-        padding: const EdgeInsets.all(kSpace6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              linkRoomGone
-                  ? loc.lobbyErrorLinkRoomGone
-                  : lobbyErrorMessage(loc, controller.errorCode),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: kSpace4),
-            if (retryable) ...[
-              ElevatedButton(
-                key: const Key('lobby-retry-button'),
-                onPressed: _issueRequest,
-                child: Text(loc.lobbyRetryButton),
+      child: _lobbyCard(
+        cardKey: const Key('lobby-error-card'),
+        icon: icon,
+        title: linkRoomGone
+            ? loc.lobbyErrorLinkRoomGone
+            : lobbyErrorMessage(loc, controller.errorCode),
+        // Exactly one filled button: Retry when it is offered, else the way
+        // out takes that place.
+        children: [
+          if (retryable) ...[
+            ElevatedButton(
+              key: const Key('lobby-retry-button'),
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size.fromHeight(48),
               ),
-              const SizedBox(height: kSpace2),
-            ],
+              onPressed: _issueRequest,
+              child: Text(loc.lobbyRetryButton),
+            ),
+            const SizedBox(height: kSpace2),
             OutlinedButton(
               key: const Key('lobby-leave-button'),
-              onPressed: _leaveLobby,
-              // C-529 D4: a lobby that never held a seat has nothing to
-              // leave; the way out says where it goes.
-              child: Text(
-                backToHome ? loc.lobbyBackToHomeButton : loc.gameLeaveButton,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(48),
               ),
+              onPressed: _leaveLobby,
+              child: leaveLabel,
             ),
-          ],
-        ),
+          ] else
+            ElevatedButton(
+              key: const Key('lobby-leave-button'),
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size.fromHeight(48),
+              ),
+              onPressed: _leaveLobby,
+              child: leaveLabel,
+            ),
+        ],
       ),
     );
   }
 
   Widget _closedBody(AppLocalizations loc, RoomController controller) {
     return Center(
-      key: const Key('lobby-closed'),
-      child: Padding(
-        padding: const EdgeInsets.all(kSpace6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(loc.lobbyConnectionLost, textAlign: TextAlign.center),
-            if (controller.autoReconnectPending) ...[
+      child: _lobbyCard(
+        cardKey: const Key('lobby-closed'),
+        icon: Icons.wifi_off_rounded,
+        title: loc.lobbyConnectionLost,
+        children: [
+          if (controller.autoReconnectPending) ...[
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.sync_rounded,
+                  size: 18,
+                  color: LudoColors.inkMuted,
+                ),
+                const SizedBox(width: kSpace2),
+                Flexible(
+                  child: Text(
+                    loc.lobbyReconnecting,
+                    key: const Key('lobby-reconnecting'),
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(color: LudoColors.inkMuted),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: kSpace4),
+          ],
+          ElevatedButton(
+            key: const Key('lobby-reconnect-button'),
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
+            ),
+            onPressed: controller.reconnect,
+            child: Text(loc.lobbyReconnectButton),
+          ),
+          const SizedBox(height: kSpace2),
+          OutlinedButton(
+            key: const Key('lobby-leave-button'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
+            ),
+            onPressed: _leaveLobby,
+            child: Text(loc.gameLeaveButton),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// C-533 D2: the one card shape for the lobby's error and never-connected
+  /// bodies, the game screen's `_connectionLostBody` without its game state:
+  /// [icon] on top, [title] in `titleMedium`, then [children] (the actions).
+  Widget _lobbyCard({
+    required Key cardKey,
+    required IconData icon,
+    required String title,
+    required List<Widget> children,
+  }) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 320),
+      child: Material(
+        key: cardKey,
+        color: LudoColors.paperElevated,
+        borderRadius: BorderRadius.circular(2 * kRadiusControl),
+        elevation: 6,
+        child: Padding(
+          padding: const EdgeInsets.all(kSpace5),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(icon, size: 32, color: LudoColors.inkMuted),
               const SizedBox(height: kSpace2),
               Text(
-                loc.lobbyReconnecting,
-                key: const Key('lobby-reconnecting'),
+                title,
                 textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleMedium
+                    ?.copyWith(color: LudoColors.ink),
               ),
+              const SizedBox(height: kSpace4),
+              ...children,
             ],
-            const SizedBox(height: kSpace4),
-            ElevatedButton(
-              key: const Key('lobby-reconnect-button'),
-              onPressed: controller.reconnect,
-              child: Text(loc.lobbyReconnectButton),
-            ),
-            const SizedBox(height: kSpace2),
-            OutlinedButton(
-              key: const Key('lobby-leave-button'),
-              onPressed: _leaveLobby,
-              child: Text(loc.gameLeaveButton),
-            ),
-          ],
+          ),
         ),
       ),
     );

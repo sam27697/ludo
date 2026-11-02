@@ -1315,7 +1315,8 @@ String _screenNote(WidgetTester tester) {
       '${tile('captures', _capturesKey)}; ${tile('home', _homeKey)}';
 }
 
-/// All four tiles present and showing exactly these numbers.
+/// Every tile whose number is above 0 present and showing exactly it; a tile
+/// whose number is 0 is not built (C-533 D3).
 void _expectTiles(
   WidgetTester tester,
   String tag, {
@@ -1331,6 +1332,18 @@ void _expectTiles(
     'home': (_homeKey, home),
   };
   want.forEach((String name, (Key, int) spec) {
+    if (spec.$2 == 0) {
+      expect(
+        find.byKey(spec.$1),
+        findsNothing,
+        reason: _why(
+          tag,
+          'no $name tile, its number is 0',
+          _screenNote(tester),
+        ),
+      );
+      return;
+    }
     expect(
       find.byKey(spec.$1),
       findsOneWidget,
