@@ -197,7 +197,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
     if (_resumeRefused) {
       _resumeRefusalHandled = true;
-      _leaveWith(GameScreenResult.gameGone);
+      // C-540 D2: a seat only drops its socket and keeps its token, so a
+      // refused token means the next game started without this player.
+      _leaveWith(
+        widget.controller.errorCode == 'BAD_SEAT_TOKEN'
+            ? GameScreenResult.removed
+            : GameScreenResult.gameGone,
+      );
     } else if (_roomClosedWhileAway) {
       _resumeRefusalHandled = true;
       _leaveWith(
@@ -234,7 +240,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// C-447 D4: a resume answered NO_SUCH_ROOM (the room was reaped) or
   /// BAD_SEAT_TOKEN (the seat was taken back). The player typed no code, so
   /// there is nothing to check and nothing to retry: the route goes home
-  /// with [GameScreenResult.gameGone] instead of drawing the error body.
+  /// instead of drawing the error body, with [GameScreenResult.gameGone] for
+  /// the first and [GameScreenResult.removed] for the second (C-540 D2).
   bool get _resumeRefused {
     final RoomController controller = widget.controller;
     return widget.action == LobbyAction.resume &&
@@ -397,9 +404,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   /// Pops this lobby. Completes the pop immediately so Cancel is not gated
   /// on the page transition.
+  ///
+  /// C-540 D6: a tap that lands while this route is already leaving does
+  /// nothing, so it cannot pop the route below.
   void _leaveLobby([Object? result]) {
     final NavigatorState navigator = Navigator.of(context);
     final Route<dynamic> route = ModalRoute.of(context)!;
+    if (!route.isActive || !route.isCurrent) {
+      return;
+    }
     navigator.pop(result);
     if (route.navigator != null) {
       navigator.finalizeRoute(route);

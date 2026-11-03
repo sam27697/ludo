@@ -12,6 +12,7 @@
 //                text; one info icon; the text is not inkMuted
 //   N3       D1  the card sits under the title block and above the name row
 //   N4       D1  one notice at a time; the newer one replaces the older one
+//                (C-540 D4: refused resume first, then removed)
 //   N5       D2  a dismiss control at least 48 x 48 that removes the card
 //   N5b      D2  the dismiss control carries a semantics label
 //   N5c      D2  the card also goes away on the events that hide it today
@@ -652,37 +653,35 @@ void main() {
   }
 
   // ------------------------------------------------- D1 one at a time
-  testWidgets('N4 (D1): removed, then a refused resume: only the game-gone '
+  // C-540 D4: Home stops offering the Rejoin control for a removed seat in
+  // the same frame it shows the removed notice, so the older order of this
+  // case (removed first, then a tap on that control for the refused resume)
+  // has no control left to tap. The newer notice still replaces the older
+  // one, shown here in the other order.
+  testWidgets('N4 (D1): a refused resume, then removed: only the removed '
       'notice is up', (tester) async {
     _seed(withSeat: true);
     final _Factory factory = _Factory();
-    const String scenario = 'N4 removed then refused resume, locale en';
+    const String scenario = 'N4 refused resume then removed, locale en';
     await _mount(tester, _app(factory));
     await _guarded(tester, factory, () async {
-      await _driveRemoved(tester, factory, scenario: scenario);
-      expect(
-        find.byKey(_removedTextKey),
-        findsOneWidget,
-        reason: '$scenario: fixture broken, the removed notice never showed',
-      );
-      expect(
-        find.byKey(_rejoinKey),
-        findsOneWidget,
-        reason:
-            '$scenario: fixture broken, the stored seat button is needed for '
-            'the second step and is gone after the removed pop',
-      );
       await _driveRefusedResume(tester, factory, scenario: scenario);
-
       expect(
         find.byKey(_goneTextKey),
         findsOneWidget,
-        reason: '$scenario: home-game-gone-notice must be up',
+        reason: '$scenario: fixture broken, the game-gone notice never showed',
       );
+      await _driveRemoved(tester, factory, scenario: scenario);
+
       expect(
         find.byKey(_removedTextKey),
+        findsOneWidget,
+        reason: '$scenario: home-removed-notice must be up',
+      );
+      expect(
+        find.byKey(_goneTextKey),
         findsNothing,
-        reason: '$scenario: home-removed-notice must be gone, not stacked',
+        reason: '$scenario: home-game-gone-notice must be gone, not stacked',
       );
       expect(
         find.byKey(_noticeKey),
@@ -692,9 +691,9 @@ void main() {
             '${find.byKey(_noticeKey).evaluate().length}',
       );
       expect(
-        _inCard(find.byKey(_goneTextKey)),
+        _inCard(find.byKey(_removedTextKey)),
         findsOneWidget,
-        reason: '$scenario: the one card must hold the game-gone text',
+        reason: '$scenario: the one card must hold the removed text',
       );
     });
   });

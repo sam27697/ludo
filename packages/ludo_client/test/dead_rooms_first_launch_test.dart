@@ -76,6 +76,11 @@ const Key _lobbyReconnectKey = Key('lobby-reconnect-button');
 const Key _gameReconnectKey = Key('game-screen-reconnect-button');
 const Key _goneNoticeKey = Key('home-game-gone-notice');
 const Key _closedNoticeKey = Key('home-room-closed-notice');
+
+/// A code lobbyErrorMessage maps to the generic line. D5 used BAD_SEAT_TOKEN
+/// for this until C-540 D1: a game route whose controller fails with
+/// BAD_SEAT_TOKEN now goes home instead of drawing the connection-lost card.
+const String _genericCode = 'INTERNAL';
 const Key _removedNoticeKey = Key('home-removed-notice');
 const Key _noticeCardKey = Key('home-notice');
 const Key _rematchGoneKey = Key('end-card-rematch-gone');
@@ -1673,16 +1678,16 @@ void main() {
       (id: 'D5b', locale: const Locale('ar')),
     ]) {
       testWidgets(
-        '${variant.id}: BAD_SEAT_TOKEN with the server\'s English message '
+        '${variant.id}: a generic-line code (INTERNAL) with the server\'s English message '
         '(${variant.locale}): the English text is nowhere in the tree and '
         'game-screen-error-message is absent',
         (tester) async {
           final String scenario =
-              '${variant.id} roll answered BAD_SEAT_TOKEN '
+              '${variant.id} roll answered $_genericCode '
               '"$_serverEnglish", locale ${variant.locale}';
           final controller = await _failedPlaying(
             tester,
-            code: 'BAD_SEAT_TOKEN',
+            code: _genericCode,
             message: _serverEnglish,
             locale: variant.locale,
             scenario: scenario,
@@ -1706,7 +1711,7 @@ void main() {
             find.byKey(_errorMessageKey, skipOffstage: false),
             findsNothing,
             reason:
-                '$scenario: BAD_SEAT_TOKEN maps to the generic line, so '
+                '$scenario: $_genericCode maps to the generic line, so '
                 'game-screen-error-message and its gap must be absent',
           );
         },
@@ -1715,10 +1720,10 @@ void main() {
 
     testWidgets('D5c: an empty server message leaves no empty line under '
         '"Connection lost."', (tester) async {
-      const String scenario = 'D5c roll answered BAD_SEAT_TOKEN, message ""';
+      const String scenario = 'D5c roll answered $_genericCode, message ""';
       await _failedPlaying(
         tester,
-        code: 'BAD_SEAT_TOKEN',
+        code: _genericCode,
         message: '',
         scenario: scenario,
       );
