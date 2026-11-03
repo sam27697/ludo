@@ -693,7 +693,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   /// C-547 D2: the card for a seat another phone took over, in the lobby's
   /// card shape under [cardKey]. The reason, no Reconnect (resuming would take
-  /// the seat back from that phone) and Leave as the one filled action.
+  /// the seat back from that phone) and Leave as the one filled action. Its
+  /// Key is not `lobby-leave-button`: the header's corner close owns that one
+  /// on the stale-room overlay.
   Widget _seatMovedCard(AppLocalizations loc, Key cardKey) {
     return _lobbyCard(
       cardKey: cardKey,
@@ -701,7 +703,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       title: loc.seatMovedLine,
       children: [
         ElevatedButton(
-          key: const Key('lobby-leave-button'),
+          key: const Key('lobby-seat-moved-leave'),
           style: ElevatedButton.styleFrom(
             minimumSize: const Size.fromHeight(48),
           ),
