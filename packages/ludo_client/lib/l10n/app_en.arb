@@ -635,7 +635,7 @@
       }
     }
   },
-  "endRematchStartReady": "Start with {count}",
+  "endRematchStartReady": "{count, plural, other{Start with {count} players}}",
   "@endRematchStartReady": {
     "description": "Secondary button shown only to the host, under the waiting line, once at least two seats have accepted a rematch but not every occupied seat has. Sends start_game with the ready seats.",
     "placeholders": {
