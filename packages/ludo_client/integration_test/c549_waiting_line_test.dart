@@ -1,13 +1,16 @@
 // Proof for contract C-549 D1 under the integration binding: a game screen
 // over a real RoomController on FakeTransport, the connection drops, and once
-// the reconnecting row has been up for 4.1 s the slow line is on screen with
-// the contract's exact text, in English and in Arabic.
+// the reconnecting row has been up for about 5 s the slow line is on screen
+// with the contract's exact text, in English and in Arabic.
 //
 // Run: flutter test integration_test/c549_waiting_line_test.dart -d flutter-tester
 //
 // The integration binding is the live one: pump(Duration) waits that long on
-// the real clock, so the case never sleeps on its own. It pumps the 3.9 s and
-// 0.2 s marks and reads the tree after each. The automatic attempt that fires
+// the real clock, so the case never sleeps on its own, and every pump and
+// frame adds real elapsed time. That makes the exact 3.9 s / 4.1 s boundary
+// unassertable here (it is proved under fake time in test/c549_test.dart);
+// this file asserts a window: no slow line at about 3.0 s of pumped time, the
+// exact slow line by about 5.0 s. The automatic attempt that fires
 // at 1 s is held open at the connector, so the row stays up through the flip
 // from "timer pending" to "attempt in flight", and the count is from the
 // row's first mount, not from the flip. Nothing here uses pumpAndSettle: the
@@ -102,7 +105,7 @@ void main() {
     final String want = tag == 'ar' ? _slowAr : _slowEn;
     final String id =
         'C-549 D1 $tag: game screen, connection dropped, no slow line at '
-        '3.9 s, the exact slow line at 4.1 s';
+        'about 3.0 s, the exact slow line by about 5.0 s';
 
     testWidgets(id, (tester) async {
       final String reproduce =
@@ -208,29 +211,40 @@ void main() {
           reason: 'expected the row to survive the flip. $reproduce',
         );
 
-        await tester.pump(const Duration(milliseconds: 2900));
+        // Window, not a boundary: this binding is live, so every pump and
+        // frame costs real time on top of the pumped duration and a 100 ms
+        // window around 4 s cannot be asserted here. The exact 3.9 s / 4.1 s
+        // boundary is proved under fake time in test/c549_test.dart. Here:
+        // about 3.0 s of pumped time is well inside the first 4 s, and 5.0 s
+        // is well past it.
+        await tester.pump(const Duration(seconds: 2));
         expect(
           find.byKey(_slowKey),
           findsNothing,
           reason:
-              'expected no slow line at 3.9 s after the row first appeared; '
-              'it is in the tree. $reproduce',
+              'expected no slow line at about 3.0 s of pumped time after the '
+              'row first appeared (the live binding adds real time to every '
+              'pump, so the window is 3.0 s against the 4 s rule, not the '
+              'exact boundary); it is in the tree. $reproduce',
         );
         expect(find.text(_slowEn), findsNothing, reason: reproduce);
         expect(find.text(_slowAr), findsNothing, reason: reproduce);
 
-        await tester.pump(const Duration(milliseconds: 200));
+        await tester.pump(const Duration(seconds: 2));
         expect(
           find.byKey(_slowKey),
           findsOneWidget,
           reason:
-              'expected the slow line (Key waiting-line-slow) at 4.1 s after '
-              'the row first appeared; found none. $reproduce',
+              'expected the slow line (Key waiting-line-slow) by about 5.0 s '
+              'of pumped time after the row first appeared (4 s rule plus the '
+              'real time the live binding adds); found none. $reproduce',
         );
         expect(
           find.text(want),
           findsOneWidget,
-          reason: 'expected the exact slow text "$want" at 4.1 s. $reproduce',
+          reason:
+              'expected the exact slow text "$want" by about 5.0 s. '
+              '$reproduce',
         );
         expect(
           find.descendant(
