@@ -1818,6 +1818,253 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------------------- C-544 D1
+  // Contract C-544 (work/ludo/orders/C-544-own-leave-no-offline-end-card.md):
+  // on a finished table, and on a rematch lobby with lastFinished, my own
+  // Leave or New table never swaps the end card for its offline variant while
+  // the route exits. The offline line is the `end-card-offline` text
+  // (endOffline); the offline Play again is the `end-card-rematch` button
+  // beside it, so the cases compare that button with what the player saw at
+  // the tap. The rematch lobby cases (D1.3, D1.4) are guards:
+  // RoomController.leave() clears lastFinished at the tap, so a lobby never
+  // reaches the offline end card on an own leave; they pin that it stays so.
+  group('C-544 D1 my own leave never draws the offline end card', () {
+    /// Pumps frame by frame after the leave's ack closed the phase and fails
+    /// on the first frame where the leaving route draws the offline line, its
+    /// text, or a Play again the card did not have at the tap.
+    Future<void> expectNoOfflineEndCard(
+      WidgetTester tester,
+      _Rig rig,
+      _RouteLog log,
+      String scenario, {
+      required bool playAgainAtTap,
+    }) async {
+      final String offlineLine = _loc(tester).endOffline;
+      int framesWithRoute = 0;
+      for (int i = 0; i < 40; i += 1) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (find.byType(GameScreen, skipOffstage: false).evaluate().isEmpty) {
+          break;
+        }
+        framesWithRoute += 1;
+        final String note =
+            'frame $i after the ack; saw ${_treeNote(tester, rig, log)}. '
+            '${_reproduce(scenario)}';
+        expect(
+          find.byKey(_offlineKey, skipOffstage: false),
+          findsNothing,
+          reason: '$scenario: expected no offline end card line at $note',
+        );
+        expect(
+          find.text(offlineLine, skipOffstage: false),
+          findsNothing,
+          reason: '$scenario: expected no "$offlineLine" text at $note',
+        );
+        expect(
+          find.byKey(_rematchKey, skipOffstage: false).evaluate().isNotEmpty,
+          playAgainAtTap,
+          reason:
+              '$scenario: expected Play again '
+              '${playAgainAtTap ? 'still drawn' : 'still absent'}, as at the '
+              'tap, at $note',
+        );
+      }
+      expect(
+        framesWithRoute,
+        greaterThan(0),
+        reason:
+            '$scenario: fixture: the route must still be on the tree after '
+            'the ack, or the exit transition was not observed; saw '
+            '${_treeNote(tester, rig, log)}',
+      );
+    }
+
+    for (final ({String id, Locale? locale, _Room room, Key action}) variant
+        in [
+          (
+            id: 'C-544 D1.1a',
+            locale: null,
+            room: _Room.finished,
+            action: _appBarLeaveKey,
+          ),
+          (
+            id: 'C-544 D1.1b',
+            locale: _ar,
+            room: _Room.finished,
+            action: _appBarLeaveKey,
+          ),
+          (
+            id: 'C-544 D1.2a',
+            locale: null,
+            room: _Room.finished,
+            action: _newTableKey,
+          ),
+          (
+            id: 'C-544 D1.2b',
+            locale: _ar,
+            room: _Room.finished,
+            action: _newTableKey,
+          ),
+          (
+            id: 'C-544 D1.3a',
+            locale: null,
+            room: _Room.rematch,
+            action: _appBarLeaveKey,
+          ),
+          (
+            id: 'C-544 D1.3b',
+            locale: _ar,
+            room: _Room.rematch,
+            action: _appBarLeaveKey,
+          ),
+          (
+            id: 'C-544 D1.4a',
+            locale: null,
+            room: _Room.rematch,
+            action: _newTableKey,
+          ),
+          (
+            id: 'C-544 D1.4b',
+            locale: _ar,
+            room: _Room.rematch,
+            action: _newTableKey,
+          ),
+        ]) {
+      testWidgets(
+        '${variant.id}${variant.room == _Room.rematch ? ' guard' : ''}: '
+        '${variant.room.name} table, '
+        '${(variant.action as ValueKey<String>).value} (locale '
+        '${variant.locale ?? 'en'}), the ack closes the phase during the '
+        'exit transition: no offline end card line, no offline Play again',
+        (tester) async {
+          final String scenario = variant.id;
+          _seedFreshSeat();
+          final _Rig rig = _Rig();
+          final _RouteLog log = _RouteLog();
+          await _mount(tester, rig, log, locale: variant.locale);
+          try {
+            await _gameRoute(tester, rig, scenario, room: variant.room);
+            expect(
+              find.byKey(_offlineKey, skipOffstage: false),
+              findsNothing,
+              reason:
+                  '$scenario: fixture: the connected end card is not offline',
+            );
+            if (variant.room == _Room.rematch) {
+              expect(
+                rig.controllers.first.lastFinished,
+                isNotNull,
+                reason:
+                    '$scenario: fixture: a rematch lobby is the contract\'s case '
+                    'only while lastFinished is held at the tap',
+              );
+            }
+            final bool playAgainAtTap = find
+                .byKey(_rematchKey, skipOffstage: false)
+                .evaluate()
+                .isNotEmpty;
+            await tester.ensureVisible(find.byKey(variant.action));
+            await tester.tap(find.byKey(variant.action));
+            await tester.pump();
+
+            expect(
+              rig.sent('leave_room'),
+              hasLength(1),
+              reason:
+                  '$scenario: fixture: Home must have sent one leave_room as '
+                  'the route began to leave; saw ${_treeNote(tester, rig, log)}',
+            );
+            rig.last.pushText(
+              _frame(
+                type: 'player_left',
+                re: rig.lastRequestId('leave_room'),
+                data: <String, Object?>{'seat': 0, 'host_seat': 0, 'seq': 99},
+              ),
+            );
+            await expectNoOfflineEndCard(
+              tester,
+              rig,
+              log,
+              scenario,
+              playAgainAtTap: playAgainAtTap,
+            );
+            expect(
+              rig.controllers.first.phase,
+              RoomPhase.closed,
+              reason:
+                  '$scenario: fixture: the ack must have closed the phase; '
+                  'saw ${rig.controllers.first.phase}',
+            );
+          } finally {
+            await _finish(tester, rig);
+          }
+        },
+      );
+    }
+
+    for (final ({String id, Locale? locale}) variant in [
+      (id: 'C-544 D1.5a', locale: null),
+      (id: 'C-544 D1.5b', locale: _ar),
+    ]) {
+      testWidgets(
+        '${variant.id} guard: an offline end card already up at the tap stays '
+        'up through the exit (locale ${variant.locale ?? 'en'})',
+        (tester) async {
+          final String scenario = variant.id;
+          _seedFreshSeat();
+          final _Rig rig = _Rig();
+          final _RouteLog log = _RouteLog();
+          await _mount(tester, rig, log, locale: variant.locale);
+          try {
+            await _gameRoute(tester, rig, scenario, room: _Room.finished);
+            rig.last.endFromFarSide();
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 400));
+            expect(
+              find.byKey(_offlineKey),
+              findsOneWidget,
+              reason:
+                  '$scenario: fixture: a dropped finished table must show the '
+                  'offline end card; saw ${_treeNote(tester, rig, log)}',
+            );
+            await tester.ensureVisible(find.byKey(_appBarLeaveKey));
+            await tester.tap(find.byKey(_appBarLeaveKey));
+            await tester.pump();
+
+            int framesWithRoute = 0;
+            for (int i = 0; i < 40; i += 1) {
+              if (find
+                  .byType(GameScreen, skipOffstage: false)
+                  .evaluate()
+                  .isEmpty) {
+                break;
+              }
+              framesWithRoute += 1;
+              expect(
+                find.byKey(_offlineKey, skipOffstage: false),
+                findsOneWidget,
+                reason:
+                    '$scenario: expected the offline end card to stay up '
+                    'through the exit, as at the tap; frame $i, saw '
+                    '${_treeNote(tester, rig, log)}. ${_reproduce(scenario)}',
+              );
+              await tester.pump(const Duration(milliseconds: 16));
+            }
+            expect(
+              framesWithRoute,
+              greaterThan(0),
+              reason:
+                  '$scenario: fixture: the route must be on the tree after '
+                  'the tap; saw ${_treeNote(tester, rig, log)}',
+            );
+          } finally {
+            await _finish(tester, rig);
+          }
+        },
+      );
+    }
+  });
+
   // ---------------------------------------------------------------- D6
   group('D6 a tap during a leave already in flight does nothing', () {
     /// The pointer cannot reach a route that is already leaving: the
