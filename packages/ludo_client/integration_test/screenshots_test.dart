@@ -17042,10 +17042,12 @@ Future<void> _shootLobbyJoinTransport(
 }
 
 /// 111 (order 531, C-529 D5). A PLAYING game, seat 0 to roll, the die tapped,
-/// and the roll answered `BAD_SEAT_TOKEN` with the server's English message.
-/// The connection-lost card shows with the Arabic title; the server's words
-/// and the English title are nowhere in the tree and
-/// `game-screen-error-message` is absent.
+/// and the roll answered `INTERNAL` with the server's English message. The
+/// connection-lost card shows with the Arabic title; the server's words and
+/// the English title are nowhere in the tree and `game-screen-error-message`
+/// is absent. This still used `BAD_SEAT_TOKEN` until C-540 D1: a game route
+/// whose controller fails with it now goes home, so the fixture answers a code
+/// that maps to the same generic line and stays on the game route.
 Future<void> _shootGameConnectionLost(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -17061,9 +17063,10 @@ Future<void> _shootGameConnectionLost(
   await (await SharedPreferences.getInstance()).clear();
   tester.platformDispatcher.clearTextScaleFactorTestValue();
 
+  const String genericCode = 'INTERNAL';
   final String scenario =
       'room $roomCode, game $gameId, locale ${locale.languageCode}, roll '
-      'answered BAD_SEAT_TOKEN "$_serverWords"';
+      'answered $genericCode "$_serverWords"';
   RoomController? controller;
   try {
     final _OpenedTrayGame opened = await _openHostGame(
@@ -17105,7 +17108,7 @@ Future<void> _shootGameConnectionLost(
         type: 'error',
         re: _idOf(rolls.single),
         data: const <String, Object?>{
-          'code': 'BAD_SEAT_TOKEN',
+          'code': genericCode,
           'message': _serverWords,
         },
       ),
@@ -17125,7 +17128,7 @@ Future<void> _shootGameConnectionLost(
         controller.errorCode,
         controller.errorMessage,
       ],
-      <Object?>[RoomPhase.failed, 'BAD_SEAT_TOKEN', _serverWords],
+      <Object?>[RoomPhase.failed, genericCode, _serverWords],
       reason:
           'capture $shotName ($scenario): fixture: the controller must hold '
           'the failure with the server\'s message in hand',
@@ -17186,7 +17189,7 @@ Future<void> _shootGameConnectionLost(
       find.byKey(const Key('game-screen-error-message'), skipOffstage: false),
       findsNothing,
       reason:
-          'capture $shotName ($scenario): BAD_SEAT_TOKEN maps to the '
+          'capture $shotName ($scenario): $genericCode maps to the '
           'generic line, so game-screen-error-message and its gap are absent',
     );
     await binding.takeScreenshot(shotName);
