@@ -57,6 +57,7 @@ import 'session_memory.dart';
 import 'sound_toggle.dart';
 import 'theme.dart';
 import 'token_face_picker.dart';
+import 'waiting_line.dart';
 
 /// Distinct [Navigator.pop] result from the finished-board next-table
 /// button, a forced removal from the room, or a resume the server refused
@@ -2530,6 +2531,7 @@ class _GameScreenState extends State<GameScreen> {
         controller.phase == RoomPhase.closed ||
         controller.phase == RoomPhase.connecting;
     return isOffline &&
+        !controller.seatTakenOver &&
         room != null &&
         ((room.state == RoomState.finished && !_isEndHeld) ||
             (room.state == RoomState.lobby && controller.lastFinished != null));
@@ -2876,7 +2878,12 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
     _announcedConnectionLost = true;
-    _announce(AppLocalizations.of(context).lobbyConnectionLost);
+    final AppLocalizations loc = AppLocalizations.of(context);
+    _announce(
+      widget.controller.seatTakenOver
+          ? loc.seatMovedLine
+          : loc.lobbyConnectionLost,
+    );
   }
 
   /// C-529 D3: the server answered NO_SUCH_ROOM for a room this screen held
@@ -2933,7 +2940,8 @@ class _GameScreenState extends State<GameScreen> {
         ((room.state == RoomState.finished && !_isEndHeld) ||
             (room.state == RoomState.lobby && controller.lastFinished != null));
     if (isOfflineEndCard) {
-      return false;
+      // C-547 D3: a seat moved to another phone has no offline end card.
+      return controller.seatTakenOver;
     }
 
     if (room != null && isOffline) {
@@ -3703,11 +3711,15 @@ class _GameScreenState extends State<GameScreen> {
         controller.phase == RoomPhase.failed ||
         controller.phase == RoomPhase.closed ||
         controller.phase == RoomPhase.connecting;
-    final bool isOfflineEndCard =
+    final bool finishedTable =
         isOffline &&
         room != null &&
         ((room.state == RoomState.finished && !_isEndHeld) ||
             (room.state == RoomState.lobby && controller.lastFinished != null));
+    // C-547 D3: the seat moved to another phone, so the finished table draws
+    // the takeover card and never the offline end card with its Play again.
+    final bool seatTakenOverOnEnd = finishedTable && controller.seatTakenOver;
+    final bool isOfflineEndCard = finishedTable && !seatTakenOverOnEnd;
 
     // C-462 D4: the picker closes, with no send and no cue, on the rebuild
     // that makes any of its conditions true.
@@ -3764,6 +3776,10 @@ class _GameScreenState extends State<GameScreen> {
       );
     } else if (rematchGone) {
       body = _gameOverBody(loc, controller, room, rematchGone: true);
+    } else if (seatTakenOverOnEnd) {
+      body = _lostCardSuppressed
+          ? const SizedBox.expand()
+          : _connectionLostBody(loc, controller);
     } else if (isOfflineEndCard) {
       body = _gameOverBody(
         loc,
@@ -4008,6 +4024,9 @@ class _GameScreenState extends State<GameScreen> {
   /// and reconnecting line without a Reconnect button; given up shows the
   /// Reconnect button; Leave is always last.
   Widget _connectionLostBody(AppLocalizations loc, RoomController controller) {
+    if (controller.seatTakenOver) {
+      return _seatMovedBody(loc);
+    }
     // C-529 D5: the server's own `message` is English and aimed at a log, so
     // it is never drawn. A mapped code gets its localised line; the generic
     // line says nothing the title does not, so it gets no widget and no gap.
@@ -4057,25 +4076,10 @@ class _GameScreenState extends State<GameScreen> {
                 ],
                 const SizedBox(height: kSpace4),
                 if (isRetrying) ...[
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.sync_rounded,
-                        size: 18,
-                        color: LudoColors.inkMuted,
-                      ),
-                      const SizedBox(width: kSpace2),
-                      Flexible(
-                        child: Text(
-                          loc.lobbyReconnecting,
-                          key: const Key('game-screen-reconnecting'),
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(color: LudoColors.inkMuted),
-                        ),
-                      ),
-                    ],
+                  WaitingLine(
+                    key: const Key('game-screen-waiting-line'),
+                    text: loc.lobbyReconnecting,
+                    textKey: const Key('game-screen-reconnecting'),
                   ),
                   const SizedBox(height: kSpace4),
                 ] else ...[
@@ -4087,6 +4091,51 @@ class _GameScreenState extends State<GameScreen> {
                   const SizedBox(height: kSpace2),
                 ],
                 OutlinedButton(
+                  key: const Key('game-screen-leave-button'),
+                  onPressed: _leave,
+                  child: Text(loc.gameLeaveButton),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// C-547 D2: the connection-lost card's shape and Key for a seat another
+  /// phone took over. It states the reason, offers no Reconnect (resuming
+  /// would take the seat back from that phone) and keeps Leave as its one
+  /// action.
+  Widget _seatMovedBody(AppLocalizations loc) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: Material(
+          key: const Key('game-screen-connection-lost'),
+          color: LudoColors.paperElevated,
+          borderRadius: BorderRadius.circular(2 * kRadiusControl),
+          elevation: 6,
+          child: Padding(
+            padding: const EdgeInsets.all(kSpace5),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.phonelink_rounded,
+                  size: 32,
+                  color: LudoColors.inkMuted,
+                ),
+                const SizedBox(height: kSpace2),
+                Text(
+                  loc.seatMovedLine,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(color: LudoColors.ink),
+                ),
+                const SizedBox(height: kSpace4),
+                ElevatedButton(
                   key: const Key('game-screen-leave-button'),
                   onPressed: _leave,
                   child: Text(loc.gameLeaveButton),
@@ -5673,7 +5722,7 @@ class _GameScreenState extends State<GameScreen> {
       ),
       width: double.infinity,
       child: Text(
-        loc.lobbyDesynced,
+        loc.gameCatchingUp,
         key: const Key('game-screen-desync-banner'),
         style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
       ),

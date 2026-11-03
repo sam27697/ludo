@@ -188,6 +188,12 @@ class RoomController extends ChangeNotifier {
   /// only; it has no getter of its own.
   bool _blocked = false;
 
+  /// Set by an unsolicited `BAD_SEAT_TOKEN` error frame: the server closed
+  /// this socket because a newer one resumed the same seat (4004). Cleared
+  /// wherever [_blocked] is cleared on reaching [RoomPhase.connected].
+  /// [leave] and [dispose] leave it as it is.
+  bool _seatTakenOver = false;
+
   /// True once [leave] has been called, ever. One-way, like [_disposed].
   bool _leftCalled = false;
 
@@ -219,6 +225,11 @@ class RoomController extends ChangeNotifier {
   int? get seat => _cachedSeat;
   String? get seatToken => _cachedSeatToken;
   bool get hasDesynced => _hasDesynced;
+
+  /// C-547 rule 1: true after another phone took this seat over, until the
+  /// phase next reaches [RoomPhase.connected]. Screens draw the takeover card
+  /// instead of the connection-lost card, with no Reconnect.
+  bool get seatTakenOver => _seatTakenOver;
   String? get errorCode => _errorCode;
   String? get errorMessage => _errorMessage;
 
@@ -340,6 +351,7 @@ class RoomController extends ChangeNotifier {
       _cachedSeatToken = seatToken;
       _phase = RoomPhase.connected;
       _blocked = false;
+      _seatTakenOver = false;
       _errorCode = null;
       _errorMessage = null;
       notifyListeners();
@@ -382,6 +394,7 @@ class RoomController extends ChangeNotifier {
       _clearLastFinished();
       _phase = RoomPhase.connected;
       _blocked = false;
+      _seatTakenOver = false;
       _errorCode = null;
       _errorMessage = null;
       _syncSeatCache();
@@ -452,6 +465,7 @@ class RoomController extends ChangeNotifier {
       _recordLastFinished(snapshot);
       _phase = RoomPhase.connected;
       _blocked = false;
+      _seatTakenOver = false;
       _hasDesynced = false;
       _errorCode = null;
       _errorMessage = null;
@@ -1006,6 +1020,10 @@ class RoomController extends ChangeNotifier {
       // and retrying that one would make two phones of one player fight
       // over the seat forever.
       _blocked = true;
+      if (frame.data['code'] == 'BAD_SEAT_TOKEN') {
+        _seatTakenOver = true;
+        notifyListeners();
+      }
     }
     if (_stateChangingTypes.contains(frame.type)) {
       _reduce(frame);

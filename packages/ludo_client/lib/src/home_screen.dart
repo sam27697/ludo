@@ -685,6 +685,7 @@ class _HomeScreenState extends State<HomeScreen>
     _maybeRecordLastGame(controller);
     final RoomSnapshot? room = controller.room;
     if (controller.phase == RoomPhase.connected &&
+        !controller.seatTakenOver &&
         room != null &&
         room.state != RoomState.finished) {
       final int? seat = controller.seat;
@@ -707,10 +708,13 @@ class _HomeScreenState extends State<HomeScreen>
       }
     }
     final bool finished = room != null && room.state == RoomState.finished;
+    // C-547 D4: a seat another phone took over is gone for this phone too;
+    // keeping the record would let a relaunch resume and take it back.
     final bool seatGone =
-        controller.phase == RoomPhase.failed &&
-        (controller.errorCode == 'BAD_SEAT_TOKEN' ||
-            controller.errorCode == 'NO_SUCH_ROOM');
+        controller.seatTakenOver ||
+        (controller.phase == RoomPhase.failed &&
+            (controller.errorCode == 'BAD_SEAT_TOKEN' ||
+                controller.errorCode == 'NO_SUCH_ROOM'));
     if ((finished || seatGone) && !_seatClearedForOwned) {
       _seatClearedForOwned = true;
       unawaited(SessionMemory.clearSeat());
