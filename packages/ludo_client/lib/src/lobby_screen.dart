@@ -1013,6 +1013,29 @@ class _LobbyScreenState extends State<LobbyScreen> {
     );
   }
 
+  /// C-551 D2: a docked waiting line is a status, so it carries a still
+  /// hourglass ahead of the text. The row follows the ambient direction, so
+  /// the mark sits on the right in Arabic. The mark is out of semantics and
+  /// does not move: the seat list above is what moves when a friend joins.
+  Widget _dockedWaiting(String text, Key textKey) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: <Widget>[
+        const ExcludeSemantics(
+          child: Icon(
+            Icons.hourglass_top_rounded,
+            size: 18,
+            color: LudoColors.inkMuted,
+          ),
+        ),
+        const SizedBox(width: kSpace2),
+        Flexible(
+          child: Text(text, key: textKey, textAlign: TextAlign.center),
+        ),
+      ],
+    );
+  }
+
   /// C-398: the host's start, the short-room start, and the waiting line
   /// (and the rematch accept that replaces them) sit outside the scroll.
   List<Widget> _lobbyAction(
@@ -1038,21 +1061,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
     if (inRematchLobby && amReadyForRematch) {
       return <Widget>[
-        Text(
+        _dockedWaiting(
           loc.endRematchWaiting,
-          key: const Key('lobby-rematch-waiting'),
-          textAlign: TextAlign.center,
+          const Key('lobby-rematch-waiting'),
         ),
       ];
     }
     if (!controller.isHost) {
       return <Widget>[
-        Text(
+        _dockedWaiting(
           roomFull
               ? loc.lobbyWaitingForHost
               : loc.lobbyWaitingForPlayers(room.seats.length, room.players),
-          key: const Key('lobby-waiting'),
-          textAlign: TextAlign.center,
+          const Key('lobby-waiting'),
         ),
       ];
     }
@@ -1071,10 +1092,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ];
     }
     return <Widget>[
-      Text(
+      _dockedWaiting(
         loc.lobbyWaitingForPlayers(room.seats.length, room.players),
-        key: const Key('lobby-waiting'),
-        textAlign: TextAlign.center,
+        const Key('lobby-waiting'),
       ),
       if (room.state == RoomState.lobby && room.seats.length >= 2) ...[
         SizedBox(height: compact ? kSpace1 : kSpace2),
