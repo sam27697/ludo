@@ -872,12 +872,17 @@ void main() {
               'C-447 D4: a resume for code "$_kCode" refused with $errorCode '
               'must pop back to Home, which must be the current route',
         );
+        // C-540 D2: the two refusals read differently. A room that is gone
+        // reads "game ended"; a seat that was taken back reads "removed".
+        final String noticeKey = errorCode == 'BAD_SEAT_TOKEN'
+            ? 'home-removed-notice'
+            : 'home-game-gone-notice';
         expect(
-          find.byKey(const Key('home-game-gone-notice')),
+          find.byKey(Key(noticeKey)),
           findsOneWidget,
           reason:
-              'C-447 D4: a resume refused with $errorCode must show '
-              'home-game-gone-notice on Home',
+              'C-447 D4 / C-540 D2: a resume refused with $errorCode must '
+              'show $noticeKey on Home',
         );
       });
     }
