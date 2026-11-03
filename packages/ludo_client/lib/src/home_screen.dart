@@ -1146,11 +1146,21 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     );
-    // C-447 D4: a resume the server refused (room reaped, seat taken back)
-    // goes home with its own true line, set before the retire like the
-    // removed notice in _createRoom.
-    if (result == GameScreenResult.gameGone) {
+    // C-447 D4, C-540 D4: a resume the server refused (room reaped, seat
+    // taken back) or a seat removed while the route was up goes home with its
+    // own true line, set before the retire like the removed notice in
+    // _createRoom, and the Rejoin control for that seat goes with it: the
+    // retire can sit for the 10 second request timeout on a dead socket, and
+    // a seat that is gone cannot be rejoined. The stored record itself is
+    // cleared by the retire, as before.
+    if (result == GameScreenResult.gameGone ||
+        result == GameScreenResult.removed) {
       _showNoticeFor(result);
+      if (mounted && _seatRecord?.code == record.code) {
+        setState(() {
+          _seatRecord = null;
+        });
+      }
     }
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
@@ -1162,8 +1172,6 @@ class _HomeScreenState extends State<HomeScreen>
     }
     if (result == GameScreenResult.newTable) {
       await _createRoom();
-    } else if (result == GameScreenResult.removed) {
-      _showNoticeFor(result);
     }
   }
 
