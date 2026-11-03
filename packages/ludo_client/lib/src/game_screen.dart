@@ -409,8 +409,14 @@ class _GameScreenState extends State<GameScreen> {
   // While set the connection-lost card is not drawn and not announced unless
   // it was already up when the leave began ([_lostCardUpAtLeave]), and a
   // second Leave or New table tap does nothing (D6).
+  //
+  // C-544 D1: the same latch for the end card. One that was not the offline
+  // variant when the leave began stays the variant the player last saw, so
+  // the ack that closes the socket never swaps in the "no connection" line
+  // and its Play again ([_offlineEndCardUpAtLeave]).
   bool _leaving = false;
   bool _lostCardUpAtLeave = false;
+  bool _offlineEndCardUpAtLeave = false;
 
   // C-442 D5: the `game_id` of the last room this screen saw PLAYING and
   // whose `game_over` it has not received. A FINISHED snapshot naming this
@@ -2510,7 +2516,23 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
     _lostCardUpAtLeave = _wouldShowConnectionLostBody();
+    _offlineEndCardUpAtLeave = _isOfflineEndCardNow();
     _leaving = true;
+  }
+
+  /// C-544 D1: the end card is drawn in its offline variant right now, same
+  /// condition as [build] (C-316 rule 4).
+  bool _isOfflineEndCardNow() {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    final bool isOffline =
+        controller.phase == RoomPhase.failed ||
+        controller.phase == RoomPhase.closed ||
+        controller.phase == RoomPhase.connecting;
+    return isOffline &&
+        room != null &&
+        ((room.state == RoomState.finished && !_isEndHeld) ||
+            (room.state == RoomState.lobby && controller.lastFinished != null));
   }
 
   /// A1.1: hands [result] to Home whatever sits above this route. A bare pop
@@ -2873,6 +2895,9 @@ class _GameScreenState extends State<GameScreen> {
   /// C-540 D5: a card that was not up when the route began to leave is not
   /// drawn for the rest of the exit, so the body the player last saw stays.
   bool get _lostCardSuppressed => _leaving && !_lostCardUpAtLeave;
+
+  /// C-544 D1: the end card keeps the variant it had when the leave began.
+  bool get _offlineEndCardSuppressed => _leaving && !_offlineEndCardUpAtLeave;
 
   bool _isShowingConnectionLostBody() =>
       _wouldShowConnectionLostBody() && !_lostCardSuppressed;
@@ -3740,7 +3765,12 @@ class _GameScreenState extends State<GameScreen> {
     } else if (rematchGone) {
       body = _gameOverBody(loc, controller, room, rematchGone: true);
     } else if (isOfflineEndCard) {
-      body = _gameOverBody(loc, controller, room, isOffline: true);
+      body = _gameOverBody(
+        loc,
+        controller,
+        room,
+        isOffline: !_offlineEndCardSuppressed,
+      );
     } else if (room != null && isOffline && _lostCardSuppressed) {
       // C-540 D5: my own leave is closing the socket. The table the player
       // last saw stays as it was, with no card and no dimming.
