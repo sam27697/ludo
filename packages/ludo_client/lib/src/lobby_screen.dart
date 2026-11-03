@@ -564,7 +564,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           WaitingLine(
             key: const Key('lobby-connecting-line'),
             text: loc.lobbyConnecting,
-            style: DefaultTextStyle.of(context).style,
+            style: Theme.of(context).textTheme.bodyMedium,
             showMark: false,
           ),
           const SizedBox(height: kSpace4),
