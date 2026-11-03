@@ -965,7 +965,14 @@ void main() {
         reason: 'H8: hasDesynced true must show the desync banner',
       );
       final banner = tester.widget<Text>(find.byKey(_desyncKey));
-      expect(banner.data, loc.lobbyDesynced);
+      expect(banner.data, loc.gameCatchingUp);
+      expect(
+        banner.data,
+        isNot(loc.lobbyDesynced),
+        reason:
+            'H8 / C-549 D4: the game screen banner must not use the lobby '
+            'wording "${loc.lobbyDesynced}"',
+      );
       expect(
         find.byKey(_boardKey),
         findsOneWidget,

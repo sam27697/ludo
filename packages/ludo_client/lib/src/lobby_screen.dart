@@ -22,6 +22,7 @@ import 'sound_toggle.dart';
 import 'rule_off_strike.dart';
 import 'session_memory.dart' show SeatRecord;
 import 'theme.dart';
+import 'waiting_line.dart';
 
 /// The one request LobbyScreen issues, once, from initState.
 enum LobbyAction { create, join, resume }
@@ -558,7 +559,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
         children: [
           const CircularProgressIndicator(),
           const SizedBox(height: kSpace4),
-          Text(loc.lobbyConnecting),
+          // C-549 D3: the spinner stays the one turning mark here; the line
+          // only adds its slow second line after 4 s.
+          WaitingLine(
+            key: const Key('lobby-connecting-line'),
+            text: loc.lobbyConnecting,
+            style: Theme.of(context).textTheme.bodyMedium,
+            showMark: false,
+          ),
           const SizedBox(height: kSpace4),
           OutlinedButton(
             key: const Key('lobby-cancel-button'),
@@ -644,6 +652,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Widget _closedBody(AppLocalizations loc, RoomController controller) {
+    if (controller.seatTakenOver) {
+      return Center(child: _seatMovedCard(loc, const Key('lobby-closed')));
+    }
     return Center(
       child: _lobbyCard(
         cardKey: const Key('lobby-closed'),
@@ -651,25 +662,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
         title: loc.lobbyConnectionLost,
         children: [
           if (controller.autoReconnectPending) ...[
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  Icons.sync_rounded,
-                  size: 18,
-                  color: LudoColors.inkMuted,
-                ),
-                const SizedBox(width: kSpace2),
-                Flexible(
-                  child: Text(
-                    loc.lobbyReconnecting,
-                    key: const Key('lobby-reconnecting'),
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodyMedium
-                        ?.copyWith(color: LudoColors.inkMuted),
-                  ),
-                ),
-              ],
+            WaitingLine(
+              key: const Key('lobby-waiting-line'),
+              text: loc.lobbyReconnecting,
+              textKey: const Key('lobby-reconnecting'),
             ),
             const SizedBox(height: kSpace4),
           ],
@@ -692,6 +688,29 @@ class _LobbyScreenState extends State<LobbyScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  /// C-547 D2: the card for a seat another phone took over, in the lobby's
+  /// card shape under [cardKey]. The reason, no Reconnect (resuming would take
+  /// the seat back from that phone) and Leave as the one filled action. Its
+  /// Key is not `lobby-leave-button`: the header's corner close owns that one
+  /// on the stale-room overlay.
+  Widget _seatMovedCard(AppLocalizations loc, Key cardKey) {
+    return _lobbyCard(
+      cardKey: cardKey,
+      icon: Icons.phonelink_rounded,
+      title: loc.seatMovedLine,
+      children: [
+        ElevatedButton(
+          key: const Key('lobby-seat-moved-leave'),
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+          ),
+          onPressed: _leaveLobby,
+          child: Text(loc.gameLeaveButton),
+        ),
+      ],
     );
   }
 
@@ -739,6 +758,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// shows the Reconnect button. The corner close is the way out; no Leave
   /// button in the card.
   Widget _connectionLostCard(AppLocalizations loc, RoomController controller) {
+    if (controller.seatTakenOver) {
+      return Center(child: _seatMovedCard(loc, const Key('lobby-closed')));
+    }
     final bool isRetrying =
         controller.autoReconnectPending ||
         controller.phase == RoomPhase.connecting;
@@ -771,25 +793,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 ),
                 const SizedBox(height: kSpace4),
                 if (isRetrying)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.sync_rounded,
-                        size: 18,
-                        color: LudoColors.inkMuted,
-                      ),
-                      const SizedBox(width: kSpace2),
-                      Flexible(
-                        child: Text(
-                          loc.lobbyReconnecting,
-                          key: const Key('lobby-reconnecting'),
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(color: LudoColors.inkMuted),
-                        ),
-                      ),
-                    ],
+                  WaitingLine(
+                    key: const Key('lobby-waiting-line'),
+                    text: loc.lobbyReconnecting,
+                    textKey: const Key('lobby-reconnecting'),
                   )
                 else
                   ElevatedButton(
@@ -1006,6 +1013,29 @@ class _LobbyScreenState extends State<LobbyScreen> {
     );
   }
 
+  /// C-551 D2: a docked waiting line is a status, so it carries a still
+  /// hourglass ahead of the text. The row follows the ambient direction, so
+  /// the mark sits on the right in Arabic. The mark is out of semantics and
+  /// does not move: the seat list above is what moves when a friend joins.
+  Widget _dockedWaiting(String text, Key textKey) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: <Widget>[
+        const ExcludeSemantics(
+          child: Icon(
+            Icons.hourglass_top_rounded,
+            size: 18,
+            color: LudoColors.inkMuted,
+          ),
+        ),
+        const SizedBox(width: kSpace2),
+        Flexible(
+          child: Text(text, key: textKey, textAlign: TextAlign.center),
+        ),
+      ],
+    );
+  }
+
   /// C-398: the host's start, the short-room start, and the waiting line
   /// (and the rematch accept that replaces them) sit outside the scroll.
   List<Widget> _lobbyAction(
@@ -1031,21 +1061,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
     if (inRematchLobby && amReadyForRematch) {
       return <Widget>[
-        Text(
+        _dockedWaiting(
           loc.endRematchWaiting,
-          key: const Key('lobby-rematch-waiting'),
-          textAlign: TextAlign.center,
+          const Key('lobby-rematch-waiting'),
         ),
       ];
     }
     if (!controller.isHost) {
       return <Widget>[
-        Text(
+        _dockedWaiting(
           roomFull
               ? loc.lobbyWaitingForHost
               : loc.lobbyWaitingForPlayers(room.seats.length, room.players),
-          key: const Key('lobby-waiting'),
-          textAlign: TextAlign.center,
+          const Key('lobby-waiting'),
         ),
       ];
     }
@@ -1064,10 +1092,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ];
     }
     return <Widget>[
-      Text(
+      _dockedWaiting(
         loc.lobbyWaitingForPlayers(room.seats.length, room.players),
-        key: const Key('lobby-waiting'),
-        textAlign: TextAlign.center,
+        const Key('lobby-waiting'),
       ),
       if (room.state == RoomState.lobby && room.seats.length >= 2) ...[
         SizedBox(height: compact ? kSpace1 : kSpace2),

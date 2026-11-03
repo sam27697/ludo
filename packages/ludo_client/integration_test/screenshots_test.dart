@@ -89,6 +89,16 @@
 //                             name plus the numeral 2
 //   121-end-same-names-en.png  loser's end card, English, seat 2 (the second
 //                             "Player") won: the title names "Player 2"
+//   122-game-seat-moved-en.png  game, English, the takeover card after an
+//                             unsolicited BAD_SEAT_TOKEN and the close
+//   123-game-seat-moved-ar.png  game, Arabic, the same takeover card
+//   124-lobby-seat-moved-ar.png  lobby holding a room, Arabic, the takeover
+//                             card over the stale gathering
+//   125-game-reconnecting-slow-en.png  game, English, the reconnecting row
+//                             after the slow line has appeared
+//   126-game-reconnecting-slow-ar.png  game, Arabic, the same slow row
+//   127-game-catching-up-ar.png  game, Arabic, the desync banner reading
+//                             "updating the table"
 //   (114 stays unused: dropped in run 124, a 360 x 640 surface hung the
 //   emulator. 117, the lobby closed card with no room held, is not built:
 //   the controller cannot be left in that state by any frame sequence.)
@@ -6848,6 +6858,77 @@ void main() {
       roomCode: 'SN1E5W',
       gameId: '121' * 5 + '1',
       seatToken: 'tok-shot-121',
+    );
+  });
+
+  // ==========================================================================
+  // 122-127: orders 547 and 549 (C-547, C-549). 122-124 are the takeover card
+  // on the game and on a lobby holding a room, 125-126 the reconnecting row
+  // once the slow line has appeared, 127 the game's catching-up banner.
+  // Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 122-game-seat-moved-en', (tester) async {
+    await _shootGameSeatMoved(
+      tester,
+      binding,
+      shotName: '122-game-seat-moved-en',
+      locale: const Locale('en'),
+      roomCode: 'SM2E4A',
+      seatToken: 'tok-shot-122',
+    );
+  });
+
+  testWidgets('capture 123-game-seat-moved-ar', (tester) async {
+    await _shootGameSeatMoved(
+      tester,
+      binding,
+      shotName: '123-game-seat-moved-ar',
+      locale: const Locale('ar'),
+      roomCode: 'SM3A5K',
+      seatToken: 'tok-shot-123',
+    );
+  });
+
+  testWidgets('capture 124-lobby-seat-moved-ar', (tester) async {
+    await _shootLobbySeatMoved(
+      tester,
+      binding,
+      shotName: '124-lobby-seat-moved-ar',
+      locale: const Locale('ar'),
+      roomCode: 'SM4L6W',
+      seatToken: 'tok-shot-124',
+    );
+  });
+
+  testWidgets('capture 125-game-reconnecting-slow-en', (tester) async {
+    await _shootGameReconnectingSlow(
+      tester,
+      binding,
+      shotName: '125-game-reconnecting-slow-en',
+      locale: const Locale('en'),
+      roomCode: 'RS5E7A',
+      seatToken: 'tok-shot-125',
+    );
+  });
+
+  testWidgets('capture 126-game-reconnecting-slow-ar', (tester) async {
+    await _shootGameReconnectingSlow(
+      tester,
+      binding,
+      shotName: '126-game-reconnecting-slow-ar',
+      locale: const Locale('ar'),
+      roomCode: 'RS6A8K',
+      seatToken: 'tok-shot-126',
+    );
+  });
+
+  testWidgets('capture 127-game-catching-up-ar', (tester) async {
+    await _shootGameCatchingUp(
+      tester,
+      binding,
+      shotName: '127-game-catching-up-ar',
+      locale: const Locale('ar'),
+      roomCode: 'CU7A9W',
     );
   });
 }
@@ -18220,6 +18301,630 @@ Future<void> _shootEndSameNames(
       expectedText: loc.endLoseTitle('$player ${material.formatDecimal(2)}'),
       momentDescription: scenario,
     );
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// A PLAYING game on a bare GameScreen, built the way capture 10 builds its
+/// own: a real RoomController on a FakeTransport, a create reply carrying a
+/// PLAYING room, no route in front of it. A null [seatToken] sends no
+/// `seat_assigned`, so a later seq gap sets `hasDesynced` without sending a
+/// resume and leaves no request timer running. Caller releases it with
+/// _releaseTrayGame.
+Future<_OpenedTrayGame> _openBareGame(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String? seatToken,
+  List<Duration> autoReconnectDelays = const <Duration>[],
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final FakeTransport transport = FakeTransport();
+  final RoomController controller = RoomController(
+    serverUrl: Uri.parse(_testUrl),
+    connect: (Uri url) async => transport,
+    autoReconnectDelays: autoReconnectDelays,
+  );
+  final Future<void> createFuture = controller.createRoom(
+    name: 'Priya',
+    players: 2,
+  );
+  await tester.pump();
+  await tester.pump();
+  final String createId = _idOf(transport.sentRaw.last);
+  if (seatToken != null) {
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+  }
+  transport.pushText(
+    _frame(
+      type: 'room',
+      re: createId,
+      data: _roomJson(
+        code: roomCode,
+        state: 'PLAYING',
+        players: 2,
+        seats: <Map<String, Object?>>[
+          _seatJson(0, name: 'Priya'),
+          _seatJson(1, name: 'Karim'),
+        ],
+        turn: <String, Object?>{
+          'seat': 0,
+          'phase': 'await_roll',
+          'deadline_ms': 45000,
+          'k': 0,
+        },
+        seq: 1,
+      ),
+    ),
+  );
+  await createFuture;
+  expect(
+    controller.phase,
+    RoomPhase.connected,
+    reason:
+        'capture $shotName: fixture is broken, the create reply must land '
+        'connected, room $roomCode, got ${controller.phase}',
+  );
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      GameScreen(controller: controller),
+      locale: locale,
+    ),
+  );
+  await tester.pump();
+  await _pumpRealDurationFrames(tester, frameCount: 4);
+  return _OpenedTrayGame(controller: controller, transport: transport, seq: 1);
+}
+
+/// Pushes the frame the server sends a displaced socket (an `error` with no
+/// `re`, code BAD_SEAT_TOKEN) and then ends the link. The fake transport
+/// carries no close code, so the 4004 that follows the frame on the wire is
+/// the end of the stream here.
+Future<void> _takeSeatOver(WidgetTester tester, FakeTransport transport) async {
+  transport.pushText(
+    _frame(
+      type: 'error',
+      data: const <String, Object?>{
+        'code': 'BAD_SEAT_TOKEN',
+        'message': _serverWords,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  transport.endFromFarSide();
+  await tester.pump();
+  await tester.pump();
+}
+
+/// 122 and 123 (order 552, C-547 D2). A PLAYING game, then the server's
+/// unsolicited BAD_SEAT_TOKEN and the close. The card keeps the connection-lost
+/// Key, says `seatMovedLine`, and offers Leave alone: no Reconnect, no
+/// reconnecting row, no wifi-off icon.
+Future<void> _shootGameSeatMoved(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String seatToken,
+}) async {
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, unsolicited '
+      'BAD_SEAT_TOKEN then a far-side close';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openBareGame(
+      tester,
+      binding,
+      shotName: shotName,
+      locale: locale,
+      roomCode: roomCode,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    await _takeSeatOver(tester, opened.transport);
+
+    void expectCard(String moment) {
+      expect(
+        <Object?>[controller!.seatTakenOver, controller.phase],
+        <Object?>[true, RoomPhase.closed],
+        reason:
+            'capture $shotName ($scenario) $moment: expected seatTakenOver '
+            'true and phase closed, got ${controller.seatTakenOver}, '
+            '${controller.phase}',
+      );
+      final AppLocalizations loc = AppLocalizations.of(
+        tester.element(find.byType(GameScreen)),
+      );
+      expect(
+        loc.localeName,
+        locale.languageCode,
+        reason:
+            'capture $shotName ($scenario) $moment: expected locale '
+            '${locale.languageCode}, got ${loc.localeName}',
+      );
+      expect(
+        find.byKey(const Key('game-screen-connection-lost')),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: expected '
+            'game-screen-connection-lost on screen; the texts on screen are '
+            '${_viewText(tester)}',
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('game-screen-connection-lost')),
+          matching: find.text(loc.seatMovedLine),
+        ),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: the card must say '
+            '"${loc.seatMovedLine}"',
+      );
+      expect(
+        find.text(loc.lobbyConnectionLost, skipOffstage: false),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario) $moment: the plain title "'
+            '${loc.lobbyConnectionLost}" is a false reason here',
+      );
+      expect(
+        find.byKey(const Key('game-screen-leave-button')),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: Leave is the one action',
+      );
+      for (final String gone in <String>[
+        'game-screen-reconnect-button',
+        'game-screen-reconnecting',
+        'game-screen-error-message',
+      ]) {
+        expect(
+          find.byKey(Key(gone), skipOffstage: false),
+          findsNothing,
+          reason:
+              'capture $shotName ($scenario) $moment: $gone must not be '
+              'drawn on the takeover card',
+        );
+      }
+      expect(
+        find.byIcon(Icons.phonelink_rounded),
+        findsOneWidget,
+        reason: 'capture $shotName ($scenario) $moment: the takeover icon',
+      );
+      expect(
+        find.byIcon(Icons.wifi_off_rounded),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario) $moment: the wifi-off icon belongs '
+            'to the plain card',
+      );
+    }
+
+    expectCard('right after the close');
+    await _pumpRealDurationFrames(tester);
+    expectCard('after the settle, before the capture');
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// 124 (order 552, C-547 D2 and A1). A host lobby holding its room, then the
+/// same takeover. The gathering stays dimmed under the card; the card's Leave
+/// carries `lobby-seat-moved-leave` and the header's corner close keeps
+/// `lobby-leave-button`, one widget each.
+Future<void> _shootLobbySeatMoved(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String seatToken,
+}) async {
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, unsolicited '
+      'BAD_SEAT_TOKEN then a far-side close';
+  RoomController? controller;
+  try {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+    await (await SharedPreferences.getInstance()).clear();
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+    final FakeTransport transport = FakeTransport();
+    controller = RoomController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: (Uri url) async => transport,
+    );
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.create,
+          playerName: 'Dee',
+          players: 4,
+        ),
+        locale: locale,
+      ),
+    );
+    await tester.pump();
+    expect(
+      transport.sentRaw,
+      isNotEmpty,
+      reason:
+          'capture $shotName ($scenario): fixture is broken, '
+          'LobbyScreen.initState must have sent create_room',
+    );
+    final String createId = _idOf(transport.sentRaw.last);
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: roomCode,
+          players: 4,
+          seats: <Map<String, Object?>>[_seatJson(0, name: 'Dee')],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(
+      controller.phase,
+      RoomPhase.connected,
+      reason:
+          'capture $shotName ($scenario): fixture is broken, the create '
+          'reply must land connected, got ${controller.phase}',
+    );
+
+    await _takeSeatOver(tester, transport);
+
+    void expectCard(String moment) {
+      expect(
+        <Object?>[controller!.seatTakenOver, controller.phase],
+        <Object?>[true, RoomPhase.closed],
+        reason:
+            'capture $shotName ($scenario) $moment: expected seatTakenOver '
+            'true and phase closed, got ${controller.seatTakenOver}, '
+            '${controller.phase}',
+      );
+      final AppLocalizations loc = AppLocalizations.of(
+        tester.element(find.byType(LobbyScreen)),
+      );
+      expect(
+        loc.localeName,
+        locale.languageCode,
+        reason:
+            'capture $shotName ($scenario) $moment: expected locale '
+            '${locale.languageCode}, got ${loc.localeName}',
+      );
+      expect(
+        find.byKey(const Key('lobby-closed')),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: expected lobby-closed '
+            'on screen; the texts on screen are ${_viewText(tester)}',
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-closed')),
+          matching: find.text(loc.seatMovedLine),
+        ),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: the card must say '
+            '"${loc.seatMovedLine}"',
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-stale-room')),
+          matching: find.byKey(const Key('lobby-room-code')),
+        ),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: the held room $roomCode '
+            'must stay under the card inside lobby-stale-room',
+      );
+      expect(
+        find.byKey(const Key('lobby-seat-moved-leave')),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: the card\'s Leave must '
+            'carry lobby-seat-moved-leave',
+      );
+      expect(
+        find.byKey(const Key('lobby-leave-button')),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: the header close alone '
+            'carries lobby-leave-button',
+      );
+      for (final String gone in <String>[
+        'lobby-reconnect-button',
+        'lobby-reconnecting',
+      ]) {
+        expect(
+          find.byKey(Key(gone), skipOffstage: false),
+          findsNothing,
+          reason:
+              'capture $shotName ($scenario) $moment: $gone must not be '
+              'drawn on the takeover card',
+        );
+      }
+      expect(
+        find.byIcon(Icons.wifi_off_rounded),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario) $moment: the wifi-off icon belongs '
+            'to the plain card',
+      );
+    }
+
+    expectCard('right after the close');
+    await _pumpRealDurationFrames(tester);
+    expectCard('after the settle, before the capture');
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// 125 and 126 (order 552, C-549 D1). The capture 10 fixture, held open past
+/// the slow-line threshold. The automatic attempt is five minutes away, so the
+/// reconnecting row stays up for the whole wait. Every pump is a fixed 100 ms
+/// frame: the turning mark never lets pumpAndSettle return.
+Future<void> _shootGameReconnectingSlow(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String seatToken,
+}) async {
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, transport dropped, '
+      'automatic attempt 5 minutes out, 4.5 s of frames pumped';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openBareGame(
+      tester,
+      binding,
+      shotName: shotName,
+      locale: locale,
+      roomCode: roomCode,
+      seatToken: seatToken,
+      autoReconnectDelays: const <Duration>[
+        Duration(minutes: 5),
+        Duration(minutes: 5),
+      ],
+    );
+    controller = opened.controller;
+    opened.transport.endFromFarSide();
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      <Object?>[controller.phase, controller.autoReconnectPending],
+      <Object?>[RoomPhase.closed, true],
+      reason:
+          'capture $shotName ($scenario): fixture is broken, the drop must '
+          'leave phase closed with an automatic attempt pending, got '
+          '${controller.phase}, ${controller.autoReconnectPending}',
+    );
+    expect(
+      find.byKey(const Key('game-screen-reconnecting')),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected game-screen-reconnecting '
+          'on screen when the row first appears',
+    );
+    expect(
+      find.byKey(const Key('waiting-line-slow')),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): the slow line must not be drawn '
+          'the moment the row first appears',
+    );
+
+    // 45 frames of 100 ms is the 4.5 s of fixture time; the finder wait
+    // after it covers a timer that fires on the frame boundary.
+    await _pumpRealDurationFrames(
+      tester,
+      frameCount: 45,
+      frame: const Duration(milliseconds: 100),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('waiting-line-slow')),
+      'capture $shotName ($scenario): waiting-line-slow after 4.5 s',
+      maxPumps: 20,
+      frame: const Duration(milliseconds: 100),
+    );
+
+    void expectSlowRow(String moment) {
+      expect(
+        <Object?>[controller!.phase, controller.autoReconnectPending],
+        <Object?>[RoomPhase.closed, true],
+        reason:
+            'capture $shotName ($scenario) $moment: expected phase closed '
+            'with the automatic attempt still pending, got '
+            '${controller.phase}, ${controller.autoReconnectPending}; the '
+            'sequence gave up or fired during the wait',
+      );
+      final AppLocalizations loc = AppLocalizations.of(
+        tester.element(find.byType(GameScreen)),
+      );
+      expect(
+        loc.localeName,
+        locale.languageCode,
+        reason:
+            'capture $shotName ($scenario) $moment: expected locale '
+            '${locale.languageCode}, got ${loc.localeName}',
+      );
+      expect(
+        find.byKey(const Key('game-screen-connection-lost')),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: expected '
+            'game-screen-connection-lost on screen',
+      );
+      final Finder row = find.byKey(const Key('game-screen-reconnecting'));
+      expect(
+        row,
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: expected '
+            'game-screen-reconnecting on screen',
+      );
+      expect(
+        tester.widget<Text>(row).data,
+        loc.lobbyReconnecting,
+        reason:
+            'capture $shotName ($scenario) $moment: the row must read '
+            '"${loc.lobbyReconnecting}"',
+      );
+      final Finder slow = find.byKey(const Key('waiting-line-slow'));
+      expect(
+        slow,
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: expected '
+            'waiting-line-slow on screen after 4.5 s; the texts on screen '
+            'are ${_viewText(tester)}',
+      );
+      expect(
+        tester.widget<Text>(slow).data,
+        loc.connectionSlowLine,
+        reason:
+            'capture $shotName ($scenario) $moment: the slow line must read '
+            '"${loc.connectionSlowLine}"',
+      );
+      expect(
+        find.byKey(const Key('game-screen-reconnect-button')),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario) $moment: no Reconnect button '
+            'while the automatic attempt is pending',
+      );
+    }
+
+    expectSlowRow('after 4.5 s');
+    await _pumpRealDurationFrames(tester);
+    expectSlowRow('after the settle, before the capture');
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// 127 (order 552, C-549 D4). A PLAYING game whose next push skips seq 999:
+/// the controller sets `hasDesynced` and the game screen's banner speaks
+/// `gameCatchingUp`, not the lobby's resync wording. No seat token is
+/// cached, so no resume goes out and no request timer is left running.
+Future<void> _shootGameCatchingUp(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+}) async {
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, a presence push at '
+      'seq 999 over a room at seq 1, no seat token';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openBareGame(
+      tester,
+      binding,
+      shotName: shotName,
+      locale: locale,
+      roomCode: roomCode,
+      seatToken: null,
+    );
+    controller = opened.controller;
+    opened.transport.pushText(
+      _frame(
+        type: 'presence',
+        data: const <String, Object?>{
+          'seat': 1,
+          'connected': false,
+          'seq': 999,
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    void expectBanner(String moment) {
+      expect(
+        controller!.hasDesynced,
+        isTrue,
+        reason:
+            'capture $shotName ($scenario) $moment: the seq gap must leave '
+            'hasDesynced true',
+      );
+      final AppLocalizations loc = AppLocalizations.of(
+        tester.element(find.byType(GameScreen)),
+      );
+      expect(
+        loc.localeName,
+        locale.languageCode,
+        reason:
+            'capture $shotName ($scenario) $moment: expected locale '
+            '${locale.languageCode}, got ${loc.localeName}',
+      );
+      final Finder banner = find.byKey(const Key('game-screen-desync-banner'));
+      expect(
+        banner,
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: expected '
+            'game-screen-desync-banner on screen; the texts on screen are '
+            '${_viewText(tester)}',
+      );
+      expect(
+        tester.widget<Text>(banner).data,
+        loc.gameCatchingUp,
+        reason:
+            'capture $shotName ($scenario) $moment: the banner must read '
+            '"${loc.gameCatchingUp}"',
+      );
+      expect(
+        find.text(loc.lobbyDesynced, skipOffstage: false),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario) $moment: the lobby wording "'
+            '${loc.lobbyDesynced}" does not belong on the game screen',
+      );
+    }
+
+    expectBanner('right after the gap');
+    await _pumpRealDurationFrames(tester);
+    expectBanner('after the settle, before the capture');
     await binding.takeScreenshot(shotName);
   } finally {
     await _releaseTrayGame(tester, controller);
