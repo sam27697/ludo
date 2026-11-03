@@ -160,7 +160,12 @@ shows, in this order:
    `data-ok` and `data-fail` attributes for `verify.js` to fill in --
    `"checked: all {n} rolls verified"` and `"checked: failed ({reason})"` in
    English, their Arabic equivalents on the Arabic page.
-5. The finish time (UTC) and the winning seat, as "Seat N".
+5. The finish time (UTC) and the winner, named by seat colour: "Winner: Red."
+   (Arabic "الفائز: الأحمر."), the word preceded by a small decorative swatch
+   (`aria-hidden="true"`, 1 px dark border) in the seat's colour. The four
+   words, seat 0 to 3 as in `LudoColors.seats` of the client theme: Red,
+   Green, Yellow, Blue (الأحمر, الأخضر, الأصفر, الأزرق). A seat value outside
+   0..3 prints as it is, with no swatch.
 6. What the checks prove and what they do not, in two short lists, from
    FAIRNESS.md section 0: the server fixed every roll before the game and
    could not change them; the players' seeds were mixed into every roll after
@@ -168,13 +173,17 @@ shows, in this order:
    proven: that the server's secret itself came from a good random source.
    The words "provably fair", "absolutely random", "odds", "bet" and "wager"
    do not appear, in either language.
-7. `chain_commit`, `chain_length`, and the seeds table: seat, seed, and origin
-   in words ("chosen by this player" / "drawn by the server: this seat added
-   no randomness of its own").
+7. `chain_commit`, `chain_length`, and the seeds table: player, seed, and
+   origin in words ("chosen by this player" / "drawn by the server: this
+   player added no randomness of their own"). The player cell is the swatch
+   and the colour word of item 5 (column header "Player" / "اللاعب"), and the
+   `<td>` carries the record's seat integer as `data-seat="<n>"`.
 8. The rolls table, carrying `data-match` and `data-mismatch` attributes for
-   `verify.js`: `k`, seat, die, reveal, and two check cells per row, "chain"
+   `verify.js`: `k`, player, die, reveal, and two check cells per row, "chain"
    and "die", which read "not checked" in the HTML and are filled in by
-   `verify.js`.
+   `verify.js`. The player cell is the swatch and colour word of item 5 with
+   `data-seat="<n>"` on the `<td>`, and follows the page direction (no
+   `dir="ltr"`).
 9. How to check it without trusting this page: the command
    `curl -sO https://provefair.app/v/verify.py && python3 verify.py <game_id>`
    and the link to the source, `https://github.com/sam27697/ludo`.

@@ -147,7 +147,9 @@ Future<String> _bodyOf(HttpClientResponse response) =>
 List<String> _arabicOnFoundPage(String gameId) => <String>[
       'التحقق من اللعبة $gameId - Ludo RNG',
       'اللعبة $gameId',
-      'انتهت في 2026-03-02T00:00:00Z UTC. الفائز: المقعد 1.',
+      // C-542: the winner is named by colour; the word itself is pinned in
+      // test/verify_page_colour_test.dart, this row keeps the sentence's head.
+      'انتهت في 2026-03-02T00:00:00Z UTC. الفائز:',
       'ما الذي تثبته هذه الصفحة',
       'ثبّت الخادم كل رميات هذه اللعبة قبل أن تبدأ، ولم يكن بإمكانه تغيير '
           'أي منها بعد ذلك.',
@@ -162,7 +164,7 @@ List<String> _arabicOnFoundPage(String gameId) => <String>[
       'طول السلسلة:',
       'البذور',
       'اختارها هذا اللاعب',
-      'سحبها الخادم: هذا المقعد لم يضف عشوائية من عنده',
+      'سحبها الخادم: هذا اللاعب لم يضف عشوائية من عنده',
       'الرميات',
       'لم يُفحص',
       'لم يتم التحقق بعد',
@@ -179,7 +181,7 @@ List<String> _arabicOnFoundPage(String gameId) => <String>[
 List<String> _englishReplacedOnFoundPage(String gameId) => <String>[
       'Verify game $gameId - Ludo RNG',
       'Game $gameId',
-      'Finished 2026-03-02T00:00:00Z UTC. Winner: Seat 1.',
+      'Finished 2026-03-02T00:00:00Z UTC. Winner:',
       'What this proves',
       'The server fixed every roll of this game before the game began, and\n'
           'could not change any of them afterwards.',
@@ -198,7 +200,7 @@ List<String> _englishReplacedOnFoundPage(String gameId) => <String>[
       'Chain length:',
       'Seeds',
       'chosen by this player',
-      'drawn by the server: this seat added no randomness of its own',
+      'drawn by the server: this player added no randomness of their own',
       'Rolls',
       'not checked',
       // "not checked" (summary) is the same literal string as the cell
@@ -219,10 +221,16 @@ List<String> _englishReplacedOnFoundPage(String gameId) => <String>[
 /// off packages/ludo_server/lib/src/verify_page.dart verbatim, for
 /// decision 3 ("the English page keeps every sentence it has today, word
 /// for word").
+///
+/// Two rows follow C-542 (work/ludo/orders/C-542-verify-page-seat-colours.md):
+/// the winner line now ends in a colour word behind a swatch, so only its
+/// head is matched here, and the server-drawn seed line says player, not
+/// seat. The colour word itself is pinned in
+/// test/verify_page_colour_test.dart.
 List<String> _englishSentencesOnFfe63fd(String gameId) => <String>[
       'Verify game $gameId - Ludo RNG',
       'Game $gameId',
-      'Finished 2026-03-02T00:00:00Z UTC. Winner: Seat 1.',
+      'Finished 2026-03-02T00:00:00Z UTC. Winner:',
       'What this proves',
       'The server fixed every roll of this game before the game began, and\n'
           'could not change any of them afterwards.',
@@ -241,7 +249,7 @@ List<String> _englishSentencesOnFfe63fd(String gameId) => <String>[
       'Chain length:',
       'Seeds',
       'chosen by this player',
-      'drawn by the server: this seat added no randomness of its own',
+      'drawn by the server: this player added no randomness of their own',
       'Rolls',
       'not checked',
       'Check it yourself',

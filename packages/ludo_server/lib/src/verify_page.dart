@@ -30,6 +30,42 @@ const HtmlEscape _escaper = HtmlEscape();
 
 const String _sourceUrl = 'https://github.com/sam27697/ludo';
 
+/// C-542: the page names a seat by its colour, the way the board does. One
+/// row per seat index 0..3, in the order of `LudoColors.seats` in the
+/// client theme (`packages/ludo_client/lib/src/theme.dart`); a test reads
+/// that file as text so this table cannot drift from the board. The record
+/// keeps the seat as an integer and so does `data-seat` below.
+class _SeatColour {
+  const _SeatColour(this.hex, this.en, this.ar);
+
+  final String hex;
+  final String en;
+  final String ar;
+}
+
+const List<_SeatColour> _seatColours = <_SeatColour>[
+  _SeatColour('#D32F2F', 'Red', 'الأحمر'),
+  _SeatColour('#388E3C', 'Green', 'الأخضر'),
+  _SeatColour('#FBC02D', 'Yellow', 'الأصفر'),
+  _SeatColour('#1976D2', 'Blue', 'الأزرق'),
+];
+
+/// What a seat reads as: a small decorative swatch, then the colour word in
+/// the page language -- colour is never the only signal. The 1 px dark
+/// border keeps yellow visible on the page background. A value that is not
+/// an integer in 0..3 (the record format allows only those; this is
+/// defence) prints escaped as it is, with no swatch.
+String _seatMarkup(Object? seat, {required bool isAr}) {
+  if (seat is int && seat >= 0 && seat < _seatColours.length) {
+    final _SeatColour colour = _seatColours[seat];
+    return '<span aria-hidden="true" style="display:inline-block;'
+        'width:0.8em;height:0.8em;background:${colour.hex};'
+        'border:1px solid #1a1a1a;margin-inline-end:0.3em;'
+        'vertical-align:middle"></span>${isAr ? colour.ar : colour.en}';
+  }
+  return _esc(seat);
+}
+
 /// Decision 4's lead line, English. A plain Dart constant rather than text
 /// written straight into the template below so that wrapping this comment
 /// block (or the template itself) for line length can never fold a stray
@@ -155,6 +191,7 @@ String buildVerifyPageHtml(
   final List<Object?> seeds = record['seeds'] as List<Object?>;
   final List<Object?> rolls = record['rolls'] as List<Object?>;
 
+  final String winnerMarkup = _seatMarkup(winner, isAr: isAr);
   final String ltrAttr = isAr ? ' dir="ltr"' : '';
   final String notCheckedCell = isAr ? 'لم يُفحص' : 'not checked';
 
@@ -165,12 +202,14 @@ String buildVerifyPageHtml(
     final String originText = origin == 'player'
         ? (isAr ? 'اختارها هذا اللاعب' : 'chosen by this player')
         : (isAr
-            ? 'سحبها الخادم: هذا المقعد لم يضف عشوائية من عنده'
-            : 'drawn by the server: this seat added no randomness of its '
-                'own');
+            ? 'سحبها الخادم: هذا اللاعب لم يضف عشوائية من عنده'
+            : 'drawn by the server: this player added no randomness of '
+                'their own');
     seedRows
-      ..write('<tr><td$ltrAttr>')
+      ..write('<tr><td data-seat="')
       ..write(_esc(seed['seat']))
+      ..write('">')
+      ..write(_seatMarkup(seed['seat'], isAr: isAr))
       ..write('</td><td$ltrAttr>')
       ..write(_esc(seed['seed']))
       ..write('</td><td>')
@@ -186,8 +225,10 @@ String buildVerifyPageHtml(
     rollRows
       ..write('<tr><td$ltrAttr>')
       ..write(kEsc)
-      ..write('</td><td$ltrAttr>')
+      ..write('</td><td data-seat="')
       ..write(_esc(roll['seat']))
+      ..write('">')
+      ..write(_seatMarkup(roll['seat'], isAr: isAr))
       ..write('</td><td$ltrAttr>')
       ..write(_esc(roll['die']))
       ..write('</td><td class="reveal"$ltrAttr>')
@@ -258,7 +299,7 @@ $_sharedStyle
 <p>$leadLine</p>
 <p id="summary" data-ok="$dataOk" data-fail="$dataFail">$notCheckedSummary</p>
 
-<p>انتهت في <span dir="ltr">${_esc(finishedAt)} UTC</span>. الفائز: المقعد ${_esc(winner)}.</p>
+<p>انتهت في <span dir="ltr">${_esc(finishedAt)} UTC</span>. الفائز: $winnerMarkup.</p>
 
 <h2>ما الذي تثبته هذه الصفحة</h2>
 <ul>
@@ -278,14 +319,14 @@ $_sharedStyle
 
 <h2>البذور</h2>
 <table>
-<thead><tr><th>المقعد</th><th>البذرة</th><th>المصدر</th></tr></thead>
+<thead><tr><th>اللاعب</th><th>البذرة</th><th>المصدر</th></tr></thead>
 <tbody>
 $seedRows</tbody>
 </table>
 
 <h2>الرميات</h2>
 <table id="rolls-table" data-match="$dataMatch" data-mismatch="$dataMismatch">
-<thead><tr><th>k</th><th>المقعد</th><th>النرد</th><th>الكشف</th>
+<thead><tr><th>k</th><th>اللاعب</th><th>النرد</th><th>الكشف</th>
 <th>فحص السلسلة</th><th>فحص النرد</th></tr></thead>
 <tbody>
 $rollRows</tbody>
@@ -323,7 +364,7 @@ $_sharedStyle
 <p>$_enLeadLine</p>
 <p id="summary" data-ok="checked: all {n} rolls verified" data-fail="checked: failed ({reason})">not checked</p>
 
-<p>Finished ${_esc(finishedAt)} UTC. Winner: Seat ${_esc(winner)}.</p>
+<p>Finished ${_esc(finishedAt)} UTC. Winner: $winnerMarkup.</p>
 
 <h2>What this proves</h2>
 <ul>
@@ -347,14 +388,14 @@ build, and neither is in place here.</li>
 
 <h2>Seeds</h2>
 <table>
-<thead><tr><th>Seat</th><th>Seed</th><th>Origin</th></tr></thead>
+<thead><tr><th>Player</th><th>Seed</th><th>Origin</th></tr></thead>
 <tbody>
 $seedRows</tbody>
 </table>
 
 <h2>Rolls</h2>
 <table id="rolls-table" data-match="checked: matches" data-mismatch="checked: does not match">
-<thead><tr><th>k</th><th>Seat</th><th>Die</th><th>Reveal</th>
+<thead><tr><th>k</th><th>Player</th><th>Die</th><th>Reveal</th>
 <th>Chain check</th><th>Die check</th></tr></thead>
 <tbody>
 $rollRows</tbody>

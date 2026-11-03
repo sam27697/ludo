@@ -216,7 +216,8 @@ void main() {
       expect(body, isNotEmpty);
     });
 
-    test('the game id, chain_commit, every reveal, and "Seat <winner>" appear',
+    test(
+        'the game id, chain_commit, every reveal, and the winner\'s colour appear',
         () async {
       final _Harness harness = _Harness.build();
       active = harness;
@@ -239,9 +240,16 @@ void main() {
             reason: 'expected reveal for k=${roll['k']} in the page; body: '
                 '$body');
       }
-      expect(body.contains('Seat 1'), isTrue,
-          reason: 'expected the winning seat rendered as "Seat 1"; body: '
-              '$body');
+      // C-542: seat 1 is named by its colour, behind a swatch span, and the
+      // page never prints the bare seat number.
+      final String text = body
+          .replaceAll(RegExp(r'<[^>]*>'), '')
+          .replaceAll(RegExp(r'\s+'), ' ');
+      expect(text.contains('Winner: Green.'), isTrue,
+          reason: 'expected the winning seat 1 rendered as "Winner: Green."; '
+              'body: $body');
+      expect(body.contains('Seat'), isFalse,
+          reason: 'expected no "Seat" text anywhere in the page; body: $body');
     });
 
     test(
