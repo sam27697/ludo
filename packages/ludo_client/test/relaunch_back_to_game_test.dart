@@ -10,7 +10,9 @@
 //   R1..R7   D2/D3  a fresh record resumes on its own, an old one is dropped,
 //                   a legacy one (no session.seatSavedAt) keeps the button
 //   R8, R9   D4     a resume refused with NO_SUCH_ROOM or BAD_SEAT_TOKEN goes
-//                   home with a true line instead of lobby-error
+//                   home with a true line instead of lobby-error (C-540 D2:
+//                   NO_SUCH_ROOM reads "That game has ended.", BAD_SEAT_TOKEN
+//                   reads the removed line)
 //   R10      D5     any other failure is unchanged
 //   R11, R12 D4b    a room link to a reaped room gets its own line and no Retry
 //   R6b-d    D3b    the cold link race: the link wins, the reader answers
@@ -83,6 +85,7 @@ const Duration _kStale = Duration(minutes: 61);
 // compiling there.
 const String _enGone = 'That game has ended.';
 const String _arGone = 'انتهت تلك اللعبة.';
+const String _enRemoved = 'The next game started without you';
 const String _enLinkGone =
     'This game is no longer open. Ask your friend for a new link.';
 const String _arLinkGone =
@@ -560,6 +563,42 @@ void _expectGoneNotice(
       reason:
           '$scenario: the notice takes the slot above create-room-button '
           'that home-removed-notice uses',
+    );
+  }
+}
+
+/// C-540 D2: a resume refused BAD_SEAT_TOKEN reads the removed line, in the
+/// slot above create-room-button, and never the game-ended line.
+void _expectRemovedNotice(
+  WidgetTester tester, {
+  required String expected,
+  required String scenario,
+}) {
+  final Finder notice = find.byKey(_removedNoticeKey);
+  expect(
+    notice,
+    findsOneWidget,
+    reason:
+        '$scenario: Home must show home-removed-notice; found '
+        '${notice.evaluate().length}',
+  );
+  final Text text = tester.widget<Text>(notice);
+  expect(
+    text.data,
+    expected,
+    reason: '$scenario: the notice must read "$expected"; read "${text.data}"',
+  );
+  expect(
+    find.byKey(_goneNoticeKey, skipOffstage: false),
+    findsNothing,
+    reason: '$scenario: the game-ended notice must not show with it',
+  );
+  final Finder create = find.byKey(_createKey);
+  if (create.evaluate().length == 1) {
+    expect(
+      tester.getTopLeft(notice).dy,
+      lessThan(tester.getTopLeft(create).dy),
+      reason: '$scenario: the notice takes the slot above create-room-button',
     );
   }
 }
@@ -1054,10 +1093,10 @@ void main() {
 
   // ---------------------------------------------------------------- D4
   for (final String code in <String>['NO_SUCH_ROOM', 'BAD_SEAT_TOKEN']) {
+    final bool removed = code == 'BAD_SEAT_TOKEN';
     testWidgets('R8 (D4): an automatic resume answered $code goes home with '
-        'home-game-gone-notice, never lobby-error, and clears the record', (
-      tester,
-    ) async {
+        '${removed ? 'home-removed-notice (C-540 D2)' : 'home-game-gone-notice'}, '
+        'never lobby-error, and clears the record', (tester) async {
       _seedFresh();
       final _Factory factory = _Factory();
       await _mount(tester, _app(factory.call));
@@ -1079,7 +1118,11 @@ void main() {
         isTrue,
         reason: '$scenario: Home must be the current route',
       );
-      _expectGoneNotice(tester, expected: _enGone, scenario: scenario);
+      if (removed) {
+        _expectRemovedNotice(tester, expected: _enRemoved, scenario: scenario);
+      } else {
+        _expectGoneNotice(tester, expected: _enGone, scenario: scenario);
+      }
       await _expectStoreCleared(scenario);
       expect(
         factory.controllers,
@@ -1123,7 +1166,7 @@ void main() {
 
   testWidgets(
     'R8d (D4): a tap on the button answered BAD_SEAT_TOKEN goes home with the '
-    'notice, never lobby-error',
+    'removed notice (C-540 D2), never lobby-error',
     (tester) async {
       _seedLegacy();
       final _Factory factory = _Factory();
@@ -1145,7 +1188,7 @@ void main() {
         reason: '$scenario: lobby-error showed at pump(s) $withError',
       );
       expect(_homeIsCurrent(tester), isTrue, reason: '$scenario: Home current');
-      _expectGoneNotice(tester, expected: _enGone, scenario: scenario);
+      _expectRemovedNotice(tester, expected: _enRemoved, scenario: scenario);
       await _expectStoreCleared(scenario);
 
       await _finish(tester, factory.disposeAll, flush: false);
