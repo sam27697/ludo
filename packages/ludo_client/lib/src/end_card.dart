@@ -174,6 +174,11 @@ class EndCard extends StatefulWidget {
   /// 38 % and a tap plays the invalid-tap cue and sends nothing.
   final bool quickReplyCooling;
 
+  /// C-540 D3: handed the fair-hint sheet's own route when it builds, so the
+  /// game screen can close that sheet when a frame changes the screen under
+  /// it. Null draws the sheet the same and tracks nothing.
+  final void Function(Route<void> route)? onFairHintRoute;
+
   const EndCard({
     super.key,
     required this.mySeat,
@@ -199,6 +204,7 @@ class EndCard extends StatefulWidget {
     this.quickReplies = const <String>[],
     this.onQuickReply,
     this.quickReplyCooling = false,
+    this.onFairHintRoute,
   });
 
   @override
@@ -705,6 +711,10 @@ class _EndCardState extends State<EndCard> {
     showModalBottomSheet<void>(
       context: context,
       builder: (BuildContext sheetContext) {
+        final Route<void>? sheetRoute = ModalRoute.of<void>(sheetContext);
+        if (sheetRoute != null) {
+          widget.onFairHintRoute?.call(sheetRoute);
+        }
         return Padding(
           padding: const EdgeInsets.all(kSpace5),
           child: Text(loc.endFairHint, textAlign: TextAlign.center),

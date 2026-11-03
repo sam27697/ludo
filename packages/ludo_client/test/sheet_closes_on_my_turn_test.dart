@@ -12,10 +12,11 @@
 // buttons, then pushes the frame under test.
 //
 //   positive arms: a `turn` frame naming seat 0 closes the quick-message
-//     sheet, and the die is hit-testable. (The in-game settings sheet arms
-//     went with the sheet, C-523 D7.)
-//   negative arms: a `turn` frame naming seat 1, a `rolled` frame, an `emote`
-//     from seat 1, and the leave confirm all leave what is open in place.
+//     sheet and, since C-540 D3.4, the leave confirm, and the die is
+//     hit-testable. (The in-game settings sheet arms went with the sheet,
+//     C-523 D7.)
+//   negative arms: a `turn` frame naming seat 1, a `rolled` frame and an
+//     `emote` from seat 1 leave what is open in place.
 //
 // Announcements are read off SystemChannels.accessibility the way
 // test/talkback_announce_test.dart reads them. Every wait is a bounded
@@ -36,7 +37,6 @@ const Key _chatButtonKey = Key('game-chat-button');
 const Key _chatSheetKey = Key('quick-chat-sheet');
 const Key _leaveButtonKey = Key('game-screen-appbar-leave');
 const Key _leaveConfirmKey = Key('game-leave-confirm');
-const Key _leaveStayKey = Key('game-leave-confirm-stay');
 const Key _hostOpenKey = Key('test-open-game');
 const Key _hostPageKey = Key('test-host-page');
 
@@ -252,6 +252,35 @@ void main() {
           }
         },
       );
+
+      testWidgets(
+        'C-540 D3.4: the leave confirm is closed by my turn frame, the die is '
+        'reachable and the screen is still mounted ($lang)',
+        (tester) async {
+          final _Case c = await _start(
+            tester,
+            'leave-confirm-then-my-turn $lang',
+            locale: locale,
+          );
+          try {
+            await c.openLeaveConfirm();
+            await c.myTurn();
+            expect(
+              c.leaveConfirm,
+              findsNothing,
+              reason: c.why(
+                'game-leave-confirm is closed by the turn frame naming seat 0 '
+                '(its "the timer plays your turns" is false once it is my '
+                'turn)',
+              ),
+            );
+            c.expectGameMounted('after the confirm closes');
+            c.expectDieReachable('once the confirm is closed, on my turn');
+          } finally {
+            await _release(tester, c);
+          }
+        },
+      );
     });
   }
 
@@ -309,41 +338,6 @@ void main() {
         await _release(tester, c);
       }
     });
-
-    testWidgets(
-      'the leave confirm stays open when my turn frame arrives, and Stay '
-      'then closes only the confirm',
-      (tester) async {
-        final _Case c = await _start(tester, 'leave-confirm-then-my-turn');
-        try {
-          await c.openLeaveConfirm();
-          await c.myTurn();
-          expect(
-            c.leaveConfirm,
-            findsOneWidget,
-            reason: c.why(
-              'game-leave-confirm is a decision in progress, my turn frame '
-              'does not close it',
-            ),
-          );
-          c.expectGameMounted('with the confirm open');
-
-          c.s.steps.add('tap game-leave-confirm-stay');
-          await tester.tap(find.byKey(_leaveStayKey));
-          await tester.pump();
-          await c.s.pump(_sheetMotion);
-          expect(
-            c.leaveConfirm,
-            findsNothing,
-            reason: c.why('Stay closes the confirm'),
-          );
-          c.expectGameMounted('after Stay');
-          c.expectDieReachable('after Stay, on my turn');
-        } finally {
-          await _release(tester, c);
-        }
-      },
-    );
 
     testWidgets('my turn frame with no sheet open changes nothing on screen', (
       tester,

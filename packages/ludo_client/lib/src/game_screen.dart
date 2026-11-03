@@ -394,6 +394,30 @@ class _GameScreenState extends State<GameScreen> {
   // picker, or a sheet another screen opened.
   Route<void>? _chatSheetRoute;
 
+  // C-540 D3: the other two sheets this route opens, tracked the same way so
+  // one helper closes all three. The leave confirm hands over its route from
+  // its builder; the end card hands over the fair-hint sheet's.
+  Route<void>? _leaveConfirmRoute;
+  Route<void>? _fairHintRoute;
+
+  // C-540 D3 item 3: the phase the last controller notification saw, so only
+  // the step out of `connected` closes the sheets. A sheet opened while the
+  // link is already down (the fair hint on an offline end card) stays.
+  late RoomPhase _lastPhase;
+
+  // C-540 D5: latched the moment this route begins to leave, for any reason.
+  // While set the connection-lost card is not drawn and not announced unless
+  // it was already up when the leave began ([_lostCardUpAtLeave]), and a
+  // second Leave or New table tap does nothing (D6).
+  //
+  // C-544 D1: the same latch for the end card. One that was not the offline
+  // variant when the leave began stays the variant the player last saw, so
+  // the ack that closes the socket never swaps in the "no connection" line
+  // and its Play again ([_offlineEndCardUpAtLeave]).
+  bool _leaving = false;
+  bool _lostCardUpAtLeave = false;
+  bool _offlineEndCardUpAtLeave = false;
+
   // C-442 D5: the `game_id` of the last room this screen saw PLAYING and
   // whose `game_over` it has not received. A FINISHED snapshot naming this
   // same game is a game that ended while the screen was not listening.
@@ -523,6 +547,7 @@ class _GameScreenState extends State<GameScreen> {
   void initState() {
     super.initState();
     _currentGameId = widget.controller.room?.gameId;
+    _lastPhase = widget.controller.phase;
     _notePlayingGame();
     final RoomSnapshot? mountRoom = widget.controller.room;
     if (mountRoom != null &&
@@ -561,6 +586,10 @@ class _GameScreenState extends State<GameScreen> {
     unawaited(_loadHintUsed());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _maybeFetchGameLog();
+      // C-540 D1: mounted onto a controller that was already refused.
+      if (mounted) {
+        _leaveIfSeatRefused();
+      }
     });
   }
 
@@ -640,6 +669,12 @@ class _GameScreenState extends State<GameScreen> {
     if (frame.type == 'emote') {
       _onEmoteFrame(frame);
       return;
+    }
+    // C-540 D3 items 1 and 2: the new screen (the end card with its cue, or
+    // the new board) must not arrive under a scrim, so this runs ahead of
+    // every cue and announcement the frame owes.
+    if (frame.type == 'game_over' || frame.type == 'game_started') {
+      _closeOwnSheets();
     }
     // C-246 rule 5: a `game_started` naming a game this screen has not
     // already recorded is the next game after a rematch (or the very
@@ -877,7 +912,7 @@ class _GameScreenState extends State<GameScreen> {
   }) {
     feedback.play(cue);
     if (cue == FeedbackCue.yourTurn) {
-      // C-518 D1: my turn closes the sheet I opened, silently.
+      // C-518 D1, C-540 D3: my turn closes the sheets I opened, silently.
       _closeOwnSheets();
     }
     final String? message = _announcementFor(cue, snapshot: snapshot);
@@ -886,13 +921,18 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
-  /// C-518 D1. Closes the quick-message sheet this screen opened, if it is
-  /// still up. Only the sheet's own route is closed:
+  /// C-518 D1, C-540 D3. Closes the sheets this screen opened (the
+  /// quick-message sheet, the leave confirm and the end card's fair-hint
+  /// sheet), whichever are still up. Only each sheet's own route is closed:
   /// on top it pops with its exit motion, under a dialog it is removed in
   /// place, and a route that already left is left alone.
   void _closeOwnSheets() {
     _closeSheetRoute(_chatSheetRoute);
     _chatSheetRoute = null;
+    _closeSheetRoute(_leaveConfirmRoute);
+    _leaveConfirmRoute = null;
+    _closeSheetRoute(_fairHintRoute);
+    _fairHintRoute = null;
   }
 
   void _closeSheetRoute(Route<void>? route) {
@@ -2408,6 +2448,15 @@ class _GameScreenState extends State<GameScreen> {
 
   void _onControllerChanged() {
     final RoomController controller = widget.controller;
+    // C-540 D3 item 3: the link dropped under an open sheet. The
+    // connection-lost card brings its own Leave. A route that is already
+    // leaving has nothing to show it for (D5).
+    if (_lastPhase == RoomPhase.connected &&
+        controller.phase != RoomPhase.connected &&
+        !_leaving) {
+      _closeOwnSheets();
+    }
+    _lastPhase = controller.phase;
     if (controller.phase == RoomPhase.failed ||
         controller.phase == RoomPhase.closed) {
       _travelCount = 0;
@@ -2438,6 +2487,52 @@ class _GameScreenState extends State<GameScreen> {
       _clearSafeCue();
       _leaveGameRoute(GameScreenResult.gameGone);
     }
+    _leaveIfSeatRefused();
+  }
+
+  /// C-540 D1: the server refused this seat's token (a resume, a reconnect
+  /// or a reconnect-and-rematch, PROTOCOL 16.4, 16.9, section 18 rule 3), so
+  /// the seat is gone whatever the room held. The 4004 takeover carries no
+  /// error code and is not this.
+  bool get _seatRefused =>
+      widget.controller.phase == RoomPhase.failed &&
+      widget.controller.errorCode == 'BAD_SEAT_TOKEN';
+
+  /// C-540 D1: leaves once, latched with the `player_left` naming me, since
+  /// both mean the same thing to Home: removed.
+  void _leaveIfSeatRefused() {
+    if (!_seatRefused || _removedLeaveHandled) {
+      return;
+    }
+    _removedLeaveHandled = true;
+    _clearSafeCue();
+    _leaveGameRoute(GameScreenResult.removed);
+  }
+
+  /// C-540 D5. Latches [_leaving], remembering whether the connection-lost
+  /// card was already the body the player was looking at.
+  void _latchLeaving() {
+    if (_leaving) {
+      return;
+    }
+    _lostCardUpAtLeave = _wouldShowConnectionLostBody();
+    _offlineEndCardUpAtLeave = _isOfflineEndCardNow();
+    _leaving = true;
+  }
+
+  /// C-544 D1: the end card is drawn in its offline variant right now, same
+  /// condition as [build] (C-316 rule 4).
+  bool _isOfflineEndCardNow() {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    final bool isOffline =
+        controller.phase == RoomPhase.failed ||
+        controller.phase == RoomPhase.closed ||
+        controller.phase == RoomPhase.connecting;
+    return isOffline &&
+        room != null &&
+        ((room.state == RoomState.finished && !_isEndHeld) ||
+            (room.state == RoomState.lobby && controller.lastFinished != null));
   }
 
   /// A1.1: hands [result] to Home whatever sits above this route. A bare pop
@@ -2450,6 +2545,7 @@ class _GameScreenState extends State<GameScreen> {
     if (!route.isActive) {
       return;
     }
+    _latchLeaving();
     if (!route.isCurrent) {
       navigator.popUntil((Route<dynamic> r) => r == route);
     }
@@ -2796,13 +2892,28 @@ class _GameScreenState extends State<GameScreen> {
         room.state == RoomState.playing;
   }
 
+  /// C-540 D5: a card that was not up when the route began to leave is not
+  /// drawn for the rest of the exit, so the body the player last saw stays.
+  bool get _lostCardSuppressed => _leaving && !_lostCardUpAtLeave;
+
+  /// C-544 D1: the end card keeps the variant it had when the leave began.
+  bool get _offlineEndCardSuppressed => _leaving && !_offlineEndCardUpAtLeave;
+
+  bool _isShowingConnectionLostBody() =>
+      _wouldShowConnectionLostBody() && !_lostCardSuppressed;
+
   /// Mirrors [build]'s own decision of when [_connectionLostBody] is the
   /// body drawn, without rebuilding the widget tree: the end card (a gone
   /// rematch, or an offline end card) always wins over it, same priority
   /// order as [build].
-  bool _isShowingConnectionLostBody() {
+  bool _wouldShowConnectionLostBody() {
     final RoomController controller = widget.controller;
     final RoomSnapshot? room = controller.room;
+
+    // C-540 D1: a refused seat has no card; the route is leaving.
+    if (_seatRefused) {
+      return false;
+    }
 
     final bool rematchGone =
         controller.phase == RoomPhase.failed &&
@@ -3366,13 +3477,33 @@ class _GameScreenState extends State<GameScreen> {
   /// The finished-board next-table control is not this path: it pops
   /// [GameScreenResult.newTable] so HomeScreen can open a fresh table
   /// after that same leave()/dispose() sequence.
+  ///
+  /// C-540 D6: a tap that lands while this route is already leaving, or with
+  /// something above it, pops nothing: a second pop would take the route
+  /// below this one.
   void _leave() {
+    if (!_mayLeaveNow()) {
+      return;
+    }
     _clearSafeCue();
+    _latchLeaving();
     Navigator.of(context).pop();
   }
 
   void _requestNewTable() {
+    if (!_mayLeaveNow()) {
+      return;
+    }
+    _latchLeaving();
     Navigator.of(context).pop(GameScreenResult.newTable);
+  }
+
+  bool _mayLeaveNow() {
+    if (_leaving) {
+      return false;
+    }
+    final ModalRoute<dynamic>? route = ModalRoute.of(context);
+    return route != null && route.isActive && route.isCurrent;
   }
 
   /// C-272 rule 3: confirm only when leaving costs something.
@@ -3417,6 +3548,10 @@ class _GameScreenState extends State<GameScreen> {
     showModalBottomSheet<void>(
       context: context,
       builder: (BuildContext sheetContext) {
+        final Route<void>? sheetRoute = ModalRoute.of<void>(sheetContext);
+        if (sheetRoute != null) {
+          _leaveConfirmRoute = sheetRoute;
+        }
         return Padding(
           key: const Key('game-leave-confirm'),
           padding: const EdgeInsets.all(kSpace5),
@@ -3459,6 +3594,7 @@ class _GameScreenState extends State<GameScreen> {
       },
     ).whenComplete(() {
       _isLeaveConfirmOpen = false;
+      _leaveConfirmRoute = null;
     });
   }
 
@@ -3551,6 +3687,8 @@ class _GameScreenState extends State<GameScreen> {
     // never touches it -- so it is still the finished (or rematch-LOBBY)
     // snapshot the end card was already showing.
     final bool roomGonePlaying = _roomGoneWhilePlaying;
+    // C-540 D1: the seat is refused and the route is already leaving.
+    final bool seatRefused = _seatRefused;
     final bool rematchGone =
         controller.phase == RoomPhase.failed &&
         controller.errorCode == 'NO_SUCH_ROOM' &&
@@ -3575,6 +3713,7 @@ class _GameScreenState extends State<GameScreen> {
     // that makes any of its conditions true.
     _syncFacePick(
       playingOnScreen:
+          !seatRefused &&
           !rematchGone &&
           !roomGonePlaying &&
           !isOfflineEndCard &&
@@ -3584,7 +3723,30 @@ class _GameScreenState extends State<GameScreen> {
     _syncShownHint();
 
     final Widget body;
-    if (roomGonePlaying) {
+    if (seatRefused) {
+      // C-540 D1: the route is leaving with GameScreenResult.removed. The
+      // frames of the pop never draw the offline end card's Play again or the
+      // connection-lost card's Reconnect, which cannot succeed for a seat that
+      // is gone. A table in play keeps its last frame, dimmed; anything else
+      // has nothing to show for the length of the exit.
+      body =
+          (room != null &&
+              room.state == RoomState.playing &&
+              room.seats.length >= 2)
+          ? KeyedSubtree(
+              key: const Key('game-screen-stale-table'),
+              child: IgnorePointer(
+                ignoring: true,
+                child: ExcludeSemantics(
+                  child: Opacity(
+                    opacity: 0.35,
+                    child: _connectedBody(loc, controller, room, stale: true),
+                  ),
+                ),
+              ),
+            )
+          : const SizedBox.expand(key: Key('game-screen-seat-refused'));
+    } else if (roomGonePlaying) {
       // C-529 D3: the route is already leaving with gameGone. The frames of
       // the pop keep the last table, dimmed, and never a card that says the
       // connection was lost or the game is over.
@@ -3603,7 +3765,16 @@ class _GameScreenState extends State<GameScreen> {
     } else if (rematchGone) {
       body = _gameOverBody(loc, controller, room, rematchGone: true);
     } else if (isOfflineEndCard) {
-      body = _gameOverBody(loc, controller, room, isOffline: true);
+      body = _gameOverBody(
+        loc,
+        controller,
+        room,
+        isOffline: !_offlineEndCardSuppressed,
+      );
+    } else if (room != null && isOffline && _lostCardSuppressed) {
+      // C-540 D5: my own leave is closing the socket. The table the player
+      // last saw stays as it was, with no card and no dimming.
+      body = _connectedBody(loc, controller, room);
     } else if (room != null && isOffline) {
       // C-282 rules 1 and 2: a dropped or retrying connection keeps the
       // last snapshot's table in view (dimmed, untappable) under the
@@ -3632,8 +3803,9 @@ class _GameScreenState extends State<GameScreen> {
     } else if (room == null) {
       // C-282 rule 4: failed or closed with no room yet shows the card
       // centred over an empty body; connecting stays loading.
-      if (controller.phase == RoomPhase.failed ||
-          controller.phase == RoomPhase.closed) {
+      if ((controller.phase == RoomPhase.failed ||
+              controller.phase == RoomPhase.closed) &&
+          !_lostCardSuppressed) {
         body = _connectionLostBody(loc, controller);
       } else {
         body = _loadingBody();
@@ -3660,6 +3832,8 @@ class _GameScreenState extends State<GameScreen> {
       canPop: !_needsLeaveConfirm(),
       onPopInvokedWithResult: (bool didPop, Object? result) {
         if (didPop) {
+          // C-540 D5: the system back gesture is a leave too.
+          _latchLeaving();
           return;
         }
         _showLeaveConfirm(context, loc);
@@ -5417,6 +5591,7 @@ class _GameScreenState extends State<GameScreen> {
             : const <String>['good_game', 'revenge', 'lucky'],
         onQuickReply: _onChatPick,
         quickReplyCooling: _chatCooling,
+        onFairHintRoute: (Route<void> route) => _fairHintRoute = route,
       ),
       trailing: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
