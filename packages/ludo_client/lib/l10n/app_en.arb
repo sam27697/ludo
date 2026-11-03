@@ -105,6 +105,18 @@
   "@lobbyReconnecting": {
     "description": "Shown on the lobby screen and the game screen while an automatic reconnect attempt is scheduled or in flight."
   },
+  "seatMovedLine": "Your seat moved to another phone.",
+  "@seatMovedLine": {
+    "description": "Title of the card on the game screen and the lobby screen when the server closed this connection because another phone of the same player took the seat over. Its one action is Leave."
+  },
+  "connectionSlowLine": "Taking longer than usual. Check your internet.",
+  "@connectionSlowLine": {
+    "description": "Second line under a connecting or reconnecting line once it has been showing for 4 seconds: the wait is still going and the player can check their internet."
+  },
+  "gameCatchingUp": "Updating the table...",
+  "@gameCatchingUp": {
+    "description": "Banner on the game screen while the client is fetching the table again after it noticed a gap in the updates it received. The game screen has no Resync button; the client resyncs on its own."
+  },
   "lobbyRoomCodeLabel": "Room code",
   "@lobbyRoomCodeLabel": {
     "description": "Caption shown above the room code on the lobby screen."
