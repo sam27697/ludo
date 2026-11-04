@@ -62,6 +62,8 @@ const Key _ringKey = Key('game-header-countdown-ring');
 const Key _entranceKey = Key('game-table-entrance');
 const Key _dieKey = Key('game-die');
 const Key _boardKey = Key('game-screen-board');
+// Drawn by the playing body only, never by an end card.
+const Key _playingChipKey = Key('game-header-chip');
 const Key _rematchKey = Key('end-card-rematch');
 const Key _offlineKey = Key('end-card-offline');
 const Key _shotKey = Key('c554-shot');
@@ -278,25 +280,41 @@ Future<void> _mountGame(
     ),
   );
   await tester.pump();
-  // A finished screen with no transcript asks the server for the game log on
-  // its first frame. Refuse it, so the request's timer is not left running
-  // and the case measures only what it was written to measure.
   final FakeTransport? transport = _transports[controller];
   if (transport != null) {
-    for (final String raw in transport.sentRaw.toList()) {
-      if (_typeOf(raw) == 'game_log') {
-        transport.pushText(
-          _frame(
-            type: 'error',
-            re: _idOf(raw),
-            data: <String, Object?>{
-              'code': 'GAME_LOG_UNAVAILABLE',
-              'message': 'not in this test',
-            },
-          ),
-        );
-      }
+    await _refuseGameLogs(tester, transport);
+  }
+}
+
+/// The game-log requests already answered, per transport.
+final Expando<Set<String>> _refusedLogs = Expando<Set<String>>('refusedLogs');
+
+/// A finished screen with no transcript asks the server for the game log, on
+/// its first frame or when a game ends under it. Refuse every request not yet
+/// answered, so the request's 10 s timer is not left running and the case
+/// measures only what it was written to measure.
+Future<void> _refuseGameLogs(
+  WidgetTester tester,
+  FakeTransport transport,
+) async {
+  final Set<String> done = _refusedLogs[transport] ??= <String>{};
+  bool answered = false;
+  for (final String raw in transport.sentRaw.toList()) {
+    if (_typeOf(raw) == 'game_log' && done.add(_idOf(raw))) {
+      answered = true;
+      transport.pushText(
+        _frame(
+          type: 'error',
+          re: _idOf(raw),
+          data: <String, Object?>{
+            'code': 'GAME_LOG_UNAVAILABLE',
+            'message': 'not in this test',
+          },
+        ),
+      );
     }
+  }
+  if (answered) {
     await tester.pump();
     await tester.pump();
   }
@@ -304,6 +322,30 @@ Future<void> _mountGame(
 
 AppLocalizations _locOf(WidgetTester tester) =>
     AppLocalizations.of(tester.element(find.byType(GameScreen)));
+
+/// Fixture check for the departure cases: the card itself must be showing
+/// [expected] on its left line, so that what is asserted next is an
+/// announcement of something the card says.
+void _expectCardLeftLine(
+  WidgetTester tester,
+  String expected,
+  String scenario,
+) {
+  final Finder line = find.byKey(const Key('end-card-left'));
+  expect(
+    line,
+    findsOneWidget,
+    reason:
+        'fixture: the end card must show end-card-left. Scenario: $scenario',
+  );
+  expect(
+    tester.widget<Text>(line).data,
+    expected,
+    reason:
+        'fixture: the end card left line must read "$expected". '
+        'Scenario: $scenario',
+  );
+}
 
 class _RecordingFeedback implements FeedbackService {
   final List<FeedbackCue> recorded = <FeedbackCue>[];
@@ -563,6 +605,46 @@ Future<void> _startGameFromLobby(
   );
 }
 
+/// Pushes the rematch game's `game_started` and pumps zero-length frames until
+/// the playing body is in the tree (only it draws [_playingChipKey]), the way
+/// [_push] delivers a frame: one pump has not yet carried the frame to the
+/// screen. What is read next is the first frame of the new board.
+Future<void> _startRematchGame(
+  WidgetTester tester,
+  FakeTransport transport, {
+  required String gameId,
+  required int seq,
+}) async {
+  expect(
+    find.byKey(_playingChipKey),
+    findsNothing,
+    reason: 'fixture: the end card draws no playing header before the start',
+  );
+  transport.pushText(
+    _frame(
+      type: 'game_started',
+      data: <String, Object?>{
+        'turn': 0,
+        'game_id': gameId,
+        'client_seeds': '0:seed',
+        'seq': seq,
+      },
+    ),
+  );
+  for (
+    int i = 0;
+    i < 4 && find.byKey(_playingChipKey).evaluate().isEmpty;
+    i++
+  ) {
+    await tester.pump();
+  }
+  expect(
+    find.byKey(_playingChipKey),
+    findsOneWidget,
+    reason: 'fixture: game_started must put the playing header on screen',
+  );
+}
+
 /// Taps the die and answers the roll it sends, so no request stays open.
 /// Returns how many `roll` requests the tap produced.
 Future<int> _tapDieAndAnswer(
@@ -597,7 +679,10 @@ Future<int> _tapDieAndAnswer(
 }
 
 /// A FINISHED table on GameScreen (game g1) mounted straight onto its end
-/// card, mySeat [mySeat].
+/// card, mySeat [mySeat]. Reached the way a phone reaches it: a resume into a
+/// FINISHED room. A create or join reply never records the finished snapshot
+/// (`RoomController.lastFinished`), and without it the card has no baseline to
+/// measure departures against, which no real table is in.
 Future<(RoomController, FakeTransport)> _connectFinished(
   WidgetTester tester, {
   required int mySeat,
@@ -608,6 +693,7 @@ Future<(RoomController, FakeTransport)> _connectFinished(
   return _connect(
     tester,
     mySeat: mySeat,
+    resume: true,
     roomData: _roomJson(
       state: 'FINISHED',
       hostSeat: hostSeat,
@@ -897,6 +983,9 @@ void main() {
             'verify_url': 'https://c554-test.invalid/verify',
             'seq': 2,
           });
+          // The finished screen asks for the game log; the request's timer
+          // is the screen's, not the hourglass's, so it is answered here.
+          await _refuseGameLogs(tester, transport);
           for (int i = 0; i < 12; i++) {
             await tester.pump(const Duration(milliseconds: 250));
           }
@@ -1102,21 +1191,11 @@ void main() {
             reason: 'nothing started yet, heard ${said.messages} ($scenario)',
           );
 
-          transport.pushText(
-            _frame(
-              type: 'game_started',
-              data: <String, Object?>{
-                'turn': 0,
-                'game_id': 'g2',
-                'client_seeds': '0:seed',
-                'seq': 3,
-              },
-            ),
-          );
-          await tester.pump();
+          await _startRematchGame(tester, transport, gameId: 'g2', seq: 3);
           final bool layerOnFirstFrame =
               find.byKey(_entranceKey).evaluate().length == 1;
-          final bool boardUp = find.byKey(_boardKey).evaluate().isNotEmpty;
+          final bool boardUp =
+              find.byKey(_playingChipKey).evaluate().length == 1;
           await _push(tester, transport, 'turn', <String, Object?>{
             'seat': 0,
             'deadline_ms': 45000,
@@ -1360,18 +1439,7 @@ void main() {
             seq: 2,
           ),
         );
-        transport.pushText(
-          _frame(
-            type: 'game_started',
-            data: <String, Object?>{
-              'turn': 0,
-              'game_id': 'g2',
-              'client_seeds': '0:seed',
-              'seq': 3,
-            },
-          ),
-        );
-        await tester.pump();
+        await _startRematchGame(tester, transport, gameId: 'g2', seq: 3);
         final bool layer = find.byKey(_entranceKey).evaluate().isNotEmpty;
         await tester.pump(const Duration(milliseconds: 400));
         expect(controller.room!.gameId, 'g2', reason: 'fixture ($scenario)');
@@ -1548,6 +1616,7 @@ void main() {
             'seat': 1,
             'seq': 2,
           });
+          _expectCardLeftLine(tester, loc.endLeft('Bob'), scenario);
           expect(
             said.messages,
             <String>[loc.endLeft('Bob')],
@@ -1571,6 +1640,11 @@ void main() {
               gameId: 'g1',
               seq: 3,
             ),
+          );
+          _expectCardLeftLine(
+            tester,
+            loc.endLeft(<String>['Bob', 'Ken'].join(_sepFor(locale))),
+            scenario,
           );
           expect(
             said.messages,
@@ -1617,6 +1691,11 @@ void main() {
             seq: 2,
           ),
         );
+        _expectCardLeftLine(
+          tester,
+          loc.endLeft(<String>['Bob', 'Ken'].join(_sepFor(locale))),
+          scenario,
+        );
         expect(
           said.messages,
           <String>[
@@ -1659,6 +1738,7 @@ void main() {
               seq: 2,
             ),
           );
+          _expectCardLeftLine(tester, loc.endEveryoneLeft, scenario);
           expect(
             said.messages,
             <String>[loc.endEveryoneLeft],
@@ -1732,6 +1812,7 @@ void main() {
             'seq': 2,
           });
           expect(controller.isHost, isTrue, reason: 'fixture ($scenario)');
+          _expectCardLeftLine(tester, loc.endLeft('Sam'), scenario);
           expect(
             said.messages,
             <String>[loc.endLeft('Sam'), _hostNowFor(locale)],
@@ -1783,6 +1864,7 @@ void main() {
               seq: 2,
             ),
           );
+          _expectCardLeftLine(tester, loc.endLeft('Sam'), scenario);
           expect(
             said.messages,
             <String>[
@@ -1821,6 +1903,7 @@ void main() {
             'host_seat': 1,
             'seq': 2,
           });
+          _expectCardLeftLine(tester, loc.endEveryoneLeft, scenario);
           expect(
             said.messages,
             <String>[loc.endEveryoneLeft, _hostNowFor(locale)],

@@ -3,12 +3,9 @@
 // parallel in trees this file's author has not read, so on a tree without
 // them every case that pins new behaviour is expected RED and the guards GREEN.
 //
-// `RoomController.resync()` and `isResyncing` do not exist on the base. They
-// are called through `dynamic`, behind two small wrappers that turn a
-// NoSuchMethodError into a test failure naming the missing member, so the file
-// compiles on the base and the cases that need them go red at that one call.
-// Everything else is asserted through Keys, visible text, the render tree and
-// the wire (FakeTransport.sentRaw), never through a symbol the spec adds.
+// `RoomController.resync()` and `isResyncing` are called directly. Everything
+// else is asserted through Keys, visible text, the render tree and the wire
+// (FakeTransport.sentRaw), never through a symbol the spec adds.
 //
 // D1 runs under fake_async over a live FakeTransport, the way
 // test/net/room_controller_test.dart reaches its request-timeout case: a seq
@@ -146,30 +143,6 @@ class _Connector {
 
 List<String> _resumes(FakeTransport transport) =>
     transport.sentRaw.where((String raw) => _typeOf(raw) == 'resume').toList();
-
-// --- the members this order adds, through dynamic ----------------------------
-
-Future<void> _resync(RoomController controller, String scenario) {
-  try {
-    return (controller as dynamic).resync() as Future<void>;
-  } on NoSuchMethodError catch (e) {
-    fail(
-      'D1: RoomController.resync() is missing, so no resync can be started. '
-      'Scenario: $scenario. Error: $e',
-    );
-  }
-}
-
-bool _isResyncing(RoomController controller, String scenario) {
-  try {
-    return (controller as dynamic).isResyncing as bool;
-  } on NoSuchMethodError catch (e) {
-    fail(
-      'D1: RoomController.isResyncing is missing. Scenario: $scenario. '
-      'Error: $e',
-    );
-  }
-}
 
 // --- D1 fixtures (fake_async) --------------------------------------------------
 
@@ -563,13 +536,13 @@ void main() {
         final _Live live = _desyncedAfterTimeout(async);
         final RoomController controller = live.controller;
         expect(
-          _isResyncing(controller, scenario),
+          controller.isResyncing,
           isFalse,
           reason: 'D1: nothing is in flight after the timeout. $scenario',
         );
 
         bool settled = false;
-        _resync(controller, scenario).then((_) => settled = true);
+        controller.resync().then((_) => settled = true);
         async.flushMicrotasks();
 
         expect(
@@ -585,7 +558,7 @@ void main() {
           reason: 'D1: a resync never opens a second transport. $scenario',
         );
         expect(
-          _isResyncing(controller, scenario),
+          controller.isResyncing,
           isTrue,
           reason:
               'D1: isResyncing must be true while the resume is out. $scenario',
@@ -621,7 +594,7 @@ void main() {
           reason: 'D1: the future completes on the reply. $scenario',
         );
         expect(
-          _isResyncing(controller, scenario),
+          controller.isResyncing,
           isFalse,
           reason: 'D1: isResyncing is false after the reply. $scenario',
         );
@@ -653,7 +626,7 @@ void main() {
         final RoomController controller = live.controller;
 
         bool firstSettled = false;
-        _resync(controller, scenario).then((_) => firstSettled = true);
+        controller.resync().then((_) => firstSettled = true);
         async.flushMicrotasks();
         expect(
           _resumes(live.transport),
@@ -662,7 +635,7 @@ void main() {
         );
 
         bool secondSettled = false;
-        _resync(controller, scenario).then((_) => secondSettled = true);
+        controller.resync().then((_) => secondSettled = true);
         async.flushMicrotasks();
 
         expect(
@@ -709,10 +682,10 @@ void main() {
         final RoomController controller = live.controller;
 
         bool settled = false;
-        _resync(controller, scenario).then((_) => settled = true);
+        controller.resync().then((_) => settled = true);
         async.flushMicrotasks();
         expect(
-          _isResyncing(controller, scenario),
+          controller.isResyncing,
           isTrue,
           reason: 'D1: fixture, in flight. $scenario',
         );
@@ -725,7 +698,7 @@ void main() {
           reason: 'D1: the non-fatal failure settles the future. $scenario',
         );
         expect(
-          _isResyncing(controller, scenario),
+          controller.isResyncing,
           isFalse,
           reason:
               'D1: isResyncing is false after a non-fatal failure. $scenario',
@@ -758,7 +731,7 @@ void main() {
         final RoomController controller = live.controller;
 
         bool settled = false;
-        _resync(controller, scenario).then((_) => settled = true);
+        controller.resync().then((_) => settled = true);
         async.flushMicrotasks();
         live.transport.pushText(
           _frame(
@@ -775,7 +748,7 @@ void main() {
           reason: 'D1: a verdict settles the future. $scenario',
         );
         expect(
-          _isResyncing(controller, scenario),
+          controller.isResyncing,
           isFalse,
           reason: 'D1: isResyncing is false after a verdict. $scenario',
         );
@@ -808,12 +781,12 @@ void main() {
         transport.pushText(_frame(type: 'room', re: id, data: _roomJson()));
         async.flushMicrotasks();
         expect(
-          _isResyncing(controller, scenario),
+          controller.isResyncing,
           isFalse,
           reason: 'D1: isResyncing starts false. $scenario',
         );
 
-        _resync(controller, scenario);
+        controller.resync();
         async.flushMicrotasks();
         expect(
           _resumes(transport),
@@ -830,7 +803,7 @@ void main() {
         );
         async.flushMicrotasks();
         expect(
-          _isResyncing(controller, scenario),
+          controller.isResyncing,
           isFalse,
           reason: 'D1: settled. $scenario',
         );
@@ -937,7 +910,7 @@ void main() {
 
         connector.enqueue(second);
         bool settled = false;
-        _resync(controller, scenario).then((_) => settled = true);
+        controller.resync().then((_) => settled = true);
         async.flushMicrotasks();
 
         expect(
@@ -990,7 +963,7 @@ void main() {
         int notified = 0;
         idle.addListener(() => notified++);
         bool settled = false;
-        _resync(idle, scenario).then((_) => settled = true);
+        idle.resync().then((_) => settled = true);
         async.flushMicrotasks();
         expect(
           settled,
@@ -1029,7 +1002,7 @@ void main() {
         );
         final int callsBefore = failing.calls.length;
         bool failedSettled = false;
-        _resync(failed, scenario).then((_) => failedSettled = true);
+        failed.resync().then((_) => failedSettled = true);
         async.flushMicrotasks();
         expect(
           failedSettled,
