@@ -3138,7 +3138,7 @@ class _GameScreenState extends State<GameScreen> {
   /// while `rollEnabled`), so this is one of the notice's own three
   /// clearing events for my own seat.
   void _onDieTap() {
-    if (_isEndHeld) {
+    if (_isEndHeld || _myTimeUp) {
       return;
     }
     final TurnState? turn = widget.controller.room?.turn;
@@ -3290,7 +3290,7 @@ class _GameScreenState extends State<GameScreen> {
       _autoMoveHandledK = null;
       _autoMoveHandledQueue = null;
     }
-    if (_isEndHeld || !_isUniqueLegalAwaitMove()) {
+    if (_isEndHeld || _myTimeUp || !_isUniqueLegalAwaitMove()) {
       _clearPendingHold();
       return;
     }
@@ -3472,7 +3472,7 @@ class _GameScreenState extends State<GameScreen> {
     _pendingAutoMoveToken = null;
     _pendingAutoMoveFace = null;
     final TurnState? turn = widget.controller.room?.turn;
-    if (!_sameMoveDecision(turn, k, armedQueue)) {
+    if (_myTimeUp || !_sameMoveDecision(turn, k, armedQueue)) {
       setState(() {});
       return;
     }
@@ -3502,7 +3502,9 @@ class _GameScreenState extends State<GameScreen> {
   /// whether this call sent anything.
   bool _sendMove(int token, int k, {int? face}) {
     final TurnState? turn = widget.controller.room?.turn;
-    if (turn == null ||
+    // C-560 D3: a move sent at my time up is late by construction.
+    if (_myTimeUp ||
+        turn == null ||
         turn.seat != widget.controller.seat ||
         turn.phase != TurnPhase.awaitMove ||
         turn.k != k) {
@@ -3635,9 +3637,35 @@ class _GameScreenState extends State<GameScreen> {
           _countdownRemainingSeconds = 0;
           _countdownTimer?.cancel();
           _countdownTimer = null;
+          // C-560 D3: the zero is my time up when the turn is mine, and a
+          // pending hold must not outlive it.
+          _syncAutoMove();
         }
       });
     });
+  }
+
+  /// C-560. My time up: the playing body is showing, the turn is mine, the
+  /// countdown is armed for exactly this `(seat, deadlineMs, k)` and has
+  /// reached zero. The client gets to zero no earlier than the server's
+  /// deadline, so a roll or move sent now is late by construction. Ends when
+  /// a frame changes the triple (the countdown re-arms) or the turn stops
+  /// being mine. Another seat's zero is not this.
+  bool get _myTimeUp {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    final TurnState? turn = room?.turn;
+    final int? seat = controller.seat;
+    return room != null &&
+        room.state == RoomState.playing &&
+        room.seats.length >= 2 &&
+        turn != null &&
+        seat != null &&
+        turn.seat == seat &&
+        turn.seat == _countdownSeat &&
+        turn.deadlineMs == _countdownDeadlineMs &&
+        turn.k == _countdownK &&
+        _countdownRemainingSeconds == 0;
   }
 
   /// The one path every leave affordance on this screen goes through,
@@ -4401,7 +4429,10 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   bool _facePickMustClose(_OpenFacePick pick, {required bool playingOnScreen}) {
-    if (!playingOnScreen || _isEndHeld || _pendingAutoMoveToken != null) {
+    if (!playingOnScreen ||
+        _isEndHeld ||
+        _myTimeUp ||
+        _pendingAutoMoveToken != null) {
       return true;
     }
     final TurnState? turn = widget.controller.room?.turn;
@@ -4809,8 +4840,12 @@ class _GameScreenState extends State<GameScreen> {
     final SeatState? offlineTurnSeat = _offlineTurnSeat(room);
     final Map<int, String> names = seatLabelsFor(context, room.seats);
 
+    // C-560 D2: my time up disables the die like any other turn that is not
+    // mine to play; a tap on it plays the die's own invalid-tap shake.
+    final bool timeUp = _myTimeUp;
     final bool rollEnabled =
         !_isEndHeld &&
+        !timeUp &&
         room.state == RoomState.playing &&
         turn != null &&
         turn.seat == seat &&
@@ -4824,7 +4859,9 @@ class _GameScreenState extends State<GameScreen> {
         turn != null &&
         turn.seat == seat &&
         turn.phase == TurnPhase.awaitMove;
-    final Set<int> legalTokens = myAwaitMove
+    // C-560 D3: at my time up nothing is legal for me any more, so no ring,
+    // no pulse, and a token tap is the unmovable token's tap.
+    final Set<int> legalTokens = myAwaitMove && !timeUp
         ? (turn.legalByFace != null
               ? _legalTokenUnion(turn.legalByFace!)
               : (turn.legal?.toSet() ?? const <int>{}))
@@ -4932,6 +4969,10 @@ class _GameScreenState extends State<GameScreen> {
                   facePick: _tokenFacePick(seat),
                   onTokenTap: (int index) {
                     if (_isEndHeld) {
+                      return;
+                    }
+                    if (_myTimeUp) {
+                      FeedbackScope.of(context).play(FeedbackCue.invalidTap);
                       return;
                     }
                     _cancelPendingHoldForManualMove();
@@ -5291,6 +5332,7 @@ class _GameScreenState extends State<GameScreen> {
       seat,
       seatLabelsFor(context, room.seats),
       stale: stale,
+      timeUp: _myTimeUp,
       autoMoveVisible: autoMoveVisible,
     );
     final int turnSeat = turn?.seat ?? seat ?? 0;
@@ -6324,12 +6366,16 @@ List<int> _seatsInPlayOf(RoomSnapshot room) {
 /// line (stale is a connection problem, C-290's own order over it is
 /// unchanged), but once the unique-legal hold's glow is actually visible
 /// [autoMoveVisible] beats the plain move line under it.
+/// C-560 D1: [timeUp] (my own countdown at zero) comes after stale, since a
+/// connection problem explains more than the clock, and before the auto-move
+/// line and the roll / move lines.
 String _turnBannerText(
   AppLocalizations loc,
   RoomSnapshot room,
   int? seat,
   Map<int, String> names, {
   bool stale = false,
+  bool timeUp = false,
   bool autoMoveVisible = false,
 }) {
   if (room.state == RoomState.finished ||
@@ -6342,11 +6388,17 @@ String _turnBannerText(
   }
   if (turn.seat == seat) {
     if (turn.phase == TurnPhase.awaitRoll) {
-      return stale ? loc.gameYourTurnStale : loc.gameYourTurnRoll;
+      if (stale) {
+        return loc.gameYourTurnStale;
+      }
+      return timeUp ? loc.gameYourTurnTimeUp : loc.gameYourTurnRoll;
     }
     if (turn.phase == TurnPhase.awaitMove) {
       if (stale) {
         return loc.gameYourTurnStale;
+      }
+      if (timeUp) {
+        return loc.gameYourTurnTimeUp;
       }
       if (autoMoveVisible) {
         return loc.gameAutoMoving;

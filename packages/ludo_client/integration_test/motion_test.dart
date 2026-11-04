@@ -2905,7 +2905,19 @@ class _Playback {
     final String? re = act ? await _tapDie() : null;
     _k += 1;
     final int k = _k;
+    // The product holds the no-move mark and notice for _noMoveHold from the
+    // rolled frame, whatever the turn does underneath. The hold it has run
+    // when a later line executes is always between these two clocks.
+    final bool noMoveStep = mine && step.noMoveBeat;
+    final Stopwatch rolledClock = Stopwatch();
+    final Stopwatch armedClock = Stopwatch();
+    if (noMoveStep) {
+      rolledClock.start();
+    }
     await _push('rolled', _rolledData(step, seat, k), re: re);
+    if (noMoveStep) {
+      armedClock.start();
+    }
     final bool awaitRoll = step.rollAgain || step.passTo != null;
     _expectModel(
       seat: seat,
@@ -2943,9 +2955,41 @@ class _Playback {
         ),
         re: re,
       );
-      if (mine && step.noMoveBeat) {
-        await _holdFor(tester, const Duration(milliseconds: 1000));
+      if (noMoveStep) {
+        final int sinceRolled = rolledClock.elapsedMilliseconds;
+        expect(
+          sinceRolled,
+          lessThan(1500),
+          reason:
+              'seat $seat roll ${step.face} (roll $k): $sinceRolled ms had '
+              'passed since the rolled push when turn_passed and turn were '
+              'in, so the 1500 ms no-move hold could not be observed after '
+              'the pass; the emulator is too slow for this check',
+        );
         _expectNoMove();
+        _motion('3 no move survives the pass at $sinceRolled ms');
+        await _holdUntil(
+          tester,
+          armedClock,
+          const Duration(milliseconds: 1800),
+        );
+        await tester.pump();
+        expect(
+          find.byKey(const Key('game-die-no-move-mark')),
+          findsNothing,
+          reason:
+              'seat $seat roll ${step.face} (roll $k): the no-move mark is '
+              'still drawn ${armedClock.elapsedMilliseconds} ms after the '
+              'rolled push, the hold should end at 1500 ms',
+        );
+        expect(
+          find.byKey(const Key('game-no-move-notice')),
+          findsNothing,
+          reason:
+              'seat $seat roll ${step.face} (roll $k): the no-move notice is '
+              'still drawn ${armedClock.elapsedMilliseconds} ms after the '
+              'rolled push, the hold should end at 1500 ms',
+        );
       }
       return;
     }

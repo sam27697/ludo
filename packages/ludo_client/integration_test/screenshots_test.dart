@@ -25,8 +25,8 @@
 // thing standing in for reality is the socket.
 //
 // LobbyScreen.initState fires createRoom or joinRoom synchronously and the
-// screen sits in a connecting state holding a CircularProgressIndicator,
-// whose ticker reschedules a frame forever. pumpAndSettle() never returns
+// screen sits in a connecting state whose waiting-line mark turns, and its
+// ticker reschedules a frame forever. pumpAndSettle() never returns
 // once LobbyScreen has mounted -- a known, repeatedly-paid-for fact in this
 // project, not a guess. Every pump after the first tap that can push
 // LobbyScreen or GameScreen onto the tree is therefore bounded: either a
@@ -108,6 +108,8 @@
 //   131-lobby-resyncing-ar.png  lobby, Arabic, the same banner
 //   132-lobby-connecting-large-text-en.png  lobby connecting body, English,
 //                             system text scale 2.0, the slow line showing
+//   133-lobby-connecting-large-text-ar.png  lobby connecting body, Arabic,
+//                             the same
 //   (114 stays unused: dropped in run 124, a 360 x 640 surface hung the
 //   emulator. 117, the lobby closed card with no room held, is not built:
 //   the controller cannot be left in that state by any frame sequence.)
@@ -393,7 +395,7 @@ void _stubScreenshotChannel(WidgetTester tester) {
 /// Taps the button at [buttonKey] and pumps just long enough for the pushed
 /// MaterialPageRoute's transition to finish and the pushed route's first
 /// screen to mount, without ever calling pumpAndSettle. See the file header:
-/// LobbyScreen's connecting body holds a CircularProgressIndicator whose
+/// LobbyScreen's connecting body draws a waiting-line mark whose
 /// ticker never settles, so pumpAndSettle here would hang. 400ms is
 /// comfortably past MaterialPageRoute's default 300ms transition, the same
 /// value test/composed_play_test.dart already proved sufficient for
@@ -6942,9 +6944,10 @@ void main() {
   });
 
   // ==========================================================================
-  // 128-132: order 559 (C-554 D1, C-555 D1 and D2). 128-129 are the game's
-  // countdown at zero, 130-131 the lobby's desync banner with a resync out on
-  // the live socket, 132 the lobby's connecting body at text scale 2.0.
+  // 128-133: order 559 (C-554 D1, C-555 D1 and D2), order 564 (C-560 D4).
+  // 128-129 are the game's countdown at zero, 130-131 the lobby's desync
+  // banner with a resync out on the live socket, 132-133 the lobby's
+  // connecting body at text scale 2.0.
   // Bodies live at the bottom of the file.
   // ==========================================================================
   testWidgets('capture 128-game-time-up-en', (tester) async {
@@ -6997,6 +7000,15 @@ void main() {
       binding,
       shotName: '132-lobby-connecting-large-text-en',
       locale: const Locale('en'),
+    );
+  });
+
+  testWidgets('capture 133-lobby-connecting-large-text-ar', (tester) async {
+    await _shootLobbyConnectingLarge(
+      tester,
+      binding,
+      shotName: '133-lobby-connecting-large-text-ar',
+      locale: const Locale('ar'),
     );
   });
 }
@@ -19402,10 +19414,13 @@ Future<void> _shootLobbyResyncing(
   }
 }
 
-/// 132 (order 559, C-549 D3 under large text). The lobby's connecting body
-/// before any reply: the spinner, "Connecting to the room..." and, after 4.5
-/// s of frames, the slow line, all at text scale 2.0. The spinner turns, so
-/// nothing settles; the frames are fixed 100 ms pumps.
+/// 132 and 133 (order 559, C-549 D3 under large text; order 564, C-560 D4).
+/// The lobby's connecting body before any reply: the `lobby-connecting-line`
+/// with its one `waiting-line-mark` (no CircularProgressIndicator), the side
+/// margin, "Connecting to the room..." and, after 4.5 s of frames, the slow
+/// line, all at text scale 2.0. The mark turns, so nothing settles; the
+/// frames are fixed 100 ms pumps. 133 is the same capture in Arabic, laid out
+/// right to left.
 Future<void> _shootLobbyConnectingLarge(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -19512,17 +19527,45 @@ Future<void> _shootLobbyConnectingLarge(
       expect(
         find.descendant(
           of: body,
-          matching: find.byType(CircularProgressIndicator),
+          matching: find.byKey(const Key('waiting-line-mark')),
         ),
         findsOneWidget,
-        reason: 'capture $shotName ($scenario) $moment: expected the spinner',
+        reason:
+            'capture $shotName ($scenario) $moment: expected exactly one '
+            'waiting-line-mark under lobby-connecting (C-560 D4)',
       );
       expect(
-        find.descendant(of: body, matching: find.text(loc.lobbyConnecting)),
+        find.descendant(
+          of: body,
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario) $moment: the spinner was removed '
+            'by C-560 D4, found one under lobby-connecting',
+      );
+      final Finder line = find.byKey(const Key('lobby-connecting-line'));
+      expect(
+        find.descendant(of: body, matching: line),
         findsOneWidget,
         reason:
-            'capture $shotName ($scenario) $moment: the body must read '
-            '"${loc.lobbyConnecting}"',
+            'capture $shotName ($scenario) $moment: expected '
+            'lobby-connecting-line under lobby-connecting; the texts on '
+            'screen are ${_viewText(tester)}',
+      );
+      expect(
+        find.descendant(of: line, matching: find.text(loc.lobbyConnecting)),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: lobby-connecting-line '
+            'must read "${loc.lobbyConnecting}"',
+      );
+      expect(
+        Directionality.of(tester.element(body)),
+        locale.languageCode == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+        reason:
+            'capture $shotName ($scenario) $moment: the body must lay out in '
+            'the locale\'s own direction',
       );
       final Finder slow = find.byKey(const Key('waiting-line-slow'));
       expect(

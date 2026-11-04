@@ -274,6 +274,10 @@
   "@gameYourTurnStale": {
     "description": "Turn banner shown on the game screen when it is this player's own turn while the connection is stale or reconnecting."
   },
+  "gameYourTurnTimeUp": "Time is up. Playing for you.",
+  "@gameYourTurnTimeUp": {
+    "description": "Turn banner shown on the game screen in place of the roll and move lines once this player's own countdown has reached zero, until the server's next frame: nothing asks for a tap, because the server is about to play or has already played the turn."
+  },
   "gameRollButton": "Roll",
   "@gameRollButton": {
     "description": "Label of the button on the game screen that sends the roll intention to the server."
