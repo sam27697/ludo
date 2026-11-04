@@ -6122,21 +6122,15 @@ class _TimeUpHourglassState extends State<_TimeUpHourglass>
     with SingleTickerProviderStateMixin {
   static const Duration _halfTurn = Duration(milliseconds: 600);
 
+  // One controller for the full cycle of two eased half turns, repeated with
+  // no restart gap, so the turn stays periodic whatever the frame timing.
   late final AnimationController _turn;
-  // Half turns finished so far; only its parity matters for the angle.
-  int _halfTurns = 0;
   bool? _reduced;
 
   @override
   void initState() {
     super.initState();
-    _turn = AnimationController(vsync: this, duration: _halfTurn);
-    _turn.addStatusListener((AnimationStatus status) {
-      if (status == AnimationStatus.completed) {
-        _halfTurns += 1;
-        _turn.forward(from: 0);
-      }
-    });
+    _turn = AnimationController(vsync: this, duration: _halfTurn * 2);
   }
 
   @override
@@ -6150,7 +6144,7 @@ class _TimeUpHourglassState extends State<_TimeUpHourglass>
     if (reduced) {
       _turn.stop();
     } else {
-      _turn.forward(from: 0);
+      _turn.repeat();
     }
   }
 
@@ -6160,14 +6154,21 @@ class _TimeUpHourglassState extends State<_TimeUpHourglass>
     super.dispose();
   }
 
+  // Half turns finished so far within the cycle (0 or 1) plus the eased
+  // progress through the current one.
+  double _turns(double t) {
+    final double half = t * 2;
+    final int whole = half.floor().clamp(0, 1);
+    return whole + Curves.easeInOut.transform(half - whole);
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _turn,
       builder: (BuildContext context, Widget? child) {
-        final double eased = Curves.easeInOut.transform(_turn.value);
         return Transform.rotate(
-          angle: ((_halfTurns % 2) + eased) * math.pi,
+          angle: _turns(_turn.value) * math.pi,
           child: child,
         );
       },
