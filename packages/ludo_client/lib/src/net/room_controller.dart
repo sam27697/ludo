@@ -226,6 +226,10 @@ class RoomController extends ChangeNotifier {
   String? get seatToken => _cachedSeatToken;
   bool get hasDesynced => _hasDesynced;
 
+  /// C-555 D1: true exactly while a resync's `resume` is out on the open
+  /// socket. A screen draws a turning mark on it and takes no second tap.
+  bool get isResyncing => _resyncInFlight;
+
   /// C-547 rule 1: true after another phone took this seat over, until the
   /// phase next reaches [RoomPhase.connected]. Screens draw the takeover card
   /// instead of the connection-lost card, with no Reconnect.
@@ -428,6 +432,60 @@ class RoomController extends ChangeNotifier {
     _cancelAutoReconnect();
     await _attemptReconnect(automatic: false, room: room, token: token);
   }
+
+  /// C-555 D1: what the lobby's Resync does. With the phase [RoomPhase.closed]
+  /// or [RoomPhase.failed] this is [reconnect]. With the phase
+  /// [RoomPhase.connected], a room, a cached seat token and no resync in
+  /// flight it is `_beginResync` on the socket already open, never a second
+  /// transport. Every other case changes nothing and returns at once.
+  /// Completes when the resync it started has settled -- the room re-based,
+  /// a verdict from the server, or a failure that is not a verdict -- or at
+  /// once when it started nothing.
+  Future<void> resync() async {
+    if (_disposed) {
+      return;
+    }
+    if (_phase == RoomPhase.closed || _phase == RoomPhase.failed) {
+      await reconnect();
+      return;
+    }
+    final RoomSnapshot? room = _room;
+    if (_phase != RoomPhase.connected ||
+        room == null ||
+        _cachedSeatToken == null ||
+        _connection == null ||
+        _resyncInFlight) {
+      return;
+    }
+    _beginResync(room);
+    if (!_resyncInFlight) {
+      return;
+    }
+    final Completer<void> settled = Completer<void>();
+    _resyncSettled = settled;
+    void onChange() {
+      if (!_resyncInFlight && !settled.isCompleted) {
+        settled.complete();
+      }
+    }
+
+    addListener(onChange);
+    // _beginResync raises the flag after its own notification, so a screen
+    // drawing the turning mark is told here.
+    notifyListeners();
+    try {
+      await settled.future;
+    } finally {
+      removeListener(onChange);
+      if (identical(_resyncSettled, settled)) {
+        _resyncSettled = null;
+      }
+    }
+  }
+
+  /// The wait [resync] is holding, completed by [dispose] so a screen that
+  /// goes away mid-resync does not leave its caller waiting forever.
+  Completer<void>? _resyncSettled;
 
   /// The body every reconnect attempt runs, manual or automatic: phase to
   /// [RoomPhase.connecting], open a new [RoomConnection], send `resume` with
@@ -858,6 +916,10 @@ class RoomController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _sendRematchOnResume = false;
+    final Completer<void>? resyncWait = _resyncSettled;
+    if (resyncWait != null && !resyncWait.isCompleted) {
+      resyncWait.complete();
+    }
     _cancelAutoReconnect();
     _clearLastFinished();
     unawaited(_frameSub?.cancel());
