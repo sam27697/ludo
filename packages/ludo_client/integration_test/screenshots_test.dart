@@ -19119,12 +19119,18 @@ Future<void> _shootGameTimeUp(
       frameCount: 3,
       frame: const Duration(milliseconds: 100),
     );
+    // This job's emulator runs with animations removed, which is C-554 D1's
+    // still hourglass; the motion jobs run with them on.
+    final bool reduced = MediaQuery.disableAnimationsOf(
+      tester.element(find.byKey(const Key('game-screen-turn-timeup'))),
+    );
     expect(
-      turned(),
-      isNot(before),
+      turned() != before,
+      !reduced,
       reason:
-          'capture $shotName ($scenario): the hourglass must be turning, its '
-          'rotation stood at $before after 300 ms of frames',
+          'capture $shotName ($scenario): the hourglass must turn, and stand '
+          'still with animations removed (reduced $reduced); its rotation '
+          'was $before and is ${turned()} after 300 ms of frames',
     );
     await _pumpRealDurationFrames(tester);
     expectTimeUp('after the settle, before the capture');
@@ -19359,10 +19365,12 @@ Future<void> _shootLobbyResyncing(
       );
       expect(
         mark.turns.isAnimating || mark.turns.value != 0,
-        isTrue,
+        !_animationsRemoved(tester),
         reason:
-            'capture $shotName ($scenario) $moment: the mark must be turning, '
-            'its animation is ${mark.turns.status} at ${mark.turns.value}',
+            'capture $shotName ($scenario) $moment: the mark must turn, and '
+            'stand still with animations removed '
+            '(reduced ${_animationsRemoved(tester)}); its animation is '
+            '${mark.turns.status} at ${mark.turns.value}',
       );
     }
 
@@ -19374,11 +19382,13 @@ Future<void> _shootLobbyResyncing(
       frame: const Duration(milliseconds: 100),
     );
     expect(
-      mark.turns.value,
-      isNot(turnedAt),
+      mark.turns.value != turnedAt,
+      !_animationsRemoved(tester),
       reason:
           'capture $shotName ($scenario): the sync mark must move between '
-          'frames, it stood at $turnedAt after 300 ms',
+          'frames, and stand still with animations removed '
+          '(reduced ${_animationsRemoved(tester)}); it was $turnedAt and is '
+          '${mark.turns.value} after 300 ms',
     );
     await _pumpRealDurationFrames(tester);
     expectResyncing('after the settle, before the capture');
@@ -19551,3 +19561,9 @@ Future<void> _shootLobbyConnectingLarge(
     await _releaseTrayGame(tester, controller);
   }
 }
+
+/// Whether the lobby resync captures run with the system's animations
+/// removed (this job's emulator does; C-555 D2 then keeps the mark still).
+bool _animationsRemoved(WidgetTester tester) => MediaQuery.disableAnimationsOf(
+  tester.element(find.byKey(const Key('lobby-resync-button'))),
+);
