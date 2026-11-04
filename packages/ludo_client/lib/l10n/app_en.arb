@@ -446,6 +446,14 @@
       }
     }
   },
+  "gameTurnTimeUp": "Time is up",
+  "@gameTurnTimeUp": {
+    "description": "Spoken label of the turn countdown ring once its count has reached zero and the server has not yet moved on; the ring shows a turning hourglass in place of the digits."
+  },
+  "gameStartedLine": "The game has started",
+  "@gameStartedLine": {
+    "description": "Announced to a screen reader when a new game arrives on the game screen, either from the lobby or as the rematch board replacing the end card."
+  },
   "gameOverYouWin": "You win",
   "@gameOverYouWin": {
     "description": "Shown on the game screen when the game has finished and the winning seat is this player's own."
@@ -662,6 +670,10 @@
   "endEveryoneLeft": "Everyone else left the table",
   "@endEveryoneLeft": {
     "description": "Shown on the end card when every other player has left the table."
+  },
+  "endHostNow": "You are the host now",
+  "@endHostNow": {
+    "description": "Announced to a screen reader while the end card is up when the host role passes to this player."
   },
   "endOffline": "No connection right now",
   "@endOffline": {

@@ -69,6 +69,12 @@ class _RoomRouteState extends State<RoomRoute> {
   /// build.
   bool _showGame = false;
 
+  /// True only when the latch tripped in the controller listener, so the
+  /// GameScreen it mounted is a new game arriving from the lobby and plays
+  /// its entrance. A route that opens straight onto a room already in play
+  /// (a resume) leaves it false. GameScreen reads it once, on mount.
+  bool _gameFromLobby = false;
+
   @override
   void initState() {
     super.initState();
@@ -96,6 +102,7 @@ class _RoomRouteState extends State<RoomRoute> {
     }
     setState(() {
       _showGame = true;
+      _gameFromLobby = true;
     });
   }
 
@@ -107,7 +114,10 @@ class _RoomRouteState extends State<RoomRoute> {
   @override
   Widget build(BuildContext context) {
     if (_showGame) {
-      return GameScreen(controller: widget.controller);
+      return GameScreen(
+        controller: widget.controller,
+        fromLobby: _gameFromLobby,
+      );
     }
     return LobbyScreen(
       controller: widget.controller,

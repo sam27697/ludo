@@ -55,6 +55,7 @@ import 'safe_cue.dart';
 import 'seat_die.dart';
 import 'session_memory.dart';
 import 'sound_toggle.dart';
+import 'table_entrance.dart';
 import 'theme.dart';
 import 'token_face_picker.dart';
 import 'waiting_line.dart';
@@ -133,9 +134,19 @@ const Duration kEndCardDwell = Duration(milliseconds: 600);
 const Duration kEndCardHoldLimit = Duration(milliseconds: 2500);
 
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key, required this.controller});
+  const GameScreen({
+    super.key,
+    required this.controller,
+    this.fromLobby = false,
+  });
 
   final RoomController controller;
+
+  /// C-554 D2: true only when [RoomRoute] mounted this screen by switching
+  /// away from the lobby, so the first board it shows is a new game arriving.
+  /// A plain mount onto a game in progress leaves it false. Read once, on
+  /// mount.
+  final bool fromLobby;
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -161,6 +172,23 @@ class _GameScreenState extends State<GameScreen> {
   int? _countdownDeadlineMs;
   int? _countdownK;
   int _countdownRemainingSeconds = 0;
+
+  // C-554 D2/D3: a new game arrives through [TableEntrance] and is announced
+  // once. `_entranceFromLobby` is the mount-time ask from RoomRoute, held
+  // until the first build that shows the playing board. `_endCardGameId` is
+  // the game this State last showed an end card for, so a different playing
+  // game after it is the rematch board. `_entranceGameId` is the game the
+  // entrance last ran for, so one game never runs it twice.
+  bool _entranceFromLobby = false;
+  String? _endCardGameId;
+  String? _entranceGameId;
+  bool _entranceShowing = false;
+  int _entranceSerial = 0;
+
+  // C-554 D4: what the end card showed after the last controller change, so
+  // the next change can be told from the state the card first appeared in.
+  // Null while the card is not on screen with the connection up.
+  _EndCardSeen? _endSeen;
 
   // Client-side unique-legal hold. Armed once per await_move decision
   // (this seat, turn.k, and the queue) when exactly one token is legal.
@@ -547,6 +575,7 @@ class _GameScreenState extends State<GameScreen> {
   @override
   void initState() {
     super.initState();
+    _entranceFromLobby = widget.fromLobby;
     _currentGameId = widget.controller.room?.gameId;
     _lastPhase = widget.controller.phase;
     _notePlayingGame();
@@ -614,6 +643,10 @@ class _GameScreenState extends State<GameScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // C-554 D3: the new game is announced ahead of any turn cue or line the
+    // same mount produces.
+    _syncEntrance();
+    _syncEndCardAnnouncements();
     if (_announceMountTimerPlayed) {
       _announceMountTimerPlayed = false;
       _announce(AppLocalizations.of(context).gameTimerPlayedMine);
@@ -1150,6 +1183,7 @@ class _GameScreenState extends State<GameScreen> {
     if (mounted) {
       setState(() {});
     }
+    _syncEndCardAnnouncements();
     _maybeFetchGameLog();
   }
 
@@ -2447,6 +2481,138 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
+  /// C-554 D2 and D3. Decides, on the first look at a playing board that is
+  /// new to this State, whether a new game is arriving: the mount asked for it
+  /// from the lobby ([GameScreen.fromLobby]), or the game differs from the
+  /// one this State showed an end card for (the rematch board). A mount onto
+  /// a game in progress asks for nothing, and one game never runs it twice.
+  /// Fields and one announcement only; the layer itself is drawn by [build].
+  void _syncEntrance() {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    if (room == null) {
+      return;
+    }
+    if (room.state == RoomState.finished) {
+      _endCardGameId = room.gameId ?? _endCardGameId;
+      return;
+    }
+    if (room.state == RoomState.lobby) {
+      if (room.rematch != null) {
+        _endCardGameId = controller.lastFinished?.gameId ?? _endCardGameId;
+      }
+      return;
+    }
+    if (room.state != RoomState.playing || room.seats.length < 2) {
+      return;
+    }
+    final String? gameId = room.gameId;
+    bool arriving = false;
+    if (_entranceFromLobby) {
+      _entranceFromLobby = false;
+      arriving = gameId == null || gameId != _entranceGameId;
+    }
+    if (!arriving &&
+        _endCardGameId != null &&
+        gameId != null &&
+        gameId != _endCardGameId &&
+        gameId != _entranceGameId) {
+      arriving = true;
+    }
+    if (!arriving) {
+      return;
+    }
+    _entranceGameId = gameId;
+    _endCardGameId = null;
+    _entranceSerial += 1;
+    _entranceShowing = !MediaQuery.disableAnimationsOf(context);
+    _announce(AppLocalizations.of(context).gameStartedLine);
+  }
+
+  void _onEntranceDone() {
+    if (!mounted || !_entranceShowing) {
+      return;
+    }
+    setState(() {
+      _entranceShowing = false;
+    });
+  }
+
+  /// The end card is on screen with the connection up, same condition as the
+  /// body [build] draws for a connected room (an offline, gone or held card
+  /// is not this).
+  bool _endCardOnScreen() {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    if (room == null ||
+        controller.phase != RoomPhase.connected ||
+        _seatRefused) {
+      return false;
+    }
+    if (room.state == RoomState.finished) {
+      return !(_isEndHeld && room.seats.length >= 2);
+    }
+    return room.state == RoomState.lobby && room.rematch != null;
+  }
+
+  /// C-554 D4. While the end card is up, a change another seat or the server
+  /// makes to what it says is also said aloud: a rematch asked for by someone
+  /// else, a seat leaving (or everyone), the host role passing to me. Each
+  /// build is compared with the one before it; the state the card first
+  /// appears in, my own actions, and an offline or gone card announce
+  /// nothing. No haptic and no sound (the vocabulary waits on card 0fa8).
+  void _syncEndCardAnnouncements() {
+    if (!_endCardOnScreen()) {
+      _endSeen = null;
+      return;
+    }
+    final RoomController controller = widget.controller;
+    final RoomSnapshot room = controller.room!;
+    final _EndDepartures departures = _departuresOf(controller, room);
+    final _EndCardSeen seen = _EndCardSeen(
+      rematchOpen: room.rematch != null,
+      departedNames: departures.names,
+      everyoneLeft: departures.everyoneLeft,
+      isHost: controller.isHost,
+    );
+    final _EndCardSeen? before = _endSeen;
+    _endSeen = seen;
+    if (before == null) {
+      return;
+    }
+    final AppLocalizations loc = AppLocalizations.of(context);
+    final RematchState? rematch = room.rematch;
+    if (!before.rematchOpen &&
+        rematch != null &&
+        rematch.by != controller.seat) {
+      final String? byName = _rematchByNameOf(
+        context,
+        room,
+        _finishedOf(controller, room),
+      );
+      // The card hides its ask line when the asker has gone or cannot be
+      // named; there is then nothing to say.
+      if (!departures.rematchByDeparted && byName != null) {
+        _announce(loc.endRematchAsk(byName));
+      }
+    }
+    if (seen.everyoneLeft && !before.everyoneLeft) {
+      _announce(loc.endEveryoneLeft);
+    } else {
+      final List<String> joined = seen.departedNames
+          .where((String name) => !before.departedNames.contains(name))
+          .toList();
+      if (joined.isNotEmpty) {
+        final String separator =
+            Localizations.localeOf(context).languageCode == 'ar' ? '، ' : ', ';
+        _announce(loc.endLeft(joined.join(separator)));
+      }
+    }
+    if (!before.isHost && seen.isHost) {
+      _announce(loc.endHostNow);
+    }
+  }
+
   void _onControllerChanged() {
     final RoomController controller = widget.controller;
     // C-540 D3 item 3: the link dropped under an open sheet. The
@@ -2475,6 +2641,8 @@ class _GameScreenState extends State<GameScreen> {
     // below records the holder's `turn.value` again (C-465 D2).
     _syncOpponentThrows();
     _syncSeatFaceMemory();
+    _syncEntrance();
+    _syncEndCardAnnouncements();
     setState(() {
       _syncCountdown();
       _releaseMoveGuard();
@@ -3929,6 +4097,17 @@ class _GameScreenState extends State<GameScreen> {
                     chatLine,
                     clearOfChatButton: _chat?.clearOfChatButton ?? false,
                   ),
+                // C-554 D2: above everything the screen draws, and gone once
+                // the fade is over. Never drawn under reduced motion.
+                if (_entranceShowing &&
+                    !MediaQuery.disableAnimationsOf(context))
+                  Positioned.fill(
+                    key: const Key('game-table-entrance-layer'),
+                    child: TableEntrance(
+                      key: ValueKey<int>(_entranceSerial),
+                      onDone: _onEntranceDone,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -5214,10 +5393,15 @@ class _GameScreenState extends State<GameScreen> {
     final double remainingFraction = budget > 0
         ? (_countdownRemainingSeconds / budget).clamp(0.0, 1.0)
         : 0.0;
+    // C-554 D1: at zero the server has not yet moved on, so the digits give
+    // way to a turning hourglass that says the time is up.
+    final bool timeUp = _countdownRemainingSeconds == 0;
 
     return Semantics(
       key: const Key('game-header-countdown-semantics'),
-      label: loc.gameTurnCountdown(_countdownRemainingSeconds),
+      label: timeUp
+          ? loc.gameTurnTimeUp
+          : loc.gameTurnCountdown(_countdownRemainingSeconds),
       child: SizedBox(
         width: _countdownRingSize,
         height: _countdownRingSize,
@@ -5230,19 +5414,21 @@ class _GameScreenState extends State<GameScreen> {
               remainingFraction: remainingFraction,
             ),
             ExcludeSemantics(
-              child: Text(
-                loc.gameTurnCountdownDigits(_countdownRemainingSeconds),
-                key: const Key('game-screen-turn-countdown'),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                softWrap: false,
-                style: TextStyle(
-                  color: ringColor,
-                  fontWeight: FontWeight.w600,
-                  fontSize: kTypeLabel,
-                  height: 1,
-                ),
-              ),
+              child: timeUp
+                  ? _TimeUpHourglass(color: ringColor)
+                  : Text(
+                      loc.gameTurnCountdownDigits(_countdownRemainingSeconds),
+                      key: const Key('game-screen-turn-countdown'),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        color: ringColor,
+                        fontWeight: FontWeight.w600,
+                        fontSize: kTypeLabel,
+                        height: 1,
+                      ),
+                    ),
             ),
           ],
         ),
@@ -5447,6 +5633,87 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
+  /// C-310 rule 2: the snapshot the end card presents. When a rematch is open
+  /// in LOBBY, or a FINISHED room names the game [RoomController.lastFinished]
+  /// holds, that last FINISHED snapshot; otherwise [room] itself.
+  RoomSnapshot _finishedOf(RoomController controller, RoomSnapshot room) {
+    final RoomSnapshot? lastFinished = controller.lastFinished;
+    return (lastFinished != null &&
+            ((room.state == RoomState.lobby && room.rematch != null) ||
+                (room.state == RoomState.finished &&
+                    room.gameId == lastFinished.gameId)))
+        ? lastFinished
+        : room;
+  }
+
+  /// C-316 rule 2: which seats of the game just played are no longer in the
+  /// room, in seat order, whether none of the others remain, and whether the
+  /// seat that asked for the rematch is one of the departed. Shared by the
+  /// end card and by the announcements that follow its changes (C-554 D4), so
+  /// both read the same names.
+  _EndDepartures _departuresOf(RoomController controller, RoomSnapshot room) {
+    final RoomSnapshot? lastFinished = controller.lastFinished;
+    final RoomSnapshot? baseline =
+        lastFinished ?? (room.state == RoomState.finished ? room : null);
+    final List<String> names = <String>[];
+    bool everyoneLeft = false;
+    bool rematchByDeparted = false;
+    if (baseline != null) {
+      final Set<int> liveSeats = room.seats
+          .map((SeatState s) => s.seat)
+          .toSet();
+      final List<SeatState> pastSeats = List<SeatState>.from(baseline.seats)
+        ..sort((SeatState a, SeatState b) => a.seat.compareTo(b.seat));
+      final Map<int, String> pastNames = seatLabelsFor(context, pastSeats);
+      for (final SeatState s in pastSeats) {
+        if (s.seat != controller.seat && !liveSeats.contains(s.seat)) {
+          names.add(pastNames[s.seat]!);
+        }
+      }
+      final bool otherSeatPresent = liveSeats.any(
+        (int seat) => seat != controller.seat,
+      );
+      if (names.isNotEmpty && !otherSeatPresent) {
+        everyoneLeft = true;
+      }
+      final RematchState? rematch = room.rematch;
+      if (rematch != null && !liveSeats.contains(rematch.by)) {
+        rematchByDeparted = true;
+      }
+    }
+    return _EndDepartures(names, everyoneLeft, rematchByDeparted);
+  }
+
+  /// C-246 rule 4: the ask line names `rematch.by`, resolved against live
+  /// room.seats, falling back to [finished].seats if that seat has since
+  /// left. Null when there is no rematch open, or when `by` is in neither.
+  String? _rematchByNameOf(
+    BuildContext context,
+    RoomSnapshot room,
+    RoomSnapshot finished,
+  ) {
+    final RematchState? rematch = room.rematch;
+    if (rematch == null) {
+      return null;
+    }
+    final Map<int, String> roomNames = seatLabelsFor(context, room.seats);
+    for (final SeatState seatState in room.seats) {
+      if (seatState.seat == rematch.by) {
+        return roomNames[seatState.seat];
+      }
+    }
+    final Map<int, String> finishedNames = seatLabelsFor(
+      context,
+      finished.seats,
+    );
+    for (final SeatState seatState in finished.seats) {
+      if (seatState.seat == rematch.by) {
+        return finishedNames[seatState.seat];
+      }
+    }
+    return null;
+  }
+
   /// H6.2 and H7: the game has finished. C-243's `EndCard` carries the
   /// title, the winner's celebration or the loser's warmth, the honest
   /// numbers and the fairness line; this method's own job is only to
@@ -5472,46 +5739,13 @@ class _GameScreenState extends State<GameScreen> {
     // C-316 rule 2: on a FINISHED room whose gameId equals
     // controller.lastFinished?.gameId, finished is lastFinished so a departed
     // seat does not clear the winner, numbers or board.
-    final RoomSnapshot? lastFinished = controller.lastFinished;
-    final RoomSnapshot finished =
-        (lastFinished != null &&
-            ((room.state == RoomState.lobby && room.rematch != null) ||
-                (room.state == RoomState.finished &&
-                    room.gameId == lastFinished.gameId)))
-        ? lastFinished
-        : room;
+    final RoomSnapshot finished = _finishedOf(controller, room);
 
     // C-316 rule 2: departed seats on the end card.
-    final RoomSnapshot? departedBaseline =
-        lastFinished ?? (room.state == RoomState.finished ? room : null);
-    final List<String> departedNames = <String>[];
-    bool everyoneLeft = false;
-    bool rematchByDeparted = false;
-
-    if (departedBaseline != null) {
-      final Set<int> liveSeats = room.seats
-          .map((SeatState s) => s.seat)
-          .toSet();
-      final List<SeatState> pastSeats = List<SeatState>.from(
-        departedBaseline.seats,
-      )..sort((SeatState a, SeatState b) => a.seat.compareTo(b.seat));
-      final Map<int, String> pastNames = seatLabelsFor(context, pastSeats);
-      for (final SeatState s in pastSeats) {
-        if (s.seat != controller.seat && !liveSeats.contains(s.seat)) {
-          departedNames.add(pastNames[s.seat]!);
-        }
-      }
-      final bool otherSeatPresent = liveSeats.any(
-        (int seat) => seat != controller.seat,
-      );
-      if (departedNames.isNotEmpty && !otherSeatPresent) {
-        everyoneLeft = true;
-      }
-      final RematchState? rematch = room.rematch;
-      if (rematch != null && !liveSeats.contains(rematch.by)) {
-        rematchByDeparted = true;
-      }
-    }
+    final _EndDepartures departures = _departuresOf(controller, room);
+    final List<String> departedNames = departures.names;
+    final bool everyoneLeft = departures.everyoneLeft;
+    final bool rematchByDeparted = departures.rematchByDeparted;
 
     final bool hasBoard = finished.seats.length >= 2;
 
@@ -5534,28 +5768,8 @@ class _GameScreenState extends State<GameScreen> {
     }
     final int? winnerSeat = winnerName == null ? null : finished.winner;
 
-    // C-246 rule 4: the ask line names `rematch.by`, resolved against
-    // live room.seats, falling back to finished.seats if that seat has since
-    // left. Null when there is no rematch open, or when `by` is in neither.
     final RematchState? rematch = room.rematch;
-    String? rematchByName;
-    if (rematch != null) {
-      final Map<int, String> roomNames = seatLabelsFor(context, room.seats);
-      for (final SeatState seatState in room.seats) {
-        if (seatState.seat == rematch.by) {
-          rematchByName = roomNames[seatState.seat];
-          break;
-        }
-      }
-      if (rematchByName == null) {
-        for (final SeatState seatState in finished.seats) {
-          if (seatState.seat == rematch.by) {
-            rematchByName = finishedNames[seatState.seat];
-            break;
-          }
-        }
-      }
-    }
+    final String? rematchByName = _rematchByNameOf(context, room, finished);
 
     // C-293 rule 2, amended by C-304 rules 3 and 5, and C-310 rule 2: this
     // seat's numbers, computed from controller's gameTranscript when complete,
@@ -5890,6 +6104,108 @@ class _GameScreenState extends State<GameScreen> {
 /// that would otherwise paint at `Size.zero`. The depleting sweep itself is
 /// Canvas work (`_CountdownRingPainter`); nothing about "is it red yet"
 /// lives there, only "what colour was I given".
+/// C-554 D1. The hourglass that takes the digits' place in the countdown ring
+/// once the count is at zero: one half turn every 600 ms, over and over, for
+/// as long as it is in the tree. Under `disableAnimations` it stands still.
+/// It owns its ticker and gives it up when the count leaves zero, the turn
+/// goes or the screen is disposed.
+class _TimeUpHourglass extends StatefulWidget {
+  const _TimeUpHourglass({required this.color});
+
+  final Color color;
+
+  @override
+  State<_TimeUpHourglass> createState() => _TimeUpHourglassState();
+}
+
+class _TimeUpHourglassState extends State<_TimeUpHourglass>
+    with SingleTickerProviderStateMixin {
+  static const Duration _halfTurn = Duration(milliseconds: 600);
+
+  late final AnimationController _turn;
+  // Half turns finished so far; only its parity matters for the angle.
+  int _halfTurns = 0;
+  bool? _reduced;
+
+  @override
+  void initState() {
+    super.initState();
+    _turn = AnimationController(vsync: this, duration: _halfTurn);
+    _turn.addStatusListener((AnimationStatus status) {
+      if (status == AnimationStatus.completed) {
+        _halfTurns += 1;
+        _turn.forward(from: 0);
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    if (reduced == _reduced) {
+      return;
+    }
+    _reduced = reduced;
+    if (reduced) {
+      _turn.stop();
+    } else {
+      _turn.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _turn.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _turn,
+      builder: (BuildContext context, Widget? child) {
+        final double eased = Curves.easeInOut.transform(_turn.value);
+        return Transform.rotate(
+          angle: ((_halfTurns % 2) + eased) * math.pi,
+          child: child,
+        );
+      },
+      child: Icon(
+        Icons.hourglass_bottom_rounded,
+        key: const Key('game-screen-turn-timeup'),
+        color: widget.color,
+        size: 24,
+      ),
+    );
+  }
+}
+
+/// C-554 D4: the facts of the end card that the announcements compare from
+/// one controller change to the next.
+class _EndCardSeen {
+  const _EndCardSeen({
+    required this.rematchOpen,
+    required this.departedNames,
+    required this.everyoneLeft,
+    required this.isHost,
+  });
+
+  final bool rematchOpen;
+  final List<String> departedNames;
+  final bool everyoneLeft;
+  final bool isHost;
+}
+
+/// C-316 rule 2: the departed seats an end card is told about.
+class _EndDepartures {
+  const _EndDepartures(this.names, this.everyoneLeft, this.rematchByDeparted);
+
+  final List<String> names;
+  final bool everyoneLeft;
+  final bool rematchByDeparted;
+}
+
 class _CountdownRing extends StatelessWidget {
   const _CountdownRing({
     super.key,
