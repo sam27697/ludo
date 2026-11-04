@@ -60,6 +60,7 @@
   "gameYourTurnMove": "دورك. حرّك قطعة.",
   "gameAutoMoving": "حركة وحيدة. سنلعبها عنك.",
   "gameYourTurnStale": "دورك",
+  "gameYourTurnTimeUp": "انتهى الوقت. نلعب عنك.",
   "gameRollButton": "رمي النرد",
   "gameTokenButton": "قطعة {number}",
   "announceAutoMoveArmed": "حركة وحيدة. القطعة {number} ستتحرك وحدها.",

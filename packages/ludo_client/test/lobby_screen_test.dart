@@ -409,8 +409,8 @@ void main() {
   group('rule 3: phase rendering is exclusive', () {
     testWidgets(
       'idle-or-connecting: pumped before the initState request resolves, '
-      'shows lobby-connecting with a spinner and loc.lobbyConnecting, and '
-      'nothing else',
+      'shows lobby-connecting with one waiting-line mark and '
+      'loc.lobbyConnecting, and nothing else',
       (tester) async {
         final connector = _Connector();
         final transport = FakeTransport();
@@ -458,12 +458,22 @@ void main() {
         expect(
           find.descendant(
             of: find.byKey(const Key('lobby-connecting')),
-            matching: find.byType(CircularProgressIndicator),
+            matching: find.byKey(const Key('waiting-line-mark')),
           ),
           findsOneWidget,
           reason:
-              'rule 3: lobby-connecting must contain a '
-              'CircularProgressIndicator',
+              'rule 3: lobby-connecting must contain exactly one '
+              'waiting-line-mark',
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(const Key('lobby-connecting')),
+            matching: find.byType(CircularProgressIndicator),
+          ),
+          findsNothing,
+          reason:
+              'rule 3: lobby-connecting draws its one turning mark through '
+              'the waiting line, so it must hold no CircularProgressIndicator',
         );
         expect(
           find.descendant(

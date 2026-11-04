@@ -5,11 +5,11 @@
 // RoomController over FakeTransport (test/net/fake_transport.dart,
 // read-only here), mounted once on a fresh idle controller so initState's
 // own create_room is the request that connects. One LobbyScreen mount per
-// case. No pumpAndSettle (the connecting spinner never settles) and no
-// bare pumpEventQueue() inside a testWidgets body.
+// case. No pumpAndSettle (the connecting body's turning mark never settles)
+// and no bare pumpEventQueue() inside a testWidgets body.
 //
 // On this tree a dropped connection with a room held still shows the
-// closed column, an attempt still shows the spinner, and the chrome row
+// closed column, an attempt still shows the connecting body, and the chrome row
 // is built only while connected. Every case except the control is red
 // here for that reason. The control is room == null, connecting, which
 // this tree already draws as lobby-connecting.
@@ -977,10 +977,18 @@ void main() {
         expect(
           find.descendant(
             of: find.byKey(_connectingKey),
-            matching: find.byType(CircularProgressIndicator),
+            matching: find.byKey(const Key('lobby-connecting-line')),
           ),
           findsOneWidget,
-          reason: 'today\'s connecting body still contains the spinner',
+          reason: 'today\'s connecting body still contains its waiting line',
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(_connectingKey),
+            matching: find.byKey(const Key('waiting-line-mark')),
+          ),
+          findsOneWidget,
+          reason: 'today\'s connecting body still draws its one turning mark',
         );
         expect(
           find.byKey(_staleRoomKey),
