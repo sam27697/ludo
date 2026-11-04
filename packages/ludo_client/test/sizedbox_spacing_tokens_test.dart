@@ -536,19 +536,13 @@ void main() {
   );
 
   testWidgets(
-    'lobby connecting spinner-to-label and label-to-cancel gaps are kSpace4',
+    'lobby connecting label-to-cancel gap (the line bottom to Cancel) is kSpace4',
     (WidgetTester tester) async {
       final RoomController controller = await _pumpConnectingLobby(tester);
       try {
         final Finder connecting = find.byKey(const Key('lobby-connecting'));
         expect(connecting, findsOneWidget);
 
-        final Rect spinner = tester.getRect(
-          find.descendant(
-            of: connecting,
-            matching: find.byType(CircularProgressIndicator),
-          ),
-        );
         final AppLocalizations loc = AppLocalizations.of(
           tester.element(find.byType(LobbyScreen)),
         );
@@ -562,13 +556,6 @@ void main() {
           find.byKey(const Key('lobby-cancel-button')),
         );
 
-        expect(
-          label.top - spinner.bottom,
-          kSpace4,
-          reason:
-              'lobby connecting spinner-to-label gap must be kSpace4 '
-              '($kSpace4), found ${label.top - spinner.bottom}',
-        );
         expect(
           cancel.top - label.bottom,
           kSpace4,

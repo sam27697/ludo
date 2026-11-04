@@ -15,7 +15,7 @@
 //   game     GameScreen's connection-lost body during an automatic sequence
 //   overlay  LobbyScreen's stale-room overlay card (a room held, link lost)
 //   closed   LobbyScreen's closed body (no room, a reconnect pending)
-//   connect  LobbyScreen's connecting body (spinner, text, Cancel)
+//   connect  LobbyScreen's connecting body (mark, text, Cancel)
 //
 // Ambiguities, reported rather than invented around:
 //
@@ -82,6 +82,7 @@ const Key _gameReconnectingKey = Key('game-screen-reconnecting');
 const Key _lobbyClosedKey = Key('lobby-closed');
 const Key _lobbyReconnectingKey = Key('lobby-reconnecting');
 const Key _lobbyConnectingKey = Key('lobby-connecting');
+const Key _waitingMarkKey = Key('waiting-line-mark');
 const Key _cancelKey = Key('lobby-cancel-button');
 const Key _gameDesyncKey = Key('game-screen-desync-banner');
 const Key _lobbyDesyncKey = Key('lobby-desync-banner');
@@ -954,7 +955,7 @@ void main() {
       final String id =
           'D3 connect ${_tag(locale)}: the connecting body keeps its text '
           'under lobby-connecting, its Cancel, and one turning mark (the '
-          'spinner)';
+          'waiting line\'s, no spinner)';
       testWidgets(id, (tester) async {
         final _Rig rig = _ConnectRig(tester, locale);
         try {
@@ -980,21 +981,25 @@ void main() {
           expect(
             find.descendant(
               of: find.byKey(_lobbyConnectingKey),
-              matching: find.byType(CircularProgressIndicator),
+              matching: find.byKey(_waitingMarkKey),
             ),
             findsOneWidget,
-            reason: _msg(id, 'the spinner stays'),
+            reason: _msg(
+              id,
+              'the waiting line draws the one turning mark in the connecting '
+              'body',
+            ),
           );
           expect(
             find.descendant(
               of: find.byKey(_lobbyConnectingKey),
-              matching: find.byIcon(Icons.sync_rounded),
+              matching: find.byType(CircularProgressIndicator),
             ),
             findsNothing,
             reason: _msg(
               id,
-              'the spinner is the one turning mark in the connecting body; '
-              'a sync mark beside it would draw two',
+              'the spinner is gone; one over the waiting line\'s mark would '
+              'draw two turning marks',
             ),
           );
         } finally {
@@ -1172,11 +1177,37 @@ void main() {
               );
               used = const Duration(milliseconds: 600);
             } else {
-              expect(
-                find.byIcon(Icons.sync_rounded),
-                findsNothing,
-                reason: _msg(id, 'the connecting body draws no sync mark'),
+              // The connecting body's mark is the waiting line's own, and it
+              // is read off its RotationTransition: a still one holds turns 0.
+              final Finder mark = find.descendant(
+                of: find.byKey(_lobbyConnectingKey),
+                matching: find.byKey(_waitingMarkKey),
               );
+              expect(
+                mark,
+                findsOneWidget,
+                reason: _msg(
+                  id,
+                  'the connecting body keeps one waiting-line-mark under '
+                  'disableAnimations',
+                ),
+              );
+              final List<double> turns = <double>[];
+              turns.add(tester.widget<RotationTransition>(mark).turns.value);
+              await tester.pump(const Duration(milliseconds: 100));
+              turns.add(tester.widget<RotationTransition>(mark).turns.value);
+              await tester.pump(const Duration(milliseconds: 500));
+              turns.add(tester.widget<RotationTransition>(mark).turns.value);
+              expect(
+                turns,
+                everyElement(0.0),
+                reason: _msg(
+                  id,
+                  'the mark must stay still: turns $turns at 0, 100 and '
+                  '600 ms',
+                ),
+              );
+              used = const Duration(milliseconds: 600);
             }
             await _expectFourSecondMark(tester, id, rig, used);
           } finally {
