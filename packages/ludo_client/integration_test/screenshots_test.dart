@@ -99,6 +99,15 @@
 //   126-game-reconnecting-slow-ar.png  game, Arabic, the same slow row
 //   127-game-catching-up-ar.png  game, Arabic, the desync banner reading
 //                             "updating the table"
+//   128-game-time-up-en.png   game, English, my turn with the count at zero:
+//                             the turning hourglass in the ring, no digits
+//   129-game-time-up-ar.png   game, Arabic, the same hourglass
+//   130-lobby-resyncing-en.png  lobby holding a room, English, the desync
+//                             banner with a resync out on the live socket:
+//                             Resync disabled, its mark turning
+//   131-lobby-resyncing-ar.png  lobby, Arabic, the same banner
+//   132-lobby-connecting-large-text-en.png  lobby connecting body, English,
+//                             system text scale 2.0, the slow line showing
 //   (114 stays unused: dropped in run 124, a 360 x 640 surface hung the
 //   emulator. 117, the lobby closed card with no room held, is not built:
 //   the controller cannot be left in that state by any frame sequence.)
@@ -6929,6 +6938,65 @@ void main() {
       shotName: '127-game-catching-up-ar',
       locale: const Locale('ar'),
       roomCode: 'CU7A9W',
+    );
+  });
+
+  // ==========================================================================
+  // 128-132: order 559 (C-554 D1, C-555 D1 and D2). 128-129 are the game's
+  // countdown at zero, 130-131 the lobby's desync banner with a resync out on
+  // the live socket, 132 the lobby's connecting body at text scale 2.0.
+  // Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 128-game-time-up-en', (tester) async {
+    await _shootGameTimeUp(
+      tester,
+      binding,
+      shotName: '128-game-time-up-en',
+      locale: const Locale('en'),
+      roomCode: 'TU8E1A',
+      seatToken: 'tok-shot-128',
+    );
+  });
+
+  testWidgets('capture 129-game-time-up-ar', (tester) async {
+    await _shootGameTimeUp(
+      tester,
+      binding,
+      shotName: '129-game-time-up-ar',
+      locale: const Locale('ar'),
+      roomCode: 'TU9A2K',
+      seatToken: 'tok-shot-129',
+    );
+  });
+
+  testWidgets('capture 130-lobby-resyncing-en', (tester) async {
+    await _shootLobbyResyncing(
+      tester,
+      binding,
+      shotName: '130-lobby-resyncing-en',
+      locale: const Locale('en'),
+      roomCode: 'RY0E3W',
+      seatToken: 'tok-shot-130',
+    );
+  });
+
+  testWidgets('capture 131-lobby-resyncing-ar', (tester) async {
+    await _shootLobbyResyncing(
+      tester,
+      binding,
+      shotName: '131-lobby-resyncing-ar',
+      locale: const Locale('ar'),
+      roomCode: 'RY1A4L',
+      seatToken: 'tok-shot-131',
+    );
+  });
+
+  testWidgets('capture 132-lobby-connecting-large-text-en', (tester) async {
+    await _shootLobbyConnectingLarge(
+      tester,
+      binding,
+      shotName: '132-lobby-connecting-large-text-en',
+      locale: const Locale('en'),
     );
   });
 }
@@ -18321,6 +18389,7 @@ Future<_OpenedTrayGame> _openBareGame(
   required String roomCode,
   required String? seatToken,
   List<Duration> autoReconnectDelays = const <Duration>[],
+  int deadlineMs = 45000,
 }) async {
   binding.testTextInput.register();
   _stubScreenshotChannel(tester);
@@ -18364,7 +18433,7 @@ Future<_OpenedTrayGame> _openBareGame(
         turn: <String, Object?>{
           'seat': 0,
           'phase': 'await_roll',
-          'deadline_ms': 45000,
+          'deadline_ms': deadlineMs,
           'k': 0,
         },
         seq: 1,
@@ -18927,6 +18996,558 @@ Future<void> _shootGameCatchingUp(
     expectBanner('after the settle, before the capture');
     await binding.takeScreenshot(shotName);
   } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// 128 and 129 (order 559, C-554 D1). A PLAYING game resumed into seat 0's
+/// turn with `deadline_ms` 0: the count is at zero from the first frame, so
+/// the ring keeps its error colour and the hourglass stands where the digits
+/// were. The hourglass turns for as long as the count is zero, so nothing here
+/// settles: every pump is a fixed frame.
+Future<void> _shootGameTimeUp(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String seatToken,
+}) async {
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, seat 0 to roll with '
+      'deadline_ms 0';
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openBareGame(
+      tester,
+      binding,
+      shotName: shotName,
+      locale: locale,
+      roomCode: roomCode,
+      seatToken: seatToken,
+      deadlineMs: 0,
+    );
+    controller = opened.controller;
+
+    void expectTimeUp(String moment) {
+      expect(
+        <Object?>[
+          controller!.seat,
+          controller.room?.turn?.seat,
+          controller.room?.turn?.deadlineMs,
+        ],
+        <Object?>[0, 0, 0],
+        reason:
+            'capture $shotName ($scenario) $moment: fixture is broken, '
+            'expected this device (seat 0) to hold the turn with 0 ms left, '
+            'got seat ${controller.seat}, turn ${controller.room?.turn?.seat}, '
+            'deadline ${controller.room?.turn?.deadlineMs}',
+      );
+      final AppLocalizations loc = AppLocalizations.of(
+        tester.element(find.byType(GameScreen)),
+      );
+      expect(
+        loc.localeName,
+        locale.languageCode,
+        reason:
+            'capture $shotName ($scenario) $moment: expected locale '
+            '${locale.languageCode}, got ${loc.localeName}',
+      );
+      expect(
+        find.byKey(const Key('game-screen-board')),
+        findsOneWidget,
+        reason: 'capture $shotName ($scenario) $moment: expected the board',
+      );
+      final Finder hourglass = find.byKey(const Key('game-screen-turn-timeup'));
+      expect(
+        hourglass,
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: expected '
+            'game-screen-turn-timeup in the ring; the texts on screen are '
+            '${_viewText(tester)}',
+      );
+      expect(
+        find.byKey(const Key('game-screen-turn-countdown')),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario) $moment: the digits must be gone '
+            'at zero',
+      );
+      final Icon icon = tester.widget<Icon>(hourglass);
+      expect(
+        <Object?>[icon.icon, icon.color],
+        <Object?>[Icons.hourglass_bottom_rounded, LudoColors.error],
+        reason:
+            'capture $shotName ($scenario) $moment: expected the hourglass '
+            'in LudoColors.error, got ${icon.icon}, ${icon.color}',
+      );
+      expect(
+        find.byKey(const Key('game-header-countdown-ring')),
+        findsOneWidget,
+        reason: 'capture $shotName ($scenario) $moment: expected the ring',
+      );
+      expect(
+        tester
+            .widget<Semantics>(
+              find.byKey(const Key('game-header-countdown-semantics')),
+            )
+            .properties
+            .label,
+        loc.gameTurnTimeUp,
+        reason:
+            'capture $shotName ($scenario) $moment: the countdown label must '
+            'read "${loc.gameTurnTimeUp}"',
+      );
+    }
+
+    expectTimeUp('right after the mount');
+    double turned() => tester
+        .widget<Transform>(
+          find
+              .ancestor(
+                of: find.byKey(const Key('game-screen-turn-timeup')),
+                matching: find.byType(Transform),
+              )
+              .first,
+        )
+        .transform
+        .storage[0];
+    final double before = turned();
+    await _pumpRealDurationFrames(
+      tester,
+      frameCount: 3,
+      frame: const Duration(milliseconds: 100),
+    );
+    expect(
+      turned(),
+      isNot(before),
+      reason:
+          'capture $shotName ($scenario): the hourglass must be turning, its '
+          'rotation stood at $before after 300 ms of frames',
+    );
+    await _pumpRealDurationFrames(tester);
+    expectTimeUp('after the settle, before the capture');
+    await binding.takeScreenshot(shotName);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// 130 and 131 (order 559, C-555 D1 and D2). A host lobby holding its room.
+/// A presence push skips to seq 999 and the controller sends a resume that
+/// nobody answers; once the request times out on the live socket the banner
+/// stays and the Resync button takes taps again. The capture is of the tap
+/// after that: `controller.resync()` out on the same socket, a second resume
+/// unanswered, the button disabled and its mark turning. The wait for the
+/// timeout is a condition, not a sleep, and nothing settles while the mark
+/// turns.
+Future<void> _shootLobbyResyncing(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String seatToken,
+}) async {
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, a presence push at '
+      'seq 999 over a room at seq 1, the first resume left unanswered until '
+      'it times out, then one tap on Resync';
+  RoomController? controller;
+  FakeTransport? transport;
+  try {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+    await (await SharedPreferences.getInstance()).clear();
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+    transport = FakeTransport();
+    final FakeTransport socket = transport;
+    controller = RoomController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: (Uri url) async => socket,
+    );
+    final RoomController held = controller;
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        LobbyScreen(
+          controller: held,
+          action: LobbyAction.create,
+          playerName: 'Dee',
+          players: 4,
+        ),
+        locale: locale,
+      ),
+    );
+    await tester.pump();
+    expect(
+      socket.sentRaw,
+      isNotEmpty,
+      reason:
+          'capture $shotName ($scenario): fixture is broken, '
+          'LobbyScreen.initState must have sent create_room',
+    );
+    final String createId = _idOf(socket.sentRaw.last);
+    socket.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+    socket.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: roomCode,
+          players: 4,
+          seats: <Map<String, Object?>>[_seatJson(0, name: 'Dee')],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(
+      held.phase,
+      RoomPhase.connected,
+      reason:
+          'capture $shotName ($scenario): fixture is broken, the create '
+          'reply must land connected, got ${held.phase}',
+    );
+
+    int resumesSent() =>
+        socket.sentRaw.where((String s) => _typeOf(s) == 'resume').length;
+
+    socket.pushText(
+      _frame(
+        type: 'presence',
+        data: const <String, Object?>{'seat': 0, 'connected': true, 'seq': 999},
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(
+      <Object?>[held.hasDesynced, held.isResyncing, resumesSent()],
+      <Object?>[true, true, 1],
+      reason:
+          'capture $shotName ($scenario): fixture is broken, the seq gap '
+          'must leave hasDesynced true with one resume out, got '
+          '${held.hasDesynced}, ${held.isResyncing}, ${resumesSent()} resumes',
+    );
+
+    // The resume goes unanswered. The request times out after its own ten
+    // seconds on a socket that stays open: the banner stays, the controller
+    // stops resyncing, and the phase stays connected.
+    var waited = 0;
+    while (held.isResyncing) {
+      if (waited >= 130) {
+        throw TestFailure(
+          'capture $shotName ($scenario): the first resume was still in '
+          'flight after $waited frames of 100 ms; the request timeout never '
+          'settled it',
+        );
+      }
+      await tester.pump(const Duration(milliseconds: 100));
+      waited += 1;
+    }
+    expect(
+      <Object?>[held.phase, held.hasDesynced, held.isResyncing],
+      <Object?>[RoomPhase.connected, true, false],
+      reason:
+          'capture $shotName ($scenario): a resume that timed out on a live '
+          'socket must leave phase connected and hasDesynced true with no '
+          'resync in flight, got ${held.phase}, ${held.hasDesynced}, '
+          '${held.isResyncing}',
+    );
+
+    final Finder button = find.byKey(const Key('lobby-resync-button'));
+    expect(
+      button,
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected lobby-resync-button '
+          'after the first resume failed',
+    );
+    expect(
+      tester.widget<OutlinedButton>(button).onPressed,
+      isNotNull,
+      reason:
+          'capture $shotName ($scenario): C-555 D2, the button must take '
+          'taps again once the resync failed without a verdict',
+    );
+
+    await tester.tap(button);
+    await tester.pump();
+    await tester.pump();
+
+    final RotationTransition mark = tester.widget<RotationTransition>(
+      find.descendant(of: button, matching: find.byType(RotationTransition)),
+    );
+    void expectResyncing(String moment) {
+      expect(
+        <Object?>[held.phase, held.hasDesynced, held.isResyncing],
+        <Object?>[RoomPhase.connected, true, true],
+        reason:
+            'capture $shotName ($scenario) $moment: expected controller.'
+            'resync() in flight on the live socket, got ${held.phase}, '
+            '${held.hasDesynced}, ${held.isResyncing}',
+      );
+      expect(
+        resumesSent(),
+        2,
+        reason:
+            'capture $shotName ($scenario) $moment: the tap must send one '
+            'more resume on the same socket, ${resumesSent()} sent in all',
+      );
+      final AppLocalizations loc = AppLocalizations.of(
+        tester.element(find.byType(LobbyScreen)),
+      );
+      expect(
+        loc.localeName,
+        locale.languageCode,
+        reason:
+            'capture $shotName ($scenario) $moment: expected locale '
+            '${locale.languageCode}, got ${loc.localeName}',
+      );
+      final Finder banner = find.byKey(const Key('lobby-desync-banner'));
+      expect(
+        banner,
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: expected '
+            'lobby-desync-banner on screen; the texts on screen are '
+            '${_viewText(tester)}',
+      );
+      expect(
+        find.descendant(of: banner, matching: find.text(loc.lobbyDesynced)),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: the banner must read '
+            '"${loc.lobbyDesynced}"',
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-resync-button')),
+          matching: find.text(loc.lobbyResyncButton),
+        ),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: the button must read '
+            '"${loc.lobbyResyncButton}"',
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.byKey(const Key('lobby-resync-button')),
+            )
+            .onPressed,
+        isNull,
+        reason:
+            'capture $shotName ($scenario) $moment: C-555 D2, the button '
+            'must not take a tap while a resync is out',
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-resync-button')),
+          matching: find.byIcon(Icons.sync),
+        ),
+        findsOneWidget,
+        reason: 'capture $shotName ($scenario) $moment: expected Icons.sync',
+      );
+      expect(
+        mark.turns.isAnimating || mark.turns.value != 0,
+        isTrue,
+        reason:
+            'capture $shotName ($scenario) $moment: the mark must be turning, '
+            'its animation is ${mark.turns.status} at ${mark.turns.value}',
+      );
+    }
+
+    expectResyncing('right after the tap');
+    final double turnedAt = mark.turns.value;
+    await _pumpRealDurationFrames(
+      tester,
+      frameCount: 3,
+      frame: const Duration(milliseconds: 100),
+    );
+    expect(
+      mark.turns.value,
+      isNot(turnedAt),
+      reason:
+          'capture $shotName ($scenario): the sync mark must move between '
+          'frames, it stood at $turnedAt after 300 ms',
+    );
+    await _pumpRealDurationFrames(tester);
+    expectResyncing('after the settle, before the capture');
+    await binding.takeScreenshot(shotName);
+  } finally {
+    // The second resume is still out; ending the socket fails it and cancels
+    // its timer before the controller goes.
+    transport?.endFromFarSide();
+    await tester.pump();
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// 132 (order 559, C-549 D3 under large text). The lobby's connecting body
+/// before any reply: the spinner, "Connecting to the room..." and, after 4.5
+/// s of frames, the slow line, all at text scale 2.0. The spinner turns, so
+/// nothing settles; the frames are fixed 100 ms pumps.
+Future<void> _shootLobbyConnectingLarge(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  final String scenario =
+      'locale ${locale.languageCode}, create_room sent and unanswered, '
+      'text scale 2.0, 4.5 s of frames pumped';
+  RoomController? controller;
+  try {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+    await (await SharedPreferences.getInstance()).clear();
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    final FakeTransport transport = FakeTransport();
+    controller = RoomController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: (Uri url) async => transport,
+    );
+    final RoomController held = controller;
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        LobbyScreen(
+          controller: held,
+          action: LobbyAction.create,
+          playerName: 'Dee',
+          players: 4,
+        ),
+        locale: locale,
+      ),
+    );
+    await tester.pump();
+    expect(
+      transport.sentRaw.map(_typeOf).toList(),
+      contains('create_room'),
+      reason:
+          'capture $shotName ($scenario): fixture is broken, '
+          'LobbyScreen.initState must have sent create_room, sent '
+          '${transport.sentRaw.map(_typeOf).toList()}',
+    );
+
+    expect(
+      find.byKey(const Key('lobby-connecting')),
+      findsOneWidget,
+      reason:
+          'capture $shotName ($scenario): expected lobby-connecting on '
+          'screen when the lobby first mounts',
+    );
+    expect(
+      find.byKey(const Key('waiting-line-slow')),
+      findsNothing,
+      reason:
+          'capture $shotName ($scenario): the slow line must not be drawn '
+          'the moment the body first appears',
+    );
+
+    // 45 frames of 100 ms is the 4.5 s of fixture time; the finder wait
+    // after it covers a timer that fires on the frame boundary. The create
+    // request's own ten seconds are far enough off to stay unanswered.
+    await _pumpRealDurationFrames(
+      tester,
+      frameCount: 45,
+      frame: const Duration(milliseconds: 100),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('waiting-line-slow')),
+      'capture $shotName ($scenario): waiting-line-slow after 4.5 s',
+      maxPumps: 20,
+      frame: const Duration(milliseconds: 100),
+    );
+
+    void expectConnecting(String moment) {
+      expect(
+        <Object?>[held.room == null, held.phase],
+        <Object?>[true, RoomPhase.connecting],
+        reason:
+            'capture $shotName ($scenario) $moment: expected no room and '
+            'phase connecting, got room ${held.room?.code}, ${held.phase}',
+      );
+      final AppLocalizations loc = AppLocalizations.of(
+        tester.element(find.byType(LobbyScreen)),
+      );
+      expect(
+        loc.localeName,
+        locale.languageCode,
+        reason:
+            'capture $shotName ($scenario) $moment: expected locale '
+            '${locale.languageCode}, got ${loc.localeName}',
+      );
+      final Finder body = find.byKey(const Key('lobby-connecting'));
+      expect(
+        body,
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: expected '
+            'lobby-connecting on screen; the texts on screen are '
+            '${_viewText(tester)}',
+      );
+      expect(
+        find.descendant(
+          of: body,
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsOneWidget,
+        reason: 'capture $shotName ($scenario) $moment: expected the spinner',
+      );
+      expect(
+        find.descendant(of: body, matching: find.text(loc.lobbyConnecting)),
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: the body must read '
+            '"${loc.lobbyConnecting}"',
+      );
+      final Finder slow = find.byKey(const Key('waiting-line-slow'));
+      expect(
+        slow,
+        findsOneWidget,
+        reason:
+            'capture $shotName ($scenario) $moment: expected '
+            'waiting-line-slow on screen after 4.5 s; the texts on screen '
+            'are ${_viewText(tester)}',
+      );
+      expect(
+        tester.widget<Text>(slow).data,
+        loc.connectionSlowLine,
+        reason:
+            'capture $shotName ($scenario) $moment: the slow line must read '
+            '"${loc.connectionSlowLine}"',
+      );
+      final double scaledTen = MediaQuery.textScalerOf(tester.element(body))
+          .scale(10);
+      expect(
+        scaledTen,
+        20.0,
+        reason:
+            'capture $shotName ($scenario) $moment: expected '
+            'MediaQuery.textScalerOf at lobby-connecting to scale 10 to 20 '
+            'under textScaleFactorTestValue = 2.0, got $scaledTen',
+      );
+    }
+
+    expectConnecting('after 4.5 s');
+    await _pumpRealDurationFrames(tester);
+    expectConnecting('after the settle, before the capture');
+    await binding.takeScreenshot(shotName);
+  } finally {
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
     await _releaseTrayGame(tester, controller);
   }
 }
