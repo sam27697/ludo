@@ -323,6 +323,8 @@ Future<void> _mount(
 }
 
 const Key _countdownKey = Key('game-screen-turn-countdown');
+const Key _timeUpKey = Key('game-screen-turn-timeup');
+const Key _countdownSemanticsKey = Key('game-header-countdown-semantics');
 const Key _waitingForSeatKey = Key('game-screen-waiting-for-seat');
 const Key _turnBannerKey = Key('game-screen-turn-banner');
 const Key _boardKey = Key('game-screen-board');
@@ -457,8 +459,9 @@ void main() {
   // P3: the clamp.
   // ==========================================================================
   testWidgets(
-    'P3: past the deadline the rendered value is zero and never negative at '
-    'any second sampled across the boundary, and stays zero once reached',
+    'P3: the digits are never negative and never zero, and from the deadline '
+    'on the hourglass stands in for them and stays, at any second sampled '
+    'across the boundary',
     (tester) async {
       final (controller, _) = await _connectPlaying(
         tester,
@@ -478,42 +481,78 @@ void main() {
       );
 
       // Sample every second from 1 through 50 seconds of pumped time,
-      // crossing the 45000ms deadline partway through, and require that no
-      // sample is ever negative -- the case requirement 2 in the contract
-      // exists for.
+      // crossing the 45000ms deadline partway through. C-554 D1 takes the
+      // digits away at zero, so each sample is one of two things: digits
+      // that read 1 or more (never negative, which requirement 2 in the
+      // contract exists for, and never a "0", which D1 exists for), or the
+      // hourglass with no digits at all. Once the hourglass is up the
+      // digits never come back.
+      bool timeUpSeen = false;
       for (int elapsedSeconds = 1; elapsedSeconds <= 50; elapsedSeconds++) {
         await tester.pump(const Duration(seconds: 1));
-        final int shown = _wholeSecondsShown(tester, _countdownKey);
+        final bool digits = find.byKey(_countdownKey).evaluate().isNotEmpty;
+        final bool timeUp = find.byKey(_timeUpKey).evaluate().isNotEmpty;
         expect(
-          shown,
-          greaterThanOrEqualTo(0),
+          digits != timeUp,
+          isTrue,
           reason:
-              'P3: game-screen-turn-countdown must never show a negative '
-              'number; at $elapsedSeconds second(s) of pumped time past a '
-              '45000ms deadline, got $shown',
+              'P3: exactly one of the digits and the hourglass must be '
+              'shown; at $elapsedSeconds second(s) of pumped time past a '
+              '45000ms deadline digits=$digits timeUp=$timeUp',
         );
+        if (digits) {
+          expect(
+            timeUpSeen,
+            isFalse,
+            reason:
+                'P3: the digits came back at $elapsedSeconds second(s) '
+                'after the hourglass had taken their place',
+          );
+          final int shown = _wholeSecondsShown(tester, _countdownKey);
+          expect(
+            shown,
+            greaterThanOrEqualTo(1),
+            reason:
+                'P3: game-screen-turn-countdown must never show a negative '
+                'number or a zero; at $elapsedSeconds second(s) of pumped '
+                'time past a 45000ms deadline, got $shown',
+          );
+        } else {
+          timeUpSeen = true;
+        }
       }
-      final int shownAtFifty = _wholeSecondsShown(tester, _countdownKey);
       expect(
-        shownAtFifty,
-        0,
+        timeUpSeen,
+        isTrue,
         reason:
             'P3: with 50 seconds of pumped time against a 45000ms deadline, '
-            'game-screen-turn-countdown must show exactly 0; got '
-            '$shownAtFifty',
+            'game-screen-turn-timeup must have replaced the digits',
+      );
+      expect(
+        find.byKey(_countdownKey),
+        findsNothing,
+        reason:
+            'P3: with 50 seconds of pumped time against a 45000ms deadline, '
+            'game-screen-turn-countdown must be gone, not showing 0',
       );
 
       // Advance further and confirm the clamp holds rather than the
       // countdown wrapping, resetting or otherwise moving off zero.
       await tester.pump(const Duration(seconds: 10));
-      final int shownAfterMore = _wholeSecondsShown(tester, _countdownKey);
       expect(
-        shownAfterMore,
-        0,
+        find.byKey(_timeUpKey),
+        findsOneWidget,
         reason:
             'P3: 10 further seconds of pumped time past an already-expired '
-            '45000ms deadline must still show 0, not drift away from the '
-            'clamp; got $shownAfterMore',
+            '45000ms deadline must still show the hourglass',
+      );
+      expect(
+        find.byKey(_countdownKey),
+        findsNothing,
+        reason:
+            'P3: 10 further seconds of pumped time past an already-expired '
+            '45000ms deadline must not bring digits back (wrapping or '
+            'resetting)',
       );
     },
   );
@@ -836,8 +875,10 @@ void main() {
   // is actually gone (both P3 and P7 already read the value, never whether
   // anything is still scheduled).
   //
-  // What is used instead: the Text widget GameScreen builds at
-  // game-screen-turn-countdown is a fresh object on every rebuild, because
+  // What is used instead: the Semantics widget GameScreen builds at
+  // game-header-countdown-semantics, the wrapper of both the digits and (since
+  // C-554 D1) the hourglass that replaces them at zero, is a fresh object on
+  // every rebuild of the screen, because
   // every call to State.build reconstructs its whole return value -- Flutter
   // does not diff a build's output against the last one before replacing it.
   // Capturing that widget's identity, advancing fake time well past the
@@ -850,8 +891,12 @@ void main() {
   // If the periodic tick kept re-arming after clamping to zero, that stray
   // tick calls setState every second and this identity comparison catches
   // it; if it self-cancels as requirement 4 of order 141's contract
-  // requires, nothing calls setState again and the same Text instance
-  // persists.
+  // requires, nothing calls setState again and the same Semantics instance
+  // persists. The hourglass turns on a ticker of its own inside its own
+  // State; that rebuilds the hourglass and nothing above it, so it leaves the
+  // wrapper's identity alone, which is the property carried over from the
+  // digits: nothing but the hourglass's own ticker keeps scheduling work once
+  // the countdown is at zero.
   //
   // This was checked against a mutated scratch copy of game_screen.dart, not
   // argued statically alone: lib/src/game_screen.dart was copied outside the
@@ -865,10 +910,11 @@ void main() {
   // fails) -- measured by running both through this same fixture idiom, not
   // by reasoning about the framework's internals alone.
   testWidgets(
-    'P8: game-screen-turn-countdown stops scheduling rebuilds once the '
-    'countdown reaches zero, checked by identity of the rendered widget '
-    'across a further advance while still mounted, not by the rendered '
-    'value or by anything the end-of-test unmount-and-check could paper over',
+    'P8: the countdown stops scheduling rebuilds of the screen once it '
+    'reaches zero, beyond the hourglass\'s own ticker, checked by identity of '
+    'the countdown\'s Semantics wrapper across a further advance while still '
+    'mounted, not by the rendered value or by anything the end-of-test '
+    'unmount-and-check could paper over',
     (tester) async {
       final (controller, _) = await _connectPlaying(
         tester,
@@ -888,20 +934,25 @@ void main() {
       );
 
       // Cross the 3000ms deadline in one bounded pump, then confirm the
-      // clamp reads zero -- this much is already covered by P3 and is only
-      // a sanity check here, not this case's own assertion.
+      // hourglass has taken the digits' place -- this much is already
+      // covered by P3 and is only a sanity check here, not this case's own
+      // assertion.
       await tester.pump(const Duration(seconds: 5));
       expect(
-        _wholeSecondsShown(tester, _countdownKey),
-        0,
+        find.byKey(_timeUpKey),
+        findsOneWidget,
         reason:
             'P8: fixture is broken: 5 seconds of pumped time past a 3000ms '
-            'deadline must already read as clamped to 0',
+            'deadline must already show game-screen-turn-timeup',
+      );
+      expect(
+        find.byKey(_countdownKey),
+        findsNothing,
+        reason: 'P8: fixture is broken: the digits must be gone at zero',
       );
 
-      final Widget beforeFurtherAdvance = _renderedTextWidgetAt(
-        tester,
-        _countdownKey,
+      final Widget beforeFurtherAdvance = tester.widget(
+        find.byKey(_countdownSemanticsKey),
       );
 
       // Advance well past another full tick interval with nothing else
@@ -909,17 +960,16 @@ void main() {
       // schedules nothing here; a leaked one fires three more times.
       await tester.pump(const Duration(seconds: 3));
 
-      final Widget afterFurtherAdvance = _renderedTextWidgetAt(
-        tester,
-        _countdownKey,
+      final Widget afterFurtherAdvance = tester.widget(
+        find.byKey(_countdownSemanticsKey),
       );
       expect(
         identical(afterFurtherAdvance, beforeFurtherAdvance),
         isTrue,
         reason:
-            'P8: game-screen-turn-countdown must not be rebuilt by a '
+            'P8: the screen must not be rebuilt by a '
             'further 3 seconds of pumped time once the countdown has '
-            'already clamped to zero -- rendering the same widget instance '
+            'already reached zero -- rendering the same widget instance '
             'both before and after means nothing called setState in '
             'between; a periodic timer that forgot to cancel itself at zero '
             'would call setState every further second and this case '
@@ -1183,34 +1233,4 @@ String _renderedTextAt(WidgetTester tester, Key key) {
   );
   final Text text = tester.widget<Text>(descendant.first);
   return text.data ?? '';
-}
-
-/// Locates the same Text [_wholeSecondsShown] and [_renderedTextAt] read from
-/// [key], but returns the widget instance itself rather than a value parsed
-/// or copied out of it. Used by P8, which needs to tell whether
-/// [GameScreen] rebuilt at all between two samples -- every call to
-/// State.build constructs a brand new Text object regardless of whether the
-/// string it carries changed, so two samples taken across a pump with no
-/// rebuild in between are the same object (`identical`), and two samples
-/// taken across a pump that did rebuild are not, independently of what
-/// either one renders.
-Widget _renderedTextWidgetAt(WidgetTester tester, Key key) {
-  final Finder finder = find.byKey(key);
-  final Widget widget = tester.widget(finder);
-  if (widget is Text) {
-    return widget;
-  }
-  final Finder descendant = find.descendant(
-    of: finder,
-    matching: find.byType(Text),
-  );
-  expect(
-    descendant,
-    findsAtLeastNWidgets(1),
-    reason:
-        'the widget keyed $key is a ${widget.runtimeType}, not a '
-        'Text, and carries no Text descendant to read a widget instance '
-        'from',
-  );
-  return tester.widget<Text>(descendant.first);
 }

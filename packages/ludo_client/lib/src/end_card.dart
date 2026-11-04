@@ -211,7 +211,34 @@ class EndCard extends StatefulWidget {
   State<EndCard> createState() => _EndCardState();
 }
 
-class _EndCardState extends State<EndCard> {
+class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
+  /// C-555 D3: how long a New table that has just replaced Play again takes
+  /// no tap, measured from the first frame it is drawn.
+  static const Duration _kNewTableGuard = Duration(milliseconds: 600);
+
+  /// C-555 D3: the fade-in at the start of that guard.
+  static const Duration _kNewTableFade = Duration(milliseconds: 250);
+
+  /// Runs for [_kNewTableGuard] when the primary New table replaces Play
+  /// again on a card already on screen, and is otherwise at rest at 1. It is
+  /// guarding exactly while it is animating. Started from `didUpdateWidget`,
+  /// during the build, so its clock is the frame that first draws the button.
+  late final AnimationController _newTableGuard = AnimationController(
+    vsync: this,
+    duration: _kNewTableGuard,
+    value: 1,
+  );
+
+  /// C-555 D4: false for the card's first build, true for every build after.
+  /// A line that comes into a card already on screen fades in; the lines a
+  /// card is first drawn with do not.
+  bool _onScreen = false;
+
+  /// What `_onScreen` was when the current build began. A `LayoutBuilder`
+  /// inside the card runs after the build has finished, so the lines read
+  /// this field, never `_onScreen`.
+  bool _arriving = false;
+
   /// True while the finished scroll still has content below the viewport,
   /// so the dock can show a soft top shadow. False when the scroll is at
   /// its end or the column fits, which keeps a short card from growing a
@@ -232,7 +259,46 @@ class _EndCardState extends State<EndCard> {
   }
 
   @override
+  void didUpdateWidget(EndCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_primaryNewTable(widget)) {
+      _newTableGuard.value = 1;
+    } else if (!_primaryNewTable(oldWidget) && _showsPlayAgain(oldWidget)) {
+      _newTableGuard.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _newTableGuard.dispose();
+    super.dispose();
+  }
+
+  /// Whether [w] draws New table as the one primary action (C-246 rules 3
+  /// and 8): the table closed, or everyone else gone.
+  static bool _primaryNewTable(EndCard w) => w.rematchGone || w.everyoneLeft;
+
+  /// Whether [w] draws `end-card-rematch`, mirroring the branches of
+  /// `_actionArea`: every branch but the closed table, everyone gone, and
+  /// my own rematch already sent (the waiting line has no Play again).
+  static bool _showsPlayAgain(EndCard w) {
+    if (_primaryNewTable(w)) {
+      return false;
+    }
+    if (w.isOffline) {
+      return true;
+    }
+    final RematchState? rematch = w.rematch;
+    final int? mySeat = w.mySeat;
+    return !(rematch != null &&
+        mySeat != null &&
+        rematch.ready.contains(mySeat));
+  }
+
+  @override
   Widget build(BuildContext context) {
+    _arriving = _onScreen;
+    _onScreen = true;
     final AppLocalizations loc = AppLocalizations.of(context);
     final bool isWinner =
         widget.winnerSeat != null && widget.winnerSeat == widget.mySeat;
@@ -754,10 +820,13 @@ class _EndCardState extends State<EndCard> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Text(
-            loc.endRematchGone,
-            key: const Key('end-card-rematch-gone'),
-            textAlign: TextAlign.center,
+          _arrivingLine(
+            const ValueKey<String>('fade-gone'),
+            Text(
+              loc.endRematchGone,
+              key: const Key('end-card-rematch-gone'),
+              textAlign: TextAlign.center,
+            ),
           ),
           const SizedBox(height: kSpace3),
           _newTableButton(loc, primary: true),
@@ -769,10 +838,13 @@ class _EndCardState extends State<EndCard> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Text(
-            loc.endEveryoneLeft,
-            key: const Key('end-card-left'),
-            textAlign: TextAlign.center,
+          _arrivingLine(
+            const ValueKey<String>('fade-everyone-left'),
+            Text(
+              loc.endEveryoneLeft,
+              key: const Key('end-card-left'),
+              textAlign: TextAlign.center,
+            ),
           ),
           const SizedBox(height: kSpace3),
           _newTableButton(loc, primary: true),
@@ -784,10 +856,13 @@ class _EndCardState extends State<EndCard> {
         Localizations.localeOf(context).languageCode == 'ar' ? '، ' : ', ';
     final bool hasDeparted = widget.departedNames.isNotEmpty;
     final Widget? leftLine = hasDeparted
-        ? Text(
-            loc.endLeft(widget.departedNames.join(separator)),
-            key: const Key('end-card-left'),
-            textAlign: TextAlign.center,
+        ? _arrivingLine(
+            const ValueKey<String>('fade-left'),
+            Text(
+              loc.endLeft(widget.departedNames.join(separator)),
+              key: const Key('end-card-left'),
+              textAlign: TextAlign.center,
+            ),
           )
         : null;
 
@@ -879,29 +954,32 @@ class _EndCardState extends State<EndCard> {
             leftLine,
             const SizedBox(height: kSpace2),
           ],
-          LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final TextStyle? fitStyle = _fitTitleFontSize(
-                text: askText,
-                base: bodyStyle,
-                maxWidth: constraints.maxWidth,
-                scaler: MediaQuery.textScalerOf(context),
-                direction: Directionality.of(context),
-                locale: Localizations.maybeLocaleOf(context),
-              );
-              return Text.rich(
-                TextSpan(
-                  children: _nameHighlightSpans(
-                    askText,
-                    byName,
-                    _seatColor(rematch.by),
-                    fitStyle,
+          _arrivingLine(
+            const ValueKey<String>('fade-ask'),
+            LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+                final TextStyle? fitStyle = _fitTitleFontSize(
+                  text: askText,
+                  base: bodyStyle,
+                  maxWidth: constraints.maxWidth,
+                  scaler: MediaQuery.textScalerOf(context),
+                  direction: Directionality.of(context),
+                  locale: Localizations.maybeLocaleOf(context),
+                );
+                return Text.rich(
+                  TextSpan(
+                    children: _nameHighlightSpans(
+                      askText,
+                      byName,
+                      _seatColor(rematch.by),
+                      fitStyle,
+                    ),
                   ),
-                ),
-                key: const Key('end-card-rematch-ask'),
-                textAlign: TextAlign.center,
-              );
-            },
+                  key: const Key('end-card-rematch-ask'),
+                  textAlign: TextAlign.center,
+                );
+              },
+            ),
           ),
           const SizedBox(height: kSpace3),
           _rematchButton(loc),
@@ -928,6 +1006,14 @@ class _EndCardState extends State<EndCard> {
         ],
       ],
     );
+  }
+
+  /// C-555 D4: [line] fades in over 200 ms when it comes into a card that is
+  /// already on screen, and does not on the card's first frame. [key] names
+  /// the line, so a line that stays keeps its state when its neighbours come
+  /// and go around it.
+  Widget _arrivingLine(Key key, Widget line) {
+    return _FadeInOnArrival(key: key, fade: _arriving, child: line);
   }
 
   /// One ready dot per occupied seat (rule 4's second bullet), seat-coloured
@@ -1001,11 +1087,36 @@ class _EndCardState extends State<EndCard> {
   /// primary spot used to be.
   Widget _newTableButton(AppLocalizations loc, {required bool primary}) {
     if (primary) {
-      return ElevatedButton(
-        key: const Key('game-screen-new-room-button'),
-        style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-        onPressed: widget.onNewTable,
-        child: Text(loc.gameNewRoomButton),
+      // C-555 D3: one wrapper, always there, so the button is never rebuilt
+      // under a finger when the guard ends. The guard is the controller
+      // still running; a tap in it goes nowhere.
+      return FadeTransition(
+        opacity: MediaQuery.disableAnimationsOf(context)
+            ? kAlwaysCompleteAnimation
+            : _newTableGuard.drive(
+                CurveTween(
+                  curve: Interval(
+                    0,
+                    _kNewTableFade.inMilliseconds /
+                        _kNewTableGuard.inMilliseconds,
+                    curve: Curves.easeOut,
+                  ),
+                ),
+              ),
+        alwaysIncludeSemantics: true,
+        child: ElevatedButton(
+          key: const Key('game-screen-new-room-button'),
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+          ),
+          onPressed: () {
+            if (_newTableGuard.isAnimating) {
+              return;
+            }
+            widget.onNewTable();
+          },
+          child: Text(loc.gameNewRoomButton),
+        ),
       );
     }
     return OutlinedButton(
@@ -1013,6 +1124,61 @@ class _EndCardState extends State<EndCard> {
       style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
       onPressed: widget.onNewTable,
       child: Text(loc.gameNewRoomButton),
+    );
+  }
+}
+
+/// C-555 D4: shows [child] at once, or, when [fade] is true, fades it in from
+/// nothing over 200 ms. [fade] is read once, when this widget is first
+/// built: a line already showing is never re-faded by a later rebuild. With
+/// the system's animations removed there is no fade (P9).
+class _FadeInOnArrival extends StatefulWidget {
+  const _FadeInOnArrival({super.key, required this.fade, required this.child});
+
+  final bool fade;
+  final Widget child;
+
+  @override
+  State<_FadeInOnArrival> createState() => _FadeInOnArrivalState();
+}
+
+class _FadeInOnArrivalState extends State<_FadeInOnArrival>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _opacity = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 200),
+    value: widget.fade ? 0 : 1,
+  );
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) {
+      return;
+    }
+    _started = true;
+    if (widget.fade) {
+      if (MediaQuery.disableAnimationsOf(context)) {
+        _opacity.value = 1;
+      } else {
+        _opacity.forward();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _opacity.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      alwaysIncludeSemantics: true,
+      child: widget.child,
     );
   }
 }
