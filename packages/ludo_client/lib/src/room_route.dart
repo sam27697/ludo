@@ -69,15 +69,23 @@ class _RoomRouteState extends State<RoomRoute> {
   /// build.
   bool _showGame = false;
 
-  /// True only when the latch tripped in the controller listener, so the
-  /// GameScreen it mounted is a new game arriving from the lobby and plays
-  /// its entrance. A route that opens straight onto a room already in play
-  /// (a resume) leaves it false. GameScreen reads it once, on mount.
+  /// True only when the latch tripped in the controller listener after this
+  /// route had seen the room in the lobby, so the GameScreen it mounted is a
+  /// new game arriving from the lobby and plays its entrance. A route that
+  /// opens straight onto a room already in play, or whose first snapshot is
+  /// already in play (a resume), leaves it false. GameScreen reads it once, on mount.
   bool _gameFromLobby = false;
+
+  /// True once this route has seen the room in RoomState.lobby, at mount or
+  /// in any snapshot its listener observed. A resume starts with no room and
+  /// the first snapshot is already PLAYING or FINISHED, so it never sets this
+  /// and the latch trips as a plain mount, not a new game.
+  bool _sawLobby = false;
 
   @override
   void initState() {
     super.initState();
+    _sawLobby = widget.controller.room?.state == RoomState.lobby;
     _showGame = _roomIsInGame(widget.controller.room);
     widget.controller.addListener(_onControllerChanged);
   }
@@ -97,12 +105,19 @@ class _RoomRouteState extends State<RoomRoute> {
     // connecting and calls notifyListeners before its first await), so an
     // unconditional setState here would reenter this element's own build.
     // Rebuilding only on the one transition that matters avoids that.
-    if (_showGame || !_roomIsInGame(widget.controller.room)) {
+    if (_showGame) {
+      return;
+    }
+    final room = widget.controller.room;
+    if (room?.state == RoomState.lobby) {
+      _sawLobby = true;
+    }
+    if (!_roomIsInGame(room)) {
       return;
     }
     setState(() {
       _showGame = true;
-      _gameFromLobby = true;
+      _gameFromLobby = _sawLobby;
     });
   }
 

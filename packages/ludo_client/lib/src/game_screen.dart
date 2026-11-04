@@ -2571,6 +2571,7 @@ class _GameScreenState extends State<GameScreen> {
     final _EndDepartures departures = _departuresOf(controller, room);
     final _EndCardSeen seen = _EndCardSeen(
       rematchOpen: room.rematch != null,
+      departedSeats: departures.seats,
       departedNames: departures.names,
       everyoneLeft: departures.everyoneLeft,
       isHost: controller.isHost,
@@ -2599,9 +2600,13 @@ class _GameScreenState extends State<GameScreen> {
     if (seen.everyoneLeft && !before.everyoneLeft) {
       _announce(loc.endEveryoneLeft);
     } else {
-      final List<String> joined = seen.departedNames
-          .where((String name) => !before.departedNames.contains(name))
-          .toList();
+      // Compared by seat: the labels can change with the locale (a duplicate
+      // name is numbered differently) and the names are only the spoken text.
+      final List<String> joined = <String>[
+        for (int i = 0; i < seen.departedSeats.length; i++)
+          if (!before.departedSeats.contains(seen.departedSeats[i]))
+            seen.departedNames[i],
+      ];
       if (joined.isNotEmpty) {
         final String separator =
             Localizations.localeOf(context).languageCode == 'ar' ? '، ' : ', ';
@@ -3571,7 +3576,9 @@ class _GameScreenState extends State<GameScreen> {
   /// keeps scheduling frames after zero never lets `pumpAndSettle`
   /// return, and both test/composed_play_test.dart and
   /// test/game_screen_test.dart drive a playing board through exactly
-  /// that call.
+  /// that call. Since C-554 D1 the hourglass at zero turns on its own
+  /// ticker, so a settle call on a board whose clock has run out does not
+  /// return; the countdown itself still schedules nothing.
   void _syncCountdown() {
     final RoomController controller = widget.controller;
     final RoomSnapshot? room = controller.room;
@@ -5655,6 +5662,7 @@ class _GameScreenState extends State<GameScreen> {
     final RoomSnapshot? lastFinished = controller.lastFinished;
     final RoomSnapshot? baseline =
         lastFinished ?? (room.state == RoomState.finished ? room : null);
+    final List<int> seats = <int>[];
     final List<String> names = <String>[];
     bool everyoneLeft = false;
     bool rematchByDeparted = false;
@@ -5667,6 +5675,7 @@ class _GameScreenState extends State<GameScreen> {
       final Map<int, String> pastNames = seatLabelsFor(context, pastSeats);
       for (final SeatState s in pastSeats) {
         if (s.seat != controller.seat && !liveSeats.contains(s.seat)) {
+          seats.add(s.seat);
           names.add(pastNames[s.seat]!);
         }
       }
@@ -5681,7 +5690,7 @@ class _GameScreenState extends State<GameScreen> {
         rematchByDeparted = true;
       }
     }
-    return _EndDepartures(names, everyoneLeft, rematchByDeparted);
+    return _EndDepartures(seats, names, everyoneLeft, rematchByDeparted);
   }
 
   /// C-246 rule 4: the ask line names `rematch.by`, resolved against live
@@ -6096,14 +6105,6 @@ class _GameScreenState extends State<GameScreen> {
   }
 }
 
-/// C-250 rule 8: the countdown's own ring, key `game-header-countdown-ring`,
-/// exposing the colour it is currently painted with as a plain public
-/// field rather than making a caller re-derive it from the seconds left.
-/// Amendment run 72 (rule 9a): it expands to fill whatever box the
-/// countdown block gives it, rather than staying a childless `CustomPaint`
-/// that would otherwise paint at `Size.zero`. The depleting sweep itself is
-/// Canvas work (`_CountdownRingPainter`); nothing about "is it red yet"
-/// lives there, only "what colour was I given".
 /// C-554 D1. The hourglass that takes the digits' place in the countdown ring
 /// once the count is at zero: one half turn every 600 ms, over and over, for
 /// as long as it is in the tree. Under `disableAnimations` it stands still.
@@ -6187,12 +6188,16 @@ class _TimeUpHourglassState extends State<_TimeUpHourglass>
 class _EndCardSeen {
   const _EndCardSeen({
     required this.rematchOpen,
+    required this.departedSeats,
     required this.departedNames,
     required this.everyoneLeft,
     required this.isHost,
   });
 
   final bool rematchOpen;
+
+  /// The departed seat numbers, and their labels in the same order.
+  final List<int> departedSeats;
   final List<String> departedNames;
   final bool everyoneLeft;
   final bool isHost;
@@ -6200,13 +6205,28 @@ class _EndCardSeen {
 
 /// C-316 rule 2: the departed seats an end card is told about.
 class _EndDepartures {
-  const _EndDepartures(this.names, this.everyoneLeft, this.rematchByDeparted);
+  const _EndDepartures(
+    this.seats,
+    this.names,
+    this.everyoneLeft,
+    this.rematchByDeparted,
+  );
 
+  /// The departed seat numbers, parallel to [names].
+  final List<int> seats;
   final List<String> names;
   final bool everyoneLeft;
   final bool rematchByDeparted;
 }
 
+/// C-250 rule 8: the countdown's own ring, key `game-header-countdown-ring`,
+/// exposing the colour it is currently painted with as a plain public
+/// field rather than making a caller re-derive it from the seconds left.
+/// Amendment run 72 (rule 9a): it expands to fill whatever box the
+/// countdown block gives it, rather than staying a childless `CustomPaint`
+/// that would otherwise paint at `Size.zero`. The depleting sweep itself is
+/// Canvas work (`_CountdownRingPainter`); nothing about "is it red yet"
+/// lives there, only "what colour was I given".
 class _CountdownRing extends StatelessWidget {
   const _CountdownRing({
     super.key,
