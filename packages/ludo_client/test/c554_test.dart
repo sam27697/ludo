@@ -48,6 +48,7 @@ import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
 import 'package:ludo_client/src/room_route.dart';
+import 'package:ludo_client/src/session_memory.dart' show SeatRecord;
 import 'package:ludo_client/src/theme.dart';
 import 'package:path/path.dart' as p;
 
@@ -643,6 +644,104 @@ Future<void> _startRematchGame(
     findsOneWidget,
     reason: 'fixture: game_started must put the playing header on screen',
   );
+}
+
+/// RoomRoute on a fresh controller (no room held) under LobbyAction.resume,
+/// the way Home's Rejoin and the launch auto-resume push it. The resume
+/// request is sent and left unanswered: [_answerResume] delivers the reply, so
+/// a case sees every frame from the first one.
+Future<(RoomController, FakeTransport)> _mountRoomRouteResume(
+  WidgetTester tester, {
+  Locale locale = _en,
+}) async {
+  await tester.binding.setSurfaceSize(const Size(390, 844));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  final _Connector connector = _Connector();
+  final FakeTransport transport = FakeTransport();
+  connector.enqueue(transport);
+  final RoomController controller = RoomController(
+    serverUrl: Uri.parse(_testUrl),
+    connect: connector.call,
+  );
+  addTearDown(controller.dispose);
+  await tester.pumpWidget(
+    _harness(
+      FeedbackScope(
+        settings: FeedbackSettings.forTest(),
+        service: const NoopFeedbackService(),
+        child: RoomRoute(
+          controller: controller,
+          action: LobbyAction.resume,
+          playerName: 'Sam',
+          resume: const SeatRecord(code: 'C554XX', seat: 0, seatToken: 'tok-0'),
+        ),
+      ),
+      locale: locale,
+    ),
+  );
+  await tester.pump();
+  expect(
+    transport.sentRaw.isNotEmpty ? _typeOf(transport.sentRaw.last) : null,
+    'resume',
+    reason: 'fixture: a resume route on a fresh controller must send resume',
+  );
+  expect(
+    controller.room,
+    isNull,
+    reason: 'fixture: the controller holds no room before the reply',
+  );
+  expect(
+    find.byType(LobbyScreen),
+    findsOneWidget,
+    reason: 'fixture: RoomRoute shows the lobby until the reply arrives',
+  );
+  return (controller, transport);
+}
+
+/// Delivers the reply to the resume request: seat_assigned, then the room
+/// frame answering it, pumping zero-length frames until GameScreen is in the
+/// tree (or four have passed). Returns how many of those frames, the one that
+/// brought GameScreen included, carried [_entranceKey].
+Future<int> _answerResume(
+  WidgetTester tester,
+  FakeTransport transport,
+  Map<String, Object?> roomData,
+) async {
+  final String id = _idOf(
+    transport.sentRaw.lastWhere((String raw) => _typeOf(raw) == 'resume'),
+  );
+  transport.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: <String, Object?>{'seat': 0, 'seat_token': 'tok-0'},
+    ),
+  );
+  transport.pushText(_frame(type: 'room', re: id, data: roomData));
+  int layered = 0;
+  for (int i = 0; i < 4 && find.byType(GameScreen).evaluate().isEmpty; i++) {
+    await tester.pump();
+    if (find.byKey(_entranceKey).evaluate().isNotEmpty) {
+      layered += 1;
+    }
+  }
+  return layered;
+}
+
+/// Pumps [steps] times by [step] and returns the elapsed times (ms since the
+/// call) at which [_entranceKey] was in the tree.
+Future<List<int>> _layerSightings(
+  WidgetTester tester, {
+  required int steps,
+  Duration step = const Duration(milliseconds: 100),
+}) async {
+  final List<int> seen = <int>[];
+  for (int i = 0; i < steps; i++) {
+    await tester.pump(step);
+    if (find.byKey(_entranceKey).evaluate().isNotEmpty) {
+      seen.add((i + 1) * step.inMilliseconds);
+    }
+  }
+  return seen;
 }
 
 /// Taps the die and answers the roll it sends, so no request stays open.
@@ -1350,6 +1449,232 @@ void main() {
         );
       },
     );
+
+    for (final Locale locale in <Locale>[_en, _ar]) {
+      final String lang = locale.languageCode;
+
+      for (final bool checkLayer in <bool>[true, false]) {
+        testWidgets(
+          checkLayer
+              ? '$lang: A1: a fresh controller resumed into a game in '
+                    'progress through RoomRoute is a plain mount: no layer at '
+                    'any pump'
+              : '$lang: A1: a fresh controller resumed into a game in '
+                    'progress through RoomRoute: no "${_startedFor(locale)}" '
+                    'within 1 s',
+          (WidgetTester tester) async {
+            final String scenario =
+                'RoomRoute LobbyAction.resume on a fresh controller (no '
+                'room), resume reply PLAYING g1, 2 seats, seat 0 tokens [5, '
+                '12, 20, -1], seat 1 tokens [3, 40, -1, -1], turn seat 0 '
+                'await_roll 45000 k 14 (seq 31), locale $lang';
+            final _Announcements said = _Announcements()..install(tester);
+            final (RoomController controller, FakeTransport transport) =
+                await _mountRoomRouteResume(tester, locale: locale);
+
+            final int onDelivery = await _answerResume(
+              tester,
+              transport,
+              _roomJson(
+                seats: <Map<String, Object?>>[
+                  <String, Object?>{
+                    ..._seatJson(0, name: 'Sam'),
+                    'tokens': const <int>[5, 12, 20, -1],
+                  },
+                  <String, Object?>{
+                    ..._seatJson(1, name: 'Bob'),
+                    'tokens': const <int>[3, 40, -1, -1],
+                  },
+                ],
+                turn: _turnJson(
+                  seat: 0,
+                  phase: 'await_roll',
+                  deadlineMs: 45000,
+                  k: 14,
+                ),
+                gameId: 'g1',
+                seq: 31,
+              ),
+            );
+            final List<int> later = await _layerSightings(tester, steps: 10);
+
+            expect(
+              find.byType(GameScreen),
+              findsOneWidget,
+              reason:
+                  'fixture: the PLAYING resume reply must put GameScreen up. '
+                  'Scenario: $scenario',
+            );
+            expect(
+              find.byKey(_playingChipKey),
+              findsOneWidget,
+              reason: 'fixture: the playing board must be up ($scenario)',
+            );
+            expect(
+              controller.room!.turn!.k,
+              14,
+              reason: 'fixture: the resumed room is deep in a game ($scenario)',
+            );
+            if (checkLayer) {
+              expect(
+                <Object>[onDelivery, ...later],
+                <Object>[0],
+                reason:
+                    'A1: a resume that goes from no room straight to PLAYING '
+                    'is a plain mount, game-table-entrance must never be in '
+                    'the tree. Frames carrying it: $onDelivery of the '
+                    'delivery frames up to the first game frame, then at ms '
+                    '$later after it. Scenario: $scenario',
+              );
+            } else {
+              expect(
+                said.count(_startedFor(locale)),
+                0,
+                reason:
+                    'A1: "${_startedFor(locale)}" must not be announced on a '
+                    'resume into a game in progress; heard ${said.messages}. '
+                    'Scenario: $scenario',
+              );
+            }
+          },
+        );
+      }
+
+      testWidgets(
+        '$lang: A1: a fresh controller resumed into a FINISHED room has no '
+        'layer and no "${_startedFor(locale)}" line',
+        (WidgetTester tester) async {
+          final String scenario =
+              'RoomRoute LobbyAction.resume on a fresh controller (no room), '
+              'resume reply FINISHED g1, 2 seats, winner 0, turn finished k '
+              '8 (seq 9), locale $lang';
+          final _Announcements said = _Announcements()..install(tester);
+          final (RoomController controller, FakeTransport transport) =
+              await _mountRoomRouteResume(tester, locale: locale);
+
+          final int onDelivery = await _answerResume(
+            tester,
+            transport,
+            _roomJson(
+              state: 'FINISHED',
+              seats: _seatsOf(<String>['Sam', 'Bob']),
+              turn: _turnJson(seat: 0, phase: 'finished', deadlineMs: 0, k: 8),
+              winner: 0,
+              gameId: 'g1',
+              seq: 9,
+            ),
+          );
+          await _refuseGameLogs(tester, transport);
+          final List<int> later = await _layerSightings(tester, steps: 10);
+
+          expect(
+            find.byType(GameScreen),
+            findsOneWidget,
+            reason:
+                'fixture: the FINISHED resume reply must put GameScreen up. '
+                'Scenario: $scenario',
+          );
+          expect(
+            find.byKey(_rematchKey),
+            findsOneWidget,
+            reason: 'fixture: the end card must be showing ($scenario)',
+          );
+          expect(
+            controller.room!.state.name,
+            'finished',
+            reason: 'fixture ($scenario)',
+          );
+          expect(
+            <Object>[onDelivery, ...later],
+            <Object>[0],
+            reason:
+                'A1: a resume that goes from no room straight to FINISHED is '
+                'a plain mount, game-table-entrance must never be in the '
+                'tree. Frames carrying it: $onDelivery of the delivery '
+                'frames up to the first game frame, then at ms $later after '
+                'it. Scenario: $scenario',
+          );
+          expect(
+            said.count(_startedFor(locale)),
+            0,
+            reason:
+                'A1: "${_startedFor(locale)}" must not be announced on a '
+                'resume into a finished room; heard ${said.messages}. '
+                'Scenario: $scenario',
+          );
+        },
+      );
+
+      testWidgets(
+        '$lang: A1 guard: a fresh controller resumed into a LOBBY room, then '
+        'game_started: the layer on the first game frame, the line once',
+        (WidgetTester tester) async {
+          final String scenario =
+              'RoomRoute LobbyAction.resume on a fresh controller (no room), '
+              'resume reply LOBBY (seq 1), game_started turn 0 g1 (seq 2), '
+              'locale $lang';
+          final _Announcements said = _Announcements()..install(tester);
+          final (RoomController controller, FakeTransport transport) =
+              await _mountRoomRouteResume(tester, locale: locale);
+
+          await _answerResume(
+            tester,
+            transport,
+            _roomJson(
+              state: 'LOBBY',
+              seats: _seatsOf(<String>['Sam', 'Bob']),
+              seq: 1,
+            ),
+          );
+          await tester.pump();
+          await tester.pump();
+          expect(
+            find.byType(LobbyScreen),
+            findsOneWidget,
+            reason:
+                'fixture: the LOBBY resume reply must leave RoomRoute on the '
+                'lobby ($scenario)',
+          );
+          expect(
+            said.count(_startedFor(locale)),
+            0,
+            reason: 'nothing started yet, heard ${said.messages} ($scenario)',
+          );
+
+          await _startGameFromLobby(tester, transport);
+          final bool layerOnFirstFrame =
+              find.byKey(_entranceKey).evaluate().length == 1;
+          await _push(tester, transport, 'turn', <String, Object?>{
+            'seat': 0,
+            'deadline_ms': 45000,
+            'seq': 3,
+          });
+          await tester.pump(const Duration(milliseconds: 400));
+
+          expect(controller.room!.gameId, 'g1', reason: 'fixture ($scenario)');
+          expect(
+            layerOnFirstFrame,
+            isTrue,
+            reason:
+                'D2(a): a lobby seen by this route and then game_started is a '
+                'new game arriving, game-table-entrance must be in the tree '
+                'on the first game frame. Scenario: $scenario',
+          );
+          expect(
+            find.byKey(_entranceKey),
+            findsNothing,
+            reason: 'D2: the layer must be gone 400 ms later. $scenario',
+          );
+          expect(
+            said.count(_startedFor(locale)),
+            1,
+            reason:
+                'D3: "${_startedFor(locale)}" must be announced exactly once; '
+                'heard ${said.messages}. Scenario: $scenario',
+          );
+        },
+      );
+    }
 
     for (final Locale locale in <Locale>[_en, _ar]) {
       testWidgets(
