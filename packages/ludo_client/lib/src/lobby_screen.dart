@@ -554,27 +554,29 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Widget _connectingBody(AppLocalizations loc) {
     return Center(
       key: const Key('lobby-connecting'),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const CircularProgressIndicator(),
-          const SizedBox(height: kSpace4),
-          // C-549 D3: the spinner stays the one turning mark here; the line
-          // only adds its slow second line after 4 s.
-          WaitingLine(
-            key: const Key('lobby-connecting-line'),
-            text: loc.lobbyConnecting,
-            style: Theme.of(context).textTheme.bodyMedium,
-            showMark: false,
-          ),
-          const SizedBox(height: kSpace4),
-          OutlinedButton(
-            key: const Key('lobby-cancel-button'),
-            style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
-            onPressed: _leaveLobby,
-            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
-          ),
-        ],
+      // C-560 D4: the same side margin the connected body keeps, so the line
+      // wraps inside the screen at large text sizes.
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: kSpace6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // C-560 D4: the line draws the one turning mark; with animations
+            // removed it is a still, full-size icon that still reads as one.
+            WaitingLine(
+              key: const Key('lobby-connecting-line'),
+              text: loc.lobbyConnecting,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: kSpace4),
+            OutlinedButton(
+              key: const Key('lobby-cancel-button'),
+              style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+              onPressed: _leaveLobby,
+              child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+            ),
+          ],
+        ),
       ),
     );
   }
