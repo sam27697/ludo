@@ -1307,22 +1307,98 @@ class _LobbyScreenState extends State<LobbyScreen> {
             // C-340 rule 3: same outlined-pill treatment as the copy
             // actions, in the strip's own onErrorContainer colour so it
             // reads against the error-tinted banner, not the paper theme.
-            OutlinedButton.icon(
-              key: const Key('lobby-resync-button'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
-                side: BorderSide(
-                  color: Theme.of(context).colorScheme.onErrorContainer,
-                ),
-                minimumSize: const Size(48, 48),
-              ),
-              onPressed: controller.reconnect,
-              icon: const Icon(Icons.sync, size: 20),
-              label: Text(loc.lobbyResyncButton),
+            _ResyncButton(
+              resyncing: controller.isResyncing,
+              onPressed: controller.resync,
+              label: loc.lobbyResyncButton,
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// C-555 D2: the desync strip's Resync pill. While a resync is out on the
+/// socket it takes no tap, draws in the strip's own colour at 60 % rather
+/// than Material's grey, and its mark turns once per 1200 ms. With the
+/// system's animations removed the mark stays still and the guard stays (P9).
+class _ResyncButton extends StatefulWidget {
+  const _ResyncButton({
+    required this.resyncing,
+    required this.onPressed,
+    required this.label,
+  });
+
+  final bool resyncing;
+  final Future<void> Function() onPressed;
+  final String label;
+
+  @override
+  State<_ResyncButton> createState() => _ResyncButtonState();
+}
+
+class _ResyncButtonState extends State<_ResyncButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _turn = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncTurn();
+  }
+
+  @override
+  void didUpdateWidget(_ResyncButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncTurn();
+  }
+
+  void _syncTurn() {
+    final bool still = MediaQuery.disableAnimationsOf(context);
+    if (widget.resyncing && !still) {
+      if (!_turn.isAnimating) {
+        _turn.repeat();
+      }
+    } else {
+      _turn.stop();
+      _turn.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _turn.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Color ink = Theme.of(context).colorScheme.onErrorContainer;
+    final Color dimmed = ink.withValues(alpha: 0.6);
+    return OutlinedButton.icon(
+      key: const Key('lobby-resync-button'),
+      style:
+          OutlinedButton.styleFrom(
+            foregroundColor: ink,
+            disabledForegroundColor: dimmed,
+            minimumSize: const Size(48, 48),
+          ).copyWith(
+            side: WidgetStateProperty.resolveWith<BorderSide>(
+              (Set<WidgetState> states) => BorderSide(
+                color: states.contains(WidgetState.disabled) ? dimmed : ink,
+              ),
+            ),
+          ),
+      onPressed: widget.resyncing ? null : () => unawaited(widget.onPressed()),
+      icon: RotationTransition(
+        turns: _turn,
+        child: const Icon(Icons.sync, size: 20),
+      ),
+      label: Text(widget.label),
     );
   }
 }
