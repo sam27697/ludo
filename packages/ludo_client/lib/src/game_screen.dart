@@ -3113,7 +3113,9 @@ class _GameScreenState extends State<GameScreen> {
       if (seat == mySeat || _seatDieHeldBack(seat)) {
         continue;
       }
-      final bool holdsTurn = turn != null && turn.seat == seat;
+      // C-571 D2: a finished room leaves no seat die live.
+      final bool holdsTurn =
+          !_roomIsFinished(room) && turn != null && turn.seat == seat;
       final int? face;
       if (active != null && active.seat == seat) {
         face = active.face;
@@ -4955,6 +4957,7 @@ class _GameScreenState extends State<GameScreen> {
     final bool rollEnabled =
         !_isEndHeld &&
         !timeUp &&
+        !_roomIsFinished(room) &&
         room.state == RoomState.playing &&
         turn != null &&
         turn.seat == seat &&
@@ -4997,8 +5000,10 @@ class _GameScreenState extends State<GameScreen> {
     final int? dieFace = _boardDieFace(rawDieFace);
     // C-468 D7: the idle die under the board, while another seat holds
     // the turn and my no-move hold is not up. Full opacity otherwise.
+    // C-571 D1: a finished room fades it for every viewer, the winner too.
     final bool fadeIdleDie =
-        seat != null && turn != null && turn.seat != seat && !_noMoveVisible;
+        _roomIsFinished(room) ||
+        (seat != null && turn != null && turn.seat != seat && !_noMoveVisible);
 
     final (
       List<int>? trayFaces,
@@ -6683,6 +6688,10 @@ List<(int k, int face)>? _appendedRolls(
   }
   return null;
 }
+
+/// C-571. The room is over: the state says so, or the last turn does.
+bool _roomIsFinished(RoomSnapshot room) =>
+    room.state == RoomState.finished || room.turn?.phase == TurnPhase.finished;
 
 /// Another seat already stands on the mover's destination. Progress
 /// outside the main track is not an absolute square, so it does not count.
