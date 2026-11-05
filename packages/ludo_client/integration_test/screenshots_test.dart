@@ -550,6 +550,77 @@ Future<void> _pumpRealDurationFrames(
   }
 }
 
+/// Order 567: every `takeScreenshot` in this file goes through here. [frames]
+/// real-duration pumps (see _pumpRealDurationFrames) run after the caller's
+/// last assertion and right before the shot, so the platform surface has
+/// painted frames of the tree the capture just asserted. With `frames: 0` the
+/// shot follows the caller's last pump directly, and after bare pump() calls
+/// that photographs the surface one push behind: capture 06 did, and the
+/// offline line was missing in CI runs 39903965012, 40064732859, 41232160665,
+/// 41581381415 and 41898558485.
+///
+/// The default 30 is _pumpRealDurationFrames's own, the value 10 and 11 use.
+/// A capture that already ends in its own real-duration pumps with no tree
+/// change after them passes `frames: 0` and keeps that settle; a capture
+/// whose state expires on a timer passes a count that ends well inside the
+/// hold. Those, with the hold and the margin each leaves:
+///   - 04, 37, 38: the last moved push lands seat 1 on seat 0's square, which
+///     arms the C-384 pair pill (kSafeCueHold 1400 ms + kSafeCueFade 200 ms).
+///     Measured under flutter-tester it is on screen from about 100 ms to
+///     about 1600 ms after the push, so 30 frames (about 1500 ms) end on its
+///     fade. [untilGone] keeps pumping until it has left the tree, so the
+///     frame shows the board without the pill, as it did before this helper.
+///   - 15, 16, 76-78: no-move notice, _noMoveHold 1500 ms; own 10 frames
+///     (320 ms), about 1100 ms left; frames: 0.
+///   - 51, 52: timer-played-other notice, _timerPlayedOtherHold 2500 ms; own
+///     12 frames (_trayShotFrames), about 2000 ms left; frames: 0.
+///   - 69, 70: capture gloat, kCaptureGloatLife 1600 ms; own 500 ms of 50 ms
+///     pumps after it appears, about 1100 ms left; frames: 0.
+///   - 73, 74: hint glow, _kHintGlow 800 ms; own 300 ms of pumps after the
+///     tap, about 500 ms left; frames: 0.
+///   - 81-88, 91, 92: chat bubble and end-card line, kChatBubbleLife
+///     2500 ms; the 300 or 400 ms hold after the push is one pump, so 12
+///     frames (about 600 ms) follow it, about 1400 ms left.
+///   - 89, 90: countdown digits, one second per value; the wait loop exits
+///     within a frame of the tick, 6 frames (about 300 ms) follow it, about
+///     600 ms left.
+///   - 95, 96: chat rest ring, 3000 ms; own 31 frames (992 ms), the shot
+///     shows the ring part drained; frames: 0.
+///   - 97, 98, 106: refusal mark, kRefusalMarkLife 300 ms, shot 96 ms after
+///     the tap, about 200 ms left. No settle fits inside that, so these keep
+///     frames: 0 and still photograph straight after their last pump.
+///   - 17, 18: capture gloat, kCaptureGloatLife 1600 ms, measured still in
+///     the tree at the shot after the own 30 frames (about 1500 ms) under
+///     flutter-tester, so little margin. A longer settle would drop it;
+///     frames: 0.
+Future<void> _capture(
+  IntegrationTestWidgetsFlutterBinding binding,
+  WidgetTester tester,
+  String name, {
+  int frames = 30,
+  Finder? untilGone,
+  int maxExtraFrames = 60,
+  Duration frame = const Duration(milliseconds: 32),
+}) async {
+  await _pumpRealDurationFrames(tester, frameCount: frames, frame: frame);
+  var extraFrames = 0;
+  while (untilGone != null && untilGone.evaluate().isNotEmpty) {
+    if (extraFrames >= maxExtraFrames) {
+      throw TestFailure(
+        'capture $name: expected ${untilGone.describeMatch(Plurality.one)} '
+        'to have left the tree before the shot, it was still there after '
+        '$frames settle '
+        'frames plus $maxExtraFrames more of $frame each. Reproduce with '
+        '`flutter test integration_test/screenshots_test.dart --plain-name '
+        '"$name"` on the test that owns this capture.',
+      );
+    }
+    await tester.pump(frame);
+    extraFrames += 1;
+  }
+  await binding.takeScreenshot(name);
+}
+
 /// Asserts the home screen is on screen, in the locale named by
 /// [localeName] ('en' or 'ar'), before a home-screen capture is taken.
 Future<void> _expectHomeScreen(
@@ -779,7 +850,7 @@ void main() {
       'before the first capture',
     );
     await _expectHomeScreen(tester, localeName: 'en');
-    await binding.takeScreenshot('01-home-en');
+    await _capture(binding, tester, '01-home-en', frames: 0);
 
     await tester.tap(find.byKey(const Key('locale-toggle-button')));
     await tester.pumpAndSettle();
@@ -798,7 +869,7 @@ void main() {
       'laid out on the home screen after the locale toggle',
     );
     await _expectHomeScreen(tester, localeName: 'ar');
-    await binding.takeScreenshot('02-home-ar');
+    await _capture(binding, tester, '02-home-ar', frames: 0);
 
     // Back to English: 03-lobby-en and 04-game-en are both English
     // captures, and this is still the home screen, so pumpAndSettle is
@@ -943,7 +1014,7 @@ void main() {
           '"${settledStartLabel.data}"',
     );
 
-    await binding.takeScreenshot('03-lobby-en');
+    await _capture(binding, tester, '03-lobby-en', frames: 0);
 
     final Finder startButton = find.byKey(const Key('lobby-start-button'));
     expect(
@@ -1060,7 +1131,12 @@ void main() {
       localeName: 'en',
       controller: controller,
     );
-    await binding.takeScreenshot('04-game-en');
+    await _capture(
+      binding,
+      tester,
+      '04-game-en',
+      untilGone: _keysStartingWith('board-safe-cue-'),
+    );
 
     // ==========================================================================
     // 06: continuing this same room and this same controller (per the
@@ -1166,7 +1242,7 @@ void main() {
           'actually sees; got "${bannerText06.data}"',
     );
 
-    await binding.takeScreenshot('06-game-offline-en');
+    await _capture(binding, tester, '06-game-offline-en', frames: 30);
   });
 
   // ==========================================================================
@@ -1336,7 +1412,7 @@ void main() {
       localeName: 'ar',
       controller: controller,
     );
-    await binding.takeScreenshot('05-game-ar');
+    await _capture(binding, tester, '05-game-ar', frames: 30);
 
     // ==========================================================================
     // 07: continuing this same room and this same controller. This is the
@@ -1483,7 +1559,7 @@ void main() {
           '"${bannerText07.data}"',
     );
 
-    await binding.takeScreenshot('07-game-offline-ar');
+    await _capture(binding, tester, '07-game-offline-ar', frames: 30);
   });
 
   // ==========================================================================
@@ -1541,7 +1617,7 @@ void main() {
           '(code "$rejoinCode") SessionMemory.recordSeat wrote before this '
           'harness was ever pumped',
     );
-    await binding.takeScreenshot('08-home-rejoin-en');
+    await _capture(binding, tester, '08-home-rejoin-en', frames: 0);
 
     await tester.tap(find.byKey(const Key('locale-toggle-button')));
     await tester.pumpAndSettle();
@@ -1566,7 +1642,7 @@ void main() {
           'expected home-rejoin-button still on screen after the locale '
           'toggle, before capture 09',
     );
-    await binding.takeScreenshot('09-home-rejoin-ar');
+    await _capture(binding, tester, '09-home-rejoin-ar', frames: 0);
 
     await SessionMemory.clearSeat();
   });
@@ -1779,7 +1855,7 @@ void main() {
           'automatic retry is pending',
     );
 
-    await binding.takeScreenshot('10-game-reconnecting-en');
+    await _capture(binding, tester, '10-game-reconnecting-en', frames: 0);
   });
 
   // ==========================================================================
@@ -2002,7 +2078,7 @@ void main() {
           'pending',
     );
 
-    await binding.takeScreenshot('11-lobby-reconnecting-ar');
+    await _capture(binding, tester, '11-lobby-reconnecting-ar', frames: 0);
   });
 
   // ==========================================================================
@@ -2275,7 +2351,7 @@ void main() {
           'around',
     );
 
-    await binding.takeScreenshot('12-lobby-guest-full-ar');
+    await _capture(binding, tester, '12-lobby-guest-full-ar', frames: 0);
   });
 
   // ==========================================================================
@@ -2527,7 +2603,7 @@ void main() {
           'after the post-room-reply settle, immediately before capture 14',
     );
 
-    await binding.takeScreenshot('14-lobby-host-start-with-ar');
+    await _capture(binding, tester, '14-lobby-host-start-with-ar', frames: 0);
   });
 
   // ==========================================================================
@@ -2758,7 +2834,7 @@ void main() {
       expectedText: loc15.gameNoMoveNeedSix,
     );
 
-    await binding.takeScreenshot('15-game-no-move-en');
+    await _capture(binding, tester, '15-game-no-move-en', frames: 0);
   });
 
   // ==========================================================================
@@ -2966,7 +3042,7 @@ void main() {
       expectedText: loc16.gameNoMoveNeedSix,
     );
 
-    await binding.takeScreenshot('16-game-no-move-ar');
+    await _capture(binding, tester, '16-game-no-move-ar', frames: 0);
   });
 
   // ==========================================================================
@@ -3204,7 +3280,7 @@ void main() {
           'after the post-move settle, immediately before capture 17',
     );
 
-    await binding.takeScreenshot('17-game-capture-en');
+    await _capture(binding, tester, '17-game-capture-en', frames: 0);
   });
 
   // ==========================================================================
@@ -3422,7 +3498,7 @@ void main() {
           'after the post-move settle, immediately before capture 18',
     );
 
-    await binding.takeScreenshot('18-game-capture-ar');
+    await _capture(binding, tester, '18-game-capture-ar', frames: 0);
   });
 
   // ==========================================================================
@@ -3601,7 +3677,7 @@ void main() {
           'after the post-game-over settle, immediately before capture 19',
     );
 
-    await binding.takeScreenshot('19-end-winner-en');
+    await _capture(binding, tester, '19-end-winner-en', frames: 0);
   });
 
   // ==========================================================================
@@ -3781,7 +3857,7 @@ void main() {
           'after the post-game-over settle, immediately before capture 20',
     );
 
-    await binding.takeScreenshot('20-end-winner-ar');
+    await _capture(binding, tester, '20-end-winner-ar', frames: 0);
   });
 
   // ==========================================================================
@@ -3957,7 +4033,7 @@ void main() {
           'after the post-game-over settle, immediately before capture 21',
     );
 
-    await binding.takeScreenshot('21-end-loser-en');
+    await _capture(binding, tester, '21-end-loser-en', frames: 0);
   });
 
   // ==========================================================================
@@ -4136,7 +4212,7 @@ void main() {
           'after the post-game-over settle, immediately before capture 22',
     );
 
-    await binding.takeScreenshot('22-end-loser-ar');
+    await _capture(binding, tester, '22-end-loser-ar', frames: 0);
   });
 
   // ==========================================================================
@@ -4373,7 +4449,7 @@ void main() {
       home: scriptHome23,
     );
 
-    await binding.takeScreenshot('23-rematch-ask-en');
+    await _capture(binding, tester, '23-rematch-ask-en', frames: 0);
   });
 
   // ==========================================================================
@@ -4640,7 +4716,7 @@ void main() {
       home: scriptHome24,
     );
 
-    await binding.takeScreenshot('24-rematch-waiting-ar');
+    await _capture(binding, tester, '24-rematch-waiting-ar', frames: 0);
   });
 
   // ==========================================================================
@@ -4964,7 +5040,7 @@ void main() {
           'capture 33-home-last-game-en: expected homeLastGame '
           '("$enLastGameText") text on screen before the shot',
     );
-    await binding.takeScreenshot('33-home-last-game-en');
+    await _capture(binding, tester, '33-home-last-game-en', frames: 0);
 
     await tester.tap(find.byKey(const Key('locale-toggle-button')));
     await tester.pumpAndSettle();
@@ -5004,7 +5080,7 @@ void main() {
           'capture 34-home-last-game-ar: expected homeLastGame '
           '("$arLastGameText") text on screen before the shot',
     );
-    await binding.takeScreenshot('34-home-last-game-ar');
+    await _capture(binding, tester, '34-home-last-game-ar', frames: 0);
   });
 
   // ==========================================================================
@@ -5314,7 +5390,12 @@ void main() {
             'shot',
       );
 
-      await binding.takeScreenshot('37-game-large-en');
+      await _capture(
+        binding,
+        tester,
+        '37-game-large-en',
+        untilGone: _keysStartingWith('board-safe-cue-'),
+      );
     } finally {
       controller37?.dispose();
     }
@@ -5532,7 +5613,12 @@ void main() {
             'the shot, got "${bannerText38.data}"',
       );
 
-      await binding.takeScreenshot('38-game-large-ar');
+      await _capture(
+        binding,
+        tester,
+        '38-game-large-ar',
+        untilGone: _keysStartingWith('board-safe-cue-'),
+      );
     } finally {
       controller38?.dispose();
     }
@@ -5670,7 +5756,7 @@ void main() {
             '"${settledStartLabel39.data}"',
       );
 
-      await binding.takeScreenshot('39-lobby-large-en');
+      await _capture(binding, tester, '39-lobby-large-en', frames: 0);
     } finally {
       controller39?.dispose();
     }
@@ -5890,7 +5976,7 @@ void main() {
             'before the shot',
       );
 
-      await binding.takeScreenshot('40-end-loser-large-ar');
+      await _capture(binding, tester, '40-end-loser-large-ar', frames: 0);
     } finally {
       controller40?.dispose();
     }
@@ -8340,7 +8426,7 @@ Future<void> _captureReconnectLoser(
   );
   expect(find.byKey(const Key('end-card-lose')), findsOneWidget);
 
-  await binding.takeScreenshot(shotName);
+  await _capture(binding, tester, shotName, frames: 0);
 }
 
 /// Two parts, back to back, the way section 17 sends them. [entries] is
@@ -8568,7 +8654,7 @@ Future<void> _captureFriendLeft(
     momentDescription: 'after settle',
   );
 
-  await binding.takeScreenshot(shotName);
+  await _capture(binding, tester, shotName, frames: 0);
 }
 
 void _expectFriendLeftState(
@@ -8787,7 +8873,7 @@ Future<void> _captureEveryoneLeft(
     momentDescription: 'after settle',
   );
 
-  await binding.takeScreenshot(shotName);
+  await _capture(binding, tester, shotName, frames: 0);
 }
 
 void _expectEveryoneLeftState(
@@ -8983,7 +9069,7 @@ Future<void> _captureEndOffline(
     momentDescription: 'after settle',
   );
 
-  await binding.takeScreenshot(shotName);
+  await _capture(binding, tester, shotName, frames: 0);
 }
 
 void _expectEndOfflineState(
@@ -9211,7 +9297,7 @@ Future<void> _captureHomeRemoved(
     momentDescription: 'after settle',
   );
 
-  await binding.takeScreenshot(shotName);
+  await _capture(binding, tester, shotName, frames: 0);
 }
 
 void _expectHomeRemovedState(
@@ -9373,7 +9459,7 @@ Future<void> _captureHomeGameGone(
     momentDescription: 'after settle',
   );
 
-  await binding.takeScreenshot(shotName);
+  await _capture(binding, tester, shotName, frames: 0);
 }
 
 void _expectHomeGameGoneState(
@@ -10153,7 +10239,7 @@ Future<void> _shootLiveTray(
           'reading order',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -10398,7 +10484,7 @@ Future<void> _shootPickedTray(
       scenario: 'queue [6, 6, 3, 2], ${_viewText(tester)}',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -10583,7 +10669,7 @@ Future<void> _shootCompactTray(
     );
     _expectDieRowClearOfHint(tester, shotName: shotName, scenario: scenario);
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
     if (textScale != null) {
@@ -10813,7 +10899,7 @@ Future<void> _shootDeadTray(
           'the big die',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -11249,7 +11335,7 @@ Future<void> _shootViewerBoard(
           'quarter of ludo-board ${_rectText(boardRect)}',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -11389,7 +11475,7 @@ Future<void> _shootTimerPlayedMine(
           'notice stays up once the turn has passed to seat 2',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -11717,7 +11803,7 @@ Future<void> _shootTimerPlayedOther(
           'seat ("$opponentName"); read "${otherNoticeText.data}"',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -11995,7 +12081,7 @@ Future<void> _shootSeatDieTwoSeats(
           '6x6 yard quadrant ${_rectText(topRightYard)}',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
     if (textScale != null) {
@@ -12419,7 +12505,7 @@ Future<void> _shootSeatDieFourSeats(
           'idle in viewer seat 1\'s colour',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -12676,7 +12762,7 @@ Future<void> _shootCaptureGloat(
           '${_rectText(boardRect)}',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -12815,7 +12901,7 @@ Future<void> _shootIdleDieFaded(
           'seat holds the turn, got ${nearestOpacity.opacity}',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -13012,7 +13098,7 @@ Future<void> _shootHintReady(
           'tapping game-hint-button',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -13139,7 +13225,7 @@ Future<void> _shootHintShown(
           'spending the hint',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -13357,7 +13443,7 @@ Future<void> _shootHintQueue(
           'wrap face option 6 in the open picker',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -13491,7 +13577,7 @@ Future<void> _shootHintUsedLarge(
           'on a fresh turn after the hint was spent earlier in the game',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
     tester.platformDispatcher.clearTextScaleFactorTestValue();
@@ -13677,7 +13763,7 @@ Future<void> _shootNoMoveReason(
           '"$expectedLine"',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -14086,7 +14172,7 @@ Future<void> _shootChatSheet(
           'the quick-chat-mute switch',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -14267,7 +14353,7 @@ Future<void> _shootChatBubbles(
       scenario: scenario,
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 12);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -14349,7 +14435,7 @@ Future<void> _shootChatBubblesLarge(
       scenario: scenario,
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 12);
   } finally {
     await _releaseTrayGame(tester, controller);
     tester.platformDispatcher.clearTextScaleFactorTestValue();
@@ -14868,7 +14954,7 @@ Future<void> _shootEndCardChat(
       );
     }
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 12);
   } finally {
     await _releaseTrayGame(tester, controller);
     if (textScale != null) {
@@ -15047,7 +15133,7 @@ Future<void> _shootChatMySix(
       );
     }
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 12);
   } finally {
     await _releaseTrayGame(tester, controller);
     if (textScale != null) {
@@ -15285,7 +15371,7 @@ Future<void> _shootAwayRing(
       );
     }
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 6);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -15414,7 +15500,7 @@ Future<void> _shootChatResting(
       reason: 'capture $shotName ($scenario): the sheet closed after the pick',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -15594,7 +15680,7 @@ Future<void> _shootRefusalReduced(
           'cover the tapped object, whose centre is $centre',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
     tester.platformDispatcher.clearAccessibilityFeaturesTestValue();
@@ -15879,7 +15965,7 @@ Future<void> _shootHomePlain(
       context: 'on the plain home before capture $shotName',
     );
   }
-  await binding.takeScreenshot(shotName);
+  await _capture(binding, tester, shotName, frames: 0);
 }
 
 /// 101, 102: the players menu open over home-players-button, 4 selected.
@@ -15938,7 +16024,7 @@ Future<void> _shootHomePlayersMenu(
           '${n == 4 ? 'has none' : 'has one'}',
     );
   }
-  await binding.takeScreenshot(shotName);
+  await _capture(binding, tester, shotName, frames: 0);
 }
 
 /// 103: six characters typed, Join in the tree.
@@ -16008,7 +16094,7 @@ Future<void> _shootHomeJoinShown(
     label: 'join-room-button',
     context: 'with Join shown before capture $shotName',
   );
-  await binding.takeScreenshot(shotName);
+  await _capture(binding, tester, shotName, frames: 0);
 }
 
 /// 104: system text scale 2.0, the players row scrolled onto the screen.
@@ -16073,7 +16159,7 @@ Future<void> _shootHomeLargeText(
         'capture $shotName: the players question is clipped at text scale '
         '2.0 (${_viewText(tester)}); it exceeds its line limit',
   );
-  await binding.takeScreenshot(shotName);
+  await _capture(binding, tester, shotName, frames: 0);
 }
 
 /// 105: the game header after one tap on game-sound-toggle.
@@ -16196,7 +16282,7 @@ Future<void> _shootGameMuted(
           'capture $shotName: expected locale ${locale.languageCode}, got '
           '${loc.localeName}',
     );
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -16524,7 +16610,7 @@ Future<void> _shootRefusalDieMyTurn(
           'sent ${opened.transport.sentRaw.map(_typeOf).toList()}',
     );
 
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
     tester.platformDispatcher.clearAccessibilityFeaturesTestValue();
@@ -16753,7 +16839,7 @@ Future<void> _shootHomeRoomClosed(
       label: 'home-room-closed-notice',
       context: 'on Home before capture $shotName',
     );
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _finishShot(tester, factory);
   }
@@ -16929,7 +17015,7 @@ Future<void> _shootLobbyJoinRefused(
       retry: false,
       leaveText: leaveText,
     );
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _finishShot(tester, factory);
   }
@@ -17196,7 +17282,7 @@ Future<void> _shootLobbyJoinTransport(
       findsNothing,
       reason: 'capture $shotName ($scenario): only the error card is built',
     );
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _finishShot(tester, factory);
   }
@@ -17353,7 +17439,7 @@ Future<void> _shootGameConnectionLost(
           'capture $shotName ($scenario): $genericCode maps to the '
           'generic line, so game-screen-error-message and its gap are absent',
     );
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -17525,7 +17611,7 @@ Future<void> _shootEndResumedNoRolls(
           'capture $shotName ($scenario): the verify link stays the way to '
           'the rolls',
     );
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _finishShot(tester, factory);
   }
@@ -17740,7 +17826,7 @@ Future<void> _shootEndLoseZero(
       home: 0,
       momentDescription: 'capture $shotName ($scenario), before the shot',
     );
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -17985,7 +18071,7 @@ Future<void> _shootEndLoseSomeZero(
       home: 0,
       momentDescription: 'capture $shotName ($scenario), before the shot',
     );
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -18178,7 +18264,7 @@ Future<void> _shootLobbySameNames(
       what: 'lobby-seat-2',
       scenario: scenario,
     );
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -18255,7 +18341,7 @@ Future<void> _shootGameSameNames(
       what: 'board-seat-name-2',
       scenario: scenario,
     );
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -18381,7 +18467,7 @@ Future<void> _shootEndSameNames(
       expectedText: loc.endLoseTitle('$player ${material.formatDecimal(2)}'),
       momentDescription: scenario,
     );
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -18600,7 +18686,7 @@ Future<void> _shootGameSeatMoved(
     expectCard('right after the close');
     await _pumpRealDurationFrames(tester);
     expectCard('after the settle, before the capture');
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -18768,7 +18854,7 @@ Future<void> _shootLobbySeatMoved(
     expectCard('right after the close');
     await _pumpRealDurationFrames(tester);
     expectCard('after the settle, before the capture');
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -18916,7 +19002,7 @@ Future<void> _shootGameReconnectingSlow(
     expectSlowRow('after 4.5 s');
     await _pumpRealDurationFrames(tester);
     expectSlowRow('after the settle, before the capture');
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -19006,7 +19092,7 @@ Future<void> _shootGameCatchingUp(
     expectBanner('right after the gap');
     await _pumpRealDurationFrames(tester);
     expectBanner('after the settle, before the capture');
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -19146,7 +19232,7 @@ Future<void> _shootGameTimeUp(
     );
     await _pumpRealDurationFrames(tester);
     expectTimeUp('after the settle, before the capture');
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     await _releaseTrayGame(tester, controller);
   }
@@ -19404,7 +19490,7 @@ Future<void> _shootLobbyResyncing(
     );
     await _pumpRealDurationFrames(tester);
     expectResyncing('after the settle, before the capture');
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     // The second resume is still out; ending the socket fails it and cancels
     // its timer before the controller goes.
@@ -19598,7 +19684,7 @@ Future<void> _shootLobbyConnectingLarge(
     expectConnecting('after 4.5 s');
     await _pumpRealDurationFrames(tester);
     expectConnecting('after the settle, before the capture');
-    await binding.takeScreenshot(shotName);
+    await _capture(binding, tester, shotName, frames: 0);
   } finally {
     tester.platformDispatcher.clearTextScaleFactorTestValue();
     await _releaseTrayGame(tester, controller);
