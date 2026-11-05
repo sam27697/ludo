@@ -4,7 +4,10 @@
 // token out of the yard, home must be reached by exact count).
 
 /// The words the no-move line uses. [plain] is today's line, unchanged.
-enum NoMoveReason { needSix, needExact, plain }
+/// [threeSixes] (C-568 D3) is never returned by [noMoveReason]: it is not a
+/// property of the tokens but of the roll history, so the screen sets it
+/// itself when the server voids a third six.
+enum NoMoveReason { needSix, needExact, plain, threeSixes }
 
 /// Progress value of a token still in the yard.
 const int _yard = -1;

@@ -386,6 +386,12 @@ class _GameScreenState extends State<GameScreen> {
   // and untouched while it is up, even when a snapshot lands under it.
   NoMoveReason _noMoveReason = NoMoveReason.plain;
 
+  // C-568 D1/D2: why a seat is to roll again, per seat. Set by a live frame
+  // that leaves the seat owing a roll, cleared by that seat's next `rolled`,
+  // a `turn` naming another seat, `game_over`, a new game and every snapshot
+  // (a reason the screen did not see happen is not shown).
+  final Map<int, _ExtraRoll> _extraRoll = <int, _ExtraRoll>{};
+
   // C-426 (order 428, docs/PROTOCOL.md section 22): a `rolled` or `moved`
   // whose raw data carries `by == "timer"` exactly. Mine
   // (`_timerPlayedMineVisible`) has no timer of its own -- D3's three
@@ -768,20 +774,25 @@ class _GameScreenState extends State<GameScreen> {
       frame,
       mySeat: widget.controller.seat,
     );
+    // C-568 D3: read ahead of `_trackRollQueue`, which is what moves the
+    // queue this screen last knew for the seat.
+    final bool thirdSix = _isThirdSix(frame);
     // docs/PROTOCOL.md section 21 (C-362 Part B), order 365, K9/K10: must
     // run ahead of every use of `cues` below, since a 6 (or a bonus roll)
     // that still owes another roll makes `cuesForFrame` answer `noMove`
     // for this same `rolled` -- correct for an old server's genuine dead
     // roll, wrong here.
-    if (_trackRollQueue(frame)) {
+    final bool owesRoll = _trackRollQueue(frame);
+    if (owesRoll) {
       cues = cues
           .where((FeedbackCue cue) => cue != FeedbackCue.noMove)
           .toList();
     }
+    _trackExtraRoll(frame, owesRoll: owesRoll);
     // C-474 D3.3: the announcement below plays before the notice arms, so
     // the reason is taken first and both read the same one.
     if (frame.type == 'rolled' && cues.contains(FeedbackCue.noMove)) {
-      _resolveNoMoveReason(_intAt(frame.data, 'value'));
+      _resolveNoMoveReason(_intAt(frame.data, 'value'), thirdSix: thirdSix);
     }
     if (frame.type == 'turn' && cues.contains(FeedbackCue.yourTurn)) {
       final TurnState? liveTurn = widget.controller.room?.turn;
@@ -886,7 +897,7 @@ class _GameScreenState extends State<GameScreen> {
     }
     if (frame.type == 'rolled') {
       if (cues.contains(FeedbackCue.noMove)) {
-        _armNoMoveHold(_intAt(frame.data, 'value'));
+        _armNoMoveHold(_intAt(frame.data, 'value'), thirdSix: thirdSix);
       } else if (_intAt(frame.data, 'value') != null) {
         _dropNoMoveHold();
         _dropTrayDead();
@@ -1908,6 +1919,7 @@ class _GameScreenState extends State<GameScreen> {
     _clearThrows();
     _syncSeatFaceMemory();
     _lastKnownQueue.clear();
+    _extraRoll.clear();
     _yourTurnPlayedK = null;
     _dropDeadCandidate();
     _trayDeadTimer?.cancel();
@@ -1941,7 +1953,14 @@ class _GameScreenState extends State<GameScreen> {
   /// already up on the same face keeps the reason it was armed with. `F` is
   /// the live queue when it is not empty, otherwise just the face; `U` is
   /// read off my own seat's tokens in the room the controller holds.
-  void _resolveNoMoveReason(int? face) {
+  ///
+  /// C-568 D3: [thirdSix] (decided by [_isThirdSix] at the `rolled` frame)
+  /// names the true cause and beats every reason read off the tokens.
+  void _resolveNoMoveReason(int? face, {bool thirdSix = false}) {
+    if (thirdSix) {
+      _noMoveReason = NoMoveReason.threeSixes;
+      return;
+    }
     if (_noMoveVisible && _noMoveFace == face) {
       return;
     }
@@ -1972,11 +1991,13 @@ class _GameScreenState extends State<GameScreen> {
         return loc.gameNoMoveNeedExact;
       case NoMoveReason.plain:
         return loc.gameNoMove;
+      case NoMoveReason.threeSixes:
+        return loc.gameNoMoveThreeSixes;
     }
   }
 
-  void _armNoMoveHold(int? face) {
-    _resolveNoMoveReason(face);
+  void _armNoMoveHold(int? face, {bool thirdSix = false}) {
+    _resolveNoMoveReason(face, thirdSix: thirdSix);
     _noMoveTimer?.cancel();
     _noMoveTimer = Timer(_noMoveHold, _dropNoMoveHold);
     if (_noMoveVisible && _noMoveFace == face) {
@@ -2393,6 +2414,79 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
+  /// C-568 D3. A live `rolled` for my seat with value 6, an empty `queue`
+  /// and the queue this screen knew for my seat (before the frame) exactly
+  /// `[6, 6]`: the server voided the roll because it is the third six. Must
+  /// run before [_trackRollQueue] for the frame. The `legal` half of the
+  /// definition is the `noMove` cue the caller already requires.
+  bool _isThirdSix(Frame frame) {
+    final int? mySeat = widget.controller.seat;
+    if (frame.type != 'rolled' ||
+        mySeat == null ||
+        _intAt(frame.data, 'seat') != mySeat ||
+        _intAt(frame.data, 'value') != 6) {
+      return false;
+    }
+    final Object? queue = frame.data['queue'];
+    if (queue is! List || queue.isNotEmpty) {
+      return false;
+    }
+    final List<int>? known = _lastKnownQueue[mySeat];
+    return known != null && known.length == 2 && known[0] == 6 && known[1] == 6;
+  }
+
+  /// C-568 D1/D2: keeps [_extraRoll] in step with a live frame. [owesRoll]
+  /// is what [_trackRollQueue] answered for this same frame. A frame a
+  /// resync ignored changed nothing underneath, so it sets nothing here.
+  void _trackExtraRoll(Frame frame, {required bool owesRoll}) {
+    final Map<int, _ExtraRoll> before = Map<int, _ExtraRoll>.of(_extraRoll);
+    final int? seat = _intAt(frame.data, 'seat');
+    switch (frame.type) {
+      case 'room':
+      case 'game_over':
+        _extraRoll.clear();
+      case 'turn':
+        _extraRoll.removeWhere((int held, _ExtraRoll _) => held != seat);
+      case 'rolled':
+        if (seat == null) {
+          break;
+        }
+        _extraRoll.remove(seat);
+        if (owesRoll &&
+            !widget.controller.hasDesynced &&
+            _intAt(frame.data, 'value') == 6) {
+          _extraRoll[seat] = _ExtraRoll.six;
+        }
+      case 'moved':
+        if (seat == null ||
+            frame.data['extra_roll'] != true ||
+            widget.controller.hasDesynced) {
+          break;
+        }
+        final Object? captured = frame.data['captured'];
+        if (captured is List && captured.isNotEmpty) {
+          _extraRoll[seat] = _ExtraRoll.capture;
+        } else if (_intAt(frame.data, 'to') == 57) {
+          _extraRoll[seat] = _ExtraRoll.home;
+        }
+    }
+    if (mounted && !_sameExtraRoll(before, _extraRoll)) {
+      setState(() {});
+    }
+  }
+
+  bool _sameExtraRoll(Map<int, _ExtraRoll> a, Map<int, _ExtraRoll> b) {
+    if (a.length != b.length) {
+      return false;
+    }
+    for (final MapEntry<int, _ExtraRoll> entry in a.entries) {
+      if (b[entry.key] != entry.value) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /// K9: resolves a banked `rolled`- or `moved`-dead candidate against the
   /// `turn_passed` that names why the turn actually died, into D, and
   /// shows it. Drops the candidate silently when `turn_passed` names a
@@ -2413,6 +2507,21 @@ class _GameScreenState extends State<GameScreen> {
     final int? face = _deadCandidateFace;
     final bool fromMove = _deadCandidateFromMove;
     _dropDeadCandidate();
+
+    // C-568 D3: the server names the cause. A notice for that very roll that
+    // was armed on another line (the screen did not know the queue) switches
+    // to the true one in place: no second cue, no second announcement.
+    if (reason == 'three_sixes' &&
+        seat == widget.controller.seat &&
+        !fromMove &&
+        _noMoveVisible &&
+        _noMoveFace == face &&
+        _noMoveReason != NoMoveReason.threeSixes &&
+        mounted) {
+      setState(() {
+        _noMoveReason = NoMoveReason.threeSixes;
+      });
+    }
 
     List<int>? dead;
     if (reason == 'three_sixes') {
@@ -5196,12 +5305,16 @@ class _GameScreenState extends State<GameScreen> {
 
     return math.max(
       math.max(
-        // C-474 A2: the two reason lines are measured unbounded, exactly as
-        // the plain line is, so the slot is the tallest of the three.
+        // C-474 A2: the reason lines are measured unbounded, exactly as
+        // the plain line is, so the slot is the tallest of them (C-568 adds
+        // the third-six line).
         math.max(heightOf(loc.gameNoMove), heightOf(loc.gameSeatOffline(''))),
         math.max(
-          heightOf(loc.gameNoMoveNeedSix),
-          heightOf(loc.gameNoMoveNeedExact),
+          math.max(
+            heightOf(loc.gameNoMoveNeedSix),
+            heightOf(loc.gameNoMoveNeedExact),
+          ),
+          heightOf(loc.gameNoMoveThreeSixes),
         ),
       ),
       // C-426 D5 (order 428): these two measure at `maxLines: 1`, matching
@@ -5334,6 +5447,7 @@ class _GameScreenState extends State<GameScreen> {
       stale: stale,
       timeUp: _myTimeUp,
       autoMoveVisible: autoMoveVisible,
+      extraRoll: turn == null ? null : _extraRoll[turn.seat],
     );
     final int turnSeat = turn?.seat ?? seat ?? 0;
     final Color seatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
@@ -5543,6 +5657,16 @@ class _GameScreenState extends State<GameScreen> {
             opacity: 0,
             child: Text(
               loc.gameNoMoveNeedExact,
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+            ),
+          ),
+        ),
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(
+              loc.gameNoMoveThreeSixes,
               textAlign: TextAlign.center,
               textScaler: scaler,
             ),
@@ -6355,6 +6479,9 @@ Map<int, List<int>> _tokensOf(RoomSnapshot room) {
   };
 }
 
+/// C-568: why a seat is to roll again. One meaning per banner line.
+enum _ExtraRoll { six, capture, home }
+
 /// H1: the `seat` of every entry in `room.seats`, in the order they appear.
 List<int> _seatsInPlayOf(RoomSnapshot room) {
   return <int>[for (final SeatState seatState in room.seats) seatState.seat];
@@ -6369,6 +6496,10 @@ List<int> _seatsInPlayOf(RoomSnapshot room) {
 /// C-560 D1: [timeUp] (my own countdown at zero) comes after stale, since a
 /// connection problem explains more than the clock, and before the auto-move
 /// line and the roll / move lines.
+/// C-568 D1/D2: [extraRoll] is why the seat on turn is to roll again, if the
+/// screen saw it happen. On my own roll it comes after the auto-move line
+/// and before the plain roll line (timeUp and stale still beat it); for a
+/// watcher it replaces the waiting line.
 String _turnBannerText(
   AppLocalizations loc,
   RoomSnapshot room,
@@ -6377,6 +6508,7 @@ String _turnBannerText(
   bool stale = false,
   bool timeUp = false,
   bool autoMoveVisible = false,
+  _ExtraRoll? extraRoll,
 }) {
   if (room.state == RoomState.finished ||
       room.turn?.phase == TurnPhase.finished) {
@@ -6391,7 +6523,19 @@ String _turnBannerText(
       if (stale) {
         return loc.gameYourTurnStale;
       }
-      return timeUp ? loc.gameYourTurnTimeUp : loc.gameYourTurnRoll;
+      if (timeUp) {
+        return loc.gameYourTurnTimeUp;
+      }
+      switch (extraRoll) {
+        case _ExtraRoll.six:
+          return loc.gameRollAgainSix;
+        case _ExtraRoll.capture:
+          return loc.gameRollAgainCapture;
+        case _ExtraRoll.home:
+          return loc.gameRollAgainHome;
+        case null:
+          return loc.gameYourTurnRoll;
+      }
     }
     if (turn.phase == TurnPhase.awaitMove) {
       if (stale) {
@@ -6406,7 +6550,13 @@ String _turnBannerText(
       return loc.gameYourTurnMove;
     }
   }
-  return _waitingForSeatText(loc, room, turn.seat, names);
+  return _waitingForSeatText(
+    loc,
+    room,
+    turn.seat,
+    names,
+    goesAgain: extraRoll != null,
+  );
 }
 
 /// Names the seat `turnSeat` the same way [_turnBannerText] does once it
@@ -6417,11 +6567,15 @@ String _waitingForSeatText(
   AppLocalizations loc,
   RoomSnapshot room,
   int turnSeat,
-  Map<int, String> names,
-) {
+  Map<int, String> names, {
+  bool goesAgain = false,
+}) {
   for (final SeatState seatState in room.seats) {
     if (seatState.seat == turnSeat) {
-      return loc.gameWaitingForPlayer(names[seatState.seat]!);
+      final String name = names[seatState.seat]!;
+      return goesAgain
+          ? loc.gameGoesAgain(name)
+          : loc.gameWaitingForPlayer(name);
     }
   }
   return loc.gameWaitingForTurn;
