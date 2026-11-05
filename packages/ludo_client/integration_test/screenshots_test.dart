@@ -564,12 +564,13 @@ Future<void> _pumpRealDurationFrames(
 /// change after them passes `frames: 0` and keeps that settle; a capture
 /// whose state expires on a timer passes a count that ends well inside the
 /// hold. Those, with the hold and the margin each leaves:
-///   - 04, 37, 38: the last moved push lands seat 1 on seat 0's square, which
-///     arms the C-384 pair pill (kSafeCueHold 1400 ms + kSafeCueFade 200 ms).
-///     Measured under flutter-tester it is on screen from about 100 ms to
-///     about 1600 ms after the push, so 30 frames (about 1500 ms) end on its
-///     fade. [untilGone] keeps pumping until it has left the tree, so the
-///     frame shows the board without the pill, as it did before this helper.
+///   - 04, 37, 38: since order 573 the last moved push lands seat 1 token 1 on
+///     progress 44, absolute square 5 (entry 13), which no other token holds, so
+///     the C-384 pair pill (kSafeCueHold 1400 ms + kSafeCueFade 200 ms) no
+///     longer arms. Before that the push landed on progress 45, absolute 6, seat
+///     0's square, and the pill showed from about 100 ms to about 1600 ms after
+///     the push. [untilGone] stays: it finds nothing to wait for and returns at
+///     once, and it would still wait out a pill if one ever armed again.
 ///   - 15, 16, 76-78: no-move notice, _noMoveHold 1500 ms; own 10 frames
 ///     (320 ms), about 1100 ms left; frames: 0.
 ///   - 134, 135: no-move notice (three sixes), _noMoveHold 1500 ms, armed by
@@ -1113,7 +1114,7 @@ void main() {
     await tester.pump();
     pushMoved(seat: 2, token: 0, from: -1, to: 30);
     await tester.pump();
-    pushMoved(seat: 1, token: 1, from: -1, to: 45);
+    pushMoved(seat: 1, token: 1, from: -1, to: 44);
     await tester.pump();
 
     await _pumpUntilFound(
@@ -1308,7 +1309,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'seat_assigned',
-        data: <String, Object?>{'seat': 1, 'seat_token': 'tok-shot-joiner'},
+        data: <String, Object?>{'seat': 2, 'seat_token': 'tok-shot-joiner'},
       ),
     );
     transport.pushText(
@@ -1321,7 +1322,7 @@ void main() {
           hostSeat: 0,
           seats: <Map<String, Object?>>[
             _seatJson(0, name: 'Sam'),
-            _seatJson(1, name: joinerName),
+            _seatJson(2, name: joinerName),
           ],
           seq: 1,
         ),
@@ -1391,9 +1392,9 @@ void main() {
     await tester.pump();
     pushMoved(seat: 0, token: 1, from: -1, to: 23);
     await tester.pump();
-    pushMoved(seat: 1, token: 0, from: -1, to: 15);
+    pushMoved(seat: 2, token: 0, from: -1, to: 15);
     await tester.pump();
-    pushMoved(seat: 1, token: 1, from: -1, to: 40);
+    pushMoved(seat: 2, token: 1, from: -1, to: 40);
     await tester.pump();
     pushMoved(seat: 0, token: 2, from: -1, to: 3);
     await tester.pump();
@@ -1502,14 +1503,16 @@ void main() {
           'capture fires, got ${controller.room!.turn!.seat}',
     );
     expect(
-      controller.room!.seats[offlineSeat07].connected,
+      controller.room!.seats
+          .firstWhere((SeatState s) => s.seat == offlineSeat07)
+          .connected,
       isFalse,
       reason:
           'capture 07 pushed presence {seat: $offlineSeat07, connected: '
-          'false}; expected controller.room!.seats[$offlineSeat07] '
-          '("$offlineSeatName07") to read disconnected before the '
-          'capture fires, got connected='
-          '${controller.room!.seats[offlineSeat07].connected}',
+          'false}; expected the seat $offlineSeat07 entry of '
+          'controller.room!.seats ("$offlineSeatName07") to read '
+          'disconnected before the capture fires, got connected='
+          '${controller.room!.seats.firstWhere((SeatState s) => s.seat == offlineSeat07).connected}',
     );
 
     final Finder offlineFinder07 = find.byKey(
@@ -1707,7 +1710,7 @@ void main() {
           players: 2,
           seats: <Map<String, Object?>>[
             _seatJson(0, name: 'Priya'),
-            _seatJson(1, name: 'Karim'),
+            _seatJson(2, name: 'Karim'),
           ],
           turn: <String, Object?>{
             'seat': 0,
@@ -2626,7 +2629,8 @@ void main() {
   // freshly armed or long gone.
   //
   // Host and joiner: Priya and Karim, the same two names capture 04's own
-  // room seats at 0 and 1, reused here and through capture 22 below so the
+  // room uses (there at seats 0 and 1 of three; here, in a room of two, at
+  // seats 0 and 2), reused here and through capture 22 below so the
   // order's "the frames read as one game" holds across the whole new set --
   // see the standing note in this file's own return for why this, and not
   // Sam/Dee from capture 05, was the pair picked. My own seat is always
@@ -2711,7 +2715,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
       ),
     );
     await tester.pump();
@@ -2786,7 +2790,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'turn',
-        data: <String, Object?>{'seat': 1, 'deadline_ms': 45000, 'seq': 5},
+        data: <String, Object?>{'seat': 2, 'deadline_ms': 45000, 'seq': 5},
       ),
     );
     await tester.pump();
@@ -2794,11 +2798,11 @@ void main() {
 
     expect(
       controller.room!.turn!.seat,
-      1,
+      2,
       reason:
-          'capture 15 pushed a turn frame naming seat 1 (Karim) right '
+          'capture 15 pushed a turn frame naming seat 2 (Karim) right '
           'after my own no-move rolled; expected '
-          'controller.room!.turn!.seat to read 1 immediately after both '
+          'controller.room!.turn!.seat to read 2 immediately after both '
           'frames land, got ${controller.room!.turn!.seat}',
     );
 
@@ -2823,10 +2827,10 @@ void main() {
 
     expect(
       controller.room!.turn!.seat,
-      1,
+      2,
       reason:
           'capture 15: after the ~300ms settle, expected '
-          'controller.room!.turn!.seat to still read 1 (Karim) '
+          'controller.room!.turn!.seat to still read 2 (Karim) '
           'immediately before the capture, got '
           '${controller.room!.turn!.seat}',
     );
@@ -2922,7 +2926,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
       ),
     );
     await tester.pump();
@@ -2994,7 +2998,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'turn',
-        data: <String, Object?>{'seat': 1, 'deadline_ms': 45000, 'seq': 5},
+        data: <String, Object?>{'seat': 2, 'deadline_ms': 45000, 'seq': 5},
       ),
     );
     await tester.pump();
@@ -3002,11 +3006,11 @@ void main() {
 
     expect(
       controller.room!.turn!.seat,
-      1,
+      2,
       reason:
-          'capture 16 pushed a turn frame naming seat 1 (Karim) right '
+          'capture 16 pushed a turn frame naming seat 2 (Karim) right '
           'after my own no-move rolled; expected '
-          'controller.room!.turn!.seat to read 1 immediately after both '
+          'controller.room!.turn!.seat to read 2 immediately after both '
           'frames land, got ${controller.room!.turn!.seat}',
     );
 
@@ -3031,10 +3035,10 @@ void main() {
 
     expect(
       controller.room!.turn!.seat,
-      1,
+      2,
       reason:
           'capture 16: after the ~300ms settle, expected '
-          'controller.room!.turn!.seat to still read 1 (Karim) '
+          'controller.room!.turn!.seat to still read 2 (Karim) '
           'immediately before the capture, got '
           '${controller.room!.turn!.seat}',
     );
@@ -3051,11 +3055,11 @@ void main() {
 
   // ==========================================================================
   // 17, 18: order 240's (X14) capture frame -- an opponent token sent home
-  // by my own `moved`. Karim's token (seat 1) is placed on the board by a
+  // by my own `moved`. Karim's token (seat 2) is placed on the board by a
   // scene-setting `moved` first (the same idiom captures 04/05 already use
   // to populate a board before the frame actually under test), then my own
   // roll names that same square legal, and my own `moved` lands on it,
-  // naming seat 1's token in `captured`. Asserted, per the order, off
+  // naming seat 2's token in `captured`. Asserted, per the order, off
   // controller.room -- the same RoomController GameScreen renders from --
   // not a hand-built snapshot: the captured token reads -1 (back in its
   // yard) there.
@@ -3129,7 +3133,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
       ),
     );
     await tester.pump();
@@ -3173,14 +3177,14 @@ void main() {
     );
     expect(find.byType(LobbyScreen), findsNothing);
 
-    // Scene-setting: Karim's token (seat 1, token 0) already sitting on
+    // Scene-setting: Karim's token (seat 2, token 0) already sitting on
     // square 10, the same idiom captures 04/05 use to populate a board
     // before the frame under test, not the frame this capture is about.
     transport.pushText(
       _frame(
         type: 'moved',
         data: <String, Object?>{
-          'seat': 1,
+          'seat': 2,
           'token': 0,
           'from': -1,
           'to': 10,
@@ -3198,13 +3202,13 @@ void main() {
     // the first place, and the capture assertion below would pass for the
     // wrong reason.
     expect(
-      controller.room!.seats[1].tokens[0],
+      controller.room!.seats.firstWhere((SeatState s) => s.seat == 2).tokens[0],
       10,
       reason:
-          'capture 17 fixture is broken: expected Karim\'s token (seat 1, '
+          'capture 17 fixture is broken: expected Karim\'s token (seat 2, '
           'token 0) to read 10 in controller.room!.seats after the '
           'scene-setting moved landed, got '
-          '${controller.room!.seats[1].tokens[0]} -- if this reads -1 the '
+          '${controller.room!.seats.firstWhere((SeatState s) => s.seat == 2).tokens[0]} -- if this reads -1 the '
           'capture assertion below would prove nothing, since -1 is also '
           'that token\'s starting value',
     );
@@ -3236,7 +3240,7 @@ void main() {
           'from': -1,
           'to': 10,
           'captured': <Object?>[
-            <String, Object?>{'seat': 1, 'token': 0},
+            <String, Object?>{'seat': 2, 'token': 0},
           ],
           'extra_roll': true,
           'seq': 6,
@@ -3294,7 +3298,7 @@ void main() {
     _expectCapturedTokenHome(
       tester,
       controller: controller,
-      capturedSeat: 1,
+      capturedSeat: 2,
       capturedToken: 0,
       momentDescription:
           'immediately after my own moved landed, before the post-move '
@@ -3316,7 +3320,7 @@ void main() {
     _expectCapturedTokenHome(
       tester,
       controller: controller,
-      capturedSeat: 1,
+      capturedSeat: 2,
       capturedToken: 0,
       momentDescription:
           'after the post-move settle, immediately before capture 17',
@@ -3402,7 +3406,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
       ),
     );
     await tester.pump();
@@ -3450,7 +3454,7 @@ void main() {
       _frame(
         type: 'moved',
         data: <String, Object?>{
-          'seat': 1,
+          'seat': 2,
           'token': 0,
           'from': -1,
           'to': 10,
@@ -3468,13 +3472,13 @@ void main() {
     // the first place, and the capture assertion below would pass for the
     // wrong reason.
     expect(
-      controller.room!.seats[1].tokens[0],
+      controller.room!.seats.firstWhere((SeatState s) => s.seat == 2).tokens[0],
       10,
       reason:
-          'capture 18 fixture is broken: expected Karim\'s token (seat 1, '
+          'capture 18 fixture is broken: expected Karim\'s token (seat 2, '
           'token 0) to read 10 in controller.room!.seats after the '
           'scene-setting moved landed, got '
-          '${controller.room!.seats[1].tokens[0]} -- if this reads -1 the '
+          '${controller.room!.seats.firstWhere((SeatState s) => s.seat == 2).tokens[0]} -- if this reads -1 the '
           'capture assertion below would prove nothing, since -1 is also '
           'that token\'s starting value',
     );
@@ -3503,7 +3507,7 @@ void main() {
           'from': -1,
           'to': 10,
           'captured': <Object?>[
-            <String, Object?>{'seat': 1, 'token': 0},
+            <String, Object?>{'seat': 2, 'token': 0},
           ],
           'extra_roll': true,
           'seq': 6,
@@ -3556,7 +3560,7 @@ void main() {
     _expectCapturedTokenHome(
       tester,
       controller: controller,
-      capturedSeat: 1,
+      capturedSeat: 2,
       capturedToken: 0,
       momentDescription:
           'immediately after my own moved landed, before the post-move '
@@ -3568,7 +3572,7 @@ void main() {
     _expectCapturedTokenHome(
       tester,
       controller: controller,
-      capturedSeat: 1,
+      capturedSeat: 2,
       capturedToken: 0,
       momentDescription:
           'after the post-move settle, immediately before capture 18',
@@ -3667,7 +3671,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
       ),
     );
     await tester.pump();
@@ -3733,7 +3737,7 @@ void main() {
     );
 
     // Seat 0 (Priya, me) rolls 6, 6, 6; the server ends the turn on the
-    // third and hands it to seat 1 (Karim).
+    // third and hands it to seat 2 (Karim).
     final int lastSeq = await _pushThreeSixesRun(tester, transport, 4);
 
     _expectThreeSixesNotice(
@@ -3840,7 +3844,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
       ),
     );
     await tester.pump();
@@ -3906,7 +3910,7 @@ void main() {
     );
 
     // Seat 0 (Priya, me) rolls 6, 6, 6; the server ends the turn on the
-    // third and hands it to seat 1 (Karim).
+    // third and hands it to seat 2 (Karim).
     final int lastSeq = await _pushThreeSixesRun(tester, transport, 4);
 
     _expectThreeSixesNotice(
@@ -4011,7 +4015,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
       ),
     );
     await tester.pump();
@@ -4187,7 +4191,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
       ),
     );
     await tester.pump();
@@ -4366,7 +4370,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
       ),
     );
     await tester.pump();
@@ -4421,12 +4425,12 @@ void main() {
       priyaWins: false,
     );
 
-    // The other seat (1, Karim) is named winner.
+    // The other seat (2, Karim) is named winner.
     transport.pushText(
       _frame(
         type: 'game_over',
         data: <String, Object?>{
-          'winner': 1,
+          'winner': 2,
           'verify_url': 'https://verify.example.invalid/shot21',
           'seq': gameOverSeq21,
         },
@@ -4441,7 +4445,7 @@ void main() {
     _expectGameOverWinnerText(
       tester,
       controller: controller,
-      expectedWinner: 1,
+      expectedWinner: 2,
       expectedText: loc21.endLoseTitle('Karim'),
       momentDescription:
           'immediately after the game_over push landed, before the '
@@ -4453,7 +4457,7 @@ void main() {
     _expectGameOverWinnerText(
       tester,
       controller: controller,
-      expectedWinner: 1,
+      expectedWinner: 2,
       expectedText: loc21.endLoseTitle('Karim'),
       momentDescription:
           'after the post-game-over settle, immediately before capture 21',
@@ -4541,7 +4545,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
       ),
     );
     await tester.pump();
@@ -4600,7 +4604,7 @@ void main() {
       _frame(
         type: 'game_over',
         data: <String, Object?>{
-          'winner': 1,
+          'winner': 2,
           'verify_url': 'https://verify.example.invalid/shot22',
           'seq': gameOverSeq22,
         },
@@ -4620,7 +4624,7 @@ void main() {
     _expectGameOverWinnerText(
       tester,
       controller: controller,
-      expectedWinner: 1,
+      expectedWinner: 2,
       expectedText: loc22.endLoseTitle('Karim'),
       momentDescription:
           'immediately after the game_over push landed, before the '
@@ -4632,7 +4636,7 @@ void main() {
     _expectGameOverWinnerText(
       tester,
       controller: controller,
-      expectedWinner: 1,
+      expectedWinner: 2,
       expectedText: loc22.endLoseTitle('Karim'),
       momentDescription:
           'after the post-game-over settle, immediately before capture 22',
@@ -4654,12 +4658,12 @@ void main() {
   // ==========================================================================
   // 23: order 247's (C-246) rematch ask -- a `room` LOBBY with `rematch`
   // naming the other seat arrives while my own end card is up. Karim joins
-  // Priya's room at seat 1, not the host; Priya wins the first game; then
+  // Priya's room at seat 2, not the host; Priya wins the first game; then
   // Priya's own `rematch` request lands as an unprompted push naming seat
   // 0 in `by` with only seat 0 in `ready` (docs/PROTOCOL.md section
   // 16.6/16.7, C-246 rule 4's "rematch LOBBY, my seat NOT in ready" case).
   // Before that `game_over`, `_playEndCardScript` plays the same short game
-  // captures 19 and 20 play. This device is seat 1, so the tiles are
+  // captures 19 and 20 play. This device is seat 2, so the tiles are
   // Karim's own rolls and tokens home from that game, not Priya's.
   // ==========================================================================
   testWidgets('capture 23-rematch-ask-en', (tester) async {
@@ -4708,11 +4712,12 @@ void main() {
     );
     final String joinId23 = _idOf(joinMessages23.single);
 
-    // Seat 1: a guest, not the host at seat 0 -- Priya is already seated.
+    // Seat 2: a guest, not the host at seat 0 -- Priya is already seated.
+    // A game of two is seated 0 and 2 (docs/RULES.md), never 0 and 1.
     transport.pushText(
       _frame(
         type: 'seat_assigned',
-        data: <String, Object?>{'seat': 1, 'seat_token': 'tok-shot-23'},
+        data: <String, Object?>{'seat': 2, 'seat_token': 'tok-shot-23'},
       ),
     );
     transport.pushText(
@@ -4725,7 +4730,7 @@ void main() {
           hostSeat: 0,
           seats: <Map<String, Object?>>[
             _seatJson(0, name: hostName),
-            _seatJson(1, name: joinerName),
+            _seatJson(2, name: joinerName),
           ],
           seq: 1,
         ),
@@ -4770,7 +4775,7 @@ void main() {
     );
     expect(find.byType(LobbyScreen), findsNothing);
 
-    // Seat 1 (Karim), the seat this card is about. Priya wins, so this is
+    // Seat 2 (Karim), the seat this card is about. Priya wins, so this is
     // the script captures 19 and 20 play. Rolls and tokens home are counted
     // off the script once it returns; the shot below reads those counts.
     final int gameOverSeq23 = await _playEndCardScript(
@@ -4780,10 +4785,10 @@ void main() {
       gameStartedSeq: 2,
       priyaWins: true,
     );
-    final int scriptRolls23 = _scriptedRolls(controller, 1);
-    final int scriptHome23 = _scriptedHome(controller, 1);
+    final int scriptRolls23 = _scriptedRolls(controller, 2);
+    final int scriptHome23 = _scriptedHome(controller, 2);
 
-    // Priya (seat 0) wins the first game; I (seat 1, Karim) lose.
+    // Priya (seat 0) wins the first game; I (seat 2, Karim) lose.
     transport.pushText(
       _frame(
         type: 'game_over',
@@ -4813,7 +4818,7 @@ void main() {
       find.byKey(const Key('end-card-lose')),
       findsOneWidget,
       reason:
-          'capture 23 fixture is broken: seat 1 (Karim) must see the '
+          'capture 23 fixture is broken: seat 2 (Karim) must see the '
           'loser card before the rematch ask can be shown on top of it',
     );
 
@@ -4831,7 +4836,7 @@ void main() {
             players: 2,
             seats: <Map<String, Object?>>[
               _seatJson(0, name: hostName),
-              _seatJson(1, name: joinerName),
+              _seatJson(2, name: joinerName),
             ],
             seq: gameOverSeq23 + 1,
           ),
@@ -4857,14 +4862,14 @@ void main() {
       askFinder23,
       findsOneWidget,
       reason:
-          'expected end-card-rematch-ask on screen: seat 1 (Karim) is not '
+          'expected end-card-rematch-ask on screen: seat 2 (Karim) is not '
           'yet in rematch.ready {0}',
     );
     expect(
       find.byKey(const Key('end-card-rematch-waiting')),
       findsNothing,
       reason:
-          'end-card-rematch-waiting must not show before seat 1 has '
+          'end-card-rematch-waiting must not show before seat 2 has '
           'accepted',
     );
 
@@ -4891,7 +4896,7 @@ void main() {
   // ==========================================================================
   // 24: order 247's (C-246) rematch waiting line -- Priya (seat 0, the
   // host) taps her own end card's Rematch button and the server's reply
-  // puts her alone in `rematch.ready`; Karim (seat 1) has not answered yet
+  // puts her alone in `rematch.ready`; Karim (seat 2) has not answered yet
   // (C-246 rule 4's "rematch LOBBY, my seat in ready" case), in Arabic.
   // Before `game_over`, `_playEndCardScript` plays the same short game
   // captures 19 and 20 play. This device is seat 0, so the tiles are
@@ -4962,7 +4967,7 @@ void main() {
     transport.pushText(
       _frame(
         type: 'player_joined',
-        data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
       ),
     );
     await tester.pump();
@@ -5074,7 +5079,7 @@ void main() {
     );
     final String rematchReqId24 = _idOf(rematchMessages24.single);
 
-    // The server's reply: Priya's own seat (0) is now in ready; Karim (1)
+    // The server's reply: Priya's own seat (0) is now in ready; Karim (2)
     // has not answered.
     transport.pushText(
       _frame(
@@ -5088,7 +5093,7 @@ void main() {
             players: 2,
             seats: <Map<String, Object?>>[
               _seatJson(0, name: hostName),
-              _seatJson(1, name: 'Karim'),
+              _seatJson(2, name: 'Karim'),
             ],
             seq: gameOverSeq24 + 1,
           ),
@@ -5130,9 +5135,9 @@ void main() {
       reason: 'end-card-ready-0 must exist for occupied seat 0',
     );
     expect(
-      find.byKey(const Key('end-card-ready-1')),
+      find.byKey(const Key('end-card-ready-2')),
       findsOneWidget,
-      reason: 'end-card-ready-1 must exist for occupied seat 1',
+      reason: 'end-card-ready-2 must exist for occupied seat 2',
     );
 
     await _pumpRealDurationFrames(tester);
@@ -5292,7 +5297,7 @@ void main() {
 
   // ==========================================================================
   // 30, 31: contract C-316 rule 4 (offline on the end card). A 2-seat game
-  // finishes; this device is seat 1 (Karim) and loses. The transport drops
+  // (seats 0 and 2) finishes; this device is seat 2 (Karim) and loses. The transport drops
   // from the far side with automatic reconnect not yet fired. The end card
   // stays up showing end-card-offline, no connection-lost card is shown, and
   // the verify button remains shown and hit-testable.
@@ -5773,7 +5778,7 @@ void main() {
       await tester.pump();
       pushMoved(transport37, seat: 2, token: 0, from: -1, to: 30, seq: 8);
       await tester.pump();
-      pushMoved(transport37, seat: 1, token: 1, from: -1, to: 45, seq: 9);
+      pushMoved(transport37, seat: 1, token: 1, from: -1, to: 44, seq: 9);
       await tester.pump();
 
       await _pumpUntilFound(
@@ -5998,7 +6003,7 @@ void main() {
       await tester.pump();
       pushMoved(transport38, seat: 2, token: 0, from: -1, to: 30, seq: 8);
       await tester.pump();
-      pushMoved(transport38, seat: 1, token: 1, from: -1, to: 45, seq: 9);
+      pushMoved(transport38, seat: 1, token: 1, from: -1, to: 44, seq: 9);
       await tester.pump();
 
       await _pumpUntilFound(
@@ -6139,7 +6144,7 @@ void main() {
       transport39.pushText(
         _frame(
           type: 'player_joined',
-          data: <String, Object?>{'seat': 1, 'name': otherName, 'seq': 2},
+          data: <String, Object?>{'seat': 2, 'name': otherName, 'seq': 2},
         ),
       );
       await tester.pump();
@@ -6278,7 +6283,7 @@ void main() {
       transport40.pushText(
         _frame(
           type: 'player_joined',
-          data: <String, Object?>{'seat': 1, 'name': otherName, 'seq': 2},
+          data: <String, Object?>{'seat': 2, 'name': otherName, 'seq': 2},
         ),
       );
       await tester.pump();
@@ -6361,7 +6366,7 @@ void main() {
         _frame(
           type: 'game_over',
           data: <String, Object?>{
-            'winner': 1,
+            'winner': 2,
             'verify_url': 'https://verify.example.invalid/shot40',
             'seq': gameOverSeq40,
           },
@@ -6381,7 +6386,7 @@ void main() {
       _expectGameOverWinnerText(
         tester,
         controller: controller40,
-        expectedWinner: 1,
+        expectedWinner: 2,
         expectedText: loc40.endLoseTitle(otherName),
         momentDescription:
             'capture 40: immediately after the game_over push landed, '
@@ -6393,7 +6398,7 @@ void main() {
       _expectGameOverWinnerText(
         tester,
         controller: controller40,
-        expectedWinner: 1,
+        expectedWinner: 2,
         expectedText: loc40.endLoseTitle(otherName),
         momentDescription:
             'capture 40: after the post-game-over settle, immediately '
@@ -7951,7 +7956,7 @@ Future<int> _pushThreeSixesRun(
     seq,
     type: 'turn',
     data: <String, Object?>{
-      'seat': 1,
+      'seat': 2,
       'phase': 'await_roll',
       'deadline_ms': _trayDeadlineMs,
       'queue': <int>[],
@@ -8015,10 +8020,10 @@ void _expectThreeSixesNotice(
   );
   expect(
     controller.room!.turn!.seat,
-    1,
+    2,
     reason:
         'capture $captureName ($momentDescription): expected the turn on '
-        'seat 1 (Karim) after turn_passed three_sixes and the next turn '
+        'seat 2 (Karim) after turn_passed three_sixes and the next turn '
         'frame, got seat ${controller.room!.turn!.seat}. $reproduce',
   );
   expect(
@@ -8141,7 +8146,8 @@ void _expectScriptedEndCardCount(
 
 /// Plays the short two-seat game captures 19-22 photograph, on the same
 /// [transport] the capture already used, with `seq` continuous from
-/// [gameStartedSeq].
+/// [gameStartedSeq]. A game of two is seated 0 and 2 (docs/RULES.md), so
+/// "Karim" below is seat 2, and every hand-off goes 0 to 2 to 0.
 ///
 /// Frame fields match integration_test/motion_test.dart: `rolled` carries
 /// seat, value, legal, deadline_ms, k, reveal and seq; `moved` carries
@@ -8159,7 +8165,7 @@ void _expectScriptedEndCardCount(
 ///
 /// [priyaWins] true (captures 19 and 20). Seat 0's own frames, in order:
 /// rolled 6 and token 0 from -1 to 0; rolled 4 and token 0 from 0 to 4
-/// capturing seat 1 token 0; rolled 1 and token 1 from -1 to 57; rolled 1
+/// capturing seat 2 token 0; rolled 1 and token 1 from -1 to 57; rolled 1
 /// and token 2 from -1 to 57; rolled 1 and token 3 from -1 to 57; rolled 1
 /// and token 0 from 4 to 57. That is rolls 6, sixes 1, captures 1, home 4.
 /// Karim's opening 6 and 4 only put his token 0 on square 4 so there is a
@@ -8276,8 +8282,8 @@ Future<int> _playEndCardScript(
   }
 
   if (priyaWins) {
-    play(seat: 1, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 1);
-    play(seat: 1, face: 4, token: 0, from: 0, to: 4, extra: false, turnSeat: 0);
+    play(seat: 2, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 2);
+    play(seat: 2, face: 4, token: 0, from: 0, to: 4, extra: false, turnSeat: 0);
     play(seat: 0, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 0);
     play(
       seat: 0,
@@ -8285,7 +8291,7 @@ Future<int> _playEndCardScript(
       token: 0,
       from: 0,
       to: 4,
-      captured: const <(int, int)>[(1, 0)],
+      captured: const <(int, int)>[(2, 0)],
       extra: true,
       turnSeat: 0,
     );
@@ -8319,46 +8325,46 @@ Future<int> _playEndCardScript(
     play(seat: 0, face: 1, token: 0, from: 4, to: 57, extra: false);
   } else {
     play(seat: 0, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 0);
-    play(seat: 0, face: 3, token: 0, from: 0, to: 3, extra: false, turnSeat: 1);
-    play(seat: 1, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 1);
+    play(seat: 0, face: 3, token: 0, from: 0, to: 3, extra: false, turnSeat: 2);
+    play(seat: 2, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 2);
     play(
-      seat: 1,
+      seat: 2,
       face: 3,
       token: 0,
       from: 0,
       to: 3,
       captured: const <(int, int)>[(0, 0)],
       extra: true,
-      turnSeat: 1,
+      turnSeat: 2,
     );
     play(
-      seat: 1,
+      seat: 2,
       face: 1,
       token: 1,
       from: -1,
       to: 57,
       extra: false,
-      turnSeat: 1,
+      turnSeat: 2,
     );
     play(
-      seat: 1,
+      seat: 2,
       face: 1,
       token: 2,
       from: -1,
       to: 57,
       extra: false,
-      turnSeat: 1,
+      turnSeat: 2,
     );
     play(
-      seat: 1,
+      seat: 2,
       face: 1,
       token: 3,
       from: -1,
       to: 57,
       extra: false,
-      turnSeat: 1,
+      turnSeat: 2,
     );
-    play(seat: 1, face: 1, token: 0, from: 3, to: 57, extra: false);
+    play(seat: 2, face: 1, token: 0, from: 3, to: 57, extra: false);
   }
 
   await tester.pump();
@@ -8376,7 +8382,7 @@ Future<int> _playEndCardScript(
     RoomState.playing,
     reason: 'end-card script must still be in play when it returns',
   );
-  final int winnerSeat = priyaWins ? 0 : 1;
+  final int winnerSeat = priyaWins ? 0 : 2;
   expect(
     _endCardTokens(controller, winnerSeat),
     <int>[57, 57, 57, 57],
@@ -8632,16 +8638,16 @@ _ReconnectLoserScript _reconnectLoserScript({
     'client_seeds': '0:seed',
   });
 
-  // Live. The drop is after the turn that hands the dice to Karim.
+  // Live. The drop is after the turn that hands the dice to Karim (seat 2).
   play(seat: 0, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 0);
-  play(seat: 0, face: 5, token: 0, from: 0, to: 5, extra: false, turnSeat: 1);
+  play(seat: 0, face: 5, token: 0, from: 0, to: 5, extra: false, turnSeat: 2);
   final int dropAfterSeq = seq;
 
   // Hole. The first of these is a rolled, and none of them are pushed.
-  play(seat: 1, face: 6, token: 0, from: -1, to: 57, extra: true, turnSeat: 1);
-  play(seat: 1, face: 1, token: 1, from: -1, to: 57, extra: false, turnSeat: 1);
-  play(seat: 1, face: 1, token: 2, from: -1, to: 57, extra: false, turnSeat: 1);
-  play(seat: 1, face: 1, token: 3, from: -1, to: 57, extra: false, turnSeat: 0);
+  play(seat: 2, face: 6, token: 0, from: -1, to: 57, extra: true, turnSeat: 2);
+  play(seat: 2, face: 1, token: 1, from: -1, to: 57, extra: false, turnSeat: 2);
+  play(seat: 2, face: 1, token: 2, from: -1, to: 57, extra: false, turnSeat: 2);
+  play(seat: 2, face: 1, token: 3, from: -1, to: 57, extra: false, turnSeat: 0);
   play(seat: 0, face: 6, token: 1, from: -1, to: 57, extra: true, turnSeat: 0);
   play(seat: 0, face: 1, token: 2, from: -1, to: 57, extra: false, turnSeat: 0);
   play(seat: 0, face: 1, token: 0, from: 5, to: 57, extra: false, turnSeat: 0);
@@ -8649,7 +8655,7 @@ _ReconnectLoserScript _reconnectLoserScript({
   final int resumeSeq = seq;
   final int turnK = k;
 
-  add('game_over', <String, Object?>{'winner': 1, 'verify_url': verifyUrl});
+  add('game_over', <String, Object?>{'winner': 2, 'verify_url': verifyUrl});
 
   return _ReconnectLoserScript(
     entries: entries,
@@ -8808,7 +8814,7 @@ Future<void> _captureReconnectLoser(
   first.pushText(
     _frame(
       type: 'player_joined',
-      data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
+      data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
     ),
   );
   await tester.pump();
@@ -8912,7 +8918,7 @@ Future<void> _captureReconnectLoser(
         hostSeat: 0,
         seats: <Map<String, Object?>>[
           _seatJson(0, name: hostName, tokens: _reconnectLoserTokens),
-          _seatJson(1, name: 'Karim', tokens: _reconnectWinnerTokens),
+          _seatJson(2, name: 'Karim', tokens: _reconnectWinnerTokens),
         ],
         turn: <String, Object?>{
           'seat': 0,
@@ -8934,7 +8940,7 @@ Future<void> _captureReconnectLoser(
   expect(controller.room?.seq, script.resumeSeq);
   expect(controller.room?.state, RoomState.playing);
   expect(_endCardTokens(controller, 0), _reconnectLoserTokens);
-  expect(_endCardTokens(controller, 1), _reconnectWinnerTokens);
+  expect(_endCardTokens(controller, 2), _reconnectWinnerTokens);
   expect(
     _sentOfType(live, 'game_log'),
     isEmpty,
@@ -9036,7 +9042,7 @@ Future<void> _captureReconnectLoser(
   _expectGameOverWinnerText(
     tester,
     controller: controller,
-    expectedWinner: 1,
+    expectedWinner: 2,
     expectedText: loc.endLoseTitle('Karim'),
     momentDescription:
         'after the game_log answer, before the settle ($shotName)',
@@ -9069,7 +9075,7 @@ Future<void> _captureReconnectLoser(
   _expectGameOverWinnerText(
     tester,
     controller: controller,
-    expectedWinner: 1,
+    expectedWinner: 2,
     expectedText: loc.endLoseTitle('Karim'),
     momentDescription:
         'after the post-game-log settle, immediately before $shotName',
@@ -9391,7 +9397,8 @@ void _expectFriendLeftState(
   );
 }
 
-/// Capture 29: 2-seat FINISHED game, seat 1 lost, seat 0 leaves.
+/// Capture 29: 2-seat FINISHED game (seats 0 and 2), seat 2 lost, seat 0
+/// leaves.
 Future<void> _captureEveryoneLeft(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -9425,7 +9432,7 @@ Future<void> _captureEveryoneLeft(
   transport.pushText(
     _frame(
       type: 'seat_assigned',
-      data: const <String, Object?>{'seat': 1, 'seat_token': 'tok-shot-karim'},
+      data: const <String, Object?>{'seat': 2, 'seat_token': 'tok-shot-karim'},
     ),
   );
   transport.pushText(
@@ -9439,7 +9446,7 @@ Future<void> _captureEveryoneLeft(
         players: 2,
         seats: <Map<String, Object?>>[
           _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
-          _seatJson(1, name: 'Karim'),
+          _seatJson(2, name: 'Karim'),
         ],
         turn: const <String, Object?>{
           'seat': 0,
@@ -9465,7 +9472,7 @@ Future<void> _captureEveryoneLeft(
           players: 2,
           seats: <Map<String, Object?>>[
             _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
-            _seatJson(1, name: 'Karim'),
+            _seatJson(2, name: 'Karim'),
           ],
           turn: _finishedTurnJson(),
           winner: 0,
@@ -9486,11 +9493,11 @@ Future<void> _captureEveryoneLeft(
   );
   await tester.pump();
 
-  // Seat 0 (Priya) leaves: player_left naming seat 0, host_seat becomes 1.
+  // Seat 0 (Priya) leaves: player_left naming seat 0, host_seat becomes 2.
   transport.pushText(
     _frame(
       type: 'player_left',
-      data: const <String, Object?>{'seat': 0, 'host_seat': 1, 'seq': 3},
+      data: const <String, Object?>{'seat': 0, 'host_seat': 2, 'seq': 3},
     ),
   );
   await tester.pump();
@@ -9502,9 +9509,9 @@ Future<void> _captureEveryoneLeft(
         ..._roomJson(
           code: roomCode,
           state: 'FINISHED',
-          hostSeat: 1,
+          hostSeat: 2,
           players: 2,
-          seats: <Map<String, Object?>>[_seatJson(1, name: 'Karim')],
+          seats: <Map<String, Object?>>[_seatJson(2, name: 'Karim')],
           turn: _finishedTurnJson(),
           winner: 0,
           seq: 4,
@@ -9547,11 +9554,11 @@ void _expectEveryoneLeftState(
     reason: '$shotName ($momentDescription): room must be finished',
   );
   expect(controller.room?.seats.map((SeatState s) => s.seat).toList(), <int>[
-    1,
-  ], reason: '$shotName ($momentDescription): only seat 1 must remain');
+    2,
+  ], reason: '$shotName ($momentDescription): only seat 2 must remain');
   expect(
     controller.lastFinished?.seats.map((SeatState s) => s.seat).toList(),
-    <int>[0, 1],
+    <int>[0, 2],
     reason: '$shotName ($momentDescription): lastFinished must keep both seats',
   );
 
@@ -9609,7 +9616,8 @@ void _expectEveryoneLeftState(
   );
 }
 
-/// Captures 30 and 31: 2-seat FINISHED game, lost, transport drops offline.
+/// Captures 30 and 31: 2-seat FINISHED game (seats 0 and 2), lost, transport
+/// drops offline.
 Future<void> _captureEndOffline(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -9647,7 +9655,7 @@ Future<void> _captureEndOffline(
   transport.pushText(
     _frame(
       type: 'seat_assigned',
-      data: const <String, Object?>{'seat': 1, 'seat_token': 'tok-shot-karim'},
+      data: const <String, Object?>{'seat': 2, 'seat_token': 'tok-shot-karim'},
     ),
   );
   transport.pushText(
@@ -9661,7 +9669,7 @@ Future<void> _captureEndOffline(
         players: 2,
         seats: <Map<String, Object?>>[
           _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
-          _seatJson(1, name: 'Karim'),
+          _seatJson(2, name: 'Karim'),
         ],
         turn: const <String, Object?>{
           'seat': 0,
@@ -9686,7 +9694,7 @@ Future<void> _captureEndOffline(
           players: 2,
           seats: <Map<String, Object?>>[
             _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
-            _seatJson(1, name: 'Karim'),
+            _seatJson(2, name: 'Karim'),
           ],
           turn: _finishedTurnJson(),
           winner: 0,
@@ -9863,7 +9871,7 @@ Future<void> _captureHomeRemoved(
           players: 2,
           seats: <Map<String, Object?>>[
             _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 57, 57]),
-            _seatJson(1, name: 'Karim'),
+            _seatJson(2, name: 'Karim'),
           ],
           turn: _finishedTurnJson(),
           winner: 0,
@@ -9894,13 +9902,13 @@ Future<void> _captureHomeRemoved(
           players: 2,
           seats: <Map<String, Object?>>[
             _seatJson(0, name: 'Priya'),
-            _seatJson(1, name: 'Karim'),
+            _seatJson(2, name: 'Karim'),
           ],
           seq: 2,
         ),
         'rematch': const <String, Object?>{
-          'by': 1,
-          'ready': <int>[1],
+          'by': 2,
+          'ready': <int>[2],
         },
       },
     ),
@@ -9918,7 +9926,7 @@ Future<void> _captureHomeRemoved(
   transport.pushText(
     _frame(
       type: 'player_left',
-      data: const <String, Object?>{'seat': 0, 'host_seat': 1, 'seq': 3},
+      data: const <String, Object?>{'seat': 0, 'host_seat': 2, 'seq': 3},
     ),
   );
 
@@ -9934,7 +9942,7 @@ Future<void> _captureHomeRemoved(
       _frame(
         type: 'player_left',
         re: _idOf(leaveMessages.single),
-        data: const <String, Object?>{'seat': 0, 'host_seat': 1, 'seq': 4},
+        data: const <String, Object?>{'seat': 0, 'host_seat': 2, 'seq': 4},
       ),
     );
     await tester.pump();
@@ -18174,17 +18182,17 @@ Future<void> _shootEndResumedNoRolls(
             players: 2,
             hostSeat: 0,
             gameId: gameId,
-            clientSeeds: '0:seed|1:seed',
-            winner: 1,
+            clientSeeds: '0:seed|2:seed',
+            winner: 2,
             turn: const <String, Object?>{
-              'seat': 1,
+              'seat': 2,
               'phase': 'finished',
               'deadline_ms': 0,
               'k': 8,
             },
             seats: <Map<String, Object?>>[
               _seatJson(0, name: 'Priya', tokens: const <int>[57, 57, 12, -1]),
-              _seatJson(1, name: 'Karim', tokens: const <int>[57, 57, 57, 57]),
+              _seatJson(2, name: 'Karim', tokens: const <int>[57, 57, 57, 57]),
             ],
             seq: 9,
           ),
@@ -18226,10 +18234,10 @@ Future<void> _shootEndResumedNoRolls(
     final RoomController controller = factory.controllers.single;
     expect(
       <Object?>[controller.room!.state, controller.room!.winner],
-      <Object?>[RoomState.finished, 1],
+      <Object?>[RoomState.finished, 2],
       reason:
           'capture $shotName ($scenario): the snapshot must land FINISHED '
-          'with winner 1, got ${controller.room!.state}, winner '
+          'with winner 2, got ${controller.room!.state}, winner '
           '${controller.room!.winner}',
     );
     final AppLocalizations loc = AppLocalizations.of(
@@ -19185,7 +19193,7 @@ Future<_OpenedTrayGame> _openBareGame(
         players: 2,
         seats: <Map<String, Object?>>[
           _seatJson(0, name: 'Priya'),
-          _seatJson(1, name: 'Karim'),
+          _seatJson(2, name: 'Karim'),
         ],
         turn: <String, Object?>{
           'seat': 0,
@@ -19696,7 +19704,7 @@ Future<void> _shootGameCatchingUp(
       _frame(
         type: 'presence',
         data: const <String, Object?>{
-          'seat': 1,
+          'seat': 2,
           'connected': false,
           'seq': 999,
         },
