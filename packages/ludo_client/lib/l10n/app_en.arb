@@ -278,6 +278,28 @@
   "@gameYourTurnTimeUp": {
     "description": "Turn banner shown on the game screen in place of the roll and move lines once this player's own countdown has reached zero, until the server's next frame: nothing asks for a tap, because the server is about to play or has already played the turn."
   },
+  "gameRollAgainSix": "Six! Roll again.",
+  "@gameRollAgainSix": {
+    "description": "Turn banner shown on the game screen in place of the plain roll line when this player's six has left a roll owed, so the die being theirs again has a reason. Cleared by their next roll."
+  },
+  "gameRollAgainCapture": "You captured. Roll again.",
+  "@gameRollAgainCapture": {
+    "description": "Turn banner shown on the game screen in place of the plain roll line when this player's move captured a token and the capture bonus leaves a roll owed. Cleared by their next roll."
+  },
+  "gameRollAgainHome": "Token home. Roll again.",
+  "@gameRollAgainHome": {
+    "description": "Turn banner shown on the game screen in place of the plain roll line when this player's token reached home and the home bonus leaves a roll owed. Cleared by their next roll."
+  },
+  "gameGoesAgain": "{name} goes again",
+  "@gameGoesAgain": {
+    "description": "Turn banner shown on the game screen naming the seat that rolls again after a six, a capture or a token home, in place of the waiting line.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
   "gameRollButton": "Roll",
   "@gameRollButton": {
     "description": "Label of the button on the game screen that sends the roll intention to the server."
@@ -541,6 +563,10 @@
   "gameNoMoveNeedExact": "Home needs an exact roll",
   "@gameNoMoveNeedExact": {
     "description": "The no-move line when no token of the player is in the yard and every face of the roll overshoots home. Same place and timing as the plain no-move line."
+  },
+  "gameNoMoveThreeSixes": "Three sixes in a row. Turn over.",
+  "@gameNoMoveThreeSixes": {
+    "description": "The no-move line when the server voided the roll because it was the third six in a row. Same place and timing as the other no-move lines."
   },
   "announceCapturedOther": "You captured a token",
   "@announceCapturedOther": {

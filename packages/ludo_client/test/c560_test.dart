@@ -1401,17 +1401,22 @@ void main() {
                   'D4: the mark is Icons.sync_rounded, the same mark every '
                   'other wait line uses. Scenario: $scenario',
             );
+            // C-565 D1 (run 130): the mark grows with the text scale, so
+            // 18 is its floor at 1.0, not its size at 2.0.
             expect(
               tester.widget<Icon>(icon).size,
-              18,
-              reason: 'D4: the Icon\'s size must be 18. Scenario: $scenario',
-            );
-            expect(
-              tester.getSize(icon),
-              const Size(18, 18),
+              greaterThanOrEqualTo(18),
               reason:
-                  'D4: the mark must draw at 18 x 18, not a shrunken arc. '
+                  'D4: the Icon\'s size must be at least 18. '
                   'Scenario: $scenario',
+            );
+            final Size drawn = tester.getSize(icon);
+            expect(
+              drawn.width >= 18 && drawn.width == drawn.height,
+              isTrue,
+              reason:
+                  'D4: the mark must draw square and at least 18 wide, not '
+                  'a shrunken arc. Saw $drawn. Scenario: $scenario',
             );
             expect(
               find.descendant(

@@ -1023,11 +1023,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: <Widget>[
-        const ExcludeSemantics(
-          child: Icon(
-            Icons.hourglass_top_rounded,
-            size: 18,
-            color: LudoColors.inkMuted,
+        // A Builder: the line's Text renders under the Scaffold's Material,
+        // so the style to measure is the one at the Row, not the State's.
+        ExcludeSemantics(
+          child: Builder(
+            builder: (BuildContext rowContext) => Icon(
+              Icons.hourglass_top_rounded,
+              key: const Key('lobby-docked-waiting-mark'),
+              size: waitingMarkSize(
+                rowContext,
+                DefaultTextStyle.of(rowContext).style,
+              ),
+              color: LudoColors.inkMuted,
+            ),
           ),
         ),
         const SizedBox(width: kSpace2),

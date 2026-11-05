@@ -61,6 +61,10 @@
   "gameAutoMoving": "حركة وحيدة. سنلعبها عنك.",
   "gameYourTurnStale": "دورك",
   "gameYourTurnTimeUp": "انتهى الوقت. نلعب عنك.",
+  "gameRollAgainSix": "ستّة! ارمِ مرة أخرى.",
+  "gameRollAgainCapture": "ضربت قطعة. ارمِ مرة أخرى.",
+  "gameRollAgainHome": "قطعة في البيت. ارمِ مرة أخرى.",
+  "gameGoesAgain": "دور {name} مجددًا",
   "gameRollButton": "رمي النرد",
   "gameTokenButton": "قطعة {number}",
   "announceAutoMoveArmed": "حركة وحيدة. القطعة {number} ستتحرك وحدها.",
@@ -114,7 +118,7 @@
       }
     }
   },
-  "gameTurnCountdown": "باقي {seconds} ثانية",
+  "gameTurnCountdown": "{seconds, plural, =0{انتهى الوقت} =1{بقيت ثانية واحدة} =2{بقيت ثانيتان} few{بقيت {seconds} ثوانٍ} other{بقيت {seconds} ثانية}}",
   "gameTurnCountdownDigits": "{seconds}",
   "gameSeatOffline": "انقطع اتصال {name}",
   "gameTimerPlayedMine": "انتهى الوقت. لعبنا عنك.",
@@ -138,6 +142,7 @@
   "gameNoMove": "لا حركة بهذه الرمية",
   "gameNoMoveNeedSix": "تحتاج 6 لإخراج قطعة",
   "gameNoMoveNeedExact": "تحتاج الرقم بالضبط للبيت",
+  "gameNoMoveThreeSixes": "ثلاث ستّات متتالية. انتهى الدور.",
   "announceCapturedOther": "ضربت قطعة",
   "announceCapturedMe": "ضُربت قطعتك",
   "announceHome": "وصلت قطعة إلى البيت",
