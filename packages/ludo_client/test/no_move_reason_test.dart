@@ -48,15 +48,22 @@ void main() {
   group('D1: the enum', () {
     // Catches an enum with a fourth member or a renamed one: the screen
     // switches on exactly these three.
-    test('C-474 D1: NoMoveReason has exactly needSix, needExact, plain', () {
+    test('C-474 D1, C-568 D3: NoMoveReason has exactly needSix, needExact, '
+        'plain, threeSixes', () {
       // The contract declares
       //   enum NoMoveReason { needSix, needExact, plain }
-      // so values, in order, are those three.
-      expect(NoMoveReason.values, <NoMoveReason>[
-        NoMoveReason.needSix,
-        NoMoveReason.needExact,
-        NoMoveReason.plain,
-      ], reason: 'C-474 D1 declares exactly three members in this order');
+      // and C-568 D3 (run 130) adds threeSixes, which noMoveReason() never
+      // returns; the screen sets it from the wire.
+      expect(
+        NoMoveReason.values,
+        <NoMoveReason>[
+          NoMoveReason.needSix,
+          NoMoveReason.needExact,
+          NoMoveReason.plain,
+          NoMoveReason.threeSixes,
+        ],
+        reason: 'C-474 D1 declares three members in this order, C-568 D3 adds threeSixes',
+      );
     });
   });
 
