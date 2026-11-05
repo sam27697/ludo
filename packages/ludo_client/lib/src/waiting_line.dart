@@ -12,6 +12,18 @@ const Duration kWaitingLineSlowAfter = Duration(seconds: 4);
 /// One full turn of the mark.
 const Duration _kTurn = Duration(milliseconds: 1200);
 
+/// C-565 D1: the size of a wait mark that sits beside a line of text. 18 dp
+/// beside 14 sp text at the default scale, growing with the system text
+/// scale so the mark never shrinks to a speck next to large text (P9), and
+/// capped so it cannot take the row from the words.
+double waitingMarkSize(BuildContext context, TextStyle style) {
+  final double fs = style.fontSize ?? 14;
+  return (MediaQuery.textScalerOf(context).scale(fs) * 18 / 14).clamp(
+    18.0,
+    40.0,
+  );
+}
+
 /// A wait that says it is still working: a turning mark beside [text], and
 /// once this widget has been mounted for [kWaitingLineSlowAfter] a second
 /// line with something the player can check. The count starts at the first
@@ -94,6 +106,7 @@ class _WaitingLineState extends State<WaitingLine>
         widget.style ??
         textTheme.bodyMedium?.copyWith(color: LudoColors.inkMuted) ??
         const TextStyle(color: LudoColors.inkMuted);
+    final TextStyle rendered = DefaultTextStyle.of(context).style.merge(line);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -108,7 +121,7 @@ class _WaitingLineState extends State<WaitingLine>
                   turns: _turn,
                   child: Icon(
                     Icons.sync_rounded,
-                    size: 18,
+                    size: waitingMarkSize(context, rendered),
                     color: line.color ?? LudoColors.inkMuted,
                   ),
                 ),
