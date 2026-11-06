@@ -158,6 +158,7 @@ import 'package:ludo_client/src/verify_rolls_button.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../test/net/fake_transport.dart';
+import 'fixtures/real_games_fixture.dart' show realGamesJson;
 
 const String _testUrl = 'wss://screenshots-test.invalid/ws';
 
@@ -3946,9 +3947,10 @@ void main() {
   // seat (0, Priya) as `winner`. No `turn` frame follows a `game_over`
   // (docs/PROTOCOL.md section 13's own last line); `_reduceGameOver`
   // carries the current turn forward into `TurnPhase.finished`, exactly
-  // as sections 14.1/14.2 require. Before that push, `_playEndCardScript`
-  // plays a short game on this same transport so the four stat tiles are
-  // this seat's own rolls, sixes, captures and tokens home.
+  // as sections 14.1/14.2 require. Before that push, `_replayRealGame`
+  // plays the recorded game host_wins_1 from the host's view (seat 0) on this
+  // same transport, so the four stat tiles are this seat's own rolls, sixes,
+  // captures and tokens home in that game, read from the fixture's `counts`.
   // ==========================================================================
   testWidgets('capture 19-end-winner-en', (tester) async {
     binding.testTextInput.register();
@@ -3964,122 +3966,25 @@ void main() {
     await tester.pumpAndSettle();
     await _expectHomeScreen(tester, localeName: 'en');
 
-    const String hostName = 'Priya';
-    const String roomCode = 'SHOT19';
-
-    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
-    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-
-    expect(factory.controllers, hasLength(1));
-    final RoomController controller = factory.controllers.single;
-    final FakeTransport transport = factory.transports.single;
-    addTearDown(controller.dispose);
-
-    final List<String> createMessages = transport.sentRaw
-        .where((s) => _typeOf(s) == 'create_room')
-        .toList();
-    expect(createMessages, hasLength(1));
-    final String createId = _idOf(createMessages.single);
-
-    transport.pushText(
-      _frame(
-        type: 'seat_assigned',
-        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-19'},
-      ),
-    );
-    transport.pushText(
-      _frame(
-        type: 'room',
-        re: createId,
-        data: _roomJson(
-          code: roomCode,
-          players: 2,
-          hostSeat: 0,
-          // Tokens start in the yard. The script after game_started moves
-          // the winner's four onto 57; a room snapshot that already says
-          // 57 is not a played game.
-          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
-          seq: 1,
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
+    // Seat 0 (Priya), the host, in the recorded game host_wins_1: the device
+    // types Priya, taps Create, taps Start, and every recorded frame follows.
+    addTearDown(() {
+      for (final RoomController c in factory.controllers) {
+        c.dispose();
+      }
+    });
+    final _RealReplay replay19 = await _replayRealGame(
       tester,
-      find.byType(LobbyScreen),
-      'LobbyScreen after the create_room reply carrying code "$roomCode"',
-    );
-
-    transport.pushText(
-      _frame(
-        type: 'player_joined',
-        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
-      ),
-    );
-    await tester.pump();
-
-    await _expectLobbyScreen(
-      tester,
+      factory,
+      capture: 'capture 19-end-winner-en',
+      gameName: 'host_wins_1',
+      seat: 0,
       localeName: 'en',
-      code: roomCode,
-      expectedSeatCount: 2,
     );
+    final RoomController controller = replay19.controller;
 
-    final Finder startButton19 = find.byKey(const Key('lobby-start-button'));
-    expect(startButton19, findsOneWidget);
-    await tester.tap(startButton19);
-    await tester.pump();
-    final List<String> startMessages = transport.sentRaw
-        .where((s) => _typeOf(s) == 'start_game')
-        .toList();
-    expect(startMessages, hasLength(1));
-    final String startId = _idOf(startMessages.single);
-
-    transport.pushText(
-      _frame(
-        type: 'game_started',
-        re: startId,
-        data: <String, Object?>{
-          'turn': 0,
-          'game_id': 'e' * 16,
-          'client_seeds': '0:seed',
-          'seq': 3,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
-      tester,
-      find.byType(GameScreen),
-      'GameScreen after the game_started push answering start_game',
-    );
-    expect(find.byType(LobbyScreen), findsNothing);
-
-    // Seat 0 (Priya), the seat this card is about:
-    // rolls 6, sixes 1, captures 1, home 4.
-    final int gameOverSeq19 = await _playEndCardScript(
-      tester,
-      transport,
-      controller,
-      gameStartedSeq: 3,
-      priyaWins: true,
-    );
-
-    // My own seat (0, Priya) is named winner.
-    transport.pushText(
-      _frame(
-        type: 'game_over',
-        data: <String, Object?>{
-          'winner': 0,
-          'verify_url': 'https://verify.example.invalid/shot19',
-          'seq': gameOverSeq19,
-        },
-      ),
-    );
+    // My own seat (0, Priya) is named winner by the recorded game_over.
+    replay19.pushGameOver();
     await tester.pump();
     await tester.pump();
 
@@ -4106,15 +4011,18 @@ void main() {
       momentDescription:
           'after the post-game-over settle, immediately before capture 19',
     );
-    // rolls 6, sixes 1, captures 1, home 4.
+    // The four tiles show the fixture's counts for this device's seat in
+    // the recorded game, read at run time; a count of 0 means the tile is
+    // absent (C-533 D3).
     _expectEndCardStatTiles(
       tester,
-      rolls: 6,
-      sixes: 1,
-      captures: 1,
-      home: 4,
+      rolls: replay19.counts.rolls,
+      sixes: replay19.counts.sixes,
+      captures: replay19.counts.captures,
+      home: replay19.counts.home,
       momentDescription:
-          'after the post-game-over settle, immediately before capture 19',
+          'after the post-game-over settle, immediately before capture 19 '
+          '(${replay19.describe}; ${replay19.counts})',
     );
 
     await _capture(binding, tester, '19-end-winner-en', frames: 0);
@@ -4141,120 +4049,24 @@ void main() {
     await tester.pumpAndSettle();
     await _expectHomeScreen(tester, localeName: 'ar');
 
-    const String hostName = 'Priya';
-    const String roomCode = 'SHOT20';
-
-    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
-    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-
-    expect(factory.controllers, hasLength(1));
-    final RoomController controller = factory.controllers.single;
-    final FakeTransport transport = factory.transports.single;
-    addTearDown(controller.dispose);
-
-    final List<String> createMessages = transport.sentRaw
-        .where((s) => _typeOf(s) == 'create_room')
-        .toList();
-    expect(createMessages, hasLength(1));
-    final String createId = _idOf(createMessages.single);
-
-    transport.pushText(
-      _frame(
-        type: 'seat_assigned',
-        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-20'},
-      ),
-    );
-    transport.pushText(
-      _frame(
-        type: 'room',
-        re: createId,
-        data: _roomJson(
-          code: roomCode,
-          players: 2,
-          hostSeat: 0,
-          // Same yard start as capture 19. The script moves the winner's
-          // four onto 57 after game_started.
-          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
-          seq: 1,
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
+    // Seat 0 (Priya), the host, in the recorded game host_wins_1, as capture 19.
+    addTearDown(() {
+      for (final RoomController c in factory.controllers) {
+        c.dispose();
+      }
+    });
+    final _RealReplay replay20 = await _replayRealGame(
       tester,
-      find.byType(LobbyScreen),
-      'LobbyScreen after the create_room reply carrying code "$roomCode"',
-    );
-
-    transport.pushText(
-      _frame(
-        type: 'player_joined',
-        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
-      ),
-    );
-    await tester.pump();
-
-    await _expectLobbyScreen(
-      tester,
+      factory,
+      capture: 'capture 20-end-winner-ar',
+      gameName: 'host_wins_1',
+      seat: 0,
       localeName: 'ar',
-      code: roomCode,
-      expectedSeatCount: 2,
     );
+    final RoomController controller = replay20.controller;
 
-    final Finder startButton20 = find.byKey(const Key('lobby-start-button'));
-    expect(startButton20, findsOneWidget);
-    await tester.tap(startButton20);
-    await tester.pump();
-    final List<String> startMessages = transport.sentRaw
-        .where((s) => _typeOf(s) == 'start_game')
-        .toList();
-    expect(startMessages, hasLength(1));
-    final String startId = _idOf(startMessages.single);
-
-    transport.pushText(
-      _frame(
-        type: 'game_started',
-        re: startId,
-        data: <String, Object?>{
-          'turn': 0,
-          'game_id': 'f' * 16,
-          'client_seeds': '0:seed',
-          'seq': 3,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
-      tester,
-      find.byType(GameScreen),
-      'GameScreen after the game_started push answering start_game',
-    );
-    expect(find.byType(LobbyScreen), findsNothing);
-
-    // Seat 0 (Priya), the seat this card is about:
-    // rolls 6, sixes 1, captures 1, home 4.
-    final int gameOverSeq20 = await _playEndCardScript(
-      tester,
-      transport,
-      controller,
-      gameStartedSeq: 3,
-      priyaWins: true,
-    );
-
-    transport.pushText(
-      _frame(
-        type: 'game_over',
-        data: <String, Object?>{
-          'winner': 0,
-          'verify_url': 'https://verify.example.invalid/shot20',
-          'seq': gameOverSeq20,
-        },
-      ),
-    );
+    // My own seat (0, Priya) is named winner by the recorded game_over.
+    replay20.pushGameOver();
     await tester.pump();
     await tester.pump();
 
@@ -4286,15 +4098,18 @@ void main() {
       momentDescription:
           'after the post-game-over settle, immediately before capture 20',
     );
-    // rolls 6, sixes 1, captures 1, home 4.
+    // The four tiles show the fixture's counts for this device's seat in
+    // the recorded game, read at run time; a count of 0 means the tile is
+    // absent (C-533 D3).
     _expectEndCardStatTiles(
       tester,
-      rolls: 6,
-      sixes: 1,
-      captures: 1,
-      home: 4,
+      rolls: replay20.counts.rolls,
+      sixes: replay20.counts.sixes,
+      captures: replay20.counts.captures,
+      home: replay20.counts.home,
       momentDescription:
-          'after the post-game-over settle, immediately before capture 20',
+          'after the post-game-over settle, immediately before capture 20 '
+          '(${replay20.describe}; ${replay20.counts})',
     );
 
     await _capture(binding, tester, '20-end-winner-ar', frames: 0);
@@ -4305,8 +4120,9 @@ void main() {
   // other seat (1, Karim) as `winner`, so the lose title is what this
   // capture is evidence for: `loc.endLoseTitle(seatState.name)`, looked up
   // from this tree's own AppLocalizations and the opponent's own name off
-  // controller.room, not hardcoded here. The card's four tiles are Priya's
-  // own numbers from `_playEndCardScript`, not Karim's.
+  // controller.room, not hardcoded here. The device is seat 0 in the recorded
+  // game guest_wins_1, which Karim (seat 2) wins; the card's four tiles are
+  // Priya's own fixture counts for that game, not Karim's.
   // ==========================================================================
   testWidgets('capture 21-end-loser-en', (tester) async {
     binding.testTextInput.register();
@@ -4322,120 +4138,25 @@ void main() {
     await tester.pumpAndSettle();
     await _expectHomeScreen(tester, localeName: 'en');
 
-    const String hostName = 'Priya';
-    const String roomCode = 'SHOT21';
-
-    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
-    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-
-    expect(factory.controllers, hasLength(1));
-    final RoomController controller = factory.controllers.single;
-    final FakeTransport transport = factory.transports.single;
-    addTearDown(controller.dispose);
-
-    final List<String> createMessages = transport.sentRaw
-        .where((s) => _typeOf(s) == 'create_room')
-        .toList();
-    expect(createMessages, hasLength(1));
-    final String createId = _idOf(createMessages.single);
-
-    transport.pushText(
-      _frame(
-        type: 'seat_assigned',
-        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-21'},
-      ),
-    );
-    transport.pushText(
-      _frame(
-        type: 'room',
-        re: createId,
-        data: _roomJson(
-          code: roomCode,
-          players: 2,
-          hostSeat: 0,
-          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
-          seq: 1,
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
+    // Seat 0 (Priya), the host, in the recorded game guest_wins_1: Karim (seat 2)
+    // wins it.
+    addTearDown(() {
+      for (final RoomController c in factory.controllers) {
+        c.dispose();
+      }
+    });
+    final _RealReplay replay21 = await _replayRealGame(
       tester,
-      find.byType(LobbyScreen),
-      'LobbyScreen after the create_room reply carrying code "$roomCode"',
-    );
-
-    transport.pushText(
-      _frame(
-        type: 'player_joined',
-        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
-      ),
-    );
-    await tester.pump();
-
-    await _expectLobbyScreen(
-      tester,
+      factory,
+      capture: 'capture 21-end-loser-en',
+      gameName: 'guest_wins_1',
+      seat: 0,
       localeName: 'en',
-      code: roomCode,
-      expectedSeatCount: 2,
     );
+    final RoomController controller = replay21.controller;
 
-    final Finder startButton21 = find.byKey(const Key('lobby-start-button'));
-    expect(startButton21, findsOneWidget);
-    await tester.tap(startButton21);
-    await tester.pump();
-    final List<String> startMessages = transport.sentRaw
-        .where((s) => _typeOf(s) == 'start_game')
-        .toList();
-    expect(startMessages, hasLength(1));
-    final String startId = _idOf(startMessages.single);
-
-    transport.pushText(
-      _frame(
-        type: 'game_started',
-        re: startId,
-        data: <String, Object?>{
-          'turn': 0,
-          'game_id': 'g' * 16,
-          'client_seeds': '0:seed',
-          'seq': 3,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
-      tester,
-      find.byType(GameScreen),
-      'GameScreen after the game_started push answering start_game',
-    );
-    expect(find.byType(LobbyScreen), findsNothing);
-
-    // Seat 0 (Priya), the seat this card is about:
-    // rolls 2, sixes 1, captures 0, home 0.
-    // Karim is the capturing seat; his four tokens reach 57 by moved.
-    final int gameOverSeq21 = await _playEndCardScript(
-      tester,
-      transport,
-      controller,
-      gameStartedSeq: 3,
-      priyaWins: false,
-    );
-
-    // The other seat (2, Karim) is named winner.
-    transport.pushText(
-      _frame(
-        type: 'game_over',
-        data: <String, Object?>{
-          'winner': 2,
-          'verify_url': 'https://verify.example.invalid/shot21',
-          'seq': gameOverSeq21,
-        },
-      ),
-    );
+    // The other seat (2, Karim) is named winner by the recorded game_over.
+    replay21.pushGameOver();
     await tester.pump();
     await tester.pump();
 
@@ -4462,15 +4183,18 @@ void main() {
       momentDescription:
           'after the post-game-over settle, immediately before capture 21',
     );
-    // rolls 2, sixes 1, captures 0, home 0: the last two tiles are absent.
+    // The four tiles show the fixture's counts for this device's seat in
+    // the recorded game, read at run time; a count of 0 means the tile is
+    // absent (C-533 D3).
     _expectEndCardStatTiles(
       tester,
-      rolls: 2,
-      sixes: 1,
-      captures: 0,
-      home: 0,
+      rolls: replay21.counts.rolls,
+      sixes: replay21.counts.sixes,
+      captures: replay21.counts.captures,
+      home: replay21.counts.home,
       momentDescription:
-          'after the post-game-over settle, immediately before capture 21',
+          'after the post-game-over settle, immediately before capture 21 '
+          '(${replay21.describe}; ${replay21.counts})',
     );
 
     await _capture(binding, tester, '21-end-loser-en', frames: 0);
@@ -4497,119 +4221,24 @@ void main() {
     await tester.pumpAndSettle();
     await _expectHomeScreen(tester, localeName: 'ar');
 
-    const String hostName = 'Priya';
-    const String roomCode = 'SHOT22';
-
-    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
-    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-
-    expect(factory.controllers, hasLength(1));
-    final RoomController controller = factory.controllers.single;
-    final FakeTransport transport = factory.transports.single;
-    addTearDown(controller.dispose);
-
-    final List<String> createMessages = transport.sentRaw
-        .where((s) => _typeOf(s) == 'create_room')
-        .toList();
-    expect(createMessages, hasLength(1));
-    final String createId = _idOf(createMessages.single);
-
-    transport.pushText(
-      _frame(
-        type: 'seat_assigned',
-        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-22'},
-      ),
-    );
-    transport.pushText(
-      _frame(
-        type: 'room',
-        re: createId,
-        data: _roomJson(
-          code: roomCode,
-          players: 2,
-          hostSeat: 0,
-          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
-          seq: 1,
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
+    // Seat 0 (Priya), the host, in the recorded game guest_wins_1, as capture 21.
+    addTearDown(() {
+      for (final RoomController c in factory.controllers) {
+        c.dispose();
+      }
+    });
+    final _RealReplay replay22 = await _replayRealGame(
       tester,
-      find.byType(LobbyScreen),
-      'LobbyScreen after the create_room reply carrying code "$roomCode"',
-    );
-
-    transport.pushText(
-      _frame(
-        type: 'player_joined',
-        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
-      ),
-    );
-    await tester.pump();
-
-    await _expectLobbyScreen(
-      tester,
+      factory,
+      capture: 'capture 22-end-loser-ar',
+      gameName: 'guest_wins_1',
+      seat: 0,
       localeName: 'ar',
-      code: roomCode,
-      expectedSeatCount: 2,
     );
+    final RoomController controller = replay22.controller;
 
-    final Finder startButton22 = find.byKey(const Key('lobby-start-button'));
-    expect(startButton22, findsOneWidget);
-    await tester.tap(startButton22);
-    await tester.pump();
-    final List<String> startMessages = transport.sentRaw
-        .where((s) => _typeOf(s) == 'start_game')
-        .toList();
-    expect(startMessages, hasLength(1));
-    final String startId = _idOf(startMessages.single);
-
-    transport.pushText(
-      _frame(
-        type: 'game_started',
-        re: startId,
-        data: <String, Object?>{
-          'turn': 0,
-          'game_id': 'h' * 16,
-          'client_seeds': '0:seed',
-          'seq': 3,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
-      tester,
-      find.byType(GameScreen),
-      'GameScreen after the game_started push answering start_game',
-    );
-    expect(find.byType(LobbyScreen), findsNothing);
-
-    // Seat 0 (Priya), the seat this card is about:
-    // rolls 2, sixes 1, captures 0, home 0.
-    // Karim is the capturing seat; his four tokens reach 57 by moved.
-    final int gameOverSeq22 = await _playEndCardScript(
-      tester,
-      transport,
-      controller,
-      gameStartedSeq: 3,
-      priyaWins: false,
-    );
-
-    transport.pushText(
-      _frame(
-        type: 'game_over',
-        data: <String, Object?>{
-          'winner': 2,
-          'verify_url': 'https://verify.example.invalid/shot22',
-          'seq': gameOverSeq22,
-        },
-      ),
-    );
+    // The other seat (2, Karim) is named winner by the recorded game_over.
+    replay22.pushGameOver();
     await tester.pump();
     await tester.pump();
 
@@ -4641,15 +4270,18 @@ void main() {
       momentDescription:
           'after the post-game-over settle, immediately before capture 22',
     );
-    // rolls 2, sixes 1, captures 0, home 0: the last two tiles are absent.
+    // The four tiles show the fixture's counts for this device's seat in
+    // the recorded game, read at run time; a count of 0 means the tile is
+    // absent (C-533 D3).
     _expectEndCardStatTiles(
       tester,
-      rolls: 2,
-      sixes: 1,
-      captures: 0,
-      home: 0,
+      rolls: replay22.counts.rolls,
+      sixes: replay22.counts.sixes,
+      captures: replay22.counts.captures,
+      home: replay22.counts.home,
       momentDescription:
-          'after the post-game-over settle, immediately before capture 22',
+          'after the post-game-over settle, immediately before capture 22 '
+          '(${replay22.describe}; ${replay22.counts})',
     );
 
     await _capture(binding, tester, '22-end-loser-ar', frames: 0);
@@ -4662,9 +4294,10 @@ void main() {
   // Priya's own `rematch` request lands as an unprompted push naming seat
   // 0 in `by` with only seat 0 in `ready` (docs/PROTOCOL.md section
   // 16.6/16.7, C-246 rule 4's "rematch LOBBY, my seat NOT in ready" case).
-  // Before that `game_over`, `_playEndCardScript` plays the same short game
-  // captures 19 and 20 play. This device is seat 2, so the tiles are
-  // Karim's own rolls and tokens home from that game, not Priya's.
+  // Before that `game_over`, `_replayRealGame` plays the recorded game
+  // host_wins_1 (the game captures 19 and 20 play) from the view of seat 2.
+  // This device is seat 2, so the tiles are Karim's own fixture counts for
+  // that game, not Priya's.
   // ==========================================================================
   testWidgets('capture 23-rematch-ask-en', (tester) async {
     binding.testTextInput.register();
@@ -4680,125 +4313,48 @@ void main() {
     await tester.pumpAndSettle();
     await _expectHomeScreen(tester, localeName: 'en');
 
-    const String hostName = 'Priya';
-    const String joinerName = 'Karim';
-    const String roomCode = 'SH7T23';
-
-    await tester.enterText(
-      find.byKey(const Key('home-name-field')),
-      joinerName,
-    );
-    await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
-    // Join is in the tree only once the field holds a full code (C-523 D3);
-    // let its entry finish before the tap. Home only, so this settles.
-    await tester.pumpAndSettle();
-    await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
-
-    expect(factory.controllers, hasLength(1));
-    final RoomController controller = factory.controllers.single;
-    final FakeTransport transport = factory.transports.single;
-    addTearDown(controller.dispose);
-
-    final List<String> joinMessages23 = transport.sentRaw
-        .where((s) => _typeOf(s) == 'join_room')
-        .toList();
-    expect(
-      joinMessages23,
-      hasLength(1),
-      reason:
-          'expected LobbyScreen.initState, reached through RoomRoute, to '
-          'have sent exactly one join_room request; sent '
-          '${transport.sentRaw.map(_typeOf).toList()}',
-    );
-    final String joinId23 = _idOf(joinMessages23.single);
-
-    // Seat 2: a guest, not the host at seat 0 -- Priya is already seated.
-    // A game of two is seated 0 and 2 (docs/RULES.md), never 0 and 1.
-    transport.pushText(
-      _frame(
-        type: 'seat_assigned',
-        data: <String, Object?>{'seat': 2, 'seat_token': 'tok-shot-23'},
-      ),
-    );
-    transport.pushText(
-      _frame(
-        type: 'room',
-        re: joinId23,
-        data: _roomJson(
-          code: roomCode,
-          players: 2,
-          hostSeat: 0,
-          seats: <Map<String, Object?>>[
-            _seatJson(0, name: hostName),
-            _seatJson(2, name: joinerName),
-          ],
-          seq: 1,
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
+    // Seat 2 (Karim), a guest who joins by the recorded code, in the recorded
+    // game host_wins_1, which Priya (seat 0) wins.
+    addTearDown(() {
+      for (final RoomController c in factory.controllers) {
+        c.dispose();
+      }
+    });
+    final _RealReplay replay23 = await _replayRealGame(
       tester,
-      find.byType(LobbyScreen),
-      'LobbyScreen after the join_room reply carrying code "$roomCode"',
-    );
-
-    await _expectLobbyScreen(
-      tester,
+      factory,
+      capture: 'capture 23-rematch-ask-en',
+      gameName: 'host_wins_1',
+      seat: 2,
       localeName: 'en',
-      code: roomCode,
-      expectedSeatCount: 2,
     );
-
-    // Priya (seat 0, the host) starts the first game; this client, never
-    // having sent start_game itself, only ever sees the broadcast.
-    transport.pushText(
-      _frame(
-        type: 'game_started',
-        data: <String, Object?>{
-          'turn': 0,
-          'game_id': 'i' * 16,
-          'client_seeds': '0:seed',
-          'seq': 2,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
-      tester,
-      find.byType(GameScreen),
-      'GameScreen after the game_started push',
-    );
-    expect(find.byType(LobbyScreen), findsNothing);
-
-    // Seat 2 (Karim), the seat this card is about. Priya wins, so this is
-    // the script captures 19 and 20 play. Rolls and tokens home are counted
-    // off the script once it returns; the shot below reads those counts.
-    final int gameOverSeq23 = await _playEndCardScript(
-      tester,
-      transport,
-      controller,
-      gameStartedSeq: 2,
-      priyaWins: true,
-    );
+    final RoomController controller = replay23.controller;
+    final FakeTransport transport = replay23.transport;
+    final String hostName = replay23.game.nameOf(0);
+    final String joinerName = replay23.game.nameOf(2);
+    final String roomCode = replay23.roomCode;
+    final int gameOverSeq23 = replay23.gameOverSeq;
+    // The screen has absorbed every recorded frame before game_over. What it
+    // counted from them must be the fixture's counts for this seat.
     final int scriptRolls23 = _scriptedRolls(controller, 2);
     final int scriptHome23 = _scriptedHome(controller, 2);
+    expect(
+      scriptRolls23,
+      replay23.counts.rolls,
+      reason:
+          'capture 23: rolls the screen counted from the replayed frames '
+          'must equal the fixture\'s counts (${replay23.describe})',
+    );
+    expect(
+      scriptHome23,
+      replay23.counts.home,
+      reason:
+          'capture 23: tokens home on the replayed board must equal the '
+          'fixture\'s counts (${replay23.describe})',
+    );
 
     // Priya (seat 0) wins the first game; I (seat 2, Karim) lose.
-    transport.pushText(
-      _frame(
-        type: 'game_over',
-        data: <String, Object?>{
-          'winner': 0,
-          'verify_url': 'https://verify.example.invalid/shot23',
-          'seq': gameOverSeq23,
-        },
-      ),
-    );
+    replay23.pushGameOver();
     await tester.pump();
     await tester.pump();
 
@@ -4886,8 +4442,8 @@ void main() {
     _expectScriptedEndCardTiles(
       tester,
       capture: 'capture 23',
-      rolls: scriptRolls23,
-      home: scriptHome23,
+      rolls: replay23.counts.rolls,
+      home: replay23.counts.home,
     );
 
     await _capture(binding, tester, '23-rematch-ask-en', frames: 0);
@@ -4898,9 +4454,10 @@ void main() {
   // host) taps her own end card's Rematch button and the server's reply
   // puts her alone in `rematch.ready`; Karim (seat 2) has not answered yet
   // (C-246 rule 4's "rematch LOBBY, my seat in ready" case), in Arabic.
-  // Before `game_over`, `_playEndCardScript` plays the same short game
-  // captures 19 and 20 play. This device is seat 0, so the tiles are
-  // Priya's own numbers from that game, including her tokens home.
+  // Before `game_over`, `_replayRealGame` plays the recorded game host_wins_1
+  // (the game captures 19 and 20 play) from the host's view. This device is
+  // seat 0, so the tiles are Priya's own fixture counts for that game,
+  // including her tokens home.
   // ==========================================================================
   testWidgets('capture 24-rematch-waiting-ar', (tester) async {
     binding.testTextInput.register();
@@ -4919,122 +4476,46 @@ void main() {
     await tester.pumpAndSettle();
     await _expectHomeScreen(tester, localeName: 'ar');
 
-    const String hostName = 'Priya';
-    const String roomCode = 'SHOT24';
-
-    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
-    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-
-    expect(factory.controllers, hasLength(1));
-    final RoomController controller = factory.controllers.single;
-    final FakeTransport transport = factory.transports.single;
-    addTearDown(controller.dispose);
-
-    final List<String> createMessages24 = transport.sentRaw
-        .where((s) => _typeOf(s) == 'create_room')
-        .toList();
-    expect(createMessages24, hasLength(1));
-    final String createId24 = _idOf(createMessages24.single);
-
-    transport.pushText(
-      _frame(
-        type: 'seat_assigned',
-        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-24'},
-      ),
-    );
-    transport.pushText(
-      _frame(
-        type: 'room',
-        re: createId24,
-        data: _roomJson(
-          code: roomCode,
-          players: 2,
-          hostSeat: 0,
-          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
-          seq: 1,
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
+    // Seat 0 (Priya), the host, in the recorded game host_wins_1, which she wins.
+    addTearDown(() {
+      for (final RoomController c in factory.controllers) {
+        c.dispose();
+      }
+    });
+    final _RealReplay replay24 = await _replayRealGame(
       tester,
-      find.byType(LobbyScreen),
-      'LobbyScreen after the create_room reply carrying code "$roomCode"',
-    );
-
-    transport.pushText(
-      _frame(
-        type: 'player_joined',
-        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
-      ),
-    );
-    await tester.pump();
-
-    await _expectLobbyScreen(
-      tester,
+      factory,
+      capture: 'capture 24-rematch-waiting-ar',
+      gameName: 'host_wins_1',
+      seat: 0,
       localeName: 'ar',
-      code: roomCode,
-      expectedSeatCount: 2,
     );
-
-    final Finder startButton24 = find.byKey(const Key('lobby-start-button'));
-    expect(startButton24, findsOneWidget);
-    await tester.tap(startButton24);
-    await tester.pump();
-    final List<String> startMessages24 = transport.sentRaw
-        .where((s) => _typeOf(s) == 'start_game')
-        .toList();
-    expect(startMessages24, hasLength(1));
-    final String startId24 = _idOf(startMessages24.single);
-
-    transport.pushText(
-      _frame(
-        type: 'game_started',
-        re: startId24,
-        data: <String, Object?>{
-          'turn': 0,
-          'game_id': 'j' * 16,
-          'client_seeds': '0:seed',
-          'seq': 3,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
-      tester,
-      find.byType(GameScreen),
-      'GameScreen after the game_started push answering start_game',
-    );
-    expect(find.byType(LobbyScreen), findsNothing);
-
-    // Seat 0 (Priya), the seat this card is about. The script is the one
-    // captures 19 and 20 play. Rolls and tokens home are counted off the
-    // script once it returns; the shot below reads those counts.
-    final int gameOverSeq24 = await _playEndCardScript(
-      tester,
-      transport,
-      controller,
-      gameStartedSeq: 3,
-      priyaWins: true,
-    );
+    final RoomController controller = replay24.controller;
+    final FakeTransport transport = replay24.transport;
+    final String hostName = replay24.game.nameOf(0);
+    final String roomCode = replay24.roomCode;
+    final int gameOverSeq24 = replay24.gameOverSeq;
+    // The screen has absorbed every recorded frame before game_over. What it
+    // counted from them must be the fixture's counts for this seat.
     final int scriptRolls24 = _scriptedRolls(controller, 0);
     final int scriptHome24 = _scriptedHome(controller, 0);
-
-    // My own seat (0, Priya) is named winner.
-    transport.pushText(
-      _frame(
-        type: 'game_over',
-        data: <String, Object?>{
-          'winner': 0,
-          'verify_url': 'https://verify.example.invalid/shot24',
-          'seq': gameOverSeq24,
-        },
-      ),
+    expect(
+      scriptRolls24,
+      replay24.counts.rolls,
+      reason:
+          'capture 24: rolls the screen counted from the replayed frames '
+          'must equal the fixture\'s counts (${replay24.describe})',
     );
+    expect(
+      scriptHome24,
+      replay24.counts.home,
+      reason:
+          'capture 24: tokens home on the replayed board must equal the '
+          'fixture\'s counts (${replay24.describe})',
+    );
+
+    // My own seat (0, Priya) is named winner by the recorded game_over.
+    replay24.pushGameOver();
     await tester.pump();
     await tester.pump();
 
@@ -5153,8 +4634,8 @@ void main() {
     _expectScriptedEndCardTiles(
       tester,
       capture: 'capture 24',
-      rolls: scriptRolls24,
-      home: scriptHome24,
+      rolls: replay24.counts.rolls,
+      home: replay24.counts.home,
     );
 
     await _capture(binding, tester, '24-rematch-waiting-ar', frames: 0);
@@ -6203,13 +5684,13 @@ void main() {
     }
 
     // ------------------------------------------------------------------
-    // 40: capture 22's own Arabic end card, re-staged with this block's
-    // two names -- the host ($hostName) loses, $otherName wins, exactly
-    // the way capture 22 stages Priya losing to Karim.
+    // 40: capture 22's own Arabic end card, replayed from the same recorded
+    // game and view (guest_wins_1, seat 0: Priya loses to Karim), at this
+    // block's system text scale 2.0. The frames name Priya and Karim, so the
+    // block's long names do not reach this card.
     // ------------------------------------------------------------------
     await (await SharedPreferences.getInstance()).clear();
     final factory40 = _ScreenshotControllerFactory();
-    RoomController? controller40;
     try {
       await tester.pumpWidget(
         _reconnectingCaptureHarness(
@@ -6220,158 +5701,23 @@ void main() {
       await tester.pumpAndSettle();
       await _expectHomeScreen(tester, localeName: 'ar');
 
-      const String roomCode40 = 'SHOT40';
-      await tester.enterText(
-        find.byKey(const Key('home-name-field')),
-        hostName,
-      );
-      await _tapCreateRoom(tester);
-
-      expect(
-        factory40.controllers,
-        hasLength(1),
-        reason:
-            'capture 40: tapping Create Room must build exactly one '
-            'controller through the injected controllerFactory '
-            '(home_screen.dart)',
-      );
-      controller40 = factory40.controllers.single;
-      final FakeTransport transport40 = factory40.transports.single;
-
-      final List<String> createMessages40 = transport40.sentRaw
-          .where((s) => _typeOf(s) == 'create_room')
-          .toList();
-      expect(
-        createMessages40,
-        hasLength(1),
-        reason:
-            'capture 40: expected LobbyScreen.initState, reached through '
-            'RoomRoute, to have sent exactly one create_room request; '
-            'sent ${transport40.sentRaw.map(_typeOf).toList()}',
-      );
-      final String createId40 = _idOf(createMessages40.single);
-
-      transport40.pushText(
-        _frame(
-          type: 'seat_assigned',
-          data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-40'},
-        ),
-      );
-      transport40.pushText(
-        _frame(
-          type: 'room',
-          re: createId40,
-          data: _roomJson(
-            code: roomCode40,
-            players: 2,
-            hostSeat: 0,
-            seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
-            seq: 1,
-          ),
-        ),
-      );
-      await tester.pump();
-      await tester.pump();
-
-      await _pumpUntilFound(
+      // Seat 0 (Priya), the host, in the recorded game guest_wins_1, as
+      // capture 22: Karim (seat 2) wins it. The device types the recorded
+      // names, so this card names Priya and Karim, not the long pair the
+      // rest of this block uses.
+      final _RealReplay replay40 = await _replayRealGame(
         tester,
-        find.byType(LobbyScreen),
-        'capture 40: LobbyScreen after the create_room reply carrying '
-        'code "$roomCode40"',
-      );
-
-      transport40.pushText(
-        _frame(
-          type: 'player_joined',
-          data: <String, Object?>{'seat': 2, 'name': otherName, 'seq': 2},
-        ),
-      );
-      await tester.pump();
-
-      await _expectLobbyScreen(
-        tester,
+        factory40,
+        capture: 'capture 37-40 large text',
+        gameName: 'guest_wins_1',
+        seat: 0,
         localeName: 'ar',
-        code: roomCode40,
-        expectedSeatCount: 2,
       );
+      final RoomController controller40 = replay40.controller;
+      final String winnerName40 = replay40.game.nameOf(2);
 
-      final Finder startButton40 = find.byKey(const Key('lobby-start-button'));
-      expect(
-        startButton40,
-        findsOneWidget,
-        reason:
-            'capture 40: the host, seat 0, must see a Start button once '
-            'seated',
-      );
-      // See capture 37's own matching comment: scroll lobby-start-button
-      // into view before tapping it.
-      await tester.ensureVisible(startButton40);
-      await tester.pump();
-      await tester.tap(startButton40);
-      await tester.pump();
-      final List<String> startMessages40 = transport40.sentRaw
-          .where((s) => _typeOf(s) == 'start_game')
-          .toList();
-      expect(
-        startMessages40,
-        hasLength(1),
-        reason:
-            'capture 40: tapping lobby-start-button must send exactly '
-            'one start_game',
-      );
-      final String startId40 = _idOf(startMessages40.single);
-
-      transport40.pushText(
-        _frame(
-          type: 'game_started',
-          re: startId40,
-          data: <String, Object?>{
-            'turn': 0,
-            'game_id': 'r' * 16,
-            'client_seeds': '0:seed',
-            'seq': 3,
-          },
-        ),
-      );
-      await tester.pump();
-      await tester.pump();
-
-      await _pumpUntilFound(
-        tester,
-        find.byType(GameScreen),
-        'capture 40: GameScreen after the game_started push answering '
-        'start_game',
-      );
-      expect(
-        find.byType(LobbyScreen),
-        findsNothing,
-        reason:
-            'capture 40: RoomRoute must latch onto GameScreen and never '
-            'go back',
-      );
-
-      // Seat 0 (the host, $hostName): rolls 2, sixes 1, captures 0,
-      // home 0. $otherName is the capturing seat; her four tokens reach
-      // 57 by moved -- exactly capture 22's own script with priyaWins:
-      // false, renamed.
-      final int gameOverSeq40 = await _playEndCardScript(
-        tester,
-        transport40,
-        controller40,
-        gameStartedSeq: 3,
-        priyaWins: false,
-      );
-
-      transport40.pushText(
-        _frame(
-          type: 'game_over',
-          data: <String, Object?>{
-            'winner': 2,
-            'verify_url': 'https://verify.example.invalid/shot40',
-            'seq': gameOverSeq40,
-          },
-        ),
-      );
+      // The other seat (2) is named winner by the recorded game_over.
+      replay40.pushGameOver();
       await tester.pump();
       await tester.pump();
 
@@ -6387,7 +5733,7 @@ void main() {
         tester,
         controller: controller40,
         expectedWinner: 2,
-        expectedText: loc40.endLoseTitle(otherName),
+        expectedText: loc40.endLoseTitle(winnerName40),
         momentDescription:
             'capture 40: immediately after the game_over push landed, '
             'before the post-game-over settle',
@@ -6399,27 +5745,31 @@ void main() {
         tester,
         controller: controller40,
         expectedWinner: 2,
-        expectedText: loc40.endLoseTitle(otherName),
+        expectedText: loc40.endLoseTitle(winnerName40),
         momentDescription:
             'capture 40: after the post-game-over settle, immediately '
             'before the shot',
       );
-      // rolls 2, sixes 1, captures 0, home 0 -- capture 22's own numbers,
-      // so the captures and home tiles are absent.
+      // The four tiles show the fixture's counts for this device's seat in
+      // the recorded game, read at run time; a count of 0 means the tile is
+      // absent (C-533 D3).
       _expectEndCardStatTiles(
         tester,
-        rolls: 2,
-        sixes: 1,
-        captures: 0,
-        home: 0,
+        rolls: replay40.counts.rolls,
+        sixes: replay40.counts.sixes,
+        captures: replay40.counts.captures,
+        home: replay40.counts.home,
         momentDescription:
             'capture 40: after the post-game-over settle, immediately '
-            'before the shot',
+            'before the shot '
+            '(${replay40.describe}; ${replay40.counts})',
       );
 
       await _capture(binding, tester, '40-end-loser-large-ar', frames: 0);
     } finally {
-      controller40?.dispose();
+      for (final RoomController c in factory40.controllers) {
+        c.dispose();
+      }
     }
 
     // The whole case's own scale, cleared here, in the body, before the
@@ -8071,9 +7421,10 @@ List<int> _endCardTokens(RoomController controller, int seat) {
   return seatState.tokens;
 }
 
-/// Rolls [seat] made in the game `_playEndCardScript` just played, counted
+/// Rolls [seat] made in the game `_replayRealGame` just replayed, counted
 /// from `rolled` frames on [controller]'s transcript. Captures 23 and 24
-/// assert the rolls tile against this count instead of a typed number.
+/// check it against the fixture's `rolls` for that seat before the tile is
+/// read.
 int _scriptedRolls(RoomController controller, int seat) {
   var rolls = 0;
   for (final Frame frame in controller.gameTranscript) {
@@ -8087,10 +7438,11 @@ int _scriptedRolls(RoomController controller, int seat) {
   return rolls;
 }
 
-/// Tokens on 57 for [seat] in the room `_playEndCardScript` just left.
-/// Captures 23 and 24 assert the home tile against this count instead of
-/// a typed number. Read it before `game_over`: that push does not move
-/// tokens, and the rematch LOBBY after it replaces the live room's seats.
+/// Tokens on 57 for [seat] in the room `_replayRealGame` just left.
+/// Captures 23 and 24 check it against the fixture's `home` for that seat
+/// before the tile is read. Read it before `game_over`: that push does not
+/// move tokens, and the rematch LOBBY after it replaces the live room's
+/// seats.
 int _scriptedHome(RoomController controller, int seat) {
   var home = 0;
   for (final int progress in _endCardTokens(controller, seat)) {
@@ -8102,9 +7454,10 @@ int _scriptedHome(RoomController controller, int seat) {
 }
 
 /// Captures 23 and 24, immediately before the shot: the rolls tile shows
-/// [rolls], which the script left non-zero, and the home tile shows [home],
-/// the device seat's tokens on 57 after that same script. A [home] of 0 (the
-/// loser in capture 23) means the home tile is absent (C-533 D3).
+/// [rolls], which the recorded game left non-zero, and the home tile shows
+/// [home], the device seat's tokens on 57 at the end of that game. Both come
+/// from the fixture's `counts`. A [home] of 0 means the home tile is absent
+/// (C-533 D3).
 void _expectScriptedEndCardTiles(
   WidgetTester tester, {
   required String capture,
@@ -8114,7 +7467,7 @@ void _expectScriptedEndCardTiles(
   expect(
     rolls,
     greaterThan(0),
-    reason: '$capture: rolls counted from the script must be non-zero',
+    reason: '$capture: the fixture\'s rolls for this seat must be non-zero',
   );
   _expectScriptedEndCardCount(
     tester,
@@ -8140,271 +7493,437 @@ void _expectScriptedEndCardCount(
     tester,
     keyName: keyName,
     count: count,
-    context: '$capture, before the shot, the script\'s count',
+    context: '$capture, before the shot, the fixture\'s count',
   );
 }
 
-/// Plays the short two-seat game captures 19-22 photograph, on the same
-/// [transport] the capture already used, with `seq` continuous from
-/// [gameStartedSeq]. A game of two is seated 0 and 2 (docs/RULES.md), so
-/// "Karim" below is seat 2, and every hand-off goes 0 to 2 to 0.
-///
-/// Frame fields match integration_test/motion_test.dart: `rolled` carries
-/// seat, value, legal, deadline_ms, k, reveal and seq; `moved` carries
-/// seat, token, from, to, captured, extra_roll and seq; `turn` carries
-/// seat, deadline_ms and seq. Each roll is followed by one move, then a
-/// `turn`, except the last move of the game. The capture pushes
-/// `game_over` itself, and no `turn` follows that.
-///
-/// Every frame is pushed before the two pumps below. The board therefore
-/// sees one net change rather than a queue of single steps, and snaps.
-/// The snap clears the in-flight travel count, so the caller's
-/// `game_over` is not held behind a move that has not landed, and the
-/// capture's existing read of the end card straight after `game_over`
-/// still holds.
-///
-/// [priyaWins] true (captures 19 and 20). Seat 0's own frames, in order:
-/// rolled 6 and token 0 from -1 to 0; rolled 4 and token 0 from 0 to 4
-/// capturing seat 2 token 0; rolled 1 and token 1 from -1 to 57; rolled 1
-/// and token 2 from -1 to 57; rolled 1 and token 3 from -1 to 57; rolled 1
-/// and token 0 from 4 to 57. That is rolls 6, sixes 1, captures 1, home 4.
-/// Karim's opening 6 and 4 only put his token 0 on square 4 so there is a
-/// token to capture. They are not seat 0's numbers.
-///
-/// [priyaWins] false (captures 21 and 22). Seat 0's own frames: rolled 6
-/// and token 0 from -1 to 0; rolled 3 and token 0 from 0 to 3. That is
-/// rolls 2, sixes 1, captures 0, home 0. Karim, the capturing seat, then
-/// rolls a 6, rolls a 3 that captures seat 0 token 0, and moves each of
-/// his four tokens to 57. His six and his capture are in the script; the
-/// card shows Priya's numbers, not his.
-///
-/// Returns the seq the capture's `game_over` must carry: one past the
-/// last frame pushed here.
-Future<int> _playEndCardScript(
-  WidgetTester tester,
-  FakeTransport transport,
-  RoomController controller, {
-  required int gameStartedSeq,
-  required bool priyaWins,
-}) async {
-  expect(
-    controller.room?.seq,
-    gameStartedSeq,
-    reason:
-        'end-card script: room seq is ${controller.room?.seq}, expected '
-        '$gameStartedSeq (the game_started this capture already pushed)',
-  );
-  expect(
-    controller.hasDesynced,
-    isFalse,
-    reason: 'end-card script: already desynced before the first roll',
-  );
+// --- captures 19-24 and 40: a recorded real game, replayed -----------------
 
-  var seq = gameStartedSeq;
-  var k = 0;
+/// The two recorded games, decoded once from the Dart copy of
+/// `real_games.json` (integration_test/fixtures/real_games_fixture.dart,
+/// generated by packages/ludo_server/tool/wrap_real_games_fixture.dart).
+final Map<String, Object?> _realGamesFixture =
+    jsonDecode(realGamesJson) as Map<String, Object?>;
 
-  void pushRolled(int seat, int face, List<int> legal) {
-    k += 1;
-    seq += 1;
-    transport.pushText(
-      _frame(
-        type: 'rolled',
-        data: <String, Object?>{
-          'seat': seat,
-          'value': face,
-          'legal': legal,
-          'deadline_ms': _endCardDeadlineMs,
-          'k': k,
-          'reveal': _endCardReveal(k),
-          'seq': seq,
-        },
-      ),
+/// The four numbers an end card's stat tiles read, for one seat of one
+/// recorded game, taken from the fixture's `counts` at run time.
+class _RealStatCounts {
+  const _RealStatCounts({
+    required this.rolls,
+    required this.sixes,
+    required this.captures,
+    required this.home,
+  });
+
+  final int rolls;
+  final int sixes;
+  final int captures;
+  final int home;
+
+  @override
+  String toString() =>
+      'rolls $rolls, sixes $sixes, captures $captures, home $home';
+}
+
+/// One game of the fixture, read through the schema of
+/// work/ludo/orders/574-real-game-recorder.md.
+class _RealGame {
+  _RealGame(this.json);
+
+  final Map<String, Object?> json;
+
+  String get name => json['name']! as String;
+  int get winner => json['winner']! as int;
+  int get playerCount => json['players']! as int;
+
+  String nameOf(int seat) =>
+      (json['names']! as Map<String, Object?>)['$seat']! as String;
+
+  /// Every frame the socket of [seat] received, verbatim, in arrival order,
+  /// through `game_over`.
+  List<Map<String, Object?>> view(int seat) => <Map<String, Object?>>[
+    for (final Object? f
+        in (json['views']! as Map<String, Object?>)['$seat']! as List<Object?>)
+      f! as Map<String, Object?>,
+  ];
+
+  List<int> finalTokens(int seat) => <int>[
+    for (final Object? t
+        in (json['final_tokens']! as Map<String, Object?>)['$seat']!
+            as List<Object?>)
+      t! as int,
+  ];
+
+  _RealStatCounts counts(int seat) {
+    final Map<String, Object?> c =
+        (json['counts']! as Map<String, Object?>)['$seat']!
+            as Map<String, Object?>;
+    return _RealStatCounts(
+      rolls: c['rolls']! as int,
+      sixes: c['sixes']! as int,
+      captures: c['captures_made']! as int,
+      home: c['home']! as int,
     );
   }
+}
 
-  void pushMoved(
-    int seat,
-    int token,
-    int from,
-    int to, {
-    List<(int, int)> captured = const <(int, int)>[],
-    required bool extra,
-  }) {
-    seq += 1;
-    transport.pushText(
-      _frame(
-        type: 'moved',
-        data: <String, Object?>{
-          'seat': seat,
-          'token': token,
-          'from': from,
-          'to': to,
-          'captured': <Object?>[
-            for (final (int capturedSeat, int capturedToken) in captured)
-              <String, Object?>{'seat': capturedSeat, 'token': capturedToken},
-          ],
-          'extra_roll': extra,
-          'seq': seq,
-        },
-      ),
-    );
-  }
-
-  void pushTurn(int seat) {
-    seq += 1;
-    transport.pushText(
-      _frame(
-        type: 'turn',
-        data: <String, Object?>{
-          'seat': seat,
-          'deadline_ms': _endCardDeadlineMs,
-          'seq': seq,
-        },
-      ),
-    );
-  }
-
-  void play({
-    required int seat,
-    required int face,
-    required int token,
-    required int from,
-    required int to,
-    List<(int, int)> captured = const <(int, int)>[],
-    required bool extra,
-    int? turnSeat,
-  }) {
-    pushRolled(seat, face, <int>[token]);
-    pushMoved(seat, token, from, to, captured: captured, extra: extra);
-    if (turnSeat != null) {
-      pushTurn(turnSeat);
+_RealGame _realGame(String name) {
+  final List<Object?> games = _realGamesFixture['games']! as List<Object?>;
+  for (final Object? g in games) {
+    final _RealGame game = _RealGame(g! as Map<String, Object?>);
+    if (game.name == name) {
+      return game;
     }
   }
+  throw TestFailure(
+    'real_games.json holds no game named "$name"; it holds '
+    '${<String>[for (final Object? g in games) (g! as Map<String, Object?>)['name']! as String]}. '
+    'A re-record that renames games needs the captures moved with it.',
+  );
+}
 
-  if (priyaWins) {
-    play(seat: 2, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 2);
-    play(seat: 2, face: 4, token: 0, from: 0, to: 4, extra: false, turnSeat: 0);
-    play(seat: 0, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 0);
-    play(
-      seat: 0,
-      face: 4,
-      token: 0,
-      from: 0,
-      to: 4,
-      captured: const <(int, int)>[(2, 0)],
-      extra: true,
-      turnSeat: 0,
-    );
-    play(
-      seat: 0,
-      face: 1,
-      token: 1,
-      from: -1,
-      to: 57,
-      extra: false,
-      turnSeat: 0,
-    );
-    play(
-      seat: 0,
-      face: 1,
-      token: 2,
-      from: -1,
-      to: 57,
-      extra: false,
-      turnSeat: 0,
-    );
-    play(
-      seat: 0,
-      face: 1,
-      token: 3,
-      from: -1,
-      to: 57,
-      extra: false,
-      turnSeat: 0,
-    );
-    play(seat: 0, face: 1, token: 0, from: 4, to: 57, extra: false);
+/// The one rewrite a replayed frame is allowed: its `re`. A recorded `re`
+/// that answers a request this device really sent (create or join, and
+/// `start_game` on the host) is swapped for that request's id; every other
+/// `re` answers a request the device never sent (the recorder's own
+/// set_seed, and the roll and move requests the replay plays for it) and is
+/// dropped. A frame without `re` is encoded as it was recorded.
+class _ReplayRe {
+  _ReplayRe();
+
+  /// Recorded request id -> the id this device's request carried.
+  final Map<String, String> deviceIds = <String, String>{};
+
+  int pushed = 0;
+  int rewritten = 0;
+  int dropped = 0;
+  final Map<String, int> droppedByType = <String, int>{};
+
+  String wire(Map<String, Object?> frame) {
+    pushed += 1;
+    final Object? re = frame['re'];
+    if (re == null) {
+      return jsonEncode(frame);
+    }
+    final String? id = deviceIds[re];
+    if (id != null) {
+      rewritten += 1;
+      return jsonEncode(<String, Object?>{...frame, 're': id});
+    }
+    dropped += 1;
+    final String type = frame['t']! as String;
+    droppedByType[type] = (droppedByType[type] ?? 0) + 1;
+    return jsonEncode(<String, Object?>{...frame}..remove('re'));
+  }
+}
+
+/// A recorded game, replayed up to the frame before its `game_over`.
+class _RealReplay {
+  _RealReplay({
+    required this.capture,
+    required this.game,
+    required this.seat,
+    required this.controller,
+    required this.transport,
+    required this.roomCode,
+    required this.counts,
+    required this.re,
+    required this.gameOver,
+  });
+
+  final String capture;
+  final _RealGame game;
+  final int seat;
+  final RoomController controller;
+  final FakeTransport transport;
+  final String roomCode;
+
+  /// The fixture's `counts` for [seat]: the numbers the end card must show.
+  final _RealStatCounts counts;
+  final _ReplayRe re;
+
+  /// The recorded `game_over`, the only frame not yet pushed.
+  final Map<String, Object?> gameOver;
+
+  /// Pushes the recorded `game_over` (its `re` handled like any other).
+  void pushGameOver() => transport.pushText(re.wire(gameOver));
+
+  /// The recorded `game_over`'s own `seq`.
+  int get gameOverSeq =>
+      (gameOver['d']! as Map<String, Object?>)['seq']! as int;
+
+  /// For a failure message: which recorded view this device was.
+  String get describe =>
+      'fixture game "${game.name}", view of seat $seat; reproduce with '
+      '`flutter test integration_test/screenshots_test.dart -d flutter-tester '
+      '--plain-name "$capture"`';
+}
+
+/// Drives a capture the way a real player meets it, from the device's home
+/// screen to the last frame before `game_over`, from the recorded [seat]'s
+/// view of the fixture game [gameName]: the name typed is the name recorded
+/// for that seat; Create (the host) or Join with the recorded room code (a
+/// guest) is tapped; then the view's frames are pushed verbatim, in order,
+/// with the device's own tap where a real client must make it (Start, for
+/// the host, once the recorded `player_joined` has put the second seat in the
+/// lobby). The only rewrite is `re` (see [_ReplayRe]). The frames from the
+/// first `seat_seed` through `game_started` go in one by one, then the board
+/// is mounted, then every frame up to the one before `game_over` goes in as
+/// one burst, as the hand-typed script did before order 576, and two pumps
+/// let the screen absorb it. The caller pushes `game_over` with
+/// [_RealReplay.pushGameOver] and keeps its own post-`game_over` asserts.
+///
+/// The home screen must already be on screen in [localeName] (the caller's
+/// [_expectHomeScreen]). [capture] is only for the failure messages.
+Future<_RealReplay> _replayRealGame(
+  WidgetTester tester,
+  _ScreenshotControllerFactory factory, {
+  required String capture,
+  required String gameName,
+  required int seat,
+  required String localeName,
+}) async {
+  final _RealGame game = _realGame(gameName);
+  final List<Map<String, Object?>> view = game.view(seat);
+  final String where =
+      '$capture: replay of fixture game "$gameName", view of seat $seat. '
+      'Reproduce with `flutter test integration_test/screenshots_test.dart '
+      '-d flutter-tester --plain-name "$capture"`';
+
+  expect(
+    view.map((Map<String, Object?> f) => f['t']).take(2).toList(),
+    <String>['seat_assigned', 'room'],
+    reason: '$where: a recorded view must open with seat_assigned and room',
+  );
+  expect(
+    (view[0]['d']! as Map<String, Object?>)['seat'],
+    seat,
+    reason: '$where: the first frame must assign the seat this device plays',
+  );
+  expect(
+    view.last['t'],
+    'game_over',
+    reason: '$where: a recorded view must end with game_over',
+  );
+  final Map<String, Object?> roomData = view[1]['d']! as Map<String, Object?>;
+  final String roomCode = roomData['code']! as String;
+  final bool isHost = roomData['host_seat'] == seat;
+  final String playerName = game.nameOf(seat);
+  final int seatCount = (roomData['players']! as int) == game.playerCount
+      ? game.playerCount
+      : -1;
+  expect(
+    seatCount,
+    isNot(-1),
+    reason: '$where: room.players disagrees with the game record',
+  );
+  expect(
+    view[1]['re'],
+    isA<String>(),
+    reason: '$where: the opening room frame must answer a request',
+  );
+
+  // The device's own entry: its recorded name, then Create or Join.
+  await tester.enterText(find.byKey(const Key('home-name-field')), playerName);
+  if (isHost) {
+    await _tapCreateRoom(tester);
   } else {
-    play(seat: 0, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 0);
-    play(seat: 0, face: 3, token: 0, from: 0, to: 3, extra: false, turnSeat: 2);
-    play(seat: 2, face: 6, token: 0, from: -1, to: 0, extra: true, turnSeat: 2);
-    play(
-      seat: 2,
-      face: 3,
-      token: 0,
-      from: 0,
-      to: 3,
-      captured: const <(int, int)>[(0, 0)],
-      extra: true,
-      turnSeat: 2,
+    expect(
+      isValidRoomCode(roomCode),
+      isTrue,
+      reason: '$where: the recorded room code "$roomCode" is not typeable',
     );
-    play(
-      seat: 2,
-      face: 1,
-      token: 1,
-      from: -1,
-      to: 57,
-      extra: false,
-      turnSeat: 2,
-    );
-    play(
-      seat: 2,
-      face: 1,
-      token: 2,
-      from: -1,
-      to: 57,
-      extra: false,
-      turnSeat: 2,
-    );
-    play(
-      seat: 2,
-      face: 1,
-      token: 3,
-      from: -1,
-      to: 57,
-      extra: false,
-      turnSeat: 2,
-    );
-    play(seat: 2, face: 1, token: 0, from: 3, to: 57, extra: false);
+    await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+    // Join is in the tree only once the field holds a full code (C-523 D3).
+    await tester.pumpAndSettle();
+    await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
   }
 
+  expect(factory.controllers, hasLength(1), reason: '$where: one controller');
+  final RoomController controller = factory.controllers.single;
+  final FakeTransport transport = factory.transports.single;
+
+  final String openType = isHost ? 'create_room' : 'join_room';
+  final List<String> opening = transport.sentRaw
+      .where((String s) => _typeOf(s) == openType)
+      .toList();
+  expect(
+    opening,
+    hasLength(1),
+    reason:
+        '$where: expected exactly one $openType from the lobby; sent '
+        '${transport.sentRaw.map(_typeOf).toList()}',
+  );
+  final Map<String, Object?> openData =
+      _decode(opening.single)['d']! as Map<String, Object?>;
+  expect(
+    openData['name'],
+    playerName,
+    reason: '$where: the request must carry the recorded name',
+  );
+  if (!isHost) {
+    expect(
+      openData['code'],
+      roomCode,
+      reason: '$where: the join must carry the recorded room code',
+    );
+  }
+
+  final _ReplayRe re = _ReplayRe();
+  re.deviceIds[view[1]['re']! as String] = _idOf(opening.single);
+
+  var next = 0;
+  void push() => transport.pushText(re.wire(view[next++]));
+
+  final Stopwatch firstPushToAbsorbed = Stopwatch()..start();
+  push(); // seat_assigned
+  push(); // room, answering the create or join
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byType(LobbyScreen),
+    '$where: LobbyScreen after the room frame carrying code "$roomCode"',
+  );
+
+  if (isHost) {
+    expect(
+      view[next]['t'],
+      'player_joined',
+      reason: '$where: the host view must show the guest joining next',
+    );
+    push();
+    await tester.pump();
+  }
+  await _expectLobbyScreen(
+    tester,
+    localeName: localeName,
+    code: roomCode,
+    expectedSeatCount: seatCount,
+  );
+
+  if (isHost) {
+    final Finder startButton = find.byKey(const Key('lobby-start-button'));
+    expect(
+      startButton,
+      findsOneWidget,
+      reason: '$where: the host must see a Start button once seated',
+    );
+    if (tester.platformDispatcher.textScaleFactor > 1.0) {
+      // Under a larger system text scale Start sits below the fold, as a
+      // player would scroll to it.
+      await tester.ensureVisible(startButton);
+      await tester.pump();
+    }
+    await tester.tap(startButton);
+    await tester.pump();
+    final List<String> starts = transport.sentRaw
+        .where((String s) => _typeOf(s) == 'start_game')
+        .toList();
+    expect(
+      starts,
+      hasLength(1),
+      reason: '$where: tapping Start must send exactly one start_game',
+    );
+    final Map<String, Object?> started = view.firstWhere(
+      (Map<String, Object?> f) => f['t'] == 'game_started',
+    );
+    expect(
+      started['re'],
+      isA<String>(),
+      reason: '$where: the host view\'s game_started must answer start_game',
+    );
+    re.deviceIds[started['re']! as String] = _idOf(starts.single);
+  }
+
+  // From here the recorded server speaks: seat seeds, then game_started.
+  while (view[next]['t'] != 'game_started') {
+    push();
+  }
+  push(); // game_started
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byType(GameScreen),
+    '$where: GameScreen after the game_started push',
+  );
+  expect(
+    find.byType(LobbyScreen),
+    findsNothing,
+    reason: '$where: RoomRoute must latch onto GameScreen and never go back',
+  );
+
+  // The game itself, up to the frame before game_over, in one burst.
+  final int gameOverIndex = view.length - 1;
+  while (next < gameOverIndex) {
+    push();
+  }
   await tester.pump();
   await tester.pump();
 
+  final int lastSeq =
+      (view[gameOverIndex - 1]['d']! as Map<String, Object?>)['seq']! as int;
   expect(
     controller.hasDesynced,
     isFalse,
     reason:
-        'end-card script: seq gap (room seq ${controller.room?.seq}, '
-        'last pushed seq $seq)',
+        '$where: seq gap (room seq ${controller.room?.seq}, last pushed '
+        'seq $lastSeq)',
+  );
+  expect(
+    controller.room?.seq,
+    lastSeq,
+    reason: '$where: the controller must have absorbed every frame',
   );
   expect(
     controller.room?.state,
     RoomState.playing,
-    reason: 'end-card script must still be in play when it returns',
+    reason: '$where: the replay must still be in play before game_over',
   );
-  final int winnerSeat = priyaWins ? 0 : 2;
-  expect(
-    _endCardTokens(controller, winnerSeat),
-    <int>[57, 57, 57, 57],
-    reason:
-        'end-card script: seat $winnerSeat tokens must read 57 from the '
-        'moved frames above, got ${_endCardTokens(controller, winnerSeat)}',
-  );
-  if (!priyaWins) {
+  for (final int s in <int>[0, 2]) {
     expect(
-      _endCardTokens(controller, 0),
-      <int>[-1, -1, -1, -1],
+      _endCardTokens(controller, s),
+      game.finalTokens(s),
       reason:
-          'end-card script: seat 0 was captured and has nothing on 57, '
-          'got ${_endCardTokens(controller, 0)}',
+          '$where: seat $s tokens after the last frame before game_over '
+          'must be the recorded final_tokens',
     );
   }
-  return seq + 1;
+  expect(
+    transport.sentRaw.map(_typeOf).toList(),
+    isHost ? <String>['create_room', 'start_game'] : <String>['join_room'],
+    reason:
+        '$where: the device must have sent only its own lobby requests; the '
+        'replay plays every roll and move for it',
+  );
+
+  // ignore: avoid_print
+  print(
+    'screenshots_test: $capture replays "$gameName" from seat $seat: '
+    '${re.pushed} frames pushed before game_over, ${re.rewritten} re '
+    'rewritten to this device\'s request ids, ${re.dropped} re dropped '
+    '${re.droppedByType}; ${firstPushToAbsorbed.elapsedMilliseconds} ms from '
+    'the first push to the last pre-game_over frame absorbed',
+  );
+
+  return _RealReplay(
+    capture: capture,
+    game: game,
+    seat: seat,
+    controller: controller,
+    transport: transport,
+    roomCode: roomCode,
+    counts: game.counts(seat),
+    re: re,
+    gameOver: view[gameOverIndex],
+  );
 }
 
 /// Captures 19-22 and 40: each stat tile with a positive count is on screen
 /// and shows it; a tile whose count is 0 is absent (C-533 D3). Callers pass
-/// literals and name the same counts in a comment beside the call.
+/// the fixture's `counts` for the device's seat in the recorded game they
+/// replayed, read at run time (see [_RealReplay.counts]), never typed.
 void _expectEndCardStatTiles(
   WidgetTester tester, {
   required int rolls,
@@ -8449,7 +7968,7 @@ void _expectOneEndCardStat(
     tester,
     keyName: keyName,
     count: count,
-    context: 'capture 19/20/21/22 ($momentDescription)',
+    context: 'capture 19/20/21/22/40 ($momentDescription)',
   );
 }
 
@@ -18288,7 +17807,7 @@ Future<void> _shootEndResumedNoRolls(
 /// [gameStartedSeq], on [transport]. Seat 0 (this device) rolls 2, 5 and 3
 /// and none of them can move: no six, no capture, nothing home. Seat 2
 /// (Karim) enters on a 6 and takes all four tokens to 57. Every frame is
-/// pushed before the two pumps, as [_playEndCardScript] does, and `seq` is
+/// pushed before the two pumps, as the end-card replay does, and `seq` is
 /// continuous so the stats stay complete. Returns the seq `game_over` must
 /// carry.
 Future<int> _playLoseZeroScript(
