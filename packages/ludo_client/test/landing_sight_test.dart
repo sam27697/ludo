@@ -1947,46 +1947,49 @@ void main() {
       'after it is gone, and no node mentions it',
       (WidgetTester tester) async {
         final SemanticsHandle handle = tester.ensureSemantics();
-        addTearDown(handle.dispose);
-        final _Rig rig = await _mount(
-          tester,
-          tokens: _homeBefore(2, 1),
-          fixture: 'seat 2 token 1 walks 52 to 57',
-          mySeat: 0,
-        );
-        await rig.begin(_homeAfter(2, 1));
-        await rig.advanceTo(5 * _stepMs + 150);
-        expect(
-          find.byKey(Key(_burstKey(2, 1))),
-          findsOneWidget,
-          reason: 'precondition: burst showing. ${rig.scenario}',
-        );
-        final int during = _semanticsCount(tester);
-        final List<String> mentions = _semanticsMentioning(tester, <String>[
-          'burst',
-          'flash',
-          'captured-flash',
-        ]);
-        await rig.advanceTo(5 * _stepMs + 700 + _kFrameSlack + 4 * _kChunk);
-        expect(
-          find.byKey(Key(_burstKey(2, 1))),
-          findsNothing,
-          reason: 'precondition: burst gone. ${rig.scenario}',
-        );
-        final int after = _semanticsCount(tester);
-        expect(
-          during,
-          after,
-          reason:
-              'Expected the same number of semantics nodes with and without '
-              'the burst ($after after); $during while it showed. '
-              '${rig.scenario}',
-        );
-        expect(
-          mentions,
-          isEmpty,
-          reason: 'Expected no semantics node for the burst; $mentions',
-        );
+        try {
+          final _Rig rig = await _mount(
+            tester,
+            tokens: _homeBefore(2, 1),
+            fixture: 'seat 2 token 1 walks 52 to 57',
+            mySeat: 0,
+          );
+          await rig.begin(_homeAfter(2, 1));
+          await rig.advanceTo(5 * _stepMs + 150);
+          expect(
+            find.byKey(Key(_burstKey(2, 1))),
+            findsOneWidget,
+            reason: 'precondition: burst showing. ${rig.scenario}',
+          );
+          final int during = _semanticsCount(tester);
+          final List<String> mentions = _semanticsMentioning(tester, <String>[
+            'burst',
+            'flash',
+            'captured-flash',
+          ]);
+          await rig.advanceTo(5 * _stepMs + 700 + _kFrameSlack + 4 * _kChunk);
+          expect(
+            find.byKey(Key(_burstKey(2, 1))),
+            findsNothing,
+            reason: 'precondition: burst gone. ${rig.scenario}',
+          );
+          final int after = _semanticsCount(tester);
+          expect(
+            during,
+            after,
+            reason:
+                'Expected the same number of semantics nodes with and without '
+                'the burst ($after after); $during while it showed. '
+                '${rig.scenario}',
+          );
+          expect(
+            mentions,
+            isEmpty,
+            reason: 'Expected no semantics node for the burst; $mentions',
+          );
+        } finally {
+          handle.dispose();
+        }
       },
     );
 
@@ -1995,47 +1998,52 @@ void main() {
       'after it is gone, and no node mentions it',
       (WidgetTester tester) async {
         final SemanticsHandle handle = tester.ensureSemantics();
-        addTearDown(handle.dispose);
-        final _Rig rig = await _mount(
-          tester,
-          tokens: _captureBefore(),
-          fixture: 'seat 1 token 0 walks 3 to 5 capturing seat 3 token 2',
-          mySeat: 3,
-        );
-        await rig.begin(_captureAfter());
-        await rig.advanceTo(2 * _stepMs + 200);
-        expect(
-          find.byKey(Key(_flashKey(3, 2))),
-          findsOneWidget,
-          reason: 'precondition: flash showing. ${rig.scenario}',
-        );
-        final List<String> mentions = _semanticsMentioning(tester, <String>[
-          'burst',
-          'flash',
-        ]);
-        // The flight is over after the landing; compare against the count
-        // once the flash is gone and the board is at rest.
-        final int during = _semanticsCount(tester);
-        await rig.advanceTo(2 * _stepMs + _flightMs + 300 + _kFrameSlack + 40);
-        expect(
-          find.byKey(Key(_flashKey(3, 2))),
-          findsNothing,
-          reason: 'precondition: flash gone. ${rig.scenario}',
-        );
-        final int after = _semanticsCount(tester);
-        expect(
-          during,
-          after,
-          reason:
-              'Expected the same number of semantics nodes with and without '
-              'the flash ($after after); $during while it showed. '
-              '${rig.scenario}',
-        );
-        expect(
-          mentions,
-          isEmpty,
-          reason: 'Expected no semantics node for the flash; $mentions',
-        );
+        try {
+          final _Rig rig = await _mount(
+            tester,
+            tokens: _captureBefore(),
+            fixture: 'seat 1 token 0 walks 3 to 5 capturing seat 3 token 2',
+            mySeat: 3,
+          );
+          await rig.begin(_captureAfter());
+          await rig.advanceTo(2 * _stepMs + 200);
+          expect(
+            find.byKey(Key(_flashKey(3, 2))),
+            findsOneWidget,
+            reason: 'precondition: flash showing. ${rig.scenario}',
+          );
+          final List<String> mentions = _semanticsMentioning(tester, <String>[
+            'burst',
+            'flash',
+          ]);
+          // The flight is over after the landing; compare against the count
+          // once the flash is gone and the board is at rest.
+          final int during = _semanticsCount(tester);
+          await rig.advanceTo(
+            2 * _stepMs + _flightMs + 300 + _kFrameSlack + 40,
+          );
+          expect(
+            find.byKey(Key(_flashKey(3, 2))),
+            findsNothing,
+            reason: 'precondition: flash gone. ${rig.scenario}',
+          );
+          final int after = _semanticsCount(tester);
+          expect(
+            during,
+            after,
+            reason:
+                'Expected the same number of semantics nodes with and without '
+                'the flash ($after after); $during while it showed. '
+                '${rig.scenario}',
+          );
+          expect(
+            mentions,
+            isEmpty,
+            reason: 'Expected no semantics node for the flash; $mentions',
+          );
+        } finally {
+          handle.dispose();
+        }
       },
     );
   });
