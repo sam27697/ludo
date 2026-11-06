@@ -580,8 +580,11 @@ Future<void> _pumpRealDurationFrames(
 ///     1100 ms left; frames: 0.
 ///   - 51, 52: timer-played-other notice, _timerPlayedOtherHold 2500 ms; own
 ///     12 frames (_trayShotFrames), about 2000 ms left; frames: 0.
-///   - 69, 70: capture gloat, kCaptureGloatLife 1600 ms; own 500 ms of 50 ms
-///     pumps after it appears, about 1100 ms left; frames: 0.
+///   - 17, 18, 69, 70: capture gloat, kCaptureGloatLife 1600 ms, full opacity
+///     for the first 1350 ms. Order 578: the replay returns about 450 ms after
+///     the walk lands and 6 own frames follow; measured 740 to 800 ms after
+///     landing at the shot under flutter-tester, asserted at opacity 1.0
+///     immediately before it; frames: 0.
 ///   - 73, 74: hint glow, _kHintGlow 800 ms; own 300 ms of pumps after the
 ///     tap, about 500 ms left; frames: 0.
 ///   - 81-88, 91, 92: chat bubble and end-card line, kChatBubbleLife
@@ -595,10 +598,6 @@ Future<void> _pumpRealDurationFrames(
 ///   - 97, 98, 106: refusal mark, kRefusalMarkLife 300 ms, shot 96 ms after
 ///     the tap, about 200 ms left. No settle fits inside that, so these keep
 ///     frames: 0 and still photograph straight after their last pump.
-///   - 17, 18: capture gloat, kCaptureGloatLife 1600 ms, measured still in
-///     the tree at the shot after the own 30 frames (about 1500 ms) under
-///     flutter-tester, so little margin. A longer settle would drop it;
-///     frames: 0.
 Future<void> _capture(
   IntegrationTestWidgetsFlutterBinding binding,
   WidgetTester tester,
@@ -3056,286 +3055,30 @@ void main() {
 
   // ==========================================================================
   // 17, 18: order 240's (X14) capture frame -- an opponent token sent home
-  // by my own `moved`. Karim's token (seat 2) is placed on the board by a
-  // scene-setting `moved` first (the same idiom captures 04/05 already use
-  // to populate a board before the frame actually under test), then my own
-  // roll names that same square legal, and my own `moved` lands on it,
-  // naming seat 2's token in `captured`. Asserted, per the order, off
-  // controller.room -- the same RoomController GameScreen renders from --
-  // not a hand-built snapshot: the captured token reads -1 (back in its
-  // yard) there.
+  // by my own `moved`. Order 578: the frame is a real one. `_replayRealGameToCapture`
+  // plays the recorded game host_wins_1 from the host's view (seat 0, Priya)
+  // up to the first capture seat 0 makes, pushes that `moved` alone so the
+  // board walks it square by square and the struck token flies home, then the
+  // frames behind it through the next `turn`. The mover's square, the struck
+  // token and the seat on turn are read off the recorded frames; the shot is
+  // taken a fraction of a second after landing, while the gloat is whole.
   //
   // Order 570: the capturing `moved` carries `extra_roll: true`, because a
   // capture grants another roll (docs/PROTOCOL.md 12.2), and the server
   // sends a `turn` for the same seat in `await_roll` right behind it
   // (21.3.4), so the frame under test is the one a player sees: the banner
   // says "You captured. Roll again." (loc.gameRollAgainCapture), asserted
-  // before the shot.
+  // before the shot. Asserted off controller.room -- the same RoomController
+  // GameScreen renders from -- not a hand-built snapshot: the struck token
+  // reads -1 (back in its yard) there.
   // ==========================================================================
   testWidgets('capture 17-game-capture-en', (tester) async {
-    binding.testTextInput.register();
-    _stubScreenshotChannel(tester);
-    await binding.convertFlutterSurfaceToImage();
-
-    await (await SharedPreferences.getInstance()).clear();
-
-    final factory = _ScreenshotControllerFactory();
-    await tester.pumpWidget(
-      _ScreenshotHarness(controllerFactory: factory.call),
-    );
-    await tester.pumpAndSettle();
-    await _expectHomeScreen(tester, localeName: 'en');
-
-    const String hostName = 'Priya';
-    const String roomCode = 'SHOT17';
-
-    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
-    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-
-    expect(factory.controllers, hasLength(1));
-    final RoomController controller = factory.controllers.single;
-    final FakeTransport transport = factory.transports.single;
-    addTearDown(controller.dispose);
-
-    final List<String> createMessages = transport.sentRaw
-        .where((s) => _typeOf(s) == 'create_room')
-        .toList();
-    expect(createMessages, hasLength(1));
-    final String createId = _idOf(createMessages.single);
-
-    transport.pushText(
-      _frame(
-        type: 'seat_assigned',
-        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-17'},
-      ),
-    );
-    transport.pushText(
-      _frame(
-        type: 'room',
-        re: createId,
-        data: _roomJson(
-          code: roomCode,
-          players: 2,
-          hostSeat: 0,
-          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
-          seq: 1,
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
+    await _shootCaptureRollAgain(
       tester,
-      find.byType(LobbyScreen),
-      'LobbyScreen after the create_room reply carrying code "$roomCode"',
+      binding,
+      shotName: '17-game-capture-en',
+      locale: const Locale('en'),
     );
-
-    transport.pushText(
-      _frame(
-        type: 'player_joined',
-        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
-      ),
-    );
-    await tester.pump();
-
-    await _expectLobbyScreen(
-      tester,
-      localeName: 'en',
-      code: roomCode,
-      expectedSeatCount: 2,
-    );
-
-    final Finder startButton17 = find.byKey(const Key('lobby-start-button'));
-    expect(startButton17, findsOneWidget);
-    await tester.tap(startButton17);
-    await tester.pump();
-    final List<String> startMessages = transport.sentRaw
-        .where((s) => _typeOf(s) == 'start_game')
-        .toList();
-    expect(startMessages, hasLength(1));
-    final String startId = _idOf(startMessages.single);
-
-    transport.pushText(
-      _frame(
-        type: 'game_started',
-        re: startId,
-        data: <String, Object?>{
-          'turn': 0,
-          'game_id': 'c' * 16,
-          'client_seeds': '0:seed',
-          'seq': 3,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
-      tester,
-      find.byType(GameScreen),
-      'GameScreen after the game_started push answering start_game',
-    );
-    expect(find.byType(LobbyScreen), findsNothing);
-
-    // Scene-setting: Karim's token (seat 2, token 0) already sitting on
-    // square 10, the same idiom captures 04/05 use to populate a board
-    // before the frame under test, not the frame this capture is about.
-    transport.pushText(
-      _frame(
-        type: 'moved',
-        data: <String, Object?>{
-          'seat': 2,
-          'token': 0,
-          'from': -1,
-          'to': 10,
-          'captured': <Object?>[],
-          'extra_roll': false,
-          'seq': 4,
-        },
-      ),
-    );
-    await tester.pump();
-
-    // Proof the scene-setting push above actually left the yard: without
-    // this, a captured token reading -1 later would be indistinguishable
-    // from one that was never moved out of _seatJson's own -1 default in
-    // the first place, and the capture assertion below would pass for the
-    // wrong reason.
-    expect(
-      controller.room!.seats.firstWhere((SeatState s) => s.seat == 2).tokens[0],
-      10,
-      reason:
-          'capture 17 fixture is broken: expected Karim\'s token (seat 2, '
-          'token 0) to read 10 in controller.room!.seats after the '
-          'scene-setting moved landed, got '
-          '${controller.room!.seats.firstWhere((SeatState s) => s.seat == 2).tokens[0]} -- if this reads -1 the '
-          'capture assertion below would prove nothing, since -1 is also '
-          'that token\'s starting value',
-    );
-
-    // My own roll (seat 0) names token 0 legal.
-    transport.pushText(
-      _frame(
-        type: 'rolled',
-        data: <String, Object?>{
-          'seat': 0,
-          'value': 6,
-          'legal': <int>[0],
-          'deadline_ms': 40000,
-          'k': 1,
-          'seq': 5,
-        },
-      ),
-    );
-    await tester.pump();
-
-    // My own moved (seat 0, token 0) lands on square 10, capturing Karim's
-    // token there.
-    transport.pushText(
-      _frame(
-        type: 'moved',
-        data: <String, Object?>{
-          'seat': 0,
-          'token': 0,
-          'from': -1,
-          'to': 10,
-          'captured': <Object?>[
-            <String, Object?>{'seat': 2, 'token': 0},
-          ],
-          'extra_roll': true,
-          'seq': 6,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    // The turn frame the server sends right behind a capturing moved (the
-    // capture grants another roll): the same seat, back in await_roll, with
-    // the segment restarted (docs/PROTOCOL.md 12.2 and 21.3.4).
-    transport.pushText(
-      _frame(
-        type: 'turn',
-        data: <String, Object?>{
-          'seat': 0,
-          'phase': 'await_roll',
-          'deadline_ms': _trayDeadlineMs,
-          'queue': <int>[],
-          'seq': 7,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
-      tester,
-      find.byKey(const Key('game-screen-board')),
-      'the game board after the capturing moved push',
-    );
-
-    final AppLocalizations loc17 = AppLocalizations.of(
-      tester.element(find.byType(GameScreen)),
-    );
-    _expectCaptureRollAgain(
-      tester,
-      controller: controller,
-      captureName: '17-game-capture-en',
-      expected: loc17.gameRollAgainCapture,
-      momentDescription:
-          'immediately after the capturing moved and the same-seat turn '
-          'landed, before the post-move settle',
-    );
-
-    expect(
-      controller.room!.seats[0].tokens[0],
-      10,
-      reason:
-          'capture 17 fixture is broken: expected my own token (seat 0, '
-          'token 0) to read 10 in controller.room!.seats after my own '
-          'moved landed, got ${controller.room!.seats[0].tokens[0]}',
-    );
-    _expectCapturedTokenHome(
-      tester,
-      controller: controller,
-      capturedSeat: 2,
-      capturedToken: 0,
-      momentDescription:
-          'immediately after my own moved landed, before the post-move '
-          'settle',
-    );
-
-    // Same audit as every mid-game capture above: hold the frame open for
-    // real wall time before re-reading everything this capture depends on.
-    await _pumpRealDurationFrames(tester);
-
-    expect(
-      controller.room!.seats[0].tokens[0],
-      10,
-      reason:
-          'capture 17: after the post-move settle, expected my own token '
-          '(seat 0, token 0) to still read 10 immediately before the '
-          'capture, got ${controller.room!.seats[0].tokens[0]}',
-    );
-    _expectCapturedTokenHome(
-      tester,
-      controller: controller,
-      capturedSeat: 2,
-      capturedToken: 0,
-      momentDescription:
-          'after the post-move settle, immediately before capture 17',
-    );
-    _expectCaptureRollAgain(
-      tester,
-      controller: controller,
-      captureName: '17-game-capture-en',
-      expected: loc17.gameRollAgainCapture,
-      momentDescription:
-          'after the post-move settle, immediately before capture 17',
-    );
-
-    await _capture(binding, tester, '17-game-capture-en', frames: 0);
   });
 
   // ==========================================================================
@@ -3343,251 +3086,12 @@ void main() {
   // way capture 16 is.
   // ==========================================================================
   testWidgets('capture 18-game-capture-ar', (tester) async {
-    binding.testTextInput.register();
-    _stubScreenshotChannel(tester);
-    await binding.convertFlutterSurfaceToImage();
-
-    await (await SharedPreferences.getInstance()).clear();
-
-    final factory = _ScreenshotControllerFactory();
-    await tester.pumpWidget(
-      _reconnectingCaptureHarness(
-        HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
-        locale: const Locale('ar'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await _expectHomeScreen(tester, localeName: 'ar');
-
-    const String hostName = 'Priya';
-    const String roomCode = 'SHOT18';
-
-    await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
-    await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-
-    expect(factory.controllers, hasLength(1));
-    final RoomController controller = factory.controllers.single;
-    final FakeTransport transport = factory.transports.single;
-    addTearDown(controller.dispose);
-
-    final List<String> createMessages = transport.sentRaw
-        .where((s) => _typeOf(s) == 'create_room')
-        .toList();
-    expect(createMessages, hasLength(1));
-    final String createId = _idOf(createMessages.single);
-
-    transport.pushText(
-      _frame(
-        type: 'seat_assigned',
-        data: <String, Object?>{'seat': 0, 'seat_token': 'tok-shot-18'},
-      ),
-    );
-    transport.pushText(
-      _frame(
-        type: 'room',
-        re: createId,
-        data: _roomJson(
-          code: roomCode,
-          players: 2,
-          hostSeat: 0,
-          seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
-          seq: 1,
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
+    await _shootCaptureRollAgain(
       tester,
-      find.byType(LobbyScreen),
-      'LobbyScreen after the create_room reply carrying code "$roomCode"',
+      binding,
+      shotName: '18-game-capture-ar',
+      locale: const Locale('ar'),
     );
-
-    transport.pushText(
-      _frame(
-        type: 'player_joined',
-        data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
-      ),
-    );
-    await tester.pump();
-
-    await _expectLobbyScreen(
-      tester,
-      localeName: 'ar',
-      code: roomCode,
-      expectedSeatCount: 2,
-    );
-
-    final Finder startButton18 = find.byKey(const Key('lobby-start-button'));
-    expect(startButton18, findsOneWidget);
-    await tester.tap(startButton18);
-    await tester.pump();
-    final List<String> startMessages = transport.sentRaw
-        .where((s) => _typeOf(s) == 'start_game')
-        .toList();
-    expect(startMessages, hasLength(1));
-    final String startId = _idOf(startMessages.single);
-
-    transport.pushText(
-      _frame(
-        type: 'game_started',
-        re: startId,
-        data: <String, Object?>{
-          'turn': 0,
-          'game_id': 'd' * 16,
-          'client_seeds': '0:seed',
-          'seq': 3,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
-      tester,
-      find.byType(GameScreen),
-      'GameScreen after the game_started push answering start_game',
-    );
-    expect(find.byType(LobbyScreen), findsNothing);
-
-    transport.pushText(
-      _frame(
-        type: 'moved',
-        data: <String, Object?>{
-          'seat': 2,
-          'token': 0,
-          'from': -1,
-          'to': 10,
-          'captured': <Object?>[],
-          'extra_roll': false,
-          'seq': 4,
-        },
-      ),
-    );
-    await tester.pump();
-
-    // Proof the scene-setting push above actually left the yard: without
-    // this, a captured token reading -1 later would be indistinguishable
-    // from one that was never moved out of _seatJson's own -1 default in
-    // the first place, and the capture assertion below would pass for the
-    // wrong reason.
-    expect(
-      controller.room!.seats.firstWhere((SeatState s) => s.seat == 2).tokens[0],
-      10,
-      reason:
-          'capture 18 fixture is broken: expected Karim\'s token (seat 2, '
-          'token 0) to read 10 in controller.room!.seats after the '
-          'scene-setting moved landed, got '
-          '${controller.room!.seats.firstWhere((SeatState s) => s.seat == 2).tokens[0]} -- if this reads -1 the '
-          'capture assertion below would prove nothing, since -1 is also '
-          'that token\'s starting value',
-    );
-
-    transport.pushText(
-      _frame(
-        type: 'rolled',
-        data: <String, Object?>{
-          'seat': 0,
-          'value': 6,
-          'legal': <int>[0],
-          'deadline_ms': 40000,
-          'k': 1,
-          'seq': 5,
-        },
-      ),
-    );
-    await tester.pump();
-
-    transport.pushText(
-      _frame(
-        type: 'moved',
-        data: <String, Object?>{
-          'seat': 0,
-          'token': 0,
-          'from': -1,
-          'to': 10,
-          'captured': <Object?>[
-            <String, Object?>{'seat': 2, 'token': 0},
-          ],
-          'extra_roll': true,
-          'seq': 6,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    // The same-seat turn frame the server sends behind a capturing moved,
-    // as in capture 17.
-    transport.pushText(
-      _frame(
-        type: 'turn',
-        data: <String, Object?>{
-          'seat': 0,
-          'phase': 'await_roll',
-          'deadline_ms': _trayDeadlineMs,
-          'queue': <int>[],
-          'seq': 7,
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    await _pumpUntilFound(
-      tester,
-      find.byKey(const Key('game-screen-board')),
-      'the game board after the capturing moved push',
-    );
-
-    final AppLocalizations loc18 = AppLocalizations.of(
-      tester.element(find.byType(GameScreen)),
-    );
-    expect(
-      loc18.localeName,
-      'ar',
-      reason: 'capture 18 fixture is broken: this case must be in Arabic',
-    );
-    _expectCaptureRollAgain(
-      tester,
-      controller: controller,
-      captureName: '18-game-capture-ar',
-      expected: loc18.gameRollAgainCapture,
-      momentDescription:
-          'immediately after the capturing moved and the same-seat turn '
-          'landed, before the post-move settle',
-    );
-    _expectCapturedTokenHome(
-      tester,
-      controller: controller,
-      capturedSeat: 2,
-      capturedToken: 0,
-      momentDescription:
-          'immediately after my own moved landed, before the post-move '
-          'settle',
-    );
-
-    await _pumpRealDurationFrames(tester);
-
-    _expectCapturedTokenHome(
-      tester,
-      controller: controller,
-      capturedSeat: 2,
-      capturedToken: 0,
-      momentDescription:
-          'after the post-move settle, immediately before capture 18',
-    );
-    _expectCaptureRollAgain(
-      tester,
-      controller: controller,
-      captureName: '18-game-capture-ar',
-      expected: loc18.gameRollAgainCapture,
-      momentDescription:
-          'after the post-move settle, immediately before capture 18',
-    );
-
-    await _capture(binding, tester, '18-game-capture-ar', frames: 0);
   });
 
   // ==========================================================================
@@ -6030,9 +5534,12 @@ void main() {
   // ==========================================================================
   // 69-71: order 470. Emulator frames of the capture gloat and the faded idle
   // die (C-468 D5, D7). Same route as captures 64-68: a GameScreen over
-  // FakeTransport, frames copied by hand into this file, no server, no
-  // pumpAndSettle once GameScreen is up. Bodies live at the bottom of the
-  // file.
+  // FakeTransport, no server, no pumpAndSettle once GameScreen is up. Bodies
+  // live at the bottom of the file. Order 578: 69 and 70 replay a capture of
+  // a recorded real game (`_replayRealGameToCapture`) instead of frames typed
+  // by hand. 69 is guest_wins_1 from the host's view (seat 0, Priya): seat 2
+  // captures, so this device is the captured seat. 70 is host_wins_1's second
+  // capture: seat 0 captures, so this device is the capturer. 71 is unchanged.
   // ==========================================================================
   testWidgets('capture 69-gloat-captured-en', (tester) async {
     await _shootCaptureGloat(
@@ -6040,10 +5547,9 @@ void main() {
       binding,
       shotName: '69-gloat-captured-en',
       locale: const Locale('en'),
-      capturerSeat: 2,
-      roomCode: 'GL69EN',
-      gameId: '6' * 16,
-      seatToken: 'tok-shot-69',
+      gameName: 'guest_wins_1',
+      moverSeat: 2,
+      ordinal: 1,
     );
   });
 
@@ -6053,10 +5559,9 @@ void main() {
       binding,
       shotName: '70-gloat-capturer-ar',
       locale: const Locale('ar'),
-      capturerSeat: 0,
-      roomCode: 'GL70AR',
-      gameId: '7' * 16,
-      seatToken: 'tok-shot-70',
+      gameName: 'host_wins_1',
+      moverSeat: 0,
+      ordinal: 2,
     );
   });
 
@@ -7181,7 +6686,8 @@ void _expectCapturedTokenHome(
 
 /// Order 570, captures 17 and 18: after my own capturing `moved`
 /// (`extra_roll: true`) and the same-seat `turn` the server sends behind it,
-/// the seat on turn is me, awaiting a roll, and the turn banner reads
+/// the seat on turn is [seat], mine, awaiting a roll (the caller reads it off
+/// the recorded `turn` frame, order 578), and the turn banner reads
 /// [expected], the capture extra-roll line of the capture's locale (the
 /// caller passes `loc.gameRollAgainCapture`, never a literal).
 /// [momentDescription] names which of the two calls (before or after the
@@ -7189,6 +6695,7 @@ void _expectCapturedTokenHome(
 void _expectCaptureRollAgain(
   WidgetTester tester, {
   required RoomController controller,
+  required int seat,
   required String captureName,
   required String expected,
   required String momentDescription,
@@ -7200,10 +6707,10 @@ void _expectCaptureRollAgain(
   final turn = controller.room?.turn;
   expect(
     turn == null ? null : (turn.seat, turn.phase.name),
-    (0, 'awaitRoll'),
+    (seat, 'awaitRoll'),
     reason:
         'capture $captureName ($momentDescription): expected the turn on '
-        'my seat 0 in await_roll after the capturing moved and the '
+        'my seat $seat in await_roll after the capturing moved and the '
         'same-seat turn frame, got '
         '${turn == null ? 'no turn' : 'seat ${turn.seat} ${turn.phase.name}'}. '
         '$reproduce',
@@ -7659,23 +7166,49 @@ class _RealReplay {
       '--plain-name "$capture"`';
 }
 
-/// Drives a capture the way a real player meets it, from the device's home
-/// screen to the last frame before `game_over`, from the recorded [seat]'s
-/// view of the fixture game [gameName]: the name typed is the name recorded
-/// for that seat; Create (the host) or Join with the recorded room code (a
-/// guest) is tapped; then the view's frames are pushed verbatim, in order,
-/// with the device's own tap where a real client must make it (Start, for
-/// the host, once the recorded `player_joined` has put the second seat in the
-/// lobby). The only rewrite is `re` (see [_ReplayRe]). The frames from the
-/// first `seat_seed` through `game_started` go in one by one, then the board
-/// is mounted, then every frame up to the one before `game_over` goes in as
-/// one burst, as the hand-typed script did before order 576, and two pumps
-/// let the screen absorb it. The caller pushes `game_over` with
-/// [_RealReplay.pushGameOver] and keeps its own post-`game_over` asserts.
-///
-/// The home screen must already be on screen in [localeName] (the caller's
-/// [_expectHomeScreen]). [capture] is only for the failure messages.
-Future<_RealReplay> _replayRealGame(
+/// The state [_enterRealGame] hands on: the recorded view, the cursor into it,
+/// and the device's controller and transport.
+class _RealEntry {
+  _RealEntry({
+    required this.where,
+    required this.game,
+    required this.seat,
+    required this.view,
+    required this.controller,
+    required this.transport,
+    required this.roomCode,
+    required this.isHost,
+    required this.re,
+    required this.next,
+    required this.firstPushToAbsorbed,
+  });
+
+  final String where;
+  final _RealGame game;
+  final int seat;
+  final List<Map<String, Object?>> view;
+  final RoomController controller;
+  final FakeTransport transport;
+  final String roomCode;
+  final bool isHost;
+  final _ReplayRe re;
+  final Stopwatch firstPushToAbsorbed;
+
+  /// Index in [view] of the next frame to push.
+  int next;
+
+  /// Pushes the next recorded frame of [view] verbatim (see [_ReplayRe]).
+  void push() => transport.pushText(re.wire(view[next++]));
+}
+
+/// The part of every replay up to the first game frame: the device's own
+/// entry (recorded name, Create or Join with the recorded code, Start for the
+/// host), then the recorded frames through `game_started`, one by one, and the
+/// board mounted. Returns with the view's cursor on the first frame after
+/// `game_started`. Shared by [_replayRealGame] and
+/// [_replayRealGameToCapture]; the checks of the recorded view and the
+/// device's own requests are the same for both.
+Future<_RealEntry> _enterRealGame(
   WidgetTester tester,
   _ScreenshotControllerFactory factory, {
   required String capture,
@@ -7854,9 +7387,67 @@ Future<_RealReplay> _replayRealGame(
     reason: '$where: RoomRoute must latch onto GameScreen and never go back',
   );
 
+  return _RealEntry(
+    where: where,
+    game: game,
+    seat: seat,
+    view: view,
+    controller: controller,
+    transport: transport,
+    roomCode: roomCode,
+    isHost: isHost,
+    re: re,
+    next: next,
+    firstPushToAbsorbed: firstPushToAbsorbed,
+  );
+}
+
+/// Drives a capture the way a real player meets it, from the device's home
+/// screen to the last frame before `game_over`, from the recorded [seat]'s
+/// view of the fixture game [gameName]: the name typed is the name recorded
+/// for that seat; Create (the host) or Join with the recorded room code (a
+/// guest) is tapped; then the view's frames are pushed verbatim, in order,
+/// with the device's own tap where a real client must make it (Start, for
+/// the host, once the recorded `player_joined` has put the second seat in the
+/// lobby). The only rewrite is `re` (see [_ReplayRe]). The frames from the
+/// first `seat_seed` through `game_started` go in one by one, then the board
+/// is mounted, then every frame up to the one before `game_over` goes in as
+/// one burst, as the hand-typed script did before order 576, and two pumps
+/// let the screen absorb it. The caller pushes `game_over` with
+/// [_RealReplay.pushGameOver] and keeps its own post-`game_over` asserts.
+///
+/// The home screen must already be on screen in [localeName] (the caller's
+/// [_expectHomeScreen]). [capture] is only for the failure messages.
+Future<_RealReplay> _replayRealGame(
+  WidgetTester tester,
+  _ScreenshotControllerFactory factory, {
+  required String capture,
+  required String gameName,
+  required int seat,
+  required String localeName,
+}) async {
+  final _RealEntry entry = await _enterRealGame(
+    tester,
+    factory,
+    capture: capture,
+    gameName: gameName,
+    seat: seat,
+    localeName: localeName,
+  );
+  final String where = entry.where;
+  final _RealGame game = entry.game;
+  final List<Map<String, Object?>> view = entry.view;
+  final RoomController controller = entry.controller;
+  final FakeTransport transport = entry.transport;
+  final String roomCode = entry.roomCode;
+  final bool isHost = entry.isHost;
+  final _ReplayRe re = entry.re;
+  final Stopwatch firstPushToAbsorbed = entry.firstPushToAbsorbed;
+  void push() => entry.push();
+
   // The game itself, up to the frame before game_over, in one burst.
   final int gameOverIndex = view.length - 1;
-  while (next < gameOverIndex) {
+  while (entry.next < gameOverIndex) {
     push();
   }
   await tester.pump();
@@ -7918,6 +7509,412 @@ Future<_RealReplay> _replayRealGame(
     re: re,
     gameOver: view[gameOverIndex],
   );
+}
+
+/// One capturing `moved` of a recorded view, found at run time, and the
+/// frames around it: [turnIndex] is the first `turn` after it. Every number a
+/// capture asserts about the capture is read off these frames.
+class _RealCaptureFrame {
+  _RealCaptureFrame({
+    required this.index,
+    required this.turnIndex,
+    required this.moved,
+    required this.turn,
+  });
+
+  /// Index of the `moved` in the recorded view of the device's seat.
+  final int index;
+
+  /// Index of the first `turn` after it in the same view.
+  final int turnIndex;
+
+  final Map<String, Object?> moved;
+  final Map<String, Object?> turn;
+
+  Map<String, Object?> get _movedData => moved['d']! as Map<String, Object?>;
+  Map<String, Object?> get _struck =>
+      (_movedData['captured']! as List<Object?>).single!
+          as Map<String, Object?>;
+
+  int get moverSeat => _movedData['seat']! as int;
+  int get moverToken => _movedData['token']! as int;
+  int get from => _movedData['from']! as int;
+  int get to => _movedData['to']! as int;
+  int get face => _movedData['face']! as int;
+  int get capturedSeat => _struck['seat']! as int;
+  int get capturedToken => _struck['token']! as int;
+  int get turnSeat => (turn['d']! as Map<String, Object?>)['seat']! as int;
+
+  @override
+  String toString() =>
+      'view index $index: seat $moverSeat token $moverToken $from to $to '
+      'face $face, struck seat $capturedSeat token $capturedToken, next turn '
+      'at index $turnIndex for seat $turnSeat';
+}
+
+/// The [ordinal]th (1-based) capturing `moved` made by [moverSeat] in the
+/// recorded [view] of [viewSeat], found by scanning the frames. The
+/// recorder's own `events` list is the cross-check: it must name the same
+/// frame, or the fixture and its index disagree.
+_RealCaptureFrame _locateRealCapture(
+  _RealGame game,
+  List<Map<String, Object?>> view,
+  int viewSeat, {
+  required int moverSeat,
+  required int ordinal,
+  required String where,
+}) {
+  var seen = 0;
+  int? index;
+  for (var i = 0; i < view.length; i++) {
+    final Map<String, Object?> frame = view[i];
+    if (frame['t'] != 'moved') {
+      continue;
+    }
+    final Map<String, Object?> d = frame['d']! as Map<String, Object?>;
+    if (d['seat'] != moverSeat || (d['captured']! as List<Object?>).isEmpty) {
+      continue;
+    }
+    seen++;
+    if (seen == ordinal) {
+      index = i;
+      break;
+    }
+  }
+  if (index == null) {
+    throw TestFailure(
+      '$where: expected capture number $ordinal by seat $moverSeat in the '
+      'recorded view, found only $seen',
+    );
+  }
+  final List<Object?> events = <Object?>[
+    for (final Object? e in game.json['events']! as List<Object?>)
+      if ((e! as Map<String, Object?>)['kind'] == 'capture' &&
+          (e as Map<String, Object?>)['by'] == moverSeat)
+        e,
+  ];
+  final Object? recorded = ordinal <= events.length
+      ? (((events[ordinal - 1]! as Map<String, Object?>)['view_index']!
+            as Map<String, Object?>)['$viewSeat'])
+      : null;
+  if (recorded != index) {
+    throw TestFailure(
+      '$where: the scan found capture $ordinal by seat $moverSeat at view '
+      'index $index but the recorder\'s events say $recorded',
+    );
+  }
+  final Map<String, Object?> moved = view[index];
+  final Map<String, Object?> movedData = moved['d']! as Map<String, Object?>;
+  if ((movedData['captured']! as List<Object?>).length != 1 ||
+      movedData['extra_roll'] != true) {
+    throw TestFailure(
+      '$where: expected one struck token and extra_roll true on the '
+      'capturing moved at view index $index, got $movedData',
+    );
+  }
+  var turnIndex = index + 1;
+  while (turnIndex < view.length && view[turnIndex]['t'] != 'turn') {
+    turnIndex++;
+  }
+  if (turnIndex >= view.length) {
+    throw TestFailure('$where: no turn frame after view index $index');
+  }
+  final _RealCaptureFrame found = _RealCaptureFrame(
+    index: index,
+    turnIndex: turnIndex,
+    moved: moved,
+    turn: view[turnIndex],
+  );
+  if (found.turnSeat != moverSeat) {
+    throw TestFailure(
+      '$where: a capture grants the mover another roll, but the next turn '
+      'frame ($found) is not the mover\'s',
+    );
+  }
+  return found;
+}
+
+/// A recorded game replayed to a capture and one turn past it.
+class _RealCaptureReplay {
+  _RealCaptureReplay({
+    required this.capture,
+    required this.entry,
+    required this.found,
+    required this.sinceLanding,
+  });
+
+  final String capture;
+  final _RealEntry entry;
+  final _RealCaptureFrame found;
+
+  /// Wall time since the capturing walk landed (the struck token's flight
+  /// home was first seen), which is when the gloat starts.
+  final Stopwatch sinceLanding;
+
+  RoomController get controller => entry.controller;
+  FakeTransport get transport => entry.transport;
+
+  /// For a failure message: which recorded capture this device is on.
+  String get describe =>
+      'fixture game "${entry.game.name}", view of seat ${entry.seat}, capture '
+      '${found.toString()}; reproduce with `flutter test '
+      'integration_test/screenshots_test.dart -d flutter-tester --plain-name '
+      '"$capture"`';
+}
+
+/// Pumps in 50 ms steps until the struck token's flight home is on the board
+/// (the capturing walk has landed) and then until it is gone. Returns a
+/// stopwatch started when the flight was first seen, which is when the gloat
+/// begins. Bounded: a walk that never lands fails with [where].
+Future<Stopwatch> _pumpThroughCaptureWalk(
+  WidgetTester tester, {
+  required _RealCaptureFrame found,
+  required String where,
+}) async {
+  final Finder flight = find.byKey(
+    Key('board-capture-flight-${found.capturedSeat}-${found.capturedToken}'),
+  );
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 16));
+  var steps = 0;
+  while (flight.evaluate().isEmpty) {
+    if (steps++ >= 60) {
+      throw TestFailure(
+        '$where: expected the capturing walk to land and the struck token '
+        '(seat ${found.capturedSeat} token ${found.capturedToken}) to start '
+        'its flight home within 3 s of the capturing moved, saw no '
+        'board-capture-flight key; the board snapped or never moved it',
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  final Stopwatch sinceLanding = Stopwatch()..start();
+  steps = 0;
+  while (flight.evaluate().isNotEmpty) {
+    if (steps++ >= 40) {
+      throw TestFailure(
+        '$where: the struck token\'s flight home was still on the board 2 s '
+        'after it began',
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  return sinceLanding;
+}
+
+/// Drives a capture the way [_replayRealGame] does (home screen, recorded
+/// name, Create or Join with the recorded code, Start for the host, the `re`
+/// rule), then stops at a capture of the recorded game: every frame before
+/// the [ordinal]th capturing `moved` made by [moverSeat] is pushed and
+/// absorbed, the `moved` is pushed alone and the board walks it for real (the
+/// walk lands, the struck token flies home, the gloat starts at landing), and
+/// then the frames behind it are pushed up to and including the next `turn`.
+/// Nothing in any frame changes except `re`. The capture is located in the
+/// fixture at run time, never by a typed index.
+Future<_RealCaptureReplay> _replayRealGameToCapture(
+  WidgetTester tester,
+  _ScreenshotControllerFactory factory, {
+  required String capture,
+  required String gameName,
+  required int seat,
+  required int moverSeat,
+  required int ordinal,
+  required String localeName,
+}) async {
+  final _RealEntry entry = await _enterRealGame(
+    tester,
+    factory,
+    capture: capture,
+    gameName: gameName,
+    seat: seat,
+    localeName: localeName,
+  );
+  final _RealCaptureFrame found = _locateRealCapture(
+    entry.game,
+    entry.view,
+    seat,
+    moverSeat: moverSeat,
+    ordinal: ordinal,
+    where: entry.where,
+  );
+  final String where = '${entry.where}; capture $found';
+  final RoomController controller = entry.controller;
+  final List<String> lobbyRequests = entry.isHost
+      ? <String>['create_room', 'start_game']
+      : <String>['join_room'];
+
+  while (entry.next < found.index) {
+    entry.push();
+  }
+  await tester.pump();
+  await tester.pump();
+
+  int seqOf(int index) =>
+      (entry.view[index]['d']! as Map<String, Object?>)['seq']! as int;
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason: '$where: seq gap before the capturing moved',
+  );
+  expect(
+    controller.room?.seq,
+    seqOf(found.index - 1),
+    reason: '$where: the controller must have absorbed every frame before it',
+  );
+  expect(
+    controller.room?.state,
+    RoomState.playing,
+    reason: '$where: the replay must be in play at the capture',
+  );
+  expect(
+    _endCardTokens(controller, found.moverSeat)[found.moverToken],
+    found.from,
+    reason:
+        '$where: before the capturing moved, expected the mover\'s token on '
+        '${found.from}',
+  );
+  expect(
+    _endCardTokens(controller, found.capturedSeat)[found.capturedToken],
+    isNot(-1),
+    reason:
+        '$where: before the capturing moved, the struck token must be out on '
+        'the track, or there is nothing to send home',
+  );
+  expect(
+    entry.transport.sentRaw.map(_typeOf).toList(),
+    lobbyRequests,
+    reason:
+        '$where: before the capturing moved the device must have sent only '
+        'its own lobby requests',
+  );
+
+  // A gloat still up from an earlier capture in the frames just absorbed
+  // would be taken for this capture's, so it runs out first.
+  final Finder anyGloat = find.byWidgetPredicate(
+    (Widget w) =>
+        w.key is ValueKey<String> &&
+        (w.key! as ValueKey<String>).value.startsWith('capture-gloat-'),
+  );
+  var gloatSteps = 0;
+  while (anyGloat.evaluate().isNotEmpty) {
+    if (gloatSteps++ >= 60) {
+      throw TestFailure(
+        '$where: a gloat from an earlier frame was still up 3 s after the '
+        'frames before the capture were absorbed',
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  expect(
+    entry.transport.sentRaw.map(_typeOf).toList(),
+    lobbyRequests,
+    reason:
+        '$where: waiting out an earlier gloat, the device must still have '
+        'sent only its own lobby requests (no held move may fire)',
+  );
+
+  // The capture alone, walked for real.
+  entry.push();
+  final Stopwatch sinceLanding = await _pumpThroughCaptureWalk(
+    tester,
+    found: found,
+    where: where,
+  );
+
+  // The frames behind it, through the next turn.
+  while (entry.next <= found.turnIndex) {
+    entry.push();
+  }
+  await tester.pump();
+  await tester.pump();
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason: '$where: seq gap after the capturing moved',
+  );
+  expect(
+    controller.room?.seq,
+    seqOf(found.turnIndex),
+    reason: '$where: the controller must have absorbed the turn frame',
+  );
+  expect(
+    entry.transport.sentRaw.map(_typeOf).toList(),
+    lobbyRequests,
+    reason:
+        '$where: the device must have sent only its own lobby requests; the '
+        'replay plays every roll and move for it',
+  );
+
+  // ignore: avoid_print
+  print(
+    'screenshots_test: $capture replays "$gameName" from seat $seat to '
+    'capture $ordinal by seat $moverSeat ($found): ${entry.re.pushed} frames '
+    'pushed, ${entry.re.rewritten} re rewritten to this device\'s request '
+    'ids, ${entry.re.dropped} re dropped ${entry.re.droppedByType}',
+  );
+
+  return _RealCaptureReplay(
+    capture: capture,
+    entry: entry,
+    found: found,
+    sinceLanding: sinceLanding,
+  );
+}
+
+/// The painted opacity of the capture gloat on [seat]'s yard: the `Opacity`
+/// that `CaptureGloat` wraps its face in, read off the tree. Fails if the
+/// gloat is absent.
+double _gloatOpacity(WidgetTester tester, int seat, String where) {
+  final Finder gloat = find.byKey(Key('capture-gloat-$seat'));
+  expect(
+    gloat,
+    findsOneWidget,
+    reason: '$where: expected capture-gloat-$seat in the tree',
+  );
+  final Finder opacity = find.descendant(
+    of: gloat,
+    matching: find.byType(Opacity),
+  );
+  expect(
+    opacity,
+    findsOneWidget,
+    reason: '$where: expected one Opacity under capture-gloat-$seat',
+  );
+  return tester.widget<Opacity>(opacity).opacity;
+}
+
+/// Immediately before the shot: `capture-gloat-<capturer seat>` is in the tree
+/// and the `Opacity` its face paints with reads 1.0. A gloat that has begun to
+/// fade is the old fault (the store frame caught it leaving), so a failure
+/// names the gloat's age. Returns the opacity read.
+double _expectGloatAtFullOpacity(
+  WidgetTester tester,
+  _RealCaptureReplay replay,
+  String momentDescription,
+) {
+  final int seat = replay.found.moverSeat;
+  final double opacity = _gloatOpacity(
+    tester,
+    seat,
+    '${replay.capture} ($momentDescription)',
+  );
+  expect(
+    opacity,
+    1.0,
+    reason:
+        '${replay.capture} ($momentDescription): expected the Opacity under '
+        'capture-gloat-$seat to read 1.0, got $opacity; the gloat is '
+        '${replay.sinceLanding.elapsedMilliseconds} ms old by wall time '
+        '(it holds full opacity for 1350 ms and is gone at 1600 ms). '
+        '${replay.describe}',
+  );
+  // ignore: avoid_print
+  print(
+    'screenshots_test: ${replay.capture} gloat opacity $opacity at '
+    '$momentDescription, ${replay.sinceLanding.elapsedMilliseconds} ms after '
+    'landing',
+  );
+  return opacity;
 }
 
 /// Captures 19-22 and 40: each stat tile with a positive count is on screen
@@ -12697,261 +12694,294 @@ Future<void> _shootSeatDieFourSeats(
   }
 }
 
-// --- order 470: captures 69-71 (C-468) -------------------------------------
+// --- order 578: captures 17, 18, 69 and 70 replay a recorded capture --------
 //
-// Emulator frames of the capture gloat (C-468 D5) and the faded idle die on
-// another seat's turn (C-468 D7). Same harness as captures 64-68: GameScreen
-// over FakeTransport, frames copied by hand into this file, no server, no
-// pumpAndSettle once GameScreen is up.
+// The four captures photograph a capture of the recorded real games in
+// integration_test/fixtures/real_games.json, through `_replayRealGameToCapture`.
+// The capturing `moved` is walked by the board, the struck token flies home
+// and the gloat starts at landing; the shot is taken `_captureShotSettleFrames`
+// pumps later, about 0.75 s after landing, inside the gloat's 1350 ms at full
+// opacity (C-468 D5, kCaptureGloatLife 1600 ms).
 
-Future<void> _pumpUntilGloatFound(
-  WidgetTester tester, {
-  required int seat,
-  required String shotName,
-}) async {
-  // Start tickers on their first frame, then step in 50 ms increments until
-  // capture-gloat-$seat is in the tree (at most 3 s, 60 frames).
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 16));
-  final Finder gloatFinder = find.byKey(Key('capture-gloat-$seat'));
-  for (int step = 0; step < 60; step++) {
-    if (gloatFinder.evaluate().isNotEmpty) {
-      return;
-    }
-    await tester.pump(const Duration(milliseconds: 50));
+/// Real-duration pumps (32 ms each) between the replay's last frame and the
+/// shot. The replay returns about 400 ms after landing; these end well inside
+/// the 1350 ms the gloat holds full opacity for.
+const int _captureShotSettleFrames = 6;
+
+/// The home screen the replay starts from, in [locale]: Arabic is mounted
+/// directly through HomeScreen the way captures 16 and 20 are.
+Widget _replayHome(_ScreenshotControllerFactory factory, Locale locale) {
+  if (locale.languageCode == 'ar') {
+    return _reconnectingCaptureHarness(
+      HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+      locale: locale,
+    );
   }
-  expect(
-    gloatFinder,
-    findsOneWidget,
-    reason:
-        'capture $shotName: C-468 D5, capture-gloat-$seat must appear '
-        'within 3 s of the capturing moved frame',
-  );
+  return _ScreenshotHarness(controllerFactory: factory.call);
 }
 
-/// Captures 69 and 70. Two seats `[0, 2]`, viewer at seat 0. [capturerSeat]
-/// holds the turn, rolls, and its `moved` captures the other seat's token 0.
+/// Captures 17 and 18. The device is seat 0 (Priya, the host) of the recorded
+/// game host_wins_1 and the capturer of its first capture. After the replay
+/// the banner reads the capture roll-again line, the mover's token sits on
+/// the recorded `to` and the struck token is back in its yard, all read off
+/// the recorded frames.
+Future<void> _shootCaptureRollAgain(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(_replayHome(factory, locale));
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+  addTearDown(() {
+    for (final RoomController c in factory.controllers) {
+      c.dispose();
+    }
+  });
+  final _RealCaptureReplay replay = await _replayRealGameToCapture(
+    tester,
+    factory,
+    capture: 'capture $shotName',
+    gameName: 'host_wins_1',
+    seat: 0,
+    moverSeat: 0,
+    ordinal: 1,
+    localeName: locale.languageCode,
+  );
+  final RoomController controller = replay.controller;
+  final _RealCaptureFrame found = replay.found;
+
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('game-screen-board')),
+    'the game board after the capturing moved push',
+  );
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+  expect(
+    loc.localeName,
+    locale.languageCode,
+    reason: 'capture $shotName fixture is broken: wrong locale',
+  );
+
+  void expectCaptureMoment(String moment) {
+    _expectCaptureRollAgain(
+      tester,
+      controller: controller,
+      seat: found.turnSeat,
+      captureName: shotName,
+      expected: loc.gameRollAgainCapture,
+      momentDescription: moment,
+    );
+    expect(
+      _endCardTokens(controller, found.moverSeat)[found.moverToken],
+      found.to,
+      reason:
+          'capture $shotName ($moment): expected my token (seat '
+          '${found.moverSeat}, token ${found.moverToken}) to read '
+          '${found.to} in controller.room!.seats after my own moved landed, '
+          'got ${_endCardTokens(controller, found.moverSeat)[found.moverToken]}. '
+          '${replay.describe}',
+    );
+    _expectCapturedTokenHome(
+      tester,
+      controller: controller,
+      capturedSeat: found.capturedSeat,
+      capturedToken: found.capturedToken,
+      momentDescription: moment,
+    );
+  }
+
+  expectCaptureMoment(
+    'immediately after the capturing moved and the same-seat turn landed, '
+    'before the post-move settle',
+  );
+
+  await _pumpRealDurationFrames(tester, frameCount: _captureShotSettleFrames);
+
+  expectCaptureMoment(
+    'after the post-move settle, immediately before capture $shotName',
+  );
+  _expectGloatAtFullOpacity(
+    tester,
+    replay,
+    'immediately before capture $shotName',
+  );
+
+  await _capture(binding, tester, shotName, frames: 0);
+}
+
+/// Captures 69 and 70. Two seats `[0, 2]`, the device at seat 0 (Priya, the
+/// host) in the recorded game [gameName]; the [ordinal]th capture made by
+/// [moverSeat] is walked for real. Seat 0 is the capturer in 70 and the
+/// captured seat in 69. Everything numeric is read off the recorded frames.
 Future<void> _shootCaptureGloat(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
   required String shotName,
   required Locale locale,
-  required int capturerSeat,
-  required String roomCode,
-  required String gameId,
-  required String seatToken,
+  required String gameName,
+  required int moverSeat,
+  required int ordinal,
 }) async {
-  expect(
-    capturerSeat == 0 || capturerSeat == 2,
-    isTrue,
-    reason: 'capture $shotName: capturerSeat must be 0 or 2, got $capturerSeat',
-  );
-  final int capturedSeat = capturerSeat == 0 ? 2 : 0;
-  // Seat 0 enters at absolute square 0, seat 2 at 26. A progress of 26 for
-  // the victim sits on the capturer's entry square (progress 0).
-  const int victimProgress = 26;
-  const int capturerDestProgress = 0;
-
   binding.testTextInput.register();
   _stubScreenshotChannel(tester);
   await binding.convertFlutterSurfaceToImage();
   await (await SharedPreferences.getInstance()).clear();
   tester.platformDispatcher.clearTextScaleFactorTestValue();
 
-  RoomController? controller;
-  try {
-    final _OpenedTrayGame opened = await _openHostGame(
-      tester,
-      capture: shotName,
-      roomCode: roomCode,
-      locale: locale,
-      gameId: gameId,
-      seatToken: seatToken,
-    );
-    controller = opened.controller;
-    int seq = opened.seq;
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(_replayHome(factory, locale));
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
 
-    // Scene-setting: place the victim's token 0 on the capturer's entry
-    // square. From -1 to 26 snaps onto the track without step animation.
-    seq = await _pushSeatMoved(
-      tester,
-      opened.transport,
-      seq,
-      seat: capturedSeat,
-      token: 0,
-      from: -1,
-      to: victimProgress,
-    );
-    expect(
-      _progressOf(controller, capturedSeat, 0),
-      victimProgress,
-      reason:
-          'capture $shotName: victim seat $capturedSeat token 0 must sit on '
-          'progress $victimProgress before the capturing roll and move',
-    );
-
-    if (capturerSeat != 0) {
-      seq = await _pushTraySeq(
-        tester,
-        opened.transport,
-        seq,
-        type: 'turn',
-        data: <String, Object?>{
-          'seat': capturerSeat,
-          'deadline_ms': _trayDeadlineMs,
-        },
-      );
+  addTearDown(() {
+    for (final RoomController c in factory.controllers) {
+      c.dispose();
     }
+  });
+  final _RealCaptureReplay replay = await _replayRealGameToCapture(
+    tester,
+    factory,
+    capture: 'capture $shotName',
+    gameName: gameName,
+    seat: 0,
+    moverSeat: moverSeat,
+    ordinal: ordinal,
+    localeName: locale.languageCode,
+  );
+  final RoomController controller = replay.controller;
+  final _RealCaptureFrame found = replay.found;
+  final int capturerSeat = found.moverSeat;
+  final int capturedSeat = found.capturedSeat;
+  final int capturedToken = found.capturedToken;
 
-    seq = await _pushTraySeq(
-      tester,
-      opened.transport,
-      seq,
-      type: 'rolled',
-      data: <String, Object?>{
-        'seat': capturerSeat,
-        'value': 6,
-        'legal': <int>[0],
-        'deadline_ms': _trayDeadlineMs,
-        'k': 1,
-        'reveal': _trayReveal,
-      },
-    );
+  await _pumpRealDurationFrames(tester, frameCount: _captureShotSettleFrames);
 
-    seq = await _pushTraySeq(
-      tester,
-      opened.transport,
-      seq,
-      type: 'moved',
-      data: <String, Object?>{
-        'seat': capturerSeat,
-        'token': 0,
-        'from': -1,
-        'to': capturerDestProgress,
-        'captured': <Object?>[
-          <String, Object?>{'seat': capturedSeat, 'token': 0},
-        ],
-        'extra_roll': true,
-      },
-    );
+  expect(
+    controller.room!.seq,
+    (replay.entry.view[found.turnIndex]['d']! as Map<String, Object?>)['seq'],
+    reason:
+        'capture $shotName: a pushed frame was dropped; room seq is '
+        '${controller.room!.seq}. ${replay.describe}',
+  );
+  expect(
+    controller.seat,
+    0,
+    reason: 'capture $shotName: viewer seat must be 0',
+  );
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+  expect(
+    loc.localeName,
+    locale.languageCode,
+    reason:
+        'capture $shotName: expected locale ${locale.languageCode}, '
+        'got ${loc.localeName}',
+  );
 
-    await _pumpUntilGloatFound(tester, seat: capturerSeat, shotName: shotName);
-    // Advance 500 ms in bounded steps so the pop (300 ms) and the first
-    // wobble (250 ms) are over and the capture flight (360 ms) has landed.
-    for (int step = 0; step < 10; step++) {
-      await tester.pump(const Duration(milliseconds: 50));
-    }
+  _expectKey(
+    tester,
+    Key('capture-gloat-$capturerSeat'),
+    present: true,
+    reason:
+        'capture $shotName: C-468 D5, capture-gloat-$capturerSeat must '
+        'still be on the board after the walk, the flight and the settle. '
+        '${replay.describe}',
+  );
+  expect(
+    _progressOf(controller, capturerSeat, found.moverToken),
+    found.to,
+    reason:
+        'capture $shotName: capturer seat $capturerSeat token '
+        '${found.moverToken} must read ${found.to} in controller.room. '
+        '${replay.describe}',
+  );
+  _expectCapturedTokenHome(
+    tester,
+    controller: controller,
+    capturedSeat: capturedSeat,
+    capturedToken: capturedToken,
+    momentDescription: 'after the walk, the flight and the settle',
+  );
+  _expectKey(
+    tester,
+    Key('board-capture-flight-$capturedSeat-$capturedToken'),
+    present: false,
+    reason:
+        'capture $shotName: captured token flight must have finished '
+        'before the shot. ${replay.describe}',
+  );
 
-    expect(
-      controller.room!.seq,
-      seq,
-      reason:
-          'capture $shotName: a pushed frame was dropped; room seq is '
-          '${controller.room!.seq}, last push was $seq',
-    );
-    expect(
-      controller.seat,
-      0,
-      reason: 'capture $shotName: viewer seat must be 0',
-    );
-    final AppLocalizations loc = AppLocalizations.of(
-      tester.element(find.byType(GameScreen)),
-    );
-    expect(
-      loc.localeName,
-      locale.languageCode,
-      reason:
-          'capture $shotName: expected locale ${locale.languageCode}, '
-          'got ${loc.localeName}',
-    );
+  final Finder boardFinder = find.byKey(const Key('ludo-board'));
+  expect(
+    boardFinder,
+    findsOneWidget,
+    reason: 'capture $shotName: ludo-board must be on screen',
+  );
+  final Rect boardWidget = tester.getRect(boardFinder);
+  final double boardSide = boardWidget.width < boardWidget.height
+      ? boardWidget.width
+      : boardWidget.height;
+  final Rect boardRect = Rect.fromCenter(
+    center: boardWidget.center,
+    width: boardSide,
+    height: boardSide,
+  );
 
-    _expectKey(
-      tester,
-      Key('capture-gloat-$capturerSeat'),
-      present: true,
-      reason:
-          'capture $shotName: C-468 D5, capture-gloat-$capturerSeat must '
-          'still be on the board 500 ms after appearing',
-    );
-    expect(
-      _progressOf(controller, capturerSeat, 0),
-      capturerDestProgress,
-      reason:
-          'capture $shotName: capturer seat $capturerSeat token 0 must read '
-          '$capturerDestProgress in controller.room',
-    );
-    _expectCapturedTokenHome(
-      tester,
-      controller: controller,
-      capturedSeat: capturedSeat,
-      capturedToken: 0,
-      momentDescription: '500 ms after capture-gloat-$capturerSeat appeared',
-    );
-    _expectKey(
-      tester,
-      Key('board-capture-flight-$capturedSeat-0'),
-      present: false,
-      reason:
-          'capture $shotName: captured token flight must have finished '
-          'within 500 ms of the gloat starting',
-    );
+  final Finder capturedTokenFinder = _tokenFinder(capturedSeat, capturedToken);
+  expect(
+    capturedTokenFinder,
+    findsOneWidget,
+    reason:
+        'capture $shotName: captured seat $capturedSeat token '
+        '$capturedToken must be in the tree',
+  );
+  final Offset capturedTokenCenter = tester.getCenter(capturedTokenFinder);
+  final bool inCapturedYard = capturedSeat == 0
+      ? _inBottomLeftQuarter(capturedTokenCenter, boardRect)
+      : _inTopRightQuarter(capturedTokenCenter, boardRect);
+  expect(
+    inCapturedYard,
+    isTrue,
+    reason:
+        'capture $shotName: captured seat $capturedSeat token '
+        '$capturedToken centre ${_offsetText(capturedTokenCenter)} must lie '
+        'in its yard quadrant of ludo-board ${_rectText(boardRect)}',
+  );
 
-    final Finder boardFinder = find.byKey(const Key('ludo-board'));
-    expect(
-      boardFinder,
-      findsOneWidget,
-      reason: 'capture $shotName: ludo-board must be on screen',
-    );
-    final Rect boardWidget = tester.getRect(boardFinder);
-    final double boardSide = boardWidget.width < boardWidget.height
-        ? boardWidget.width
-        : boardWidget.height;
-    final Rect boardRect = Rect.fromCenter(
-      center: boardWidget.center,
-      width: boardSide,
-      height: boardSide,
-    );
+  final Finder gloatFinder = find.byKey(Key('capture-gloat-$capturerSeat'));
+  final Offset gloatCenter = tester.getCenter(gloatFinder);
+  final bool inCapturerYard = capturerSeat == 0
+      ? _inBottomLeftQuarter(gloatCenter, boardRect)
+      : _inTopRightQuarter(gloatCenter, boardRect);
+  expect(
+    inCapturerYard,
+    isTrue,
+    reason:
+        'capture $shotName: C-468 D5.2, capture-gloat-$capturerSeat '
+        'centre ${_offsetText(gloatCenter)} must lie in seat '
+        '$capturerSeat\'s yard quadrant of ludo-board '
+        '${_rectText(boardRect)}',
+  );
 
-    final Finder capturedTokenFinder = _tokenFinder(capturedSeat, 0);
-    expect(
-      capturedTokenFinder,
-      findsOneWidget,
-      reason:
-          'capture $shotName: captured seat $capturedSeat token 0 must be '
-          'in the tree',
-    );
-    final Offset capturedTokenCenter = tester.getCenter(capturedTokenFinder);
-    final bool inCapturedYard = capturedSeat == 0
-        ? _inBottomLeftQuarter(capturedTokenCenter, boardRect)
-        : _inTopRightQuarter(capturedTokenCenter, boardRect);
-    expect(
-      inCapturedYard,
-      isTrue,
-      reason:
-          'capture $shotName: captured seat $capturedSeat token 0 centre '
-          '${_offsetText(capturedTokenCenter)} must lie in its yard '
-          'quadrant of ludo-board ${_rectText(boardRect)}',
-    );
+  _expectGloatAtFullOpacity(
+    tester,
+    replay,
+    'immediately before capture $shotName',
+  );
 
-    final Finder gloatFinder = find.byKey(Key('capture-gloat-$capturerSeat'));
-    final Offset gloatCenter = tester.getCenter(gloatFinder);
-    final bool inCapturerYard = capturerSeat == 0
-        ? _inBottomLeftQuarter(gloatCenter, boardRect)
-        : _inTopRightQuarter(gloatCenter, boardRect);
-    expect(
-      inCapturerYard,
-      isTrue,
-      reason:
-          'capture $shotName: C-468 D5.2, capture-gloat-$capturerSeat '
-          'centre ${_offsetText(gloatCenter)} must lie in seat '
-          '$capturerSeat\'s yard quadrant of ludo-board '
-          '${_rectText(boardRect)}',
-    );
-
-    await _capture(binding, tester, shotName, frames: 0);
-  } finally {
-    await _releaseTrayGame(tester, controller);
-  }
+  await _capture(binding, tester, shotName, frames: 0);
 }
 
 /// Capture 71. Two seats `[0, 2]`, viewer seat 0, English. Seat 2 holds the
