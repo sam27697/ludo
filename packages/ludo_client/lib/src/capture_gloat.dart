@@ -11,17 +11,29 @@ import 'theme.dart';
 /// How long the face stays up, reduced motion included. C-468 D5.
 const Duration kCaptureGloatLife = Duration(milliseconds: 1600);
 
+/// The last part of the life, in which the face rises and fades. A rolled
+/// die of the capturer's seat starts the same exit early. C-579 D2.
+const Duration kCaptureGloatExit = Duration(milliseconds: 250);
+
 /// Delay before the captured seat hears the gloat cue. C-468 D5.
 const Duration kCaptureGloatSoundDelay = Duration(milliseconds: 250);
 
 /// Seat and start serial the board's `gloat` parameter carries. A new
 /// [serial] is a new gloat, including one that replaces another still
 /// showing. Null on the board draws nothing. C-468 D5.
+///
+/// [yielding] is true once the screen has started the face's exit ahead of
+/// its schedule, because its seat rolled. C-579 D2.
 class BoardGloat {
-  const BoardGloat({required this.seat, required this.serial});
+  const BoardGloat({
+    required this.seat,
+    required this.serial,
+    this.yielding = false,
+  });
 
   final int seat;
   final int serial;
+  final bool yielding;
 }
 
 /// Laughing face centred by the board on seat M's viewed yard. The root
@@ -33,10 +45,14 @@ class CaptureGloat extends StatefulWidget {
     required this.serial,
     required this.diameter,
     required this.cellSize,
+    this.yielding = false,
   });
 
   final int seat;
   final int serial;
+
+  /// The exit starts now if it has not started. C-579 D2.
+  final bool yielding;
 
   /// Two cells. C-468 D5.
   final double diameter;
@@ -66,6 +82,16 @@ class _CaptureGloatState extends State<CaptureGloat>
     // A replacement has to start its pop over. C-468 D5.
     if (oldWidget.serial != widget.serial) {
       _clock.forward(from: 0);
+    } else if (widget.yielding && !oldWidget.yielding) {
+      // Straight into the face's own exit, which then plays out in
+      // [kCaptureGloatExit]. A face already leaving keeps its place.
+      // C-579 D2.
+      final double exitAt =
+          (kCaptureGloatLife - kCaptureGloatExit).inMicroseconds /
+          kCaptureGloatLife.inMicroseconds;
+      if (_clock.value < exitAt) {
+        _clock.forward(from: exitAt);
+      }
     }
   }
 
@@ -86,7 +112,7 @@ class _CaptureGloatState extends State<CaptureGloat>
           animation: _clock,
           builder: (BuildContext context, Widget? child) {
             final _GloatPose pose = _poseFor(
-              _clock.lastElapsedDuration ?? Duration.zero,
+              kCaptureGloatLife * _clock.value,
               reduced: reduced,
               cellSize: widget.cellSize,
             );
@@ -172,20 +198,24 @@ double _wobbleAt(double t) {
   return 8 * math.pi / 180 * math.sin(u * 2 * math.pi * 2);
 }
 
+final double _exitMs = kCaptureGloatExit.inMicroseconds / 1000.0;
+final double _exitStartMs =
+    (kCaptureGloatLife - kCaptureGloatExit).inMicroseconds / 1000.0;
+
 /// Half a cell upward over the last 250 ms. C-468 D5.
 double _riseAt(double t, double cellSize) {
-  if (t < 1350) {
+  if (t < _exitStartMs) {
     return 0;
   }
-  final double u = ((t - 1350) / 250).clamp(0.0, 1.0);
+  final double u = ((t - _exitStartMs) / _exitMs).clamp(0.0, 1.0);
   return -0.5 * cellSize * u;
 }
 
 double _opacityAt(double t) {
-  if (t < 1350) {
+  if (t < _exitStartMs) {
     return 1;
   }
-  final double u = ((t - 1350) / 250).clamp(0.0, 1.0);
+  final double u = ((t - _exitStartMs) / _exitMs).clamp(0.0, 1.0);
   return 1 - u;
 }
 
