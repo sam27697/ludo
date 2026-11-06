@@ -581,9 +581,9 @@ Future<void> _pumpRealDurationFrames(
 ///   - 51, 52: timer-played-other notice, _timerPlayedOtherHold 2500 ms; own
 ///     12 frames (_trayShotFrames), about 2000 ms left; frames: 0.
 ///   - 17, 18, 69, 70: capture gloat, kCaptureGloatLife 1600 ms, full opacity
-///     for the first 1350 ms. Order 578: the replay returns about 450 ms after
-///     the walk lands and 6 own frames follow; measured 740 to 800 ms after
-///     landing at the shot under flutter-tester, asserted at opacity 1.0
+///     for the first 1350 ms. Order 578: the replay returns 400 to 460 ms after
+///     the walk lands and 6 own frames follow; the shot is 720 to 800 ms after
+///     landing under flutter-tester, asserted under 1100 ms and at opacity 1.0
 ///     immediately before it; frames: 0.
 ///   - 73, 74: hint glow, _kHintGlow 800 ms; own 300 ms of pumps after the
 ///     tap, about 500 ms left; frames: 0.
@@ -7634,6 +7634,34 @@ _RealCaptureFrame _locateRealCapture(
   return found;
 }
 
+/// The progress the recorded frames of [view] before index [before] leave
+/// [seat]'s [token] at: the `to` of its last `moved`, or -1 once a `moved`
+/// has struck it (and for a token no frame has moved).
+int _recordedProgress(
+  List<Map<String, Object?>> view,
+  int before,
+  int seat,
+  int token,
+) {
+  var progress = -1;
+  for (var i = 0; i < before; i++) {
+    if (view[i]['t'] != 'moved') {
+      continue;
+    }
+    final Map<String, Object?> d = view[i]['d']! as Map<String, Object?>;
+    if (d['seat'] == seat && d['token'] == token) {
+      progress = d['to']! as int;
+    }
+    for (final Object? c in d['captured']! as List<Object?>) {
+      final Map<String, Object?> struck = c! as Map<String, Object?>;
+      if (struck['seat'] == seat && struck['token'] == token) {
+        progress = -1;
+      }
+    }
+  }
+  return progress;
+}
+
 /// A recorded game replayed to a capture and one turn past it.
 class _RealCaptureReplay {
   _RealCaptureReplay({
@@ -7773,12 +7801,26 @@ Future<_RealCaptureReplay> _replayRealGameToCapture(
         '$where: before the capturing moved, expected the mover\'s token on '
         '${found.from}',
   );
+  final int struckAt = _recordedProgress(
+    entry.view,
+    found.index,
+    found.capturedSeat,
+    found.capturedToken,
+  );
   expect(
-    _endCardTokens(controller, found.capturedSeat)[found.capturedToken],
+    struckAt,
     isNot(-1),
     reason:
-        '$where: before the capturing moved, the struck token must be out on '
-        'the track, or there is nothing to send home',
+        '$where: the recorded frames before the capturing moved leave the '
+        'struck token in its yard, so there is nothing to send home',
+  );
+  expect(
+    _endCardTokens(controller, found.capturedSeat)[found.capturedToken],
+    struckAt,
+    reason:
+        '$where: before the capturing moved, expected the struck token (seat '
+        '${found.capturedSeat} token ${found.capturedToken}) on $struckAt, '
+        'where the recorded frames before it left it',
   );
   expect(
     entry.transport.sentRaw.map(_typeOf).toList(),
@@ -7850,7 +7892,8 @@ Future<_RealCaptureReplay> _replayRealGameToCapture(
     'screenshots_test: $capture replays "$gameName" from seat $seat to '
     'capture $ordinal by seat $moverSeat ($found): ${entry.re.pushed} frames '
     'pushed, ${entry.re.rewritten} re rewritten to this device\'s request '
-    'ids, ${entry.re.dropped} re dropped ${entry.re.droppedByType}',
+    'ids, ${entry.re.dropped} re dropped ${entry.re.droppedByType}; the '
+    'replay returns ${sinceLanding.elapsedMilliseconds} ms after landing',
   );
 
   return _RealCaptureReplay(
@@ -7893,6 +7936,17 @@ double _expectGloatAtFullOpacity(
   String momentDescription,
 ) {
   final int seat = replay.found.moverSeat;
+  final int ageMs = replay.sinceLanding.elapsedMilliseconds;
+  expect(
+    ageMs,
+    lessThan(_captureShotMaxAgeMs),
+    reason:
+        '${replay.capture} ($momentDescription): expected the shot within '
+        '$_captureShotMaxAgeMs ms of the capturing walk landing, got $ageMs '
+        'ms by wall time; the gloat holds full opacity for 1350 ms and is '
+        'gone at 1600 ms, so a slower device must shorten '
+        '_captureShotSettleFrames. ${replay.describe}',
+  );
   final double opacity = _gloatOpacity(
     tester,
     seat,
@@ -12700,13 +12754,18 @@ Future<void> _shootSeatDieFourSeats(
 // integration_test/fixtures/real_games.json, through `_replayRealGameToCapture`.
 // The capturing `moved` is walked by the board, the struck token flies home
 // and the gloat starts at landing; the shot is taken `_captureShotSettleFrames`
-// pumps later, about 0.75 s after landing, inside the gloat's 1350 ms at full
+// pumps later, 720 to 800 ms after landing, inside the gloat's 1350 ms at full
 // opacity (C-468 D5, kCaptureGloatLife 1600 ms).
 
 /// Real-duration pumps (32 ms each) between the replay's last frame and the
-/// shot. The replay returns about 400 ms after landing; these end well inside
+/// shot. The replay returns 400 to 460 ms after landing; these end well inside
 /// the 1350 ms the gloat holds full opacity for.
 const int _captureShotSettleFrames = 6;
+
+/// Wall time after landing by which the shot must be taken; checked right
+/// before it, so a device too slow for [_captureShotSettleFrames] fails with
+/// the measured age instead of photographing a fading gloat.
+const int _captureShotMaxAgeMs = 1100;
 
 /// The home screen the replay starts from, in [locale]: Arabic is mounted
 /// directly through HomeScreen the way captures 16 and 20 are.
