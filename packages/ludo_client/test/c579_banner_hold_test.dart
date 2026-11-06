@@ -1,5 +1,7 @@
-// Screen proof for C-579 D5 (order 579t): the turn banner holds its line
-// while the controller's placeholder turn is up. Written from the contract's
+// Screen proof for C-579 D5 as amended by the RESPEC (order 579t): the turn
+// banner holds its line while the controller's placeholder turn is up, in
+// the one place D5 names: the own-seat plain roll line. The C-568 extra-roll
+// lines are not held (item 6(b)). Written from the contract's
 // text alone. A real GameScreen over a real RoomController on FakeTransport,
 // every state a decoded wire frame, the harness from
 // support/roll_tray_harness.dart.
@@ -11,9 +13,10 @@
 // on the fake clock.
 //
 // What the banner reads once the `turn` has arrived is the pre-C-579 reading
-// for that turn (measured on 5412df0 and written out below by its
-// localized name), so the proof that the line returns to the live turn does
-// not depend on the hold.
+// for that turn, so the proof that the line returns to the live turn does not
+// depend on the hold. Item 7 starts from an await_move turn only: the
+// void-roll flow (rolled with no legal move, then turn_passed) is not
+// asserted, since there the last non-settling line is already the roll line.
 //
 // Every failure reason starts with the scenario name and ends with the
 // frames and pumps that led to it, so a red case replays from its message.
@@ -38,6 +41,20 @@ Map<String, Object?> _moveTurn() => turnJson(
   k: 1,
   value: 4,
   legal: const <int>[1, 3],
+);
+
+/// Two legal tokens, face 4 now and face 3 still queued behind it.
+Map<String, Object?> _queuedMoveTurn() => turnJson(
+  seat: 0,
+  phase: 'await_move',
+  k: 2,
+  value: 4,
+  legal: const <int>[1, 3],
+  queue: const <int>[4, 3],
+  legalByFace: <Map<String, Object?>>[
+    faceLegal(4, const <int>[1, 3]),
+    faceLegal(3, const <int>[1, 3]),
+  ],
 );
 
 class _Rig {
@@ -113,17 +130,19 @@ void main() {
     final String lang = locale.languageCode;
 
     // -----------------------------------------------------------------
-    // Item 6: the move line survives the placeholder.
+    // Item 6(a): a plain move with more faces queued keeps the move line.
     // -----------------------------------------------------------------
     testWidgets(
-      'C-579 D5 [$lang]: my move arrives and no turn follows yet: the banner '
-      'keeps gameYourTurnMove at every frame, never gameYourTurnRoll; the '
-      'turn after a capture then reads the roll-again line it read before',
+      'C-579 D5 [$lang]: item 6(a): a plain move (no capture, no extra roll) '
+      'with faces still queued and no turn yet: the banner reads '
+      'gameYourTurnMove at every frame, never gameYourTurnRoll, and still '
+      'does when the turn arrives',
       (tester) async {
         final _Rig r = await _rig(
           tester,
-          name: 'C-579 item 6 capture',
+          name: 'C-579 item 6a plain move, faces queued',
           locale: locale,
+          turn: _queuedMoveTurn(),
         );
         try {
           final AppLocalizations loc = r.loc;
@@ -132,7 +151,7 @@ void main() {
             loc.gameYourTurnMove,
             reason: r.s.why('fixture: my move to make reads gameYourTurnMove'),
           );
-          await _pushMove(r, capture: true);
+          await _pushMove(r);
           expect(
             r.banner,
             loc.gameYourTurnMove,
@@ -150,7 +169,7 @@ void main() {
               isNot(loc.gameYourTurnRoll),
               reason: r.s.why(
                 'never gameYourTurnRoll before the turn frame, at +$at ms '
-                'after moved',
+                'after moved; it read "$banner"',
               ),
             );
             expect(
@@ -162,15 +181,21 @@ void main() {
               ),
             );
           });
-          await r.s.push('turn', turnFrame(0));
+          await r.s.push('turn', <String, Object?>{
+            'seat': 0,
+            'phase': 'await_move',
+            'deadline_ms': rollTrayDeadlineMs,
+            'value': 3,
+            'legal': const <int>[1, 3],
+            'queue': const <int>[3],
+          });
           await r.s.pump(const Duration(milliseconds: 100));
           expect(
             r.banner,
-            loc.gameRollAgainCapture,
+            loc.gameYourTurnMove,
             reason: r.s.why(
-              'the turn frame (await_roll, same seat, after a capture) '
-              'returns the banner to the live line, the roll-again-after-'
-              'capture line it read on 5412df0',
+              'the turn frame (await_move, next queued face) reads '
+              'gameYourTurnMove; it read "${r.banner}"',
             ),
           );
         } finally {
@@ -179,37 +204,57 @@ void main() {
       },
     );
 
+    // -----------------------------------------------------------------
+    // Item 6(b): a capture with extra_roll keeps C-568's own line.
+    // -----------------------------------------------------------------
     testWidgets(
-      'C-579 D5 [$lang]: a plain move and the turn goes to the other seat: '
-      'gameYourTurnMove is held, then the waiting line for Bob',
+      'C-579 D5 [$lang]: item 6(b): a capturing move with extra_roll true '
+      'and no turn yet: the banner reads gameRollAgainCapture right after '
+      'moved and at every frame, and after the turn',
       (tester) async {
         final _Rig r = await _rig(
           tester,
-          name: 'C-579 item 6 plain move',
+          name: 'C-579 item 6b capture with extra_roll',
           locale: locale,
         );
         try {
           final AppLocalizations loc = r.loc;
-          await _pushMove(r);
-          await r.pumpChecking(const Duration(milliseconds: 1000), (
+          expect(
+            r.banner,
+            loc.gameYourTurnMove,
+            reason: r.s.why('fixture: my move to make reads gameYourTurnMove'),
+          );
+          await _pushMove(r, capture: true);
+          expect(
+            r.banner,
+            loc.gameRollAgainCapture,
+            reason: r.s.why(
+              'right after moved the banner reads gameRollAgainCapture (it '
+              'read "${r.banner}")',
+            ),
+          );
+          await r.pumpChecking(const Duration(milliseconds: 1500), (
             String banner,
             int at,
           ) {
             expect(
               banner,
-              loc.gameYourTurnMove,
+              loc.gameRollAgainCapture,
               reason: r.s.why(
-                'gameYourTurnMove held at +$at ms after moved; it read '
-                '"$banner"',
+                'gameRollAgainCapture before the turn frame, at +$at ms '
+                'after moved; it read "$banner"',
               ),
             );
           });
-          await r.s.push('turn', turnFrame(2));
+          await r.s.push('turn', turnFrame(0));
           await r.s.pump(const Duration(milliseconds: 100));
           expect(
             r.banner,
-            loc.gameWaitingForPlayer('Bob'),
-            reason: r.s.why('the next seat\'s turn reads the waiting line'),
+            loc.gameRollAgainCapture,
+            reason: r.s.why(
+              'the turn frame (await_roll, same seat, after a capture) '
+              'reads gameRollAgainCapture; it read "${r.banner}"',
+            ),
           );
         } finally {
           await releaseGame(tester, r.s.drive);
