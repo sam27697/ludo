@@ -9,14 +9,17 @@
 // not vacuous by corrupting a copy eight ways (and a few more) and asserting
 // each corruption is reported against the frame it touched.
 //
-// Run from `packages/ludo_server`:
-//   dart test test/real_games_fixture_test.dart -r expanded
+// Runs from `packages/ludo_server` or from the repository root
+// (`dart test packages/ludo_server/test/real_games_fixture_test.dart`, the
+// way bin/ludo-verify.sh and CI run the server tests): the fixture path is
+// anchored on the package root, never on the working directory.
 //
 // The fixture is read-only here. A missing or unreadable file is a failure,
 // never a skip.
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:test/test.dart';
 
@@ -24,13 +27,37 @@ import 'support/real_games_check.dart';
 
 typedef Json = Map<String, Object?>;
 
-/// Loads and decodes the fixture, failing the test run if it cannot.
-Json loadRealGames([String path = realGamesFixturePath]) {
-  final File file = File(path);
+/// The absolute path of this package's root directory (the one holding
+/// `lib/` and `pubspec.yaml`), resolved from the package configuration and
+/// not from the working directory. Same method as `_packageRoot` in
+/// privacy_route_test.dart and `_oracleUri` in dice_oracle_test.dart: under
+/// `dart test` the package config is the same whether the runner was started
+/// in `packages/ludo_server` or at the repository root.
+Future<String> packageRoot() async {
+  final Uri? libUri = await Isolate.resolvePackageUri(
+    Uri.parse('package:ludo_server/ludo_server.dart'),
+  );
+  if (libUri == null) {
+    fail(
+      'could not resolve package:ludo_server/ludo_server.dart to a file URI '
+      '(cwd ${Directory.current.path}); cannot locate the fixture',
+    );
+  }
+  // <package root>/lib/ludo_server.dart
+  return File.fromUri(libUri).parent.parent.path;
+}
+
+/// Loads and decodes the fixture, failing the test run if it cannot. A
+/// relative [path] is taken relative to the server package root; an absolute
+/// one is used as given.
+Future<Json> loadRealGames([String path = realGamesFixturePath]) async {
+  final File given = File(path);
+  final File file =
+      given.isAbsolute ? given : File('${await packageRoot()}/$path');
   final String where =
       'fixture "$path" (resolved ${file.absolute.path}, cwd ${Directory.current.path})';
   if (!file.existsSync()) {
-    fail('$where does not exist; run the tests from packages/ludo_server');
+    fail('$where does not exist');
   }
   final Object? decoded;
   try {
@@ -85,6 +112,9 @@ Hit findFrame(
   fail('the fixture has no $what to corrupt');
 }
 
+/// The checker's problems on the untouched file, set once in `setUpAll`.
+late List<String> baseline;
+
 /// Asserts that corrupting the copy produced a problem containing [needle]
 /// that the untouched file did not produce.
 void expectCaught(
@@ -93,7 +123,7 @@ void expectCaught(
   String needle, {
   List<String> alsoContains = const <String>[],
 }) {
-  final List<String> before = checkRealGames(loadRealGames());
+  final List<String> before = baseline;
   final List<String> after = checkRealGames(corrupted);
   final List<String> fresh =
       after.where((String p) => !before.contains(p)).toList();
@@ -125,8 +155,9 @@ void expectCaught(
 void main() {
   late Json fixture;
 
-  setUpAll(() {
-    fixture = loadRealGames();
+  setUpAll(() async {
+    fixture = await loadRealGames();
+    baseline = checkRealGames(fixture);
   });
 
   group('the recorded file', () {
@@ -147,20 +178,19 @@ void main() {
       );
     });
 
-    test('a missing file is a failure, not a skip', () {
-      expect(
-        () =>
-            loadRealGames('../ludo_client/integration_test/fixtures/nope.json'),
+    test('a missing file is a failure, not a skip', () async {
+      await expectLater(
+        loadRealGames('../ludo_client/integration_test/fixtures/nope.json'),
         throwsA(isA<TestFailure>()),
       );
     });
 
-    test('a file that is not JSON is a failure, not a skip', () {
+    test('a file that is not JSON is a failure, not a skip', () async {
       final Directory dir = Directory.systemTemp.createTempSync('rg575');
       addTearDown(() => dir.deleteSync(recursive: true));
       final File bad = File('${dir.path}/bad.json')
         ..writeAsStringSync('{"games": [');
-      expect(() => loadRealGames(bad.path), throwsA(isA<TestFailure>()));
+      await expectLater(loadRealGames(bad.path), throwsA(isA<TestFailure>()));
     });
   });
 
