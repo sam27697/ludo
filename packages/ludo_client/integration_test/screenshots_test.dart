@@ -7872,6 +7872,26 @@ Future<_RealCaptureReplay> _replayRealGameToCapture(
       ? <String>['create_room', 'start_game']
       : <String>['join_room'];
 
+  // The burst stops short of the roll the capture spends, and the throws it
+  // queued land first. The capture's own roll then comes in about as long
+  // before the walk as a player takes to tap, so its turn's countdown has
+  // not been running through the whole drain when the shot is taken.
+  var captureRoll = found.index - 1;
+  while (captureRoll > entry.next && entry.view[captureRoll]['t'] != 'rolled') {
+    captureRoll--;
+  }
+  while (entry.next < captureRoll) {
+    entry.push();
+  }
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilThrownDiceGone(
+    tester,
+    controller,
+    capture: capture,
+    where: '$where; before the capture roll',
+  );
+
   while (entry.next < found.index) {
     entry.push();
   }
