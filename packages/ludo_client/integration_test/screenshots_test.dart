@@ -8514,30 +8514,205 @@ Map<String, Object?> _recordedResumeSnapshot(
   };
 }
 
-/// Pushes the recorded `game_log` parts verbatim, only `re` set to
-/// [requestId], and returns how many it pushed. A part over the frame limit
-/// fails here, naming the part, rather than being dropped by the client.
-int _pushRecordedGameLog(
-  FakeTransport transport, {
+/// The bytes of one `game_log` part as a whole encoded frame, measured the
+/// way the server measures it: packages/ludo_server/lib/src/connection.dart
+/// `_measurePartBytes` (~1217-1235). The envelope carries `re` set to the
+/// request id and a 22-character placeholder message id, keys in the order
+/// `encodeEnvelope` writes them (v, t, id, d, re).
+int _measureGameLogPartBytes({
+  required String gameId,
+  required int part,
+  required int parts,
+  required List<Map<String, Object?>> frames,
   required String requestId,
-  required List<Map<String, Object?>> parts,
+}) {
+  const String placeholderId = '0123456789012345678901';
+  return utf8
+      .encode(
+        jsonEncode(<String, Object?>{
+          'v': 1,
+          't': 'game_log',
+          'id': placeholderId,
+          'd': <String, Object?>{
+            'game_id': gameId,
+            'part': part,
+            'parts': parts,
+            'frames': frames,
+          },
+          're': requestId,
+        }),
+      )
+      .length;
+}
+
+/// One greedy pass at a fixed [targetParts]: packages/ludo_server/lib/src/
+/// connection.dart `_packGameLog` (~1165-1215). Each entry joins the current
+/// chunk if the part, measured as a whole frame with the part number and
+/// [targetParts] it would carry, stays within [maxFrameBytes]; otherwise the
+/// chunk closes and the entry opens the next one. Null when one entry alone
+/// does not fit.
+List<List<Map<String, Object?>>>? _packGameLogPass({
+  required List<Map<String, Object?>> entries,
+  required String gameId,
+  required String requestId,
+  required int targetParts,
+}) {
+  final List<List<Map<String, Object?>>> chunks =
+      <List<Map<String, Object?>>>[];
+  List<Map<String, Object?>> currentChunk = <Map<String, Object?>>[];
+  int currentPart = 1;
+  for (final Map<String, Object?> entry in entries) {
+    final int bytes = _measureGameLogPartBytes(
+      gameId: gameId,
+      part: currentPart,
+      parts: targetParts,
+      frames: <Map<String, Object?>>[...currentChunk, entry],
+      requestId: requestId,
+    );
+    if (bytes <= maxFrameBytes) {
+      currentChunk.add(entry);
+    } else {
+      if (currentChunk.isEmpty) {
+        return null;
+      }
+      chunks.add(currentChunk);
+      currentChunk = <Map<String, Object?>>[entry];
+      currentPart++;
+      final int singleBytes = _measureGameLogPartBytes(
+        gameId: gameId,
+        part: currentPart,
+        parts: targetParts,
+        frames: currentChunk,
+        requestId: requestId,
+      );
+      if (singleBytes > maxFrameBytes) {
+        return null;
+      }
+    }
+  }
+  if (currentChunk.isNotEmpty) {
+    chunks.add(currentChunk);
+  }
+  return chunks;
+}
+
+/// The parts the server cuts [entries] into for [requestId]: connection.dart
+/// `_publishGameLog` (~1086-1117). The target part count starts at 1 and
+/// follows the count each pass produces, at most ten passes, until a pass
+/// yields the count it was aimed at.
+List<List<Map<String, Object?>>> _packGameLogForRequest({
+  required List<Map<String, Object?>> entries,
+  required String gameId,
+  required String requestId,
   required String where,
 }) {
-  for (final Map<String, Object?> part in parts) {
-    final String text = jsonEncode(<String, Object?>{...part, 're': requestId});
+  if (entries.isEmpty) {
+    return <List<Map<String, Object?>>>[<Map<String, Object?>>[]];
+  }
+  var targetParts = 1;
+  List<List<Map<String, Object?>>>? packed;
+  for (var i = 0; i < 10; i++) {
+    packed = _packGameLogPass(
+      entries: entries,
+      gameId: gameId,
+      requestId: requestId,
+      targetParts: targetParts,
+    );
+    if (packed == null || packed.length == targetParts) {
+      break;
+    }
+    targetParts = packed.length;
+  }
+  if (packed == null) {
+    throw TestFailure(
+      '$where: the server\'s packing rule cannot fit a recorded game_log '
+      'entry in one part for request id "$requestId"',
+    );
+  }
+  return packed;
+}
+
+/// The `game_log` answer as served: the parts pushed, each as a decoded
+/// frame, in order.
+class _ServedGameLog {
+  _ServedGameLog(this.recordedParts, this.parts);
+
+  final int recordedParts;
+  final List<Map<String, Object?>> parts;
+
+  List<Map<String, Object?>> get frames => <Map<String, Object?>>[
+    for (final Map<String, Object?> part in parts)
+      for (final Object? f
+          in (part['d']! as Map<String, Object?>)['frames']! as List<Object?>)
+        f! as Map<String, Object?>,
+  ];
+}
+
+/// Answers a `game_log` request with the recorded game's log: the inner
+/// frames of the recorded parts, concatenated in recorded order and not
+/// changed, packed into parts by the server's rule for [requestId]
+/// ([_packGameLogForRequest]), each part a fresh 22-character message id with
+/// `re` set to [requestId] and the recorded `game_id`. Parts are per request,
+/// so the recorded part boundaries (cut under the recorder's own short ids)
+/// are not served. Fails if a part is over [maxFrameBytes] encoded or if the
+/// served inner frames are not the recorded ones.
+_ServedGameLog _pushRecordedGameLog(
+  FakeTransport transport, {
+  required String requestId,
+  required List<Map<String, Object?>> recordedParts,
+  required String where,
+}) {
+  final List<Map<String, Object?>> recorded = <Map<String, Object?>>[
+    for (final Map<String, Object?> part in recordedParts)
+      for (final Object? f
+          in (part['d']! as Map<String, Object?>)['frames']! as List<Object?>)
+        f! as Map<String, Object?>,
+  ];
+  final String gameId =
+      (recordedParts.first['d']! as Map<String, Object?>)['game_id']! as String;
+  final List<List<Map<String, Object?>>> chunks = _packGameLogForRequest(
+    entries: recorded,
+    gameId: gameId,
+    requestId: requestId,
+    where: where,
+  );
+  final List<Map<String, Object?>> served = <Map<String, Object?>>[];
+  for (var p = 0; p < chunks.length; p++) {
+    final Map<String, Object?> part = <String, Object?>{
+      'v': 1,
+      't': 'game_log',
+      'id': 'shot-gl-${(p + 1).toString().padLeft(14, '0')}',
+      'd': <String, Object?>{
+        'game_id': gameId,
+        'part': p + 1,
+        'parts': chunks.length,
+        'frames': chunks[p],
+      },
+      're': requestId,
+    };
+    final String text = jsonEncode(part);
     final int size = utf8.encode(text).length;
-    final int number = (part['d']! as Map<String, Object?>)['part']! as int;
     expect(
       size,
       lessThanOrEqualTo(maxFrameBytes),
       reason:
-          '$where: game_log part $number encoded to $size bytes with re '
-          '"$requestId", over the $maxFrameBytes limit; the client would '
-          'drop it',
+          '$where: served game_log part ${p + 1} of ${chunks.length} encoded '
+          'to $size bytes with re "$requestId", over the $maxFrameBytes '
+          'limit; the client would drop it',
     );
+    served.add(part);
     transport.pushText(text);
   }
-  return parts.length;
+  final _ServedGameLog log = _ServedGameLog(recordedParts.length, served);
+  expect(
+    log.frames,
+    recorded,
+    reason:
+        '$where: the served inner frames must be the recorded inner frames, '
+        'in order, unchanged (${log.frames.length} served, ${recorded.length} '
+        'recorded)',
+  );
+  return log;
 }
 
 /// The near-finish line the lose card reads for [stepsLeft] squares: the
@@ -8826,38 +9001,44 @@ Future<void> _captureReconnectLoser(
     await tester.pump(const Duration(milliseconds: 16));
   }
 
-  final List<Map<String, Object?>> parts = <Map<String, Object?>>[
+  final List<Map<String, Object?>> recordedParts = <Map<String, Object?>>[
     for (final Object? p in game.json['game_log']! as List<Object?>)
       p! as Map<String, Object?>,
   ];
   final List<String> logs = _sentOfType(live, 'game_log');
-  var partsServed = 0;
+  _ServedGameLog? servedLog;
   if (logs.length == 1) {
     expect(
       _decode(logs.single)['d'],
       isEmpty,
       reason: '$shotName: game_log is sent as {}',
     );
-    partsServed = _pushRecordedGameLog(
+    servedLog = _pushRecordedGameLog(
       live,
       requestId: _idOf(logs.single),
-      parts: parts,
+      recordedParts: recordedParts,
       where: where,
     );
     await tester.pump();
     await tester.pump();
   }
 
+  expect(
+    servedLog,
+    isNotNull,
+    reason:
+        '$shotName: expected exactly one game_log request after game_over to '
+        'answer, sent ${live.sentRaw.map(_typeOf).toList()}',
+  );
+  final int partsServed = servedLog!.parts.length;
   final GameStats served = computeGameStats(
     frames: <Frame>[
-      for (final Map<String, Object?> part in parts)
-        for (final Object? raw
-            in (part['d']! as Map<String, Object?>)['frames']! as List<Object?>)
-          Frame(
-            type: (raw! as Map<String, Object?>)['t']! as String,
-            id: 'log-entry',
-            data: (raw as Map<String, Object?>)['d']! as Map<String, Object?>,
-          ),
+      for (final Map<String, Object?> f in servedLog.frames)
+        Frame(
+          type: f['t']! as String,
+          id: 'log-entry',
+          data: f['d']! as Map<String, Object?>,
+        ),
     ],
     seat: entry.seat,
     finalTokens: _endCardTokens(controller, entry.seat),
@@ -8912,13 +9093,6 @@ Future<void> _captureReconnectLoser(
   );
 
   expect(
-    partsServed,
-    parts.length,
-    reason:
-        '$shotName: the device must have asked for the game_log once and '
-        'been served all ${parts.length} recorded parts, served $partsServed',
-  );
-  expect(
     _sentOfType(live, 'game_log'),
     hasLength(1),
     reason:
@@ -8968,7 +9142,7 @@ Future<void> _captureReconnectLoser(
     '${<String, Object?>{for (final int s in seats) 'seat $s': beforeOver.tokens[s]}}, '
     'turn seat ${beforeOver.turnSeat} ${beforeOver.phase} k ${beforeOver.k} '
     'deadline_ms ${beforeOver.deadlineMs}, game_over seq ${resumeSeq + 1}, '
-    '$partsServed game_log parts served; tiles $counts, steps left '
+    '${recordedParts.length} game_log parts recorded, $partsServed served (re-packed for the request id); tiles $counts, steps left '
     '${beforeOver.stepsLeft(entry.seat)}, lose line "$loseLine"; re: '
     '$rePushedLive recorded frames pushed live, ${entry.re.rewritten} '
     'rewritten to this device\'s ids, $reDroppedLive dropped '
