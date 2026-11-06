@@ -5509,7 +5509,8 @@ class _GameScreenState extends State<GameScreen> {
     // the same frame board.dart's own `atRestAtTruth` lets the glow (and
     // the arc nested inside it) actually draw.
     final bool autoMoveVisible = !_isEndHeld && _autoMoveTimer != null;
-    final String liveBannerText = _turnBannerText(
+    final bool settling = turn?.settling ?? false;
+    final String bannerText = _turnBannerText(
       loc,
       room,
       seat,
@@ -5518,20 +5519,12 @@ class _GameScreenState extends State<GameScreen> {
       timeUp: _myTimeUp,
       autoMoveVisible: autoMoveVisible,
       extraRoll: turn == null ? null : _extraRoll[turn.seat],
+      held: _heldBannerText,
     );
-    // C-579 D5: the placeholder turn between `moved` or `turn_passed` and
-    // the `turn` behind it says nothing, so the line keeps what it said.
-    // A finished room and a connection problem still win over the held line.
-    final bool finished =
-        room.state == RoomState.finished ||
-        room.turn?.phase == TurnPhase.finished;
-    final String? held = _heldBannerText;
-    final String bannerText =
-        (turn?.settling ?? false) && !finished && !stale && held != null
-        ? held
-        : liveBannerText;
-    if (!(turn?.settling ?? false)) {
-      _heldBannerText = liveBannerText;
+    // C-579 D5: the line a settling turn is allowed to hold is the one the
+    // last build whose turn was not settling showed.
+    if (!settling) {
+      _heldBannerText = bannerText;
     }
     final int turnSeat = turn?.seat ?? seat ?? 0;
     final Color seatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
@@ -6584,6 +6577,9 @@ List<int> _seatsInPlayOf(RoomSnapshot room) {
 /// screen saw it happen. On my own roll it comes after the auto-move line
 /// and before the plain roll line (timeUp and stale still beat it); for a
 /// watcher it replaces the waiting line.
+/// C-579 D5: [held] is the text of the last settled build. It stands in for
+/// the plain roll line, and only there, while the turn is the controller's
+/// settling placeholder.
 String _turnBannerText(
   AppLocalizations loc,
   RoomSnapshot room,
@@ -6593,6 +6589,7 @@ String _turnBannerText(
   bool timeUp = false,
   bool autoMoveVisible = false,
   _ExtraRoll? extraRoll,
+  String? held,
 }) {
   if (room.state == RoomState.finished ||
       room.turn?.phase == TurnPhase.finished) {
@@ -6618,6 +6615,12 @@ String _turnBannerText(
         case _ExtraRoll.home:
           return loc.gameRollAgainHome;
         case null:
+          // C-579 D5: a settling turn is the controller's placeholder, not
+          // the server's word that it is time to roll. The line the screen
+          // last showed for a settled turn stays.
+          if (turn.settling && held != null) {
+            return held;
+          }
           return loc.gameYourTurnRoll;
       }
     }
