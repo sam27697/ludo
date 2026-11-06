@@ -260,25 +260,25 @@ named in `verify_url`.
 |---|---|---|
 | `--target` | required | `ws://` or `wss://` URL of the running server. |
 | `--choice-seed` | 1 | Seed of the move choices. The faces are the server's, so the same seed against a fresh server gives a different game. |
-| `--max-games` | 60 | Give up after this many games: exit 2 and a line naming what is not covered, nothing written. |
+| `--max-games` | 5 | Give up after this many games: exit 2 and a line naming what is not covered, nothing written. More than 5 is refused with exit 64. |
 | `--host-name`, `--guest-name` | `Priya`, `Karim` | Display names of seat 0 and seat 2. |
 | `--out` | the fixture path | Where to write. Use a path under `/tmp` for a trial run. |
 | `--timeout-seconds` | 3000 | Bound on the whole run. |
 
-The tool plays one game after another in a single room through the rematch
-flow (`docs/PROTOCOL.md` section 16), because `create_room` allows five per hour
-per address and the sixth answers `RATE_LIMITED`. It keeps at most four games:
-the ones that together cover a win for each seat, a capture by each seat on a
-non-entry square, a `three_sixes` and a `no_legal_move` pass, and a roll that
-leaves a dead face in a queue of two or more, fewest games first and shortest
-first. It stops as soon as all are covered. It exits `1` on any protocol error
-or disagreement (the two seats saw different pushes, the `game_log` differs
-from what seat 0 received, the stored record's roll or six counts differ from
-the frames) and says which game and seed.
+Every game is played in a new room on a new pair of sockets: the host creates
+it, the guest joins by code, the host sets a seed and starts the game. There is
+no rematch, so each kept game's views begin at the socket's first frame, as a
+fresh client's would, and both sockets are closed once seat 0's `game_log` is
+fetched. `create_room` allows five per hour per address (`docs/PROTOCOL.md`
+section 7; the sixth answers `RATE_LIMITED`), so a run plays at most five games.
+If five games do not cover everything the tool exits `2` and names what is
+missing; run it again against a fresh server process, which starts with a clean
+limiter. Do not vary the address or work around the limiter.
 
-A game after the first has no `seat_assigned` at the start of its views: each
-view runs from the first frame after the previous game's last frame, which is
-the rematch lobby, through its own `game_over`. Seat 0's `game_log` answer for
-a kept game is stored in `game_log` and is not part of the next view.
-`game_log` is limited to two requests a minute per connection, so the tool
-waits out that window when two kept-looking games finish close together.
+It keeps at most four games: the ones that together cover a win for each seat,
+a capture by each seat on a non-entry square, a `three_sixes` and a
+`no_legal_move` pass, and a roll that leaves a dead face in a queue of two or
+more, fewest games first and shortest first. It stops as soon as all are
+covered. It exits `1` on any protocol error or disagreement (the two seats saw
+different pushes, the `game_log` differs from what seat 0 received, the stored
+record's roll or six counts differ from the frames) and says which game and seed.

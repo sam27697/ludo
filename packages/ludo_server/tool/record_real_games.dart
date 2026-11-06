@@ -11,12 +11,18 @@
 // server offered (`legal_by_face`, or `legal` on a server that sends no
 // faces) it sends, drawn from a `Random(--choice-seed)`.
 //
-// Games are played one after another in a single room through the rematch
-// flow of docs/PROTOCOL.md section 16, because `create_room` is limited to
-// five per hour per address (section 7, measured: the sixth from one
-// address answers RATE_LIMITED). Playing stops as soon as the kept games
-// cover everything in [_requirements]; at most [_maxKept] games are kept,
-// chosen to cover the most, then to be the fewest, then to be the shortest.
+// Every game is played in a NEW room on a new socket pair: the host creates,
+// the guest joins by code, the host sets a seed and starts the game, so each
+// game's views begin at the socket's first frame, the way a fresh client
+// enters a game. No rematch. `create_room` is limited to five per hour per
+// address (docs/PROTOCOL.md section 7, measured: the sixth from one address
+// answers RATE_LIMITED), so a run plays at most [_roomLimit] games and
+// `--max-games` above that is refused. The limiter is not worked around: when
+// five games do not cover everything the run exits 2 and the operator runs
+// it again against a fresh server process. Playing stops as soon as the kept
+// games cover everything in [_requirements]; at most [_maxKept] games are
+// kept, chosen to cover the most, then to be the fewest, then to be the
+// shortest. Both sockets of a room are closed once its `game_log` is fetched.
 //
 // Exit codes: 0 covered and written, 1 a protocol or cross-check failure
 // (nothing is written), 2 `--max-games` reached without full coverage
@@ -39,6 +45,9 @@ import 'sim/wire.dart';
 const int _hostSeat = 0;
 const int _guestSeat = 2;
 const int _maxKept = 4;
+
+/// `create_room` answers RATE_LIMITED from the sixth in an hour per address.
+const int _roomLimit = 5;
 
 /// Absolute squares that are entry squares (docs/RULES.md section 1.1).
 const Set<int> _entrySquares = <int>{0, 13, 26, 39};
@@ -77,7 +86,9 @@ usage: dart run tool/record_real_games.dart --target <ws-url> [options]
 
   --target <url>         ws:// or wss:// URL of a running server (required)
   --choice-seed <n>      seed of the move choices (default 1)
-  --max-games <n>        give up, exit 2, after this many games (default 60)
+  --max-games <n>        give up, exit 2, after this many games, one new room
+                         each (default 5, the most create_room allows an hour;
+                         more is refused, exit 64)
   --host-name <name>     seat 0 display name (default Priya)
   --guest-name <name>    seat 2 display name (default Karim)
   --out <path>           output file (default: ludo_client's
@@ -153,10 +164,19 @@ _Args _parseArgs(List<String> argv) {
     return parsed;
   }
 
+  final int maxGames = intFlag('--max-games', _roomLimit, min: 1);
+  if (maxGames > _roomLimit) {
+    throw _UsageError(
+      '--max-games $maxGames is more than $_roomLimit: create_room is limited '
+      'to $_roomLimit per hour per address and every game needs its own room. '
+      'Run again against a fresh server process instead.',
+    );
+  }
+
   return _Args(
     target: target,
     choiceSeed: intFlag('--choice-seed', 1, min: -1 << 31),
-    maxGames: intFlag('--max-games', 60, min: 1),
+    maxGames: maxGames,
     hostName: values['--host-name'] ?? 'Priya',
     guestName: values['--guest-name'] ?? 'Karim',
     out: values['--out'] ??
@@ -282,12 +302,6 @@ class _Recorder {
   String chainCommit = '';
   Map<String, Object?> rules = <String, Object?>{};
 
-  /// Where each seat's next game view starts in its [SimSocket.log].
-  final Map<int, int> viewStart = <int, int>{_hostSeat: 0, _guestSeat: 0};
-
-  /// Sent `game_log` requests, for the 2-per-minute limit of section 17.
-  final List<Stopwatch> gameLogSends = <Stopwatch>[];
-
   int gamesPlayed = 0;
   List<_Game> kept = <_Game>[];
 
@@ -313,56 +327,61 @@ class _Recorder {
   }
 
   Future<void> run() async {
-    host = await SimSocket.connect(args.target, label: 'host');
-    guest = await SimSocket.connect(args.target, label: 'guest');
-    connected = true;
-    try {
-      final String serverVersion = await _serverVersion();
-      await _openRoom();
-      while (gamesPlayed < args.maxGames) {
-        final bool first = gamesPlayed == 0;
-        final Frame openingTurn = await _begin(first: first);
-        final _Played played = await _play(openingTurn);
-        gamesPlayed++;
-        await _settle(played);
-        final int covered = _covered(kept).length;
-        stdout.writeln(
-          'game $gamesPlayed: winner seat ${played.winner}, '
-          '${played.rolls.length} rolls, kept ${kept.length}, '
-          'covered $covered/${_requirements.length}',
-        );
-        if (covered == _requirements.length) {
-          break;
+    final String serverVersion = await _serverVersion();
+    while (gamesPlayed < args.maxGames) {
+      connected = false;
+      host = await SimSocket.connect(args.target, label: 'host');
+      try {
+        guest = await SimSocket.connect(args.target, label: 'guest');
+        connected = true;
+        try {
+          await _openRoom();
+          final Frame openingTurn = await _begin();
+          final _Played played = await _play(openingTurn);
+          gamesPlayed++;
+          await _settle(played);
+          final int covered = _covered(kept).length;
+          stdout.writeln(
+            'game $gamesPlayed: winner seat ${played.winner}, '
+            '${played.rolls.length} rolls, kept ${kept.length}, '
+            'covered $covered/${_requirements.length}',
+          );
+        } finally {
+          await guest.close();
         }
+      } finally {
+        await host.close();
       }
-      final Set<String> covered = _covered(kept);
-      final List<String> missing = <String>[
-        for (final String r in _requirements)
-          if (!covered.contains(r)) r,
-      ];
-      stdout.writeln('games played: $gamesPlayed, games kept: ${kept.length}');
-      for (final _Game g in kept) {
-        stdout.writeln(
-          'kept game ${g.order} (${g.gameId}): winner seat ${g.winner}, '
-          '${g.totalRolls} rolls, covers ${(g.covers.toList()..sort()).join(', ')}',
-        );
+      if (_covered(kept).length == _requirements.length) {
+        break;
       }
-      if (missing.isNotEmpty) {
-        stdout.writeln(
-          'not covered after $gamesPlayed games: ${missing.join(', ')}',
-        );
-        exitCode = 2;
-        return;
-      }
-      stdout.writeln('coverage: all ${_requirements.length} covered '
-          '(${_requirements.join(', ')})');
-      final int bytes = _write(serverVersion);
-      stdout.writeln('wrote ${args.out} ($bytes bytes)');
-      exitCode = 0;
-    } finally {
-      await host.close();
-      await guest.close();
     }
+    final Set<String> covered = _covered(kept);
+    final List<String> missing = <String>[
+      for (final String r in _requirements)
+        if (!covered.contains(r)) r,
+    ];
+    stdout.writeln('games played: $gamesPlayed, games kept: ${kept.length}');
+    for (final _Game g in kept) {
+      stdout.writeln(
+        'kept game ${g.order} (${g.gameId}): winner seat ${g.winner}, '
+        '${g.totalRolls} rolls, covers ${(g.covers.toList()..sort()).join(', ')}',
+      );
+    }
+    if (missing.isNotEmpty) {
+      stdout.writeln(
+        'not covered after $gamesPlayed games: ${missing.join(', ')}; '
+        'run again against a fresh server process (create_room allows '
+        '$_roomLimit rooms an hour per address)',
+      );
+      exitCode = 2;
+      return;
+    }
+    stdout.writeln('coverage: all ${_requirements.length} covered '
+        '(${_requirements.join(', ')})');
+    final int bytes = _write(serverVersion);
+    stdout.writeln('wrote ${args.out} ($bytes bytes)');
+    exitCode = 0;
   }
 
   Future<String> _serverVersion() async {
@@ -393,7 +412,7 @@ class _Recorder {
     }
   }
 
-  /// Game 1's room: create, then join by code, as a host and a friend would.
+  /// A new room: create, then join by code, as a host and a friend would.
   Future<void> _openRoom() async {
     await host.send('create_room', <String, Object?>{
       'name': args.hostName,
@@ -438,35 +457,15 @@ class _Recorder {
     rules = r;
   }
 
-  /// Brings the room from the lobby (game 1) or from FINISHED (later games,
-  /// section 16) to a started game, and returns the opening `turn` frame.
+  /// Brings the lobby to a started game and returns the opening `turn` frame.
   /// The host fixes its own seed once the lobby's `chain_commit` is in hand;
   /// the guest leaves its seed to the server.
-  Future<Frame> _begin({required bool first}) async {
-    if (!first) {
-      await host.send('rematch', <String, Object?>{});
-      final Frame hostRoom =
-          await _awaitType(host, 'room', because: 'first rematch');
-      await _awaitType(guest, 'room', because: 'first rematch');
-      final Map<String, Object?> data = frameData(hostRoom);
-      if (data['state'] != 'LOBBY') {
-        throw _RunFailure('room.state after rematch is ${data['state']}, '
-            'expected LOBBY');
-      }
-      _takeRoom(data);
-    }
+  Future<Frame> _begin() async {
     final String seed = 'rec-${args.choiceSeed}-g${gamesPlayed + 1}';
     await host.send('set_seed', <String, Object?>{'client_seed': seed});
     await _awaitType(host, 'seat_seed', because: 'the host set_seed');
     await _awaitType(guest, 'seat_seed', because: 'the host set_seed');
-    if (first) {
-      await host.send('start_game', <String, Object?>{});
-    } else {
-      // The accept of the last seat starts the game itself (16.4).
-      await guest.send('rematch', <String, Object?>{});
-      await _awaitType(host, 'room', because: 'the guest accepted');
-      await _awaitType(guest, 'room', because: 'the guest accepted');
-    }
+    await host.send('start_game', <String, Object?>{});
     await _awaitType(host, 'game_started', because: 'game start');
     await _awaitType(guest, 'game_started', because: 'game start');
     await _awaitType(guest, 'turn', because: 'the opening turn');
@@ -601,24 +600,22 @@ class _Recorder {
     );
   }
 
-  /// The frames [socket] received for the game that just ended: from
-  /// [viewStart] through its last `game_over`, `pong` dropped.
+  /// The frames [socket] received, from its first frame through its last
+  /// `game_over`, `pong` dropped.
   List<Frame> _viewOf(int seat) {
     final SimSocket socket = _socketOf(seat);
-    final int start = viewStart[seat]!;
     int end = -1;
-    for (int i = socket.log.length - 1; i >= start; i--) {
+    for (int i = socket.log.length - 1; i >= 0; i--) {
       if (frameType(socket.log[i]) == 'game_over') {
         end = i;
         break;
       }
     }
     if (end < 0) {
-      throw _RunFailure('seat $seat received no game_over after log index '
-          '$start');
+      throw _RunFailure('seat $seat received no game_over');
     }
     return <Frame>[
-      for (final Frame f in socket.log.sublist(start, end + 1))
+      for (final Frame f in socket.log.sublist(0, end + 1))
         if (frameType(f) != 'pong') f,
     ];
   }
@@ -637,10 +634,6 @@ class _Recorder {
     } else {
       kept = best..sort((_Game a, _Game b) => a.order.compareTo(b.order));
     }
-    // Everything up to here belongs to the game just ended; the next game's
-    // views start at the next frame each socket receives.
-    viewStart[_hostSeat] = host.log.length;
-    viewStart[_guestSeat] = guest.log.length;
   }
 
   /// Fewest-games-first is the third key: most requirements covered, then
@@ -961,15 +954,7 @@ class _Recorder {
   /// Seat 0 asks for the `game_log` and keeps every part verbatim, after
   /// checking it is the broadcast pushes of this game that seat 0 received.
   Future<List<Frame>> _fetchGameLog(String gameId, List<Frame> hostView) async {
-    // Section 17 rule 4: two requests a minute per connection.
-    gameLogSends.removeWhere((Stopwatch w) => w.elapsed.inSeconds >= 61);
-    if (gameLogSends.length >= 2) {
-      final Duration wait =
-          const Duration(seconds: 61) - gameLogSends.first.elapsed;
-      stdout.writeln('waiting ${wait.inSeconds + 1}s for the game_log limit');
-      await Future<void>.delayed(wait);
-    }
-    gameLogSends.add(Stopwatch()..start());
+    // Section 17 rule 4 limits requests per connection; this socket asks once.
     final String id = await host.send('game_log', <String, Object?>{});
     final List<Frame> parts = <Frame>[];
     int expectedParts = 1;
