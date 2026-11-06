@@ -23,6 +23,7 @@ import 'package:flutter/widgets.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board_geometry.dart';
 import 'capture_gloat.dart';
+import 'landing_marks.dart';
 import 'move_hint.dart';
 import 'refusal_mark.dart';
 import 'safe_cue.dart';
@@ -660,6 +661,14 @@ class _LudoBoardState extends State<LudoBoard> {
   _FlyingCapture? _flying;
   Timer? _stepTimer;
 
+  // Contract C-577. Pure decoration, never read by the travel timeline above:
+  // `_bursts` holds, keyed "seat-token", the restart counter of each home
+  // burst still showing; `_flashLinger` holds the captured tokens of mine
+  // whose red ring is still fading after their disc landed in the yard.
+  final Map<String, int> _bursts = <String, int>{};
+  final Set<String> _flashLinger = <String>{};
+  int _burstSerial = 0;
+
   @override
   void dispose() {
     _shakeTimer?.cancel();
@@ -758,6 +767,8 @@ class _LudoBoardState extends State<LudoBoard> {
     _queue.clear();
     _override.clear();
     _flying = null;
+    _bursts.clear();
+    _flashLinger.clear();
     widget.onTravelReset?.call();
   }
 
@@ -851,12 +862,21 @@ class _LudoBoardState extends State<LudoBoard> {
   void _onMoveArrived(_Move move) {
     widget.onMoveLanded?.call(move.seat, move.token);
     final int? capturedSeat = move.capturedSeat;
+    if (move.newProgress == 57) {
+      // Contract C-577 rule 1: a real landing at home, whoever's token it is.
+      setState(() {
+        _bursts[_key(move.seat, move.token)] = ++_burstSerial;
+      });
+    }
     if (capturedSeat != null) {
       final int capturedToken = move.capturedToken!;
       final int fromProgress =
           _override.remove(_key(capturedSeat, capturedToken)) ??
           move.capturedOldProgress!;
       setState(() {
+        // Rule 5: a ring still fading from an earlier capture of this same
+        // token is replaced by the flight's own, never stacked beside it.
+        _flashLinger.remove(_key(capturedSeat, capturedToken));
         _flying = _FlyingCapture(
           seat: capturedSeat,
           token: capturedToken,
@@ -879,6 +899,10 @@ class _LudoBoardState extends State<LudoBoard> {
     if (flying != null && flying.seat == seat && flying.token == token) {
       setState(() {
         _flying = null;
+        if (widget.mySeat == seat) {
+          // Contract C-577 rule 2: the red ring outlives the flight.
+          _flashLinger.add(_key(seat, token));
+        }
       });
     }
     _finishPlaying();
@@ -1508,6 +1532,9 @@ class _LudoBoardState extends State<LudoBoard> {
                         tokenIndex: tokenIndex,
                         cellSize: cellSize,
                       ),
+                  // C-577: the landing marks, above every disc, in one slot
+                  // that is always there so the layers after it never shift.
+                  _landingMarks(cellSize),
                   // C-471 D4: above my disc, under the thrown die and the
                   // face picker. IgnorePointer, so a tap lands on the token.
                   if (widget.hint != null && widget.mySeat != null)
@@ -1994,6 +2021,9 @@ class _LudoBoardState extends State<LudoBoard> {
           duration: kCaptureFlightDuration,
           reducedDuration: kCaptureFlightDurationReduced,
           onArrived: () => _handleCaptureArrived(seat, tokenIndex),
+          flashKey: isMine
+              ? Key('board-captured-flash-$seat-$tokenIndex')
+              : null,
           child: token,
         ),
       );
@@ -2061,6 +2091,97 @@ class _LudoBoardState extends State<LudoBoard> {
     }
 
     return layer;
+  }
+
+  void _endFlashLinger(int seat, int token) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _flashLinger.remove(_key(seat, token));
+    });
+  }
+
+  void _endBurst(int seat, int token) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _bursts.remove(_key(seat, token));
+    });
+  }
+
+  /// Contract C-577: every landing mark still showing, in one always-present
+  /// layer (so a mark coming or going never shifts the unkeyed layers after
+  /// it, the gloat among them), above every disc, under IgnorePointer and
+  /// with no Semantics. A burst per finished token (rule 1) centred on that
+  /// token's drawn finished position and sized from the cell, and the fading
+  /// red ring (rule 2) of a captured token of mine on its drawn yard box.
+  Widget _landingMarks(double cellSize) {
+    final List<Widget> marks = <Widget>[];
+    for (final int seat in widget.seatsInPlay) {
+      for (var token = 0; token < 4; token++) {
+        final int? restart = _bursts[_key(seat, token)];
+        if (restart != null) {
+          final _TokenLayout at = _tokenLayout(
+            seat: seat,
+            tokenIndex: token,
+            progress: 57,
+            cellSize: cellSize,
+            mySeat: widget.mySeat,
+            tokens: widget.tokens,
+            seatsInPlay: widget.seatsInPlay,
+            progressOf: _drawnProgress,
+          );
+          final double side = cellSize * 3.2;
+          marks.add(
+            Positioned(
+              left: at.center.dx - side / 2,
+              top: at.center.dy - side / 2,
+              width: side,
+              height: side,
+              child: HomeBurst(
+                key: Key('board-home-burst-$seat-$token'),
+                size: side,
+                seatColor: LudoColors.seats[seat],
+                restart: restart,
+                onDone: () => _endBurst(seat, token),
+              ),
+            ),
+          );
+        }
+        if (seat == widget.mySeat && _flashLinger.contains(_key(seat, token))) {
+          final _TokenLayout at = _tokenLayout(
+            seat: seat,
+            tokenIndex: token,
+            progress: _drawnProgress(seat, token),
+            cellSize: cellSize,
+            mySeat: widget.mySeat,
+            tokens: widget.tokens,
+            seatsInPlay: widget.seatsInPlay,
+            progressOf: _drawnProgress,
+          );
+          marks.add(
+            Positioned(
+              left: at.center.dx - at.size / 2,
+              top: at.center.dy - at.size / 2,
+              width: at.size,
+              height: at.size,
+              child: CapturedFlashLinger(
+                key: Key('board-captured-flash-linger-$seat-$token'),
+                markKey: Key('board-captured-flash-$seat-$token'),
+                onDone: () => _endFlashLinger(seat, token),
+              ),
+            ),
+          );
+        }
+      }
+    }
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Stack(clipBehavior: Clip.none, children: marks),
+      ),
+    );
   }
 
   /// C-471 D4. The arrow stands wholly above the legal ring, one cell
@@ -2605,7 +2726,12 @@ class _CaptureFlight extends StatefulWidget {
     required this.reducedDuration,
     required this.onArrived,
     required this.child,
+    this.flashKey,
   });
+
+  /// Contract C-577 rule 2: when non-null the flying disc carries the red
+  /// flash under this key (mine only; null leaves the flight as it was).
+  final Key? flashKey;
 
   final Offset from;
   final Offset to;
@@ -2666,12 +2792,25 @@ class _CaptureFlightState extends State<_CaptureFlight>
           widget.to,
           _controller.value,
         )!;
+        final Key? flashKey = widget.flashKey;
         return Positioned(
           left: at.dx,
           top: at.dy,
           width: widget.size,
           height: widget.size,
-          child: widget.child,
+          child: flashKey == null
+              ? widget.child
+              : Stack(
+                  fit: StackFit.expand,
+                  clipBehavior: Clip.none,
+                  children: <Widget>[
+                    widget.child,
+                    CapturedFlashMark.inFlight(
+                      key: flashKey,
+                      u: _controller.value,
+                    ),
+                  ],
+                ),
         );
       },
     );
