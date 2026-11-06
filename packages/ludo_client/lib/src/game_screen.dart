@@ -494,6 +494,14 @@ class _GameScreenState extends State<GameScreen> {
   int _gloatSerial = 0;
   Timer? _gloatSoundTimer;
   Timer? _gloatLifeTimer;
+  // C-579 D2: pending until the face's own exit begins, on its normal
+  // schedule or because its seat rolled. True from then on.
+  Timer? _gloatExitTimer;
+  bool _gloatExiting = false;
+
+  // C-579 D5: the turn banner's text on the last build whose turn was not
+  // the controller's settling placeholder.
+  String? _heldBannerText;
   final List<_PendingGloat> _pendingGloats = <_PendingGloat>[];
 
   // C-478 D5, C-500 D1: quick messages. The screen holds one line, the
@@ -884,6 +892,11 @@ class _GameScreenState extends State<GameScreen> {
     // this, and a resync's ignored frames are skipped inside.
     if (frame.type == 'moved') {
       _considerGloat(frame);
+    }
+    // C-579 D1: the capturer's bonus roll is the event, the face is
+    // decoration around it.
+    if (frame.type == 'rolled') {
+      _yieldGloatToRoll(frame);
     }
     if (frame.type == 'game_over') {
       // Still in the air: the landing may still start one. Already down:
@@ -1334,6 +1347,9 @@ class _GameScreenState extends State<GameScreen> {
     _gloatSoundTimer = null;
     _gloatLifeTimer?.cancel();
     _gloatLifeTimer = null;
+    _gloatExitTimer?.cancel();
+    _gloatExitTimer = null;
+    _gloatExiting = false;
     _gloatSerial++;
     final int serial = _gloatSerial;
     final int seat = pending.seat;
@@ -1351,6 +1367,12 @@ class _GameScreenState extends State<GameScreen> {
         _playCue(FeedbackScope.of(context), FeedbackCue.gloat);
       });
     }
+    _gloatExitTimer = Timer(kCaptureGloatLife - kCaptureGloatExit, () {
+      _gloatExitTimer = null;
+      if (_gloat?.serial == serial) {
+        _gloatExiting = true;
+      }
+    });
     _gloatLifeTimer = Timer(kCaptureGloatLife, () {
       _gloatLifeTimer = null;
       if (_gloat?.serial != serial) {
@@ -1359,6 +1381,45 @@ class _GameScreenState extends State<GameScreen> {
       _gloat = null;
       _scheduleGloatRebuild();
     });
+  }
+
+  /// C-579 D1 to D3. A `rolled` the controller applied, for the seat whose
+  /// face is up, starts the face's own exit now instead of at 1350 ms. The
+  /// frame counts when the live turn already carries it (seat, `k` and
+  /// value), the same read [_trackRollQueue] makes. A face already leaving
+  /// keeps its schedule. The sound timer and the pending queue are not
+  /// touched.
+  void _yieldGloatToRoll(Frame frame) {
+    final BoardGloat? up = _gloat;
+    if (up == null || _gloatLifeTimer == null || _gloatExiting) {
+      return;
+    }
+    final TurnState? liveTurn = widget.controller.room?.turn;
+    final int? seat = _intAt(frame.data, 'seat');
+    if (widget.controller.hasDesynced ||
+        seat == null ||
+        seat != up.seat ||
+        liveTurn == null ||
+        liveTurn.seat != seat ||
+        liveTurn.k != _intAt(frame.data, 'k') ||
+        liveTurn.value != _intAt(frame.data, 'value')) {
+      return;
+    }
+    _gloatExiting = true;
+    _gloatExitTimer?.cancel();
+    _gloatExitTimer = null;
+    _gloatLifeTimer?.cancel();
+    final int serial = up.serial;
+    _gloat = BoardGloat(seat: up.seat, serial: serial, yielding: true);
+    _gloatLifeTimer = Timer(kCaptureGloatExit, () {
+      _gloatLifeTimer = null;
+      if (_gloat?.serial != serial) {
+        return;
+      }
+      _gloat = null;
+      _scheduleGloatRebuild();
+    });
+    _scheduleGloatRebuild();
   }
 
   /// The board reports a snap from inside its own update, so a setState
@@ -1388,6 +1449,9 @@ class _GameScreenState extends State<GameScreen> {
     _gloatSoundTimer = null;
     _gloatLifeTimer?.cancel();
     _gloatLifeTimer = null;
+    _gloatExitTimer?.cancel();
+    _gloatExitTimer = null;
+    _gloatExiting = false;
     if (pending) {
       _dropPendingGloats();
     }
@@ -1930,6 +1994,7 @@ class _GameScreenState extends State<GameScreen> {
     _shownHint = null;
     _dropPendingLandingCues();
     _removeGloat();
+    _heldBannerText = null;
     _clearChatBubbles();
     // The cooldown is the server's cadence (PROTOCOL section 25 rule 3), not
     // the game's: a new game leaves it running.
@@ -5444,6 +5509,7 @@ class _GameScreenState extends State<GameScreen> {
     // the same frame board.dart's own `atRestAtTruth` lets the glow (and
     // the arc nested inside it) actually draw.
     final bool autoMoveVisible = !_isEndHeld && _autoMoveTimer != null;
+    final bool settling = turn?.settling ?? false;
     final String bannerText = _turnBannerText(
       loc,
       room,
@@ -5453,7 +5519,13 @@ class _GameScreenState extends State<GameScreen> {
       timeUp: _myTimeUp,
       autoMoveVisible: autoMoveVisible,
       extraRoll: turn == null ? null : _extraRoll[turn.seat],
+      held: _heldBannerText,
     );
+    // C-579 D5: the line a settling turn is allowed to hold is the one the
+    // last build whose turn was not settling showed.
+    if (!settling) {
+      _heldBannerText = bannerText;
+    }
     final int turnSeat = turn?.seat ?? seat ?? 0;
     final Color seatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
     final bool myTurn = turn != null && turn.seat == seat;
@@ -6505,6 +6577,9 @@ List<int> _seatsInPlayOf(RoomSnapshot room) {
 /// screen saw it happen. On my own roll it comes after the auto-move line
 /// and before the plain roll line (timeUp and stale still beat it); for a
 /// watcher it replaces the waiting line.
+/// C-579 D5: [held] is the text of the last settled build. It stands in for
+/// the plain roll line, and only there, while the turn is the controller's
+/// settling placeholder.
 String _turnBannerText(
   AppLocalizations loc,
   RoomSnapshot room,
@@ -6514,6 +6589,7 @@ String _turnBannerText(
   bool timeUp = false,
   bool autoMoveVisible = false,
   _ExtraRoll? extraRoll,
+  String? held,
 }) {
   if (room.state == RoomState.finished ||
       room.turn?.phase == TurnPhase.finished) {
@@ -6539,6 +6615,12 @@ String _turnBannerText(
         case _ExtraRoll.home:
           return loc.gameRollAgainHome;
         case null:
+          // C-579 D5: a settling turn is the controller's placeholder, not
+          // the server's word that it is time to roll. The line the screen
+          // last showed for a settled turn stays.
+          if (turn.settling && held != null) {
+            return held;
+          }
           return loc.gameYourTurnRoll;
       }
     }

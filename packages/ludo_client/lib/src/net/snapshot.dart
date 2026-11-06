@@ -186,6 +186,7 @@ class TurnState {
     this.queue = const <int>[],
     this.legalByFace,
     this.segmentMs,
+    this.settling = false,
   });
 
   final int seat;
@@ -211,6 +212,11 @@ class TurnState {
   /// (a server built before section 26), and the caller then falls back to
   /// `rules.turn_seconds`.
   final int? segmentMs;
+
+  /// C-579 D4: true only on the placeholder the controller builds for a
+  /// `moved` or a `turn_passed`, which lives until the `turn` frame the
+  /// server sends right behind it. Says "not known yet". Never on the wire.
+  final bool settling;
 
   factory TurnState.fromJson(Map<String, Object?> json) {
     final int seat = _reqInt(json, 'seat');

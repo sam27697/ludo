@@ -1644,6 +1644,7 @@ class RoomController extends ChangeNotifier {
             legal: null,
             sixes: null,
             segmentMs: currentTurn.segmentMs,
+            settling: true,
           );
 
     final RoomSnapshot updated = turn == null
@@ -1689,6 +1690,7 @@ class RoomController extends ChangeNotifier {
             legal: null,
             sixes: null,
             segmentMs: currentTurn.segmentMs,
+            settling: true,
           );
 
     _room = turn == null

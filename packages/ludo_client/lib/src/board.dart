@@ -1612,6 +1612,7 @@ class _LudoBoardState extends State<LudoBoard> {
         child: CaptureGloat(
           seat: seat,
           serial: gloat.serial,
+          yielding: gloat.yielding,
           diameter: diameter,
           cellSize: cellSize,
         ),
