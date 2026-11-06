@@ -230,3 +230,55 @@ protocol pins an order) the scenario or `k` needed to see it again:
   several hundred rolls. That is a property of the simulator's move
   selection, not of the protocol or the engine, and it is why the default
   `--timeout-seconds` is 180 rather than something tighter.
+
+## Re-recording the real-game fixture
+
+`packages/ludo_client/integration_test/fixtures/real_games.json` holds complete
+two-player games played over the wire against a real server process, so the
+client's end cards and captures can be built from frames a server produced
+rather than frames typed by hand. `packages/ludo_server/tool/record_real_games.dart`
+writes it; the file is never edited by hand.
+
+Start a server on a free port (`ss -ltn` first), with the verify URL base the
+deployed host uses, a throwaway verify directory and the commit as version:
+
+```
+export PATH=/path/to/dart-sdk/bin:$PATH
+cd packages/ludo_server
+PORT=8096 LUDO_VERIFY_BASE_URL=https://ludo.provefair.app/v/ \
+  LUDO_VERIFY_DIR=$(mktemp -d /tmp/ludo-verify.XXXXXX) \
+  LUDO_VERSION=$(git rev-parse --short HEAD) dart run bin/server.dart &
+dart run tool/record_real_games.dart --target ws://127.0.0.1:8096/ws
+```
+
+`LUDO_VERIFY_BASE_URL` must end in `/v/`; a value without the path is the right
+host with the wrong `verify_url` shape. Stop the server by its PID afterwards.
+The tool reads the stored record from the local server, never from the host
+named in `verify_url`.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--target` | required | `ws://` or `wss://` URL of the running server. |
+| `--choice-seed` | 1 | Seed of the move choices. The faces are the server's, so the same seed against a fresh server gives a different game. |
+| `--max-games` | 60 | Give up after this many games: exit 2 and a line naming what is not covered, nothing written. |
+| `--host-name`, `--guest-name` | `Priya`, `Karim` | Display names of seat 0 and seat 2. |
+| `--out` | the fixture path | Where to write. Use a path under `/tmp` for a trial run. |
+| `--timeout-seconds` | 3000 | Bound on the whole run. |
+
+The tool plays one game after another in a single room through the rematch
+flow (`docs/PROTOCOL.md` section 16), because `create_room` allows five per hour
+per address and the sixth answers `RATE_LIMITED`. It keeps at most four games:
+the ones that together cover a win for each seat, a capture by each seat on a
+non-entry square, a `three_sixes` and a `no_legal_move` pass, and a roll that
+leaves a dead face in a queue of two or more, fewest games first and shortest
+first. It stops as soon as all are covered. It exits `1` on any protocol error
+or disagreement (the two seats saw different pushes, the `game_log` differs
+from what seat 0 received, the stored record's roll or six counts differ from
+the frames) and says which game and seed.
+
+A game after the first has no `seat_assigned` at the start of its views: each
+view runs from the first frame after the previous game's last frame, which is
+the rematch lobby, through its own `game_over`. Seat 0's `game_log` answer for
+a kept game is stored in `game_log` and is not part of the next view.
+`game_log` is limited to two requests a minute per connection, so the tool
+waits out that window when two kept-looking games finish close together.
