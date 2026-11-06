@@ -137,6 +137,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart'
     show appSupportedLocales, buildAppTheme;
+import 'package:ludo_client/src/die_cube.dart' show BoardThrownDie;
 import 'package:ludo_client/src/end_card.dart' show EndCard;
 import 'package:ludo_client/src/feedback.dart'
     show FeedbackCue, FeedbackScope, FeedbackService, FeedbackSettings;
@@ -7730,6 +7731,106 @@ Future<Stopwatch> _pumpThroughCaptureWalk(
   return sinceLanding;
 }
 
+/// What waiting for the queued thrown dice cost: pumps, test-clock and wall
+/// milliseconds, and how many distinct throws were seen on the board.
+class _ThrowDrain {
+  _ThrowDrain({
+    required this.pumps,
+    required this.clockMs,
+    required this.wallMs,
+    required this.throwsSeen,
+    required this.queuedAtStart,
+  });
+
+  final int pumps;
+  final int clockMs;
+  final int wallMs;
+  final int throwsSeen;
+  final int queuedAtStart;
+
+  String get describe =>
+      '$pumps pumps, $clockMs ms on the test clock, $wallMs ms wall time, '
+      '$throwsSeen throws seen on the board, $queuedAtStart recentRolls '
+      'entries newer than the die showing at the start';
+}
+
+/// How many thrown dice the board shows, with the face of each.
+List<BoardThrownDie> _thrownDice(WidgetTester tester) => tester
+    .widgetList<BoardThrownDie>(find.byType(BoardThrownDie))
+    .toList(growable: false);
+
+/// The throw queue lives in the game screen's state, so its length cannot be
+/// read: this counts the `recentRolls` entries newer than the die showing, an
+/// upper bound (the device's own rolls are never thrown).
+int _rollsNewerThanShownDie(RoomController controller, BoardThrownDie? die) {
+  final Key? key = die?.key;
+  if (key is! ValueKey<int>) {
+    return 0;
+  }
+  final List<(int k, int face)> rolls =
+      controller.room?.recentRolls ?? const <(int k, int face)>[];
+  return rolls.where(((int k, int face) r) => r.$1 > key.value).length;
+}
+
+/// Pumps in 50 ms steps until no [BoardThrownDie] is in the tree, and until it
+/// stays absent for two consecutive pumps (the queue hands the next throw on
+/// in the pump after one ends). Bounded by 60 s of wall time: a queue that
+/// needs longer fails with its drain rate rather than being cut short.
+Future<_ThrowDrain> _pumpUntilThrownDiceGone(
+  WidgetTester tester,
+  RoomController controller, {
+  required String capture,
+  required String where,
+}) async {
+  const int maxWallMs = 60000;
+  final Stopwatch wall = Stopwatch()..start();
+  final Set<int> seen = <int>{};
+  final int queuedAtStart = _rollsNewerThanShownDie(
+    controller,
+    _thrownDice(tester).isEmpty ? null : _thrownDice(tester).first,
+  );
+  var pumps = 0;
+  var absent = 0;
+  while (absent < 2) {
+    final List<BoardThrownDie> dice = _thrownDice(tester);
+    if (dice.isEmpty) {
+      absent++;
+    } else {
+      absent = 0;
+      for (final BoardThrownDie die in dice) {
+        final Key? key = die.key;
+        if (key is ValueKey<int>) {
+          seen.add(key.value);
+        }
+      }
+      if (wall.elapsedMilliseconds >= maxWallMs) {
+        final String showing = dice
+            .map((BoardThrownDie d) => 'seat ${d.seat} face ${d.face}')
+            .join(', ');
+        final double perSecond = pumps == 0 ? 0 : seen.length / (pumps * 0.05);
+        throw TestFailure(
+          '$capture: expected every queued thrown die to be gone within '
+          '${maxWallMs ~/ 1000} s of wall time before the capturing moved, '
+          'but a thrown die ($showing) was still up after $pumps pumps '
+          '(${pumps * 50} ms on the test clock); ${seen.length} throws seen '
+          'so far (${perSecond.toStringAsFixed(2)} per test-clock second), '
+          '${_rollsNewerThanShownDie(controller, dice.first)} recentRolls '
+          'entries newer than the die showing; $where',
+        );
+      }
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+    pumps++;
+  }
+  return _ThrowDrain(
+    pumps: pumps,
+    clockMs: pumps * 50,
+    wallMs: wall.elapsedMilliseconds,
+    throwsSeen: seen.length,
+    queuedAtStart: queuedAtStart,
+  );
+}
+
 /// Drives a capture the way [_replayRealGame] does (home screen, recorded
 /// name, Create or Join with the recorded code, Start for the host, the `re`
 /// rule), then stops at a capture of the recorded game: every frame before
@@ -7855,6 +7956,23 @@ Future<_RealCaptureReplay> _replayRealGameToCapture(
         'sent only its own lobby requests (no held move may fire)',
   );
 
+  // Every throw the burst queued has landed and gone before the capture: in a
+  // real game the capturer taps the move long after the last die rested. A
+  // thrown die still up would paint over the gloat.
+  final _ThrowDrain drain = await _pumpUntilThrownDiceGone(
+    tester,
+    controller,
+    capture: capture,
+    where: where,
+  );
+  expect(
+    entry.transport.sentRaw.map(_typeOf).toList(),
+    lobbyRequests,
+    reason:
+        '$where: waiting out the queued throws, the device must still have '
+        'sent only its own lobby requests (no held move may fire)',
+  );
+
   // The capture alone, walked for real.
   entry.push();
   final Stopwatch sinceLanding = await _pumpThroughCaptureWalk(
@@ -7893,7 +8011,8 @@ Future<_RealCaptureReplay> _replayRealGameToCapture(
     'capture $ordinal by seat $moverSeat ($found): ${entry.re.pushed} frames '
     'pushed, ${entry.re.rewritten} re rewritten to this device\'s request '
     'ids, ${entry.re.dropped} re dropped ${entry.re.droppedByType}; the '
-    'replay returns ${sinceLanding.elapsedMilliseconds} ms after landing',
+    'replay returns ${sinceLanding.elapsedMilliseconds} ms after landing; '
+    'queued throws needed ${drain.describe}',
   );
 
   return _RealCaptureReplay(
@@ -7946,6 +8065,16 @@ double _expectGloatAtFullOpacity(
         'ms by wall time; the gloat holds full opacity for 1350 ms and is '
         'gone at 1600 ms, so a slower device must shorten '
         '_captureShotSettleFrames. ${replay.describe}',
+  );
+  final List<BoardThrownDie> dice = _thrownDice(tester);
+  expect(
+    dice,
+    isEmpty,
+    reason:
+        '${replay.capture} ($momentDescription): expected no BoardThrownDie '
+        'on the board at the shot (it paints over the gloat), found '
+        '${dice.map((BoardThrownDie d) => 'seat ${d.seat} face ${d.face}').join(', ')}; '
+        'the capture itself is face ${replay.found.face}. ${replay.describe}',
   );
   final double opacity = _gloatOpacity(
     tester,
