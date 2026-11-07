@@ -956,11 +956,7 @@ class RoomRegistry {
     // when the rematch LOBBY first opened -- a seat that has since left can
     // never go on blocking a start, and a seat that joined since is waited
     // for like any other.
-    final List<int> occupied = room.seats.map((Seat s) => s.seat).toList();
-    final bool everyoneReady = occupied.every(ready.contains);
-    final bool atLeastTwo = occupied.length >= 2;
-    final bool everyoneConnected = room.seats.every((Seat s) => s.connected);
-    final bool autoStart = everyoneReady && atLeastTwo && everyoneConnected;
+    final bool autoStart = rematchAutoStartHolds(room);
     // docs/PROTOCOL.md section 16.4, "Everyone accepted": [room] is handed
     // back here exactly as this accept left it, still LOBBY -- starting the
     // game is the caller's job, through [startRematchAuto], once it has
@@ -969,10 +965,30 @@ class RoomRegistry {
     return RematchOk(room: room, changed: true, autoStart: autoStart);
   }
 
+  /// `docs/PROTOCOL.md` section 16.4's "Everyone accepted" condition, read
+  /// fresh off [room] at this instant: [room] is a rematch LOBBY, every
+  /// occupied seat is in `rematch.ready`, at least two seats are occupied,
+  /// and every one of them is connected. The one predicate behind the accept
+  /// path in [rematch] and, since section 16.9 rule 5, the evaluation after a
+  /// `resume` and after a `leave_room`. Pure: it changes nothing.
+  bool rematchAutoStartHolds(Room room) {
+    final Rematch? current = room.rematch;
+    if (room.state != RoomState.lobby || current == null) {
+      return false;
+    }
+    final bool everyoneReady =
+        room.seats.every((Seat s) => current.ready.contains(s.seat));
+    final bool atLeastTwo = room.seats.length >= 2;
+    final bool everyoneConnected = room.seats.every((Seat s) => s.connected);
+    return everyoneReady && atLeastTwo && everyoneConnected;
+  }
+
   /// `docs/PROTOCOL.md` section 16.4, "Everyone accepted": the exact
   /// mechanics an accepted `start_game` runs, called once the wire layer has
   /// already broadcast the `room` that `rematch` returned with
-  /// `RematchOk.autoStart` true. [room] must be that same `Room`, with
+  /// `RematchOk.autoStart` true, or, since section 16.9 rule 5, once
+  /// [rematchAutoStartHolds] is true after a `resume` or a `leave_room`.
+  /// [room] must be that same `Room`, with
   /// nothing else called against this registry in between -- this file is
   /// synchronous throughout, so a caller that does not `await` anything
   /// between the two calls gets exactly that for free.
