@@ -137,6 +137,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart'
     show appSupportedLocales, buildAppTheme;
+import 'package:ludo_client/src/board.dart' show LudoBoard;
 import 'package:ludo_client/src/die_cube.dart' show BoardThrownDie;
 import 'package:ludo_client/src/end_card.dart' show EndCard;
 import 'package:ludo_client/src/feedback.dart'
@@ -5750,11 +5751,11 @@ void main() {
   // 84-87: order 489 (C-485 D7), re-pointed by order 497 to C-492. Emulator
   // frames of the end card's replies and lines: a FINISHED room reached
   // through a real GameScreen over FakeTransport the way captures 21 and 22
-  // reach theirs, then `emote` pushes with no `re` the way captures 81-83
-  // inject them. Since C-492 the line is one bubble, the newest, drawn in the
-  // header band. Frames copied by hand into this file, no server, no
-  // pumpAndSettle once GameScreen is up. Bodies live at the bottom of the
-  // file.
+  // reach theirs (order 582: a recorded game, replayed from the home screen
+  // to its own `game_over`), then `emote` pushes with no `re` the way
+  // captures 81-83 inject them. Since C-492 the line is one bubble, the
+  // newest, drawn in the header band. No server, no pumpAndSettle once
+  // GameScreen is up. Bodies live at the bottom of the file.
   // ==========================================================================
   testWidgets('capture 84-end-lose-chat-en', (tester) async {
     await _shootEndCardChat(
@@ -5762,13 +5763,12 @@ void main() {
       binding,
       shotName: '84-end-lose-chat-en',
       locale: const Locale('en'),
+      gameName: 'guest_wins_1',
+      viewerSeat: 0,
       fourSeats: false,
       winnerSeat: 2,
       emotes: const <(int, String)>[(2, 'ha_ha')],
       expectedReplies: const <String>['good_game', 'revenge', 'lucky'],
-      roomCode: 'GG84EN',
-      gameId: '6' * 16,
-      seatToken: 'tok-shot-84',
     );
   });
 
@@ -5778,13 +5778,12 @@ void main() {
       binding,
       shotName: '85-end-lose-chat-ar',
       locale: const Locale('ar'),
+      gameName: 'guest_wins_1',
+      viewerSeat: 0,
       fourSeats: false,
       winnerSeat: 2,
       emotes: const <(int, String)>[(2, 'ha_ha')],
       expectedReplies: const <String>['good_game', 'revenge', 'lucky'],
-      roomCode: 'GG85AR',
-      gameId: '7' * 16,
-      seatToken: 'tok-shot-85',
     );
   });
 
@@ -5794,13 +5793,12 @@ void main() {
       binding,
       shotName: '86-end-win-chat-en',
       locale: const Locale('en'),
+      gameName: 'four_seats_1',
+      viewerSeat: 1,
       fourSeats: true,
-      winnerSeat: 0,
-      emotes: const <(int, String)>[(1, 'good_game'), (3, 'lucky')],
+      winnerSeat: 1,
+      emotes: const <(int, String)>[(0, 'good_game'), (3, 'lucky')],
       expectedReplies: const <String>['good_game', 'ha_ha'],
-      roomCode: 'GG86EN',
-      gameId: '8' * 16,
-      seatToken: 'tok-shot-86',
     );
   });
 
@@ -5810,13 +5808,12 @@ void main() {
       binding,
       shotName: '87-end-lose-chat-ar-large-text',
       locale: const Locale('ar'),
+      gameName: 'guest_wins_1',
+      viewerSeat: 0,
       fourSeats: false,
       winnerSeat: 2,
       emotes: const <(int, String)>[(2, 'revenge')],
       expectedReplies: const <String>['good_game', 'revenge', 'lucky'],
-      roomCode: 'GG87AR',
-      gameId: '9' * 16,
-      seatToken: 'tok-shot-87',
       textScale: 2.0,
       expectNameDroppedOnPhone: true,
     );
@@ -5837,13 +5834,12 @@ void main() {
       binding,
       shotName: '88-end-chat-replace-en',
       locale: const Locale('en'),
+      gameName: 'host_wins_1',
+      viewerSeat: 0,
       fourSeats: false,
       winnerSeat: 0,
       emotes: const <(int, String)>[(2, 'good_game'), (0, 'ha_ha')],
       expectedReplies: const <String>['good_game', 'ha_ha'],
-      roomCode: 'GG88EN',
-      gameId: 'a' * 16,
-      seatToken: 'tok-shot-88',
       emoteGap: const Duration(milliseconds: 300),
     );
   });
@@ -15600,28 +15596,33 @@ void _expectChatClearOfHeader(
   }
 }
 
-/// Captures 84-87 (order 489, C-485 D5.1, D5.2, D7). A room walked to
-/// FINISHED through a real GameScreen: two seats `[0, 2]` or, with
-/// [fourSeats], `[0, 1, 2, 3]`, viewer seat 0, `game_over` naming
-/// [winnerSeat]. After the end card has settled the [emotes] land as pushes
-/// with no `re`, in order, [emoteGap] apart, and the shot is taken 400 ms after
-/// the last. Before the shot the card's variant, the one line that is up (the
-/// newest, C-492 D2, with no bubble of any other seat) and its place clear of
-/// the title and the header's buttons, and the reply chips are asserted. The
-/// line is read under C-500 D5 (the name only when it fits); [expectNameDroppedOnPhone]
-/// pins that answer for a capture whose text scale forces it.
+/// Captures 84-88 (order 489, C-485 D5.1, D5.2, D7; order 582 for the game).
+/// A room walked to FINISHED the way a player meets it: [_replayRealGame]
+/// plays the recorded game [gameName] from the home screen as [viewerSeat],
+/// then the recorded `game_over` (seat [winnerSeat] wins, which must be the
+/// fixture's winner) lands. Room code, game id, seat token and verify URL are
+/// the recorded ones. After the end card has settled its four stat tiles are
+/// asserted from the fixture's `counts` for [viewerSeat], then the [emotes]
+/// land as pushes with no `re`, in order, [emoteGap] apart, and the shot is
+/// taken 400 ms after the last. Before the shot the card's variant, the one
+/// line that is up (the newest, C-492 D2, with no bubble of any other seat),
+/// its place clear of the title and the header's buttons, the reply chips and
+/// the board's tokens (every seat on the recorded `final_tokens`) are
+/// asserted. The line is read under C-500 D5 (the name only when it fits);
+/// [expectNameDroppedOnPhone] pins that answer for a capture whose text scale
+/// forces it. [fourSeats] only names the seats and names the old fixture's
+/// players had, which the recorded game must still carry.
 Future<void> _shootEndCardChat(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
   required String shotName,
   required Locale locale,
+  required String gameName,
+  required int viewerSeat,
   required bool fourSeats,
   required int winnerSeat,
   required List<(int, String)> emotes,
   required List<String> expectedReplies,
-  required String roomCode,
-  required String gameId,
-  required String seatToken,
   double? textScale,
   bool? expectNameDroppedOnPhone,
   Duration emoteGap = Duration.zero,
@@ -15637,34 +15638,53 @@ Future<void> _shootEndCardChat(
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
   }
 
+  final _RealGame game = _realGame(gameName);
   final String scenario =
-      'room $roomCode, game $gameId, locale ${locale.languageCode}'
+      'fixture game "$gameName", viewer seat $viewerSeat, locale '
+      '${locale.languageCode}'
       '${textScale == null ? '' : ', text scale $textScale'}, winner seat '
       '$winnerSeat';
   final List<int> seats = fourSeats ? <int>[0, 1, 2, 3] : <int>[0, 2];
   final Map<int, String> names = fourSeats
       ? const <int, String>{0: 'Priya', 1: 'Karim', 2: 'Lina', 3: 'Tariq'}
       : const <int, String>{0: 'Priya', 2: 'Karim'};
-  RoomController? controller;
+  expect(
+    <Object?>[
+      game.json['seats'],
+      game.winner,
+      <int, String>{for (final int s in seats) s: game.nameOf(s)},
+    ],
+    <Object?>[seats, winnerSeat, names],
+    reason:
+        'capture $shotName ($scenario): the recorded game must seat $seats, '
+        'be won by seat $winnerSeat and name its players $names, the names '
+        'this capture\'s emote lines were written for',
+  );
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
   try {
-    final _OpenedTrayGame opened = fourSeats
-        ? await _openFourSeatHostGame(
-            tester,
-            capture: shotName,
-            roomCode: roomCode,
-            locale: locale,
-            gameId: gameId,
-            seatToken: seatToken,
-          )
-        : await _openHostGame(
-            tester,
-            capture: shotName,
-            roomCode: roomCode,
-            locale: locale,
-            gameId: gameId,
-            seatToken: seatToken,
-          );
-    controller = opened.controller;
+    await tester.pumpWidget(
+      locale.languageCode == 'ar'
+          ? _reconnectingCaptureHarness(
+              HomeScreen(
+                controllerFactory: factory.call,
+                onToggleLocale: () {},
+              ),
+              locale: locale,
+            )
+          : _ScreenshotHarness(controllerFactory: factory.call),
+    );
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+    final _RealReplay replay = await _replayRealGame(
+      tester,
+      factory,
+      capture: 'capture $shotName',
+      gameName: gameName,
+      seat: viewerSeat,
+      localeName: locale.languageCode,
+    );
+    final RoomController controller = replay.controller;
     expect(
       controller.room!.seats.map((SeatState s) => s.seat).toList(),
       seats,
@@ -15673,16 +15693,7 @@ Future<void> _shootEndCardChat(
           '${controller.room!.seats.map((SeatState s) => s.seat).toList()}',
     );
 
-    opened.transport.pushText(
-      _frame(
-        type: 'game_over',
-        data: <String, Object?>{
-          'winner': winnerSeat,
-          'verify_url': 'https://verify.example.invalid/shot$shotName',
-          'seq': opened.seq + 1,
-        },
-      ),
-    );
+    replay.pushGameOver();
     await tester.pump();
     await tester.pump();
     await _pumpRealDurationFrames(tester);
@@ -15697,8 +15708,8 @@ Future<void> _shootEndCardChat(
     );
     expect(
       controller.seat,
-      0,
-      reason: 'capture $shotName ($scenario): viewer seat must be 0',
+      viewerSeat,
+      reason: 'capture $shotName ($scenario): viewer seat must be $viewerSeat',
     );
     final AppLocalizations loc = AppLocalizations.of(
       tester.element(find.byType(GameScreen)),
@@ -15723,7 +15734,7 @@ Future<void> _shootEndCardChat(
       );
     }
 
-    final bool iWon = winnerSeat == 0;
+    final bool iWon = winnerSeat == viewerSeat;
     expect(
       find.byKey(Key(iWon ? 'end-card-win' : 'end-card-lose')),
       findsOneWidget,
@@ -15757,6 +15768,19 @@ Future<void> _shootEndCardChat(
           'capture $shotName ($scenario): expected the card title '
           '"$expectedTitle", got "$shownTitle"',
     );
+    // The four tiles show the fixture's counts for the viewer's seat in the
+    // recorded game, read at run time; a count of 0 means the tile is absent
+    // (C-533 D3).
+    _expectEndCardStatTiles(
+      tester,
+      rolls: replay.counts.rolls,
+      sixes: replay.counts.sixes,
+      captures: replay.counts.captures,
+      home: replay.counts.home,
+      momentDescription:
+          'capture $shotName: after the post-game-over settle, before the '
+          'emotes (${replay.describe}; ${replay.counts})',
+    );
 
     for (final int seat in seats) {
       expect(
@@ -15785,7 +15809,7 @@ Future<void> _shootEndCardChat(
       }
       await _pushEmote(
         tester,
-        opened.transport,
+        replay.transport,
         seat: emotes[i].$1,
         emote: emotes[i].$2,
       );
@@ -15864,9 +15888,29 @@ Future<void> _shootEndCardChat(
       );
     }
 
+    // The board behind the card is the recorded game's last position: every
+    // seat's four tokens are the fixture's `final_tokens`.
+    final LudoBoard board = tester.widget<LudoBoard>(
+      find.byKey(const Key('game-screen-board')),
+    );
+    for (final int seat in seats) {
+      expect(
+        board.tokens[seat],
+        game.finalTokens(seat),
+        reason:
+            'capture $shotName ($scenario): the board must show seat $seat '
+            'on the recorded final_tokens ${game.finalTokens(seat)}, it '
+            'shows ${board.tokens[seat]}',
+      );
+    }
+
     await _capture(binding, tester, shotName, frames: 12);
   } finally {
-    await _releaseTrayGame(tester, controller);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    for (final RoomController c in factory.controllers) {
+      c.dispose();
+    }
     if (textScale != null) {
       tester.platformDispatcher.clearTextScaleFactorTestValue();
     }
