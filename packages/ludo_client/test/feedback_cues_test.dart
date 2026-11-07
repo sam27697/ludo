@@ -345,7 +345,7 @@ void main() {
   });
 
   // --- mySeat == null: every frame type gives [] -----------------------------
-  group('mySeat == null gives [] for every frame type', () {
+  group('mySeat == null gives [] for every frame type but a capture', () {
     final cases = <String, Frame>{
       'turn': _frame('turn', <String, Object?>{
         'seat': 0,
@@ -375,16 +375,6 @@ void main() {
         'captured': <Object?>[],
         'extra_roll': false,
       }),
-      'moved (captures a seat-0 token)': _frame('moved', <String, Object?>{
-        'seat': 1,
-        'token': 0,
-        'from': 5,
-        'to': 10,
-        'captured': <Object?>[
-          <String, Object?>{'seat': 0, 'token': 1},
-        ],
-        'extra_roll': false,
-      }),
       'game_over (winner 0)': _frame('game_over', <String, Object?>{
         'winner': 0,
         'verify_url': 'https://ludo.provefair.app/v/abc123',
@@ -406,6 +396,30 @@ void main() {
         );
       });
     }
+
+    // C-588 D2: the one case a null seat no longer answers [] for. It was a
+    // member of the map above (seat 1 capturing a seat-0 token, answered []
+    // for a spectator); a spectator now hears any capture between seats.
+    test('moved (captures a seat-0 token) gives [captureSeen] when mySeat is '
+        'null (C-588 D2)', () {
+      final frame = _frame('moved', <String, Object?>{
+        'seat': 1,
+        'token': 0,
+        'from': 5,
+        'to': 10,
+        'captured': <Object?>[
+          <String, Object?>{'seat': 0, 'token': 1},
+        ],
+        'extra_roll': false,
+      });
+      expect(
+        cuesForFrame(frame, mySeat: null),
+        equals(<FeedbackCue>[FeedbackCue.values.byName('captureSeen')]),
+        reason:
+            'C-588 D2: a spectator (mySeat null) hears a capture between '
+            'seats as [captureSeen]; frame.data=${frame.data}',
+      );
+    });
   });
 
   // --- malformed frames: [] and never a thrown exception ---------------------
@@ -552,16 +566,18 @@ void main() {
       ...expectedIds,
       FeedbackCue.values.byName('dieLand'): 'die_land',
       FeedbackCue.values.byName('gloat'): 'gloat',
+      FeedbackCue.values.byName('captureSeen'): 'capture_seen',
     };
 
-    test('there are exactly thirteen values, matching C-225, C-422 D1 and '
-        'C-468 D6', () {
+    test('there are exactly fourteen values, matching C-225, C-422 D1, '
+        'C-468 D6 and C-588 D1', () {
       expect(
         FeedbackCue.values,
-        hasLength(13),
+        hasLength(14),
         reason:
-            'C-225 defines ten FeedbackCue values, C-422 D1 appends tap and '
-            'C-468 D6 appends dieLand and gloat after it; got '
+            'C-225 defines ten FeedbackCue values, C-422 D1 appends tap, '
+            'C-468 D6 appends dieLand and gloat after it and C-588 D1 '
+            'appends captureSeen after gloat; got '
             '${FeedbackCue.values.length}: ${FeedbackCue.values}',
       );
       expect(
@@ -569,10 +585,11 @@ void main() {
         equals(<FeedbackCue>[
           FeedbackCue.values.byName('dieLand'),
           FeedbackCue.values.byName('gloat'),
+          FeedbackCue.values.byName('captureSeen'),
         ]),
         reason:
-            'C-468 D6: dieLand and gloat come in that order after tap; '
-            'got ${FeedbackCue.values}',
+            'C-468 D6, C-588 D1: dieLand, gloat and captureSeen come in '
+            'that order after tap; got ${FeedbackCue.values}',
       );
     });
 
@@ -620,6 +637,17 @@ void main() {
           reason: 'FeedbackCue.${entry.key.name}.id must be "${entry.value}"',
         );
       }
+    });
+  });
+
+  // --- C-588 D1: the wire id of the new cue --------------------------------
+  group('FeedbackCue.captureSeen (C-588 D1)', () {
+    test('carries the wire id capture_seen', () {
+      expect(
+        FeedbackCue.values.byName('captureSeen').id,
+        'capture_seen',
+        reason: 'C-588 D1: captureSeen.id must be "capture_seen"',
+      );
     });
   });
 
