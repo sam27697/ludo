@@ -580,6 +580,12 @@ Future<void> _pumpRealDurationFrames(
 ///     the third `rolled`; the turn_passed and turn behind it land with no
 ///     real-time gap, so, as in 15 and 16, own 10 frames (320 ms), about
 ///     1100 ms left; frames: 0.
+///   - 136-138: watcher dead-roll line and badge, _noMoveHold 1500 ms, armed
+///     by the `turn_passed` that lands with its `rolled`; own 10 frames (320
+///     ms), about 1100 ms left, asserted under 1200 ms by wall time; frames: 0.
+///   - 139, 140: countdown digits at 10, one second per value; the wait loop
+///     exits within a frame of the tick, 6 frames (about 190 ms) follow,
+///     about 800 ms left in that second; frames: 0.
 ///   - 51, 52: timer-played-other notice, _timerPlayedOtherHold 2500 ms; own
 ///     12 frames (_trayShotFrames), about 2000 ms left; frames: 0.
 ///   - 17, 18, 69, 70: capture gloat, kCaptureGloatLife 1600 ms, full opacity
@@ -3446,6 +3452,78 @@ void main() {
     );
 
     await _capture(binding, tester, '135-game-three-sixes-ar', frames: 0);
+  });
+
+  // ==========================================================================
+  // 136-140: order 587 (C-586 D1-D7). Emulator frames from recorded real games
+  // (`real_games.json`), never a typed frame. 136-138 are a watcher meeting
+  // another seat's dead roll: the recorded `rolled` with no legal move and the
+  // `turn_passed` behind it land together, and inside the 1500 ms hold the
+  // line under the die names the seat (`game-no-move-other-notice`) and that
+  // seat's die wears the red X (`board-seat-die-dead-<seat>`). 139 and 140 are
+  // the last ten seconds of a recorded turn, read in real time until the
+  // digits show 10: the ring and digits sit under
+  // `game-header-countdown-warning`. 139 is seat 0's own turn (red ring on a
+  // red seat, the case colour alone cannot tell), 140 is a watcher on seat 0's
+  // turn. Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 136-watcher-dead-roll-en', (tester) async {
+    await _shootWatcherDeadRoll(
+      tester,
+      binding,
+      shotName: '136-watcher-dead-roll-en',
+      locale: const Locale('en'),
+      gameName: 'host_wins_1',
+      viewerSeat: 0,
+      bySeat: 2,
+    );
+  });
+
+  testWidgets('capture 137-watcher-dead-roll-ar', (tester) async {
+    await _shootWatcherDeadRoll(
+      tester,
+      binding,
+      shotName: '137-watcher-dead-roll-ar',
+      locale: const Locale('ar'),
+      gameName: 'guest_wins_1',
+      viewerSeat: 2,
+      bySeat: 0,
+    );
+  });
+
+  testWidgets('capture 138-watcher-dead-roll-four-en', (tester) async {
+    await _shootWatcherDeadRoll(
+      tester,
+      binding,
+      shotName: '138-watcher-dead-roll-four-en',
+      locale: const Locale('en'),
+      gameName: 'four_seats_1',
+      viewerSeat: 1,
+    );
+  });
+
+  testWidgets('capture 139-countdown-warning-seat0-en', (tester) async {
+    await _shootCountdownWarning(
+      tester,
+      binding,
+      shotName: '139-countdown-warning-seat0-en',
+      locale: const Locale('en'),
+      gameName: 'host_wins_1',
+      viewerSeat: 0,
+      turnSeat: 0,
+    );
+  });
+
+  testWidgets('capture 140-countdown-warning-watch-ar', (tester) async {
+    await _shootCountdownWarning(
+      tester,
+      binding,
+      shotName: '140-countdown-warning-watch-ar',
+      locale: const Locale('ar'),
+      gameName: 'guest_wins_1',
+      viewerSeat: 2,
+      turnSeat: 0,
+    );
   });
 
   // ==========================================================================
@@ -20654,3 +20732,600 @@ Future<void> _shootLobbyConnectingLarge(
 bool _animationsRemoved(WidgetTester tester) => MediaQuery.disableAnimationsOf(
   tester.element(find.byKey(const Key('lobby-resync-button'))),
 );
+
+// ============================================================================
+// Order 587 (captures 136-140): C-586 from recorded real games.
+// ============================================================================
+
+/// One dead roll of a recorded view, found at run time. [index] is the
+/// `turn_passed` the recorder's `events` name for the viewer, [rolledIndex]
+/// the `rolled` right before it and [turnIndex] the `turn` before that. The
+/// face is single because that `turn` carried an empty queue: the client's
+/// dead list is the queue the seat held plus the face just rolled
+/// (`_resolveDeadCandidate`), here exactly [face].
+class _RealDeadRoll {
+  _RealDeadRoll({
+    required this.eventOrdinal,
+    required this.index,
+    required this.rolledIndex,
+    required this.turnIndex,
+    required this.seat,
+    required this.face,
+    required this.skipped,
+  });
+
+  /// Position in the game's `events` list (all kinds, from 0).
+  final int eventOrdinal;
+  final int index;
+  final int rolledIndex;
+  final int turnIndex;
+  final int seat;
+  final int face;
+
+  /// `no_legal_move` events by a seat that qualified on seat but whose
+  /// frames are not a single-face roll straight off an empty queue, as
+  /// "ordinal: reason", for the report.
+  final List<String> skipped;
+
+  @override
+  String toString() =>
+      'event $eventOrdinal, view index $index (rolled $rolledIndex, turn '
+      '$turnIndex): seat $seat rolled $face with no legal move';
+}
+
+/// The first `no_legal_move` event of the recorded game that another seat
+/// than [viewSeat] made ([bySeat] pins which, null takes any) whose frames in
+/// the viewer's [view] are a single-face dead roll: a `turn` of that seat in
+/// `await_roll` with an empty queue, the `rolled` with no `legal` and an empty
+/// `queue`, the `turn_passed` with reason `no_legal_move`. The recorder's
+/// `view_index` for the viewer names the `turn_passed`; the frames are read to
+/// confirm it, never trusted.
+_RealDeadRoll _locateRealDeadRoll(
+  _RealGame game,
+  List<Map<String, Object?>> view,
+  int viewSeat, {
+  required int? bySeat,
+  required String where,
+}) {
+  final List<Object?> events = game.json['events']! as List<Object?>;
+  final List<String> skipped = <String>[];
+  for (var ordinal = 0; ordinal < events.length; ordinal++) {
+    final Map<String, Object?> event = events[ordinal]! as Map<String, Object?>;
+    final int seat = event['seat']! as int;
+    if (event['kind'] != 'no_legal_move' ||
+        seat == viewSeat ||
+        (bySeat != null && seat != bySeat)) {
+      continue;
+    }
+    final int index =
+        (event['view_index']! as Map<String, Object?>)['$viewSeat']! as int;
+    if (index < 2) {
+      skipped.add('$ordinal: view index $index too early');
+      continue;
+    }
+    Map<String, Object?> dataOf(int i) => view[i]['d']! as Map<String, Object?>;
+    final bool passed =
+        view[index]['t'] == 'turn_passed' &&
+        dataOf(index)['seat'] == seat &&
+        dataOf(index)['reason'] == 'no_legal_move';
+    final bool rolled =
+        view[index - 1]['t'] == 'rolled' &&
+        dataOf(index - 1)['seat'] == seat &&
+        (dataOf(index - 1)['legal']! as List<Object?>).isEmpty &&
+        (dataOf(index - 1)['queue']! as List<Object?>).isEmpty;
+    final bool turn =
+        view[index - 2]['t'] == 'turn' &&
+        dataOf(index - 2)['seat'] == seat &&
+        dataOf(index - 2)['phase'] == 'await_roll' &&
+        (dataOf(index - 2)['queue']! as List<Object?>).isEmpty;
+    if (!passed || !rolled || !turn) {
+      skipped.add(
+        '$ordinal: frames at $index are not turn, rolled, turn_passed of '
+        'seat $seat with empty queues (passed $passed, rolled $rolled, turn '
+        '$turn)',
+      );
+      continue;
+    }
+    return _RealDeadRoll(
+      eventOrdinal: ordinal,
+      index: index,
+      rolledIndex: index - 1,
+      turnIndex: index - 2,
+      seat: seat,
+      face: dataOf(index - 1)['value']! as int,
+      skipped: skipped,
+    );
+  }
+  throw TestFailure(
+    '$where: expected a single-face no_legal_move by '
+    '${bySeat == null ? 'another seat' : 'seat $bySeat'} in the recorded '
+    'events, found none (skipped $skipped)',
+  );
+}
+
+/// The first `turn` of [turnSeat] in `await_roll` with an empty queue that
+/// comes after the first `moved` of the view, so the board shows a game under
+/// way and not four yards. Returns its index in [view].
+int _locateRealAwaitRollTurn(
+  List<Map<String, Object?>> view,
+  int turnSeat, {
+  required String where,
+}) {
+  final int firstMoved = view.indexWhere(
+    (Map<String, Object?> f) => f['t'] == 'moved',
+  );
+  for (var i = firstMoved + 1; firstMoved != -1 && i < view.length; i++) {
+    if (view[i]['t'] != 'turn') {
+      continue;
+    }
+    final Map<String, Object?> d = view[i]['d']! as Map<String, Object?>;
+    if (d['seat'] == turnSeat &&
+        d['phase'] == 'await_roll' &&
+        (d['queue']! as List<Object?>).isEmpty) {
+      return i;
+    }
+  }
+  throw TestFailure(
+    '$where: expected a turn of seat $turnSeat in await_roll with an empty '
+    'queue after the first moved of the recorded view, found none',
+  );
+}
+
+/// C-586 D4 `gameNoMoveOther`, written out because the getter is not on the
+/// branch this order was cut from. The text is the contract's own; once the
+/// getter exists `loc.gameNoMoveOther(name)` is the source of truth.
+String _noMoveOtherLine(String localeName, String name) => localeName == 'ar'
+    ? '$name: لا حركة بهذه الرمية'
+    : '$name: no move with this roll';
+
+/// The plain text of the `Text` at or under [finder].
+String _textUnder(WidgetTester tester, Finder finder) {
+  final Widget widget = tester.widget(finder);
+  if (widget is Text) {
+    return widget.data ?? widget.textSpan?.toPlainText() ?? '';
+  }
+  final Finder inner = find.descendant(of: finder, matching: find.byType(Text));
+  final Text text = tester.widget<Text>(inner.first);
+  return text.data ?? text.textSpan?.toPlainText() ?? '';
+}
+
+/// Captures 136-138 (order 587, C-586 D1-D3). The device is [viewerSeat] of
+/// the recorded game [gameName]; the first single-face `no_legal_move` of
+/// [bySeat] (any other seat when null) is replayed: every frame before its
+/// `rolled` goes in as one burst, the queued throws land, then the `rolled`
+/// and the `turn_passed` behind it go in together, as the server sends them.
+/// Inside the 1500 ms hold the line under the die names the seat and the
+/// seat's die wears the badge; the viewer's own no-move notice is absent and
+/// no other seat has a badge. Asserted straight after the push and again after
+/// 320 ms, then the shot.
+Future<void> _shootWatcherDeadRoll(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String gameName,
+  required int viewerSeat,
+  int? bySeat,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(_replayHome(factory, locale));
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+  addTearDown(() {
+    for (final RoomController c in factory.controllers) {
+      c.dispose();
+    }
+  });
+  final String capture = 'capture $shotName';
+  final _RealEntry entry = await _enterRealGame(
+    tester,
+    factory,
+    capture: capture,
+    gameName: gameName,
+    seat: viewerSeat,
+    localeName: locale.languageCode,
+  );
+  final RoomController controller = entry.controller;
+  final _RealDeadRoll found = _locateRealDeadRoll(
+    entry.game,
+    entry.view,
+    viewerSeat,
+    bySeat: bySeat,
+    where: entry.where,
+  );
+  final String where = '${entry.where}; dead roll: $found';
+  final List<String> lobbyRequests = entry.isHost
+      ? <String>['create_room', 'start_game']
+      : <String>['join_room'];
+  int seqOf(int index) =>
+      (entry.view[index]['d']! as Map<String, Object?>)['seq']! as int;
+
+  // Everything before the roll in one burst, then the throws it queued land
+  // and any hold they armed runs out, so the hold under test is the roll's.
+  while (entry.next < found.rolledIndex) {
+    entry.push();
+  }
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilThrownDiceGone(
+    tester,
+    controller,
+    capture: capture,
+    where: '$where; before the dead roll',
+  );
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason: '$where: seq gap before the dead roll',
+  );
+  expect(
+    controller.room?.seq,
+    seqOf(found.rolledIndex - 1),
+    reason: '$where: the controller must have absorbed every frame before it',
+  );
+  expect(
+    controller.room?.state,
+    RoomState.playing,
+    reason: '$where: the replay must be in play at the dead roll',
+  );
+
+  // The roll and the pass behind it, together.
+  final Stopwatch sincePush = Stopwatch()..start();
+  while (entry.next <= found.index) {
+    entry.push();
+  }
+  await tester.pump();
+  await tester.pump();
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason: '$where: seq gap after the dead roll',
+  );
+  expect(
+    controller.room?.seq,
+    seqOf(found.index),
+    reason: '$where: the controller must have absorbed the turn_passed',
+  );
+  expect(
+    entry.transport.sentRaw.map(_typeOf).toList(),
+    lobbyRequests,
+    reason:
+        '$where: the device must have sent only its own lobby requests; the '
+        'replay plays every roll and move for it',
+  );
+  expect(
+    controller.seat,
+    viewerSeat,
+    reason: '$where: viewer seat must be $viewerSeat',
+  );
+  expect(
+    found.seat,
+    isNot(viewerSeat),
+    reason: '$where: the dead roll must be another seat\'s',
+  );
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+  expect(
+    loc.localeName,
+    locale.languageCode,
+    reason:
+        '$where: expected locale ${locale.languageCode}, got ${loc.localeName}',
+  );
+
+  final String seatName = entry.game.nameOf(found.seat);
+  final String expectedLine = _noMoveOtherLine(locale.languageCode, seatName);
+  final List<int> seats = <int>[
+    for (final SeatState s in controller.room!.seats) s.seat,
+  ];
+  void expectWatcherView(String moment) {
+    final Finder notice = find.byKey(const Key('game-no-move-other-notice'));
+    expect(
+      notice,
+      findsOneWidget,
+      reason:
+          '$capture ($moment): C-586 D3, expected game-no-move-other-notice '
+          'on screen for seat ${found.seat}\'s dead roll of ${found.face}, '
+          'the line "$expectedLine". $where',
+    );
+    expect(
+      _textUnder(tester, notice),
+      expectedLine,
+      reason:
+          '$capture ($moment): C-586 D3, expected game-no-move-other-notice '
+          'to read "$expectedLine" ($seatName, seat ${found.seat}). $where',
+    );
+    expect(
+      find.byKey(Key('board-seat-die-dead-${found.seat}')),
+      findsOneWidget,
+      reason:
+          '$capture ($moment): C-586 D2, expected board-seat-die-dead-'
+          '${found.seat} on seat ${found.seat}\'s die for a single dead face '
+          '${found.face}. $where',
+    );
+    for (final int other in seats.where((int s) => s != found.seat)) {
+      expect(
+        find.byKey(Key('board-seat-die-dead-$other')),
+        findsNothing,
+        reason:
+            '$capture ($moment): C-586 D2, only seat ${found.seat} rolled, '
+            'so board-seat-die-dead-$other must not exist. $where',
+      );
+    }
+    expect(
+      find.byKey(const Key('game-no-move-notice')),
+      findsNothing,
+      reason:
+          '$capture ($moment): C-586 D3, game-no-move-notice is the viewer\'s '
+          'own line and seat ${found.seat} is not the viewer. $where',
+    );
+  }
+
+  expectWatcherView('straight after the roll and the pass');
+
+  // About 320 ms in, as 134 and 135 do: the 1500 ms hold still standing.
+  await _pumpRealDurationFrames(tester, frameCount: 10);
+  expectWatcherView('after the ~320ms settle, immediately before the shot');
+  final int ageMs = sincePush.elapsedMilliseconds;
+  expect(
+    ageMs,
+    lessThan(1200),
+    reason:
+        '$capture: expected the shot within 1200 ms of the roll, got $ageMs '
+        'ms by wall time; the hold is 1500 ms. $where',
+  );
+  // ignore: avoid_print
+  print(
+    'screenshots_test: $capture replays "$gameName" from seat $viewerSeat '
+    'to $found; skipped events ${found.skipped}; shot $ageMs ms after the '
+    'roll; ${entry.re.pushed} frames pushed',
+  );
+
+  await _capture(binding, tester, shotName, frames: 0);
+}
+
+/// Captures 139 and 140 (order 587, C-586 D6). The device is [viewerSeat] of
+/// the recorded game [gameName]; the first `turn` of [turnSeat] in
+/// `await_roll` after the game is under way is pushed on its own (everything
+/// before it first, the throws landed) and the recorded clock, 45 s, runs in
+/// real time until the digits read 10. At the start the warning wrapper is
+/// absent; at 10 it exists, the ring and the digits sit under it and the
+/// digits read 10 or less. The wait is bounded by the recorded deadline.
+Future<void> _shootCountdownWarning(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String gameName,
+  required int viewerSeat,
+  required int turnSeat,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(_replayHome(factory, locale));
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+  addTearDown(() {
+    for (final RoomController c in factory.controllers) {
+      c.dispose();
+    }
+  });
+  final String capture = 'capture $shotName';
+  final _RealEntry entry = await _enterRealGame(
+    tester,
+    factory,
+    capture: capture,
+    gameName: gameName,
+    seat: viewerSeat,
+    localeName: locale.languageCode,
+  );
+  final RoomController controller = entry.controller;
+  final int turnIndex = _locateRealAwaitRollTurn(
+    entry.view,
+    turnSeat,
+    where: entry.where,
+  );
+  final Map<String, Object?> turnData =
+      entry.view[turnIndex]['d']! as Map<String, Object?>;
+  final int recordedDeadlineMs = turnData['deadline_ms']! as int;
+  final int recordedSeconds = (recordedDeadlineMs + 999) ~/ 1000;
+  final String where =
+      '${entry.where}; turn of seat $turnSeat in await_roll at view index '
+      '$turnIndex, deadline_ms $recordedDeadlineMs';
+  final List<String> lobbyRequests = entry.isHost
+      ? <String>['create_room', 'start_game']
+      : <String>['join_room'];
+  int seqOf(int index) =>
+      (entry.view[index]['d']! as Map<String, Object?>)['seq']! as int;
+  expect(
+    recordedSeconds,
+    greaterThan(10),
+    reason:
+        '$where: the recorded turn must start with more than 10 s on the '
+        'clock for the last 10 s to be reached in real time',
+  );
+
+  // Everything before the turn in one burst, the throws landed, then the turn
+  // alone, so its clock starts with the recorded whole segment.
+  while (entry.next < turnIndex) {
+    entry.push();
+  }
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilThrownDiceGone(
+    tester,
+    controller,
+    capture: capture,
+    where: '$where; before the turn',
+  );
+  expect(
+    controller.room?.seq,
+    seqOf(turnIndex - 1),
+    reason: '$where: the controller must have absorbed every frame before it',
+  );
+  entry.push();
+  await tester.pump();
+  await tester.pump();
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason: '$where: seq gap after the turn',
+  );
+  expect(
+    controller.room?.seq,
+    seqOf(turnIndex),
+    reason: '$where: the controller must have absorbed the turn frame',
+  );
+  expect(
+    entry.transport.sentRaw.map(_typeOf).toList(),
+    lobbyRequests,
+    reason:
+        '$where: the device must have sent only its own lobby requests; the '
+        'replay plays every roll and move for it',
+  );
+  expect(
+    controller.seat,
+    viewerSeat,
+    reason: '$where: viewer seat must be $viewerSeat',
+  );
+  final TurnStateSnapshot turn = _turnOf(controller);
+  expect(
+    <Object>[turn.seat, turn.phaseName],
+    <Object>[turnSeat, 'awaitRoll'],
+    reason:
+        '$where: expected seat $turnSeat awaiting a roll, got seat '
+        '${turn.seat} in ${turn.phaseName}',
+  );
+  expect(
+    controller.room!.turn!.deadlineMs,
+    recordedDeadlineMs,
+    reason: '$where: the turn must carry the recorded deadline_ms',
+  );
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+  expect(
+    loc.localeName,
+    locale.languageCode,
+    reason:
+        '$where: expected locale ${locale.languageCode}, got ${loc.localeName}',
+  );
+
+  final Finder digits = find.byKey(const Key('game-screen-turn-countdown'));
+  final Finder ring = find.byKey(const Key('game-header-countdown-ring'));
+  final Finder warning = find.byKey(const Key('game-header-countdown-warning'));
+  String shownDigits() => _textUnder(tester, digits);
+  int? shownSeconds() {
+    final String shown = shownDigits();
+    for (var n = 0; n <= recordedSeconds; n++) {
+      if (loc.gameTurnCountdownDigits(n) == shown) {
+        return n;
+      }
+    }
+    return null;
+  }
+
+  expect(
+    digits,
+    findsOneWidget,
+    reason: '$capture: expected the countdown digits. $where',
+  );
+  expect(
+    ring,
+    findsOneWidget,
+    reason: '$capture: expected the countdown ring. $where',
+  );
+  expect(
+    shownDigits(),
+    loc.gameTurnCountdownDigits(recordedSeconds),
+    reason:
+        '$capture: expected the clock to open at the recorded '
+        '$recordedSeconds, got "${shownDigits()}". $where',
+  );
+  expect(
+    warning,
+    findsNothing,
+    reason:
+        '$capture: C-586 D6, game-header-countdown-warning must not exist '
+        'with $recordedSeconds s left. $where',
+  );
+
+  // Real time, frame by frame, until the digits read 10. Bounded by the
+  // recorded segment plus a margin, so a clock that never ticks fails with
+  // what it last showed.
+  final String targetDigits = loc.gameTurnCountdownDigits(10);
+  final Stopwatch waited = Stopwatch()..start();
+  final Duration limit = Duration(milliseconds: recordedDeadlineMs + 5000);
+  while (shownDigits() != targetDigits && waited.elapsed < limit) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  expect(
+    shownDigits(),
+    targetDigits,
+    reason:
+        '$capture: expected the digits to read "$targetDigits" within '
+        '${limit.inSeconds} s, last read "${shownDigits()}" after '
+        '${waited.elapsedMilliseconds} ms. $where',
+  );
+
+  void expectWarning(String moment) {
+    final int? seconds = shownSeconds();
+    expect(
+      seconds != null && seconds <= 10,
+      isTrue,
+      reason:
+          '$capture ($moment): expected the digits to read 10 or less, got '
+          '"${shownDigits()}". $where',
+    );
+    expect(
+      warning,
+      findsOneWidget,
+      reason:
+          '$capture ($moment): C-586 D6, expected '
+          'game-header-countdown-warning with $seconds s left on seat '
+          '$turnSeat\'s turn. $where',
+    );
+    expect(
+      find.descendant(of: warning, matching: ring),
+      findsOneWidget,
+      reason:
+          '$capture ($moment): C-586 D6, expected game-header-countdown-ring '
+          'under game-header-countdown-warning. $where',
+    );
+    expect(
+      find.descendant(of: warning, matching: digits),
+      findsOneWidget,
+      reason:
+          '$capture ($moment): C-586 D6, expected game-screen-turn-countdown '
+          'under game-header-countdown-warning. $where',
+    );
+  }
+
+  expectWarning('digits at 10');
+
+  // About 300 ms into the beat, as 89 and 90 do after their tick.
+  await _pumpRealDurationFrames(tester, frameCount: 6);
+  expectWarning('after the ~190ms settle, immediately before the shot');
+  // ignore: avoid_print
+  print(
+    'screenshots_test: $capture replays "$gameName" from seat $viewerSeat '
+    'to the turn of seat $turnSeat at view index $turnIndex; the clock took '
+    '${waited.elapsedMilliseconds} ms from $recordedSeconds to 10; '
+    '${entry.re.pushed} frames pushed',
+  );
+
+  await _capture(binding, tester, shotName, frames: 0);
+}
