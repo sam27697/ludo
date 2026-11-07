@@ -21107,17 +21107,35 @@ Future<void> _shootWatcherDeadRoll(
     );
   }
 
-  expectWatcherNothingYet('straight after the roll and the pass');
+  // The hurried throw takes about 250 ms, so a device that draws a frame every
+  // 700 ms has landed the die before the first check. The seat die's face is
+  // already on the board then and "nothing yet" cannot mean anything: skip it
+  // and say so. The pre-landing property is proven frame by frame in
+  // watcher_dead_roll_test.dart (C-589 (a)); everything from the landing on
+  // runs in both branches.
+  final Finder landedFace = find.byKey(
+    Key('board-seat-die-face-${found.seat}-${found.face}'),
+  );
+  int landedAtMs = -1;
+  if (landedFace.evaluate().isEmpty) {
+    expectWatcherNothingYet('straight after the roll and the pass');
+  } else {
+    // The landing was not seen: this first sighting is the time taken, so the
+    // age checked below can read short by up to that much on such a device.
+    landedAtMs = sincePush.elapsedMilliseconds;
+    // ignore: avoid_print
+    print(
+      'screenshots_test: $capture seat ${found.seat}\'s die had landed before '
+      'the first frame was checked, $landedAtMs ms after the push; skipping '
+      'the in-the-air check, the landing checks still run. $where',
+    );
+  }
 
   // The turn_passed hurries the dead roll's thrown die and the seat die stays
   // back until the throw has landed (C-465 D2). The landing is the frame on
   // which the seat die shows the face; each pump is timed from before it ran,
   // so the landing time taken is never later than the real one and the age
   // checked below is never short. Nothing may show before it.
-  final Finder landedFace = find.byKey(
-    Key('board-seat-die-face-${found.seat}-${found.face}'),
-  );
-  int landedAtMs = -1;
   while (landedAtMs < 0) {
     final int before = sincePush.elapsedMilliseconds;
     if (before >= 10000) {
