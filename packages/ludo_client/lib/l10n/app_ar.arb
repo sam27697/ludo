@@ -143,6 +143,8 @@
   "gameNoMoveNeedSix": "تحتاج 6 لإخراج قطعة",
   "gameNoMoveNeedExact": "تحتاج الرقم بالضبط للبيت",
   "gameNoMoveThreeSixes": "ثلاث ستّات متتالية. انتهى الدور.",
+  "gameNoMoveOther": "{name}: لا حركة بهذه الرمية",
+  "gameThreeSixesOther": "{name}: ثلاث ستّات متتالية. انتهى الدور.",
   "announceCapturedOther": "ضربت قطعة",
   "announceCapturedMe": "ضُربت قطعتك",
   "announceHome": "وصلت قطعة إلى البيت",
