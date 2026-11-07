@@ -827,6 +827,9 @@ class _GameScreenState extends State<GameScreen> {
     final int? to = _intAt(frame.data, 'to');
     final int? moverSeat = _intAt(frame.data, 'seat');
     final int? moverToken = _intAt(frame.data, 'token');
+    final int? victimSeat = frame.type == 'moved'
+        ? _capturedVictimSeat(frame.data)
+        : null;
     final bool isTravellingMove =
         frame.type == 'moved' &&
         moverSeat != null &&
@@ -885,7 +888,12 @@ class _GameScreenState extends State<GameScreen> {
         _playCue(feedback, cue);
       }
       if (landingCues.isNotEmpty) {
-        _holdLandingCues(moverSeat, moverToken, landingCues);
+        _holdLandingCues(
+          moverSeat,
+          moverToken,
+          landingCues,
+          victimSeat: victimSeat,
+        );
       }
     } else {
       if (frame.type == 'game_over') {
@@ -893,7 +901,7 @@ class _GameScreenState extends State<GameScreen> {
         _maybeFetchGameLog();
       }
       for (final FeedbackCue cue in cues) {
-        _playCue(feedback, cue);
+        _playCue(feedback, cue, moverSeat: moverSeat, victimSeat: victimSeat);
       }
     }
     // C-468 D4: my own roll that left neither canMove nor noMove after the
@@ -954,15 +962,31 @@ class _GameScreenState extends State<GameScreen> {
   static bool _isLandingCue(FeedbackCue cue) =>
       cue == FeedbackCue.capturedOther ||
       cue == FeedbackCue.capturedMe ||
+      cue == FeedbackCue.captureSeen ||
       cue == FeedbackCue.home;
 
-  void _playCues(List<FeedbackCue> cues) {
+  /// The seat of the first entry of a `moved` frame's `captured` list, the
+  /// victim a capture line names (C-588 D3); null when there is none.
+  static int? _capturedVictimSeat(Map<String, Object?> data) {
+    final Object? captured = data['captured'];
+    if (captured is! List || captured.isEmpty) {
+      return null;
+    }
+    final Object? first = captured.first;
+    if (first is! Map) {
+      return null;
+    }
+    final Object? seat = first['seat'];
+    return seat is int ? seat : null;
+  }
+
+  void _playCues(List<FeedbackCue> cues, {int? moverSeat, int? victimSeat}) {
     if (!mounted || cues.isEmpty) {
       return;
     }
     final FeedbackService feedback = FeedbackScope.of(context);
     for (final FeedbackCue cue in cues) {
-      _playCue(feedback, cue);
+      _playCue(feedback, cue, moverSeat: moverSeat, victimSeat: victimSeat);
     }
   }
 
@@ -978,13 +1002,20 @@ class _GameScreenState extends State<GameScreen> {
     FeedbackService feedback,
     FeedbackCue cue, {
     RoomSnapshot? snapshot,
+    int? moverSeat,
+    int? victimSeat,
   }) {
     feedback.play(cue);
     if (cue == FeedbackCue.yourTurn) {
       // C-518 D1, C-540 D3: my turn closes the sheets I opened, silently.
       _closeOwnSheets();
     }
-    final String? message = _announcementFor(cue, snapshot: snapshot);
+    final String? message = _announcementFor(
+      cue,
+      snapshot: snapshot,
+      moverSeat: moverSeat,
+      victimSeat: victimSeat,
+    );
     if (message != null) {
       _announce(message);
     }
@@ -1028,7 +1059,16 @@ class _GameScreenState extends State<GameScreen> {
   /// the tap's own frame, not through the frame-driven table rule 1
   /// covers); the case below exists only so this switch stays exhaustive.
   /// `dieLand` and `gloat` are sound only and answer null (C-468 D4, D5).
-  String? _announcementFor(FeedbackCue cue, {RoomSnapshot? snapshot}) {
+  ///
+  /// C-588 D3: the three capture lines name the other party, read off the
+  /// same seat labels the banner uses. A name that cannot be resolved falls
+  /// back to the unnamed line, and `captureSeen` then says nothing.
+  String? _announcementFor(
+    FeedbackCue cue, {
+    RoomSnapshot? snapshot,
+    int? moverSeat,
+    int? victimSeat,
+  }) {
     final AppLocalizations loc = AppLocalizations.of(context);
     switch (cue) {
       case FeedbackCue.yourTurn:
@@ -1037,9 +1077,22 @@ class _GameScreenState extends State<GameScreen> {
         // C-474 D3.3: the same line the notice shows.
         return _noMoveLine(loc, _noMoveReason);
       case FeedbackCue.capturedOther:
-        return loc.announceCapturedOther;
+        final String? victim = _seatNameFor(victimSeat);
+        return victim == null
+            ? loc.announceCapturedOther
+            : loc.announceCapturedOtherNamed(victim);
       case FeedbackCue.capturedMe:
-        return loc.announceCapturedMe;
+        final String? mover = _seatNameFor(moverSeat);
+        return mover == null
+            ? loc.announceCapturedMe
+            : loc.announceCapturedMeNamed(mover);
+      case FeedbackCue.captureSeen:
+        final String? capturer = _seatNameFor(moverSeat);
+        final String? struck = _seatNameFor(victimSeat);
+        if (capturer == null || struck == null) {
+          return null;
+        }
+        return loc.announceCaptureSeen(capturer, struck);
       case FeedbackCue.home:
         return loc.announceHome;
       case FeedbackCue.win:
@@ -1054,6 +1107,16 @@ class _GameScreenState extends State<GameScreen> {
       case FeedbackCue.gloat:
         return null;
     }
+  }
+
+  /// The banner's display name for [seat] in the room the controller holds,
+  /// or null when [seat] is null or no longer in the room.
+  String? _seatNameFor(int? seat) {
+    final RoomSnapshot? room = widget.controller.room;
+    if (seat == null || room == null) {
+      return null;
+    }
+    return seatLabelsFor(context, room.seats)[seat];
   }
 
   /// Rule 1's `gameOver` row: the winner's name, read off the room the same
@@ -1128,11 +1191,17 @@ class _GameScreenState extends State<GameScreen> {
     return null;
   }
 
-  void _holdLandingCues(int seat, int token, List<FeedbackCue> cues) {
+  void _holdLandingCues(
+    int seat,
+    int token,
+    List<FeedbackCue> cues, {
+    int? victimSeat,
+  }) {
     final _PendingLandingCues entry = _PendingLandingCues(
       seat: seat,
       token: token,
       cues: cues,
+      victimSeat: victimSeat,
     );
     entry.fallbackTimer = Timer(kLandingCueFallback, () {
       _onLandingCueFallback(entry);
@@ -1146,7 +1215,7 @@ class _GameScreenState extends State<GameScreen> {
     }
     entry.fallbackTimer?.cancel();
     entry.fallbackTimer = null;
-    _playCues(entry.cues);
+    _playCues(entry.cues, moverSeat: entry.seat, victimSeat: entry.victimSeat);
   }
 
   void _onBoardMoveLanded(int seat, int token) {
@@ -1162,7 +1231,11 @@ class _GameScreenState extends State<GameScreen> {
       final _PendingLandingCues entry = _pendingLandingCues.removeAt(index);
       entry.fallbackTimer?.cancel();
       entry.fallbackTimer = null;
-      _playCues(entry.cues);
+      _playCues(
+        entry.cues,
+        moverSeat: entry.seat,
+        victimSeat: entry.victimSeat,
+      );
     }
     // C-468 D5: the same landing that releases the cues starts the gloat.
     _releaseGloatForLanding(seat, token);
@@ -1233,7 +1306,11 @@ class _GameScreenState extends State<GameScreen> {
     for (final _PendingLandingCues entry in entries) {
       entry.fallbackTimer?.cancel();
       entry.fallbackTimer = null;
-      _playCues(entry.cues);
+      _playCues(
+        entry.cues,
+        moverSeat: entry.seat,
+        victimSeat: entry.victimSeat,
+      );
     }
   }
 
@@ -7236,11 +7313,15 @@ class _PendingLandingCues {
     required this.seat,
     required this.token,
     required this.cues,
+    this.victimSeat,
   });
 
   final int seat;
   final int token;
   final List<FeedbackCue> cues;
+
+  /// The seat of the first captured token, named by the capture lines.
+  final int? victimSeat;
   Timer? fallbackTimer;
 }
 
