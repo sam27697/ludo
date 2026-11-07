@@ -1377,8 +1377,10 @@ void main() {
       lobby.host.client.send('ping', <String, Object?>{});
       final Map<String, Object?> pingReply = await lobby.host.client.next();
       expect(pingReply['t'], 'pong',
-          reason: 'leave_room must never itself evaluate auto-start; got '
-              '"${pingReply['t']}" instead of this ping\'s own pong');
+          reason: 'section 16.9 rule 5: after far\'s leave mid is still '
+              'seated and not ready, so the auto-start condition does not '
+              'hold and nothing may start; got "${pingReply['t']}" instead '
+              'of this ping\'s own pong');
 
       // mid, the only remaining unready seat, now accepts. The auto-start
       // set is whoever is occupied right now -- host and mid -- not the
