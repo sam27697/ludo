@@ -7327,7 +7327,11 @@ Future<_RealEntry> _enterRealGame(
     tester,
     localeName: localeName,
     code: roomCode,
-    expectedSeatCount: seatCount,
+    // A guest's lobby holds the seats its recorded `room` lists; seats that
+    // join after it (a four-seat game) arrive as later `player_joined`s.
+    expectedSeatCount: isHost
+        ? seatCount
+        : (roomData['seats']! as List<Object?>).length,
   );
 
   if (isHost) {
