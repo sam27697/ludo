@@ -507,6 +507,13 @@ class Connection {
       seq: ok.room.seq,
     );
 
+    // docs/PROTOCOL.md section 16.9 rule 5: the resume's own frames are all
+    // out; if this seat's return completed a rematch LOBBY, start it now. The
+    // takeover of an already connected seat is evaluated too, the predicate
+    // decides. `displaced` is detached by `hub.attach` above, so it is not
+    // sent the start.
+    _startRematchIfReady(envelope, ok.room.code);
+
     if (displaced != null) {
       displaced.roomCode = null;
       displaced.seatToken = null;
@@ -558,6 +565,24 @@ class Connection {
     _publishStart(envelope, result as StartOk);
   }
 
+  /// docs/PROTOCOL.md section 16.9 rule 5: after a `resume` or an accepted
+  /// `leave_room`, starts the rematch when [RoomRegistry.rematchAutoStartHolds]
+  /// holds for the room [code] as it stands now. [envelope] is the message that
+  /// caused the evaluation; its type is named in the log line. A no-op in any room that is
+  /// not a rematch LOBBY, so the first LOBBY, PLAYING and FINISHED are
+  /// untouched. Nothing is awaited between the check and the start.
+  void _startRematchIfReady(ParsedEnvelope envelope, String code) {
+    final Room? room = registry.lookup(code);
+    if (room == null || !registry.rematchAutoStartHolds(room)) {
+      return;
+    }
+    _publishStart(
+      envelope,
+      registry.startRematchAuto(room),
+      unsolicited: true,
+    );
+  }
+
   /// Every frame a successful start decided on, in order: `docs/PROTOCOL.md`
   /// section 16.4's host-forced removal and re-seat, if this start came from
   /// that path, then section 11.2's server-drawn `seat_seed`s, then
@@ -566,7 +591,33 @@ class Connection {
   /// inside [_handleRematch], so the one client message that triggered this
   /// -- a `start_game` or a `rematch` -- is the `id` every frame in the burst
   /// answers with `re` on this socket's own copy.
-  void _publishStart(ParsedEnvelope envelope, StartOk ok) {
+  ///
+  /// [unsolicited] is the section 16.9 rule 5 start, triggered by a `resume`
+  /// or a `leave_room` and answering no request: [envelope] is then only the
+  /// trigger, named in the log line, and no frame carries `re` on any socket.
+  /// Every frame goes through `hub.broadcast` to every attached socket, the
+  /// resuming one included; a `leave_room` socket is already detached and
+  /// gets nothing. Such a start is always the plain section 16.4 "Everyone
+  /// accepted" one, so the removal and re-seat steps below are empty for it.
+  void _publishStart(
+    ParsedEnvelope envelope,
+    StartOk ok, {
+    bool unsolicited = false,
+  }) {
+    void emit(String type, Map<String, Object?> data) {
+      if (unsolicited) {
+        hub.broadcast(code: ok.room.code, type: type, data: data);
+        return;
+      }
+      _send(type: type, data: data, re: envelope.id);
+      hub.broadcast(
+        code: ok.room.code,
+        type: type,
+        data: data,
+        exceptConn: this,
+      );
+    }
+
     // docs/PROTOCOL.md section 16.4, "Not everyone": every occupied seat
     // this start removed for not being ready, ascending seat order, one
     // `player_left` each at its own seq, before anything else this start
@@ -649,13 +700,7 @@ class Connection {
     final Map<String, Object?> data =
         buildGameStarted(ok.room, ok.gameStartedSeq);
 
-    _send(type: 'game_started', data: data, re: envelope.id);
-    hub.broadcast(
-      code: ok.room.code,
-      type: 'game_started',
-      data: data,
-      exceptConn: this,
-    );
+    emit('game_started', data);
 
     // docs/PROTOCOL.md section 13.1: a standalone `turn` frame always
     // follows `game_started`, announcing the opening segment the same way
@@ -671,14 +716,9 @@ class Connection {
       phase: openingFields.phase,
       queue: openingFields.queue,
     );
-    _sendAndBroadcast(
-      room: ok.room.code,
-      type: 'turn',
-      data: turnData,
-      re: envelope.id,
-    );
+    emit('turn', turnData);
     _log(
-      type: envelope.type,
+      type: unsolicited ? 'rematch_auto_start_${envelope.type}' : envelope.type,
       id: envelope.id,
       outcome: 'ok',
       room: ok.room.code,
@@ -902,6 +942,12 @@ class Connection {
       seat: seatIndex,
       seq: ok.room.seq,
     );
+
+    // docs/PROTOCOL.md section 16.9 rule 5: the `player_left` is sent and
+    // broadcast; if the seats still occupied are now all ready and connected,
+    // start the rematch. This socket is detached above, so the start never
+    // reaches it.
+    _startRematchIfReady(envelope, code);
   }
 
   /// `rematch`, `docs/PROTOCOL.md` section 16.1. Identity-first, like the

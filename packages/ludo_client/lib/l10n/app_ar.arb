@@ -160,6 +160,8 @@
   "endRematch": "العب مرة أخرى",
   "endRematchWaiting": "بانتظار الآخرين",
   "endRematchAsk": "دعوة من {name} لجولة أخرى",
+  "endRematchSeatReady": "{name}: جاهز",
+  "endRematchSeatWaiting": "{name}: ليس بعد",
   "endRematchStartReady": "{count, plural, =2{ابدأ بلاعبَين} other{ابدأ بـ {count} لاعبين}}",
   "endRematchGone": "أُغلقت هذه الطاولة",
   "endLeft": "غادر الطاولة: {names}",

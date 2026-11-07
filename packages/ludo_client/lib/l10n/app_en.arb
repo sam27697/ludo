@@ -673,6 +673,26 @@
       }
     }
   },
+  "endRematchSeatReady": "{name}: in",
+  "@endRematchSeatReady": {
+    "description": "Spoken label of one seat's chip in the end card's ready row when that seat has accepted the rematch. For the player's own seat the name is the You string.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
+  "endRematchSeatWaiting": "{name}: not yet",
+  "@endRematchSeatWaiting": {
+    "description": "Spoken label of one seat's chip in the end card's ready row when that seat has not yet answered the rematch. For the player's own seat the name is the You string.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
   "endRematchStartReady": "{count, plural, other{Start with {count} players}}",
   "@endRematchStartReady": {
     "description": "Secondary button shown only to the host, under the waiting line, once at least two seats have accepted a rematch but not every occupied seat has. Sends start_game with the ready seats.",

@@ -1348,9 +1348,9 @@ void main() {
     // not "the first rematch") -- a departed seat would then block
     // auto-start forever even after every seat still at the table is
     // ready, leaving the room stuck needing a host-forced start_game the
-    // spec says should not be necessary here. Also proves leave_room on its
-    // own never evaluates auto-start, however the remaining seats'
-    // readiness happens to line up at that moment.
+    // spec says should not be necessary here. Also proves a leave_room that
+    // leaves a not-ready seat behind starts nothing (section 16.9 rule 5
+    // evaluates the leave, and the condition does not hold).
     test(
         'a non-ready seat leaves, then the last remaining seat\'s accept '
         'auto-starts', () async {
@@ -1371,14 +1371,15 @@ void main() {
       await lobby.mid.client.next(); // broadcast
 
       // Nothing has auto-started: of the two remaining occupied seats, only
-      // host is ready, so this is not yet the condition under test, but it
-      // also proves leave_room alone never starts the game, whatever an
-      // implementation evaluates on it.
+      // host is ready, so the leave that rule 5 evaluates does not complete
+      // the condition.
       lobby.host.client.send('ping', <String, Object?>{});
       final Map<String, Object?> pingReply = await lobby.host.client.next();
       expect(pingReply['t'], 'pong',
-          reason: 'leave_room must never itself evaluate auto-start; got '
-              '"${pingReply['t']}" instead of this ping\'s own pong');
+          reason: 'section 16.9 rule 5: after far\'s leave mid is still '
+              'seated and not ready, so the auto-start condition does not '
+              'hold and nothing may start; got "${pingReply['t']}" instead '
+              'of this ping\'s own pong');
 
       // mid, the only remaining unready seat, now accepts. The auto-start
       // set is whoever is occupied right now -- host and mid -- not the
