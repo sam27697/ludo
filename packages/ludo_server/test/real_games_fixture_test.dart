@@ -1,13 +1,15 @@
-// Proof of the recorded real-games fixture, order 575.
+// Proof of the recorded real-games fixture, orders 575 and 583t.
 //
 // `packages/ludo_client/integration_test/fixtures/real_games.json` holds
-// complete two-player games recorded off a real server socket. The store
-// captures are rebuilt from it, so every frame in it has to be one the real
-// server produces. The checks live in `support/real_games_check.dart` as one
-// pure function over the decoded JSON; this file loads the real file, asserts
-// the function finds nothing wrong with it, and then proves the function is
-// not vacuous by corrupting a copy eight ways (and a few more) and asserting
-// each corruption is reported against the frame it touched.
+// complete games of two, three or four players recorded off a real server
+// socket. The store captures are rebuilt from it, so every frame in it has to
+// be one the real server produces. The checks live in
+// `support/real_games_check.dart` as one pure function over the decoded JSON;
+// this file loads the real file, asserts the function finds nothing wrong
+// with it, and then proves the function is not vacuous by corrupting a copy
+// eight ways (and a few more) and asserting each corruption is reported
+// against the frame it touched. The four-seat game has its own group of
+// corruptions, because the seats a check names there are 0..3, not 0 and 2.
 //
 // Runs from `packages/ludo_server` or from the repository root
 // (`dart test packages/ludo_server/test/real_games_fixture_test.dart`, the
@@ -84,6 +86,26 @@ String nameOf(Json game) => game['name']! as String;
 
 int startOf(Json game, String seat) =>
     framesOf(game, seat).indexWhere((Json f) => f['t'] == 'game_started');
+
+/// Which run recorded each game: its own `recorded` object when it has one,
+/// else the top-level fields.
+String recordedOf(Json doc) => gamesOf(doc)
+    .map((Json g) =>
+        '${nameOf(g)}=${jsonEncode(g['recorded'] ?? <String, Object?>{
+              'server_version': doc['server_version'],
+              'recorded_at': doc['recorded_at'],
+              'choice_seed': doc['choice_seed'],
+            })}')
+    .join('; ');
+
+/// The first game of [players] seats in the copy. Fails the test if the copy
+/// has none.
+Json gameWith(Json doc, int players) => gamesOf(doc).firstWhere(
+      (Json g) => g['players'] == players,
+      orElse: () {
+        fail('the fixture has no $players-seat game to corrupt');
+      },
+    );
 
 class Hit {
   Hit(this.game, this.index, this.frame);
@@ -172,8 +194,9 @@ void main() {
         problems,
         isEmpty,
         reason: '${problems.length} problem(s) in $realGamesFixturePath '
-            '(choice_seed ${fixture['choice_seed']}, server_version '
-            '${fixture['server_version']}):\n'
+            '(top level: choice_seed ${fixture['choice_seed']}, '
+            'server_version ${fixture['server_version']}; per game: '
+            '${recordedOf(fixture)}):\n'
             '${problems.map((String p) => '  - $p').join('\n')}',
       );
     });
@@ -216,6 +239,61 @@ void main() {
         copy,
         'coverage: no game won by the guest',
       );
+    });
+
+    test('the four-seat game cannot stand in for a missing two-seat game', () {
+      final Json copy = deepCopy(fixture);
+      final List<Object?> games = copy['games']! as List<Object?>;
+      games.removeWhere((Object? g) => (g! as Json)['players'] == 2);
+      expect(games, isNotEmpty, reason: 'the fixture has no game of 3+ seats');
+      final List<String> problems = checkRealGames(copy);
+      for (final String needle in const <String>[
+        'coverage: no game won by the host (seat 0)',
+        'coverage: no game won by the guest (seat 2)',
+        'coverage: no capture made by seat 0',
+        'coverage: no capture made by seat 2',
+        'coverage: no turn_passed with reason three_sixes',
+        'coverage: no turn_passed with reason no_legal_move',
+      ]) {
+        expect(
+          problems,
+          contains(needle),
+          reason: 'scenario: remove every two-seat game, keep the rest\n'
+              'expected "$needle"; the checker said:\n'
+              '${problems.map((String p) => '  - $p').join('\n')}\n'
+              'reproduce: load $realGamesFixturePath, drop the games with '
+              'players 2, run checkRealGames',
+        );
+      }
+    });
+
+    test('a game of four seats with no capture says so', () {
+      final Json copy = deepCopy(fixture);
+      final Json game = gameWith(copy, 4);
+      for (final Json f in framesOf(game, '0')) {
+        if (f['t'] == 'moved') {
+          dOf(f)['captured'] = <Object?>[];
+        }
+      }
+      expectCaught(
+        'game ${nameOf(game)} view 0: every moved.captured emptied',
+        copy,
+        'game ${nameOf(game)} coverage: no capture in a 4-seat game',
+      );
+    });
+
+    test('a players count that is not 2, 3 or 4 is reported', () {
+      for (final Object? bad in <Object?>[1, 5, 0, '4', 4.0, null]) {
+        final Json copy = deepCopy(fixture);
+        final Json game = gameWith(copy, 4);
+        game['players'] = bad;
+        expectCaught(
+          'game ${nameOf(game)}: players 4 -> ${jsonEncode(bad)}',
+          copy,
+          'game ${nameOf(game)} players: is ${jsonEncode(bad)}, want 2, 3 '
+              'or 4',
+        );
+      }
     });
   });
 
@@ -485,6 +563,192 @@ void main() {
         'game ${nameOf(game)} view 0',
         alsoContains: <String>['game_over'],
       );
+    });
+  });
+
+  group('the four-seat game, one corruption each', () {
+    test('(i) a frame removed from views["3"]', () {
+      final Json copy = deepCopy(fixture);
+      final Json game = gameWith(copy, 4);
+      final List<Json> frames = framesOf(game, '3');
+      final int at = frames.indexWhere(
+        (Json f) => f['t'] == 'moved',
+        startOf(game, '3') + 1,
+      );
+      expect(at, greaterThan(0), reason: 'no moved in view 3 to remove');
+      frames.removeAt(at);
+      expectCaught(
+        '(i) game ${nameOf(game)} view 3: frame $at removed',
+        copy,
+        'game ${nameOf(game)} view 3 frame $at (',
+      );
+    });
+
+    test('(ii) counts["1"].sixes off by one', () {
+      final Json copy = deepCopy(fixture);
+      final Json game = gameWith(copy, 4);
+      final Json seat1 = (game['counts']! as Json)['1']! as Json;
+      final int was = seat1['sixes']! as int;
+      seat1['sixes'] = was + 1;
+      expectCaught(
+        '(ii) game ${nameOf(game)} counts seat 1 sixes $was -> ${was + 1}',
+        copy,
+        'game ${nameOf(game)} counts seat 1 key sixes',
+      );
+    });
+
+    test('(iii) an events index moved by one in view_index["2"]', () {
+      final Json copy = deepCopy(fixture);
+      final Json game = gameWith(copy, 4);
+      final List<Object?> events = game['events']! as List<Object?>;
+      final int n =
+          events.indexWhere((Object? e) => (e! as Json)['kind'] == 'capture');
+      expect(n, greaterThanOrEqualTo(0), reason: 'no capture event');
+      final Json vi = (events[n]! as Json)['view_index']! as Json;
+      final int was = vi['2']! as int;
+      vi['2'] = was + 1;
+      expectCaught(
+        '(iii) game ${nameOf(game)} events[$n] (capture): view_index["2"] '
+            '$was -> ${was + 1}',
+        copy,
+        'game ${nameOf(game)} events[$n] kind capture view 2 frame '
+            '${was + 1} (',
+      );
+    });
+
+    test('(iv) players set to 3 with seats left at four', () {
+      final Json copy = deepCopy(fixture);
+      final Json game = gameWith(copy, 4);
+      game['players'] = 3;
+      expectCaught(
+        '(iv) game ${nameOf(game)}: players 4 -> 3, seats left [0,1,2,3]',
+        copy,
+        'game ${nameOf(game)} seats: is [0,1,2,3], want [0,1,2]',
+      );
+      expectCaught(
+        '(iv) game ${nameOf(game)}: players 4 -> 3, the lobby room says 4',
+        copy,
+        'game ${nameOf(game)} view 0 frame',
+        alsoContains: <String>['players is 4, want 3'],
+      );
+      expectCaught(
+        '(iv) game ${nameOf(game)}: players 4 -> 3, view 3 is one too many',
+        copy,
+        'game ${nameOf(game)} view 3: present',
+      );
+    });
+
+    test('(v) a rolled.value changed in views["0"], caught by the dice chain',
+        () {
+      final Json copy = deepCopy(fixture);
+      final Json game = gameWith(copy, 4);
+      final List<Json> frames = framesOf(game, '0');
+      final int at = frames.indexWhere(
+          (Json f) => f['t'] == 'rolled' && (dOf(f)['k']! as int) >= 5);
+      expect(at, greaterThan(0), reason: 'no rolled in view 0');
+      final int was = dOf(frames[at])['value']! as int;
+      dOf(frames[at])['value'] = was % 6 + 1;
+      expectCaught(
+        '(v) game ${nameOf(game)} view 0 frame $at: rolled.value $was -> '
+            '${was % 6 + 1}',
+        copy,
+        'game ${nameOf(game)} view 0 frame $at (rolled)',
+        alsoContains: <String>['fair_dice derives'],
+      );
+    });
+
+    test('(vi) recorded.choice_seed made a string', () {
+      final Json copy = deepCopy(fixture);
+      final Json game = gameWith(copy, 4);
+      final Json rec = game['recorded']! as Json;
+      rec['choice_seed'] = '${rec['choice_seed']}';
+      expectCaught(
+        '(vi) game ${nameOf(game)} recorded.choice_seed -> '
+            '${jsonEncode(rec['choice_seed'])}',
+        copy,
+        'game ${nameOf(game)} recorded: choice_seed',
+        alsoContains: <String>['want an int'],
+      );
+    });
+
+    test('(vii) views["1"] deleted', () {
+      final Json copy = deepCopy(fixture);
+      final Json game = gameWith(copy, 4);
+      (game['views']! as Json).remove('1');
+      expectCaught(
+        '(vii) game ${nameOf(game)}: views["1"] deleted',
+        copy,
+        'game ${nameOf(game)} view 1: missing or not a list',
+      );
+    });
+  });
+
+  group('the recorded object', () {
+    Json four(Json copy) => gameWith(copy, 4);
+
+    test('a well-formed one on a two-seat game adds no problem', () {
+      final Json copy = deepCopy(fixture);
+      gamesOf(copy).first['recorded'] = <String, Object?>{
+        'server_version': 'abc1234',
+        'recorded_at': '2026-11-07T05:10:41Z',
+        'choice_seed': 7,
+      };
+      expect(
+        checkRealGames(copy).where((String p) => !baseline.contains(p)),
+        isEmpty,
+        reason:
+            'scenario: recorded object added to ${nameOf(gamesOf(copy).first)}',
+      );
+    });
+
+    final Map<String, void Function(Json rec)> cases =
+        <String, void Function(Json rec)>{
+      'an extra key': (Json r) => r['note'] = 'x',
+      'server_version missing': (Json r) => r.remove('server_version'),
+      'recorded_at missing': (Json r) => r.remove('recorded_at'),
+      'choice_seed missing': (Json r) => r.remove('choice_seed'),
+      'server_version empty': (Json r) => r['server_version'] = '',
+      'server_version a number': (Json r) => r['server_version'] = 1234567,
+      'recorded_at a date only': (Json r) => r['recorded_at'] = '2026-11-07',
+      'recorded_at with no Z': (Json r) =>
+          r['recorded_at'] = '2026-11-07T05:10:41',
+      'recorded_at with an offset': (Json r) =>
+          r['recorded_at'] = '2026-11-07T09:10:41+04:00',
+      'recorded_at month 13': (Json r) =>
+          r['recorded_at'] = '2026-13-07T05:10:41Z',
+      'recorded_at 31st of February': (Json r) =>
+          r['recorded_at'] = '2026-02-31T05:10:41Z',
+      'recorded_at not text': (Json r) => r['recorded_at'] = 1794028241,
+      'choice_seed a double': (Json r) => r['choice_seed'] = 1.5,
+      'choice_seed a bool': (Json r) => r['choice_seed'] = true,
+      'choice_seed null': (Json r) => r['choice_seed'] = null,
+    };
+    cases.forEach((String what, void Function(Json rec) corrupt) {
+      test('$what is reported', () {
+        final Json copy = deepCopy(fixture);
+        final Json game = four(copy);
+        corrupt(game['recorded']! as Json);
+        expectCaught(
+          'game ${nameOf(game)} recorded: $what -> '
+              '${jsonEncode(game['recorded'])}',
+          copy,
+          'game ${nameOf(game)} recorded: ',
+        );
+      });
+    });
+
+    test('recorded that is not an object is reported', () {
+      for (final Object? bad in <Object?>['1b42602', 3, null, <Object?>[]]) {
+        final Json copy = deepCopy(fixture);
+        final Json game = four(copy);
+        game['recorded'] = bad;
+        expectCaught(
+          'game ${nameOf(game)} recorded -> ${jsonEncode(bad)}',
+          copy,
+          'game ${nameOf(game)} recorded: is ${jsonEncode(bad)}, not an '
+              'object',
+        );
+      }
     });
   });
 }

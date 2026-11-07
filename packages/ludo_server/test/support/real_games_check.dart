@@ -11,7 +11,27 @@
 // docs/FAIRNESS.md and uses the same public packages the server uses
 // (`ludo_engine`, `fair_dice`). It does not read or import the recorder.
 //
-// What is compared between the two seat views, and what is not (check 2):
+// Seat count. Each game states `players` (2, 3 or 4; anything else is a
+// problem) and every check that names seats runs over the seat set that count
+// fixes: docs/RULES.md section 2 rules 2 and 2a (lines 65-71) and
+// docs/PROTOCOL.md section 3 and the `set_players` paragraph (lines 64-68 and
+// 857-859) give [0, 2] for two players, [0, 1, 2] for three and [0, 1, 2, 3]
+// for four. `seats`, `names`, `views`, `final_tokens`, `counts`, the keys of
+// every `events[*].view_index` and the seated set of the lobby `room` must
+// each hold exactly that set, no more and no fewer.
+//
+// A game may carry a `recorded` object, the run that recorded it when that
+// run is not the one named by the file's top-level `server_version`,
+// `recorded_at` and `choice_seed`. When present it holds exactly those three
+// keys: a non-empty string, an ISO-8601 UTC time ending in `Z`, an int. When
+// absent the top-level fields apply.
+//
+// What is compared between the seat views, and what is not (check 2). Every
+// seat's view is compared with seat 0's. With two seats that is the one
+// comparison the checker always made (view 2 against view 0), so it is as
+// strict as before; with more seats each further view is held to the same
+// standard against the same reference, and the comparison is transitive for
+// the fields compared, so a pair of other views cannot differ unseen.
 //
 // * `re` is excluded. docs/PROTOCOL.md section 1: it is present only on the
 //   copy that answers the sender's own message, so the two views differ by
@@ -28,6 +48,14 @@
 // * Frames that are not broadcast are left out of both sides before the
 //   comparison: `error`, `pong`, `seat_assigned`, `game_log` (section 5 and
 //   17) and a `room` that carries `re` (an answer to one request).
+// * Frames only some seats hear are all before `game_started`: a
+//   `player_joined` reaches the seats already seated, so seat 0 hears every
+//   other seat join and the last seat none. The comparison starts at
+//   `game_started`, where every seat is present, and the lobby is compared by
+//   roster instead: each view's roster is its last lobby `room` snapshot with
+//   the `player_joined` / `player_left` deltas after it applied (the rule that
+//   was already there for the guest), and every view's roster must equal the
+//   game's `names` and the seat set.
 
 import 'dart:convert';
 
@@ -72,7 +100,19 @@ const Set<String> _ignorableInGame = <String>{
   'seat_assigned',
 };
 
+/// The canonical seat set for a player count (docs/RULES.md section 2 rules 2
+/// and 2a, docs/PROTOCOL.md section 3).
+const Map<int, List<int>> _seatSets = <int, List<int>>{
+  2: <int>[0, 2],
+  3: <int>[0, 1, 2],
+  4: <int>[0, 1, 2, 3],
+};
+
 final RegExp _hex64 = RegExp(r'^[0-9a-f]{64}$');
+
+final RegExp _isoUtc = RegExp(
+  r'^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?Z$',
+);
 
 Map<String, Object?>? _asMap(Object? v) => v is Map<String, Object?> ? v : null;
 List<Object?>? _asList(Object? v) => v is List<Object?> ? v : null;
@@ -161,7 +201,12 @@ List<String> checkRealGames(Object? doc, {void Function(String line)? info}) {
 }
 
 /// What the file as a whole shows (check 6, "Coverage"), gathered from the
-/// frames of `views["0"]` rather than from the file's own `events`.
+/// frames of `views["0"]` rather than from the file's own `events`. Only the
+/// two-seat games feed it: the host / guest wins and the captures by seats 0
+/// and 2 are statements about seats 0 and 2 playing each other, and a game of
+/// more seats must not be able to stand in for a two-seat game that is gone.
+/// A three- or four-seat game is held to its own, smaller standard (complete,
+/// at least one capture) inside [_GameCheck].
 class _Coverage {
   bool hostWin = false;
   bool guestWin = false;
@@ -200,6 +245,11 @@ class _GameCheck {
   final _Coverage coverage;
   final void Function(String line)? info;
 
+  /// The seat set the game's `players` fixes, empty until `run` has read it.
+  List<int> seatSet = <int>[];
+
+  List<String> get seatKeys => <String>[for (final int s in seatSet) '$s'];
+
   final Map<String, List<_Frame>> views = <String, List<_Frame>>{};
   final Map<String, int> startIndex = <String, int>{};
   final Map<String, int> endIndex = <String, int>{};
@@ -215,6 +265,14 @@ class _GameCheck {
       problem('view $view frame ${f.index} (${f.t})', message);
 
   void run() {
+    final Object? players = game['players'];
+    final List<int>? set = players is int ? _seatSets[players] : null;
+    if (set == null) {
+      problem('players', 'is ${_show(players)}, want 2, 3 or 4');
+      return;
+    }
+    seatSet = set;
+    _checkRecorded();
     if (!_loadViews()) {
       return;
     }
@@ -229,6 +287,77 @@ class _GameCheck {
     _gatherCoverage();
   }
 
+  // ------------------------------------------------------------- recorded
+
+  /// The optional per-game `recorded` object: exactly `server_version`,
+  /// `recorded_at` and `choice_seed`, each of the right kind.
+  void _checkRecorded() {
+    if (!game.containsKey('recorded')) {
+      return;
+    }
+    final Map<String, Object?>? rec = _asMap(game['recorded']);
+    if (rec == null) {
+      problem('recorded', 'is ${_show(game['recorded'])}, not an object');
+      return;
+    }
+    const Set<String> want = <String>{
+      'server_version',
+      'recorded_at',
+      'choice_seed',
+    };
+    for (final String k in want) {
+      if (!rec.containsKey(k)) {
+        problem('recorded', 'missing key $k');
+      }
+    }
+    for (final String k in rec.keys) {
+      if (!want.contains(k)) {
+        problem('recorded', 'unknown key $k');
+      }
+    }
+    final Object? version = rec['server_version'];
+    if (rec.containsKey('server_version') &&
+        (version is! String || version.isEmpty)) {
+      problem('recorded',
+          'server_version is ${_show(version)}, want a non-empty string');
+    }
+    final Object? at = rec['recorded_at'];
+    if (rec.containsKey('recorded_at') && !_isIsoUtc(at)) {
+      problem('recorded',
+          'recorded_at is ${_show(at)}, want an ISO-8601 UTC time ending in Z');
+    }
+    if (rec.containsKey('choice_seed') && rec['choice_seed'] is! int) {
+      problem('recorded',
+          'choice_seed is ${_show(rec['choice_seed'])}, want an int');
+    }
+  }
+
+  /// `2026-11-07T05:10:41.948461Z`: the shape, and a time that exists (a
+  /// month 13 or a 31st of February parses in some libraries by rolling over,
+  /// so the parsed parts are compared with the written ones).
+  static bool _isIsoUtc(Object? v) {
+    if (v is! String) {
+      return false;
+    }
+    final RegExpMatch? m = _isoUtc.firstMatch(v);
+    if (m == null) {
+      return false;
+    }
+    final DateTime? t = DateTime.tryParse(v);
+    if (t == null || !t.isUtc) {
+      return false;
+    }
+    final List<int> parts = <int>[
+      for (var g = 1; g <= 6; g++) int.parse(m.group(g)!),
+    ];
+    return t.year == parts[0] &&
+        t.month == parts[1] &&
+        t.day == parts[2] &&
+        t.hour == parts[3] &&
+        t.minute == parts[4] &&
+        t.second == parts[5];
+  }
+
   // ---------------------------------------------------------------- views
 
   bool _loadViews() {
@@ -237,8 +366,14 @@ class _GameCheck {
       problem('views', 'missing or not an object');
       return false;
     }
+    for (final String k in raw.keys) {
+      if (!seatKeys.contains(k)) {
+        problem('view $k',
+            'present, but a ${seatSet.length}-seat game has seats ${_show(seatSet)}');
+      }
+    }
     var ok = true;
-    for (final String s in const <String>['0', '2']) {
+    for (final String s in seatKeys) {
       final List<Object?>? list = _asList(raw[s]);
       if (list == null) {
         problem('view $s', 'missing or not a list');
@@ -289,7 +424,7 @@ class _GameCheck {
         ok = false;
       }
     }
-    return ok && views.length == 2;
+    return ok && views.length == seatSet.length;
   }
 
   Iterable<_Frame> _range(String s) =>
@@ -299,14 +434,17 @@ class _GameCheck {
 
   /// Returns the last LOBBY `room` snapshot before `game_started` in view 0.
   Map<String, Object?>? _checkSeatingAndSnapshot() {
-    if (!deepEq(game['seats'], <int>[0, 2])) {
-      problem('seats', 'is ${_show(game['seats'])}, want [0,2]');
+    if (!deepEq(game['seats'], seatSet)) {
+      problem('seats', 'is ${_show(game['seats'])}, want ${_show(seatSet)}');
     }
-    if (game['players'] != 2) {
-      problem('players', 'is ${_show(game['players'])}, want 2');
+    final Map<String, Object?>? gameNames = _asMap(game['names']);
+    final List<String> nameKeys = (gameNames?.keys.toList() ?? <String>[])
+      ..sort();
+    if (!deepEq(nameKeys, seatKeys)) {
+      problem('names', 'has seats ${_show(nameKeys)}, want ${_show(seatKeys)}');
     }
     Map<String, Object?>? chosen;
-    for (final String s in const <String>['0', '2']) {
+    for (final String s in seatKeys) {
       final List<_Frame> before = views[s]!.sublist(0, startIndex[s]!);
       final List<_Frame> rooms = <_Frame>[
         for (final _Frame f in before)
@@ -333,8 +471,9 @@ class _GameCheck {
             'last room before game_started has state ${_show(d['state'])}, '
             'want LOBBY');
       }
-      if (d['players'] != 2) {
-        frameProblem(s, snap, 'players is ${_show(d['players'])}, want 2');
+      if (d['players'] != seatSet.length) {
+        frameProblem(s, snap,
+            'players is ${_show(d['players'])}, want ${seatSet.length}');
       }
       if (!deepEq(d['rules'], game['rules'])) {
         frameProblem(
@@ -372,17 +511,17 @@ class _GameCheck {
             '${_show(game['names'])}');
       }
       final List<String> seated = names.keys.toList()..sort();
-      if (!deepEq(seated, <String>['0', '2'])) {
+      if (!deepEq(seated, seatKeys)) {
         frameProblem(
             s,
             snap,
             'seated seats are ${_show(seated)}, '
-            'want ["0","2"]');
+            'want ${_show(seatKeys)}');
       }
     }
     // Section 11.2: a chain_commit must not change for a chain_index.
     final Map<Object?, Object?> commitOf = <Object?, Object?>{};
-    for (final String s in const <String>['0', '2']) {
+    for (final String s in seatKeys) {
       for (final _Frame f in views[s]!) {
         if (f.t != 'room') {
           continue;
@@ -768,41 +907,45 @@ class _GameCheck {
 
   void _checkViewsAgree() {
     final List<_Frame> a = _range('0').where((f) => !f.unicast).toList();
-    final List<_Frame> b = _range('2').where((f) => !f.unicast).toList();
-    if (a.length != b.length) {
-      problem(
-          'views',
-          'view 0 has ${a.length} broadcast frames from game_started to '
-              'game_over, view 2 has ${b.length}');
-    }
-    var reported = 0;
-    for (var i = 0; i < a.length && i < b.length; i++) {
-      if (deepEq(_norm(a[i]), _norm(b[i]))) {
-        continue;
+    for (final String s in seatKeys.skip(1)) {
+      final List<_Frame> b = _range(s).where((f) => !f.unicast).toList();
+      if (a.length != b.length) {
+        problem(
+            'views',
+            'view 0 has ${a.length} broadcast frames from game_started to '
+                'game_over, view $s has ${b.length}');
       }
-      if (reported == 5) {
-        problem('views', 'further differences between the views not listed');
-        break;
+      var reported = 0;
+      for (var i = 0; i < a.length && i < b.length; i++) {
+        if (deepEq(_norm(a[i]), _norm(b[i]))) {
+          continue;
+        }
+        if (reported == 5) {
+          problem('views',
+              'further differences between view 0 and view $s not listed');
+          break;
+        }
+        reported++;
+        final Map<String, Object?> na = _norm(a[i]);
+        final Map<String, Object?> nb = _norm(b[i]);
+        final Set<String> keys = <String>{...na.keys, ...nb.keys};
+        final Set<String> dkeys = <String>{
+          ...?_asMap(na['d'])?.keys,
+          ...?_asMap(nb['d'])?.keys,
+        };
+        final List<String> diffs = <String>[
+          for (final String k in keys)
+            if (k != 'd' && !deepEq(na[k], nb[k])) k,
+          for (final String k in dkeys)
+            if (!deepEq(_asMap(na['d'])?[k], _asMap(nb['d'])?[k])) 'd.$k',
+        ];
+        problem(
+          'view $s frame ${b[i].index} (${b[i].t})',
+          'differs from view 0 frame ${a[i].index} (${a[i].t}) in '
+              '${diffs.join(', ')}: view $s ${_show(nb)} vs view 0 '
+              '${_show(na)}',
+        );
       }
-      reported++;
-      final Map<String, Object?> na = _norm(a[i]);
-      final Map<String, Object?> nb = _norm(b[i]);
-      final Set<String> keys = <String>{...na.keys, ...nb.keys};
-      final Set<String> dkeys = <String>{
-        ...?_asMap(na['d'])?.keys,
-        ...?_asMap(nb['d'])?.keys,
-      };
-      final List<String> diffs = <String>[
-        for (final String k in keys)
-          if (k != 'd' && !deepEq(na[k], nb[k])) k,
-        for (final String k in dkeys)
-          if (!deepEq(_asMap(na['d'])?[k], _asMap(nb['d'])?[k])) 'd.$k',
-      ];
-      problem(
-        'view 2 frame ${b[i].index} (${b[i].t})',
-        'differs from view 0 frame ${a[i].index} (${a[i].t}) in '
-            '${diffs.join(', ')}: view 2 ${_show(nb)} vs view 0 ${_show(na)}',
-      );
     }
   }
 
@@ -813,7 +956,7 @@ class _GameCheck {
   /// frame"; section 6 makes a delta whose `seq` is not the client's own plus
   /// one a gap.
   void _checkSeq() {
-    for (final String s in const <String>['0', '2']) {
+    for (final String s in seatKeys) {
       int? prev;
       for (final _Frame f in _range(s)) {
         if (!_seqCarrying.contains(f.t) || f.unicast) {
@@ -929,7 +1072,13 @@ class _GameCheck {
       'times_captured',
       'home',
     ];
-    for (final String s in const <String>['0', '2']) {
+    for (final String k in counts.keys) {
+      if (!seatKeys.contains(k)) {
+        problem(
+            'counts seat $k', 'not a seat of a ${seatSet.length}-seat game');
+      }
+    }
+    for (final String s in seatKeys) {
       final int seat = int.parse(s);
       final Map<String, int> want = <String, int>{for (final k in keys) k: 0};
       for (final _Frame f in _range('0')) {
@@ -1005,7 +1154,13 @@ class _GameCheck {
         continue;
       }
       final Map<String, _Frame> pointed = <String, _Frame>{};
-      for (final String s in const <String>['0', '2']) {
+      for (final String k in vi.keys) {
+        if (!seatKeys.contains(k)) {
+          problem('events[$n] kind $kind view $k',
+              'view_index names a seat outside ${_show(seatKeys)}');
+        }
+      }
+      for (final String s in seatKeys) {
         final int? idx = _asInt(vi[s]);
         final List<_Frame> frames = views[s]!;
         if (idx == null || idx < startIndex[s]! || idx > endIndex[s]!) {
@@ -1057,14 +1212,16 @@ class _GameCheck {
             }
         }
       }
-      if (pointed.length == 2) {
+      if (pointed.length == seatSet.length) {
         final int? s0 = _asInt(pointed['0']!.d['seq']);
-        final int? s2 = _asInt(pointed['2']!.d['seq']);
-        if (s0 != s2) {
-          problem(
-              'events[$n] kind $kind',
-              'view 0 frame ${pointed['0']!.index} has seq $s0 but view 2 '
-                  'frame ${pointed['2']!.index} has seq $s2: not the same frame');
+        for (final String s in seatKeys.skip(1)) {
+          final int? sn = _asInt(pointed[s]!.d['seq']);
+          if (s0 != sn) {
+            problem(
+                'events[$n] kind $kind',
+                'view 0 frame ${pointed['0']!.index} has seq $s0 but view $s '
+                    'frame ${pointed[s]!.index} has seq $sn: not the same frame');
+          }
         }
       }
     }
@@ -1126,27 +1283,37 @@ class _GameCheck {
   // ---------------------------------------------------------------- cover
 
   void _gatherCoverage() {
+    // A game of three or four seats is complete (run() got here, so one
+    // game_started and one game_over were found and the replay reached
+    // game_over) and must hold a capture; it feeds nothing else.
+    final bool twoSeat = seatSet.length == 2;
     final Object? winner = game['winner'];
-    if (winner == 0) {
+    if (twoSeat && winner == 0) {
       coverage.hostWin = true;
     }
-    if (winner == 2) {
+    if (twoSeat && winner == 2) {
       coverage.guestWin = true;
     }
+    var captured = false;
     for (final _Frame f in _range('0')) {
       if (f.t == 'moved' &&
           (_asList(f.d['captured']) ?? <Object?>[]).isNotEmpty) {
+        captured = true;
         final int? by = _asInt(f.d['seat']);
-        if (by != null) {
+        if (twoSeat && by != null) {
           coverage.captureBy.add(by);
         }
-      } else if (f.t == 'turn_passed') {
+      } else if (twoSeat && f.t == 'turn_passed') {
         if (f.d['reason'] == 'three_sixes') {
           coverage.threeSixes = true;
         } else if (f.d['reason'] == 'no_legal_move') {
           coverage.noLegalMove = true;
         }
       }
+    }
+    if (!twoSeat && !captured) {
+      problem(
+          'coverage', 'no capture in a ${seatSet.length}-seat game (view 0)');
     }
   }
 }
