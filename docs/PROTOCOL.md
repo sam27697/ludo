@@ -1012,7 +1012,7 @@ different `game_id` and `chain_commit`.
 
 ### 16.9 Rulings after the first implementation, 2026-10-01
 
-Four cases the text above left open, found by the first server
+Cases the text above left open, found by the first server
 implementation. Each is a test before it is code.
 
 1. **A seat removed by a host-forced start is gone, exactly as after
@@ -1037,8 +1037,32 @@ implementation. Each is a test before it is code.
    canonical set for `players`, section 3). The joiner is not ready; it
    accepts with `rematch` like anyone else. The auto-start set is the seats
    occupied when an accept arrives (16.4), so a seat that left never blocks
-   it and a seat that joined is waited for. Auto-start is evaluated only on
-   an accepted `rematch`, never on `leave_room`, `join_room` or `resume`.
+   it and a seat that joined is waited for. Auto-start is evaluated on an
+   accepted `rematch`, and since 2026-11-07 also after a `resume` and a
+   `leave_room` (rule 5); never on `join_room`.
+5. **Auto-start is also evaluated after a `resume` and after a
+   `leave_room` in a rematch LOBBY, 2026-11-07.** The condition is 16.4's,
+   read fresh off the room at that instant: every occupied seat is in
+   `rematch.ready`, at least two seats are occupied, and every one of them
+   is connected.
+   - After a `resume` into a rematch LOBBY, once the resume's own frames are
+     out (`seat_assigned` and `room` to the resuming socket, the `presence`
+     broadcast when the seat was away), if the condition holds the server
+     starts the game with the mechanics of 16.4 "Everyone accepted".
+   - After an accepted `leave_room` in a rematch LOBBY, once its
+     `player_left` is sent and broadcast, the same. The leaving socket gets
+     nothing after its `player_left` (section 4).
+   - `join_room` is never evaluated: a joiner is not ready, so it cannot
+     complete the condition.
+   - A start triggered by a `resume` or a `leave_room` answers no request:
+     every frame of it (`seat_seed`, `game_started`, `turn`) carries no
+     `re`, on every socket, the resuming one included. Its `seq` steps are
+     those of 16.4, continuing from the last frame before it.
+   Why: a ready seat whose socket was away when the last acceptance landed,
+   or a seat that was not ready and left, each left a room in which every
+   seat was ready and connected and nothing could start. The client offers
+   the host's Start only while some seat is not ready (section 16.7), so the
+   table was stuck until someone chose New table.
 
 ## 17. `game_log`: the current game's frames on request, 2026-10-10
 
