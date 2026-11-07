@@ -98,9 +98,16 @@ Key _hitKey(int seat, int index) => Key('board-token-hit-$seat-$index');
 // The three strings C-337 adds, which carry no getter on this tree yet --
 // matched here by their literal text straight out of the contract's own
 // table, never by a getter that does not exist.
-const String _announceCapturedOtherEn = 'You captured a token';
-const String _announceCapturedMeEn = 'Your token was captured';
-const String _announceCapturedMeAr = 'ضُربت قطعتك';
+//
+// C-588 D3 made the two capture lines name the other party. Every capture in
+// this file is between Sam (seat 0, me) and Bob (seat 1), so the victim of
+// my capture and the mover of the capture of me are both Bob. The unnamed
+// texts C-337 gave (`You captured a token`, `Your token was captured`,
+// `ضُربت قطعتك`) stay in the arb as the fallback for a name that cannot be
+// resolved and are proven in test/capture_seen_test.dart.
+const String _announceCapturedOtherEn = "You captured Bob's token";
+const String _announceCapturedMeEn = 'Bob captured your token';
+const String _announceCapturedMeAr = 'ضُربت قطعتك. الضربة من Bob';
 const String _announceHomeEn = 'A token reached home';
 
 // --- server-side id generation for pushed frames ----------------------------

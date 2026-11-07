@@ -568,6 +568,26 @@
   "@gameNoMoveThreeSixes": {
     "description": "The no-move line when the server voided the roll because it was the third six in a row. Same place and timing as the other no-move lines."
   },
+  "gameNoMoveOther": "{name}: no move with this roll",
+  "@gameNoMoveOther": {
+    "description": "Shown in the below-die notice slot for 1500ms when another seat's roll has no legal move, so a watcher is told why that seat's turn passed. Never played as a cue; announced once to TalkBack.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "gameThreeSixesOther": "{name}: three sixes in a row. Turn over.",
+  "@gameThreeSixesOther": {
+    "description": "Shown in the below-die notice slot for 1500ms when the server voided another seat's roll because it was the third six in a row. Same place and timing as the other-seat no-move line.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
   "announceCapturedOther": "You captured a token",
   "@announceCapturedOther": {
     "description": "Screen-reader announcement sent the moment this player's own move captures another seat's token."
@@ -575,6 +595,40 @@
   "announceCapturedMe": "Your token was captured",
   "@announceCapturedMe": {
     "description": "Screen-reader announcement sent the moment another seat's move captures this player's own token."
+  },
+  "announceCapturedOtherNamed": "You captured {name}'s token",
+  "@announceCapturedOtherNamed": {
+    "description": "Screen-reader announcement sent when this player's own move captures a token, naming the seat whose token was sent home.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "announceCapturedMeNamed": "{name} captured your token",
+  "@announceCapturedMeNamed": {
+    "description": "Screen-reader announcement sent when another seat's move captures this player's own token, naming the seat that moved.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "announceCaptureSeen": "{capturer} captured {victim}'s token",
+  "@announceCaptureSeen": {
+    "description": "Screen-reader announcement sent when a move by one other seat captures a token of a third seat, or when a spectator watches a capture.",
+    "placeholders": {
+      "capturer": {
+        "type": "String",
+        "example": "Cy"
+      },
+      "victim": {
+        "type": "String",
+        "example": "Dee"
+      }
+    }
   },
   "announceHome": "A token reached home",
   "@announceHome": {

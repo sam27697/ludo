@@ -33,6 +33,11 @@
 // contract and also asserted to be Dart cue ids, so one side gaining them
 // without the other is caught.
 //
+// C-588 D1: `capture_seen` joins them as a third sound-only id. Its
+// soundResources entry points at the existing fb_captured_other clip (no new
+// sound file) and MainActivity.kt plays it at half volume (0.5f on both
+// channels); every other id keeps volume 1f.
+//
 // `path`'s `Directory`/`File` walk to the package root, and down to the
 // Kotlin file, is copied by hand from test/color_alias_scan_test.dart's
 // own `_findPackageRoot`, per this project's standing instruction never to
@@ -111,14 +116,9 @@ String _mainActivitySource() {
   return file.readAsStringSync();
 }
 
-/// The quoted string keys of the `mapOf(...)` block declared under
-/// [declarationName] (e.g. `hapticTimings`), in source order. Matches from
-/// the declaration's own `mapOf(` through the first line that is exactly
-/// four spaces and a closing paren -- this file's three tables are all
-/// flat (no nested `mapOf`), so that line is always the map literal's own
-/// close, never one of the `longArrayOf(...)`/`intArrayOf(...)` calls
-/// nested one level deeper inside each entry.
-Set<String> _mapKeys(String source, String declarationName) {
+/// The text between the `mapOf(` and the closing paren of the flat map
+/// declared under [declarationName].
+String _mapBody(String source, String declarationName) {
   final RegExp block = RegExp(
     '$declarationName\\s*:[^=]*=\\s*mapOf\\(\\n([\\s\\S]*?)\\n {4}\\)',
   );
@@ -129,7 +129,18 @@ Set<String> _mapKeys(String source, String declarationName) {
       '$declarationName; none was found by this scan\'s own pattern',
     );
   }
-  final String body = match.group(1)!;
+  return match.group(1)!;
+}
+
+/// The quoted string keys of the `mapOf(...)` block declared under
+/// [declarationName] (e.g. `hapticTimings`), in source order. Matches from
+/// the declaration's own `mapOf(` through the first line that is exactly
+/// four spaces and a closing paren -- this file's three tables are all
+/// flat (no nested `mapOf`), so that line is always the map literal's own
+/// close, never one of the `longArrayOf(...)`/`intArrayOf(...)` calls
+/// nested one level deeper inside each entry.
+Set<String> _mapKeys(String source, String declarationName) {
+  final String body = _mapBody(source, declarationName);
   final RegExp entryKey = RegExp(r'"([a-z_]+)"\s+to\b');
   return entryKey.allMatches(body).map((Match m) => m.group(1)!).toSet();
 }
@@ -146,29 +157,32 @@ void main() {
 
   // C-468 D4, D5 and D6: sound only. They are keys of soundResources and
   // of neither haptic table; every other cue id keeps the C-422 rule.
-  const Set<String> soundOnly = <String>{'die_land', 'gloat'};
+  // C-588 D1 adds capture_seen to the same set.
+  const Set<String> soundOnly = <String>{'die_land', 'gloat', 'capture_seen'};
 
-  test('die_land and gloat are FeedbackCue ids (C-468 D6)', () {
+  test('die_land, gloat and capture_seen are FeedbackCue ids (C-468 D6, '
+      'C-588 D1)', () {
     for (final String id in soundOnly) {
       expect(
         dartIds.contains(id),
         isTrue,
         reason:
-            'C-468 D6 adds the cue id "$id" to FeedbackCue; the ids are '
+            'C-468 D6 and C-588 D1 add the cue id "$id" to FeedbackCue; the '
+            'ids are '
             '${dartIds.toList()..sort()}',
       );
     }
   });
 
-  test('every FeedbackCue id except die_land and gloat is a key of '
-      'hapticTimings in MainActivity.kt; die_land and gloat are not', () {
+  test('every FeedbackCue id except die_land, gloat and capture_seen is a '
+      'key of hapticTimings in MainActivity.kt; those three are not', () {
     for (final String id in dartIds) {
       if (soundOnly.contains(id)) {
         expect(
           hapticTimingKeys.contains(id),
           isFalse,
           reason:
-              'FeedbackCue id "$id" is sound only (C-468 D6) and must not '
+              'FeedbackCue id "$id" is sound only (C-468 D6, C-588 D1) and must not '
               'be a key of hapticTimings; hapticTimings carries '
               '${hapticTimingKeys.toList()..sort()}',
         );
@@ -192,15 +206,15 @@ void main() {
     }
   });
 
-  test('every FeedbackCue id except die_land and gloat is a key of '
-      'hapticAmplitudes in MainActivity.kt; die_land and gloat are not', () {
+  test('every FeedbackCue id except die_land, gloat and capture_seen is a '
+      'key of hapticAmplitudes in MainActivity.kt; those three are not', () {
     for (final String id in dartIds) {
       if (soundOnly.contains(id)) {
         expect(
           hapticAmplitudeKeys.contains(id),
           isFalse,
           reason:
-              'FeedbackCue id "$id" is sound only (C-468 D6) and must not '
+              'FeedbackCue id "$id" is sound only (C-468 D6, C-588 D1) and must not '
               'be a key of hapticAmplitudes; hapticAmplitudes carries '
               '${hapticAmplitudeKeys.toList()..sort()}',
         );
@@ -225,8 +239,8 @@ void main() {
   });
 
   test('every FeedbackCue id except invalid_tap and tap is a key of '
-      'soundResources; invalid_tap and tap are not; die_land and gloat '
-      'are', () {
+      'soundResources; invalid_tap and tap are not; die_land, gloat and '
+      'capture_seen are', () {
     const Set<String> hapticOnly = <String>{'invalid_tap', 'tap'};
     for (final String id in dartIds) {
       if (hapticOnly.contains(id)) {
@@ -254,11 +268,99 @@ void main() {
         soundResourceKeys.contains(id),
         isTrue,
         reason:
-            '"$id" must be a key of soundResources (C-468 D6); '
+            '"$id" must be a key of soundResources (C-468 D6, C-588 D1); '
             'soundResources carries ${soundResourceKeys.toList()..sort()}',
       );
     }
   });
+
+  test('capture_seen plays the existing fb_captured_other clip and adds no '
+      'sound file (C-588 D1)', () {
+    final String body = _mapBody(source, 'soundResources');
+    final Match? entry = RegExp(r'"capture_seen"\s+to\s+R\.raw\.(\w+)')
+        .firstMatch(body);
+    expect(
+      entry,
+      isNotNull,
+      reason:
+          'soundResources must map "capture_seen" to an R.raw clip; the '
+          'block is:\n$body',
+    );
+    expect(
+      entry!.group(1),
+      'fb_captured_other',
+      reason:
+          'C-588 D1: capture_seen reuses R.raw.fb_captured_other; got '
+          'R.raw.${entry.group(1)}',
+    );
+    final Directory raw = Directory(
+      p.join(
+        _findPackageRoot().path,
+        'android',
+        'app',
+        'src',
+        'main',
+        'res',
+        'raw',
+      ),
+    );
+    expect(
+      File(p.join(raw.path, 'fb_captured_other.wav')).existsSync(),
+      isTrue,
+      reason: 'the reused clip fb_captured_other.wav must exist in ${raw.path}',
+    );
+    expect(
+      raw.listSync().map((FileSystemEntity e) => p.basename(e.path)),
+      isNot(contains('fb_capture_seen.wav')),
+      reason: 'C-588 D1: no new sound file; res/raw must not gain a clip',
+    );
+  });
+
+  // The source does not say how the half volume is carried (a map, a `when`,
+  // an `if`), so this reads only what any shape must contain: a 0.5f literal
+  // outside the soundResources block, the id "capture_seen" in the same
+  // statement or entry as it, and a playSound whose volume arguments are no
+  // longer the bare literal 1f pair for every id.
+  test(
+    'capture_seen is played at 0.5f and every other id at 1f (C-588 D1)',
+    () {
+      final String body = _mapBody(source, 'soundResources');
+      final String rest = source.replaceFirst(body, '');
+      final RegExp nearHalf = RegExp(
+        r'capture_seen[^\n]*0\.5f|0\.5f[^\n]*capture_seen|'
+        r'capture_seen[\s\S]{0,160}?0\.5f',
+      );
+      expect(
+        nearHalf.hasMatch(rest),
+        isTrue,
+        reason:
+            'C-588 D1: MainActivity.kt must tie "capture_seen" to a 0.5f '
+            'volume outside the soundResources map; no such pairing found',
+      );
+      final RegExpMatch? play = RegExp(
+        r'soundPool\?\.play\(\s*soundId\s*,\s*([^,]+?)\s*,\s*([^,]+?)\s*,',
+      ).firstMatch(rest);
+      expect(
+        play,
+        isNotNull,
+        reason:
+            'playSound must still call soundPool?.play(soundId, left, right,',
+      );
+      expect(
+        <String>[play!.group(1)!, play.group(2)!],
+        isNot(equals(<String>['1f', '1f'])),
+        reason:
+            'C-588 D1: the volume arguments of soundPool.play cannot both be '
+            'the literal 1f any more, or capture_seen could not be quieter; '
+            'got ${play.group(1)}, ${play.group(2)}',
+      );
+      expect(
+        rest.contains('1f'),
+        isTrue,
+        reason: 'every other id keeps volume 1f; no 1f remains in the source',
+      );
+    },
+  );
 
   test(
     'the comment above soundResources names the build script (C-468 D6)',

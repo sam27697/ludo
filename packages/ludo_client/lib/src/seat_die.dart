@@ -5,13 +5,19 @@
 import 'package:flutter/widgets.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'dead_mark.dart';
 import 'die_cube.dart';
 import 'roll_tray.dart';
 import 'theme.dart';
 
 /// One opponent's die on the board. C-465 D2.
 class SeatDie {
-  const SeatDie({required this.seat, required this.face, required this.active});
+  const SeatDie({
+    required this.seat,
+    required this.face,
+    required this.active,
+    this.dead = false,
+  });
 
   /// Never the viewer's own seat.
   final int seat;
@@ -21,6 +27,11 @@ class SeatDie {
 
   /// True while [seat] holds the turn: the die is drawn at full opacity.
   final bool active;
+
+  /// True for the hold after this seat's roll had no legal move and the
+  /// viewer is a watcher (C-586 D2): the die is drawn at full opacity and
+  /// carries the dead badge the viewer's own big die carries.
+  final bool dead;
 }
 
 /// The roll record of one seat, drawn in that seat's yard. C-465 D4.
@@ -68,24 +79,43 @@ class SeatDieView extends StatelessWidget {
     final Key poseKey = idle
         ? Key('board-seat-die-idle-${die.seat}')
         : Key('board-seat-die-face-${die.seat}-$face');
-    return Opacity(
-      opacity: die.active ? 1 : 0.45,
-      child: Semantics(
-        key: Key('board-seat-die-${die.seat}'),
-        container: true,
-        button: false,
-        label: label,
-        child: SizedBox(
-          width: side,
-          height: side,
-          child: KeyedSubtree(
-            key: poseKey,
-            child: DieCube(
-              size: side,
-              rotation: idle ? kIdleDieRotation : restingRotationFor(face),
-              edgeColor: LudoColors.seats[die.seat.clamp(0, 3)],
-            ),
+    final Widget cube = Semantics(
+      key: Key('board-seat-die-${die.seat}'),
+      container: true,
+      button: false,
+      label: label,
+      child: SizedBox(
+        width: side,
+        height: side,
+        child: KeyedSubtree(
+          key: poseKey,
+          child: DieCube(
+            size: side,
+            rotation: idle ? kIdleDieRotation : restingRotationFor(face),
+            edgeColor: LudoColors.seats[die.seat.clamp(0, 3)],
           ),
+        ),
+      ),
+    );
+    return Opacity(
+      opacity: die.active || die.dead ? 1 : 0.45,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: <Widget>[cube, if (die.dead) _deadBadge()],
+      ),
+    );
+  }
+
+  /// C-586 D2. The same badge as the big die's, on the die's physical
+  /// top-right corner: [Positioned], not [PositionedDirectional], so Arabic
+  /// does not mirror it.
+  Widget _deadBadge() {
+    return Positioned.fromRect(
+      rect: deadBadgeRect(Size.square(side)),
+      child: IgnorePointer(
+        child: CustomPaint(
+          key: Key('board-seat-die-dead-${die.seat}'),
+          painter: const DeadMarkPainter(),
         ),
       ),
     );
