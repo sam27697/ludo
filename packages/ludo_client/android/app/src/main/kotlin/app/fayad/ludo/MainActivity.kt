@@ -80,6 +80,13 @@ class MainActivity : FlutterActivity() {
         "game_over" to R.raw.fb_game_over,
         "die_land" to R.raw.fb_die_land,
         "gloat" to R.raw.fb_gloat,
+        "capture_seen" to R.raw.fb_captured_other,
+    )
+
+    // A capture between two other seats plays the capture clip at half
+    // volume (C-588 D1); every id not listed here plays at 1f.
+    private val soundVolumes: Map<String, Float> = mapOf(
+        "capture_seen" to 0.5f,
     )
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -177,6 +184,7 @@ class MainActivity : FlutterActivity() {
             return
         }
         val soundId = soundIds[id] ?: return
-        soundPool?.play(soundId, 1f, 1f, 1, 0, 1f)
+        val volume = soundVolumes[id] ?: 1f
+        soundPool?.play(soundId, volume, volume, 1, 0, 1f)
     }
 }

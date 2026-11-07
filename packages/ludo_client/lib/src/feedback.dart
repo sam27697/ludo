@@ -47,6 +47,10 @@ enum FeedbackCue {
   /// The captured seat hears this after the gloat appears. Sound only.
   /// C-468 D5, D6.
   gloat,
+
+  /// A capture between two other seats, heard softly by everyone else at
+  /// the table, a spectator included. Sound only. C-588 D1, D2.
+  captureSeen,
 }
 
 /// C-225's wire ids, one per [FeedbackCue], exactly as the Kotlin side and
@@ -67,6 +71,7 @@ const Map<FeedbackCue, String> _cueIds = <FeedbackCue, String>{
   FeedbackCue.tap: 'tap',
   FeedbackCue.dieLand: 'die_land',
   FeedbackCue.gloat: 'gloat',
+  FeedbackCue.captureSeen: 'capture_seen',
 };
 
 extension FeedbackCueId on FeedbackCue {
@@ -129,7 +134,7 @@ bool _capturedHasMistypedSeat(List<Object?> captured) {
 /// from [cuesForFrame] because it is the one frame type with two
 /// independent branches (my move, someone else's) and an ordered list of
 /// cues rather than at most one.
-List<FeedbackCue> _cuesForMoved(Map<String, Object?> data, int mySeat) {
+List<FeedbackCue> _cuesForMoved(Map<String, Object?> data, int? mySeat) {
   final int? seat = _intAt(data, 'seat');
   if (seat == null) {
     return const <FeedbackCue>[];
@@ -159,23 +164,32 @@ List<FeedbackCue> _cuesForMoved(Map<String, Object?> data, int mySeat) {
   if (_capturedHasMistypedSeat(captured)) {
     return const <FeedbackCue>[];
   }
-  return _capturedIncludesSeat(captured, mySeat)
-      ? const <FeedbackCue>[FeedbackCue.capturedMe]
-      : const <FeedbackCue>[];
+  // C-588 D2: a capture between two other seats is heard by everyone else,
+  // a spectator (null seat) included. No haptic travels with it.
+  if (mySeat != null && _capturedIncludesSeat(captured, mySeat)) {
+    return const <FeedbackCue>[FeedbackCue.capturedMe];
+  }
+  return captured.isEmpty
+      ? const <FeedbackCue>[]
+      : const <FeedbackCue>[FeedbackCue.captureSeen];
 }
 
 /// C-225: the wire, one [Frame] at a time, to the cues it means for the
 /// seat sitting at [mySeat]. Pure, total and silent on anything it does not
 /// recognise: an unknown `type`, a missing or mistyped field, `turn_passed`
 /// (its `noMove` already travelled with the `rolled` that caused it), a
-/// null [mySeat], and another seat's routine move (doctrine section 3's
-/// last line, "never fire haptics for other players' routine moves") all
-/// answer `[]`, never an exception.
+/// null [mySeat] (except a capture, below), and another seat's routine move
+/// (doctrine section 3's last line, "never fire haptics for other players'
+/// routine moves") all answer `[]`, never an exception. A capture between
+/// two other seats answers [FeedbackCue.captureSeen], also for a null
+/// [mySeat] (C-588 D2).
 List<FeedbackCue> cuesForFrame(Frame frame, {required int? mySeat}) {
-  if (mySeat == null) {
-    return const <FeedbackCue>[];
-  }
   final Map<String, Object?> data = frame.data;
+  if (mySeat == null) {
+    return frame.type == 'moved'
+        ? _cuesForMoved(data, null)
+        : const <FeedbackCue>[];
+  }
   switch (frame.type) {
     case 'turn':
       return _intAt(data, 'seat') == mySeat
@@ -305,8 +319,8 @@ class FeedbackSettings extends ChangeNotifier {
 /// invocations (`haptic`, `sound`) of the `app.fayad.ludo/feedback` method
 /// channel that MainActivity.kt answers, each gated on the matching
 /// in-app switch in [settings]. `invalidTap` and `tap` have no sound
-/// (doctrine section 3's table: none, and C-422 D1). `dieLand` and `gloat`
-/// have no haptic (C-468 D6); both still call `sound`, gated on the sound
+/// (doctrine section 3's table: none, and C-422 D1). `dieLand`, `gloat` and
+/// `captureSeen` have no haptic (C-468 D6, C-588 D1); both still call `sound`, gated on the sound
 /// switch, and neither is throttled. `step` is throttled independently
 /// per channel to at most one call per [_stepThrottle]; a `step` inside
 /// the window is dropped, not queued, so a fast run of squares does not
@@ -350,6 +364,7 @@ class PlatformFeedbackService implements FeedbackService {
     if (settings.haptics &&
         cue != FeedbackCue.dieLand &&
         cue != FeedbackCue.gloat &&
+        cue != FeedbackCue.captureSeen &&
         _admitStep(cue, isHaptic: true)) {
       unawaited(_invoke('haptic', cue));
     }
