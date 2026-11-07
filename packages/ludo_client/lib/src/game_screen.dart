@@ -6089,6 +6089,7 @@ class _GameScreenState extends State<GameScreen> {
         rematch: rematch,
         rematchByName: rematchByName,
         occupiedSeats: _seatsInPlayOf(room),
+        seatNames: finishedNames,
         isHost: controller.isHost,
         rematchGone: rematchGone,
         departedNames: departedNames,

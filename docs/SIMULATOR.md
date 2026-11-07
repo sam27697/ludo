@@ -234,7 +234,7 @@ protocol pins an order) the scenario or `k` needed to see it again:
 ## Re-recording the real-game fixture
 
 `packages/ludo_client/integration_test/fixtures/real_games.json` holds complete
-two-player games played over the wire against a real server process, so the
+games played over the wire against a real server process, so the
 client's end cards and captures can be built from frames a server produced
 rather than frames typed by hand. `packages/ludo_server/tool/record_real_games.dart`
 writes it; the file is never edited by hand.
@@ -261,24 +261,38 @@ named in `verify_url`.
 | `--target` | required | `ws://` or `wss://` URL of the running server. |
 | `--choice-seed` | 1 | Seed of the move choices. The faces are the server's, so the same seed against a fresh server gives a different game. |
 | `--max-games` | 5 | Give up after this many games: exit 2 and a line naming what is not covered, nothing written. More than 5 is refused with exit 64. |
-| `--host-name`, `--guest-name` | `Priya`, `Karim` | Display names of seat 0 and seat 2. |
+| `--players` | 2 | Seats in the room: 2, 3 or 4. Three or four play each game with one socket per seat, the others joining by code in turn onto seats `[0, 1, 2]` or `[0, 1, 2, 3]`, and keep one game instead of the four-game cover: the shortest (fewest frames in seat 0's view) complete game with at least one capture, named `three_seats_N` or `four_seats_N`. Every seat's view is recorded and compared with seat 0's, push for push. |
+| `--host-name`, `--guest-name` | `Priya`, `Karim` | Display names of seat 0 and seat 2, two players only. |
+| `--names` | `Priya,Karim,Lina,Tariq` | Display names by seat, three or four players only, as many as players. |
+| `--append-to` | none | Read this fixture and write it to `--out` with the newly kept game(s) after its existing ones. The top-level fields and the bytes of every existing game stay as they were (the line that closes the last old game gains a comma). Each added game carries `"recorded": {"server_version", "recorded_at", "choice_seed"}` for this run. A name already in the file is counted on from, so `four_seats_2` follows `four_seats_1`. |
 | `--out` | the fixture path | Where to write. Use a path under `/tmp` for a trial run. |
 | `--timeout-seconds` | 3000 | Bound on the whole run. |
 
-Every game is played in a new room on a new pair of sockets: the host creates
-it, the guest joins by code, the host sets a seed and starts the game. There is
-no rematch, so each kept game's views begin at the socket's first frame, as a
-fresh client's would, and both sockets are closed once seat 0's `game_log` is
-fetched. `create_room` allows five per hour per address (`docs/PROTOCOL.md`
+Every game is played in a new room on new sockets, one per seat: the host
+creates it, the others join by code, the host sets a seed and starts the game.
+There is no rematch, so each kept game's views begin at the socket's first
+frame, as a fresh client's would, and every socket is closed once seat 0's
+`game_log` is fetched. `create_room` allows five per hour per address (`docs/PROTOCOL.md`
 section 7; the sixth answers `RATE_LIMITED`), so a run plays at most five games.
 If five games do not cover everything the tool exits `2` and names what is
 missing; run it again against a fresh server process, which starts with a clean
 limiter. Do not vary the address or work around the limiter.
 
-It keeps at most four games: the ones that together cover a win for each seat,
+With two players it keeps at most four games: the ones that together cover a win for each seat,
 a capture by each seat on a non-entry square, a `three_sixes` and a
 `no_legal_move` pass, and a roll that leaves a dead face in a queue of two or
 more, fewest games first and shortest first. It stops as soon as all are
 covered. It exits `1` on any protocol error or disagreement (the two seats saw
 different pushes, the `game_log` differs from what seat 0 received, the stored
 record's roll or six counts differ from the frames) and says which game and seed.
+
+To add a real four-player game to the existing fixture (a fresh server process,
+since this takes one of the five rooms), then regenerate the wrapper:
+
+```
+dart run tool/record_real_games.dart --target ws://127.0.0.1:8096/ws \
+  --players 4 \
+  --append-to ../ludo_client/integration_test/fixtures/real_games.json \
+  --out ../ludo_client/integration_test/fixtures/real_games.json
+dart run tool/wrap_real_games_fixture.dart
+```

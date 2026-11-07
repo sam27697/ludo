@@ -1,20 +1,21 @@
-// Order 574: records complete two-player games played over a real WebSocket
-// against a real, separately started server process, and writes them as the
-// fixture `packages/ludo_client/integration_test/fixtures/real_games.json`.
+// Order 574: records complete games played over a real WebSocket against a
+// real, separately started server process, and writes them as the fixture
+// `packages/ludo_client/integration_test/fixtures/real_games.json`.
 //
 //   dart run tool/record_real_games.dart --target ws://127.0.0.1:8096/ws
-//       [--choice-seed N] [--max-games N] [--host-name NAME]
-//       [--guest-name NAME] [--out PATH] [--timeout-seconds N]
+//       [--players 2|3|4] [--choice-seed N] [--max-games N]
+//       [--host-name NAME] [--guest-name NAME] [--names A,B,C,D]
+//       [--append-to PATH] [--out PATH] [--timeout-seconds N]
 //
 // The dice are the server's. This tool never rolls, never picks a face and
 // never searches for a good game: its only choice is which of the moves the
 // server offered (`legal_by_face`, or `legal` on a server that sends no
 // faces) it sends, drawn from a `Random(--choice-seed)`.
 //
-// Every game is played in a NEW room on a new socket pair: the host creates,
-// the guest joins by code, the host sets a seed and starts the game, so each
-// game's views begin at the socket's first frame, the way a fresh client
-// enters a game. No rematch. `create_room` is limited to five per hour per
+// Every game is played in a NEW room on new sockets, one per seat: the host
+// creates, the others join by code in turn, the host sets a seed and starts
+// the game, so each game's views begin at the socket's first frame, the way a
+// fresh client enters a game. No rematch. `create_room` is limited to five per hour per
 // address (docs/PROTOCOL.md section 7, measured: the sixth from one address
 // answers RATE_LIMITED), so a run plays at most [_roomLimit] games and
 // `--max-games` above that is refused. The limiter is not worked around: when
@@ -22,7 +23,16 @@
 // it again against a fresh server process. Playing stops as soon as the kept
 // games cover everything in [_requirements]; at most [_maxKept] games are
 // kept, chosen to cover the most, then to be the fewest, then to be the
-// shortest. Both sockets of a room are closed once its `game_log` is fetched.
+// shortest. Every socket of a room is closed once its `game_log` is fetched.
+//
+// With `--players 3` or `4` the requirements are one complete game, any
+// winner, with at least one capture, and exactly one game is kept: the
+// shortest, by frames in seat 0's view, of those that meet it. It is named
+// `three_seats_N` or `four_seats_N`. `--append-to PATH` reads an existing
+// fixture and writes it to `--out` with the new game(s) added after the
+// existing ones; the bytes of every existing game stay as they were and each
+// added game carries a `recorded` object with this run's version, time and
+// seed.
 //
 // Exit codes: 0 covered and written, 1 a protocol or cross-check failure
 // (nothing is written), 2 `--max-games` reached without full coverage
@@ -42,9 +52,25 @@ import 'sim/record_check.dart';
 import 'sim/scenario.dart';
 import 'sim/wire.dart';
 
-const int _hostSeat = 0;
-const int _guestSeat = 2;
 const int _maxKept = 4;
+
+/// The seat numbers of a room of [players], in join order: the host first.
+/// The server's `_seatIndicesFor` (registry.dart) is private; this is its
+/// table, and every join is checked against it.
+List<int> _seatsFor(int players) {
+  switch (players) {
+    case 2:
+      return const <int>[0, 2];
+    case 3:
+      return const <int>[0, 1, 2];
+    case 4:
+      return const <int>[0, 1, 2, 3];
+    default:
+      throw ArgumentError.value(players, 'players', 'must be 2, 3 or 4');
+  }
+}
+
+const List<String> _defaultNames = <String>['Priya', 'Karim', 'Lina', 'Tariq'];
 
 /// `create_room` answers RATE_LIMITED from the sixth in an hour per address.
 const int _roomLimit = 5;
@@ -52,7 +78,7 @@ const int _roomLimit = 5;
 /// Absolute squares that are entry squares (docs/RULES.md section 1.1).
 const Set<int> _entrySquares = <int>{0, 13, 26, 39};
 
-/// The frame types a room broadcasts as part of a game, the ones both seats
+/// The frame types a room broadcasts as part of a game, the ones every seat
 /// must see identically and the ones `game_log` serves (section 17).
 const Set<String> _gamePushTypes = <String>{
   'game_started',
@@ -70,8 +96,16 @@ const String _reqCaptureBySeat2 = 'capture_by_seat2';
 const String _reqThreeSixes = 'three_sixes';
 const String _reqNoLegalMove = 'no_legal_move';
 const String _reqDeadFace = 'dead_face';
+const String _reqCompleteGame = 'complete_game';
+const String _reqCapture = 'capture';
 
-const List<String> _requirements = <String>[
+/// What a run of three or four players must cover with its one kept game.
+const List<String> _requirementsMulti = <String>[
+  _reqCompleteGame,
+  _reqCapture,
+];
+
+const List<String> _requirementsTwo = <String>[
   _reqHostWin,
   _reqGuestWin,
   _reqCaptureBySeat0,
@@ -89,8 +123,14 @@ usage: dart run tool/record_real_games.dart --target <ws-url> [options]
   --max-games <n>        give up, exit 2, after this many games, one new room
                          each (default 5, the most create_room allows an hour;
                          more is refused, exit 64)
-  --host-name <name>     seat 0 display name (default Priya)
-  --guest-name <name>    seat 2 display name (default Karim)
+  --players <n>          2, 3 or 4 seats (default 2). Three or four keep the
+                         one shortest complete game with a capture
+  --host-name <name>     seat 0 display name, two players (default Priya)
+  --guest-name <name>    seat 2 display name, two players (default Karim)
+  --names <a,b,c,d>      display names by seat, three or four players
+                         (default Priya,Karim,Lina,Tariq)
+  --append-to <path>     keep this fixture's top-level fields and games and
+                         add the new game(s) after them; written to --out
   --out <path>           output file (default: ludo_client's
                          integration_test/fixtures/real_games.json)
   --timeout-seconds <n>  bound on the whole run (default 3000)
@@ -101,8 +141,9 @@ class _Args {
     required this.target,
     required this.choiceSeed,
     required this.maxGames,
-    required this.hostName,
-    required this.guestName,
+    required this.players,
+    required this.names,
+    required this.appendTo,
     required this.out,
     required this.timeoutSeconds,
   });
@@ -110,8 +151,11 @@ class _Args {
   final Uri target;
   final int choiceSeed;
   final int maxGames;
-  final String hostName;
-  final String guestName;
+  final int players;
+
+  /// Display names by join order, [players] of them.
+  final List<String> names;
+  final String? appendTo;
   final String out;
   final int timeoutSeconds;
 }
@@ -129,8 +173,11 @@ _Args _parseArgs(List<String> argv) {
     '--target',
     '--choice-seed',
     '--max-games',
+    '--players',
     '--host-name',
     '--guest-name',
+    '--names',
+    '--append-to',
     '--out',
     '--timeout-seconds',
   };
@@ -173,12 +220,49 @@ _Args _parseArgs(List<String> argv) {
     );
   }
 
+  final int players = intFlag('--players', 2, min: 2);
+  if (players > 4) {
+    throw _UsageError('--players needs 2, 3 or 4, got $players');
+  }
+  final List<String> names;
+  if (players == 2) {
+    if (values.containsKey('--names')) {
+      throw _UsageError(
+        '--names is for three or four players; use --host-name and '
+        '--guest-name for two',
+      );
+    }
+    names = <String>[
+      values['--host-name'] ?? _defaultNames[0],
+      values['--guest-name'] ?? _defaultNames[1],
+    ];
+  } else {
+    if (values.containsKey('--host-name') ||
+        values.containsKey('--guest-name')) {
+      throw _UsageError(
+        '--host-name and --guest-name are for two players; use --names for '
+        '$players',
+      );
+    }
+    final String? raw = values['--names'];
+    names = raw == null
+        ? _defaultNames.sublist(0, players)
+        : raw.split(',').map((String n) => n.trim()).toList();
+    if (names.length != players || names.any((String n) => n.isEmpty)) {
+      throw _UsageError(
+        '--names needs $players non-empty names separated by commas, got '
+        '"$raw"',
+      );
+    }
+  }
+
   return _Args(
     target: target,
     choiceSeed: intFlag('--choice-seed', 1, min: -1 << 31),
     maxGames: maxGames,
-    hostName: values['--host-name'] ?? 'Priya',
-    guestName: values['--guest-name'] ?? 'Karim',
+    players: players,
+    names: names,
+    appendTo: values['--append-to'],
     out: values['--out'] ??
         Platform.script
             .resolve(
@@ -276,6 +360,30 @@ Future<Frame> _awaitType(
   );
 }
 
+/// How a fixture this tool wrote ends: the close of the last game, of the
+/// games list and of the file.
+const String _baseTail = '\n    }\n  ]\n}\n';
+
+/// An existing fixture read for `--append-to`: its text up to and including
+/// the `    }` that closes its last game, and the names of its games.
+class _Base {
+  _Base(this.head, this.names);
+
+  final String head;
+  final List<String> names;
+
+  /// The highest N among the games named `<prefix>_N`, 0 if none.
+  int lastNumber(String prefix) {
+    int last = 0;
+    for (final String name in names) {
+      if (name.startsWith('${prefix}_')) {
+        last = max(last, int.tryParse(name.substring(prefix.length + 1)) ?? 0);
+      }
+    }
+    return last;
+  }
+}
+
 int _entryOf(int seat) => seat * 13;
 
 String _line(Object? value) => jsonEncode(value);
@@ -297,8 +405,12 @@ class _Recorder {
   /// tool never contacts.
   final Uri httpBase;
 
+  /// Seat numbers in join order; the first is the host's.
+  late final List<int> seats = _seatsFor(args.players);
+  int get _hostSeat => seats.first;
+
   late SimSocket host;
-  late SimSocket guest;
+  List<SimSocket> guests = <SimSocket>[];
   String chainCommit = '';
   Map<String, Object?> rules = <String, Object?>{};
 
@@ -306,6 +418,12 @@ class _Recorder {
   List<_Game> kept = <_Game>[];
 
   bool connected = false;
+
+  List<String> get _requirements =>
+      args.players == 2 ? _requirementsTwo : _requirementsMulti;
+
+  /// The host's socket, then the guests' in join order.
+  List<SimSocket> get sockets => <SimSocket>[host, ...guests];
 
   String where() => 'choice-seed=${args.choiceSeed} target=${args.target} '
       'game=${gamesPlayed + 1} (the faces are the server\'s: re-run with the '
@@ -317,7 +435,7 @@ class _Recorder {
       return '';
     }
     final StringBuffer out = StringBuffer();
-    for (final SimSocket s in <SimSocket>[host, guest]) {
+    for (final SimSocket s in sockets) {
       final int from = max(0, s.log.length - 4);
       for (int i = from; i < s.log.length; i++) {
         out.writeln('  ${s.label}[$i]: ${_line(s.log[i])}');
@@ -327,29 +445,37 @@ class _Recorder {
   }
 
   Future<void> run() async {
+    final _Base? base = _readBase();
     final String serverVersion = await _serverVersion();
     while (gamesPlayed < args.maxGames) {
       connected = false;
+      guests = <SimSocket>[];
       host = await SimSocket.connect(args.target, label: 'host');
       try {
-        guest = await SimSocket.connect(args.target, label: 'guest');
-        connected = true;
-        try {
-          await _openRoom();
-          final Frame openingTurn = await _begin();
-          final _Played played = await _play(openingTurn);
-          gamesPlayed++;
-          await _settle(played);
-          final int covered = _covered(kept).length;
-          stdout.writeln(
-            'game $gamesPlayed: winner seat ${played.winner}, '
-            '${played.rolls.length} rolls, kept ${kept.length}, '
-            'covered $covered/${_requirements.length}',
+        for (int i = 1; i < args.players; i++) {
+          guests.add(
+            await SimSocket.connect(
+              args.target,
+              label: args.players == 2 ? 'guest' : 'guest-$i',
+            ),
           );
-        } finally {
-          await guest.close();
         }
+        connected = true;
+        await _openRoom();
+        final Frame openingTurn = await _begin();
+        final _Played played = await _play(openingTurn);
+        gamesPlayed++;
+        await _settle(played);
+        final int covered = _covered(kept).length;
+        stdout.writeln(
+          'game $gamesPlayed: winner seat ${played.winner}, '
+          '${played.rolls.length} rolls, kept ${kept.length}, '
+          'covered $covered/${_requirements.length}',
+        );
       } finally {
+        for (final SimSocket s in guests.reversed) {
+          await s.close();
+        }
         await host.close();
       }
       if (_covered(kept).length == _requirements.length) {
@@ -379,7 +505,23 @@ class _Recorder {
     }
     stdout.writeln('coverage: all ${_requirements.length} covered '
         '(${_requirements.join(', ')})');
-    final int bytes = _write(serverVersion);
+    final List<String> gameNames = _gameNames(base);
+    if (args.players != 2) {
+      for (int i = 0; i < kept.length; i++) {
+        final _Game g = kept[i];
+        stdout.writeln(
+          '${gameNames[i]}: frames per view '
+          '${_line(<String, int>{
+                for (final int s in seats) '$s': g.views[s]!.length
+              })}, winner seat ${g.winner}, '
+          '${g.events.where((Map<String, Object?> e) => e['kind'] == 'capture').length} captures, '
+          'rolls per seat ${_line(<String, int>{
+                for (final int s in seats) '$s': g.counts[s]!['rolls']!
+              })}, server version $serverVersion',
+        );
+      }
+    }
+    final int bytes = _write(serverVersion, gameNames, base);
     stdout.writeln('wrote ${args.out} ($bytes bytes)');
     exitCode = 0;
   }
@@ -412,11 +554,12 @@ class _Recorder {
     }
   }
 
-  /// A new room: create, then join by code, as a host and a friend would.
+  /// A new room: create, then join by code, as a host and friends would.
+  /// Each joiner must land on the next seat of [seats].
   Future<void> _openRoom() async {
     await host.send('create_room', <String, Object?>{
-      'name': args.hostName,
-      'players': 2,
+      'name': args.names[0],
+      'players': args.players,
     });
     final Frame hostSeat =
         await _awaitType(host, 'seat_assigned', because: 'create_room reply');
@@ -432,20 +575,24 @@ class _Recorder {
     final String code = requireString(roomData, 'code', frame: 'room');
     _takeRoom(roomData);
 
-    await guest.send('join_room', <String, Object?>{
-      'code': code,
-      'name': args.guestName,
-    });
-    final Frame guestSeat =
-        await _awaitType(guest, 'seat_assigned', because: 'join_room reply');
-    final int gotGuest =
-        requireInt(frameData(guestSeat), 'seat', frame: 'seat_assigned');
-    if (gotGuest != _guestSeat) {
-      throw _RunFailure('the guest was seated at $gotGuest, expected '
-          '$_guestSeat: ${frameData(guestSeat)}');
+    for (int i = 0; i < guests.length; i++) {
+      final SimSocket guest = guests[i];
+      final int expected = seats[i + 1];
+      await guest.send('join_room', <String, Object?>{
+        'code': code,
+        'name': args.names[i + 1],
+      });
+      final Frame guestSeat =
+          await _awaitType(guest, 'seat_assigned', because: 'join_room reply');
+      final int gotGuest =
+          requireInt(frameData(guestSeat), 'seat', frame: 'seat_assigned');
+      if (gotGuest != expected) {
+        throw _RunFailure('${guest.label} was seated at $gotGuest, expected '
+            '$expected: ${frameData(guestSeat)}');
+      }
+      await _awaitType(guest, 'room', because: 'join_room reply');
+      await _awaitType(host, 'player_joined', because: '${guest.label} joined');
     }
-    await _awaitType(guest, 'room', because: 'join_room reply');
-    await _awaitType(host, 'player_joined', because: 'the guest joined');
   }
 
   void _takeRoom(Map<String, Object?> roomData) {
@@ -459,20 +606,26 @@ class _Recorder {
 
   /// Brings the lobby to a started game and returns the opening `turn` frame.
   /// The host fixes its own seed once the lobby's `chain_commit` is in hand;
-  /// the guest leaves its seed to the server.
+  /// the guests leave theirs to the server.
   Future<Frame> _begin() async {
     final String seed = 'rec-${args.choiceSeed}-g${gamesPlayed + 1}';
     await host.send('set_seed', <String, Object?>{'client_seed': seed});
     await _awaitType(host, 'seat_seed', because: 'the host set_seed');
-    await _awaitType(guest, 'seat_seed', because: 'the host set_seed');
+    for (final SimSocket guest in guests) {
+      await _awaitType(guest, 'seat_seed', because: 'the host set_seed');
+    }
     await host.send('start_game', <String, Object?>{});
     await _awaitType(host, 'game_started', because: 'game start');
-    await _awaitType(guest, 'game_started', because: 'game start');
-    await _awaitType(guest, 'turn', because: 'the opening turn');
+    for (final SimSocket guest in guests) {
+      await _awaitType(guest, 'game_started', because: 'game start');
+    }
+    for (final SimSocket guest in guests) {
+      await _awaitType(guest, 'turn', because: 'the opening turn');
+    }
     return _awaitType(host, 'turn', because: 'the opening turn');
   }
 
-  SimSocket _socketOf(int seat) => seat == _hostSeat ? host : guest;
+  SimSocket _socketOf(int seat) => sockets[seats.indexOf(seat)];
 
   /// Plays to `game_over`, reading seat 0's socket and acting for whichever
   /// seat is on turn. Every move is one the server offered.
@@ -528,14 +681,16 @@ class _Recorder {
             throw _RunFailure('game_over.verify_url="$url" does not end with '
                 '"/v/$gameId"');
           }
-          // The guest's socket was not read during play; its queue still holds
-          // every frame of the game ahead of this one.
-          await _awaitType(
-            guest,
-            'game_over',
-            because: 'game over',
-            maxFrames: 20000,
-          );
+          // The guests' sockets were not read during play; their queues still
+          // hold every frame of the game ahead of this one.
+          for (final SimSocket guest in guests) {
+            await _awaitType(
+              guest,
+              'game_over',
+              because: 'game over',
+              maxFrames: 20000,
+            );
+          }
           return _Played(
             gameId: gameId,
             clientSeeds: clientSeeds,
@@ -622,18 +777,35 @@ class _Recorder {
 
   Future<void> _settle(_Played played) async {
     final Map<int, List<Frame>> views = <int, List<Frame>>{
-      _hostSeat: _viewOf(_hostSeat),
-      _guestSeat: _viewOf(_guestSeat),
+      for (final int s in seats) s: _viewOf(s),
     };
     final _Game game = await _analyse(played, views);
     final List<_Game> pool = <_Game>[...kept, game];
-    final List<_Game> best = _bestSubset(pool);
+    final List<_Game> best =
+        args.players == 2 ? _bestSubset(pool) : _shortestCovering(pool);
     if (best.contains(game)) {
       game.gameLog = await _fetchGameLog(played.gameId, views[_hostSeat]!);
       kept = best..sort((_Game a, _Game b) => a.order.compareTo(b.order));
     } else {
       kept = best..sort((_Game a, _Game b) => a.order.compareTo(b.order));
     }
+  }
+
+  /// Three or four players: the one game that covers everything and has the
+  /// fewest frames in seat 0's view, the earlier game on a tie; none if no
+  /// game covers it.
+  List<_Game> _shortestCovering(List<_Game> pool) {
+    _Game? best;
+    for (final _Game g in pool) {
+      if (_covered(<_Game>[g]).length != _requirements.length) {
+        continue;
+      }
+      if (best == null ||
+          g.views[_hostSeat]!.length < best.views[_hostSeat]!.length) {
+        best = g;
+      }
+    }
+    return best == null ? <_Game>[] : <_Game>[best];
   }
 
   /// Fewest-games-first is the third key: most requirements covered, then
@@ -671,53 +843,58 @@ class _Recorder {
   }
 
   Set<String> _covered(List<_Game> games) => <String>{
-        for (final _Game g in games) ...g.covers,
+        for (final _Game g in games)
+          for (final String c in g.covers)
+            if (_requirements.contains(c)) c,
       };
 
   Future<_Game> _analyse(_Played played, Map<int, List<Frame>> views) async {
     final List<Frame> hostView = views[_hostSeat]!;
-    final List<Frame> guestView = views[_guestSeat]!;
 
-    // Both seats saw the same game, push for push.
-    final List<int> hostIdx = <int>[
-      for (int i = 0; i < hostView.length; i++)
-        if (_gamePushTypes.contains(frameType(hostView[i]))) i,
-    ];
-    final List<int> guestIdx = <int>[
-      for (int i = 0; i < guestView.length; i++)
-        if (_gamePushTypes.contains(frameType(guestView[i]))) i,
-    ];
-    if (hostIdx.length != guestIdx.length) {
-      throw _RunFailure(
-        'seat 0 received ${hostIdx.length} game pushes and seat 2 received '
-        '${guestIdx.length} for game ${played.gameId}',
-      );
-    }
-    for (int p = 0; p < hostIdx.length; p++) {
-      final Frame a = hostView[hostIdx[p]];
-      final Frame b = guestView[guestIdx[p]];
-      if (frameType(a) != frameType(b) ||
-          _line(frameData(a)) != _line(frameData(b))) {
+    // Every seat saw the same game, push for push.
+    List<int> pushIndices(List<Frame> view) => <int>[
+          for (int i = 0; i < view.length; i++)
+            if (_gamePushTypes.contains(frameType(view[i]))) i,
+        ];
+    final List<int> hostIdx = pushIndices(hostView);
+    final Map<int, List<int>> seatIdx = <int, List<int>>{
+      _hostSeat: hostIdx,
+    };
+    for (final int seat in seats.skip(1)) {
+      final List<Frame> view = views[seat]!;
+      final List<int> idx = pushIndices(view);
+      if (hostIdx.length != idx.length) {
         throw _RunFailure(
-          'push $p of game ${played.gameId} differs between the seats: '
-          'seat 0 ${_line(a)} vs seat 2 ${_line(b)}',
+          'seat $_hostSeat received ${hostIdx.length} game pushes and seat '
+          '$seat received ${idx.length} for game ${played.gameId}',
         );
       }
+      for (int p = 0; p < hostIdx.length; p++) {
+        final Frame a = hostView[hostIdx[p]];
+        final Frame b = view[idx[p]];
+        if (frameType(a) != frameType(b) ||
+            _line(frameData(a)) != _line(frameData(b))) {
+          throw _RunFailure(
+            'push $p of game ${played.gameId} differs between the seats: '
+            'seat $_hostSeat ${_line(a)} vs seat $seat ${_line(b)}',
+          );
+        }
+      }
+      seatIdx[seat] = idx;
     }
     Map<String, int> viewIndexAt(int hostViewIndex) {
       final int p = hostIdx.indexOf(hostViewIndex);
       return <String, int>{
-        '$_hostSeat': hostViewIndex,
-        '$_guestSeat': guestIdx[p],
+        for (final int s in seats)
+          '$s': s == _hostSeat ? hostViewIndex : seatIdx[s]![p],
       };
     }
 
     final Map<int, List<int>> tokens = <int, List<int>>{
-      _hostSeat: <int>[-1, -1, -1, -1],
-      _guestSeat: <int>[-1, -1, -1, -1],
+      for (final int s in seats) s: <int>[-1, -1, -1, -1],
     };
     final Map<int, Map<String, int>> counts = <int, Map<String, int>>{
-      for (final int s in <int>[_hostSeat, _guestSeat])
+      for (final int s in seats)
         s: <String, int>{
           'rolls': 0,
           'sixes': 0,
@@ -729,7 +906,13 @@ class _Recorder {
     final List<Map<String, Object?>> events = <Map<String, Object?>>[];
     final Set<String> covers = <String>{};
     final int winner = played.winner;
-    covers.add(winner == _hostSeat ? _reqHostWin : _reqGuestWin);
+    covers.add(
+      args.players != 2
+          ? _reqCompleteGame
+          : winner == _hostSeat
+              ? _reqHostWin
+              : _reqGuestWin,
+    );
 
     for (final int i in hostIdx) {
       final Frame frame = hostView[i];
@@ -785,10 +968,9 @@ class _Recorder {
     }
 
     final Map<int, List<int>> finalTokens = <int, List<int>>{
-      for (final int s in <int>[_hostSeat, _guestSeat])
-        s: List<int>.of(tokens[s]!),
+      for (final int s in seats) s: List<int>.of(tokens[s]!),
     };
-    for (final int s in <int>[_hostSeat, _guestSeat]) {
+    for (final int s in seats) {
       counts[s]!['home'] = finalTokens[s]!.where((int t) => t == 57).length;
     }
     if (finalTokens[winner]!.any((int t) => t != 57)) {
@@ -797,8 +979,7 @@ class _Recorder {
         'at ${finalTokens[winner]} (game ${played.gameId})',
       );
     }
-    final int total =
-        counts[_hostSeat]!['rolls']! + counts[_guestSeat]!['rolls']!;
+    final int total = seats.fold(0, (int a, int s) => a + counts[s]!['rolls']!);
     if (total != played.rolls.length) {
       throw _RunFailure('${played.rolls.length} rolled frames were verified '
           'but the views count $total rolls');
@@ -872,7 +1053,11 @@ class _Recorder {
       });
       if (!_entrySquares.contains(moverSquare)) {
         covers.add(
-          seat == _hostSeat ? _reqCaptureBySeat0 : _reqCaptureBySeat2,
+          args.players != 2
+              ? _reqCapture
+              : seat == _hostSeat
+                  ? _reqCaptureBySeat0
+                  : _reqCaptureBySeat2,
         );
       }
     }
@@ -918,7 +1103,7 @@ class _Recorder {
     if (recordRolls is! List<Object?>) {
       throw _RunFailure('the record at $jsonUri has no rolls list');
     }
-    for (final int s in <int>[_hostSeat, _guestSeat]) {
+    for (final int s in seats) {
       int rolls = 0;
       int sixes = 0;
       for (final Object? r in recordRolls) {
@@ -1015,36 +1200,93 @@ class _Recorder {
     return parts;
   }
 
-  String _gameName(_Game g, Map<int, int> perWinner) {
-    final int n = (perWinner[g.winner] ?? 0) + 1;
-    perWinner[g.winner] = n;
-    return '${g.winner == _hostSeat ? 'host' : 'guest'}_wins_$n';
+  /// The name of each kept game, in order: `host_wins_N` or `guest_wins_N`
+  /// for two players, `three_seats_N` or `four_seats_N` for more. N counts up
+  /// from the games of that name already in [base].
+  List<String> _gameNames(_Base? base) {
+    final Map<String, int> next = <String, int>{};
+    String take(String prefix) {
+      final int n =
+          next.putIfAbsent(prefix, () => base?.lastNumber(prefix) ?? 0) + 1;
+      next[prefix] = n;
+      return '${prefix}_$n';
+    }
+
+    return <String>[
+      for (final _Game g in kept)
+        take(
+          args.players == 2
+              ? (g.winner == _hostSeat ? 'host_wins' : 'guest_wins')
+              : (args.players == 3 ? 'three_seats' : 'four_seats'),
+        ),
+    ];
+  }
+
+  /// Reads the fixture named by `--append-to`, if any, before any room is
+  /// opened. The file must end the way this tool writes it, so that the new
+  /// games can be added without touching a byte of the old ones.
+  _Base? _readBase() {
+    final String? path = args.appendTo;
+    if (path == null) {
+      return null;
+    }
+    final String text;
+    try {
+      text = File(path).readAsStringSync();
+    } on FileSystemException catch (error) {
+      throw _RunFailure('--append-to $path cannot be read: ${error.message}');
+    }
+    final Object? decoded = jsonDecode(text);
+    final Object? games =
+        decoded is Map<String, Object?> ? decoded['games'] : null;
+    if (games is! List<Object?> || games.isEmpty) {
+      throw _RunFailure('--append-to $path has no non-empty "games" list');
+    }
+    if (!text.endsWith(_baseTail)) {
+      throw _RunFailure(
+        '--append-to $path does not end with the closing lines this tool '
+        'writes ("    }", "  ]", "}"), so its last game cannot be extended '
+        'without rewriting it',
+      );
+    }
+    return _Base(
+      text.substring(0, text.length - _baseTail.length + '\n    }'.length),
+      <String>[
+        for (final Object? g in games)
+          if (g is Map<String, Object?> && g['name'] is String)
+            g['name']! as String,
+      ],
+    );
   }
 
   /// Writes the fixture and returns its size in bytes. Two-space indent;
-  /// every recorded frame, event and small object sits on one line.
-  int _write(String serverVersion) {
+  /// every recorded frame, event and small object sits on one line. With a
+  /// [base] the old text is kept as it is, its last game gains a comma, and
+  /// the new games follow with their `recorded` field.
+  int _write(String serverVersion, List<String> gameNames, _Base? base) {
+    final String recordedAt = DateTime.now().toUtc().toIso8601String();
     final StringBuffer out = StringBuffer();
-    final Map<int, int> perWinner = <int, int>{};
-    out.writeln('{');
-    out.writeln('  "format": 1,');
-    out.writeln(
-        '  "tool": "packages/ludo_server/tool/record_real_games.dart",');
-    out.writeln('  "server_version": ${_line(serverVersion)},');
-    out.writeln(
-      '  "recorded_at": ${_line(DateTime.now().toUtc().toIso8601String())},',
-    );
-    out.writeln('  "choice_seed": ${args.choiceSeed},');
-    out.writeln('  "games": [');
+    if (base == null) {
+      out.writeln('{');
+      out.writeln('  "format": 1,');
+      out.writeln(
+          '  "tool": "packages/ludo_server/tool/record_real_games.dart",');
+      out.writeln('  "server_version": ${_line(serverVersion)},');
+      out.writeln('  "recorded_at": ${_line(recordedAt)},');
+      out.writeln('  "choice_seed": ${args.choiceSeed},');
+      out.writeln('  "games": [');
+    } else {
+      out.write(base.head);
+      out.writeln(',');
+    }
     for (int gi = 0; gi < kept.length; gi++) {
       final _Game g = kept[gi];
       out.writeln('    {');
-      out.writeln('      "name": ${_line(_gameName(g, perWinner))},');
-      out.writeln('      "players": 2,');
-      out.writeln('      "seats": [$_hostSeat, $_guestSeat],');
+      out.writeln('      "name": ${_line(gameNames[gi])},');
+      out.writeln('      "players": ${args.players},');
+      out.writeln('      "seats": [${seats.join(', ')}],');
       out.writeln('      "names": ${_line(<String, String>{
-            '$_hostSeat': args.hostName,
-            '$_guestSeat': args.guestName,
+            for (int i = 0; i < seats.length; i++) '${seats[i]}': args.names[i],
           })},');
       out.writeln('      "rules": ${_line(g.rules)},');
       out.writeln('      "game_id": ${_line(g.gameId)},');
@@ -1058,7 +1300,6 @@ class _Recorder {
               '${e.key}': e.value,
           })},');
       out.writeln('      "views": {');
-      final List<int> seats = <int>[_hostSeat, _guestSeat];
       for (int si = 0; si < seats.length; si++) {
         out.writeln('        "${seats[si]}": [');
         _writeLines(out, g.views[seats[si]]!, '          ');
@@ -1070,7 +1311,16 @@ class _Recorder {
       out.writeln('      ],');
       out.writeln('      "events": [');
       _writeLines(out, g.events, '        ');
-      out.writeln('      ]');
+      if (base == null) {
+        out.writeln('      ]');
+      } else {
+        out.writeln('      ],');
+        out.writeln('      "recorded": ${_line(<String, Object?>{
+              'server_version': serverVersion,
+              'recorded_at': recordedAt,
+              'choice_seed': args.choiceSeed,
+            })}');
+      }
       out.writeln('    }${gi == kept.length - 1 ? '' : ','}');
     }
     out.writeln('  ]');

@@ -26,6 +26,7 @@ import 'game_stats.dart';
 import 'net/snapshot.dart' show RematchState;
 import 'quick_chat.dart';
 import 'refusal_mark.dart';
+import 'seat_mark.dart';
 import 'theme.dart';
 import 'verify_rolls_button.dart';
 
@@ -127,6 +128,11 @@ class EndCard extends StatefulWidget {
   /// constructor site that predates C-246).
   final List<int> occupiedSeats;
 
+  /// C-585: the display label for each seat, the same ones the board chips
+  /// show (`seatDisplayNames`). A seat with no entry draws its mark and
+  /// state only. Empty by default.
+  final Map<int, String> seatNames;
+
   /// `controller.isHost`. Gates [onStartReady]: C-246 rule 4's start
   /// button is never shown to a non-host.
   final bool isHost;
@@ -193,6 +199,7 @@ class EndCard extends StatefulWidget {
     this.rematch,
     this.rematchByName,
     this.occupiedSeats = const <int>[],
+    this.seatNames = const <int, String>{},
     this.isHost = false,
     this.rematchGone = false,
     this.onRematch,
@@ -912,7 +919,7 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: kSpace2),
-          _readyDotsRow(rematch),
+          _readyChipsRow(loc, rematch),
           if (offerStart) ...<Widget>[
             const SizedBox(height: kSpace3),
             _startReadyButton(loc, rematch.ready.length),
@@ -981,6 +988,10 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
               },
             ),
           ),
+          if (widget.occupiedSeats.length >= 3) ...<Widget>[
+            const SizedBox(height: kSpace3),
+            _readyChipsRow(loc, rematch),
+          ],
           const SizedBox(height: kSpace3),
           _rematchButton(loc),
           if (includeSecondaryNewTable) ...<Widget>[
@@ -1016,34 +1027,85 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
     return _FadeInOnArrival(key: key, fade: _arriving, child: line);
   }
 
-  /// One ready dot per occupied seat (rule 4's second bullet), seat-coloured
-  /// and filled when that seat is in `rematch.ready`, an outline of the
-  /// same colour when it is not -- doctrine P9, colour is never the only
-  /// signal, so the two states differ in fill, not only in hue. Wrapped
-  /// rather than a bare Row so a four-seat room never overflows a narrow
-  /// card.
-  Widget _readyDotsRow(RematchState rematch) {
+  /// C-585: one ready chip per occupied seat, in seat order. The seat's
+  /// [SeatMark] on a disc of its colour, its name, and its state: a ready
+  /// chip is filled with a light tint of the seat colour and carries a check
+  /// mark, a chip still waiting is an outline with no check mark -- doctrine
+  /// P9, the state reads without colour. Wrapped rather than a bare Row so a
+  /// four-seat room never overflows a narrow card.
+  Widget _readyChipsRow(AppLocalizations loc, RematchState rematch) {
     return Wrap(
       alignment: WrapAlignment.center,
       spacing: kSpace2,
       runSpacing: kSpace2,
       children: <Widget>[
         for (final int seat in widget.occupiedSeats)
-          _readyDot(seat, rematch.ready.contains(seat)),
+          _readyChip(loc, seat, rematch.ready.contains(seat)),
       ],
     );
   }
 
-  Widget _readyDot(int seat, bool ready) {
+  Widget _readyChip(AppLocalizations loc, int seat, bool ready) {
     final Color seatColor = _seatColor(seat);
-    return Container(
+    final String? name = seat == widget.mySeat
+        ? loc.seatYou
+        : widget.seatNames[seat];
+    final String label = ready
+        ? loc.endRematchSeatReady(name ?? '')
+        : loc.endRematchSeatWaiting(name ?? '');
+    return Semantics(
       key: Key('end-card-ready-$seat'),
-      width: 16,
-      height: 16,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: ready ? seatColor : null,
-        border: Border.all(color: seatColor, width: 2),
+      container: true,
+      label: label,
+      child: ExcludeSemantics(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          constraints: const BoxConstraints(minHeight: 32),
+          padding: const EdgeInsetsDirectional.symmetric(
+            horizontal: kSpace2,
+            vertical: kSpace1,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            color: ready ? seatColor.withValues(alpha: 0.22) : null,
+            border: Border.all(color: seatColor, width: 2),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Container(
+                width: 22,
+                height: 22,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: seatColor,
+                  shape: BoxShape.circle,
+                ),
+                child: SeatMark(seat: seat, size: 14),
+              ),
+              if (name != null) ...<Widget>[
+                const SizedBox(width: kSpace1),
+                Flexible(
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: LudoColors.ink),
+                  ),
+                ),
+              ],
+              if (ready) ...<Widget>[
+                const SizedBox(width: kSpace1),
+                const Icon(
+                  Icons.check_rounded,
+                  size: 18,
+                  color: LudoColors.ink,
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
