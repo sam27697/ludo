@@ -23,6 +23,16 @@
 // right edge, and the offset is the same in English and in Arabic (within
 // 2 px). They do not pin the literal "right edge == die right edge".
 //
+// Order 589t (C-589 D1, D2) changes when the hold starts: a watcher dead end
+// whose seat has a throw queued or in flight is armed at the landing of that
+// throw (the seat die's face enters the board), not at the frames. The cases
+// under "C-589" below drive that rule; the one C-586 case whose timing
+// assertions encoded the old arm-at-frame rule (the first loop) is rewritten
+// to measure from the landing, and every other C-586 case is unchanged. The
+// landing is read off the screen: the frame on which the seat die shows the
+// thrown face (board-seat-die-face-<seat>-<face>), which the seat die waits
+// for until the throw leaves its tumble (C-465 D2).
+//
 // Every failure reason names the scenario and ends with the frames and pumps
 // that led to it. The cases are deterministic, so the scenario is the whole
 // reproduction; there is no seed.
@@ -97,16 +107,39 @@ class _Scn {
     await _pumpFrames(tester, Duration(milliseconds: ms));
   }
 
-  /// The moment the thrown die has landed on its seat (the throw tumbles for
-  /// 700 ms and no seat die is drawn meanwhile): pumps 800 ms of frames and
-  /// returns 800 if [done] holds then, else -1. The hold, armed when the dead
-  /// end frames arrived, has 700 ms left at this point.
+  /// Pumps 800 ms of frames and returns 800 if [done] holds then, else -1.
+  /// A thrown die lands within 700 ms of its start (kThrowTumble) and the
+  /// turn_passed behind the dead roll hurries it, so the landing is behind
+  /// us at this point and the C-589 hold, armed at the landing, is still up.
   Future<int> landed(bool Function() done) async {
     await pump(800);
     if (done()) {
       return 800;
     }
     steps.add('condition did not hold 800ms after the dead end frames');
+    return -1;
+  }
+
+  /// Pumps one 16 ms frame at a time. After each frame [until] is asked; the
+  /// first frame on which it holds ends the wait and the elapsed time is
+  /// returned. [each] sees every frame before that one, with the elapsed
+  /// milliseconds. Returns -1 when [limitMs] passed without [until] holding.
+  Future<int> frames({
+    required int limitMs,
+    bool Function()? until,
+    void Function(int ms)? each,
+  }) async {
+    int elapsed = 0;
+    while (elapsed < limitMs) {
+      await tester.pump(_kFrame);
+      elapsed += _kFrame.inMilliseconds;
+      if (until != null && until()) {
+        steps.add('frames ${elapsed}ms until the condition held');
+        return elapsed;
+      }
+      each?.call(elapsed);
+    }
+    steps.add('frames ${elapsed}ms, the condition never held');
     return -1;
   }
 }
@@ -280,6 +313,91 @@ Future<void> _threeSixes(_Scn s, {required int seat, required int next}) async {
   await s.push('turn', _turnFrame(next));
 }
 
+/// Seat [first] rolls [firstFace] with a legal move for its token 0 and moves
+/// it, the turn reaches [second], who rolls a dead [deadFace]; [next] is the
+/// seat after. All of it arrives with no time between the frames, so
+/// [second]'s throw is queued behind [first]'s.
+Future<void> _earlierThrowThenDead(
+  _Scn s, {
+  required int first,
+  required int second,
+  required int next,
+  int firstFace = 4,
+  int deadFace = 3,
+}) async {
+  await s.push('rolled', _rolled(first, firstFace, 1, legal: const <int>[0]));
+  await s.push(
+    'turn',
+    turnJson(
+      seat: first,
+      phase: 'await_move',
+      k: 1,
+      value: firstFace,
+      legal: const <int>[0],
+      queue: <int>[firstFace],
+      legalByFace: <Map<String, Object?>>[
+        faceLegal(firstFace, const <int>[0]),
+      ],
+    ),
+  );
+  await s.push('moved', <String, Object?>{
+    'seat': first,
+    'token': 0,
+    'from': 10,
+    'to': 10 + firstFace,
+    'captured': <Object?>[],
+    'extra_roll': false,
+    'face': firstFace,
+  });
+  await s.push('turn', _turnFrame(second));
+  await _singleDeadRoll(s, seat: second, next: next, face: deadFace, k: 2);
+}
+
+bool _isDeadLine(String m) =>
+    m.contains('no move with this roll') ||
+    m.contains('three sixes in a row') ||
+    m.contains('لا حركة بهذه الرمية') ||
+    m.contains('ثلاث ستّات');
+
+List<String> _deadLines(_Announcements said) => <String>[
+  for (final String m in said.recorded)
+    if (_isDeadLine(m)) m,
+];
+
+/// C-589 D1: while the dead roll's thrown die is in the air the watcher sees
+/// no line, no badge on any seat and hears no dead-end announcement.
+void _expectNothingYet(
+  _Scn s,
+  WidgetTester tester,
+  _Announcements said,
+  int ms,
+) {
+  expect(
+    find.byKey(_otherNoticeKey),
+    findsNothing,
+    reason: s.why(
+      'game-no-move-other-notice absent while the die is in the air '
+      '(${ms}ms in)',
+    ),
+  );
+  expect(
+    _badgeSeats(tester),
+    isEmpty,
+    reason: s.why(
+      'no board-seat-die-dead-* badge while the die is in the air '
+      '(${ms}ms in)',
+    ),
+  );
+  expect(
+    _deadLines(said),
+    isEmpty,
+    reason: s.why(
+      'no dead-end announcement while the die is in the air (${ms}ms in); '
+      'announced ${said.recorded}',
+    ),
+  );
+}
+
 Future<RollTrayDrive> _mount(
   WidgetTester tester, {
   required Map<String, Object?> turn,
@@ -411,12 +529,24 @@ void main() {
           );
           try {
             await _singleDeadRoll(s, seat: rolling, next: mySeat);
-            final int waited = await s.landed(() => _noticeUp(tester));
+            // C-589 D1: the hold is armed when the dead roll's thrown die
+            // lands (the seat die shows its 3), so the clock below starts
+            // there and not at the frames.
+            final int waited = await s.frames(
+              limitMs: 1500,
+              until: () => tester.any(find.byKey(seatDieFaceKey(rolling, 3))),
+            );
             expect(
               waited,
               isNot(-1),
+              reason: s.why('seat $rolling\'s die lands on its 3'),
+            );
+            expect(
+              _noticeUp(tester),
+              isTrue,
               reason: s.why(
-                'game-no-move-other-notice appears for seat $rolling',
+                'game-no-move-other-notice appears for seat $rolling on the '
+                'frame its die lands (${waited}ms after the push)',
               ),
             );
             expect(
@@ -464,28 +594,34 @@ void main() {
               findsOneWidget,
               reason: s.why('the dead face (a 3) is the one the die shows'),
             );
-            await s.pump(600);
+            await s.pump(1400);
             expect(
               find.byKey(_otherNoticeKey),
               findsOneWidget,
               reason: s.why(
-                'the line is still up at 1400 ms, inside the $_kHoldMs ms '
-                'hold',
+                'the line is still up 1400 ms after the landing, inside the '
+                '$_kHoldMs ms hold',
               ),
             );
-            expect(_badgeSeats(tester), <int>[
-              rolling,
-            ], reason: s.why('the badge is still up at 1400 ms'));
-            await s.pump(300);
+            expect(
+              _badgeSeats(tester),
+              <int>[rolling],
+              reason: s.why('the badge is still up 1400 ms after the landing'),
+            );
+            await s.pump(200);
             expect(
               find.byKey(_otherNoticeKey),
               findsNothing,
-              reason: s.why('the line is gone at 1700 ms, after the hold'),
+              reason: s.why(
+                'the line is gone 1600 ms after the landing, after the hold',
+              ),
             );
             expect(
               _badgeSeats(tester),
               isEmpty,
-              reason: s.why('the badge is gone at 1700 ms, after the hold'),
+              reason: s.why(
+                'the badge is gone 1600 ms after the landing, after the hold',
+              ),
             );
           } finally {
             await releaseGame(tester, drive);
@@ -1357,4 +1493,879 @@ void main() {
       }
     }
   });
+
+  // ===========================================================================
+  // C-589 (order 589t). D1: the watcher dead end waits for the dead roll's
+  // thrown die to land. D2: a pending one is dropped when it is superseded.
+  // ===========================================================================
+  group('C-589 fixture controls (green without the implementation)', () {
+    testWidgets('after the frames of a dead roll the thrown die is still in '
+        'the air and the seat die is not drawn', (tester) async {
+      final RollTrayDrive drive = await _mount(
+        tester,
+        turn: _awaitRoll(2),
+        seats: _pair(mySeat: 0),
+      );
+      final _Scn s = _Scn('control: dead roll in the air', tester, drive);
+      try {
+        await _singleDeadRoll(s, seat: 2, next: 0);
+        expect(
+          find.byKey(opponentThrowTumblingKey(2)),
+          findsOneWidget,
+          reason: s.why('seat 2\'s thrown die tumbles right after the push'),
+        );
+        expect(
+          find.byKey(seatDieFaceKey(2, 3)),
+          findsNothing,
+          reason: s.why('the seat die holds back until the throw lands'),
+        );
+        final int landedMs = await s.frames(
+          limitMs: 1500,
+          until: () => tester.any(find.byKey(seatDieFaceKey(2, 3))),
+        );
+        expect(
+          landedMs,
+          allOf(greaterThan(0), lessThanOrEqualTo(800)),
+          reason: s.why('the die lands within the 700 ms tumble'),
+        );
+      } finally {
+        await releaseGame(tester, drive);
+      }
+    });
+
+    testWidgets('an earlier throw of another seat holds the dead roll\'s '
+        'throw in the queue', (tester) async {
+      final RollTrayDrive drive = await _mount(
+        tester,
+        mySeat: 1,
+        players: 4,
+        turn: _awaitRoll(3),
+        seats: _quad(
+          mySeat: 1,
+          tokens: const <int, List<int>>{
+            3: <int>[10, -1, -1, -1],
+          },
+        ),
+      );
+      final _Scn s = _Scn('control: queued throw', tester, drive);
+      try {
+        await _earlierThrowThenDead(s, first: 3, second: 0, next: 1);
+        expect(
+          find.byKey(opponentThrowKey(3)),
+          findsOneWidget,
+          reason: s.why('seat 3\'s earlier throw is the one in flight'),
+        );
+        expect(
+          find.byKey(opponentThrowKey(0)),
+          findsNothing,
+          reason: s.why('seat 0\'s throw waits in the queue behind it'),
+        );
+        final int landedMs = await s.frames(
+          limitMs: 3000,
+          until: () => tester.any(find.byKey(seatDieFaceKey(0, 3))),
+        );
+        expect(
+          landedMs,
+          isNot(-1),
+          reason: s.why('seat 0\'s die lands once its turn in the queue comes'),
+        );
+      } finally {
+        await releaseGame(tester, drive);
+      }
+    });
+  });
+
+  for (final Locale locale in _locales) {
+    final String lang = locale.languageCode;
+    for (final int mySeat in const <int>[0, 2]) {
+      final int rolling = mySeat == 0 ? 2 : 0;
+      testWidgets(
+        'C-589 D1 (a) ($lang): I am seat $mySeat, seat $rolling dead roll '
+        'still in the air: no line, no badge, no announcement while it '
+        'tumbles; from the landing line, badge and one announcement for the '
+        'full hold',
+        (tester) async {
+          final _Announcements said = _Announcements();
+          said.install(tester);
+          addTearDown(() => said.remove(tester));
+          final RollTrayDrive drive = await _mount(
+            tester,
+            mySeat: mySeat,
+            locale: locale,
+            turn: _awaitRoll(rolling),
+            seats: _pair(mySeat: mySeat),
+          );
+          final _Scn s = _Scn(
+            'two seats, me=$mySeat, seat $rolling dead roll of 3 in the air, '
+            '$lang',
+            tester,
+            drive,
+          );
+          final String line = _noMoveOther(locale, 'Bob');
+          try {
+            said.recorded.clear();
+            await _singleDeadRoll(s, seat: rolling, next: mySeat);
+            expect(
+              find.byKey(opponentThrowTumblingKey(rolling)),
+              findsOneWidget,
+              reason: s.why('fixture: the dead roll\'s die is in the air'),
+            );
+            _expectNothingYet(s, tester, said, 0);
+            final int landedMs = await s.frames(
+              limitMs: 1500,
+              until: () => tester.any(find.byKey(seatDieFaceKey(rolling, 3))),
+              each: (int ms) => _expectNothingYet(s, tester, said, ms),
+            );
+            expect(
+              landedMs,
+              isNot(-1),
+              reason: s.why('seat $rolling\'s die lands on its 3'),
+            );
+            expect(
+              _otherNoticeText(tester),
+              line,
+              reason: s.why(
+                'on the frame the die lands (${landedMs}ms after the push) '
+                'the line reads "$line"',
+              ),
+            );
+            expect(
+              _badgeSeats(tester),
+              <int>[rolling],
+              reason: s.why(
+                'on the frame the die lands the badge is on seat $rolling '
+                'only',
+              ),
+            );
+            await s.pump(16);
+            expect(
+              _deadLines(said),
+              <String>[line],
+              reason: s.why(
+                'exactly one announcement "$line" at the landing; all '
+                'announcements: ${said.recorded}',
+              ),
+            );
+            await s.pump(1400 - 16);
+            expect(
+              _otherNoticeText(tester),
+              line,
+              reason: s.why(
+                'the line is still up 1400 ms after the landing (${landedMs}ms '
+                'after the push)',
+              ),
+            );
+            expect(
+              _badgeSeats(tester),
+              <int>[rolling],
+              reason: s.why('the badge is still up 1400 ms after the landing'),
+            );
+            await s.pump(200);
+            expect(
+              find.byKey(_otherNoticeKey),
+              findsNothing,
+              reason: s.why('the line is gone 1600 ms after the landing'),
+            );
+            expect(
+              _badgeSeats(tester),
+              isEmpty,
+              reason: s.why('the badge is gone 1600 ms after the landing'),
+            );
+            expect(
+              _deadLines(said),
+              <String>[line],
+              reason: s.why(
+                'still exactly one announcement after the hold; all '
+                'announcements: ${said.recorded}',
+              ),
+            );
+          } finally {
+            await releaseGame(tester, drive);
+          }
+        },
+      );
+    }
+  }
+
+  testWidgets(
+    'C-589 D1 (a) three sixes: no line, badge or announcement before the '
+    'first of seat 2\'s throws has landed; the line comes with one '
+    'announcement and no badge',
+    (tester) async {
+      final _Announcements said = _Announcements();
+      said.install(tester);
+      addTearDown(() => said.remove(tester));
+      final RollTrayDrive drive = await _mount(
+        tester,
+        turn: _awaitRoll(2),
+        seats: _pair(mySeat: 0),
+      );
+      final _Scn s = _Scn('two seats, me=0, seat 2 three sixes', tester, drive);
+      final String line = _threeSixesOtherEn('Bob');
+      try {
+        said.recorded.clear();
+        await _threeSixes(s, seat: 2, next: 0);
+        expect(
+          find.byKey(opponentThrowKey(2)),
+          findsOneWidget,
+          reason: s.why('fixture: a throw of seat 2 is up, more are queued'),
+        );
+        _expectNothingYet(s, tester, said, 0);
+        final int firstLandingMs = await s.frames(
+          limitMs: 1500,
+          until: () => tester.any(find.byKey(seatDieFaceKey(2, 6))),
+          each: (int ms) => _expectNothingYet(s, tester, said, ms),
+        );
+        expect(
+          firstLandingMs,
+          isNot(-1),
+          reason: s.why('the first six lands on seat 2\'s die'),
+        );
+        final int lineMs = await s.frames(
+          limitMs: 3000,
+          until: () => tester.any(find.byKey(_otherNoticeKey)),
+        );
+        expect(
+          lineMs,
+          isNot(-1),
+          reason: s.why(
+            'the three-sixes line appears once the sixes have landed',
+          ),
+        );
+        expect(
+          _otherNoticeText(tester),
+          line,
+          reason: s.why('the line reads "$line"'),
+        );
+        expect(
+          _badgeSeats(tester),
+          isEmpty,
+          reason: s.why('no badge with two dead faces'),
+        );
+        await s.pump(1700);
+        expect(_deadLines(said), <String>[
+          line,
+        ], reason: s.why('one announcement "$line"; all: ${said.recorded}'));
+      } finally {
+        await releaseGame(tester, drive);
+      }
+    },
+  );
+
+  // (b): the dead roll's throw waits in the queue behind an earlier throw.
+  for (final Locale locale in _locales) {
+    final String lang = locale.languageCode;
+    testWidgets(
+      'C-589 D1 (b) ($lang): seat 0 dead roll queued behind seat 3\'s earlier '
+      'throw: nothing while it waits and tumbles, everything from its '
+      'landing, held 1500 ms from there',
+      (tester) async {
+        final _Announcements said = _Announcements();
+        said.install(tester);
+        addTearDown(() => said.remove(tester));
+        final RollTrayDrive drive = await _mount(
+          tester,
+          mySeat: 1,
+          players: 4,
+          locale: locale,
+          turn: _awaitRoll(3),
+          seats: _quad(
+            mySeat: 1,
+            tokens: const <int, List<int>>{
+              3: <int>[10, -1, -1, -1],
+            },
+          ),
+        );
+        final _Scn s = _Scn(
+          'four seats, me=1, seat 3 moves a 4, seat 0 dead roll of 3 queued '
+          'behind it, $lang',
+          tester,
+          drive,
+        );
+        final String line = _noMoveOther(locale, 'Ann');
+        try {
+          said.recorded.clear();
+          await _earlierThrowThenDead(s, first: 3, second: 0, next: 1);
+          expect(
+            find.byKey(opponentThrowKey(0)),
+            findsNothing,
+            reason: s.why('fixture: seat 0\'s throw is still queued'),
+          );
+          _expectNothingYet(s, tester, said, 0);
+          final int landedMs = await s.frames(
+            limitMs: 3000,
+            until: () => tester.any(find.byKey(seatDieFaceKey(0, 3))),
+            each: (int ms) => _expectNothingYet(s, tester, said, ms),
+          );
+          expect(
+            landedMs,
+            isNot(-1),
+            reason: s.why('seat 0\'s die lands on its 3'),
+          );
+          expect(
+            _otherNoticeText(tester),
+            line,
+            reason: s.why(
+              'on the frame seat 0\'s die lands (${landedMs}ms after the '
+              'push) the line reads "$line"',
+            ),
+          );
+          expect(_badgeSeats(tester), <int>[
+            0,
+          ], reason: s.why('the badge is on seat 0 only at the landing'));
+          await s.pump(16);
+          expect(
+            _deadLines(said),
+            <String>[line],
+            reason: s.why(
+              'exactly one announcement "$line" at the landing; all '
+              'announcements: ${said.recorded}',
+            ),
+          );
+          await s.pump(1400 - 16);
+          expect(
+            _otherNoticeText(tester),
+            line,
+            reason: s.why('the line is still up 1400 ms after the landing'),
+          );
+          expect(_badgeSeats(tester), <int>[
+            0,
+          ], reason: s.why('the badge is still up 1400 ms after the landing'));
+          await s.pump(200);
+          expect(
+            find.byKey(_otherNoticeKey),
+            findsNothing,
+            reason: s.why('the line is gone 1600 ms after the landing'),
+          );
+          expect(
+            _badgeSeats(tester),
+            isEmpty,
+            reason: s.why('the badge is gone 1600 ms after the landing'),
+          );
+        } finally {
+          await releaseGame(tester, drive);
+        }
+      },
+    );
+  }
+
+  // Reduced motion: a throw lands on its first frame (no tumble phase), so a
+  // pending dead end that waited for a tumble to end would never arm.
+  testWidgets(
+    'C-589 D1 (reduced motion): with animations disabled a watcher dead end '
+    'still shows its line and badge, announces once and holds 1500 ms',
+    (tester) async {
+      final _Announcements said = _Announcements();
+      said.install(tester);
+      addTearDown(() => said.remove(tester));
+      final RollTrayDrive drive = await connectPlaying(
+        tester,
+        seats: _pair(mySeat: 0),
+        turn: _awaitRoll(2),
+      );
+      await mountGame(tester, drive, disableAnimations: true);
+      final _Scn s = _Scn(
+        'two seats, me=0, seat 2 dead roll of 3, disableAnimations',
+        tester,
+        drive,
+      );
+      final String line = _noMoveOtherEn('Bob');
+      try {
+        said.recorded.clear();
+        await _singleDeadRoll(s, seat: 2, next: 0);
+        final int shownMs = await s.frames(
+          limitMs: 1000,
+          until: () => tester.any(find.byKey(_otherNoticeKey)),
+        );
+        expect(
+          shownMs,
+          isNot(-1),
+          reason: s.why('the line must appear under reduced motion'),
+        );
+        expect(
+          _otherNoticeText(tester),
+          line,
+          reason: s.why('the line reads "$line"'),
+        );
+        expect(_badgeSeats(tester), <int>[
+          2,
+        ], reason: s.why('the badge is on seat 2 when the line is'));
+        await s.pump(16);
+        expect(_deadLines(said), <String>[
+          line,
+        ], reason: s.why('one announcement; all: ${said.recorded}'));
+        await s.pump(1400 - 16);
+        expect(
+          find.byKey(_otherNoticeKey),
+          findsOneWidget,
+          reason: s.why('still up 1400 ms after it appeared (${shownMs}ms in)'),
+        );
+        await s.pump(200);
+        expect(
+          find.byKey(_otherNoticeKey),
+          findsNothing,
+          reason: s.why('gone 1600 ms after it appeared'),
+        );
+      } finally {
+        await releaseGame(tester, drive);
+      }
+    },
+  );
+
+  // (c): a moved-path dead end has no throw of that seat pending: armed at once.
+  for (final bool oneFace in const <bool>[true, false]) {
+    testWidgets('C-589 D1 (c): a moved-path dead end with '
+        '${oneFace ? 'one dead face' : 'two dead faces'} and no throw pending '
+        'is armed at once: line, one announcement, ${oneFace ? 'badge' : 'no '
+                  'badge'}, held 1500 ms from the frames', (tester) async {
+      final _Announcements said = _Announcements();
+      said.install(tester);
+      addTearDown(() => said.remove(tester));
+      final RollTrayDrive drive = await _mount(
+        tester,
+        turn: _awaitRoll(2),
+        seats: _pair(mySeat: 0, other: const <int>[10, -1, -1, -1]),
+      );
+      final _Scn s = _Scn(
+        'two seats, me=0, seat 2 moved path, '
+        '${oneFace ? 'one' : 'two'} dead face(s)',
+        tester,
+        drive,
+      );
+      final String line = _noMoveOtherEn('Bob');
+      try {
+        said.recorded.clear();
+        if (oneFace) {
+          await _movedPathOneDead(s, seat: 2, next: 0);
+        } else {
+          await _movedPathTwoDead(s, seat: 2, next: 0);
+        }
+        expect(
+          find.byKey(opponentThrowKey(2)),
+          findsNothing,
+          reason: s.why('fixture: no throw of seat 2 is pending'),
+        );
+        await s.pump(16);
+        expect(
+          _otherNoticeText(tester),
+          line,
+          reason: s.why('the line is up on the first frame after the push'),
+        );
+        expect(
+          _badgeSeats(tester),
+          oneFace ? <int>[2] : isEmpty,
+          reason: s.why(
+            oneFace
+                ? 'the badge is on seat 2 on the first frame'
+                : 'no badge with two dead faces',
+          ),
+        );
+        expect(
+          _deadLines(said),
+          <String>[line],
+          reason: s.why(
+            'exactly one announcement at once; all announcements: '
+            '${said.recorded}',
+          ),
+        );
+        await s.pump(1400 - 16);
+        expect(
+          find.byKey(_otherNoticeKey),
+          findsOneWidget,
+          reason: s.why('the line is up 1400 ms after the frames'),
+        );
+        await s.pump(200);
+        expect(
+          find.byKey(_otherNoticeKey),
+          findsNothing,
+          reason: s.why('the line is gone 1600 ms after the frames'),
+        );
+        expect(
+          _badgeSeats(tester),
+          isEmpty,
+          reason: s.why('the badge is gone 1600 ms after the frames'),
+        );
+      } finally {
+        await releaseGame(tester, drive);
+      }
+    });
+  }
+
+  // (d): superseded before the landing.
+  testWidgets(
+    'C-589 D2 (d): a new game before the landing drops the pending dead end: '
+    'no line, no badge, no announcement, ever',
+    (tester) async {
+      final _Announcements said = _Announcements();
+      said.install(tester);
+      addTearDown(() => said.remove(tester));
+      final List<Map<String, Object?>> seats = _pair(mySeat: 0);
+      final RollTrayDrive drive = await connectPlaying(
+        tester,
+        seats: seats,
+        turn: _awaitRoll(2),
+        gameId: 'game-a',
+      );
+      await mountGame(tester, drive);
+      final _Scn s = _Scn(
+        'two seats, me=0, seat 2 dead roll, new game',
+        tester,
+        drive,
+      );
+      try {
+        said.recorded.clear();
+        await _singleDeadRoll(s, seat: 2, next: 0);
+        expect(
+          find.byKey(opponentThrowTumblingKey(2)),
+          findsOneWidget,
+          reason: s.why('fixture: the dead roll\'s die is in the air'),
+        );
+        await s.frames(
+          limitMs: 96,
+          each: (int ms) => _expectNothingYet(s, tester, said, ms),
+        );
+        await s.push(
+          'room',
+          roomData(seats: seats, turn: _awaitRoll(0), gameId: 'game-b'),
+        );
+        _expectNothingYet(s, tester, said, 96);
+        await s.frames(
+          limitMs: 3000,
+          each: (int ms) => _expectNothingYet(s, tester, said, 96 + ms),
+        );
+      } finally {
+        await releaseGame(tester, drive);
+      }
+    },
+  );
+
+  testWidgets(
+    'C-589 D2 (d): a resync snapshot that clears the throws before the '
+    'landing drops the pending dead end, and a later ordinary throw of the '
+    'same seat does not light it up',
+    (tester) async {
+      final _Announcements said = _Announcements();
+      said.install(tester);
+      addTearDown(() => said.remove(tester));
+      final List<Map<String, Object?>> seats = _pair(
+        mySeat: 0,
+        other: const <int>[10, -1, -1, -1],
+      );
+      final RollTrayDrive drive = await _mount(
+        tester,
+        turn: _awaitRoll(2),
+        seats: seats,
+      );
+      final _Scn s = _Scn(
+        'two seats, me=0, seat 2 dead roll, resync',
+        tester,
+        drive,
+      );
+      try {
+        said.recorded.clear();
+        await _singleDeadRoll(s, seat: 2, next: 0);
+        expect(
+          find.byKey(opponentThrowTumblingKey(2)),
+          findsOneWidget,
+          reason: s.why('fixture: the dead roll\'s die is in the air'),
+        );
+        await s.frames(
+          limitMs: 96,
+          each: (int ms) => _expectNothingYet(s, tester, said, ms),
+        );
+        await s.push('room', roomData(seats: seats, turn: _awaitRoll(2, k: 4)));
+        expect(
+          find.byKey(opponentThrowKey(2)),
+          findsNothing,
+          reason: s.why('fixture: the resync took the dead roll\'s die away'),
+        );
+        _expectNothingYet(s, tester, said, 96);
+        await s.frames(
+          limitMs: 1600,
+          each: (int ms) => _expectNothingYet(s, tester, said, 96 + ms),
+        );
+        // Seat 2 rolls again and has a move: its landing must not arm the
+        // dead end the resync dropped.
+        await s.push('rolled', _rolled(2, 5, 5, legal: const <int>[0]));
+        await s.push(
+          'turn',
+          turnJson(
+            seat: 2,
+            phase: 'await_move',
+            k: 5,
+            value: 5,
+            legal: const <int>[0],
+            queue: const <int>[5],
+            legalByFace: <Map<String, Object?>>[
+              faceLegal(5, const <int>[0]),
+            ],
+          ),
+        );
+        final int landedMs = await s.frames(
+          limitMs: 1500,
+          until: () => tester.any(find.byKey(seatDieFaceKey(2, 5))),
+          each: (int ms) => _expectNothingYet(s, tester, said, ms),
+        );
+        expect(
+          landedMs,
+          isNot(-1),
+          reason: s.why('fixture: seat 2\'s new die lands on its 5'),
+        );
+        await s.frames(
+          limitMs: 1800,
+          each: (int ms) => _expectNothingYet(s, tester, said, ms),
+        );
+      } finally {
+        await releaseGame(tester, drive);
+      }
+    },
+  );
+
+  testWidgets(
+    'C-589 D2 (d): the screen disposed before the landing: no exception and '
+    'no announcement afterwards',
+    (tester) async {
+      final _Announcements said = _Announcements();
+      said.install(tester);
+      addTearDown(() => said.remove(tester));
+      final RollTrayDrive drive = await _mount(
+        tester,
+        turn: _awaitRoll(2),
+        seats: _pair(mySeat: 0),
+      );
+      final _Scn s = _Scn(
+        'two seats, me=0, seat 2 dead roll, dispose',
+        tester,
+        drive,
+      );
+      said.recorded.clear();
+      await _singleDeadRoll(s, seat: 2, next: 0);
+      await s.pump(96);
+      await releaseGame(tester, drive);
+      await s.pump(3000);
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: s.why('no exception after the screen went away mid-throw'),
+      );
+      expect(
+        _deadLines(said),
+        isEmpty,
+        reason: s.why(
+          'no dead-end announcement after dispose; all announcements: '
+          '${said.recorded}',
+        ),
+      );
+    },
+  );
+
+  testWidgets(
+    'C-589 D2 (d): a newer dead end replaces a pending one: only the newer '
+    'seat\'s line and badge ever show, one announcement',
+    (tester) async {
+      final _Announcements said = _Announcements();
+      said.install(tester);
+      addTearDown(() => said.remove(tester));
+      final RollTrayDrive drive = await _mount(
+        tester,
+        mySeat: 1,
+        players: 4,
+        turn: _awaitRoll(3),
+        seats: _quad(mySeat: 1),
+      );
+      final _Scn s = _Scn(
+        'four seats, me=1, seat 3 dead roll pending, then seat 0 dead roll',
+        tester,
+        drive,
+      );
+      final String older = _noMoveOtherEn('Dan');
+      final String newer = _noMoveOtherEn('Ann');
+      try {
+        said.recorded.clear();
+        await _singleDeadRoll(s, seat: 3, next: 0);
+        await _singleDeadRoll(s, seat: 0, next: 1, face: 4, k: 2);
+        expect(
+          find.byKey(opponentThrowKey(0)),
+          findsNothing,
+          reason: s.why('fixture: seat 0\'s throw is queued behind seat 3\'s'),
+        );
+        final int landedMs = await s.frames(
+          limitMs: 3000,
+          until: () => tester.any(find.byKey(seatDieFaceKey(0, 4))),
+          each: (int ms) {
+            expect(
+              _otherNoticeText(tester),
+              isNull,
+              reason: s.why(
+                'no line while seat 0\'s die is not down (${ms}ms); the '
+                'older pending dead end of seat 3 must have been replaced',
+              ),
+            );
+            expect(
+              _badgeSeats(tester),
+              isEmpty,
+              reason: s.why(
+                'no badge while seat 0\'s die is not down (${ms}ms)',
+              ),
+            );
+          },
+        );
+        expect(landedMs, isNot(-1), reason: s.why('seat 0\'s die lands'));
+        expect(
+          _otherNoticeText(tester),
+          newer,
+          reason: s.why('at the landing the line names Ann, not Dan'),
+        );
+        expect(_badgeSeats(tester), <int>[
+          0,
+        ], reason: s.why('the badge is on seat 0 only'));
+        await s.pump(1700);
+        expect(
+          _deadLines(said),
+          <String>[newer],
+          reason: s.why(
+            '"$older" is never announced and "$newer" once; all '
+            'announcements: ${said.recorded}',
+          ),
+        );
+      } finally {
+        await releaseGame(tester, drive);
+      }
+    },
+  );
+
+  testWidgets(
+    'C-589 D2: my own dead end before the watcher dead end lands keeps the '
+    'slot; the landing still arms the watcher hold (one announcement) and '
+    'it ends 1500 ms after the landing',
+    (tester) async {
+      final _Announcements said = _Announcements();
+      said.install(tester);
+      addTearDown(() => said.remove(tester));
+      final RollTrayDrive drive = await _mount(
+        tester,
+        turn: _awaitRoll(2),
+        seats: _pair(mySeat: 0),
+      );
+      final _Scn s = _Scn(
+        'two seats, me=0, seat 2 dead pending then my dead roll',
+        tester,
+        drive,
+      );
+      final String line = _noMoveOtherEn('Bob');
+      try {
+        said.recorded.clear();
+        await _singleDeadRoll(s, seat: 2, next: 0);
+        await s.pump(48);
+        await _singleDeadRoll(s, seat: 0, next: 2, face: 4, k: 2);
+        await s.pump(16);
+        expect(
+          find.byKey(noMoveNoticeKey),
+          findsOneWidget,
+          reason: s.why('my own notice is up'),
+        );
+        final int landedMs = await s.frames(
+          limitMs: 1500,
+          until: () => tester.any(find.byKey(seatDieFaceKey(2, 3))),
+        );
+        expect(landedMs, isNot(-1), reason: s.why('seat 2\'s die lands'));
+        expect(
+          find.byKey(noMoveNoticeKey),
+          findsOneWidget,
+          reason: s.why('my own notice keeps the slot at the landing'),
+        );
+        expect(
+          find.byKey(_otherNoticeKey),
+          findsNothing,
+          reason: s.why('the watcher line does not take the slot from mine'),
+        );
+        await s.pump(16);
+        expect(
+          _deadLines(said),
+          <String>[line],
+          reason: s.why(
+            'the landing still announces the watcher line once; all '
+            'announcements: ${said.recorded}',
+          ),
+        );
+        await s.pump(1600);
+        expect(
+          find.byKey(_otherNoticeKey),
+          findsNothing,
+          reason: s.why('the watcher hold is over 1600 ms after the landing'),
+        );
+        expect(
+          _badgeSeats(tester),
+          isEmpty,
+          reason: s.why('no badge 1600 ms after the landing'),
+        );
+      } finally {
+        await releaseGame(tester, drive);
+      }
+    },
+  );
+
+  // (e): the badge lives exactly as long as the line.
+  testWidgets(
+    'C-589 D1 (e): the badge and the line appear on the same frame and '
+    'disappear on the same frame, 1500 ms apart',
+    (tester) async {
+      final RollTrayDrive drive = await _mount(
+        tester,
+        turn: _awaitRoll(2),
+        seats: _pair(mySeat: 0),
+      );
+      final _Scn s = _Scn(
+        'two seats, me=0, seat 2 dead roll, lifetimes',
+        tester,
+        drive,
+      );
+      try {
+        await _singleDeadRoll(s, seat: 2, next: 0);
+        final List<(int, bool, bool)> seen = <(int, bool, bool)>[];
+        final int landedMs = await s.frames(
+          limitMs: 1500,
+          until: () => tester.any(find.byKey(seatDieFaceKey(2, 3))),
+        );
+        expect(landedMs, isNot(-1), reason: s.why('seat 2\'s die lands'));
+        seen.add((0, _noticeUp(tester), _badgeSeats(tester).contains(2)));
+        for (int ms = 16; ms <= 2000; ms += 16) {
+          await tester.pump(_kFrame);
+          seen.add((ms, _noticeUp(tester), _badgeSeats(tester).contains(2)));
+        }
+        s.steps.add('pumped 2000ms frame by frame from the landing');
+        for (final (int, bool, bool) frame in seen) {
+          expect(
+            frame.$2,
+            frame.$3,
+            reason: s.why(
+              'the line (${frame.$2}) and the badge (${frame.$3}) share a '
+              'frame, ${frame.$1}ms after the landing',
+            ),
+          );
+        }
+        expect(
+          seen.first.$2,
+          isTrue,
+          reason: s.why('both are on the landing frame'),
+        );
+        final int goneAt = seen.firstWhere((f) => !f.$2).$1;
+        expect(
+          goneAt,
+          inInclusiveRange(_kHoldMs - 20, _kHoldMs + 20),
+          reason: s.why(
+            'both go $goneAt ms after the landing; the hold is $_kHoldMs ms '
+            'from the landing',
+          ),
+        );
+        expect(
+          seen.where((f) => f.$1 > goneAt && f.$2),
+          isEmpty,
+          reason: s.why('neither comes back after it went'),
+        );
+      } finally {
+        await releaseGame(tester, drive);
+      }
+    },
+  );
 }
