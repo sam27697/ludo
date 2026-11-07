@@ -280,6 +280,13 @@ class _GameScreenState extends State<GameScreen> {
   bool _watchDeadSingle = false;
   Timer? _watchDeadTimer;
 
+  // C-589 D1: a watcher dead end whose seat still has a throw in the air or
+  // waiting. Held here, with no line, no badge and no announcement, until
+  // that seat's throw leaves its tumble; then armed as above.
+  int? _pendingWatchSeat;
+  String? _pendingWatchReason;
+  bool _pendingWatchSingle = false;
+
   // C-462 D2/D4: the open face picker, or null. Closed by the checks in
   // [_syncFacePick] on every rebuild, and by the tap rules in D2 and D3.
   _OpenFacePick? _facePick;
@@ -692,6 +699,7 @@ class _GameScreenState extends State<GameScreen> {
     _timerPlayedOtherTimer?.cancel();
     _trayDeadTimer?.cancel();
     _watchDeadTimer?.cancel();
+    _dropPendingWatchDead();
     _dropPendingLandingCues();
     _clearSafeCue();
     _endHoldDwellTimer?.cancel();
@@ -2083,6 +2091,7 @@ class _GameScreenState extends State<GameScreen> {
     _watchDeadSeat = null;
     _watchDeadReason = null;
     _watchDeadSingle = false;
+    _dropPendingWatchDead();
     _facePick = null;
     _shownHint = null;
     _dropPendingLandingCues();
@@ -2709,8 +2718,19 @@ class _GameScreenState extends State<GameScreen> {
 
     // C-586 D1: a watcher is told why another seat's turn passed, whatever
     // the number of dead faces. My own seat keeps the path below.
+    // C-589 D1, D2: a newer dead end replaces a pending one. While the
+    // seat's throw is still tumbling or waiting the state is only held; the
+    // landing arms it.
     if (seat != widget.controller.seat) {
-      _armWatchDead(seat, reason, single: dead.length == 1);
+      _dropPendingWatchDead();
+      final bool single = dead.length == 1;
+      if (_seatDieHeldBack(seat)) {
+        _pendingWatchSeat = seat;
+        _pendingWatchReason = reason;
+        _pendingWatchSingle = single;
+      } else {
+        _armWatchDead(seat, reason, single: single);
+      }
     }
 
     // The big die's own red-X-and-haptic hold stays the seat-gated
@@ -2746,7 +2766,12 @@ class _GameScreenState extends State<GameScreen> {
   /// announces its line once. No cue: another seat's routine dead end is
   /// never felt (doctrine section 3). A seat the room does not name is left
   /// alone, since the line could not say whose roll it was.
-  void _armWatchDead(int seat, String reason, {required bool single}) {
+  void _armWatchDead(
+    int seat,
+    String reason, {
+    required bool single,
+    bool rebuild = true,
+  }) {
     final RoomSnapshot? room = widget.controller.room;
     if (!mounted || room == null) {
       return;
@@ -2757,12 +2782,41 @@ class _GameScreenState extends State<GameScreen> {
     }
     _watchDeadTimer?.cancel();
     _watchDeadTimer = Timer(_noMoveHold, _dropWatchDead);
-    setState(() {
+    if (rebuild) {
+      setState(() {
+        _watchDeadSeat = seat;
+        _watchDeadReason = reason;
+        _watchDeadSingle = single;
+      });
+    } else {
       _watchDeadSeat = seat;
       _watchDeadReason = reason;
       _watchDeadSingle = single;
-    });
+    }
     _announce(_watchDeadLine(AppLocalizations.of(context), reason, name));
+  }
+
+  /// C-589 D1. The landing of [seat]'s throw (the moment its face enters
+  /// `_rememberedSeatFaces`): arms the watcher dead end that was held for
+  /// it. [rebuild] is false where the caller is inside a `setState` or a
+  /// rebuild follows at once.
+  void _armPendingWatchDead(int seat, {required bool rebuild}) {
+    if (_pendingWatchSeat != seat) {
+      return;
+    }
+    final String? reason = _pendingWatchReason;
+    final bool single = _pendingWatchSingle;
+    _dropPendingWatchDead();
+    if (reason == null) {
+      return;
+    }
+    _armWatchDead(seat, reason, single: single, rebuild: rebuild);
+  }
+
+  void _dropPendingWatchDead() {
+    _pendingWatchSeat = null;
+    _pendingWatchReason = null;
+    _pendingWatchSingle = false;
   }
 
   String _watchDeadLine(AppLocalizations loc, String reason, String name) {
@@ -3084,6 +3138,8 @@ class _GameScreenState extends State<GameScreen> {
       _throwHurry = false;
       _throwConcealsFace = false;
       _seenRolls = next;
+      // C-589 D2: the throw a pending dead end waited for is gone.
+      _dropPendingWatchDead();
       // C-465 D2: a resync forgets every face this screen had remembered.
       _rememberedSeatFaces.clear();
       // C-468 D5: a room snapshot whose recentRolls is not an append
@@ -3141,6 +3197,7 @@ class _GameScreenState extends State<GameScreen> {
       _rememberedSeatFaces[landed.seat] = landed.face;
       // C-468 D4: reduced motion has already landed, so the sound is now.
       _playDieLandOnce(landed);
+      _armPendingWatchDead(landed.seat, rebuild: false);
     }
   }
 
@@ -3161,6 +3218,7 @@ class _GameScreenState extends State<GameScreen> {
     _throwQueue.clear();
     _throwHurry = false;
     _throwConcealsFace = false;
+    _dropPendingWatchDead();
     _seenRolls = List<(int k, int face)>.of(
       widget.controller.room?.recentRolls ?? const <(int k, int face)>[],
     );
@@ -3256,6 +3314,8 @@ class _GameScreenState extends State<GameScreen> {
     // a later rest-to-fade phase from playing it again.
     if (landed != null) {
       _playDieLandOnce(landed!);
+      // C-589 D1: the landing is the moment a held watcher dead end arms.
+      _armPendingWatchDead(landed!.seat, rebuild: true);
     }
   }
 
@@ -3265,10 +3325,12 @@ class _GameScreenState extends State<GameScreen> {
     }
     setState(() {
       final _QueuedThrow? done = _activeThrow;
+      _activeThrow = null;
       if (done != null) {
         _rememberedSeatFaces[done.seat] = done.face;
+        // Safety net: a throw that ends without a phase callback has landed.
+        _armPendingWatchDead(done.seat, rebuild: false);
       }
-      _activeThrow = null;
       _throwConcealsFace = false;
       _throwHurry = false;
       _startNextThrow();
