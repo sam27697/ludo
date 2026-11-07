@@ -20882,15 +20882,17 @@ String _textUnder(WidgetTester tester, Finder finder) {
   return text.data ?? text.textSpan?.toPlainText() ?? '';
 }
 
-/// Captures 136-138 (order 587, C-586 D1-D3). The device is [viewerSeat] of
-/// the recorded game [gameName]; the first single-face `no_legal_move` of
-/// [bySeat] (any other seat when null) is replayed: every frame before its
-/// `rolled` goes in as one burst, the queued throws land, then the `rolled`
-/// and the `turn_passed` behind it go in together, as the server sends them.
-/// Inside the 1500 ms hold the line under the die names the seat and the
-/// seat's die wears the badge; the viewer's own no-move notice is absent and
-/// no other seat has a badge. The line is asserted straight after the push, the
-/// badge once the dead roll's thrown die has landed, then the shot.
+/// Captures 136-138 (order 587, C-586 D1-D3; order 589t, C-589 D1). The device
+/// is [viewerSeat] of the recorded game [gameName]; the first single-face
+/// `no_legal_move` of [bySeat] (any other seat when null) is replayed: every
+/// frame before its `rolled` goes in as one burst, the queued throws land,
+/// then the `rolled` and the `turn_passed` behind it go in together, as the
+/// server sends them. While the rolling seat's thrown die is in the air
+/// nothing tells the watcher what the roll meant: straight after the push the
+/// line, every badge and the viewer's own notice are absent. From the die's
+/// landing (the seat die shows the face) the line under the die names the seat
+/// and the seat's die wears the badge, for the 1500 ms hold measured from
+/// that landing; the shot is taken inside 1200 ms of it.
 Future<void> _shootWatcherDeadRoll(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -21018,8 +21020,9 @@ Future<void> _shootWatcherDeadRoll(
   final List<int> seats = <int>[
     for (final SeatState s in controller.room!.seats) s.seat,
   ];
-  // The line, the absence of every other seat's badge and of the viewer's own
-  // notice hold from the push; the rolling seat's badge waits for the landing.
+  // The absence of every other seat's badge and of the viewer's own notice
+  // hold throughout; the line and the rolling seat's badge wait for the
+  // landing (C-589 D1).
   void expectWatcherLine(String moment) {
     final Finder notice = find.byKey(const Key('game-no-move-other-notice'));
     expect(
@@ -21055,6 +21058,43 @@ Future<void> _shootWatcherDeadRoll(
     );
   }
 
+  // C-589 D1: the dead roll's die is still in the air, so the watcher is told
+  // nothing yet and no seat wears a badge.
+  void expectWatcherNothingYet(String moment) {
+    expect(
+      find.byKey(Key('board-seat-die-face-${found.seat}-${found.face}')),
+      findsNothing,
+      reason:
+          '$capture ($moment): fixture, seat ${found.seat}\'s die must still '
+          'be in the air (no board-seat-die-face-${found.seat}-${found.face}) '
+          'for the absence below to mean anything. $where',
+    );
+    expect(
+      find.byKey(const Key('game-no-move-other-notice')),
+      findsNothing,
+      reason:
+          '$capture ($moment): C-589 D1, expected game-no-move-other-notice '
+          'ABSENT while seat ${found.seat}\'s die of ${found.face} is in the '
+          'air; the line "$expectedLine" must wait for the landing. $where',
+    );
+    for (final int any in seats) {
+      expect(
+        find.byKey(Key('board-seat-die-dead-$any')),
+        findsNothing,
+        reason:
+            '$capture ($moment): C-589 D1, expected no board-seat-die-dead-'
+            '$any while the die is in the air. $where',
+      );
+    }
+    expect(
+      find.byKey(const Key('game-no-move-notice')),
+      findsNothing,
+      reason:
+          '$capture ($moment): C-589 D1, game-no-move-notice is the viewer\'s '
+          'own line and seat ${found.seat} is not the viewer. $where',
+    );
+  }
+
   void expectWatcherView(String moment) {
     expectWatcherLine(moment);
     expect(
@@ -21067,36 +21107,63 @@ Future<void> _shootWatcherDeadRoll(
     );
   }
 
-  expectWatcherLine('straight after the roll and the pass');
+  expectWatcherNothingYet('straight after the roll and the pass');
 
   // The turn_passed hurries the dead roll's thrown die and the seat die stays
-  // back until the throw has landed (C-465 D2): the badge is asserted from the
-  // landing on, still inside the 1500 ms hold.
+  // back until the throw has landed (C-465 D2). The landing is the frame on
+  // which the seat die shows the face; each pump is timed from before it ran,
+  // so the landing time taken is never later than the real one and the age
+  // checked below is never short. Nothing may show before it.
+  final Finder landedFace = find.byKey(
+    Key('board-seat-die-face-${found.seat}-${found.face}'),
+  );
+  int landedAtMs = -1;
+  while (landedAtMs < 0) {
+    final int before = sincePush.elapsedMilliseconds;
+    if (before >= 10000) {
+      fail(
+        '$capture: expected seat ${found.seat}\'s die to land (the seat die '
+        'shows ${found.face}) within 10 s of the roll, still in the air after '
+        '$before ms. $where',
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 16));
+    if (landedFace.evaluate().isNotEmpty) {
+      landedAtMs = before;
+    } else {
+      expectWatcherNothingYet('in the air, $before ms after the push');
+    }
+  }
+  expectWatcherView('at the landing, $landedAtMs ms after the push');
+
   await _pumpUntilThrownDiceGone(
     tester,
     controller,
     capture: capture,
-    where: '$where; waiting for the dead roll to land',
+    where: '$where; waiting for the dead roll\'s die to leave the board',
   );
-  final int landedMs = sincePush.elapsedMilliseconds;
-  expectWatcherView('after the dead roll landed, $landedMs ms after the push');
+  expectWatcherView(
+    'after the thrown die left, ${sincePush.elapsedMilliseconds - landedAtMs} '
+    'ms after the landing',
+  );
 
   // A few real-duration frames so the surface has painted the landed view.
   await _pumpRealDurationFrames(tester, frameCount: 4);
   expectWatcherView('immediately before the shot');
-  final int ageMs = sincePush.elapsedMilliseconds;
+  final int ageMs = sincePush.elapsedMilliseconds - landedAtMs;
   expect(
     ageMs,
     lessThan(1200),
     reason:
-        '$capture: expected the shot within 1200 ms of the roll, got $ageMs '
-        'ms by wall time; the hold is 1500 ms. $where',
+        '$capture: expected the shot within 1200 ms of the landing, got '
+        '$ageMs ms by wall time; the hold is 1500 ms from the landing. $where',
   );
   // ignore: avoid_print
   print(
     'screenshots_test: $capture replays "$gameName" from seat $viewerSeat '
-    'to $found; skipped events ${found.skipped}; shot $ageMs ms after the '
-    'roll, landed at $landedMs ms; ${entry.re.pushed} frames pushed',
+    'to $found; skipped events ${found.skipped}; landed at $landedAtMs ms '
+    'after the push, shot $ageMs ms after the landing; ${entry.re.pushed} '
+    'frames pushed',
   );
 
   await _capture(binding, tester, shotName, frames: 0);
