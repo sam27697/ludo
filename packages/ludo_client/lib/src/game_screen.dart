@@ -270,6 +270,23 @@ class _GameScreenState extends State<GameScreen> {
   List<int>? _trayDeadFaces;
   Timer? _trayDeadTimer;
 
+  // C-586 D1: the watcher's own dead-end hold. Armed for another seat's dead
+  // end (any seat, when this device has none) for `_noMoveHold`; carries the
+  // seat, the server's reason and whether exactly one face was dead (the one
+  // case the seat's die wears the badge). Never a cue: the watcher's channel
+  // is sight and TalkBack.
+  int? _watchDeadSeat;
+  String? _watchDeadReason;
+  bool _watchDeadSingle = false;
+  Timer? _watchDeadTimer;
+
+  // C-589 D1: a watcher dead end whose seat still has a throw in the air or
+  // waiting. Held here, with no line, no badge and no announcement, until
+  // that seat's throw leaves its tumble; then armed as above.
+  int? _pendingWatchSeat;
+  String? _pendingWatchReason;
+  bool _pendingWatchSingle = false;
+
   // C-462 D2/D4: the open face picker, or null. Closed by the checks in
   // [_syncFacePick] on every rebuild, and by the tap rules in D2 and D3.
   _OpenFacePick? _facePick;
@@ -681,6 +698,8 @@ class _GameScreenState extends State<GameScreen> {
     _noMoveTimer?.cancel();
     _timerPlayedOtherTimer?.cancel();
     _trayDeadTimer?.cancel();
+    _watchDeadTimer?.cancel();
+    _dropPendingWatchDead();
     _dropPendingLandingCues();
     _clearSafeCue();
     _endHoldDwellTimer?.cancel();
@@ -816,6 +835,9 @@ class _GameScreenState extends State<GameScreen> {
     final int? to = _intAt(frame.data, 'to');
     final int? moverSeat = _intAt(frame.data, 'seat');
     final int? moverToken = _intAt(frame.data, 'token');
+    final int? victimSeat = frame.type == 'moved'
+        ? _capturedVictimSeat(frame.data)
+        : null;
     final bool isTravellingMove =
         frame.type == 'moved' &&
         moverSeat != null &&
@@ -874,7 +896,12 @@ class _GameScreenState extends State<GameScreen> {
         _playCue(feedback, cue);
       }
       if (landingCues.isNotEmpty) {
-        _holdLandingCues(moverSeat, moverToken, landingCues);
+        _holdLandingCues(
+          moverSeat,
+          moverToken,
+          landingCues,
+          victimSeat: victimSeat,
+        );
       }
     } else {
       if (frame.type == 'game_over') {
@@ -882,7 +909,7 @@ class _GameScreenState extends State<GameScreen> {
         _maybeFetchGameLog();
       }
       for (final FeedbackCue cue in cues) {
-        _playCue(feedback, cue);
+        _playCue(feedback, cue, moverSeat: moverSeat, victimSeat: victimSeat);
       }
     }
     // C-468 D4: my own roll that left neither canMove nor noMove after the
@@ -943,15 +970,31 @@ class _GameScreenState extends State<GameScreen> {
   static bool _isLandingCue(FeedbackCue cue) =>
       cue == FeedbackCue.capturedOther ||
       cue == FeedbackCue.capturedMe ||
+      cue == FeedbackCue.captureSeen ||
       cue == FeedbackCue.home;
 
-  void _playCues(List<FeedbackCue> cues) {
+  /// The seat of the first entry of a `moved` frame's `captured` list, the
+  /// victim a capture line names (C-588 D3); null when there is none.
+  static int? _capturedVictimSeat(Map<String, Object?> data) {
+    final Object? captured = data['captured'];
+    if (captured is! List || captured.isEmpty) {
+      return null;
+    }
+    final Object? first = captured.first;
+    if (first is! Map) {
+      return null;
+    }
+    final Object? seat = first['seat'];
+    return seat is int ? seat : null;
+  }
+
+  void _playCues(List<FeedbackCue> cues, {int? moverSeat, int? victimSeat}) {
     if (!mounted || cues.isEmpty) {
       return;
     }
     final FeedbackService feedback = FeedbackScope.of(context);
     for (final FeedbackCue cue in cues) {
-      _playCue(feedback, cue);
+      _playCue(feedback, cue, moverSeat: moverSeat, victimSeat: victimSeat);
     }
   }
 
@@ -967,13 +1010,20 @@ class _GameScreenState extends State<GameScreen> {
     FeedbackService feedback,
     FeedbackCue cue, {
     RoomSnapshot? snapshot,
+    int? moverSeat,
+    int? victimSeat,
   }) {
     feedback.play(cue);
     if (cue == FeedbackCue.yourTurn) {
       // C-518 D1, C-540 D3: my turn closes the sheets I opened, silently.
       _closeOwnSheets();
     }
-    final String? message = _announcementFor(cue, snapshot: snapshot);
+    final String? message = _announcementFor(
+      cue,
+      snapshot: snapshot,
+      moverSeat: moverSeat,
+      victimSeat: victimSeat,
+    );
     if (message != null) {
       _announce(message);
     }
@@ -1017,7 +1067,16 @@ class _GameScreenState extends State<GameScreen> {
   /// the tap's own frame, not through the frame-driven table rule 1
   /// covers); the case below exists only so this switch stays exhaustive.
   /// `dieLand` and `gloat` are sound only and answer null (C-468 D4, D5).
-  String? _announcementFor(FeedbackCue cue, {RoomSnapshot? snapshot}) {
+  ///
+  /// C-588 D3: the three capture lines name the other party, read off the
+  /// same seat labels the banner uses. A name that cannot be resolved falls
+  /// back to the unnamed line, and `captureSeen` then says nothing.
+  String? _announcementFor(
+    FeedbackCue cue, {
+    RoomSnapshot? snapshot,
+    int? moverSeat,
+    int? victimSeat,
+  }) {
     final AppLocalizations loc = AppLocalizations.of(context);
     switch (cue) {
       case FeedbackCue.yourTurn:
@@ -1026,9 +1085,22 @@ class _GameScreenState extends State<GameScreen> {
         // C-474 D3.3: the same line the notice shows.
         return _noMoveLine(loc, _noMoveReason);
       case FeedbackCue.capturedOther:
-        return loc.announceCapturedOther;
+        final String? victim = _seatNameFor(victimSeat);
+        return victim == null
+            ? loc.announceCapturedOther
+            : loc.announceCapturedOtherNamed(victim);
       case FeedbackCue.capturedMe:
-        return loc.announceCapturedMe;
+        final String? mover = _seatNameFor(moverSeat);
+        return mover == null
+            ? loc.announceCapturedMe
+            : loc.announceCapturedMeNamed(mover);
+      case FeedbackCue.captureSeen:
+        final String? capturer = _seatNameFor(moverSeat);
+        final String? struck = _seatNameFor(victimSeat);
+        if (capturer == null || struck == null) {
+          return null;
+        }
+        return loc.announceCaptureSeen(capturer, struck);
       case FeedbackCue.home:
         return loc.announceHome;
       case FeedbackCue.win:
@@ -1043,6 +1115,16 @@ class _GameScreenState extends State<GameScreen> {
       case FeedbackCue.gloat:
         return null;
     }
+  }
+
+  /// The banner's display name for [seat] in the room the controller holds,
+  /// or null when [seat] is null or no longer in the room.
+  String? _seatNameFor(int? seat) {
+    final RoomSnapshot? room = widget.controller.room;
+    if (seat == null || room == null) {
+      return null;
+    }
+    return seatLabelsFor(context, room.seats)[seat];
   }
 
   /// Rule 1's `gameOver` row: the winner's name, read off the room the same
@@ -1117,11 +1199,17 @@ class _GameScreenState extends State<GameScreen> {
     return null;
   }
 
-  void _holdLandingCues(int seat, int token, List<FeedbackCue> cues) {
+  void _holdLandingCues(
+    int seat,
+    int token,
+    List<FeedbackCue> cues, {
+    int? victimSeat,
+  }) {
     final _PendingLandingCues entry = _PendingLandingCues(
       seat: seat,
       token: token,
       cues: cues,
+      victimSeat: victimSeat,
     );
     entry.fallbackTimer = Timer(kLandingCueFallback, () {
       _onLandingCueFallback(entry);
@@ -1135,7 +1223,7 @@ class _GameScreenState extends State<GameScreen> {
     }
     entry.fallbackTimer?.cancel();
     entry.fallbackTimer = null;
-    _playCues(entry.cues);
+    _playCues(entry.cues, moverSeat: entry.seat, victimSeat: entry.victimSeat);
   }
 
   void _onBoardMoveLanded(int seat, int token) {
@@ -1151,7 +1239,11 @@ class _GameScreenState extends State<GameScreen> {
       final _PendingLandingCues entry = _pendingLandingCues.removeAt(index);
       entry.fallbackTimer?.cancel();
       entry.fallbackTimer = null;
-      _playCues(entry.cues);
+      _playCues(
+        entry.cues,
+        moverSeat: entry.seat,
+        victimSeat: entry.victimSeat,
+      );
     }
     // C-468 D5: the same landing that releases the cues starts the gloat.
     _releaseGloatForLanding(seat, token);
@@ -1222,7 +1314,11 @@ class _GameScreenState extends State<GameScreen> {
     for (final _PendingLandingCues entry in entries) {
       entry.fallbackTimer?.cancel();
       entry.fallbackTimer = null;
-      _playCues(entry.cues);
+      _playCues(
+        entry.cues,
+        moverSeat: entry.seat,
+        victimSeat: entry.victimSeat,
+      );
     }
   }
 
@@ -1990,6 +2086,12 @@ class _GameScreenState extends State<GameScreen> {
     _trayDeadTimer = null;
     _trayDeadSeat = null;
     _trayDeadFaces = null;
+    _watchDeadTimer?.cancel();
+    _watchDeadTimer = null;
+    _watchDeadSeat = null;
+    _watchDeadReason = null;
+    _watchDeadSingle = false;
+    _dropPendingWatchDead();
     _facePick = null;
     _shownHint = null;
     _dropPendingLandingCues();
@@ -2614,6 +2716,23 @@ class _GameScreenState extends State<GameScreen> {
       _armTrayDead(seat, dead);
     }
 
+    // C-586 D1: a watcher is told why another seat's turn passed, whatever
+    // the number of dead faces. My own seat keeps the path below.
+    // C-589 D1, D2: a newer dead end replaces a pending one. While the
+    // seat's throw is still tumbling or waiting the state is only held; the
+    // landing arms it.
+    if (seat != widget.controller.seat) {
+      _dropPendingWatchDead();
+      final bool single = dead.length == 1;
+      if (_seatDieHeldBack(seat)) {
+        _pendingWatchSeat = seat;
+        _pendingWatchReason = reason;
+        _pendingWatchSingle = single;
+      } else {
+        _armWatchDead(seat, reason, single: single);
+      }
+    }
+
     // The big die's own red-X-and-haptic hold stays the seat-gated
     // mechanism it already was (C-236 rule 4): a `rolled`-triggered dead
     // end already armed it correctly, for my own seat, through the
@@ -2640,6 +2759,82 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {
       _trayDeadSeat = seat;
       _trayDeadFaces = faces;
+    });
+  }
+
+  /// C-586 D1, D3, D5. Arms the watcher hold for [seat]'s dead end and
+  /// announces its line once. No cue: another seat's routine dead end is
+  /// never felt (doctrine section 3). A seat the room does not name is left
+  /// alone, since the line could not say whose roll it was.
+  void _armWatchDead(
+    int seat,
+    String reason, {
+    required bool single,
+    bool rebuild = true,
+  }) {
+    final RoomSnapshot? room = widget.controller.room;
+    if (!mounted || room == null) {
+      return;
+    }
+    final String? name = seatLabelsFor(context, room.seats)[seat];
+    if (name == null) {
+      return;
+    }
+    _watchDeadTimer?.cancel();
+    _watchDeadTimer = Timer(_noMoveHold, _dropWatchDead);
+    if (rebuild) {
+      setState(() {
+        _watchDeadSeat = seat;
+        _watchDeadReason = reason;
+        _watchDeadSingle = single;
+      });
+    } else {
+      _watchDeadSeat = seat;
+      _watchDeadReason = reason;
+      _watchDeadSingle = single;
+    }
+    _announce(_watchDeadLine(AppLocalizations.of(context), reason, name));
+  }
+
+  /// C-589 D1. The landing of [seat]'s throw (the moment its face enters
+  /// `_rememberedSeatFaces`): arms the watcher dead end that was held for
+  /// it. [rebuild] is false where the caller is inside a `setState` or a
+  /// rebuild follows at once.
+  void _armPendingWatchDead(int seat, {required bool rebuild}) {
+    if (_pendingWatchSeat != seat) {
+      return;
+    }
+    final String? reason = _pendingWatchReason;
+    final bool single = _pendingWatchSingle;
+    _dropPendingWatchDead();
+    if (reason == null) {
+      return;
+    }
+    _armWatchDead(seat, reason, single: single, rebuild: rebuild);
+  }
+
+  void _dropPendingWatchDead() {
+    _pendingWatchSeat = null;
+    _pendingWatchReason = null;
+    _pendingWatchSingle = false;
+  }
+
+  String _watchDeadLine(AppLocalizations loc, String reason, String name) {
+    return reason == 'three_sixes'
+        ? loc.gameThreeSixesOther(name)
+        : loc.gameNoMoveOther(name);
+  }
+
+  void _dropWatchDead() {
+    _watchDeadTimer?.cancel();
+    _watchDeadTimer = null;
+    if (!mounted || _watchDeadSeat == null) {
+      return;
+    }
+    setState(() {
+      _watchDeadSeat = null;
+      _watchDeadReason = null;
+      _watchDeadSingle = false;
     });
   }
 
@@ -2943,6 +3138,8 @@ class _GameScreenState extends State<GameScreen> {
       _throwHurry = false;
       _throwConcealsFace = false;
       _seenRolls = next;
+      // C-589 D2: the throw a pending dead end waited for is gone.
+      _dropPendingWatchDead();
       // C-465 D2: a resync forgets every face this screen had remembered.
       _rememberedSeatFaces.clear();
       // C-468 D5: a room snapshot whose recentRolls is not an append
@@ -3000,6 +3197,7 @@ class _GameScreenState extends State<GameScreen> {
       _rememberedSeatFaces[landed.seat] = landed.face;
       // C-468 D4: reduced motion has already landed, so the sound is now.
       _playDieLandOnce(landed);
+      _armPendingWatchDead(landed.seat, rebuild: false);
     }
   }
 
@@ -3020,6 +3218,7 @@ class _GameScreenState extends State<GameScreen> {
     _throwQueue.clear();
     _throwHurry = false;
     _throwConcealsFace = false;
+    _dropPendingWatchDead();
     _seenRolls = List<(int k, int face)>.of(
       widget.controller.room?.recentRolls ?? const <(int k, int face)>[],
     );
@@ -3115,6 +3314,8 @@ class _GameScreenState extends State<GameScreen> {
     // a later rest-to-fade phase from playing it again.
     if (landed != null) {
       _playDieLandOnce(landed!);
+      // C-589 D1: the landing is the moment a held watcher dead end arms.
+      _armPendingWatchDead(landed!.seat, rebuild: true);
     }
   }
 
@@ -3124,10 +3325,12 @@ class _GameScreenState extends State<GameScreen> {
     }
     setState(() {
       final _QueuedThrow? done = _activeThrow;
+      _activeThrow = null;
       if (done != null) {
         _rememberedSeatFaces[done.seat] = done.face;
+        // Safety net: a throw that ends without a phase callback has landed.
+        _armPendingWatchDead(done.seat, rebuild: false);
       }
-      _activeThrow = null;
       _throwConcealsFace = false;
       _throwHurry = false;
       _startNextThrow();
@@ -3189,7 +3392,14 @@ class _GameScreenState extends State<GameScreen> {
       } else {
         face = _rememberedSeatFaces[seat];
       }
-      dice.add(SeatDie(seat: seat, face: face, active: holdsTurn));
+      dice.add(
+        SeatDie(
+          seat: seat,
+          face: face,
+          active: holdsTurn,
+          dead: _watchDeadSingle && _watchDeadSeat == seat,
+        ),
+      );
     }
     return dice;
   }
@@ -5375,24 +5585,31 @@ class _GameScreenState extends State<GameScreen> {
 
     return math.max(
       math.max(
-        // C-474 A2: the reason lines are measured unbounded, exactly as
-        // the plain line is, so the slot is the tallest of them (C-568 adds
-        // the third-six line).
-        math.max(heightOf(loc.gameNoMove), heightOf(loc.gameSeatOffline(''))),
         math.max(
+          // C-474 A2: the reason lines are measured unbounded, exactly as
+          // the plain line is, so the slot is the tallest of them (C-568 adds
+          // the third-six line).
+          math.max(heightOf(loc.gameNoMove), heightOf(loc.gameSeatOffline(''))),
           math.max(
-            heightOf(loc.gameNoMoveNeedSix),
-            heightOf(loc.gameNoMoveNeedExact),
+            math.max(
+              heightOf(loc.gameNoMoveNeedSix),
+              heightOf(loc.gameNoMoveNeedExact),
+            ),
+            heightOf(loc.gameNoMoveThreeSixes),
           ),
-          heightOf(loc.gameNoMoveThreeSixes),
+        ),
+        // C-426 D5 (order 428): these two measure at `maxLines: 1`, matching
+        // the live Text widgets below -- the slot's own rest height must
+        // never be able to grow from either one wrapping to a second line.
+        math.max(
+          heightOf(loc.gameTimerPlayedMine, maxLines: 1),
+          heightOf(loc.gameTimerPlayedOther(''), maxLines: 1),
         ),
       ),
-      // C-426 D5 (order 428): these two measure at `maxLines: 1`, matching
-      // the live Text widgets below -- the slot's own rest height must
-      // never be able to grow from either one wrapping to a second line.
+      // C-586 D3: the two other-seat dead-end lines, measured the same way.
       math.max(
-        heightOf(loc.gameTimerPlayedMine, maxLines: 1),
-        heightOf(loc.gameTimerPlayedOther(''), maxLines: 1),
+        heightOf(loc.gameNoMoveOther(''), maxLines: 1),
+        heightOf(loc.gameThreeSixesOther(''), maxLines: 1),
       ),
     );
   }
@@ -5637,6 +5854,37 @@ class _GameScreenState extends State<GameScreen> {
     // way to a turning hourglass that says the time is up.
     final bool timeUp = _countdownRemainingSeconds == 0;
 
+    final Widget face = Stack(
+      alignment: Alignment.center,
+      children: [
+        _CountdownRing(
+          key: const Key('game-header-countdown-ring'),
+          color: ringColor,
+          remainingFraction: remainingFraction,
+          strokeWidth: runningOut
+              ? _CountdownRingPainter.warningStrokeWidth
+              : _CountdownRingPainter.restStrokeWidth,
+        ),
+        ExcludeSemantics(
+          child: timeUp
+              ? _TimeUpHourglass(color: ringColor)
+              : Text(
+                  loc.gameTurnCountdownDigits(_countdownRemainingSeconds),
+                  key: const Key('game-screen-turn-countdown'),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  softWrap: false,
+                  style: TextStyle(
+                    color: ringColor,
+                    fontWeight: runningOut ? FontWeight.w800 : FontWeight.w600,
+                    fontSize: kTypeLabel,
+                    height: 1,
+                  ),
+                ),
+        ),
+      ],
+    );
+
     return Semantics(
       key: const Key('game-header-countdown-semantics'),
       label: timeUp
@@ -5645,33 +5893,17 @@ class _GameScreenState extends State<GameScreen> {
       child: SizedBox(
         width: _countdownRingSize,
         height: _countdownRingSize,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            _CountdownRing(
-              key: const Key('game-header-countdown-ring'),
-              color: ringColor,
-              remainingFraction: remainingFraction,
-            ),
-            ExcludeSemantics(
-              child: timeUp
-                  ? _TimeUpHourglass(color: ringColor)
-                  : Text(
-                      loc.gameTurnCountdownDigits(_countdownRemainingSeconds),
-                      key: const Key('game-screen-turn-countdown'),
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      softWrap: false,
-                      style: TextStyle(
-                        color: ringColor,
-                        fontWeight: FontWeight.w600,
-                        fontSize: kTypeLabel,
-                        height: 1,
-                      ),
-                    ),
-            ),
-          ],
-        ),
+        // C-586 D6: in the last seconds the ring and the digits share one
+        // wrapper that beats once per shown second, so the warning does not
+        // rest on the colour switch alone (seat 0 is already red).
+        child: runningOut
+            ? _CountdownWarning(
+                key: const Key('game-header-countdown-warning'),
+                second: _countdownRemainingSeconds,
+                beats: !timeUp,
+                child: face,
+              )
+            : face,
       ),
     );
   }
@@ -5681,7 +5913,7 @@ class _GameScreenState extends State<GameScreen> {
   /// own reserved space above the board the way the pre-C-250 shape did.
   /// C-426 D5 (order 428) adds the two timer-played lines to the same
   /// slot, at a fixed priority, highest first: `game-no-move-notice`,
-  /// `game-timer-played-other-notice`, `game-screen-turn-seat-offline`,
+  /// `game-no-move-other-notice` (C-586 D3), `game-timer-played-other-notice`, `game-screen-turn-seat-offline`,
   /// `game-timer-played-notice`. A lower one comes back on its own the
   /// moment a higher one's own condition ends, since this method reads
   /// live state on every build rather than latching a choice. The slot is
@@ -5706,6 +5938,15 @@ class _GameScreenState extends State<GameScreen> {
     // children always covers whichever one is actually shown.
     final TextScaler scaler = _clampedScaler(context, clampScale);
     final String? timerPlayedOtherName = _timerPlayedOtherName;
+    final int? watchDeadSeat = _watchDeadSeat;
+    final String? watchDeadReason = _watchDeadReason;
+    final String? watchDeadName = watchDeadSeat == null
+        ? null
+        : names[watchDeadSeat];
+    final String? watchDeadLine =
+        watchDeadReason != null && watchDeadName != null
+        ? _watchDeadLine(loc, watchDeadReason, watchDeadName)
+        : null;
     return Stack(
       alignment: Alignment.topCenter,
       children: [
@@ -5783,6 +6024,30 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
         ),
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(
+              loc.gameNoMoveOther(''),
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+        ExcludeSemantics(
+          child: Opacity(
+            opacity: 0,
+            child: Text(
+              loc.gameThreeSixesOther(''),
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
         if (_noMoveVisible)
           Positioned.fill(
             child: Text(
@@ -5790,6 +6055,17 @@ class _GameScreenState extends State<GameScreen> {
               key: const Key('game-no-move-notice'),
               textAlign: TextAlign.center,
               textScaler: scaler,
+            ),
+          )
+        else if (watchDeadLine != null)
+          Positioned.fill(
+            child: Text(
+              watchDeadLine,
+              key: const Key('game-no-move-other-notice'),
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           )
         else if (timerPlayedOtherName != null)
@@ -6349,6 +6625,92 @@ class _GameScreenState extends State<GameScreen> {
   }
 }
 
+/// C-586 D6, D7. The wrapper the countdown's ring and digits sit under in
+/// the warning window. It beats (scale 1.0 to 1.15 and back over 300 ms)
+/// each time [second] changes, and once when it first appears. The beat is
+/// a paint transform, so the ring's size and the header row never change.
+/// Under `disableAnimations`, and while [beats] is false (the time-up
+/// hourglass), the scale is exactly 1.0 at every frame.
+class _CountdownWarning extends StatefulWidget {
+  const _CountdownWarning({
+    super.key,
+    required this.second,
+    required this.beats,
+    required this.child,
+  });
+
+  final int second;
+  final bool beats;
+  final Widget child;
+
+  @override
+  State<_CountdownWarning> createState() => _CountdownWarningState();
+}
+
+class _CountdownWarningState extends State<_CountdownWarning>
+    with SingleTickerProviderStateMixin {
+  static const Duration _beat = Duration(milliseconds: 300);
+  static const double _peak = 0.15;
+
+  late final AnimationController _pulse;
+  bool _reduced = false;
+  bool _appeared = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(vsync: this, duration: _beat);
+  }
+
+  void _rest() {
+    if (_pulse.value != 0) {
+      _pulse.value = 0;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduced = MediaQuery.disableAnimationsOf(context);
+    if (_reduced || !widget.beats) {
+      _rest();
+    } else if (!_appeared) {
+      _pulse.forward(from: 0);
+    }
+    _appeared = true;
+  }
+
+  @override
+  void didUpdateWidget(_CountdownWarning oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.beats || _reduced) {
+      _rest();
+    } else if (widget.second != oldWidget.second) {
+      _pulse.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _pulse,
+      child: widget.child,
+      builder: (BuildContext context, Widget? child) {
+        final double scale = widget.beats && !_reduced
+            ? 1 + _peak * math.sin(_pulse.value * math.pi)
+            : 1.0;
+        return Transform.scale(scale: scale, child: child);
+      },
+    );
+  }
+}
+
 /// C-554 D1. The hourglass that takes the digits' place in the countdown ring
 /// once the count is at zero: one half turn every 600 ms, over and over, for
 /// as long as it is in the tree. Under `disableAnimations` it stands still.
@@ -6476,6 +6838,7 @@ class _CountdownRing extends StatelessWidget {
     super.key,
     required this.color,
     required this.remainingFraction,
+    required this.strokeWidth,
   });
 
   /// The turn seat's own colour, `LudoColors.error` at 10s left and below
@@ -6487,6 +6850,10 @@ class _CountdownRing extends StatelessWidget {
   /// still left, the fraction of the ring the sweep still covers.
   final double remainingFraction;
 
+  /// The ring's stroke: twice the resting width in the warning window
+  /// (C-586 D6), so the last seconds read without colour.
+  final double strokeWidth;
+
   @override
   Widget build(BuildContext context) {
     return SizedBox.expand(
@@ -6494,6 +6861,7 @@ class _CountdownRing extends StatelessWidget {
         painter: _CountdownRingPainter(
           color: color,
           remainingFraction: remainingFraction,
+          strokeWidth: strokeWidth,
         ),
       ),
     );
@@ -6504,25 +6872,28 @@ class _CountdownRingPainter extends CustomPainter {
   const _CountdownRingPainter({
     required this.color,
     required this.remainingFraction,
+    required this.strokeWidth,
   });
 
   final Color color;
   final double remainingFraction;
+  final double strokeWidth;
 
-  static const double _strokeWidth = 3.5;
+  static const double restStrokeWidth = 3.5;
+  static const double warningStrokeWidth = restStrokeWidth * 2;
 
   @override
   void paint(Canvas canvas, Size size) {
     final Rect bounds = Rect.fromLTWH(
-      _strokeWidth / 2,
-      _strokeWidth / 2,
-      size.width - _strokeWidth,
-      size.height - _strokeWidth,
+      strokeWidth / 2,
+      strokeWidth / 2,
+      size.width - strokeWidth,
+      size.height - strokeWidth,
     );
     final Paint track = Paint()
       ..color = LudoColors.inkMuted.withValues(alpha: 0.25)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = _strokeWidth;
+      ..strokeWidth = strokeWidth;
     canvas.drawOval(bounds, track);
 
     if (remainingFraction <= 0) {
@@ -6531,7 +6902,7 @@ class _CountdownRingPainter extends CustomPainter {
     final Paint sweep = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = _strokeWidth
+      ..strokeWidth = strokeWidth
       ..strokeCap = StrokeCap.round;
     canvas.drawArc(
       bounds,
@@ -6545,6 +6916,7 @@ class _CountdownRingPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _CountdownRingPainter oldDelegate) =>
       oldDelegate.color != color ||
+      oldDelegate.strokeWidth != strokeWidth ||
       oldDelegate.remainingFraction != remainingFraction;
 }
 
@@ -7003,11 +7375,15 @@ class _PendingLandingCues {
     required this.seat,
     required this.token,
     required this.cues,
+    this.victimSeat,
   });
 
   final int seat;
   final int token;
   final List<FeedbackCue> cues;
+
+  /// The seat of the first captured token, named by the capture lines.
+  final int? victimSeat;
   Timer? fallbackTimer;
 }
 
