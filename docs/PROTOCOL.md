@@ -1060,8 +1060,8 @@ implementation. Each is a test before it is code.
      those of 16.4, continuing from the last frame before it.
    Why: a ready seat whose socket was away when the last acceptance landed,
    or a seat that was not ready and left, each left a room in which every
-   seat was ready and connected and nothing could start. The client offers
-   the host's Start only while some seat is not ready (section 16.7), so the
+   seat was ready and connected and nothing could start. The client's end
+   card offers the host's Start only while some seat is not ready, so the
    table was stuck until someone chose New table.
 
 ## 17. `game_log`: the current game's frames on request, 2026-10-10
