@@ -568,6 +568,26 @@
   "@gameNoMoveThreeSixes": {
     "description": "The no-move line when the server voided the roll because it was the third six in a row. Same place and timing as the other no-move lines."
   },
+  "gameNoMoveOther": "{name}: no move with this roll",
+  "@gameNoMoveOther": {
+    "description": "Shown in the below-die notice slot for 1500ms when another seat's roll has no legal move, so a watcher is told why that seat's turn passed. Never played as a cue; announced once to TalkBack.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "gameThreeSixesOther": "{name}: three sixes in a row. Turn over.",
+  "@gameThreeSixesOther": {
+    "description": "Shown in the below-die notice slot for 1500ms when the server voided another seat's roll because it was the third six in a row. Same place and timing as the other-seat no-move line.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
   "announceCapturedOther": "You captured a token",
   "@announceCapturedOther": {
     "description": "Screen-reader announcement sent the moment this player's own move captures another seat's token."
