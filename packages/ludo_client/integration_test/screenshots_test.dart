@@ -6016,7 +6016,7 @@ void main() {
       emotes: const <(int, String)>[(2, 'revenge')],
       expectedReplies: const <String>['good_game', 'revenge', 'lucky'],
       textScale: 2.0,
-      expectNameDroppedOnPhone: true,
+      expectNameDroppedOnPhone: false,
     );
   });
 
@@ -15679,7 +15679,8 @@ const double _kPhoneWidth = 600;
 /// for the name, the narrowest the name can be, so a drop is only accepted when
 /// even that does not fit. With [expectNameDroppedOnPhone] set the answer is also
 /// pinned, but only on a phone-wide surface (logical width under [_kPhoneWidth]):
-/// capture 87, text scale 2.0 in Arabic, drops the name at 360 dp, while the
+/// capture 87, text scale 2.0 in Arabic, keeps the name at 360 dp (C-596 D4
+/// lays the bubble out at 1.3, so "name: line" fits the 224 dp), while the
 /// headless tester's wider default surface can hold "name: line" in the 320 dp
 /// cap, and there the consistency checks above are the whole assertion.
 /// Returns true when the name is shown.
