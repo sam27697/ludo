@@ -17,6 +17,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/material.dart' show Icons;
 import 'package:flutter/semantics.dart';
 import 'package:flutter/widgets.dart';
 
@@ -426,6 +427,7 @@ class LudoBoard extends StatefulWidget {
     this.hint,
     this.hintNamesFace = false,
     this.chatPop,
+    this.awaySeats = const <int, String>{},
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -574,6 +576,13 @@ class LudoBoard extends StatefulWidget {
   /// the line itself is drawn in the header band, never here. Null, the
   /// default, pops nothing. C-500 D6.
   final BoardChatPop? chatPop;
+
+  /// Seats whose phone has dropped, seat -> the spoken line for that seat. A
+  /// seat in here that has a name chip gets an away mark after its name, the
+  /// whole chip drawn faded, and the chip says the line to TalkBack instead
+  /// of the bare name. Empty, the default, draws exactly what the board drew
+  /// before. C-597 D1, D2.
+  final Map<int, String> awaySeats;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -1366,12 +1375,16 @@ class _LudoBoardState extends State<LudoBoard> {
     // disc, the spacer before the name, and -- when there is a "You" --
     // the spacer before it) are taken out.
     final double contentMaxWidth = math.max(0.0, chipWidth - cellSize * 1.0);
+    // C-597 D2: an away mark takes a disc-sized icon and the same gap, out of
+    // the width the font fit is given.
+    final String? awayLine = widget.awaySeats[seat];
     final double textAvailableWidth = math.max(
       0.0,
       contentMaxWidth -
           nameDiscSize -
           cellSize * 0.15 -
-          (you != null ? cellSize * 0.15 : 0.0),
+          (you != null ? cellSize * 0.15 : 0.0) -
+          (awayLine != null ? nameDiscSize + cellSize * 0.15 : 0.0),
     );
     final ({double name, double? you}) fittedFontSizes = _fittedChipFontSizes(
       name: name,
@@ -1402,78 +1415,97 @@ class _LudoBoardState extends State<LudoBoard> {
               seat: seat,
               fromTop: edgeIsTop,
               serial: (pop != null && pop.seat == seat) ? pop.serial : null,
-              child: DecoratedBox(
-                key: Key('board-seat-name-$seat'),
-                decoration: BoxDecoration(
-                  color: seatColor,
-                  borderRadius: BorderRadius.circular(chipHeight),
-                ),
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: cellSize * 0.3,
-                    vertical: chipHeight * 0.08,
+              child: _awayChip(
+                awayLine,
+                child: DecoratedBox(
+                  key: Key('board-seat-name-$seat'),
+                  decoration: BoxDecoration(
+                    color: seatColor,
+                    borderRadius: BorderRadius.circular(chipHeight),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Container(
-                        key: Key('board-seat-name-$seat-mark'),
-                        width: nameDiscSize,
-                        height: nameDiscSize,
-                        decoration: BoxDecoration(
-                          color: seatColor,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Center(
-                          child: SeatMark(seat: seat, size: nameDiscSize * 0.5),
-                        ),
-                      ),
-                      SizedBox(width: cellSize * 0.15),
-                      Flexible(
-                        child: Text(
-                          name,
-                          maxLines: 1,
-                          softWrap: false,
-                          overflow: TextOverflow.ellipsis,
-                          // C-339 decision 1: pinned to the board's own
-                          // measure, never the system text scale.
-                          textScaler: TextScaler.noScaling,
-                          style: TextStyle(
-                            color: ink,
-                            fontFamily: kLudoFontFamily,
-                            fontFamilyFallback: kLudoFontFallbacks,
-                            fontSize: nameFontSize,
-                            fontWeight: FontWeight.w600,
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: cellSize * 0.3,
+                      vertical: chipHeight * 0.08,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Container(
+                          key: Key('board-seat-name-$seat-mark'),
+                          width: nameDiscSize,
+                          height: nameDiscSize,
+                          decoration: BoxDecoration(
+                            color: seatColor,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: SeatMark(
+                              seat: seat,
+                              size: nameDiscSize * 0.5,
+                            ),
                           ),
                         ),
-                      ),
-                      if (you != null) ...<Widget>[
                         SizedBox(width: cellSize * 0.15),
-                        // Not `Flexible`: `_fittedChipFontSizes` already sized
-                        // this and the name above it to share the chip's
-                        // width honestly (by how wide each actually is at its
-                        // own font size), not by `Flex`'s own equal-by-default
-                        // split of whatever is left -- a plain child takes
-                        // exactly the natural width that sizing computed, and
-                        // the name's own `Flexible` absorbs whatever is left
-                        // over (or, past the 10-character guarantee, still
-                        // ellipsizes).
-                        Text(
-                          you,
-                          key: const Key('board-seat-you'),
-                          maxLines: 1,
-                          softWrap: false,
-                          overflow: TextOverflow.ellipsis,
-                          textScaler: TextScaler.noScaling,
-                          style: TextStyle(
-                            color: ink,
-                            fontFamily: kLudoFontFamily,
-                            fontFamilyFallback: kLudoFontFallbacks,
-                            fontSize: youFontSize,
+                        Flexible(
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.ellipsis,
+                            // C-339 decision 1: pinned to the board's own
+                            // measure, never the system text scale.
+                            textScaler: TextScaler.noScaling,
+                            style: TextStyle(
+                              color: ink,
+                              fontFamily: kLudoFontFamily,
+                              fontFamilyFallback: kLudoFontFallbacks,
+                              fontSize: nameFontSize,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
+                        if (you != null) ...<Widget>[
+                          SizedBox(width: cellSize * 0.15),
+                          // Not `Flexible`: `_fittedChipFontSizes` already sized
+                          // this and the name above it to share the chip's
+                          // width honestly (by how wide each actually is at its
+                          // own font size), not by `Flex`'s own equal-by-default
+                          // split of whatever is left -- a plain child takes
+                          // exactly the natural width that sizing computed, and
+                          // the name's own `Flexible` absorbs whatever is left
+                          // over (or, past the 10-character guarantee, still
+                          // ellipsizes).
+                          Text(
+                            you,
+                            key: const Key('board-seat-you'),
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.ellipsis,
+                            textScaler: TextScaler.noScaling,
+                            style: TextStyle(
+                              color: ink,
+                              fontFamily: kLudoFontFamily,
+                              fontFamilyFallback: kLudoFontFallbacks,
+                              fontSize: youFontSize,
+                            ),
+                          ),
+                        ],
+                        if (awayLine != null) ...<Widget>[
+                          SizedBox(width: cellSize * 0.15),
+                          SizedBox(
+                            key: Key('board-seat-away-$seat'),
+                            width: nameDiscSize,
+                            height: nameDiscSize,
+                            child: Icon(
+                              Icons.wifi_off_rounded,
+                              size: nameDiscSize,
+                              color: ink,
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -1481,6 +1513,20 @@ class _LudoBoardState extends State<LudoBoard> {
           ),
         ),
       ),
+    );
+  }
+
+  /// C-597 D2: an away seat's chip is drawn at 0.6 opacity and says [line]
+  /// to TalkBack in place of the bare name. No line, the chip as it was.
+  Widget _awayChip(String? line, {required Widget child}) {
+    if (line == null) {
+      return child;
+    }
+    return Semantics(
+      container: true,
+      label: line,
+      excludeSemantics: true,
+      child: Opacity(opacity: 0.6, child: child),
     );
   }
 
