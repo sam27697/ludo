@@ -152,6 +152,7 @@ import 'package:ludo_client/src/net/snapshot.dart'
     show RoomSnapshot, RoomState, SeatState;
 import 'package:ludo_client/src/room_code.dart'
     show isValidRoomCode, normalizeRoomCode, roomCodeLength;
+import 'package:ludo_client/src/seat_mark.dart' show SeatMark;
 import 'package:ludo_client/src/server_config.dart';
 import 'package:ludo_client/src/session_memory.dart'
     show LastGame, SeatRecord, SessionMemory;
@@ -3602,6 +3603,48 @@ void main() {
       locale: const Locale('ar'),
       viewerSeat: 1,
       readySeats: const <int>[0, 2],
+    );
+  });
+
+  // ==========================================================================
+  // 146a, 146, 147: order 594 (C-592 D2). The recorded four-seat game
+  // four_seats_1 as seat 3 (Tariq, a guest) to its `game_over`, then a rematch
+  // LOBBY built the way 144 and 145 build one. 146a is the card seat 3 sees
+  // while the host (seat 0) and seat 1 are in and it is not yet: the C-591 line
+  // on the real screen. 146 and 147 go on: seat 3 taps Play again (ready 0, 1,
+  // 3), seat 2 never does, and the host starts as docs/PROTOCOL.md 16.4 orders
+  // it: `player_left` for seat 2, `seat_assigned` moving this device from seat
+  // 3 to seat 2, the re-seating `room`, then `game_started` and the first
+  // `turn`. The shot is inside the 4000 ms hold of the seat-moved notice and
+  // after the entrance veil has gone. Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 146a-may-start-before-move-en', (tester) async {
+    await _shootSeatMoved(
+      tester,
+      binding,
+      shotName: '146a-may-start-before-move-en',
+      locale: const Locale('en'),
+      toTheStart: false,
+    );
+  });
+
+  testWidgets('capture 146-seat-moved-en', (tester) async {
+    await _shootSeatMoved(
+      tester,
+      binding,
+      shotName: '146-seat-moved-en',
+      locale: const Locale('en'),
+      toTheStart: true,
+    );
+  });
+
+  testWidgets('capture 147-seat-moved-ar', (tester) async {
+    await _shootSeatMoved(
+      tester,
+      binding,
+      shotName: '147-seat-moved-ar',
+      locale: const Locale('ar'),
+      toTheStart: true,
     );
   });
 
@@ -22101,6 +22144,425 @@ Future<void> _shootRematchWarning(
     'screenshots_test: $capture replays "four_seats_1" from seat $viewerSeat '
     '(host seat $hostSeat) to game_over, then a rematch LOBBY with ready '
     '$readySeats; ${replay.re.pushed} recorded frames pushed',
+  );
+
+  await _capture(binding, tester, shotName, frames: 0);
+}
+
+/// Captures 146a, 146 and 147 (order 594, C-592 D2 and C-591). The device is
+/// seat 3 of the recorded game four_seats_1, a guest; the recorded frames play
+/// through `game_over`. The rematch LOBBY then grows by protocol frames the way
+/// captures 144 and 145 build one: the host (seat 0) is in, then seat 1. The
+/// card the device sees there carries `end-card-rematch-may-start` above Play
+/// again (C-591 D2): with [toTheStart] false that is the shot (146a).
+///
+/// With [toTheStart] the device taps Play again (the server's reply puts it in
+/// `ready` after seats 0 and 1), seat 2 never answers, and the host starts the
+/// game with three: `player_left` for seat 2, `seat_assigned` moving the device
+/// from seat 3 to seat 2, the re-seating `room`, `game_started` and the first
+/// `turn`. The seat-moved notice (`game-seat-moved-notice`) reads
+/// `gameSeatMoved('yellow')` (seat 2's colour), holds seat 2's `SeatMark`, and
+/// the device's own yard is seat 2's; the shot is inside the 4000 ms hold,
+/// after the entrance veil has gone.
+Future<void> _shootSeatMoved(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required bool toTheStart,
+}) async {
+  const int viewerSeat = 3;
+  const int sitsOutSeat = 2;
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(_replayHome(factory, locale));
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+  addTearDown(() {
+    for (final RoomController c in factory.controllers) {
+      c.dispose();
+    }
+  });
+  final String capture = 'capture $shotName';
+  final _RealReplay replay = await _replayRealGame(
+    tester,
+    factory,
+    capture: capture,
+    gameName: 'four_seats_1',
+    seat: viewerSeat,
+    localeName: locale.languageCode,
+  );
+  final RoomController controller = replay.controller;
+  final FakeTransport transport = replay.transport;
+  final _RealGame game = replay.game;
+  final String where = replay.describe;
+  final int hostSeat =
+      (game.view(viewerSeat)[1]['d']! as Map<String, Object?>)['host_seat']!
+          as int;
+  final List<int> seats = <int>[
+    for (final Object? s in game.json['seats']! as List<Object?>) s! as int,
+  ]..sort();
+  expect(
+    <Object>[hostSeat, seats],
+    <Object>[
+      0,
+      <int>[0, 1, 2, 3],
+    ],
+    reason: '$where: the capture needs host 0 at a table of four',
+  );
+  expect(
+    controller.seat,
+    viewerSeat,
+    reason: '$where: the device plays seat $viewerSeat',
+  );
+  final int framesBeforeOver = replay.re.pushed;
+
+  replay.pushGameOver();
+  await tester.pump();
+  await tester.pump();
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+  expect(
+    loc.localeName,
+    locale.languageCode,
+    reason:
+        '$capture: expected locale ${locale.languageCode}, got '
+        '${loc.localeName}',
+  );
+  expect(
+    controller.room?.state,
+    RoomState.finished,
+    reason: '$capture: game_over must finish the room. $where',
+  );
+
+  // Protocol frames after the recorded game, never edits of a recorded one.
+  int seq = replay.gameOverSeq;
+  Map<String, Object?> lobbyRoom(
+    List<int> present,
+    List<int> ready, {
+    int by = 0,
+    int? moveSeatOf,
+    int? moveSeatTo,
+  }) {
+    seq += 1;
+    return <String, Object?>{
+      ..._roomJson(
+        code: replay.roomCode,
+        state: 'LOBBY',
+        hostSeat: by,
+        players: present.length,
+        seats: <Map<String, Object?>>[
+          for (final int s in present)
+            _seatJson(s == moveSeatOf ? moveSeatTo! : s, name: game.nameOf(s)),
+        ],
+        seq: seq,
+      ),
+      'chain_index': 1,
+      'rematch': <String, Object?>{'by': by, 'ready': ready},
+    };
+  }
+
+  // The host asks, then seat 1 is in: the device is not, and the host and one
+  // more could start without it.
+  transport.pushText(_frame(type: 'room', data: lobbyRoom(seats, <int>[0])));
+  await tester.pump();
+  await tester.pump();
+  transport.pushText(_frame(type: 'room', data: lobbyRoom(seats, <int>[0, 1])));
+  await tester.pump();
+  await tester.pump();
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason: '$capture: seq gap in the rematch frames. $where',
+  );
+  expect(
+    controller.room?.rematch?.ready,
+    unorderedEquals(<int>[0, 1]),
+    reason: '$capture: rematch.ready before the device answers. $where',
+  );
+  await _pumpRealDurationFrames(tester);
+
+  final Finder mayStart = find.byKey(const Key('end-card-rematch-may-start'));
+  expect(
+    mayStart,
+    findsOneWidget,
+    reason:
+        '$capture: C-591 D2, expected end-card-rematch-may-start for seat '
+        '$viewerSeat while the host (seat $hostSeat) and seat 1 are in. '
+        '$where',
+  );
+  expect(
+    _textUnder(tester, mayStart),
+    loc.endRematchMayStartWithout,
+    reason:
+        '$capture: C-591 D2, expected end-card-rematch-may-start to read '
+        '"${loc.endRematchMayStartWithout}". $where',
+  );
+  final Finder playAgain = find.byKey(const Key('end-card-rematch'));
+  expect(
+    playAgain,
+    findsOneWidget,
+    reason: '$capture: Play again must be on the card. $where',
+  );
+  expect(
+    tester.getRect(mayStart).bottom,
+    lessThanOrEqualTo(tester.getRect(playAgain).top),
+    reason:
+        '$capture: C-591 D2, expected end-card-rematch-may-start above '
+        'end-card-rematch. $where',
+  );
+  if (!toTheStart) {
+    // ignore: avoid_print
+    print(
+      'screenshots_test: $capture replays "four_seats_1" from seat '
+      '$viewerSeat: $framesBeforeOver recorded frames before game_over, then '
+      'game_over and ${seq - replay.gameOverSeq} frames after it (rematch '
+      'rooms with ready [0], [0, 1])',
+    );
+    await _capture(binding, tester, shotName, frames: 0);
+    return;
+  }
+
+  // The device answers: Play again, and the reply puts it in ready.
+  await tester.tap(playAgain);
+  await tester.pump();
+  final List<String> rematches = transport.sentRaw
+      .where((String s) => _typeOf(s) == 'rematch')
+      .toList();
+  expect(
+    rematches,
+    hasLength(1),
+    reason:
+        '$capture: tapping end-card-rematch must send exactly one rematch '
+        'frame; sent ${transport.sentRaw.map(_typeOf).toList()}. $where',
+  );
+  transport.pushText(
+    _frame(
+      type: 'room',
+      re: _idOf(rematches.single),
+      data: lobbyRoom(seats, <int>[0, 1, viewerSeat]),
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  expect(
+    controller.room?.rematch?.ready,
+    unorderedEquals(<int>[0, 1, viewerSeat]),
+    reason: '$capture: the reply must put the device in ready. $where',
+  );
+  expect(
+    find.byKey(const Key('end-card-rematch-waiting')),
+    findsOneWidget,
+    reason: '$capture: the device is in, the waiting line shows. $where',
+  );
+  expect(
+    controller.seatMovedFrom,
+    isNull,
+    reason: '$capture: no move has happened yet. $where',
+  );
+
+  // The host starts with the three who answered (docs/PROTOCOL.md 16.4).
+  final List<int> staying = <int>[0, 1, viewerSeat];
+  seq += 1;
+  transport.pushText(
+    _frame(
+      type: 'player_left',
+      data: <String, Object?>{'seat': sitsOutSeat, 'seq': seq},
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  transport.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: <String, Object?>{'seat': sitsOutSeat, 'seat_token': 'tok-moved'},
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  expect(
+    controller.seat,
+    sitsOutSeat,
+    reason: '$capture: seat_assigned moves the device to seat $sitsOutSeat',
+  );
+  expect(
+    controller.seatMovedFrom,
+    viewerSeat,
+    reason:
+        '$capture: C-592 D1, the controller must remember the move from seat '
+        '$viewerSeat. $where',
+  );
+  transport.pushText(
+    _frame(
+      type: 'room',
+      data: lobbyRoom(
+        staying,
+        <int>[0, 1, viewerSeat],
+        moveSeatOf: viewerSeat,
+        moveSeatTo: sitsOutSeat,
+      ),
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason: '$capture: seq gap in the re-seating frames. $where',
+  );
+
+  final Stopwatch sinceArrival = Stopwatch()..start();
+  const String newGameId = 'b2b2b2b2b2b2b2b2';
+  seq += 1;
+  transport.pushText(
+    _frame(
+      type: 'game_started',
+      data: <String, Object?>{
+        'turn': 0,
+        'game_id': newGameId,
+        'client_seeds': '0:seed',
+        'seq': seq,
+      },
+    ),
+  );
+  seq += 1;
+  transport.pushText(
+    _frame(
+      type: 'turn',
+      data: <String, Object?>{
+        'seat': 0,
+        'phase': 'await_roll',
+        'deadline_ms': 45000,
+        'queue': <int>[],
+        'seq': seq,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason: '$capture: seq gap in the start order. $where',
+  );
+  expect(
+    controller.room?.state,
+    RoomState.playing,
+    reason: '$capture: the start order must put the room in play. $where',
+  );
+  expect(
+    <Object?>[controller.seat, controller.room?.seats.length],
+    <Object?>[sitsOutSeat, 3],
+    reason: '$capture: seat 2 of a table of three after the start. $where',
+  );
+
+  // The entrance veil runs first; the notice is up behind it and outlives it.
+  final Finder veil = find.byKey(const Key('game-table-entrance-layer'));
+  while (veil.evaluate().isNotEmpty) {
+    if (sinceArrival.elapsedMilliseconds > 3000) {
+      fail(
+        '$capture: expected the entrance veil to be gone within 3000 ms of '
+        'the start order, still there after '
+        '${sinceArrival.elapsedMilliseconds} ms. $where',
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  await _pumpRealDurationFrames(tester, frameCount: 4);
+
+  final String expectedLine = loc.gameSeatMoved('yellow');
+  final Finder notice = find.byKey(const Key('game-seat-moved-notice'));
+  expect(
+    notice,
+    findsOneWidget,
+    reason:
+        '$capture: C-592 D2, expected game-seat-moved-notice on screen '
+        '${sinceArrival.elapsedMilliseconds} ms after the start order and '
+        'after the veil, within its 4000 ms hold. $where',
+  );
+  final Finder noticeText = find.descendant(
+    of: notice,
+    matching: find.byType(Text),
+  );
+  expect(
+    noticeText,
+    findsOneWidget,
+    reason: '$capture: the notice holds exactly one Text. $where',
+  );
+  final Text text = tester.widget<Text>(noticeText);
+  expect(
+    text.data ?? text.textSpan?.toPlainText(),
+    expectedLine,
+    reason:
+        '$capture: C-592 D2, expected game-seat-moved-notice to read '
+        '"$expectedLine" (seat 2 is yellow). $where',
+  );
+  final Finder mark = find.descendant(
+    of: notice,
+    matching: find.byType(SeatMark),
+  );
+  expect(
+    mark,
+    findsOneWidget,
+    reason: '$capture: the notice holds one SeatMark. $where',
+  );
+  expect(
+    tester.widget<SeatMark>(mark).seat,
+    sitsOutSeat,
+    reason: '$capture: the SeatMark is for the new seat $sitsOutSeat. $where',
+  );
+  expect(
+    controller.seatMovedFrom,
+    isNull,
+    reason: '$capture: the arrival must clear the remembered move. $where',
+  );
+
+  // This device's own yard is seat 2's.
+  final Finder yard = find.byKey(const Key('board-my-yard'));
+  expect(
+    yard,
+    findsOneWidget,
+    reason: '$capture: expected board-my-yard on the board. $where',
+  );
+  final BoxDecoration ring =
+      tester
+              .widget<DecoratedBox>(
+                find.descendant(of: yard, matching: find.byType(DecoratedBox)),
+              )
+              .decoration
+          as BoxDecoration;
+  expect(
+    ring.border,
+    Border.all(color: LudoColors.seats[sitsOutSeat], width: 3),
+    reason:
+        '$capture: expected board-my-yard to ring seat $sitsOutSeat\'s '
+        'colour. $where',
+  );
+
+  final int ageMs = sinceArrival.elapsedMilliseconds;
+  expect(
+    ageMs,
+    lessThan(3000),
+    reason:
+        '$capture: expected the shot within 3000 ms of the start order (the '
+        'hold is 4000 ms), got $ageMs ms by wall time. $where',
+  );
+  // seat_assigned carries no seq, so it is the one frame not counted in seq.
+  // ignore: avoid_print
+  print(
+    'screenshots_test: $capture replays "four_seats_1" from seat '
+    '$viewerSeat: $framesBeforeOver recorded frames before game_over, then '
+    'game_over and ${seq - replay.gameOverSeq + 1} frames after it (rooms '
+    'with ready [0], [0, 1], [0, 1, 3], player_left 2, seat_assigned 2, the '
+    're-seating room, game_started, turn); notice "$expectedLine", shot '
+    '$ageMs ms after the start order',
   );
 
   await _capture(binding, tester, shotName, frames: 0);
