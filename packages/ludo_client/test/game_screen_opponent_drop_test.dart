@@ -686,11 +686,13 @@ void main() {
       final Text banner = tester.widget<Text>(find.byKey(_bannerKey));
       expect(
         banner.data,
-        loc.gameWaitingForPlayer('Dee'),
+        loc.gameYouAreNextAfter('Dee'),
         reason:
             'O3: the turn banner must name seat 3 (Dee) once the turn '
-            'frame naming seat 3 has landed; got "${banner.data}", '
-            'expected "${loc.gameWaitingForPlayer('Dee')}"',
+            'frame naming seat 3 has landed, and because this viewer is '
+            'seat 0, the seat that plays right after seat 3 at a table of '
+            'four (C-590 D3), it reads the you-are-next line; got '
+            '"${banner.data}", expected "${loc.gameYouAreNextAfter('Dee')}"',
       );
       final Text countdown = tester.widget<Text>(find.byKey(_countdownKey));
       expect(
