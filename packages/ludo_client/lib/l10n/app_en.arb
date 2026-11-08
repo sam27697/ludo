@@ -916,5 +916,43 @@
   "soundToggleLabel": "Sound and vibration",
   "@soundToggleLabel": {
     "description": "Tooltip and spoken label of the one sound button in the home, lobby and game headers; one tap mutes or unmutes both sound and vibration."
+  },
+  "gameYouAreNextAfter": "You're next, after {name}",
+  "@gameYouAreNextAfter": {
+    "description": "Turn banner at a table of three or four, shown to the seat that plays right after the current one, naming the seat playing now. The words that matter come first so a long name is what gets cut.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
+  "gameYouAreNextGoesAgain": "You're next. {name} goes again",
+  "@gameYouAreNextGoesAgain": {
+    "description": "Turn banner at a table of three or four, shown to the seat that plays next while the current seat has an extra roll after a six, a capture or a token home.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
+  "gameYouAreNextAnnounce": "You're next",
+  "@gameYouAreNextAnnounce": {
+    "description": "Spoken by the screen reader once, when the turn moves to the seat right before mine at a table of three or four."
+  },
+  "endRematchMayStartWithout": "The next game can start without you",
+  "@endRematchMayStartWithout": {
+    "description": "End card line for a player who has not tapped Play again while the host and at least one other player are in, so the host can start the next game without them."
+  },
+  "endRematchSitsOut": "Not in the next game: {names}",
+  "@endRematchSitsOut": {
+    "description": "End card line beside the host's Start with N button, naming every player who has not tapped Play again and will be left out if the host starts now.",
+    "placeholders": {
+      "names": {
+        "type": "String",
+        "example": "Sam, Cy"
+      }
+    }
   }
 }

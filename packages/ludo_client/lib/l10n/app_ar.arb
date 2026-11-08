@@ -226,5 +226,10 @@
   "chatSheetTitle": "رسايل سريعة",
   "chatMuteOthers": "خبّي رسايل الباقين",
   "chatSaid": "{name}: {line}",
-  "soundToggleLabel": "الصوت والاهتزاز"
+  "soundToggleLabel": "الصوت والاهتزاز",
+  "gameYouAreNextAfter": "أنت التالي بعد {name}",
+  "gameYouAreNextGoesAgain": "أنت التالي. دور {name} مجددًا",
+  "gameYouAreNextAnnounce": "أنت التالي",
+  "endRematchMayStartWithout": "قد تبدأ الجولة التالية دونك",
+  "endRematchSitsOut": "خارج الجولة التالية: {names}"
 }
