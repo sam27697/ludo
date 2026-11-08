@@ -41,6 +41,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
@@ -88,8 +89,8 @@ const Map<String, String> _wordsAr = <String, String>{
 };
 
 String _movedLine(Locale locale, String colour) => locale.languageCode == 'ar'
-    ? 'تغيّر مقعدك. لونك في هذه الجولة: ${_wordsAr[colour]}'
-    : 'Your seat moved. Your pieces are now ${_wordsEn[colour]}';
+    ? 'لونك الآن: ${_wordsAr[colour]}'
+    : 'Your pieces are now ${_wordsEn[colour]}';
 
 String _startedLine(Locale locale) =>
     locale.languageCode == 'ar' ? _startedAr : _startedEn;
@@ -468,6 +469,28 @@ Text _noticeTextWidget(WidgetTester tester) {
   return tester.widget<Text>(
     find.descendant(of: notice, matching: find.byType(Text)).first,
   );
+}
+
+Future<void> _loadAppFonts() async {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  final FontLoader poppins = FontLoader('Poppins');
+  for (final String asset in const <String>[
+    'fonts/Poppins-Regular.ttf',
+    'fonts/Poppins-Medium.ttf',
+    'fonts/Poppins-SemiBold.ttf',
+    'fonts/Poppins-Bold.ttf',
+  ]) {
+    poppins.addFont(rootBundle.load(asset));
+  }
+  await poppins.load();
+  final FontLoader arabic = FontLoader('Noto Sans Arabic');
+  for (final String asset in const <String>[
+    'fonts/NotoSansArabic-Regular.ttf',
+    'fonts/NotoSansArabic-Bold.ttf',
+  ]) {
+    arabic.addFont(rootBundle.load(asset));
+  }
+  await arabic.load();
 }
 
 void main() {
@@ -1141,6 +1164,97 @@ void main() {
             }
           },
         );
+      }
+    }
+  });
+
+  // ===========================================================================
+  // The colour word is never cut: the line is the one thing a moved seat needs
+  // to read, so on the narrowest supported phone it must lay out on one line
+  // without the ellipsis taking the colour (frame 146 of order 594 lost it).
+  // ===========================================================================
+  group('the colour word is never cut', () {
+    // The test binding's default face is a square-glyph block font, which
+    // measures every line far wider than a real one; the app's own faces are
+    // loaded here, the way header_fits_test does, so that the paragraph is
+    // laid out as it is on a phone.
+    setUpAll(_loadAppFonts);
+
+    for (final double scale in const <double>[1.0, 2.0]) {
+      for (final Locale locale in const <Locale>[Locale('en'), Locale('ar')]) {
+        for (final _Move move in const <_Move>[_yellow, _green, _red, _blue]) {
+          final String lang = locale.languageCode;
+          testWidgets(
+            '360x800, text scale $scale ($lang) ${move.colour}: the notice '
+            'text is one line and does not exceed its max lines',
+            (tester) async {
+              tester.view.physicalSize = const Size(360, 800);
+              tester.view.devicePixelRatio = 1.0;
+              addTearDown(() {
+                tester.view.resetPhysicalSize();
+                tester.view.resetDevicePixelRatio();
+              });
+              final _Run run = await _finishedTable(
+                tester,
+                '360x800 scale $scale $lang, $move',
+                move,
+                locale: locale,
+                textScale: scale,
+              );
+              try {
+                await _hostStartsRematch(run, move);
+                await _startOrder(run, move.otherAfter);
+                final String line = _movedLine(locale, move.colour);
+                final Finder paragraphs = find.descendant(
+                  of: find.descendant(
+                    of: find.byKey(_noticeKey),
+                    matching: find.byType(Text),
+                  ),
+                  matching: find.byType(RichText),
+                );
+                expect(
+                  paragraphs,
+                  findsOneWidget,
+                  reason: run.why('one laid-out paragraph under the notice'),
+                );
+                final RenderParagraph paragraph = tester
+                    .renderObject<RenderParagraph>(paragraphs);
+                expect(
+                  paragraph.maxLines,
+                  1,
+                  reason: run.why(
+                    'the paragraph is capped at one line, so that '
+                    'didExceedMaxLines below measures the ellipsis',
+                  ),
+                );
+                expect(
+                  paragraph.didExceedMaxLines,
+                  isFalse,
+                  reason: run.why(
+                    '"$line" fits on one line at 360 dp, text scale $scale, '
+                    '$lang; the paragraph exceeded its max lines, so the '
+                    'ellipsis cut the text (paragraph ${paragraph.size})',
+                  ),
+                );
+                expect(
+                  _noticeText(tester),
+                  line,
+                  reason: run.why(
+                    'game-seat-moved-notice reads "$line"; the screen showed '
+                    '${_noticeText(tester)}',
+                  ),
+                );
+                expect(
+                  tester.takeException(),
+                  isNull,
+                  reason: run.why('no layout or overflow exception'),
+                );
+              } finally {
+                await releaseGame(tester, run.drive);
+              }
+            },
+          );
+        }
       }
     }
   });
