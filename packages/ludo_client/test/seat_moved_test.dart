@@ -89,7 +89,7 @@ const Map<String, String> _wordsAr = <String, String>{
 
 String _movedLine(Locale locale, String colour) => locale.languageCode == 'ar'
     ? 'تغيّر مقعدك. لونك في هذه الجولة: ${_wordsAr[colour]}'
-    : 'Your seat moved. You are ${_wordsEn[colour]} this game';
+    : 'Your seat moved. Your pieces are now ${_wordsEn[colour]}';
 
 String _startedLine(Locale locale) =>
     locale.languageCode == 'ar' ? _startedAr : _startedEn;
