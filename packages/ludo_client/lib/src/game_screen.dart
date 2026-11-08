@@ -443,10 +443,9 @@ class _GameScreenState extends State<GameScreen> {
   int? _yourTurnPlayedK;
 
   // C-590 D4: the turn seat this screen last weighed for the "you're next"
-  // line and the `k` it announced it for. A new seat is a turn change; the
-  // same seat with a new `k` is an extra roll, and the same `k` is a replay.
+  // line. A new seat is a turn change; the same seat again is an extra roll
+  // or a replay of a turn already weighed.
   int? _nextSeenSeat;
-  int? _youAreNextPlayedK;
 
   // C-518 D1: the route of the quick-message sheet this screen opened, so
   // my turn can close it and nothing else. Never the leave confirm, the face
@@ -635,7 +634,6 @@ class _GameScreenState extends State<GameScreen> {
     // C-590 D4: the turn the screen mounts onto counts as announced.
     if (shownTurn != null && mountRoom?.state == RoomState.playing) {
       _nextSeenSeat = shownTurn.seat;
-      _youAreNextPlayedK = shownTurn.k;
     }
     _seenRolls = List<(int k, int face)>.of(
       widget.controller.room?.recentRolls ?? const <(int k, int face)>[],
@@ -1197,7 +1195,7 @@ class _GameScreenState extends State<GameScreen> {
     }
     final bool newSeat = _nextSeenSeat != turn.seat;
     _nextSeenSeat = turn.seat;
-    if (!newSeat || _youAreNextPlayedK == turn.k) {
+    if (!newSeat) {
       return;
     }
     final List<int> inPlay = _seatsInPlayOf(room);
@@ -1205,7 +1203,6 @@ class _GameScreenState extends State<GameScreen> {
         nextSeatInPlay(inPlay, turn.seat) != mySeat) {
       return;
     }
-    _youAreNextPlayedK = turn.k;
     _announce(AppLocalizations.of(context).gameYouAreNextAnnounce);
   }
 
@@ -2127,7 +2124,6 @@ class _GameScreenState extends State<GameScreen> {
     _extraRoll.clear();
     _yourTurnPlayedK = null;
     _nextSeenSeat = null;
-    _youAreNextPlayedK = null;
     _dropDeadCandidate();
     _trayDeadTimer?.cancel();
     _trayDeadTimer = null;
