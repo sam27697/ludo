@@ -11,6 +11,14 @@ import 'theme.dart';
 /// How long a bubble stays up, reduced motion included.
 const Duration kChatBubbleLife = Duration(milliseconds: 2500);
 
+/// How long a line keeps the screen before a waiting line may take over.
+/// C-596 D1.
+const Duration kChatMinDwell = Duration(milliseconds: 1200);
+
+/// The most the bubble's text follows the system text scale, so a large
+/// setting never lets it grow past the header band. C-596 D4.
+const double _kChatBubbleMaxScale = 1.3;
+
 /// Pop-in. C-478 D5.4.
 const Duration kChatBubblePop = Duration(milliseconds: 160);
 
@@ -317,6 +325,8 @@ class _EndCardChatBubbleState extends State<EndCardChatBubble>
   @override
   Widget build(BuildContext context) {
     final bool reduced = MediaQuery.disableAnimationsOf(context);
+    final TextScaler scaler = MediaQuery.textScalerOf(context)
+        .clamp(maxScaleFactor: _kChatBubbleMaxScale);
     final Color seatColor =
         LudoColors.seats[widget.seat.clamp(0, LudoColors.seats.length - 1)];
     final TextStyle? base = Theme.of(context).textTheme.labelLarge
@@ -344,7 +354,7 @@ class _EndCardChatBubbleState extends State<EndCardChatBubble>
           withName,
           widget.maxWidth - _kChatBubbleChrome,
           Directionality.of(context),
-          MediaQuery.textScalerOf(context),
+          scaler,
           Localizations.maybeLocaleOf(context),
         );
     return Semantics(
@@ -388,6 +398,7 @@ class _EndCardChatBubbleState extends State<EndCardChatBubble>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
+                  textScaler: scaler,
                 ),
               ),
             ),
