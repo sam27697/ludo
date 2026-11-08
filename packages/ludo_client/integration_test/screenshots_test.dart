@@ -138,6 +138,7 @@ import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart'
     show appSupportedLocales, buildAppTheme;
 import 'package:ludo_client/src/board.dart' show LudoBoard;
+import 'package:ludo_client/src/chat_bubble.dart' show kChatMinDwell;
 import 'package:ludo_client/src/die_cube.dart' show BoardThrownDie;
 import 'package:ludo_client/src/end_card.dart' show EndCard;
 import 'package:ludo_client/src/feedback.dart'
@@ -6015,14 +6016,15 @@ void main() {
       emotes: const <(int, String)>[(2, 'revenge')],
       expectedReplies: const <String>['good_game', 'revenge', 'lucky'],
       textScale: 2.0,
-      expectNameDroppedOnPhone: true,
+      expectNameDroppedOnPhone: false,
     );
   });
 
   // ==========================================================================
   // 88-90: order 497 (C-492 D2, C-495 D3). Capture 88 is the end card's
-  // replace rule: seat 2's line, 300 ms later my own (the server's copy of it
-  // arrives as an `emote` push like anyone's), and only mine is left. Captures
+  // replace rule: seat 2's line, one dwell (C-596 D1) later my own (the
+  // server's copy of it arrives as an `emote` push like anyone's), and only
+  // mine is left. Captures
   // 89 and 90 are an opponent on a 10 s segment at 8 s and at 2 s left: a
   // PLAYING room reached the way 79-83 reach theirs, then a `room` push whose
   // turn carries `segment_ms`, then real time until the digits read the
@@ -6040,7 +6042,6 @@ void main() {
       winnerSeat: 0,
       emotes: const <(int, String)>[(2, 'good_game'), (0, 'ha_ha')],
       expectedReplies: const <String>['good_game', 'ha_ha'],
-      emoteGap: const Duration(milliseconds: 300),
     );
   });
 
@@ -15147,6 +15148,67 @@ Future<void> _pushEmote(
   await tester.pump();
 }
 
+/// Margin on top of [kChatMinDwell] before the next push: the dwell runs from
+/// the frame that shows a line, which can land a frame after its push.
+const Duration _chatDwellMargin = Duration(milliseconds: 160);
+
+/// Lets the line that is up have its C-596 D1 dwell, in real-duration frames,
+/// so the next push is shown at once and not queued behind it.
+Future<void> _letChatLineDwell(WidgetTester tester) => _pumpRealDurationFrames(
+  tester,
+  frameCount: ((kChatMinDwell + _chatDwellMargin).inMilliseconds / 32).ceil(),
+);
+
+/// The ambient text scale the chat bubble stops at (C-596 D4).
+const double _kChatBubbleMaxScale = 1.3;
+
+/// The header row: the widest ancestor of the leave button whose height is
+/// the 48 dp row, in [WidgetTester.getRect]'s coordinate space.
+Rect _chatHeaderRow(WidgetTester tester) {
+  final RenderBox leave = tester.renderObject<RenderBox>(
+    find.byKey(const Key('game-screen-appbar-leave')),
+  );
+  RenderBox? row;
+  RenderObject? walker = leave;
+  while (walker != null) {
+    if (walker is RenderBox && (walker.size.height - 48).abs() <= 0.5) {
+      if (row == null || walker.size.width > row.size.width) {
+        row = walker;
+      }
+    }
+    walker = walker.parent;
+  }
+  expect(
+    row,
+    isNotNull,
+    reason: 'a 48 dp ancestor of game-screen-appbar-leave',
+  );
+  return row!.localToGlobal(Offset.zero) & row.size;
+}
+
+/// C-596 D4: at a large text scale the bubble [bubble] still lies inside the
+/// 48 dp header row, edges included.
+void _expectChatInsideHeaderRow(
+  WidgetTester tester,
+  Rect bubble, {
+  required int seat,
+  required String shotName,
+  required String scenario,
+}) {
+  final Rect row = _chatHeaderRow(tester);
+  const double eps = 0.5;
+  expect(
+    bubble.left >= row.left - eps &&
+        bubble.right <= row.right + eps &&
+        bubble.top >= row.top - eps &&
+        bubble.bottom <= row.bottom + eps,
+    isTrue,
+    reason:
+        'capture $shotName ($scenario): C-596 D4, end-card-chat-$seat '
+        '($bubble) must lie inside the 48 dp header row ($row)',
+  );
+}
+
 /// What a capture of the quick messages needs on screen before the shot:
 /// the room PLAYING, this device on [viewerSeat], the locale named, and the
 /// turn on seat 0 awaiting a roll.
@@ -15458,8 +15520,13 @@ Future<void> _shootChatBubbles(
       );
     }
 
+    // C-596 D1: a line up for less than the dwell is not replaced, so each
+    // line has its dwell before the next one is pushed and the newest is up
+    // when the shot is taken.
     await _pushEmote(tester, opened.transport, seat: 2, emote: 'revenge');
+    await _letChatLineDwell(tester);
     await _pushEmote(tester, opened.transport, seat: 1, emote: 'ha_ha');
+    await _letChatLineDwell(tester);
     await _pushEmote(tester, opened.transport, seat: 0, emote: 'good_luck');
     await tester.pump(_chatShotPump);
 
@@ -15544,15 +15611,26 @@ Future<void> _shootChatBubblesLarge(
           'at game-screen-turn-banner to scale 10 to 20.0, got $scaledTen',
     );
 
+    // C-596 D1: seat 2's line has its dwell before seat 0's is pushed.
     await _pushEmote(tester, opened.transport, seat: 2, emote: 'your_move');
+    await _letChatLineDwell(tester);
     await _pushEmote(tester, opened.transport, seat: 0, emote: 'coming');
     await tester.pump(_chatShotPump);
 
-    _expectHeaderChat(
+    final Rect bubble = _expectHeaderChat(
       tester,
       seat: 0,
       seats: <int>[0, 2],
       line: _chatLinesAr['coming']!,
+      shotName: shotName,
+      scenario: scenario,
+    );
+    // C-596 D4: the bubble's text is clamped at 1.3, so at 2.0 it still lies
+    // inside the 48 dp header row.
+    _expectChatInsideHeaderRow(
+      tester,
+      bubble,
+      seat: 0,
       shotName: shotName,
       scenario: scenario,
     );
@@ -15601,7 +15679,8 @@ const double _kPhoneWidth = 600;
 /// for the name, the narrowest the name can be, so a drop is only accepted when
 /// even that does not fit. With [expectNameDroppedOnPhone] set the answer is also
 /// pinned, but only on a phone-wide surface (logical width under [_kPhoneWidth]):
-/// capture 87, text scale 2.0 in Arabic, drops the name at 360 dp, while the
+/// capture 87, text scale 2.0 in Arabic, keeps the name at 360 dp (C-596 D4
+/// lays the bubble out at 1.3, so "name: line" fits the 224 dp), while the
 /// headless tester's wider default surface can hold "name: line" in the 320 dp
 /// cap, and there the consistency checks above are the whole assertion.
 /// Returns true when the name is shown.
@@ -15690,6 +15769,8 @@ bool _expectEndCardChat(
         'capture $shotName ($scenario): C-500 D5, no span of '
         'end-card-chat-$seat carries the line "$line"',
   );
+  // The bubble lays its text out at the ambient scale clamped to 1.3 (C-596
+  // D4), so the replay does too.
   final TextPainter painter = TextPainter(
     text: TextSpan(
       style: root.style,
@@ -15699,7 +15780,8 @@ bool _expectEndCardChat(
       ],
     ),
     textDirection: Directionality.of(element),
-    textScaler: MediaQuery.textScalerOf(element),
+    textScaler: MediaQuery.textScalerOf(element)
+        .clamp(maxScaleFactor: _kChatBubbleMaxScale),
     locale: Localizations.maybeLocaleOf(element),
     maxLines: 1,
     ellipsis: '\u2026',
@@ -15819,8 +15901,8 @@ void _expectChatClearOfHeader(
 /// fixture's winner) lands. Room code, game id, seat token and verify URL are
 /// the recorded ones. After the end card has settled its four stat tiles are
 /// asserted from the fixture's `counts` for [viewerSeat], then the [emotes]
-/// land as pushes with no `re`, in order, [emoteGap] apart, and the shot is
-/// taken 400 ms after the last. Before the shot the card's variant, the one
+/// land as pushes with no `re`, in order, a C-596 D1 dwell apart, and the shot
+/// is taken 400 ms after the last. Before the shot the card's variant, the one
 /// line that is up (the newest, C-492 D2, with no bubble of any other seat),
 /// its place clear of the title and the header's buttons, the reply chips and
 /// the board's tokens (every seat on the recorded `final_tokens`) are
@@ -15841,7 +15923,6 @@ Future<void> _shootEndCardChat(
   required List<String> expectedReplies,
   double? textScale,
   bool? expectNameDroppedOnPhone,
-  Duration emoteGap = Duration.zero,
 }) async {
   binding.testTextInput.register();
   _stubScreenshotChannel(tester);
@@ -16020,8 +16101,9 @@ Future<void> _shootEndCardChat(
         ? _chatLinesAr
         : _chatLinesEn;
     for (int i = 0; i < emotes.length; i++) {
-      if (i > 0 && emoteGap > Duration.zero) {
-        await tester.pump(emoteGap);
+      if (i > 0) {
+        // C-596 D1: the line up has its dwell before the next is pushed.
+        await _letChatLineDwell(tester);
       }
       await _pushEmote(
         tester,
@@ -16070,6 +16152,17 @@ Future<void> _shootEndCardChat(
       shotName: shotName,
       scenario: scenario,
     );
+    if (textScale != null) {
+      // C-596 D4: the bubble's text is clamped at 1.3, so at a large text
+      // scale it still lies inside the 48 dp header row.
+      _expectChatInsideHeaderRow(
+        tester,
+        tester.getRect(find.byKey(Key('end-card-chat-$newestSeat'))),
+        seat: newestSeat,
+        shotName: shotName,
+        scenario: scenario,
+      );
+    }
 
     final List<String> shownReplies = tester
         .widgetList(

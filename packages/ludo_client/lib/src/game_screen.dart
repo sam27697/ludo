@@ -32,7 +32,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart';
 import 'capture_gloat.dart';
-import 'chat_bubble.dart' show EndCardChatBubble, EndCardChatLine;
+import 'chat_bubble.dart'
+    show EndCardChatBubble, EndCardChatLine, kChatMinDwell;
 import 'dead_mark.dart' show deadBadgeRect;
 import 'die_cube.dart';
 import 'die_mark.dart';
@@ -559,8 +560,14 @@ class _GameScreenState extends State<GameScreen> {
   // down. A resync, a dropped link, a new game or the screen going clears it,
   // the way it clears the gloat. [_chatMuted] is owned here and bound both
   // ways to the sheet's switch.
+  // C-596: a line up for less than [kChatMinDwell] makes the next accepted
+  // line wait, one per seat, in arrival order. One timer ([_chatDwell]) hands
+  // over; [_chatDwellOpen] is true from a line's showing until it fires.
   _ChatEntry? _chat;
   int _chatSerial = 0;
+  final List<_WaitingChat> _chatWaiting = <_WaitingChat>[];
+  Timer? _chatDwell;
+  bool _chatDwellOpen = false;
   final ValueNotifier<bool> _chatMuted = ValueNotifier<bool>(false);
   // C-520 D1: the device keeps the whole cadence. [_chatAdmitted] holds the
   // instants this seat's sends came back acknowledged, oldest first, the
@@ -1631,7 +1638,8 @@ class _GameScreenState extends State<GameScreen> {
   /// is one of the twelve and the player has not hidden the others (mine are
   /// never hidden). Anything else shows nothing and says nothing. A line that
   /// is shown replaces the one up, from any seat, and starts its life over; a
-  /// line that is not shown never removes the one up.
+  /// line that is not shown never removes the one up. C-596 D1: a line up for
+  /// less than [kChatMinDwell] is not replaced; the newcomer waits its turn.
   void _onEmoteFrame(Frame frame) {
     final RoomSnapshot? room = widget.controller.room;
     final int? seat = _intAt(frame.data, 'seat');
@@ -1660,9 +1668,24 @@ class _GameScreenState extends State<GameScreen> {
     if (_chatMuted.value && seat != widget.controller.seat) {
       return;
     }
+    if (_chat != null && _chatDwellOpen) {
+      // C-596 D2: one waiting line per seat, the newer at the back.
+      _chatWaiting.removeWhere((_WaitingChat w) => w.seat == seat);
+      _chatWaiting.add(_WaitingChat(id: id, seat: seat));
+      return;
+    }
+    _showChat(id, seat, room);
+  }
+
+  /// The line goes up now, replacing the one up, with its own life and its
+  /// own minimum dwell. C-596 D1, D2.
+  void _showChat(String id, int seat, RoomSnapshot? room) {
     _chatSerial++;
     final int serial = _chatSerial;
     _chat?.timer.cancel();
+    _chatDwell?.cancel();
+    _chatDwellOpen = true;
+    _chatDwell = Timer(kChatMinDwell, _onChatDwellOver);
     _chat = _ChatEntry(
       id: id,
       seat: seat,
@@ -1681,6 +1704,40 @@ class _GameScreenState extends State<GameScreen> {
     _scheduleGloatRebuild();
   }
 
+  /// The line up has had [kChatMinDwell]: the first waiting line takes over.
+  void _onChatDwellOver() {
+    _chatDwell = null;
+    _chatDwellOpen = false;
+    _handOverChat();
+  }
+
+  /// Shows the first waiting line whose seat still has a name; one without a
+  /// name is skipped the way [_chatLineOf] skips it. C-596 D2, D3.
+  void _handOverChat() {
+    while (_chatWaiting.isNotEmpty) {
+      final _WaitingChat next = _chatWaiting.removeAt(0);
+      if (!_chatSeatKnown(next.seat)) {
+        continue;
+      }
+      _showChat(next.id, next.seat, widget.controller.room);
+      return;
+    }
+  }
+
+  /// True when [seat] is in the live seats or the game just finished.
+  bool _chatSeatKnown(int seat) {
+    final RoomController controller = widget.controller;
+    for (final RoomSnapshot? source in <RoomSnapshot?>[
+      controller.room,
+      controller.lastFinished,
+    ]) {
+      if (source?.seats.any((SeatState s) => s.seat == seat) ?? false) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// The chat button's own condition: on the header row while a seated player
   /// is connected to a table in play. C-500 D4.
   bool _showsChatButton(RoomController controller, RoomSnapshot? room) {
@@ -1692,7 +1749,12 @@ class _GameScreenState extends State<GameScreen> {
 
   /// The line goes, with its timer. A resync, a resume, a new game, dispose.
   /// C-478 D5.4, C-500 D3.
+  /// The waiting lines and the hand-over timer go with it. C-596 D3.
   void _clearChatBubbles() {
+    _chatWaiting.clear();
+    _chatDwell?.cancel();
+    _chatDwell = null;
+    _chatDwellOpen = false;
     final _ChatEntry? line = _chat;
     if (line == null) {
       return;
@@ -1702,13 +1764,20 @@ class _GameScreenState extends State<GameScreen> {
     _scheduleGloatRebuild();
   }
 
-  /// Hiding the others takes down another seat's line that is up.
+  /// Hiding the others takes down another seat's line that is up, and every
+  /// waiting line that is not mine. C-596 D3.
   void _onChatMutedChanged() {
-    if (_chatMuted.value &&
-        _chat != null &&
-        _chat?.seat != widget.controller.seat) {
-      _chat?.timer.cancel();
-      _chat = null;
+    if (_chatMuted.value) {
+      final int? mine = widget.controller.seat;
+      _chatWaiting.removeWhere((_WaitingChat w) => w.seat != mine);
+      if (_chat != null && _chat?.seat != mine) {
+        _chat?.timer.cancel();
+        _chat = null;
+        _chatDwell?.cancel();
+        _chatDwell = null;
+        _chatDwellOpen = false;
+        _handOverChat();
+      }
     }
     _scheduleGloatRebuild();
   }
@@ -5476,6 +5545,11 @@ class _GameScreenState extends State<GameScreen> {
                   tokens: _tokensOf(room),
                   seatsInPlay: _seatsInPlayOf(room),
                   seatNames: names,
+                  awaySeats: <int, String>{
+                    for (final SeatState s in room.seats)
+                      if (!s.connected && s.seat != seat)
+                        s.seat: loc.gameSeatOffline(names[s.seat]!),
+                  },
                   youLabel: loc.seatYou,
                   turnSeat: turn?.seat,
                   mySeat: seat,
@@ -7582,6 +7656,15 @@ class _ChatEntry {
   /// the line keeps clear of it after the button goes. C-500 D4.
   final bool clearOfChatButton;
   final Timer timer;
+}
+
+/// C-596 D2: a quick message that arrived inside the line up's minimum dwell
+/// and waits for its turn.
+class _WaitingChat {
+  const _WaitingChat({required this.id, required this.seat});
+
+  final String id;
+  final int seat;
 }
 
 /// C-468 D5: one capture waiting for the mover's landing.

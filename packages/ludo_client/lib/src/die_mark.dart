@@ -33,13 +33,13 @@ class SeatPipStrip extends StatelessWidget {
   /// given. Null (the default) draws all four, same as today. C-248 rule 5.
   final List<int>? seats;
 
-  /// The seat whose pip is drawn 1.5x the size with a thin ink ring, key
-  /// `game-seat-pip-turn`. Null (the default) draws every pip the same
-  /// size, same as today. C-248 rule 5.
+  /// The seat whose pip is drawn 1.5x the size with a 2 dp ink border and a
+  /// glow in its seat colour, key `game-seat-pip-turn`. Null (the default)
+  /// draws every pip the same size, same as today. C-248 rule 5.
   final int? turnSeat;
 
   /// C-590 D2: the seat that plays after [turnSeat]. Drawn at 1.25x with a
-  /// loose ink ring, key `game-seat-pip-next`. Ignored when null, when it is
+  /// broken ink ring, key `game-seat-pip-next`. Ignored when null, when it is
   /// not among the shown seats, or when it is the turn seat. Null (the
   /// default) draws exactly what it did before.
   final int? nextSeat;
@@ -79,7 +79,18 @@ class SeatPipStrip extends StatelessWidget {
       decoration: BoxDecoration(
         color: LudoColors.seats[seat],
         shape: BoxShape.circle,
-        border: isTurn ? Border.all(color: LudoColors.ink, width: 1) : null,
+        border: isTurn ? Border.all(color: LudoColors.ink, width: 2) : null,
+        // C-595 D2: a glow in the seat's own colour. A shadow takes no
+        // layout space, so the pip keeps its laid-out size.
+        boxShadow: isTurn
+            ? <BoxShadow>[
+                BoxShadow(
+                  color: LudoColors.seats[seat].withValues(alpha: 0.6),
+                  blurRadius: 6,
+                  spreadRadius: 1.5,
+                ),
+              ]
+            : null,
       ),
       child: Center(
         child: SeatMark(seat: seat, size: size * 0.5),
@@ -89,7 +100,7 @@ class SeatPipStrip extends StatelessWidget {
       return KeyedSubtree(
         key: const Key('game-seat-pip-next'),
         child: CustomPaint(
-          foregroundPainter: const _NextRingPainter(),
+          foregroundPainter: const NextSeatRingPainter(),
           // The ring is painted outside the dot's box, so the pip's layout
           // box stays the dot alone and the strip's height is unchanged.
           child: dot,
@@ -103,26 +114,38 @@ class SeatPipStrip extends StatelessWidget {
   }
 }
 
-/// C-590 D2: the loose ring around the next seat's pip. A 1.5 dp ink stroke
-/// on a circle [_gap] larger than the pip, with the felt showing between
-/// them. Paints outside its box, so it adds nothing to layout.
-class _NextRingPainter extends CustomPainter {
-  const _NextRingPainter();
+/// C-595 D1: the broken ring around the next seat's pip. [dashes] arcs of a
+/// 1.5 dp ink stroke on a circle [gap] larger than the pip, each drawn over
+/// half of its slot, the first starting at the top. Solid and lit means
+/// "plays now", broken and loose means "plays next". Paints outside its box,
+/// so it adds nothing to layout.
+class NextSeatRingPainter extends CustomPainter {
+  const NextSeatRingPainter();
 
-  static const double _gap = 2.5;
-  static const double _stroke = 1.5;
+  static const double gap = 2.5;
+  static const double stroke = 1.5;
+  static const int dashes = 8;
+  static const double alpha = 0.7;
 
   @override
   void paint(Canvas canvas, Size size) {
     final Paint ring = Paint()
-      ..color = LudoColors.ink
+      ..color = LudoColors.ink.withValues(alpha: alpha)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = _stroke;
-    canvas.drawCircle(size.center(Offset.zero), size.width / 2 + _gap, ring);
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round;
+    final Rect oval = Rect.fromCircle(
+      center: size.center(Offset.zero),
+      radius: size.width / 2 + gap,
+    );
+    const double slot = 2 * math.pi / dashes;
+    for (int i = 0; i < dashes; i++) {
+      canvas.drawArc(oval, -math.pi / 2 + i * slot, slot / 2, false, ring);
+    }
   }
 
   @override
-  bool shouldRepaint(_NextRingPainter oldDelegate) => false;
+  bool shouldRepaint(NextSeatRingPainter oldDelegate) => false;
 }
 
 /// Thin felt-coloured bar that frames the game seat-pip strip. Colour is
