@@ -881,11 +881,12 @@ void main() {
               _goesAgainLine(locale, 'Bob'),
             );
 
-            // The turn moves to the third seat.
+            // The turn moves to the third seat; the watcher (seat 0) is the
+            // seat after it by the wrap, so C-590 D3 tells the watcher so.
             await p.push('turn', _turnData(2, 'await_roll'));
             p.expectBanner(
-              'after a turn naming a third seat',
-              p.loc.gameWaitingForPlayer('Cy'),
+              'after a turn naming a third seat (the watcher is next, C-590 D3)',
+              p.loc.gameYouAreNextAfter('Cy'),
             );
           },
         );
