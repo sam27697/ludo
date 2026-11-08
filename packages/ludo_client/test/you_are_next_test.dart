@@ -27,6 +27,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
+import 'package:ludo_client/src/die_mark.dart' show NextSeatRingPainter;
 import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
@@ -710,8 +711,8 @@ void main() {
     }
   });
 
-  testWidgets('C-590 (m): pixels. The next pip has a gap and a 1.5 dp ink '
-      'ring, the turn pip keeps its 1 dp border and gets no ring, plain pips '
+  testWidgets('C-590 (m): pixels. The next pip has a gap and a broken 1.5 dp '
+      'ink ring, the turn pip has a 2 dp border and no ink ring, plain pips '
       'have neither, and every pip paints its shape', (tester) async {
     final _T t = await _open(
       tester,
@@ -728,6 +729,10 @@ void main() {
       final List<double> angles = <double>[0, 45, 90, 135, 180, 225, 270, 315];
 
       // Next pip: seat 2, diameter 15, radius 7.5; ring radius 7.5 + 2.5.
+      // C-595 D1: the ring is 8 dashes of 22.5 degrees in 45 degree slots, the
+      // first from the top, ink at alpha 0.7. The body and the gap between pip
+      // and ring are read at the old eight angles; the ring itself is read in
+      // the middle of each dash and in the middle of the gap after it.
       final Offset nextC = tester.getCenter(find.byKey(_pipKey(2)));
       final double nextR = tester.getSize(find.byKey(_pipKey(2))).width / 2;
       for (final double a in angles) {
@@ -739,20 +744,53 @@ void main() {
             'next pip body at ${a.toInt()} deg is the seat colour, got ${_hex(body)}',
           ),
         );
-        final Color ring = shot.at(_onCircle(nextC, nextR + 2.5, a));
-        expect(
-          _near(ring, ink),
-          isTrue,
-          reason: t.why(
-            'next ring (radius ${nextR + 2.5}) at ${a.toInt()} deg is ink, got ${_hex(ring)}',
-          ),
-        );
         final Color gap = shot.at(_onCircle(nextC, nextR + 1.2, a));
         expect(
           _near(gap, ink) || _near(gap, LudoColors.seats[2]),
           isFalse,
           reason: t.why(
             'the gap between pip and ring (radius ${nextR + 1.2}) at ${a.toInt()} deg is neither ink nor the seat colour, got ${_hex(gap)}',
+          ),
+        );
+      }
+      for (int i = 0; i < NextSeatRingPainter.dashes; i++) {
+        final double slot = 360 / NextSeatRingPainter.dashes;
+        final double dashMid = -90 + slot * i + slot / 4;
+        final double gapMid = dashMid + slot / 2;
+        final Color dash = shot.at(_onCircle(nextC, nextR + 2.5, dashMid));
+        final Color gap = shot.at(_onCircle(nextC, nextR + 2.5, gapMid));
+        // The dash is ink at the painter's alpha laid over what shows in the
+        // gap beside it, so the felt under the ring is part of the colour.
+        final Color expected = Color.alphaBlend(
+          ink.withValues(alpha: NextSeatRingPainter.alpha),
+          gap,
+        );
+        expect(
+          _near(dash, expected),
+          isTrue,
+          reason: t.why(
+            'next ring dash $i (radius ${nextR + 2.5}) at ${dashMid.toStringAsFixed(2)} deg is ink at alpha ${NextSeatRingPainter.alpha} over the gap colour ${_hex(gap)}, wanted ${_hex(expected)}, got ${_hex(dash)}',
+          ),
+        );
+        expect(
+          dash.computeLuminance() < gap.computeLuminance(),
+          isTrue,
+          reason: t.why(
+            'next ring dash $i at ${dashMid.toStringAsFixed(2)} deg is darker than the felt in the gap beside it (${_hex(gap)}), got ${_hex(dash)}',
+          ),
+        );
+        expect(
+          _near(gap, ink),
+          isFalse,
+          reason: t.why(
+            'next ring gap $i (radius ${nextR + 2.5}) at ${gapMid.toStringAsFixed(2)} deg is not ink, the felt shows, got ${_hex(gap)}',
+          ),
+        );
+        expect(
+          _near(gap, dash),
+          isFalse,
+          reason: t.why(
+            'next ring gap $i at ${gapMid.toStringAsFixed(2)} deg differs from the dash before it (${_hex(dash)}), got ${_hex(gap)}',
           ),
         );
       }
@@ -767,16 +805,26 @@ void main() {
         );
       }
 
-      // Turn pip: seat 1, diameter 18; 1 dp ink border inside, no outer ring.
+      // Turn pip: seat 1, diameter 18; C-595 D2 a 2 dp ink border inside the
+      // pip, read in the middle of that band, and no ink ring outside it (the
+      // glow there is the seat colour).
       final Offset turnC = tester.getCenter(find.byKey(_pipKey(1)));
       final double turnR = tester.getSize(find.byKey(_pipKey(1))).width / 2;
       for (final double a in angles) {
-        final Color border = shot.at(_onCircle(turnC, turnR - 0.5, a));
+        final Color border = shot.at(_onCircle(turnC, turnR - 1.0, a));
         expect(
           _near(border, ink),
           isTrue,
           reason: t.why(
-            'turn pip border (radius ${turnR - 0.5}) at ${a.toInt()} deg is ink, got ${_hex(border)}',
+            'turn pip border (radius ${turnR - 1.0}, the middle of the 2 dp band) at ${a.toInt()} deg is ink, got ${_hex(border)}',
+          ),
+        );
+        final Color inside = shot.at(_onCircle(turnC, turnR - 3.0, a));
+        expect(
+          _near(inside, ink),
+          isFalse,
+          reason: t.why(
+            'turn pip at radius ${turnR - 3.0}, inside the 2 dp border, at ${a.toInt()} deg is not ink, got ${_hex(inside)}',
           ),
         );
       }
@@ -786,7 +834,7 @@ void main() {
           _near(outside, ink),
           isFalse,
           reason: t.why(
-            'the turn pip gets no outer ring: radius ${turnR + 2.5} at ${a.toInt()} deg is not ink, got ${_hex(outside)}',
+            'the turn pip gets no ink ring: radius ${turnR + 2.5} at ${a.toInt()} deg is not ink (the glow is seat colour), got ${_hex(outside)}',
           ),
         );
       }
