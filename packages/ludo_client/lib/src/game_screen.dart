@@ -58,6 +58,7 @@ import 'sound_toggle.dart';
 import 'table_entrance.dart';
 import 'theme.dart';
 import 'token_face_picker.dart';
+import 'turn_order.dart';
 import 'waiting_line.dart';
 
 /// Distinct [Navigator.pop] result from the finished-board next-table
@@ -441,6 +442,12 @@ class _GameScreenState extends State<GameScreen> {
   // is announced once however many times the room is replaced under it.
   int? _yourTurnPlayedK;
 
+  // C-590 D4: the turn seat this screen last weighed for the "you're next"
+  // line and the `k` it announced it for. A new seat is a turn change; the
+  // same seat with a new `k` is an extra roll, and the same `k` is a replay.
+  int? _nextSeenSeat;
+  int? _youAreNextPlayedK;
+
   // C-518 D1: the route of the quick-message sheet this screen opened, so
   // my turn can close it and nothing else. Never the leave confirm, the face
   // picker, or a sheet another screen opened.
@@ -624,6 +631,11 @@ class _GameScreenState extends State<GameScreen> {
         shownTurn.seat == widget.controller.seat &&
         shownTurn.phase == TurnPhase.awaitRoll) {
       _yourTurnPlayedK = shownTurn.k;
+    }
+    // C-590 D4: the turn the screen mounts onto counts as announced.
+    if (shownTurn != null && mountRoom?.state == RoomState.playing) {
+      _nextSeenSeat = shownTurn.seat;
+      _youAreNextPlayedK = shownTurn.k;
     }
     _seenRolls = List<(int k, int face)>.of(
       widget.controller.room?.recentRolls ?? const <(int k, int face)>[],
@@ -825,6 +837,12 @@ class _GameScreenState extends State<GameScreen> {
       final TurnState? liveTurn = widget.controller.room?.turn;
       if (liveTurn != null && liveTurn.seat == widget.controller.seat) {
         _yourTurnPlayedK = liveTurn.k;
+      }
+    }
+    if (frame.type == 'turn') {
+      final RoomSnapshot? liveRoom = widget.controller.room;
+      if (liveRoom != null) {
+        _announceYouAreNext(liveRoom);
       }
     }
     if (frame.type == 'game_over') {
@@ -1162,6 +1180,33 @@ class _GameScreenState extends State<GameScreen> {
       message,
       Directionality.of(context),
     );
+  }
+
+  /// C-590 D4: speaks "You're next" once when a turn change makes my seat
+  /// the one after the current seat at a table of three or more. Sight and
+  /// speech only: no cue, no haptic, no sound. A turn of the seat already
+  /// weighed (an extra roll, a replay of the same turn) says nothing.
+  void _announceYouAreNext(RoomSnapshot room) {
+    final TurnState? turn = room.turn;
+    final int? mySeat = widget.controller.seat;
+    if (turn == null ||
+        turn.settling ||
+        room.state != RoomState.playing ||
+        mySeat == null) {
+      return;
+    }
+    final bool newSeat = _nextSeenSeat != turn.seat;
+    _nextSeenSeat = turn.seat;
+    if (!newSeat || _youAreNextPlayedK == turn.k) {
+      return;
+    }
+    final List<int> inPlay = _seatsInPlayOf(room);
+    if (inPlay.toSet().length < 3 ||
+        nextSeatInPlay(inPlay, turn.seat) != mySeat) {
+      return;
+    }
+    _youAreNextPlayedK = turn.k;
+    _announce(AppLocalizations.of(context).gameYouAreNextAnnounce);
   }
 
   /// C-293 rule 3: plays `your_turn` once at mount if the last `turn` frame
@@ -2081,6 +2126,8 @@ class _GameScreenState extends State<GameScreen> {
     _lastKnownQueue.clear();
     _extraRoll.clear();
     _yourTurnPlayedK = null;
+    _nextSeenSeat = null;
+    _youAreNextPlayedK = null;
     _dropDeadCandidate();
     _trayDeadTimer?.cancel();
     _trayDeadTimer = null;
@@ -2352,6 +2399,7 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
     if (room.state == RoomState.playing) {
+      _announceYouAreNext(room);
       if (turn != null &&
           turn.seat == mySeat &&
           turn.phase == TurnPhase.awaitRoll &&
@@ -4468,11 +4516,22 @@ class _GameScreenState extends State<GameScreen> {
                         children: [
                           SeatPipStrip(
                             key: const Key('game-seat-pip-strip'),
+                            // C-590 D2: 12 dp so every pip's seat mark draws.
+                            pipSize: 12,
                             seats: room == null ? null : _seatsInPlayOf(room),
                             turnSeat:
                                 (room != null &&
                                     room.state == RoomState.playing)
                                 ? room.turn?.seat
+                                : null,
+                            nextSeat:
+                                (room != null &&
+                                    room.state == RoomState.playing &&
+                                    room.turn != null)
+                                ? nextSeatInPlay(
+                                    _seatsInPlayOf(room),
+                                    room.turn!.seat,
+                                  )
                                 : null,
                           ),
                           PositionedDirectional(
@@ -6950,6 +7009,8 @@ List<int> _seatsInPlayOf(RoomSnapshot room) {
 /// screen saw it happen. On my own roll it comes after the auto-move line
 /// and before the plain roll line (timeUp and stale still beat it); for a
 /// watcher it replaces the waiting line.
+/// C-590 D3: not my turn, three or more seats in play and mine is the seat
+/// after the current one: the line says so, after the earlier branches.
 /// C-579 D5: [held] is the text of the last settled build. It stands in for
 /// the plain roll line, and only there, while the turn is the controller's
 /// settling placeholder.
@@ -7008,6 +7069,20 @@ String _turnBannerText(
         return loc.gameAutoMoving;
       }
       return loc.gameYourTurnMove;
+    }
+  }
+  // C-590 D3: at a table of three or more, the seat that plays after the
+  // current one is told so. Two seats in play, a spectator and every other
+  // seat keep the plain waiting line.
+  final List<int> inPlay = _seatsInPlayOf(room);
+  if (seat != null &&
+      inPlay.toSet().length >= 3 &&
+      nextSeatInPlay(inPlay, turn.seat) == seat) {
+    final String? name = names[turn.seat];
+    if (name != null) {
+      return extraRoll != null
+          ? loc.gameYouAreNextGoesAgain(name)
+          : loc.gameYouAreNextAfter(name);
     }
   }
   return _waitingForSeatText(
