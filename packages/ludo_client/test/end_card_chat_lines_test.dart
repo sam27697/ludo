@@ -68,6 +68,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludo_client/src/chat_bubble.dart'
+    show EndCardChatBubble, kChatMinDwell;
 import 'package:ludo_client/src/end_card.dart';
 import 'package:ludo_client/src/net/snapshot.dart' show SeatState;
 import 'package:ludo_client/src/theme.dart';
@@ -77,6 +79,9 @@ import 'support/end_card_chat_harness.dart';
 import 'support/roll_tray_harness.dart';
 
 const int _lifeMs = 2500;
+
+/// C-596 D1: a line keeps the screen this long before a newer one may take it.
+final int _dwellMs = kChatMinDwell.inMilliseconds;
 
 /// (label, seat, id) pushes that are not a line: C-478 D5.4 by way of D4.
 const List<(String, Object?, Object?)> _notALine = <(String, Object?, Object?)>[
@@ -503,7 +508,22 @@ const String _longIdAr = 'hi';
 /// 320 dp at 800, so it fits alone there and only a 300 dp screen (180 dp) is
 /// exceeded; at 3.0 the Arabic line is still 237.8 dp wide against a 291 dp
 /// span at 411. 4.0 overflows every span in the group.
+///
+/// C-596 D4: the bubble lays its text out at the ambient scale clamped to
+/// 1.3, so 4.0 (or 2.0) is 1.3 to it. At 1.3 the widest line alone is a
+/// bubble 118.96 dp wide in ar (measured on this tree at a 240 dp screen,
+/// where it did not reach the 120 dp span) and about 150 dp in en, so a line
+/// alone exceeds a span only on the narrow screens of [_narrowWidthsFor] and
+/// on 270 dp (a 150 dp span). The 800 dp case proves the 320 dp cap, which no
+/// preset can reach at 1.3: it stays red.
 const double _longScale = 4.0;
+
+/// The widths that stand in for 360 and 411 dp in the long-line cases: the
+/// spans (width - 120) are 120 and 140 dp in en and 80 and 100 dp in ar, which
+/// the widest line alone still exceeds at the 1.3 clamp (the 360 and 411 dp
+/// spans, 240 and 291 dp, no longer are exceeded).
+List<double> _narrowWidthsFor(bool ar) =>
+    ar ? <double>[200, 220] : <double>[240, 260];
 
 /// Seat 1 says the widest preset at [_longScale], where the line alone
 /// exceeds the span: the bubble is the max width, `min(320, row.width - 120)`
@@ -544,6 +564,40 @@ Future<void> _expectMaxWidthByLongLine(
   }
 }
 
+/// The cap the screen hands the bubble: the `EndCardChatBubble` it builds
+/// has `maxWidth == min(320, row.width - 120)`, and the laid-out bubble is no
+/// wider than that. C-596 D4 clamps the bubble's text at 1.3, so on a wide
+/// screen no preset reaches the cap by its own width; this proves it where it
+/// now lives (order 596t2 ruling).
+void _expectCapHandedToBubble(EndGame g, double screenWidth) {
+  final Rect row = _headerRow(g.tester);
+  final double cap = math.min(320, screenWidth - 2 * _inset);
+  expect(row.width, screenWidth, reason: g.why('fixture: the row spans it'));
+  final Finder bubbleWidget = find.byType(EndCardChatBubble);
+  expect(
+    bubbleWidget,
+    findsOneWidget,
+    reason: g.why('fixture: one EndCardChatBubble is built'),
+  );
+  final double handed = g.tester
+      .widget<EndCardChatBubble>(bubbleWidget)
+      .maxWidth;
+  expect(
+    handed,
+    closeTo(cap, 0.01),
+    reason: g.why(
+      'the screen hands the bubble maxWidth min(320, $screenWidth - 120) = '
+      '$cap, got $handed',
+    ),
+  );
+  final double laidOut = g.tester.getRect(find.byKey(chatLineKey(1))).width;
+  expect(
+    laidOut,
+    lessThanOrEqualTo(cap + 0.5),
+    reason: g.why('the laid-out bubble ($laidOut dp) is within the cap $cap'),
+  );
+}
+
 void main() {
   setUpAll(loadAppFonts);
 
@@ -572,6 +626,8 @@ void main() {
             expect(chatLineSeats(tester), <int>[
               1,
             ], reason: g.why('one line, the other seat\'s'));
+            // C-596 D1: mine comes once the other seat's line had its dwell.
+            await g.at(_dwellMs);
             await g.emote(0, 'ha_ha');
             expect(chatLineSeats(tester), <int>[
               0,
@@ -851,7 +907,8 @@ void main() {
       final EndGame g = await openFinished(tester, '6 replace');
       try {
         await g.emote(1, 'hi');
-        await g.at(1000);
+        // C-596 D1: after the first line's dwell, so it replaces at once.
+        await g.at(_dwellMs);
         await g.emote(1, 'oops');
         expect(chatLineSeats(tester), <int>[
           1,
@@ -870,11 +927,11 @@ void main() {
         await g.at(1600);
         expect(chatLineSeats(tester), <int>[
           1,
-        ], reason: g.why('up where the first would be gone (2600 ms overall)'));
+        ], reason: g.why('up where the first would be gone (2800 ms overall)'));
         await g.at(2490);
         expect(chatLineSeats(tester), <int>[
           1,
-        ], reason: g.why('up at 3490 ms overall'));
+        ], reason: g.why('up at 3690 ms overall'));
         await g.at(2510);
         _expectNoLines(g, 'gone 2500 ms after the second line');
       } finally {
@@ -937,7 +994,8 @@ void main() {
           2,
         ], reason: g.why('seat 2 is the only line'));
         _expectLine(g, 2, 'Cara', 'Hi all');
-        await g.s.pump(const Duration(milliseconds: 50));
+        // C-596 D1: each newer line comes after the dwell of the one up.
+        await g.at(_dwellMs);
         await g.emote(1, 'oops');
         expect(chatLineSeats(tester), <int>[
           1,
@@ -948,7 +1006,8 @@ void main() {
           findsNothing,
           reason: g.why('seat 2 is gone'),
         );
-        await g.s.pump(const Duration(milliseconds: 50));
+        // C-596 D1: each newer line comes after the dwell of the one up.
+        await g.at(_dwellMs);
         await g.emote(2, 'good_game');
         expect(chatLineSeats(tester), <int>[
           2,
@@ -959,9 +1018,11 @@ void main() {
           isNot(contains('Hi all')),
           reason: g.why('the old line is gone from the bubble'),
         );
-        await g.s.pump(const Duration(milliseconds: 50));
+        // C-596 D1: each newer line comes after the dwell of the one up.
+        await g.at(_dwellMs);
         await g.emote(3, 'lucky');
-        await g.s.pump(const Duration(milliseconds: 50));
+        // C-596 D1: each newer line comes after the dwell of the one up.
+        await g.at(_dwellMs);
         await g.emote(0, 'ha_ha');
         expect(chatLineSeats(tester), <int>[
           0,
@@ -982,7 +1043,7 @@ void main() {
       final EndGame g = await openFinished(tester, '6 one timer', players: 4);
       try {
         await g.emote(1, 'hi');
-        await g.s.pump(const Duration(milliseconds: 1000));
+        await g.s.pump(Duration(milliseconds: _dwellMs));
         final int t1 = g.zero;
         await g.emote(2, 'oops');
         expect(chatLineSeats(tester), <int>[
@@ -1048,8 +1109,14 @@ void main() {
           reason: g.why('one bubble for a replayed frame'),
         );
         expect(tester.takeException(), isNull);
-        await g.s.pump(const Duration(milliseconds: 3000));
-        _expectNoLines(g, 'and it ends');
+        // C-596 D2: the replay is seat 1's waiting line. It takes over when
+        // the first copy has had its dwell, with a full life of its own.
+        await g.at(_dwellMs + 100);
+        expect(chatLineSeats(tester), <int>[
+          1,
+        ], reason: g.why('the replay took over after the dwell: one bubble'));
+        await g.at(_dwellMs + _lifeMs + 100);
+        _expectNoLines(g, 'and it ends, a full life after the hand-over');
       } finally {
         await g.done();
       }
@@ -1416,6 +1483,8 @@ void main() {
         await g.gameOver(1);
         await g.s.pump(const Duration(milliseconds: 100));
         _expectLine(g, 1, 'Bob', 'Hi all');
+        // C-596 D1: after the carried line's dwell, so the new one replaces.
+        await g.at(_dwellMs);
         await g.emote(1, 'ha_ha');
         expect(chatLineSeats(tester), <int>[
           1,
@@ -1490,6 +1559,8 @@ void main() {
         ], reason: g.why('the held end draws the line (C-492 D8 is gone)'));
         _expectLine(g, 1, 'Bob', 'I\'ll get you back');
         expectNoBoardChat(g, 'the held end');
+        // C-596 D1: after the first line's dwell, so the newer one replaces.
+        await g.at(_dwellMs);
         await g.emote(0, 'lucky');
         expect(chatLineSeats(tester), <int>[
           0,
@@ -1750,6 +1821,8 @@ void main() {
             );
             await g.gameOver(0);
             await g.s.pump(const Duration(milliseconds: 100));
+            // C-596 D1: the first line has had its dwell, so this replaces.
+            await g.at(_dwellMs);
             await g.emote(1, 'good_game');
             await g.at(400);
             final Rect next = tester.getRect(find.byKey(chatLineKey(1)));
@@ -1802,6 +1875,9 @@ void main() {
               (3, 'lucky'),
               (0, 'ha_ha'),
             ]) {
+              // C-596 D1: each line comes after the dwell of the one up, so
+              // the newest replaces and is the one measured.
+              await g.at(_dwellMs);
               await g.emote(row.$1, row.$2);
             }
             await g.s.pump(const Duration(milliseconds: 300));
@@ -2026,7 +2102,7 @@ void main() {
     // C-500 D5 + C-492 D6: the max width is reached by a line that does not
     // fit alone. A long name no longer does it, the name is dropped first.
     for (final bool ar in const <bool>[false, true]) {
-      for (final double width in const <double>[360, 411]) {
+      for (final double width in _narrowWidthsFor(ar)) {
         testWidgets(
           '${width.toInt()} dp, ${ar ? 'ar' : 'en'}: the bubble stays '
           'inside the 60 dp insets, and a line too long alone is the max '
@@ -2037,7 +2113,7 @@ void main() {
               tester,
               'inset $width ${ar ? 'ar' : 'en'} $_longScale',
               names: <int, String>{0: _shortName},
-              size: Size(width, width == 411 ? 891 : 800),
+              size: Size(width, 800),
               textScale: _longScale,
               locale: Locale(ar ? 'ar' : 'en'),
             );
@@ -2051,27 +2127,59 @@ void main() {
       }
     }
 
-    for (final double width in const <double>[800, 300]) {
-      // The order's 2.0 holds on 300 dp, where the 180 dp span is exceeded.
-      final double scale = width == 300 ? 2.0 : _longScale;
-      testWidgets('a line too long alone on a ${width.toInt()} dp screen is '
-          'min(320, width - 120) wide, shown alone with an ellipsis', (
+    // 800 dp: the 320 dp cap. C-596 D4 clamps the bubble's text at 1.3, so
+    // no preset alone is 320 dp wide; the case proves the cap where it now
+    // lives, the maxWidth the screen hands the bubble (order 596t2 ruling).
+    testWidgets('a line on an 800 dp screen is handed the cap min(320, width - '
+        '120) = 320 by the screen, and the bubble stays within it', (
+      tester,
+    ) async {
+      final SemanticsHandle handle = tester.ensureSemantics();
+      final EndGame g = await openFinished(
         tester,
-      ) async {
-        final EndGame g = await openFinished(
-          tester,
-          'width $width $scale',
-          names: <int, String>{0: _shortName},
-          size: Size(width, 800),
-          textScale: scale,
+        'width 800 $_longScale',
+        names: <int, String>{0: _shortName},
+        size: const Size(800, 800),
+        textScale: _longScale,
+      );
+      try {
+        final String line = endLine(_longIdEn, ar: false);
+        await g.emote(1, _longIdEn);
+        await g.at(400);
+        final Rect row = _headerRow(tester);
+        final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
+        _expectCapHandedToBubble(g, 800);
+        _expectSaidLabel(g, 1, 'Bob', line);
+        _expectInsideInsets(g, bubble, row);
+        expect(
+          bubble.center.dx,
+          closeTo(row.center.dx, 1),
+          reason: g.why('centred on the row'),
         );
-        try {
-          await _expectMaxWidthByLongLine(tester, g, ar: false);
-        } finally {
-          await g.done();
-        }
-      });
-    }
+      } finally {
+        handle.dispose();
+        await g.done();
+      }
+    });
+
+    // 270 dp at 2.0: the span (150 dp) is exceeded even at the 1.3 clamp.
+    testWidgets('a line too long alone on a 270 dp screen is min(320, width - '
+        '120) wide, shown alone with an ellipsis, and the cap is handed to '
+        'the bubble', (tester) async {
+      final EndGame g = await openFinished(
+        tester,
+        'width 270 2.0',
+        names: <int, String>{0: _shortName},
+        size: const Size(270, 800),
+        textScale: 2.0,
+      );
+      try {
+        await _expectMaxWidthByLongLine(tester, g, ar: false);
+        _expectCapHandedToBubble(g, 270);
+      } finally {
+        await g.done();
+      }
+    });
 
     // The short-line half of the old max width cases: at text scale 1.0 a
     // short line is its own width, name kept, far from the maximum.
@@ -2111,8 +2219,8 @@ void main() {
 
     for (final bool ar in const <bool>[false, true]) {
       testWidgets(
-        'text scale 2.0, ${ar ? 'ar' : 'en'}: one line tall, starting at '
-        'the row\'s top',
+        'text scale 2.0, ${ar ? 'ar' : 'en'}: one line tall, inside the '
+        'row, centred in it',
         (tester) async {
           final EndGame g = await openFinished(
             tester,
@@ -2129,6 +2237,8 @@ void main() {
             final double short = tester
                 .getRect(find.byKey(chatLineKey(1)))
                 .height;
+            // C-596 D1: after the first line's dwell, so this replaces it.
+            await g.at(_dwellMs);
             await g.emote(2, 'good_game');
             await g.at(400);
             final Rect bubble = tester.getRect(find.byKey(chatLineKey(2)));
@@ -2155,24 +2265,28 @@ void main() {
               isNull,
               reason: g.why('no overflow'),
             );
+            // C-596 D4 inverts the rest of this case. It pinned the defect: at
+            // 2.0 the bubble was taller than the row, started at the row's
+            // top and painted down over the body. Now it fits the row and,
+            // as C-492 D6 says of a bubble that fits, is centred in it.
             final Rect row = _headerRow(tester);
             expect(
               bubble.height,
-              greaterThan(_rowDp),
-              reason: g.why('at 2.0 the bubble is taller than the row'),
+              lessThanOrEqualTo(_rowDp),
+              reason: g.why('at 2.0 the bubble is no taller than the row'),
             );
             expect(
               bubble.top,
-              closeTo(row.top, 0.5),
+              closeTo(row.top + (_rowDp - bubble.height) / 2, 0.5),
               reason: g.why(
-                'a bubble taller than the row starts at the row\'s top: '
-                'bubble $bubble, row $row',
+                'a bubble that fits is centred in the row: bubble $bubble, '
+                'row $row',
               ),
             );
             expect(
               bubble.bottom,
-              greaterThan(row.bottom),
-              reason: g.why('it paints down over the body'),
+              lessThanOrEqualTo(row.bottom + 0.01),
+              reason: g.why('it paints nothing down over the body'),
             );
           } finally {
             await g.done();
@@ -2297,6 +2411,9 @@ void main() {
           reason: g.why('control arm, no line up: every pip dot takes a hit'),
         );
         await g.emote(1, 'good_game');
+        // C-596 D1: seat 2's line comes after seat 1's dwell, so its bubble
+        // is the one on screen.
+        await g.at(_dwellMs);
         await g.emote(2, 'oops');
         await g.at(400);
         final RenderObject bubbleBox = tester.renderObject(
@@ -2389,6 +2506,10 @@ void main() {
       final EndGame g = await openFinished(tester, 'look', players: 4);
       try {
         for (final int seat in const <int>[1, 3]) {
+          if (seat != 1) {
+            // C-596 D1: after the previous seat's dwell, so this replaces it.
+            await g.at(_dwellMs);
+          }
           await g.emote(seat, 'good_game');
           await g.at(400);
           final Finder bubble = find.byKey(chatLineKey(seat));

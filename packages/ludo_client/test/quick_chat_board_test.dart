@@ -60,6 +60,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/board.dart';
+import 'package:ludo_client/src/chat_bubble.dart' show kChatMinDwell;
 import 'package:ludo_client/src/net/room_controller.dart' show RoomPhase;
 import 'package:ludo_client/src/theme.dart';
 
@@ -83,6 +84,9 @@ const List<(String, String, String)> kLines = <(String, String, String)>[
 ];
 
 const int _lifeMs = 2500;
+
+/// C-596 D1: a line keeps the screen this long before a newer one may take it.
+final int _dwellMs = kChatMinDwell.inMilliseconds;
 
 const Key _chatButton = Key('game-chat-button');
 const Key _muteKey = Key('quick-chat-mute');
@@ -795,12 +799,15 @@ void main() {
     }
   });
 
-  testWidgets('1. a second emote from seat 2 at 1000 ms replaces the first '
-      'and restarts its life: up at 3000 ms, gone by 3500 ms', (tester) async {
+  // C-596: the second emote comes once the first has had its dwell, so it
+  // replaces at once (at 1000 ms it would wait).
+  testWidgets('1. a second emote from seat 2 after the dwell (1200 ms) '
+      'replaces the first and restarts its life: up at 2800 ms, gone by '
+      '3700 ms', (tester) async {
     final _Fix f = await _fix(tester, 'item 1 restart');
     try {
       await f.emote(2, 'hi');
-      await f.at(1000);
+      await f.at(_dwellMs);
       await f.emote(2, 'oops');
       _expectOnly(f, 2, 'Oops', 'the new line replaced the old');
       expect(
@@ -808,11 +815,11 @@ void main() {
         isNot(contains('Hi all')),
         reason: f.s.why('the old text is gone'),
       );
-      // f.zero is now the second push; the first would have died at +1500.
+      // f.zero is now the second push; the first would have died at +1300.
       await f.at(1600);
       _expectOnly(f, 2, 'Oops', 'up where the first would be gone');
       await f.at(2490);
-      _expectOnly(f, 2, 'Oops', 'up at 3490 ms overall');
+      _expectOnly(f, 2, 'Oops', 'up at 3690 ms overall');
       await f.at(2510);
       _expectNone(f, 'gone $_lifeMs ms after the second emote');
     } finally {
@@ -834,15 +841,14 @@ void main() {
     }
   });
 
-  testWidgets('1. seats 1 and 2 one second apart: the newest replaces, one '
-      'line, and the first one\'s timer cannot take the second down', (
-    tester,
-  ) async {
+  testWidgets('1. seats 1 and 2 one dwell (1200 ms) apart: the newest '
+      'replaces, one line, and the first one\'s timer cannot take the second '
+      'down', (tester) async {
     final _Fix f = await _fix(tester, 'item 1 two seats', players: 4);
     try {
       await f.emote(1, 'good_luck');
       _expectOnly(f, 1, 'Good luck', 'seat 1 speaks first');
-      await f.s.pump(const Duration(milliseconds: 1000));
+      await f.s.pump(Duration(milliseconds: _dwellMs));
       final int first = f.zero;
       await f.emote(2, 'ha_ha');
       _expectOnly(f, 2, 'Ha ha ha', 'seat 2 replaces seat 1');
@@ -863,17 +869,40 @@ void main() {
     }
   });
 
-  testWidgets('1. four seats in one burst: only the last one pushed is up, '
-      'whichever seat number it carries', (tester) async {
+  // C-596 D1 and D2: a burst inside one dwell is shown in arrival order, one
+  // per seat, each for its own dwell; the last one lives its full life.
+  testWidgets('1. four seats in one burst: shown in the order pushed (2, 0, '
+      '3, 1), each for its dwell, the last for its full life', (tester) async {
     final _Fix f = await _fix(tester, 'item 1 four seats', players: 4);
     try {
       for (final int seat in const <int>[2, 0, 3, 1]) {
         await f.emote(seat, 'hi');
       }
-      _expectOnly(f, 1, 'Hi all', 'the newest of 2, 0, 3, 1 is seat 1');
-      await f.at(2490);
-      _expectOnly(f, 1, 'Hi all', 'and it lives its own 2500 ms');
-      await f.at(2510);
+      _expectOnly(f, 2, 'Hi all', 'the first of 2, 0, 3, 1 is up at once');
+      final List<int> order = const <int>[2, 0, 3, 1];
+      for (int i = 0; i < order.length; i++) {
+        if (i > 0) {
+          await f.at(i * _dwellMs - 1);
+          _expectOnly(
+            f,
+            order[i - 1],
+            'Hi all',
+            'seat ${order[i - 1]} still up 1 ms before its dwell ends '
+                '(${i * _dwellMs - 1} ms)',
+          );
+        }
+        await f.at(i * _dwellMs);
+        _expectOnly(
+          f,
+          order[i],
+          'Hi all',
+          'seat ${order[i]} is up at ${i * _dwellMs} ms',
+        );
+      }
+      final int last = (order.length - 1) * _dwellMs;
+      await f.at(last + _lifeMs - 10);
+      _expectOnly(f, 1, 'Hi all', 'and the last lives its own 2500 ms');
+      await f.at(last + _lifeMs + 10);
       _expectNone(f, 'and then nothing is left behind');
     } finally {
       await f.done();
@@ -913,7 +942,7 @@ void main() {
             await f.emote(2, row.$1);
             final String want = ar ? row.$3 : row.$2;
             _expectOnly(f, 2, want, 'emote ${row.$1}');
-            await f.s.pump(const Duration(milliseconds: 100));
+            await f.s.pump(Duration(milliseconds: _dwellMs));
           }
         } finally {
           await f.done();
@@ -1424,13 +1453,16 @@ void main() {
 
   // (width, ar, whether some preset must be too long for the span): the
   // Arabic presets are all short enough for the 188 dp span of a 360 dp
-  // screen at 2.0 text, so the ellipsis rule is exercised there on a 320 dp
-  // screen (148 dp span) instead.
+  // screen, so the ellipsis rule is exercised there on a narrower screen
+  // instead. C-596 D4 lays the text out at the 1.3 clamp even at 2.0, and
+  // at 1.3 no Arabic preset is too long for the 148 dp span of a 320 dp
+  // screen (the case's old width), so the Arabic case moved to 280 dp (a
+  // 108 dp span), where several still are.
   for (final (double, bool, bool) setup in const <(double, bool, bool)>[
     (360, false, true),
     (360, true, false),
     (320, false, true),
-    (320, true, true),
+    (280, true, true),
   ]) {
     final double width = setup.$1;
     final bool ar = setup.$2;
@@ -1454,11 +1486,15 @@ void main() {
           final Rect span = _span(tester, row, ar: ar);
           final double maxWidth = math.min(320, span.width);
           final double oneLine = f.rectOf(2).height;
+          // C-596 D4: the bubble lays out its text at the ambient scale
+          // clamped to 1.3, so that is the scale a width is expected at.
           final TextScaler scaler = MediaQuery.textScalerOf(
             tester.element(find.byKey(lineKey(2))),
-          );
+          ).clamp(maxScaleFactor: 1.3);
           int decisiveLong = 0;
           for (final (String, String, String) row3 in kLines) {
+            // C-596 D1: the line up has had its dwell, so this one replaces it.
+            await f.at(_dwellMs);
             await f.emote(2, row3.$1);
             await f.at(400);
             final String line = ar ? row3.$3 : row3.$2;
@@ -1507,7 +1543,8 @@ void main() {
               greaterThan(0),
               reason: f.s.why(
                 'fixture: at least one preset is too long for $maxWidth dp '
-                'at 2.0 text, or the ellipsis rule is never exercised',
+                'at 2.0 text (laid out at the 1.3 clamp), or the ellipsis '
+                'rule is never exercised',
               ),
             );
           }
@@ -1523,11 +1560,14 @@ void main() {
     );
   }
 
-  testWidgets('place: at 2.0 text a bubble taller than the row paints down '
-      'over the body, above it (not under it)', (tester) async {
+  // C-596 D4 inverts this case. It pinned the defect: at 2.0 text the bubble
+  // was taller than the 48 dp row and painted down over the turn banner. Now
+  // it lies inside the row, and still paints above the screen column.
+  testWidgets('place: at 2.0 text the bubble stays inside the 48 dp row and '
+      'paints nothing down over the body', (tester) async {
     final _Fix f = await _fix(
       tester,
-      'place over the body',
+      'place inside the row',
       textScale: 2.0,
       size: const Size(360, 640),
     );
@@ -1538,16 +1578,20 @@ void main() {
       final Rect bubble = f.rectOf(2);
       expect(
         bubble.height,
-        greaterThan(_rowDp),
+        lessThanOrEqualTo(_rowDp),
         reason: f.s.why(
-          'fixture: at 2.0 the bubble $bubble is taller than '
-          'the 48 dp row $row',
+          'at 2.0 the bubble $bubble is no taller than the 48 dp row $row',
         ),
       );
       expect(
+        bubble.top,
+        greaterThanOrEqualTo(row.top - 0.01),
+        reason: f.s.why('bubble $bubble starts inside the row $row'),
+      );
+      expect(
         bubble.bottom,
-        greaterThan(row.bottom),
-        reason: f.s.why('it paints down over the body'),
+        lessThanOrEqualTo(row.bottom + 0.01),
+        reason: f.s.why('bubble $bubble ends inside the row $row'),
       );
       final _Pixels px = await _Pixels.of(tester, find.byKey(lineKey(2)));
       final Color border = LudoColors.seats[2];
@@ -1556,9 +1600,18 @@ void main() {
         _near(read, border, 10),
         isTrue,
         reason: f.s.why(
-          'the bottom border of $bubble, below the row (bottom '
+          'the bottom border of $bubble, inside the row (bottom '
           '${row.bottom}), is the seat colour $border, read $read: the '
           'layer is above the whole screen column',
+        ),
+      );
+      final Color below = px.at(bubble.center.dx, row.bottom + 1);
+      expect(
+        _near(below, border, 10),
+        isFalse,
+        reason: f.s.why(
+          'one pixel under the row (y ${row.bottom + 1}) the bubble paints '
+          'nothing: read $below, not the seat colour $border',
         ),
       );
     } finally {
@@ -2093,6 +2146,8 @@ void main() {
             for (int i = 0; i < 3; i++) {
               final int seat = i + 1;
               final String name = names[i];
+              // C-596 D1: the line up has had its dwell, so this replaces it.
+              await f.at(_dwellMs);
               await f.emote(seat, 'good_game');
               await f.at(400);
               final double total = _width(name, nameStyle, scaler) + lineWidth;
@@ -2239,10 +2294,11 @@ void main() {
     try {
       await f.emote(1, 'hi');
       _expectPop(f, await _popTrace(f, 1, to: 320), 1);
-      await f.s.pump(const Duration(milliseconds: 700));
+      // C-596 D1: each next line comes once the one up has had its dwell.
+      await f.at(_dwellMs);
       await f.emote(1, 'nice');
       _expectPop(f, await _popTrace(f, 1, to: 320), 1);
-      await f.s.pump(const Duration(milliseconds: 300));
+      await f.at(_dwellMs);
       await f.emote(3, 'oops');
       _expectPop(f, await _popTrace(f, 3, to: 320), 3);
       expect(
@@ -2360,7 +2416,7 @@ void main() {
       await f.emote(2, 'hi');
       expect(f.popSeat, 2, reason: f.s.why('chatPop names the speaker'));
       final int first = f.popSerial!;
-      await f.s.pump(const Duration(milliseconds: 1000));
+      await f.s.pump(Duration(milliseconds: _dwellMs));
       expect(
         f.popSerial,
         first,
@@ -2373,6 +2429,7 @@ void main() {
         isNot(first),
         reason: f.s.why('a second line from the same seat is a new serial'),
       );
+      await f.at(_dwellMs);
       await f.emote(3, 'oops');
       expect(f.popSeat, 3, reason: f.s.why('chatPop follows the newest'));
       expect(
