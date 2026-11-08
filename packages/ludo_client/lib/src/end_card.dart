@@ -180,6 +180,11 @@ class EndCard extends StatefulWidget {
   /// 38 % and a tap plays the invalid-tap cue and sends nothing.
   final bool quickReplyCooling;
 
+  /// C-591 D1: the seat that hosts the room, as the caller knows it. With
+  /// it, a seat that has not tapped Play again is told when the host could
+  /// start the next game without it. Null keeps the card exactly as it was.
+  final int? hostSeat;
+
   /// C-540 D3: handed the fair-hint sheet's own route when it builds, so the
   /// game screen can close that sheet when a frame changes the screen under
   /// it. Null draws the sheet the same and tracks nothing.
@@ -212,6 +217,7 @@ class EndCard extends StatefulWidget {
     this.onQuickReply,
     this.quickReplyCooling = false,
     this.onFairHintRoute,
+    this.hostSeat,
   });
 
   @override
@@ -906,6 +912,15 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
           widget.isHost &&
           rematch.ready.length >= 2 &&
           rematch.ready.length < widget.occupiedSeats.length;
+      // C-591 D3: who the host's Start leaves out, in seat order.
+      final List<String> sitsOut = !offerStart
+          ? const <String>[]
+          : <String>[
+              for (final int seat in (<int>[...widget.occupiedSeats]..sort()))
+                if (!rematch.ready.contains(seat) &&
+                    widget.seatNames[seat] != null)
+                  widget.seatNames[seat]!,
+            ];
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -922,6 +937,10 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
           _readyChipsRow(loc, rematch),
           if (offerStart) ...<Widget>[
             const SizedBox(height: kSpace3),
+            if (sitsOut.isNotEmpty) ...<Widget>[
+              _sitsOutLine(context, loc, sitsOut, separator),
+              const SizedBox(height: kSpace2),
+            ],
             _startReadyButton(loc, rematch.ready.length),
           ],
           if (includeSecondaryNewTable) ...<Widget>[
@@ -933,6 +952,13 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
     }
 
     if (rematch != null && !amReady) {
+      // C-591 D2: the host is in and could start now, the same condition
+      // under which the host's own card offers Start.
+      final int? hostSeat = widget.hostSeat;
+      final bool mayStart =
+          hostSeat != null &&
+          rematch.ready.contains(hostSeat) &&
+          rematch.ready.length >= 2;
       final bool hideAsk =
           widget.rematchByDeparted || widget.rematchByName == null;
       if (hideAsk) {
@@ -942,6 +968,10 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
             if (leftLine != null) ...<Widget>[
               leftLine,
               const SizedBox(height: kSpace3),
+            ],
+            if (mayStart) ...<Widget>[
+              _mayStartLine(context, loc),
+              const SizedBox(height: kSpace2),
             ],
             _rematchButton(loc),
             if (includeSecondaryNewTable) ...<Widget>[
@@ -993,6 +1023,10 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
             _readyChipsRow(loc, rematch),
           ],
           const SizedBox(height: kSpace3),
+          if (mayStart) ...<Widget>[
+            _mayStartLine(context, loc),
+            const SizedBox(height: kSpace2),
+          ],
           _rematchButton(loc),
           if (includeSecondaryNewTable) ...<Widget>[
             const SizedBox(height: kSpace2),
@@ -1018,6 +1052,50 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
       ],
     );
   }
+
+  /// C-591 D2: the heads-up a seat that is not in yet gets above Play again.
+  /// Body style at a heavier weight and the theme's colour: a warning given
+  /// early and kindly, not a refusal. A live region, so a screen reader
+  /// reads it when it appears.
+  Widget _mayStartLine(BuildContext context, AppLocalizations loc) {
+    return _arrivingLine(
+      const ValueKey<String>('fade-may-start'),
+      Semantics(
+        liveRegion: true,
+        child: Text(
+          loc.endRematchMayStartWithout,
+          key: const Key('end-card-rematch-may-start'),
+          textAlign: TextAlign.center,
+          style: _warnStyle(context),
+        ),
+      ),
+    );
+  }
+
+  /// C-591 D3: the host's view of who Start leaves out.
+  Widget _sitsOutLine(
+    BuildContext context,
+    AppLocalizations loc,
+    List<String> names,
+    String separator,
+  ) {
+    return _arrivingLine(
+      const ValueKey<String>('fade-sits-out'),
+      Semantics(
+        liveRegion: true,
+        child: Text(
+          loc.endRematchSitsOut(names.join(separator)),
+          key: const Key('end-card-rematch-sits-out'),
+          textAlign: TextAlign.center,
+          style: _warnStyle(context),
+        ),
+      ),
+    );
+  }
+
+  TextStyle? _warnStyle(BuildContext context) =>
+      Theme.of(context).textTheme.bodyLarge
+          ?.copyWith(fontWeight: FontWeight.w600);
 
   /// C-555 D4: [line] fades in over 200 ms when it comes into a card that is
   /// already on screen, and does not on the card's first frame. [key] names
