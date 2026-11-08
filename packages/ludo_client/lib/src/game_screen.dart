@@ -5545,6 +5545,11 @@ class _GameScreenState extends State<GameScreen> {
                   tokens: _tokensOf(room),
                   seatsInPlay: _seatsInPlayOf(room),
                   seatNames: names,
+                  awaySeats: <int, String>{
+                    for (final SeatState s in room.seats)
+                      if (!s.connected && s.seat != seat)
+                        s.seat: loc.gameSeatOffline(names[s.seat]!),
+                  },
                   youLabel: loc.seatYou,
                   turnSeat: turn?.seat,
                   mySeat: seat,
