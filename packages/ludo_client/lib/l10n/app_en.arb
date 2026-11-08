@@ -954,5 +954,15 @@
         "example": "Sam, Cy"
       }
     }
+  },
+  "gameSeatMoved": "Your seat moved. You are {colour, select, red{red} green{green} yellow{yellow} blue{blue} other{a new colour}} this game",
+  "@gameSeatMoved": {
+    "description": "Shown under the die and spoken once when a game starts and this player's seat, and so their colour, is not the one they had in the lobby or the last game: the host started with fewer players and the seats were moved onto the standard set.",
+    "placeholders": {
+      "colour": {
+        "type": "String",
+        "example": "yellow"
+      }
+    }
   }
 }

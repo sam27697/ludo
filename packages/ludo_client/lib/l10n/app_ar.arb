@@ -231,5 +231,6 @@
   "gameYouAreNextGoesAgain": "أنت التالي. دور {name} مجددًا",
   "gameYouAreNextAnnounce": "أنت التالي",
   "endRematchMayStartWithout": "قد تبدأ الجولة التالية دونك",
-  "endRematchSitsOut": "خارج الجولة التالية: {names}"
+  "endRematchSitsOut": "خارج الجولة التالية: {names}",
+  "gameSeatMoved": "تغيّر مقعدك. لونك في هذه الجولة: {colour, select, red{الأحمر} green{الأخضر} yellow{الأصفر} blue{الأزرق} other{لون جديد}}"
 }
