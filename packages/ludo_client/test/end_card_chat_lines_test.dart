@@ -68,7 +68,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ludo_client/src/chat_bubble.dart' show kChatMinDwell;
+import 'package:ludo_client/src/chat_bubble.dart'
+    show EndCardChatBubble, kChatMinDwell;
 import 'package:ludo_client/src/end_card.dart';
 import 'package:ludo_client/src/net/snapshot.dart' show SeatState;
 import 'package:ludo_client/src/theme.dart';
@@ -561,6 +562,40 @@ Future<void> _expectMaxWidthByLongLine(
   } finally {
     handle.dispose();
   }
+}
+
+/// The cap the screen hands the bubble: the `EndCardChatBubble` it builds
+/// has `maxWidth == min(320, row.width - 120)`, and the laid-out bubble is no
+/// wider than that. C-596 D4 clamps the bubble's text at 1.3, so on a wide
+/// screen no preset reaches the cap by its own width; this proves it where it
+/// now lives (order 596t2 ruling).
+void _expectCapHandedToBubble(EndGame g, double screenWidth) {
+  final Rect row = _headerRow(g.tester);
+  final double cap = math.min(320, screenWidth - 2 * _inset);
+  expect(row.width, screenWidth, reason: g.why('fixture: the row spans it'));
+  final Finder bubbleWidget = find.byType(EndCardChatBubble);
+  expect(
+    bubbleWidget,
+    findsOneWidget,
+    reason: g.why('fixture: one EndCardChatBubble is built'),
+  );
+  final double handed = g.tester
+      .widget<EndCardChatBubble>(bubbleWidget)
+      .maxWidth;
+  expect(
+    handed,
+    closeTo(cap, 0.01),
+    reason: g.why(
+      'the screen hands the bubble maxWidth min(320, $screenWidth - 120) = '
+      '$cap, got $handed',
+    ),
+  );
+  final double laidOut = g.tester.getRect(find.byKey(chatLineKey(1))).width;
+  expect(
+    laidOut,
+    lessThanOrEqualTo(cap + 0.5),
+    reason: g.why('the laid-out bubble ($laidOut dp) is within the cap $cap'),
+  );
 }
 
 void main() {
@@ -2092,32 +2127,59 @@ void main() {
       }
     }
 
-    for (final double width in const <double>[800, 270]) {
-      // The order's 2.0 holds on the narrow screen, where the span is
-      // exceeded. The 800 dp case is the one that proves the 320 dp cap, and
-      // it is left red on purpose (order 596t2): C-596 D4 clamps the bubble's
-      // text at 1.3, and the widest preset alone is then about 150 dp, so no
-      // line can reach 320 dp whatever the scale. Its intent cannot be kept
-      // under the contract; it is reported, not weakened.
-      final double scale = width == 270 ? 2.0 : _longScale;
-      testWidgets('a line too long alone on a ${width.toInt()} dp screen is '
-          'min(320, width - 120) wide, shown alone with an ellipsis', (
+    // 800 dp: the 320 dp cap. C-596 D4 clamps the bubble's text at 1.3, so
+    // no preset alone is 320 dp wide; the case proves the cap where it now
+    // lives, the maxWidth the screen hands the bubble (order 596t2 ruling).
+    testWidgets('a line on an 800 dp screen is handed the cap min(320, width - '
+        '120) = 320 by the screen, and the bubble stays within it', (
+      tester,
+    ) async {
+      final SemanticsHandle handle = tester.ensureSemantics();
+      final EndGame g = await openFinished(
         tester,
-      ) async {
-        final EndGame g = await openFinished(
-          tester,
-          'width $width $scale',
-          names: <int, String>{0: _shortName},
-          size: Size(width, 800),
-          textScale: scale,
+        'width 800 $_longScale',
+        names: <int, String>{0: _shortName},
+        size: const Size(800, 800),
+        textScale: _longScale,
+      );
+      try {
+        final String line = endLine(_longIdEn, ar: false);
+        await g.emote(1, _longIdEn);
+        await g.at(400);
+        final Rect row = _headerRow(tester);
+        final Rect bubble = tester.getRect(find.byKey(chatLineKey(1)));
+        _expectCapHandedToBubble(g, 800);
+        _expectSaidLabel(g, 1, 'Bob', line);
+        _expectInsideInsets(g, bubble, row);
+        expect(
+          bubble.center.dx,
+          closeTo(row.center.dx, 1),
+          reason: g.why('centred on the row'),
         );
-        try {
-          await _expectMaxWidthByLongLine(tester, g, ar: false);
-        } finally {
-          await g.done();
-        }
-      });
-    }
+      } finally {
+        handle.dispose();
+        await g.done();
+      }
+    });
+
+    // 270 dp at 2.0: the span (150 dp) is exceeded even at the 1.3 clamp.
+    testWidgets('a line too long alone on a 270 dp screen is min(320, width - '
+        '120) wide, shown alone with an ellipsis, and the cap is handed to '
+        'the bubble', (tester) async {
+      final EndGame g = await openFinished(
+        tester,
+        'width 270 2.0',
+        names: <int, String>{0: _shortName},
+        size: const Size(270, 800),
+        textScale: 2.0,
+      );
+      try {
+        await _expectMaxWidthByLongLine(tester, g, ar: false);
+        _expectCapHandedToBubble(g, 270);
+      } finally {
+        await g.done();
+      }
+    });
 
     // The short-line half of the old max width cases: at text scale 1.0 a
     // short line is its own width, name kept, far from the maximum.
