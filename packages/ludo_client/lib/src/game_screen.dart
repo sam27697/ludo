@@ -53,6 +53,7 @@ import 'refusal_mark.dart';
 import 'roll_tray.dart';
 import 'safe_cue.dart';
 import 'seat_die.dart';
+import 'seat_mark.dart';
 import 'session_memory.dart';
 import 'sound_toggle.dart';
 import 'table_entrance.dart';
@@ -129,6 +130,18 @@ const Duration kSafeCueHold = Duration(milliseconds: 1400);
 const Duration kSafeCueFade = Duration(milliseconds: 200);
 
 /// Dwell time after winning move lands before end card, contract C-270 rule 4a.
+/// C-592 D2: how long the "your seat moved" line stays in the notice slot.
+const Duration kSeatMovedHold = Duration(milliseconds: 4000);
+
+/// C-592 D2: the colour word each seat's `gameSeatMoved` line is built from,
+/// seat 0..3 in the order of [LudoColors.seats].
+const Map<int, String> kSeatColourWords = <int, String>{
+  0: 'red',
+  1: 'green',
+  2: 'yellow',
+  3: 'blue',
+};
+
 const Duration kEndCardDwell = Duration(milliseconds: 600);
 
 /// Upper bound on end-card hold before forcing release, contract C-270 rule 4c.
@@ -281,12 +294,24 @@ class _GameScreenState extends State<GameScreen> {
   bool _watchDeadSingle = false;
   Timer? _watchDeadTimer;
 
+  // C-592 D4: the one dead face a single-face hold was armed for. While the
+  // hold is armed the seat's die wears this face, so the badge never sits on
+  // an idle, faceless die when the face memory is dropped under it.
+  int? _watchDeadFace;
+
+  // C-592 D2: the seat whose "your seat moved" line is up in the notice slot,
+  // for [kSeatMovedHold] from the arrival that announced it. Sight and
+  // TalkBack only: no cue exists for it.
+  int? _seatMovedNoticeSeat;
+  Timer? _seatMovedTimer;
+
   // C-589 D1: a watcher dead end whose seat still has a throw in the air or
   // waiting. Held here, with no line, no badge and no announcement, until
   // that seat's throw leaves its tumble; then armed as above.
   int? _pendingWatchSeat;
   String? _pendingWatchReason;
   bool _pendingWatchSingle = false;
+  int? _pendingWatchFace;
 
   // C-462 D2/D4: the open face picker, or null. Closed by the checks in
   // [_syncFacePick] on every rebuild, and by the tap rules in D2 and D3.
@@ -709,6 +734,7 @@ class _GameScreenState extends State<GameScreen> {
     _timerPlayedOtherTimer?.cancel();
     _trayDeadTimer?.cancel();
     _watchDeadTimer?.cancel();
+    _seatMovedTimer?.cancel();
     _dropPendingWatchDead();
     _dropPendingLandingCues();
     _clearSafeCue();
@@ -2134,6 +2160,7 @@ class _GameScreenState extends State<GameScreen> {
     _watchDeadSeat = null;
     _watchDeadReason = null;
     _watchDeadSingle = false;
+    _watchDeadFace = null;
     _dropPendingWatchDead();
     _facePick = null;
     _shownHint = null;
@@ -2772,8 +2799,14 @@ class _GameScreenState extends State<GameScreen> {
         _pendingWatchSeat = seat;
         _pendingWatchReason = reason;
         _pendingWatchSingle = single;
+        _pendingWatchFace = single ? dead.first : null;
       } else {
-        _armWatchDead(seat, reason, single: single);
+        _armWatchDead(
+          seat,
+          reason,
+          single: single,
+          face: single ? dead.first : null,
+        );
       }
     }
 
@@ -2814,6 +2847,7 @@ class _GameScreenState extends State<GameScreen> {
     int seat,
     String reason, {
     required bool single,
+    int? face,
     bool rebuild = true,
   }) {
     final RoomSnapshot? room = widget.controller.room;
@@ -2831,11 +2865,13 @@ class _GameScreenState extends State<GameScreen> {
         _watchDeadSeat = seat;
         _watchDeadReason = reason;
         _watchDeadSingle = single;
+        _watchDeadFace = single ? face : null;
       });
     } else {
       _watchDeadSeat = seat;
       _watchDeadReason = reason;
       _watchDeadSingle = single;
+      _watchDeadFace = single ? face : null;
     }
     _announce(_watchDeadLine(AppLocalizations.of(context), reason, name));
   }
@@ -2850,17 +2886,19 @@ class _GameScreenState extends State<GameScreen> {
     }
     final String? reason = _pendingWatchReason;
     final bool single = _pendingWatchSingle;
+    final int? face = _pendingWatchFace;
     _dropPendingWatchDead();
     if (reason == null) {
       return;
     }
-    _armWatchDead(seat, reason, single: single, rebuild: rebuild);
+    _armWatchDead(seat, reason, single: single, face: face, rebuild: rebuild);
   }
 
   void _dropPendingWatchDead() {
     _pendingWatchSeat = null;
     _pendingWatchReason = null;
     _pendingWatchSingle = false;
+    _pendingWatchFace = null;
   }
 
   String _watchDeadLine(AppLocalizations loc, String reason, String name) {
@@ -2879,6 +2917,7 @@ class _GameScreenState extends State<GameScreen> {
       _watchDeadSeat = null;
       _watchDeadReason = null;
       _watchDeadSingle = false;
+      _watchDeadFace = null;
     });
   }
 
@@ -2940,6 +2979,40 @@ class _GameScreenState extends State<GameScreen> {
     _entranceSerial += 1;
     _entranceShowing = !MediaQuery.disableAnimationsOf(context);
     _announce(AppLocalizations.of(context).gameStartedLine);
+    _announceSeatMoved(controller);
+  }
+
+  /// C-592 D2. The arrival of a game for a player the server re-seated: the
+  /// new colour is told once in words and shown in the notice slot. A move
+  /// with no arrival shows nothing and keeps [RoomController.seatMovedFrom]
+  /// until the next one.
+  void _announceSeatMoved(RoomController controller) {
+    final int? from = controller.seatMovedFrom;
+    final int? seat = controller.seat;
+    if (from == null ||
+        seat == null ||
+        from == seat ||
+        !kSeatColourWords.containsKey(seat)) {
+      return;
+    }
+    _seatMovedTimer?.cancel();
+    _seatMovedNoticeSeat = seat;
+    _seatMovedTimer = Timer(kSeatMovedHold, _dropSeatMoved);
+    _announce(
+      AppLocalizations.of(context).gameSeatMoved(kSeatColourWords[seat]!),
+    );
+    controller.clearSeatMoved();
+  }
+
+  void _dropSeatMoved() {
+    _seatMovedTimer?.cancel();
+    _seatMovedTimer = null;
+    if (!mounted || _seatMovedNoticeSeat == null) {
+      return;
+    }
+    setState(() {
+      _seatMovedNoticeSeat = null;
+    });
   }
 
   void _onEntranceDone() {
@@ -3429,7 +3502,11 @@ class _GameScreenState extends State<GameScreen> {
       final bool holdsTurn =
           !_roomIsFinished(room) && turn != null && turn.seat == seat;
       final int? face;
-      if (active != null && active.seat == seat) {
+      if (_watchDeadSingle &&
+          _watchDeadSeat == seat &&
+          _watchDeadFace != null) {
+        face = _watchDeadFace;
+      } else if (active != null && active.seat == seat) {
         face = active.face;
       } else if (turn != null && turn.seat == seat) {
         face = turn.value;
@@ -5609,6 +5686,64 @@ class _GameScreenState extends State<GameScreen> {
     return contentHeight + kSpace1 * 2;
   }
 
+  /// C-592 D3: the live room's host seat for the end card, or null when
+  /// there is no room or the seat is not one of the four.
+  int? _liveHostSeat(RoomController controller) {
+    final int? host = controller.room?.hostSeat;
+    return host != null && host >= 0 && host <= 3 ? host : null;
+  }
+
+  /// C-592 D2: the disc of the seat-moved row, like the ready chips of C-585.
+  static const double _seatMovedDisc = 16;
+
+  /// C-592 D2: the seat-moved line, the new seat's mark on a disc of its
+  /// colour and then the words, one line. [key] is null for the invisible
+  /// placeholder that reserves the slot's height.
+  Widget _seatMovedRow(
+    AppLocalizations loc,
+    int seat,
+    TextScaler scaler, {
+    Key? key,
+  }) {
+    final Widget row = Row(
+      key: key,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Container(
+          width: _seatMovedDisc,
+          height: _seatMovedDisc,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: LudoColors.seats[seat],
+            shape: BoxShape.circle,
+          ),
+          child: SeatMark(seat: seat, size: 10),
+        ),
+        const SizedBox(width: kSpace1),
+        Flexible(
+          child: Text(
+            loc.gameSeatMoved(kSeatColourWords[seat]!),
+            textAlign: TextAlign.center,
+            textScaler: scaler,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+    if (key == null || MediaQuery.disableAnimationsOf(context)) {
+      return row;
+    }
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      builder: (BuildContext context, double opacity, Widget? child) =>
+          Opacity(opacity: opacity, child: child),
+      child: row,
+    );
+  }
+
   /// The below-die notice slot reserves whichever of its placeholder
   /// strings (C-250 rule 4; C-426 D5 adds the two timer-played lines)
   /// paints taller at the given scale and width -- the same strings and
@@ -5661,10 +5796,17 @@ class _GameScreenState extends State<GameScreen> {
           heightOf(loc.gameTimerPlayedOther(''), maxLines: 1),
         ),
       ),
-      // C-586 D3: the two other-seat dead-end lines, measured the same way.
       math.max(
-        heightOf(loc.gameNoMoveOther(''), maxLines: 1),
-        heightOf(loc.gameThreeSixesOther(''), maxLines: 1),
+        // C-586 D3: the two other-seat dead-end lines, measured the same way.
+        math.max(
+          heightOf(loc.gameNoMoveOther(''), maxLines: 1),
+          heightOf(loc.gameThreeSixesOther(''), maxLines: 1),
+        ),
+        // C-592 D2: the seat-moved row, one line beside its 16 dp disc.
+        math.max(
+          heightOf(loc.gameSeatMoved('yellow'), maxLines: 1),
+          _seatMovedDisc,
+        ),
       ),
     );
   }
@@ -5968,7 +6110,7 @@ class _GameScreenState extends State<GameScreen> {
   /// own reserved space above the board the way the pre-C-250 shape did.
   /// C-426 D5 (order 428) adds the two timer-played lines to the same
   /// slot, at a fixed priority, highest first: `game-no-move-notice`,
-  /// `game-no-move-other-notice` (C-586 D3), `game-timer-played-other-notice`, `game-screen-turn-seat-offline`,
+  /// `game-seat-moved-notice` (C-592 D2), `game-no-move-other-notice` (C-586 D3), `game-timer-played-other-notice`, `game-screen-turn-seat-offline`,
   /// `game-timer-played-notice`. A lower one comes back on its own the
   /// moment a higher one's own condition ends, since this method reads
   /// live state on every build rather than latching a choice. The slot is
@@ -5993,6 +6135,7 @@ class _GameScreenState extends State<GameScreen> {
     // children always covers whichever one is actually shown.
     final TextScaler scaler = _clampedScaler(context, clampScale);
     final String? timerPlayedOtherName = _timerPlayedOtherName;
+    final int? seatMovedSeat = _seatMovedNoticeSeat;
     final int? watchDeadSeat = _watchDeadSeat;
     final String? watchDeadReason = _watchDeadReason;
     final String? watchDeadName = watchDeadSeat == null
@@ -6103,6 +6246,9 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
         ),
+        ExcludeSemantics(
+          child: Opacity(opacity: 0, child: _seatMovedRow(loc, 2, scaler)),
+        ),
         if (_noMoveVisible)
           Positioned.fill(
             child: Text(
@@ -6110,6 +6256,17 @@ class _GameScreenState extends State<GameScreen> {
               key: const Key('game-no-move-notice'),
               textAlign: TextAlign.center,
               textScaler: scaler,
+            ),
+          )
+        else if (seatMovedSeat != null)
+          Positioned.fill(
+            child: Center(
+              child: _seatMovedRow(
+                loc,
+                seatMovedSeat,
+                scaler,
+                key: const Key('game-seat-moved-notice'),
+              ),
             ),
           )
         else if (watchDeadLine != null)
@@ -6422,6 +6579,7 @@ class _GameScreenState extends State<GameScreen> {
         occupiedSeats: _seatsInPlayOf(room),
         seatNames: finishedNames,
         isHost: controller.isHost,
+        hostSeat: _liveHostSeat(controller),
         rematchGone: rematchGone,
         departedNames: departedNames,
         everyoneLeft: everyoneLeft,
