@@ -160,6 +160,7 @@ class RoomController extends ChangeNotifier {
   /// opens a brand new [RoomConnection] that starts with a null seat token
   /// of its own.
   int? _cachedSeat;
+  int? _seatMovedFrom;
   String? _cachedSeatToken;
 
   bool _hasDesynced = false;
@@ -223,6 +224,16 @@ class RoomController extends ChangeNotifier {
   /// preserved across a rematch LOBBY until the new game starts.
   RoomSnapshot? get lastFinished => _lastFinished;
   int? get seat => _cachedSeat;
+
+  /// C-592 D1: the seat this player held before the server moved it to a
+  /// different one, or null. It stays until [clearSeatMoved].
+  int? get seatMovedFrom => _seatMovedFrom;
+
+  /// C-592 D1: the screen has told the player about the move.
+  void clearSeatMoved() {
+    _seatMovedFrom = null;
+  }
+
   String? get seatToken => _cachedSeatToken;
   bool get hasDesynced => _hasDesynced;
 
@@ -351,7 +362,7 @@ class RoomController extends ChangeNotifier {
       // fall back to the resumeRoom argument.
       _room = snapshot;
       _recordLastFinished(snapshot);
-      _cachedSeat = connection.seat ?? seat;
+      _writeCachedSeat(connection.seat ?? seat);
       _cachedSeatToken = seatToken;
       _phase = RoomPhase.connected;
       _blocked = false;
@@ -992,12 +1003,23 @@ class RoomController extends ChangeNotifier {
     }
     final int? liveSeat = connection.seat;
     if (liveSeat != null) {
-      _cachedSeat = liveSeat;
+      _writeCachedSeat(liveSeat);
     }
     final String? liveToken = connection.seatToken;
     if (liveToken != null) {
       _cachedSeatToken = liveToken;
     }
+  }
+
+  /// The one writer of [_cachedSeat]. A change from one non-null seat to a
+  /// different non-null seat records the old one in [seatMovedFrom]; the
+  /// same seat again, or a first seat, records nothing.
+  void _writeCachedSeat(int? next) {
+    final int? previous = _cachedSeat;
+    if (previous != null && next != null && previous != next) {
+      _seatMovedFrom = previous;
+    }
+    _cachedSeat = next;
   }
 
   /// C-310 rule 1: records the snapshot when it becomes FINISHED.
