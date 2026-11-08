@@ -955,7 +955,7 @@
       }
     }
   },
-  "gameSeatMoved": "Your seat moved. You are {colour, select, red{red} green{green} yellow{yellow} blue{blue} other{a new colour}} this game",
+  "gameSeatMoved": "Your seat moved. Your pieces are {colour, select, red{now red} green{now green} yellow{now yellow} blue{now blue} other{in a new colour}}",
   "@gameSeatMoved": {
     "description": "Shown under the die and spoken once when a game starts and this player's seat, and so their colour, is not the one they had in the lobby or the last game: the host started with fewer players and the seats were moved onto the standard set.",
     "placeholders": {
