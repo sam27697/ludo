@@ -38,6 +38,13 @@
 // sound file) and MainActivity.kt plays it at half volume (0.5f on both
 // channels); every other id keeps volume 1f.
 //
+// C-599 D1: `friend_joined` is a full three-channel cue, not sound only. Its
+// haptic is one medium tap (timings 0, 40; amplitudes 0, 160), its clip is
+// the new R.raw.fb_friend_joined, and it plays at the default volume, so it
+// has no soundVolumes entry. The cross-checks above read the Dart enum and
+// stay as they were: with friend_joined in both places they treat it like
+// every other full cue. The group at the end pins the numbers.
+//
 // `path`'s `Directory`/`File` walk to the package root, and down to the
 // Kotlin file, is copied by hand from test/color_alias_scan_test.dart's
 // own `_findPackageRoot`, per this project's standing instruction never to
@@ -380,4 +387,239 @@ void main() {
       );
     },
   );
+  // C-599 D1: the numbers. Read from the Kotlin source by id, so the group
+  // fails on its own assertion on a tree that has no friend_joined entry
+  // yet, and stays independent of the enum cross-checks above.
+  group('friend_joined (C-599 D1)', () {
+    List<int>? numbersOf(String declaration, String id, String maker) {
+      final String body = _mapBody(source, declaration);
+      final RegExpMatch? m = RegExp('"$id"\\s+to\\s+$maker\\(([^)]*)\\)')
+          .firstMatch(body);
+      if (m == null) {
+        return null;
+      }
+      return m
+          .group(1)!
+          .split(',')
+          .map((String part) => int.parse(part.trim()))
+          .toList();
+    }
+
+    test('hapticTimings: longArrayOf(0, 40), one medium tap', () {
+      expect(
+        numbersOf('hapticTimings', 'friend_joined', 'longArrayOf'),
+        equals(<int>[0, 40]),
+        reason:
+            'C-599 D1: hapticTimings needs "friend_joined" to '
+            'longArrayOf(0, 40); keys present are '
+            '${(hapticTimingKeys.toList()..sort())}',
+      );
+    });
+
+    test('hapticAmplitudes: intArrayOf(0, 160)', () {
+      expect(
+        numbersOf('hapticAmplitudes', 'friend_joined', 'intArrayOf'),
+        equals(<int>[0, 160]),
+        reason:
+            'C-599 D1: hapticAmplitudes needs "friend_joined" to '
+            'intArrayOf(0, 160); keys present are '
+            '${(hapticAmplitudeKeys.toList()..sort())}',
+      );
+    });
+
+    test('its timings differ from your_turn and from can_move, and it is '
+        'one pulse, longer than your_turn', () {
+      final List<int>? mine = numbersOf(
+        'hapticTimings',
+        'friend_joined',
+        'longArrayOf',
+      );
+      final List<int>? yourTurn = numbersOf(
+        'hapticTimings',
+        'your_turn',
+        'longArrayOf',
+      );
+      final List<int>? canMove = numbersOf(
+        'hapticTimings',
+        'can_move',
+        'longArrayOf',
+      );
+      expect(mine, isNotNull, reason: 'friend_joined has no hapticTimings');
+      expect(yourTurn, isNotNull, reason: 'your_turn has no hapticTimings');
+      expect(canMove, isNotNull, reason: 'can_move has no hapticTimings');
+      expect(
+        mine,
+        isNot(equals(yourTurn)),
+        reason: 'C-599 D1: distinct from your_turn $yourTurn; got $mine',
+      );
+      expect(
+        mine,
+        isNot(equals(canMove)),
+        reason: 'C-599 D1: distinct from can_move $canMove; got $mine',
+      );
+      expect(
+        mine!.length,
+        2,
+        reason: 'C-599 D1: a single pulse (delay, vibrate); got $mine',
+      );
+      expect(
+        mine[1],
+        greaterThan(yourTurn![1]),
+        reason: 'C-599 D1: longer than your_turn ($yourTurn); got $mine',
+      );
+      final List<int>? mineAmp = numbersOf(
+        'hapticAmplitudes',
+        'friend_joined',
+        'intArrayOf',
+      );
+      final List<int>? yourTurnAmp = numbersOf(
+        'hapticAmplitudes',
+        'your_turn',
+        'intArrayOf',
+      );
+      expect(mineAmp, isNotNull, reason: 'friend_joined has no amplitudes');
+      expect(
+        mineAmp![1],
+        greaterThan(yourTurnAmp![1]),
+        reason: 'C-599 D1: firmer than your_turn ($yourTurnAmp); got $mineAmp',
+      );
+    });
+
+    test('timings and amplitudes have the same length (one amplitude per '
+        'segment)', () {
+      final List<int>? timings = numbersOf(
+        'hapticTimings',
+        'friend_joined',
+        'longArrayOf',
+      );
+      final List<int>? amps = numbersOf(
+        'hapticAmplitudes',
+        'friend_joined',
+        'intArrayOf',
+      );
+      expect(timings, isNotNull, reason: 'friend_joined has no timings');
+      expect(amps, isNotNull, reason: 'friend_joined has no amplitudes');
+      expect(amps!.length, timings!.length);
+    });
+
+    test('soundResources maps it to R.raw.fb_friend_joined, its own clip', () {
+      final String body = _mapBody(source, 'soundResources');
+      final RegExpMatch? entry = RegExp(r'"friend_joined"\s+to\s+R\.raw\.(\w+)')
+          .firstMatch(body);
+      expect(
+        entry,
+        isNotNull,
+        reason:
+            'C-599 D1: soundResources must map "friend_joined" to an R.raw '
+            'clip; the block is:\n$body',
+      );
+      expect(
+        entry!.group(1),
+        'fb_friend_joined',
+        reason:
+            'C-599 D1: friend_joined plays R.raw.fb_friend_joined; got '
+            'R.raw.${entry.group(1)}',
+      );
+    });
+
+    test('it is not in the sound-only set: it is a key of both haptic '
+        'tables and of soundResources', () {
+      expect(
+        hapticTimingKeys,
+        contains('friend_joined'),
+        reason: 'C-599 D1: a haptic cue, so a key of hapticTimings',
+      );
+      expect(
+        hapticAmplitudeKeys,
+        contains('friend_joined'),
+        reason: 'C-599 D1: a haptic cue, so a key of hapticAmplitudes',
+      );
+      expect(
+        soundResourceKeys,
+        contains('friend_joined'),
+        reason: 'C-599 D1: a sound cue, so a key of soundResources',
+      );
+      expect(
+        soundOnly,
+        isNot(contains('friend_joined')),
+        reason: 'friend_joined must not be added to the sound-only set',
+      );
+    });
+
+    test('soundVolumes has no friend_joined entry: it plays at volume 1f, '
+        'and capture_seen keeps its 0.5f', () {
+      final Set<String> volumeKeys = _mapKeys(source, 'soundVolumes');
+      expect(
+        volumeKeys,
+        isNot(contains('friend_joined')),
+        reason:
+            'C-599 D1: sound at volume 1f means no soundVolumes entry; '
+            'soundVolumes carries ${volumeKeys.toList()..sort()}',
+      );
+      expect(
+        volumeKeys,
+        equals(<String>{'capture_seen'}),
+        reason: 'C-599 D6: every existing volume stays; got $volumeKeys',
+      );
+      expect(
+        RegExp(r'"capture_seen"\s+to\s+0\.5f')
+            .hasMatch(_mapBody(source, 'soundVolumes')),
+        isTrue,
+        reason: 'C-588 D1: capture_seen stays at 0.5f',
+      );
+    });
+
+    test('the Dart enum carries the id the Kotlin tables key on', () {
+      expect(
+        dartIds,
+        contains('friend_joined'),
+        reason:
+            'C-599 D1: FeedbackCue gains the wire id friend_joined; the '
+            'Dart ids are ${dartIds.toList()..sort()}',
+      );
+    });
+
+    test('every existing id keeps its timings and amplitudes', () {
+      const Map<String, List<int>> timings = <String, List<int>>{
+        'your_turn': <int>[0, 18],
+        'can_move': <int>[0, 20, 60, 20],
+        'no_move': <int>[0, 220],
+        'step': <int>[0, 8],
+        'captured_other': <int>[0, 30, 40, 30],
+        'captured_me': <int>[0, 180, 60, 50],
+        'home': <int>[0, 30, 50, 40, 50, 60],
+        'win': <int>[0, 60, 60, 80, 60, 120, 60, 260],
+        'game_over': <int>[0, 90],
+        'invalid_tap': <int>[0, 10],
+        'tap': <int>[0, 14],
+      };
+      const Map<String, List<int>> amplitudes = <String, List<int>>{
+        'your_turn': <int>[0, 90],
+        'can_move': <int>[0, 120, 0, 120],
+        'no_move': <int>[0, 200],
+        'step': <int>[0, 60],
+        'captured_other': <int>[0, 255, 0, 255],
+        'captured_me': <int>[0, 200, 0, 140],
+        'home': <int>[0, 90, 0, 160, 0, 240],
+        'win': <int>[0, 80, 0, 130, 0, 190, 0, 255],
+        'game_over': <int>[0, 70],
+        'invalid_tap': <int>[0, 50],
+        'tap': <int>[0, 80],
+      };
+      for (final MapEntry<String, List<int>> e in timings.entries) {
+        expect(
+          numbersOf('hapticTimings', e.key, 'longArrayOf'),
+          equals(e.value),
+          reason: 'C-599 D6: ${e.key} keeps its hapticTimings ${e.value}',
+        );
+      }
+      for (final MapEntry<String, List<int>> e in amplitudes.entries) {
+        expect(
+          numbersOf('hapticAmplitudes', e.key, 'intArrayOf'),
+          equals(e.value),
+          reason: 'C-599 D6: ${e.key} keeps its hapticAmplitudes ${e.value}',
+        );
+      }
+    });
+  });
 }

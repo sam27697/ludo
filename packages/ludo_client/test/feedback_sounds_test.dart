@@ -19,8 +19,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-/// The eleven ids that get a clip (C-468 D2). invalid_tap and tap are
-/// deliberately excluded: they have no clip.
+/// The twelve ids that get a clip (C-468 D2, C-599 D1). invalid_tap and tap
+/// are deliberately excluded: they have no clip.
 const List<String> _soundIds = <String>[
   'your_turn',
   'can_move',
@@ -33,6 +33,7 @@ const List<String> _soundIds = <String>[
   'game_over',
   'die_land',
   'gloat',
+  'friend_joined',
 ];
 
 /// C-468 D2's "max" column, the strict duration ceiling in seconds.
@@ -48,6 +49,9 @@ const Map<String, double> _maxSeconds = <String, double>{
   'game_over': 1.20,
   'die_land': 0.80,
   'gloat': 1.00,
+  // C-599 D2: the source measures 494 ms; the ceiling matches the other
+  // short figures (captured_other, home).
+  'friend_joined': 0.60,
 };
 
 /// C-468 D3 step 4's loudness reference R in dBFS (amendment 3). Every clip's
@@ -68,6 +72,8 @@ const Map<String, double> _trimDb = <String, double>{
   'game_over': -3,
   'die_land': -6,
   'gloat': -3,
+  // C-599 D2: trim -3 dB.
+  'friend_joined': -3,
 };
 
 /// C-468 D2's source file names per cue id, the part after the last slash.
@@ -83,6 +89,7 @@ const Map<String, List<String>> _sourceFiles = <String, List<String>>{
   'game_over': <String>['jingles_PIZZI13.ogg'],
   'die_land': <String>['die-throw-1.ogg'],
   'gloat': <String>['jingles_SAX11.ogg'],
+  'friend_joined': <String>['jingles_PIZZI00.ogg'],
 };
 
 /// C-468 D1's pinned sha256 per pack and the pack names D3 puts above each
@@ -344,42 +351,45 @@ void main() {
     );
   });
 
-  test('res/raw holds exactly fb_<id>.wav for the eleven ids other than '
-      'invalid_tap and tap, and no fb_invalid_tap.wav (C-468 D2)', () {
-    expect(
-      rawDir.existsSync(),
-      isTrue,
-      reason:
-          'expected ${rawDir.path} to exist, holding the eleven fb_<id>.wav '
-          'clips C-468 D2 requires',
-    );
-
-    final actualNames = rawDir
-        .listSync()
-        .whereType<File>()
-        .map((f) => p.basename(f.path))
-        .toSet();
-    final expectedNames = _soundIds.map((id) => 'fb_$id.wav').toSet();
-
-    expect(
-      actualNames,
-      equals(expectedNames),
-      reason:
-          'expected exactly ${(expectedNames.toList()..sort())} in '
-          '${rawDir.path}, got ${(actualNames.toList()..sort())}',
-    );
-
-    for (final silent in <String>['invalid_tap', 'tap']) {
+  test(
+    'res/raw holds exactly fb_<id>.wav for the twelve ids other than '
+    'invalid_tap and tap, and no fb_invalid_tap.wav (C-468 D2, C-599 D1)',
+    () {
       expect(
-        actualNames.contains('fb_$silent.wav'),
-        isFalse,
+        rawDir.existsSync(),
+        isTrue,
         reason:
-            '$silent has no clip (C-468 D2: "invalid_tap and tap stay '
-            'without a clip"); fb_$silent.wav must not exist in '
-            '${rawDir.path}',
+            'expected ${rawDir.path} to exist, holding the twelve fb_<id>.wav '
+            'clips C-468 D2 and C-599 D1 require',
       );
-    }
-  });
+
+      final actualNames = rawDir
+          .listSync()
+          .whereType<File>()
+          .map((f) => p.basename(f.path))
+          .toSet();
+      final expectedNames = _soundIds.map((id) => 'fb_$id.wav').toSet();
+
+      expect(
+        actualNames,
+        equals(expectedNames),
+        reason:
+            'expected exactly ${(expectedNames.toList()..sort())} in '
+            '${rawDir.path}, got ${(actualNames.toList()..sort())}',
+      );
+
+      for (final silent in <String>['invalid_tap', 'tap']) {
+        expect(
+          actualNames.contains('fb_$silent.wav'),
+          isFalse,
+          reason:
+              '$silent has no clip (C-468 D2: "invalid_tap and tap stay '
+              'without a clip"); fb_$silent.wav must not exist in '
+              '${rawDir.path}',
+        );
+      }
+    },
+  );
 
   for (final id in _soundIds) {
     test('fb_$id.wav is a valid mono 16-bit 44100Hz RIFF/WAVE clip with no '
@@ -548,7 +558,7 @@ void main() {
     });
   }
 
-  test('tool/sounds/SOURCES.md exists and names every one of the eleven '
+  test('tool/sounds/SOURCES.md exists and names every one of the twelve '
       'ids', () {
     final file = File(p.join(packageRoot.path, 'tool', 'sounds', 'SOURCES.md'));
     final text = _readText(file);
@@ -697,5 +707,78 @@ void main() {
           '<uses-permission android:name="android.permission.VIBRATE"/>, '
           'per C-225\'s "Android side" section; contents were:\n$text',
     );
+  });
+  // C-599 D2: the new clip, beyond the per-clip checks every id above gets.
+  group('friend_joined clip and build script (C-599 D2)', () {
+    test('the build script pins the source: cue id, Music Jingles pack, the '
+        'Pizzicato jingles file and a -3 dB trim in one entry', () {
+      final build = File(
+        p.join(packageRoot.path, 'tool', 'build_feedback_sounds.py'),
+      );
+      final text = _readText(build);
+      final entry = RegExp(
+        r'Clip\(\s*"friend_joined"\s*,\s*Source\(\s*"jingles"\s*,\s*'
+        r'"Audio/Pizzicato jingles/jingles_PIZZI00\.ogg"\s*\)\s*,\s*'
+        r'-3(\.0)?\s*,',
+      ).hasMatch(text);
+      expect(
+        entry,
+        isTrue,
+        reason:
+            '${build.path} must hold a Clip("friend_joined", '
+            'Source("jingles", "Audio/Pizzicato jingles/jingles_PIZZI00.ogg"), '
+            '-3.0, ...) entry like the other clips (C-599 D2: Music Jingles, '
+            'no operations beyond the common steps, trim -3 dB)',
+      );
+    });
+
+    test('SOURCES.md has a friend_joined row naming jingles_PIZZI00.ogg', () {
+      final file = File(
+        p.join(packageRoot.path, 'tool', 'sounds', 'SOURCES.md'),
+      );
+      final text = _readText(file);
+      final rows = text
+          .split('\n')
+          .where((line) => _tokenCount(line, 'friend_joined') > 0)
+          .toList();
+      expect(
+        rows,
+        isNotEmpty,
+        reason: '${file.path} needs a row for friend_joined (C-599 D2)',
+      );
+      expect(
+        rows.any((line) => line.contains('jingles_PIZZI00.ogg')),
+        isTrue,
+        reason:
+            '${file.path}: the friend_joined row must name '
+            'jingles_PIZZI00.ogg; rows were $rows',
+      );
+    });
+
+    test('fb_friend_joined.wav is not a copy of any other clip, and keeps '
+        'the figure long enough to hold two notes', () {
+      final mine = File(p.join(rawDir.path, 'fb_friend_joined.wav'));
+      expect(mine.existsSync(), isTrue, reason: 'expected ${mine.path}');
+      final bytes = mine.readAsBytesSync();
+      for (final id in _soundIds) {
+        if (id == 'friend_joined') continue;
+        final other = File(p.join(rawDir.path, 'fb_$id.wav'));
+        if (!other.existsSync()) continue;
+        expect(
+          other.readAsBytesSync(),
+          isNot(equals(bytes)),
+          reason: 'C-599 D2: friend_joined must be its own sound, not fb_$id',
+        );
+      }
+      final info = _parseWav(mine);
+      expect(
+        info.durationSeconds,
+        inInclusiveRange(0.40, 0.60),
+        reason:
+            '${mine.path}: C-599 D2 measures the source at 494 ms with two '
+            'note onsets; a clip outside 0.40..0.60 s was cut wrongly; '
+            'info=$info',
+      );
+    });
   });
 }

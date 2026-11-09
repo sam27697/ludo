@@ -567,17 +567,19 @@ void main() {
       FeedbackCue.values.byName('dieLand'): 'die_land',
       FeedbackCue.values.byName('gloat'): 'gloat',
       FeedbackCue.values.byName('captureSeen'): 'capture_seen',
+      FeedbackCue.values.byName('friendJoined'): 'friend_joined',
     };
 
-    test('there are exactly fourteen values, matching C-225, C-422 D1, '
-        'C-468 D6 and C-588 D1', () {
+    test('there are exactly fifteen values, matching C-225, C-422 D1, '
+        'C-468 D6, C-588 D1 and C-599 D1', () {
       expect(
         FeedbackCue.values,
-        hasLength(14),
+        hasLength(15),
         reason:
             'C-225 defines ten FeedbackCue values, C-422 D1 appends tap, '
-            'C-468 D6 appends dieLand and gloat after it and C-588 D1 '
-            'appends captureSeen after gloat; got '
+            'C-468 D6 appends dieLand and gloat after it, C-588 D1 appends '
+            'captureSeen after gloat and C-599 D1 appends friendJoined '
+            'after captureSeen; got '
             '${FeedbackCue.values.length}: ${FeedbackCue.values}',
       );
       expect(
@@ -586,10 +588,12 @@ void main() {
           FeedbackCue.values.byName('dieLand'),
           FeedbackCue.values.byName('gloat'),
           FeedbackCue.values.byName('captureSeen'),
+          FeedbackCue.values.byName('friendJoined'),
         ]),
         reason:
-            'C-468 D6, C-588 D1: dieLand, gloat and captureSeen come in '
-            'that order after tap; got ${FeedbackCue.values}',
+            'C-468 D6, C-588 D1, C-599 D1: dieLand, gloat, captureSeen and '
+            'friendJoined come in that order after tap; got '
+            '${FeedbackCue.values}',
       );
     });
 
@@ -648,6 +652,241 @@ void main() {
         'capture_seen',
         reason: 'C-588 D1: captureSeen.id must be "capture_seen"',
       );
+    });
+  });
+
+  // --- C-599 D1: the wire id of the new cue --------------------------------
+  group('FeedbackCue.friendJoined (C-599 D1)', () {
+    test('carries the wire id friend_joined', () {
+      expect(
+        FeedbackCue.values.byName('friendJoined').id,
+        'friend_joined',
+        reason: 'C-599 D1: friendJoined.id must be "friend_joined"',
+      );
+    });
+
+    test('sits right after captureSeen, the last of the old values', () {
+      final List<FeedbackCue> all = FeedbackCue.values;
+      final int at = all.indexOf(FeedbackCue.values.byName('captureSeen'));
+      expect(at, greaterThanOrEqualTo(0), reason: 'captureSeen must exist');
+      expect(
+        all.length > at + 1 ? all[at + 1].name : null,
+        'friendJoined',
+        reason:
+            'C-599 D1: friendJoined is appended right after captureSeen; '
+            'values are ${all.map((FeedbackCue c) => c.name).toList()}',
+      );
+    });
+
+    test('every older cue keeps its index and its wire id', () {
+      const List<String> older = <String>[
+        'your_turn',
+        'can_move',
+        'no_move',
+        'step',
+        'captured_other',
+        'captured_me',
+        'home',
+        'win',
+        'game_over',
+        'invalid_tap',
+        'tap',
+        'die_land',
+        'gloat',
+        'capture_seen',
+      ];
+      expect(
+        FeedbackCue.values.take(older.length).map((FeedbackCue c) => c.id),
+        orderedEquals(older),
+        reason:
+            'C-599 D1 only appends; the first ${older.length} ids and their '
+            'order must be unchanged; got '
+            '${FeedbackCue.values.map((FeedbackCue c) => c.id).toList()}',
+      );
+    });
+  });
+
+  // --- C-599 D3: when the cue comes from a frame ---------------------------
+  group('cuesForFrame: player_joined (C-599 D3)', () {
+    List<FeedbackCue> friend() => <FeedbackCue>[
+      FeedbackCue.values.byName('friendJoined'),
+    ];
+
+    for (final int mySeat in <int>[0, 1, 2, 3]) {
+      for (final int joined in <int>[0, 1, 2, 3]) {
+        if (joined == mySeat) {
+          test('mySeat $mySeat, player_joined naming my own seat: []', () {
+            final Frame frame = _frame('player_joined', <String, Object?>{
+              'seat': joined,
+              'name': 'Karim',
+            });
+            expect(
+              cuesForFrame(frame, mySeat: mySeat),
+              equals(const <FeedbackCue>[]),
+              reason:
+                  'C-599 D3: a player_joined naming my own seat ($mySeat) '
+                  'gives []; frame.data=${frame.data}',
+            );
+          });
+        } else {
+          test('mySeat $mySeat, player_joined naming seat $joined: '
+              '[friendJoined]', () {
+            final Frame frame = _frame('player_joined', <String, Object?>{
+              'seat': joined,
+              'name': 'Karim',
+            });
+            expect(
+              cuesForFrame(frame, mySeat: mySeat),
+              equals(friend()),
+              reason:
+                  'C-599 D3: a player_joined naming another seat ($joined) '
+                  'for mySeat $mySeat gives exactly [friendJoined]; '
+                  'frame.data=${frame.data}',
+            );
+          });
+        }
+      }
+    }
+
+    for (final int joined in <int>[0, 1, 2, 3]) {
+      test('mySeat null, player_joined naming seat $joined: []', () {
+        final Frame frame = _frame('player_joined', <String, Object?>{
+          'seat': joined,
+          'name': 'Karim',
+        });
+        expect(
+          cuesForFrame(frame, mySeat: null),
+          equals(const <FeedbackCue>[]),
+          reason:
+              'C-599 D3: a null mySeat (a spectator, a seat not yet '
+              'assigned) gets no friend cue; frame.data=${frame.data}',
+        );
+      });
+    }
+
+    final Map<String, Map<String, Object?>> malformed =
+        <String, Map<String, Object?>>{
+          'seat missing': <String, Object?>{'name': 'Karim'},
+          'seat null': <String, Object?>{'seat': null, 'name': 'Karim'},
+          'seat a string': <String, Object?>{'seat': '1', 'name': 'Karim'},
+          'seat a double': <String, Object?>{'seat': 1.0, 'name': 'Karim'},
+          'seat a bool': <String, Object?>{'seat': true, 'name': 'Karim'},
+          'seat a list': <String, Object?>{
+            'seat': <int>[1],
+            'name': 'Karim',
+          },
+          'empty data': <String, Object?>{},
+        };
+    for (final MapEntry<String, Map<String, Object?>> entry
+        in malformed.entries) {
+      test('player_joined with ${entry.key}: [] and no throw', () {
+        final Frame frame = _frame('player_joined', entry.value);
+        for (final int? mySeat in <int?>[null, 0, 2]) {
+          late List<FeedbackCue> cues;
+          expect(
+            () => cues = cuesForFrame(frame, mySeat: mySeat),
+            returnsNormally,
+            reason:
+                'C-599 D3: ${entry.key} must answer [], never throw; '
+                'mySeat $mySeat, frame.data=${frame.data}',
+          );
+          expect(
+            cues,
+            equals(const <FeedbackCue>[]),
+            reason:
+                'C-599 D3: ${entry.key} gives []; mySeat $mySeat, '
+                'frame.data=${frame.data}, got $cues',
+          );
+        }
+      });
+    }
+
+    test('the name does not matter: a missing name still names a seat', () {
+      final Frame frame = _frame('player_joined', <String, Object?>{'seat': 3});
+      expect(
+        cuesForFrame(frame, mySeat: 1),
+        equals(friend()),
+        reason:
+            'C-599 D3 reads only seat; a frame carrying a seat and no name '
+            'still answers [friendJoined]; frame.data=${frame.data}',
+      );
+    });
+  });
+
+  // --- C-599 D6: no other frame type gained a cue --------------------------
+  group('cuesForFrame: frames that must stay silent (C-599 D6)', () {
+    // player_left and presence name a seat the same way player_joined
+    // does; X132 is not tonight, so they answer [] for every viewer.
+    final List<Frame> quiet = <Frame>[
+      _frame('player_left', <String, Object?>{'seat': 2, 'host_seat': 0}),
+      _frame('player_left', <String, Object?>{'seat': 1, 'host_seat': 0}),
+      _frame('presence', <String, Object?>{'seat': 2, 'connected': true}),
+      _frame('presence', <String, Object?>{'seat': 2, 'connected': false}),
+      _frame('seat_assigned', <String, Object?>{'seat': 2, 'seat_token': 't'}),
+      _frame('room', <String, Object?>{'seat': 2, 'code': 'ABC234'}),
+      _frame('game_started', <String, Object?>{'seat': 2}),
+      _frame('turn_passed', <String, Object?>{'seat': 2}),
+      _frame('seat_seed', <String, Object?>{'seat': 2}),
+      _frame('emote', <String, Object?>{'seat': 2}),
+      _frame('player_joined_late', <String, Object?>{'seat': 2}),
+      _frame('Player_Joined', <String, Object?>{'seat': 2}),
+    ];
+    for (final Frame frame in quiet) {
+      for (final int? mySeat in <int?>[null, 0, 1, 2, 3]) {
+        test('${frame.type} ${frame.data} for mySeat $mySeat: []', () {
+          expect(
+            cuesForFrame(frame, mySeat: mySeat),
+            equals(const <FeedbackCue>[]),
+            reason:
+                'C-599 D3/D6: only the exact type player_joined gains a '
+                'cue; ${frame.type} ${frame.data} for mySeat $mySeat '
+                'must stay []',
+          );
+        });
+      }
+    }
+
+    test('the old battery never yields friendJoined', () {
+      final List<Frame> frames = <Frame>[
+        for (final int seat in <int>[0, 1, 2, 3]) ...<Frame>[
+          _frame('turn', <String, Object?>{'seat': seat, 'deadline_ms': 1}),
+          _frame('rolled', <String, Object?>{
+            'seat': seat,
+            'value': 6,
+            'legal': <int>[0],
+            'deadline_ms': 1000,
+            'k': 2,
+            'reveal': 'c' * 64,
+          }),
+          _frame('moved', <String, Object?>{
+            'seat': seat,
+            'token': 0,
+            'from': 5,
+            'to': 10,
+            'captured': <Object?>[
+              <String, Object?>{'seat': (seat + 1) % 4, 'token': 1},
+            ],
+            'extra_roll': false,
+          }),
+          _frame('game_over', <String, Object?>{
+            'winner': seat,
+            'verify_url': 'https://ludo.provefair.app/v/abc123',
+          }),
+        ],
+      ];
+      for (final int? mySeat in <int?>[null, 0, 1, 2, 3]) {
+        for (final Frame frame in frames) {
+          final List<FeedbackCue> cues = cuesForFrame(frame, mySeat: mySeat);
+          expect(
+            cues.map((FeedbackCue c) => c.id),
+            isNot(contains('friend_joined')),
+            reason:
+                'C-599 D3: ${frame.type} ${frame.data} for mySeat $mySeat '
+                'gave $cues; nothing but player_joined may produce '
+                'friendJoined',
+          );
+        }
+      }
     });
   });
 

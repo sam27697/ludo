@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds the feedback service's eleven cue clips from three pinned packs.
+"""Builds the feedback service's twelve cue clips from three pinned packs.
 
 C-468 D1-D3: every clip is cut from the Kenney Casino Audio, Impact Sounds
 and Music Jingles archives (CC0), downloaded once into a cache outside the
@@ -68,7 +68,7 @@ ONSET_LEAD_MS = 2
 # largest RMS over any 50 ms window, set to REFERENCE_DBFS plus the clip's
 # trim, with the peak held at -1.0 dBFS by a limiter that never takes more
 # than 9 dB. REFERENCE_DBFS is the one level for the whole set: -19.0, or
-# the first 0.5 dB step below it at which all eleven clips reach target.
+# the first 0.5 dB step below it at which all twelve clips reach target.
 REFERENCE_DBFS = -19.0
 CEILING_DBFS = -1.0
 WINDOW = 2205
@@ -161,6 +161,13 @@ CLIPS = [
         Source("jingles", "Audio/Sax jingles/jingles_SAX11.ogg"),
         -3.0,
         1.00,
+    ),
+    # C-599 D2: a friend sitting down, the two-note pizzicato figure.
+    Clip(
+        "friend_joined",
+        Source("jingles", "Audio/Pizzicato jingles/jingles_PIZZI00.ogg"),
+        -3.0,
+        0.80,
     ),
 ]
 

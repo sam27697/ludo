@@ -964,5 +964,33 @@
         "example": "yellow"
       }
     }
+  },
+  "lobbyFriendJoined": "{name} joined",
+  "@lobbyFriendJoined": {
+    "description": "Lobby line and screen-reader announcement on every waiting phone when a friend takes a seat, naming them.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Karim"
+      }
+    }
+  },
+  "gameRollHistoryEntrySpoken": "Roll {k}: {name} rolled {face}",
+  "@gameRollHistoryEntrySpoken": {
+    "description": "Screen-reader label of one recent roll on the finished game screen: the roll index k, the seat that rolled and the die face.",
+    "placeholders": {
+      "k": {
+        "type": "int",
+        "example": "108"
+      },
+      "name": {
+        "type": "String",
+        "example": "Karim"
+      },
+      "face": {
+        "type": "int",
+        "example": "4"
+      }
+    }
   }
 }

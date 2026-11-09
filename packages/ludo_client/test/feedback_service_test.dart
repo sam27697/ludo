@@ -624,4 +624,138 @@ void main() {
       }
     });
   });
+  group('friendJoined plays on both channels, each behind its switch '
+      '(C-599 D1)', () {
+    FeedbackCue friendJoined() => FeedbackCue.values.byName('friendJoined');
+
+    test('both switches on: one haptic and one sound, id friend_joined, '
+        'and nothing else', () async {
+      final calls = _recordCalls(null, _feedbackChannel);
+      final service = PlatformFeedbackService(
+        FeedbackSettings.forTest(),
+        _feedbackChannel,
+      );
+
+      service.play(friendJoined());
+      await pumpEventQueue();
+
+      expect(
+        calls.map((c) => '${c.method}:${_idOf(c)}').toList()..sort(),
+        equals(<String>['haptic:friend_joined', 'sound:friend_joined']),
+        reason:
+            'C-599 D1: play(friendJoined) with both switches on must invoke '
+            'haptic{id:friend_joined} and sound{id:friend_joined}, once '
+            'each; got ${calls.map((c) => '${c.method}:${_idOf(c)}')}',
+      );
+    });
+
+    test('haptics off, sound on: only the sound', () async {
+      final calls = _recordCalls(null, _feedbackChannel);
+      final service = PlatformFeedbackService(
+        FeedbackSettings.forTest(haptics: false, sound: true),
+        _feedbackChannel,
+      );
+
+      service.play(friendJoined());
+      await pumpEventQueue();
+
+      expect(
+        calls.map((c) => '${c.method}:${_idOf(c)}').toList(),
+        equals(<String>['sound:friend_joined']),
+        reason:
+            'C-599 D1: with haptics off friendJoined sends only '
+            'sound{id:friend_joined}; got '
+            '${calls.map((c) => '${c.method}:${_idOf(c)}')}',
+      );
+    });
+
+    test('sound off, haptics on: only the haptic', () async {
+      final calls = _recordCalls(null, _feedbackChannel);
+      final service = PlatformFeedbackService(
+        FeedbackSettings.forTest(haptics: true, sound: false),
+        _feedbackChannel,
+      );
+
+      service.play(friendJoined());
+      await pumpEventQueue();
+
+      expect(
+        calls.map((c) => '${c.method}:${_idOf(c)}').toList(),
+        equals(<String>['haptic:friend_joined']),
+        reason:
+            'C-599 D1: with sound off friendJoined sends only '
+            'haptic{id:friend_joined}; got '
+            '${calls.map((c) => '${c.method}:${_idOf(c)}')}',
+      );
+    });
+
+    test('both switches off: nothing', () async {
+      final calls = _recordCalls(null, _feedbackChannel);
+      final service = PlatformFeedbackService(
+        FeedbackSettings.forTest(haptics: false, sound: false),
+        _feedbackChannel,
+      );
+
+      service.play(friendJoined());
+      await pumpEventQueue();
+
+      expect(
+        calls,
+        isEmpty,
+        reason: 'C-599 D1: both switches off must invoke nothing; got $calls',
+      );
+    });
+
+    test('two friends in a row are two cues: not throttled', () async {
+      final calls = _recordCalls(null, _feedbackChannel);
+      final service = PlatformFeedbackService(
+        FeedbackSettings.forTest(),
+        _feedbackChannel,
+      );
+
+      service.play(friendJoined());
+      service.play(friendJoined());
+      await pumpEventQueue();
+
+      expect(
+        calls.where((c) => c.method == 'haptic'),
+        hasLength(2),
+        reason:
+            'only step is throttled; two friendJoined plays must give two '
+            'haptics, got $calls',
+      );
+      expect(
+        calls.where((c) => c.method == 'sound'),
+        hasLength(2),
+        reason:
+            'only step is throttled; two friendJoined plays must give two '
+            'sounds, got $calls',
+      );
+    });
+
+    test('a platform failure on either channel never reaches the caller and '
+        'is counted', () async {
+      _recordCalls(
+        null,
+        _feedbackChannel,
+        onCall: (MethodCall call) async =>
+            throw PlatformException(code: 'no_vibrator'),
+      );
+      final service = PlatformFeedbackService(
+        FeedbackSettings.forTest(),
+        _feedbackChannel,
+      );
+
+      expect(() => service.play(friendJoined()), returnsNormally);
+      await pumpEventQueue();
+
+      expect(
+        service.failedCalls,
+        2,
+        reason:
+            'both channels of friendJoined fail here, so failedCalls must '
+            'count the haptic and the sound; got ${service.failedCalls}',
+      );
+    });
+  });
 }

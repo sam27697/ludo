@@ -138,6 +138,7 @@ import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart'
     show appSupportedLocales, buildAppTheme;
 import 'package:ludo_client/src/board.dart' show LudoBoard;
+import 'package:ludo_client/src/board_geometry.dart' show cellFor;
 import 'package:ludo_client/src/chat_bubble.dart' show kChatMinDwell;
 import 'package:ludo_client/src/die_cube.dart' show BoardThrownDie;
 import 'package:ludo_client/src/end_card.dart' show EndCard;
@@ -3646,6 +3647,86 @@ void main() {
       shotName: '147-seat-moved-ar',
       locale: const Locale('ar'),
       toTheStart: true,
+    );
+  });
+
+  // ==========================================================================
+  // 148, 149, 149a: order 602 (C-599 D5). The host's four-seat lobby, host
+  // seated alone, then `player_joined` for seat 1 (Karim) with the next seq:
+  // the shot is about 150 ms after the push, the card mid-entrance with its
+  // glow on and the "joined" line under the grid. 149 is the same in Arabic;
+  // 149a follows a second join (seat 2, Lina) 150 ms after it. The device
+  // wears a FeedbackScope over a recording service, so the cue is asserted
+  // too. Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 148-friend-joined-en', (tester) async {
+    await _shootFriendJoined(
+      tester,
+      binding,
+      locale: const Locale('en'),
+      roomCode: 'FJ148E',
+      seatToken: 'tok-shot-148',
+      joins: const <(int, String, String)>[
+        (1, 'Karim', '148-friend-joined-en'),
+      ],
+    );
+  });
+
+  testWidgets('capture 149-friend-joined-ar', (tester) async {
+    await _shootFriendJoined(
+      tester,
+      binding,
+      locale: const Locale('ar'),
+      roomCode: 'FJ149A',
+      seatToken: 'tok-shot-149',
+      joins: const <(int, String, String)>[
+        (1, 'Karim', '149-friend-joined-ar'),
+        (2, 'Lina', '149a-friend-joined-second-ar'),
+      ],
+    );
+  });
+
+  // ==========================================================================
+  // 150, 151: order 602 (C-601 D2). The recorded four-seat game four_seats_1
+  // replayed to its `game_over` (viewer seat 3 in English, seat 1 in Arabic),
+  // then the finished screen scrolled until the roll history is whole on
+  // screen: three rows, each with its seat's mark and name before the
+  // `k: face` text. Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 150-roll-history-seats-en', (tester) async {
+    await _shootRollHistorySeats(
+      tester,
+      binding,
+      shotName: '150-roll-history-seats-en',
+      locale: const Locale('en'),
+      viewerSeat: 3,
+    );
+  });
+
+  testWidgets('capture 151-roll-history-seats-ar', (tester) async {
+    await _shootRollHistorySeats(
+      tester,
+      binding,
+      shotName: '151-roll-history-seats-ar',
+      locale: const Locale('ar'),
+      viewerSeat: 1,
+    );
+  });
+
+  // ==========================================================================
+  // 152: order 602 (C-600 D2). The recorded game four_seats_1, viewer seat 2,
+  // replayed to the first moment tokens of three different seats stand on one
+  // main-track cell (found at run time from the recorded `moved` frames), on
+  // a 360 dp wide surface where the harness can set one. Bodies live at the
+  // bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 152-shared-cell-three-seats-en', (tester) async {
+    await _shootSharedCellThreeSeats(
+      tester,
+      binding,
+      shotName: '152-shared-cell-three-seats-en',
+      locale: const Locale('en'),
+      viewerSeat: 2,
     );
   });
 
@@ -7992,8 +8073,8 @@ Future<_ThrowDrain> _pumpUntilThrownDiceGone(
   RoomController controller, {
   required String capture,
   required String where,
+  int maxWallMs = 60000,
 }) async {
-  const int maxWallMs = 60000;
   final Stopwatch wall = Stopwatch()..start();
   final Set<int> seen = <int>{};
   final int queuedAtStart = _rollsNewerThanShownDie(
@@ -22659,4 +22740,1009 @@ Future<void> _shootSeatMoved(
   );
 
   await _capture(binding, tester, shotName, frames: 0);
+}
+
+// ============================================================================
+// Order 602: gate frames for C-599 (148, 149, 149a), C-601 (150, 151) and
+// C-600 (152).
+// ============================================================================
+
+/// Wall milliseconds after a `player_joined` push at which captures 148, 149
+/// and 149a are taken: the card's 320 ms entrance is under way, the 1200 ms
+/// glow is bright and the 2500 ms line is up.
+const int _friendShotAfterMs = 150;
+
+/// The latest a friend-joined shot may be taken, still inside the 320 ms
+/// entrance (C-599 D5a); checked right before the shot.
+const int _friendShotLatestMs = 290;
+
+/// The same under reduced motion, where the glow is held at full strength for
+/// 1200 ms instead: the shot must be inside that hold.
+const int _friendShotLatestReducedMs = 1100;
+
+/// Captures 148, 149 and 149a (order 602, C-599 D5). The device creates a
+/// room of four as the host and sits alone; each of [joins] (seat, name, shot)
+/// is then a `player_joined` pushed with the next `seq`, and the shot is taken
+/// about [_friendShotAfterMs] ms after it. The app is wrapped in a
+/// [FeedbackScope] over a recording service, the way app.dart puts the scope
+/// above the routes, so the one `friend_joined` cue per join is asserted too.
+/// At the shot: the new seat's card has its glow on in the seat's colour, the
+/// seats already at the table have neither glow nor scale, and
+/// `lobby-friend-joined-line` reads `lobbyFriendJoined(name)` with that
+/// seat's painted `SeatMark` at its start. The card itself is asserted for the
+/// branch the lobby takes, read from `MediaQuery.disableAnimationsOf`: with
+/// motion it is mid-entrance (scale from 0.9 up to, not yet, 1.0) and the shot
+/// is inside the 320 ms entrance; with animations removed (the screenshots
+/// job's emulator) its scale is exactly 1.0 and the shot is inside the 1200 ms
+/// hold of the glow. Which branch ran is printed.
+Future<void> _shootFriendJoined(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required Locale locale,
+  required String roomCode,
+  required String seatToken,
+  required List<(int seat, String name, String shotName)> joins,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final String host = _defaultPlayerName(locale);
+  final String scenario =
+      'capture ${joins.first.$3} (room $roomCode, locale '
+      '${locale.languageCode}, host "$host" alone at a table of four, joins '
+      '${[for (final j in joins) 'seat ${j.$1} "${j.$2}"']}); reproduce with '
+      '`flutter test integration_test/screenshots_test.dart -d flutter-tester '
+      '--plain-name "capture ${joins.first.$3}"`';
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  final _CueLog cues = _CueLog();
+  final FeedbackSettings settings = FeedbackSettings.forTest();
+  addTearDown(settings.dispose);
+  RoomController? controller;
+  try {
+    await tester.pumpWidget(
+      FeedbackScope(
+        settings: settings,
+        service: cues,
+        child: _reconnectingCaptureHarness(
+          HomeScreen(controllerFactory: factory.call, onToggleLocale: () {}),
+          locale: locale,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _expectHomeScreen(tester, localeName: locale.languageCode);
+
+    await tester.enterText(find.byKey(const Key('home-name-field')), host);
+    await _tapCreateRoom(tester);
+
+    expect(
+      factory.controllers,
+      hasLength(1),
+      reason:
+          '$scenario: tapping Create Room must build exactly one controller',
+    );
+    controller = factory.controllers.single;
+    final FakeTransport transport = factory.transports.single;
+    final List<String> createMessages = transport.sentRaw
+        .where((String s) => _typeOf(s) == 'create_room')
+        .toList();
+    expect(
+      createMessages,
+      hasLength(1),
+      reason:
+          '$scenario: expected one create_room, sent '
+          '${transport.sentRaw.map(_typeOf).toList()}',
+    );
+
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: _idOf(createMessages.single),
+        data: _roomJson(
+          code: roomCode,
+          players: 4,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[_seatJson(0, name: host)],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      '$scenario: LobbyScreen after the create_room reply',
+    );
+    await _pumpRealDurationFrames(tester, frameCount: 6);
+    await _expectLobbyScreen(
+      tester,
+      localeName: locale.languageCode,
+      code: roomCode,
+      expectedSeatCount: 1,
+    );
+    expect(
+      controller.room?.state,
+      RoomState.lobby,
+      reason: '$scenario: the room must be in its lobby before the first join',
+    );
+    expect(
+      cues.played,
+      isEmpty,
+      reason:
+          '$scenario: no cue may play before a friend sits down, got '
+          '${cues.played}',
+    );
+
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(LobbyScreen)),
+    );
+    final List<int> seated = <int>[0];
+    int seq = 1;
+    int joinNumber = 0;
+    for (final (int seat, String name, String shotName) in joins) {
+      joinNumber += 1;
+      seq += 1;
+      final String step = '$scenario; join $joinNumber, seat $seat "$name"';
+      final Stopwatch sincePush = Stopwatch()..start();
+      transport.pushText(
+        _frame(
+          type: 'player_joined',
+          data: <String, Object?>{'seat': seat, 'name': name, 'seq': seq},
+        ),
+      );
+      await tester.pump();
+      while (sincePush.elapsedMilliseconds < _friendShotAfterMs) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      final int ageMs = sincePush.elapsedMilliseconds;
+      seated.add(seat);
+
+      expect(
+        controller.hasDesynced,
+        isFalse,
+        reason: '$step: seq gap, room seq ${controller.room?.seq}, pushed $seq',
+      );
+      await _expectLobbyScreen(
+        tester,
+        localeName: locale.languageCode,
+        code: roomCode,
+        expectedSeatCount: seated.length,
+      );
+      // The screenshots job boots its emulator with animations removed, the
+      // motion jobs do not: the card is asserted for the branch the lobby
+      // itself takes (C-599 D5a), read from its own context.
+      final bool reduced = MediaQuery.disableAnimationsOf(
+        tester.element(find.byType(LobbyScreen)),
+      );
+      final int latestMs = reduced
+          ? _friendShotLatestReducedMs
+          : _friendShotLatestMs;
+      expect(
+        ageMs,
+        lessThanOrEqualTo(latestMs),
+        reason: reduced
+            ? '$step: expected the shot within $latestMs ms of the push (the '
+                  'held glow lasts 1200 ms), got $ageMs ms by wall time'
+            : '$step: expected the shot within $latestMs ms of the push (the '
+                  'entrance lasts 320 ms), got $ageMs ms by wall time',
+      );
+
+      // Sound and touch: one friend_joined per join, nothing else.
+      expect(
+        cues.played,
+        List<FeedbackCue>.filled(joinNumber, FeedbackCue.friendJoined),
+        reason:
+            '$step: C-599 D4, expected exactly $joinNumber friend_joined '
+            'cue(s) through the feedback service, got ${cues.played}',
+      );
+
+      // The line: the newest name, the seat's painted mark at its start.
+      final Finder line = find.byKey(const Key('lobby-friend-joined-line'));
+      expect(
+        line,
+        findsOneWidget,
+        reason:
+            '$step: C-599 D5b, expected lobby-friend-joined-line $ageMs ms '
+            'after the join',
+      );
+      final String expectedLine = loc.lobbyFriendJoined(name);
+      final Finder lineText = find.descendant(
+        of: line,
+        matching: find.byType(Text),
+      );
+      expect(
+        lineText,
+        findsOneWidget,
+        reason: '$step: the line holds exactly one Text',
+      );
+      expect(
+        _textUnder(tester, lineText),
+        expectedLine,
+        reason:
+            '$step: C-599 D5b, expected the line to read "$expectedLine", '
+            'got "${_textUnder(tester, lineText)}"',
+      );
+      for (final (int otherSeat, String otherName, String _) in joins) {
+        if (otherSeat != seat) {
+          expect(
+            _textUnder(tester, lineText),
+            isNot(contains(otherName)),
+            reason:
+                '$step: the line names the newest join only, but it reads '
+                '"${_textUnder(tester, lineText)}"',
+          );
+        }
+      }
+      final Finder lineMark = find.descendant(
+        of: line,
+        matching: find.byType(SeatMark),
+      );
+      expect(
+        lineMark,
+        findsOneWidget,
+        reason: '$step: C-599 D5b, expected one SeatMark in the line',
+      );
+      expect(
+        tester.widget<SeatMark>(lineMark).seat,
+        seat,
+        reason: '$step: the line\'s SeatMark must be seat $seat\'s',
+      );
+      expect(
+        find.descendant(
+          of: lineMark,
+          matching: find.byWidgetPredicate(
+            (Widget w) => w is CustomPaint && w.painter != null,
+          ),
+        ),
+        findsOneWidget,
+        reason:
+            '$step: the SeatMark in the line must paint its shape (10 dp is '
+            'over the 6 dp floor), but it drew the empty fallback',
+      );
+      final Rect markRect = tester.getRect(lineMark);
+      final Rect textRect = tester.getRect(lineText);
+      final bool rtl = locale.languageCode == 'ar';
+      expect(
+        rtl ? markRect.left >= textRect.right : markRect.right <= textRect.left,
+        isTrue,
+        reason:
+            '$step: C-599 D5b, the mark sits at the line\'s start, '
+            '${rtl ? 'right of' : 'left of'} the text; mark $markRect, text '
+            '$textRect',
+      );
+      expect(
+        tester.getRect(line).top,
+        greaterThanOrEqualTo(
+          tester.getRect(find.byKey(Key('lobby-seat-$seat'))).bottom,
+        ),
+        reason: '$step: the line sits under the seat grid, not over a card',
+      );
+
+      // The card: mid-entrance with the glow on; seats already there are not.
+      final ScaleTransition entrance = tester.widget<ScaleTransition>(
+        find.byKey(Key('lobby-seat-$seat-entrance')),
+      );
+      if (reduced) {
+        expect(
+          entrance.scale.value,
+          1.0,
+          reason:
+              '$step: C-599 D5a, under reduced motion the card appears at '
+              'once with no scale, expected exactly 1.0 $ageMs ms after the '
+              'join, got ${entrance.scale.value}',
+        );
+      } else {
+        expect(
+          entrance.scale.value,
+          allOf(greaterThanOrEqualTo(0.9), lessThan(1.0)),
+          reason:
+              '$step: C-599 D5a, expected the card mid-entrance (scale from '
+              '0.9 up to 1.0, not yet there) $ageMs ms after the join, got '
+              '${entrance.scale.value}',
+        );
+      }
+      expect(
+        find.byKey(Key('lobby-seat-$seat-glow')),
+        findsOneWidget,
+        reason:
+            '$step: C-599 D5a, expected the glow on the new card $ageMs ms '
+            'after the join',
+      );
+      final DecoratedBox glow = tester.widget<DecoratedBox>(
+        find.byKey(Key('lobby-seat-$seat-glow')),
+      );
+      final BoxDecoration glowDecoration = glow.decoration as BoxDecoration;
+      expect(
+        glowDecoration.boxShadow!.single.color.toARGB32() & 0x00FFFFFF,
+        LudoColors.seats[seat].toARGB32() & 0x00FFFFFF,
+        reason: '$step: the glow carries seat $seat\'s colour',
+      );
+      expect(
+        find.byKey(const Key('lobby-seat-0-glow')),
+        findsNothing,
+        reason: '$step: the host was seated at the first build, no glow',
+      );
+      expect(
+        tester
+            .widget<ScaleTransition>(
+              find.byKey(const Key('lobby-seat-0-entrance')),
+            )
+            .scale
+            .value,
+        1.0,
+        reason: '$step: the host\'s card never animates',
+      );
+      _expectNameLabel(
+        tester,
+        find.byKey(Key('lobby-seat-$seat')),
+        label: name,
+        what: 'lobby-seat-$seat',
+        scenario: step,
+      );
+
+      // ignore: avoid_print
+      print(
+        'screenshots_test: $step: ${reduced ? 'reduced motion (disableAnimations '
+                  'true): card at once, glow held' : 'full motion: card mid-entrance'}, '
+        'shot $ageMs ms after the push, card scale '
+        '${entrance.scale.value.toStringAsFixed(3)}, glow on, line '
+        '"$expectedLine", cues ${cues.played.map((FeedbackCue c) => c.name).toList()}',
+      );
+      await _capture(binding, tester, shotName, frames: 0);
+    }
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// Captures 150 and 151 (order 602, C-601 D2). The recorded four-seat game
+/// four_seats_1 replayed from [viewerSeat]'s view to its `game_over`; the
+/// finished screen is then scrolled until `game-screen-roll-history` lies
+/// whole inside the scroll viewport. The three rows are read off the
+/// fixture's last three `rolled` frames (their `k`, `value` and `seat`): the
+/// controller must hold the same rolls and seats, and the history must draw,
+/// per row and in order, the seat's painted `SeatMark`, its label (`seatYou`
+/// for the viewer) and `gameRollHistoryEntry(k, face)`, with the row's
+/// semantics label `gameRollHistoryEntrySpoken(k, name, face)`. The mark sits
+/// at the row's start: left of the name in English, right of it in Arabic.
+Future<void> _shootRollHistorySeats(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required int viewerSeat,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(_replayHome(factory, locale));
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+  addTearDown(() {
+    for (final RoomController c in factory.controllers) {
+      c.dispose();
+    }
+  });
+
+  final String capture = 'capture $shotName';
+  final _RealReplay replay = await _replayRealGame(
+    tester,
+    factory,
+    capture: capture,
+    gameName: 'four_seats_1',
+    seat: viewerSeat,
+    localeName: locale.languageCode,
+  );
+  final RoomController controller = replay.controller;
+  final _RealGame game = replay.game;
+  final String where = replay.describe;
+
+  // The last three rolls of the recorded game, from its own frames.
+  final List<Map<String, Object?>> view = game.view(viewerSeat);
+  final List<Map<String, Object?>> rolledFrames = <Map<String, Object?>>[
+    for (final Map<String, Object?> f in view)
+      if (f['t'] == 'rolled') f,
+  ];
+  expect(
+    rolledFrames.length,
+    greaterThanOrEqualTo(3),
+    reason: '$where: the recorded view holds fewer than three rolls',
+  );
+  final List<(int k, int face, int seat)> lastRolls = <(int, int, int)>[
+    for (final Map<String, Object?> f in rolledFrames.sublist(
+      rolledFrames.length - 3,
+    ))
+      (
+        (f['d']! as Map<String, Object?>)['k']! as int,
+        (f['d']! as Map<String, Object?>)['value']! as int,
+        (f['d']! as Map<String, Object?>)['seat']! as int,
+      ),
+  ];
+  final Map<int, String> names = <int, String>{
+    for (final int s in <int>[0, 1, 2, 3]) s: game.nameOf(s),
+  };
+  expect(
+    names.values.toSet(),
+    hasLength(4),
+    reason:
+        '$where: the four recorded names must be distinct for the history '
+        'labels to be the names themselves, got $names',
+  );
+
+  replay.pushGameOver();
+  await tester.pump();
+  await tester.pump();
+  await _pumpRealDurationFrames(tester);
+
+  expect(
+    controller.room?.state,
+    RoomState.finished,
+    reason: '$capture: game_over must finish the room. $where',
+  );
+  expect(
+    <Object?>[
+      for (final (int k, int face) r in controller.room!.recentRolls)
+        (r.$1, r.$2),
+    ],
+    <Object?>[
+      for (final (int k, int face, int seat) r in lastRolls) (r.$1, r.$2),
+    ],
+    reason:
+        '$capture: the controller must hold the last three recorded rolls '
+        '(k, face). $where',
+  );
+  expect(
+    controller.room!.recentRollSeats,
+    <int>[for (final (int k, int face, int seat) r in lastRolls) r.$3],
+    reason:
+        '$capture: C-601 D1, recentRollSeats must hold the seats that rolled '
+        'the last three recorded rolls, in order. $where',
+  );
+
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+  expect(
+    loc.localeName,
+    locale.languageCode,
+    reason:
+        '$capture: expected locale ${locale.languageCode}, got '
+        '${loc.localeName}',
+  );
+  final Finder history = find.byKey(const Key('game-screen-roll-history'));
+  expect(
+    history,
+    findsOneWidget,
+    reason:
+        '$capture: expected game-screen-roll-history on the finished '
+        'screen. $where',
+  );
+
+  // Scroll until the whole block is inside the scroll viewport.
+  await Scrollable.ensureVisible(tester.element(history), alignment: 0.5);
+  await _pumpRealDurationFrames(tester, frameCount: 6);
+  final ScrollableState scrollable = Scrollable.of(tester.element(history));
+  final RenderBox viewportBox =
+      scrollable.context.findRenderObject()! as RenderBox;
+  final Rect viewport =
+      viewportBox.localToGlobal(Offset.zero) & viewportBox.size;
+  final Rect block = tester.getRect(history);
+  expect(
+    block.top >= viewport.top && block.bottom <= viewport.bottom,
+    isTrue,
+    reason:
+        '$capture: expected game-screen-roll-history whole inside the scroll '
+        'viewport after scrolling, block top ${block.top.toStringAsFixed(1)} '
+        'bottom ${block.bottom.toStringAsFixed(1)}, viewport top '
+        '${viewport.top.toStringAsFixed(1)} bottom '
+        '${viewport.bottom.toStringAsFixed(1)}. $where',
+  );
+
+  // Three rows, each: the seat's painted mark, its label, the roll text.
+  final Finder marks = find.descendant(
+    of: history,
+    matching: find.byType(SeatMark),
+  );
+  expect(
+    marks,
+    findsNWidgets(3),
+    reason:
+        '$capture: C-601 D2, expected three SeatMarks (one per row) in the '
+        'roll history, found ${marks.evaluate().length}. $where',
+  );
+  expect(
+    <int>[for (final SeatMark m in tester.widgetList<SeatMark>(marks)) m.seat],
+    <int>[for (final (int k, int face, int seat) r in lastRolls) r.$3],
+    reason:
+        '$capture: C-601 D2, the three marks must be the seats of the last '
+        'three rolls, in roll order. $where',
+  );
+  expect(
+    find.descendant(
+      of: marks,
+      matching: find.byWidgetPredicate(
+        (Widget w) => w is CustomPaint && w.painter != null,
+      ),
+    ),
+    findsNWidgets(3),
+    reason:
+        '$capture: C-601 D2, every row\'s SeatMark must paint its shape '
+        '(16 dp or a 14 dp mark on its disc is over the 6 dp floor). $where',
+  );
+  final List<String> expectedTexts = <String>[
+    loc.gameRollHistoryHeading,
+    for (final (int k, int face, int seat) r in lastRolls) ...<String>[
+      r.$3 == viewerSeat ? loc.seatYou : names[r.$3]!,
+      loc.gameRollHistoryEntry(r.$1, r.$2),
+    ],
+  ];
+  expect(
+    _textsOf(tester, history),
+    expectedTexts,
+    reason:
+        '$capture: C-601 D2, expected the heading, then per row the seat '
+        'label ("${loc.seatYou}" for seat $viewerSeat) and the unchanged '
+        'gameRollHistoryEntry(k, face) text. $where',
+  );
+  final bool rtl = locale.languageCode == 'ar';
+  final List<Rect> markRects = <Rect>[
+    for (final Element e in marks.evaluate())
+      tester.getRect(find.byWidget(e.widget)),
+  ];
+  for (int i = 0; i < 3; i++) {
+    final String name = lastRolls[i].$3 == viewerSeat
+        ? loc.seatYou
+        : names[lastRolls[i].$3]!;
+    final Rect nameRect = tester.getRect(
+      find.descendant(of: history, matching: find.text(name)).at(0),
+    );
+    expect(
+      rtl
+          ? markRects[i].left >= nameRect.right
+          : markRects[i].right <= nameRect.left,
+      isTrue,
+      reason:
+          '$capture: C-601 D2, row ${i + 1} mark ${markRects[i]} must sit '
+          '${rtl ? 'right' : 'left'} of its name "$name" $nameRect (the '
+          'row mirrors under Directionality). $where',
+    );
+    if (i > 0) {
+      expect(
+        markRects[i].top,
+        greaterThan(markRects[i - 1].top),
+        reason: '$capture: the rows run top to bottom in roll order. $where',
+      );
+    }
+  }
+
+  // One semantics node per row, spoken as one line.
+  final SemanticsHandle semantics = tester.ensureSemantics();
+  try {
+    await tester.pump();
+    for (final (int k, int face, int seat) r in lastRolls) {
+      final String name = r.$3 == viewerSeat ? loc.seatYou : names[r.$3]!;
+      expect(
+        find.bySemanticsLabel(loc.gameRollHistoryEntrySpoken(r.$1, name, r.$2)),
+        findsOneWidget,
+        reason:
+            '$capture: C-601 D2, expected one semantics node labelled '
+            '"${loc.gameRollHistoryEntrySpoken(r.$1, name, r.$2)}". $where',
+      );
+    }
+  } finally {
+    semantics.dispose();
+  }
+
+  // ignore: avoid_print
+  print(
+    'screenshots_test: $capture replays "four_seats_1" from seat $viewerSeat '
+    'to game_over; last three rolls (k, face, seat) $lastRolls; labels '
+    '${expectedTexts.skip(1).toList()}',
+  );
+  await _capture(binding, tester, shotName, frames: 12);
+}
+
+/// The wall time capture 152 allows the queued throws to land. The moment it
+/// shows is the 198th roll of the recorded game; every roll of another seat
+/// before it is thrown on the board in turn, about 2.6 throws a second, so the
+/// backlog of that burst takes far longer than the 60 s the early-game
+/// captures need.
+const int _sharedCellDrainMaxMs = 300000;
+
+/// One moment of a recorded game at which tokens of [seatCount] or more
+/// different seats stand on one main-track cell, found from the `moved`
+/// frames alone.
+class _SharedCellMoment {
+  _SharedCellMoment({
+    required this.index,
+    required this.seq,
+    required this.rollK,
+    required this.absolute,
+    required this.occupants,
+  });
+
+  /// Index of the `moved` that completes the cell, in the viewer's view.
+  final int index;
+
+  /// That `moved`'s own `seq`.
+  final int seq;
+
+  /// `k` of the last `rolled` before it (the roll index of the moment).
+  final int rollK;
+
+  /// The cell's absolute main-track square (RULES.md 1.2).
+  final int absolute;
+
+  /// Every token on the cell: (seat, token, progress).
+  final List<(int seat, int token, int progress)> occupants;
+
+  @override
+  String toString() =>
+      'roll k $rollK, the moved at view index $index (seq $seq), absolute '
+      'square $absolute holding $occupants';
+}
+
+/// The first `moved` after which at least [seatCount] different seats have
+/// tokens on one main-track cell with at most four tokens in all (so the
+/// board draws them in the 0.5-cell shared slots). The positions are folded
+/// from the `moved` frames (a `captured` entry sends a token to its yard) and
+/// the fold is checked against the fixture's `final_tokens`, so a wrong
+/// reading of the frames fails here and not as a missing moment.
+_SharedCellMoment _locateSharedCell(
+  _RealGame game,
+  List<Map<String, Object?>> view, {
+  required int seatCount,
+  required String where,
+}) {
+  final Map<(int, int), int> position = <(int, int), int>{
+    for (final Object? s in game.json['seats']! as List<Object?>)
+      for (int t = 0; t < 4; t++) (s! as int, t): -1,
+  };
+  _SharedCellMoment? found;
+  int rollK = -1;
+  for (int i = 0; i < view.length; i++) {
+    final Map<String, Object?> frame = view[i];
+    final Map<String, Object?> d = frame['d']! as Map<String, Object?>;
+    if (frame['t'] == 'rolled') {
+      rollK = d['k']! as int;
+      continue;
+    }
+    if (frame['t'] != 'moved') {
+      continue;
+    }
+    position[(d['seat']! as int, d['token']! as int)] = d['to']! as int;
+    for (final Object? c in d['captured']! as List<Object?>) {
+      final Map<String, Object?> struck = c! as Map<String, Object?>;
+      position[(struck['seat']! as int, struck['token']! as int)] = -1;
+    }
+    if (found != null) {
+      continue;
+    }
+    final Map<int, List<(int, int, int)>> byCell =
+        <int, List<(int, int, int)>>{};
+    position.forEach(((int, int) key, int progress) {
+      if (progress >= 0 && progress <= 51) {
+        byCell
+            .putIfAbsent(
+              (13 * key.$1 + progress) % 52,
+              () => <(int, int, int)>[],
+            )
+            .add((key.$1, key.$2, progress));
+      }
+    });
+    byCell.forEach((int absolute, List<(int, int, int)> occupants) {
+      if (found == null &&
+          occupants.length <= 4 &&
+          occupants.map(((int, int, int) o) => o.$1).toSet().length >=
+              seatCount) {
+        found = _SharedCellMoment(
+          index: i,
+          seq: d['seq']! as int,
+          rollK: rollK,
+          absolute: absolute,
+          occupants: occupants,
+        );
+      }
+    });
+  }
+  for (final Object? s in game.json['seats']! as List<Object?>) {
+    expect(
+      <int>[for (int t = 0; t < 4; t++) position[(s! as int, t)]!],
+      game.finalTokens(s as int),
+      reason:
+          '$where: folding the recorded moved frames must end on the '
+          'fixture\'s final_tokens for seat $s; the fold is wrong',
+    );
+  }
+  if (found == null) {
+    throw TestFailure(
+      '$where: no moment of the recorded game has tokens of $seatCount '
+      'seats on one main-track cell (at most four tokens in all); report it '
+      'and skip the capture, never fake one',
+    );
+  }
+  return found!;
+}
+
+/// Capture 152 (order 602, C-600 D2). The recorded game four_seats_1 from
+/// [viewerSeat]'s view, replayed up to the first moment tokens of three
+/// different seats share one main-track cell ([_locateSharedCell]), the
+/// capturing roll's throw landed and the move walked. On a 360 dp wide surface
+/// where the harness can set one (not on a real Android device, whose own
+/// size stands; run 124 found an emulator hangs on a forced 360 x 640
+/// surface). Asserted: the three discs of that cell are drawn at 0.5 of a
+/// cell, within one cell of each other, and each carries a `SeatMark` of its
+/// own seat sized 0.62 of the disc, at least 6 dp, painting a `CustomPaint`.
+Future<void> _shootSharedCellThreeSeats(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required int viewerSeat,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final bool realDevice = !kIsWeb && Platform.isAndroid;
+  if (!realDevice) {
+    tester.view.physicalSize = const Size(360, 780);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+  }
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(_replayHome(factory, locale));
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+  addTearDown(() {
+    for (final RoomController c in factory.controllers) {
+      c.dispose();
+    }
+  });
+
+  final String capture = 'capture $shotName';
+  final _RealEntry entry = await _enterRealGame(
+    tester,
+    factory,
+    capture: capture,
+    gameName: 'four_seats_1',
+    seat: viewerSeat,
+    localeName: locale.languageCode,
+  );
+  final RoomController controller = entry.controller;
+  final _SharedCellMoment moment = _locateSharedCell(
+    entry.game,
+    entry.view,
+    seatCount: 3,
+    where: entry.where,
+  );
+  final String where = '${entry.where}; moment $moment';
+  expect(
+    <Object?>{
+      for (final (int seat, int token, int progress) o in moment.occupants)
+        cellFor(seat: o.$1, progress: o.$3, tokenIndex: o.$2),
+    },
+    hasLength(1),
+    reason:
+        '$where: the board geometry must put every occupant in one cell, but '
+        'the absolute-square arithmetic of RULES.md 1.2 says they share one',
+  );
+
+  // The burst stops short of the roll that leads to the moment, the throws
+  // queued land, then that roll goes in and lands, and the move is walked.
+  var rollAt = moment.index - 1;
+  while (rollAt > entry.next && entry.view[rollAt]['t'] != 'rolled') {
+    rollAt--;
+  }
+  while (entry.next < rollAt) {
+    entry.push();
+  }
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilThrownDiceGone(
+    tester,
+    controller,
+    capture: capture,
+    where: '$where; before the roll',
+    maxWallMs: _sharedCellDrainMaxMs,
+  );
+  while (entry.next < moment.index) {
+    entry.push();
+  }
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilThrownDiceGone(
+    tester,
+    controller,
+    capture: capture,
+    where: '$where; the roll',
+    maxWallMs: _sharedCellDrainMaxMs,
+  );
+  var turnAt = moment.index + 1;
+  while (entry.view[turnAt]['t'] != 'turn') {
+    turnAt++;
+  }
+  while (entry.next <= turnAt) {
+    entry.push();
+  }
+  await tester.pump();
+  await tester.pump();
+  expect(
+    controller.hasDesynced,
+    isFalse,
+    reason: '$where: seq gap in the replayed frames',
+  );
+  expect(
+    controller.room?.seq,
+    (entry.view[turnAt]['d']! as Map<String, Object?>)['seq'],
+    reason: '$where: the controller must have absorbed the turn after the move',
+  );
+  expect(entry.transport.sentRaw.map(_typeOf).toList(), <String>[
+    'join_room',
+  ], reason: '$where: the device must have sent only its own join');
+
+  // The truth the board is handed holds the three seats on the cell.
+  final LudoBoard board = tester.widget<LudoBoard>(
+    find.byKey(const Key('game-screen-board')),
+  );
+  for (final (int seat, int token, int progress) o in moment.occupants) {
+    expect(
+      board.tokens[o.$1]![o.$2],
+      o.$3,
+      reason:
+          '$where: the board must hold seat ${o.$1} token ${o.$2} on '
+          'progress ${o.$3}, it holds ${board.tokens[o.$1]}',
+    );
+  }
+
+  // Wait for the walk to land: every disc on the cell takes its shared slot.
+  final Finder boardFinder = find.byKey(const Key('game-screen-board'));
+  Finder discOf(int seat, int token) => find.descendant(
+    of: find.byKey(Key('token-$seat-$token')),
+    matching: find.byType(DecoratedBox),
+  );
+  double cellSize() => tester.getSize(boardFinder).width / 15;
+  bool shared() {
+    for (final (int seat, int token, int progress) o in moment.occupants) {
+      final Finder disc = discOf(o.$1, o.$2);
+      if (disc.evaluate().isEmpty ||
+          (tester.getSize(disc).width - cellSize() * 0.5).abs() > 0.6) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // The landing settles over a few frames (the mover's disc is seen in the
+  // shared slot, then back on the fan, then in the slot for good), so the
+  // slots must hold for six pumps in a row.
+  final Stopwatch waited = Stopwatch()..start();
+  int held = 0;
+  while (held < 6) {
+    if (waited.elapsedMilliseconds > 4000) {
+      fail(
+        '$where: expected the three discs on the cell to hold their 0.5-cell '
+        'shared slots for six frames within 4000 ms of the moved, not so '
+        'after ${waited.elapsedMilliseconds} ms (cell ${cellSize()} dp)',
+      );
+    }
+    held = shared() ? held + 1 : 0;
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  expect(
+    _thrownDice(tester),
+    isEmpty,
+    reason: '$where: no thrown die may be on the board at the shot',
+  );
+
+  final double cell = cellSize();
+  final Size surface = tester.view.physicalSize / tester.view.devicePixelRatio;
+  if (!realDevice) {
+    expect(
+      surface.width,
+      360,
+      reason: '$where: the surface was meant to be 360 dp wide',
+    );
+  }
+  final List<Offset> centres = <Offset>[];
+  final List<String> readings = <String>[];
+  for (final (int seat, int token, int progress) o in moment.occupants) {
+    final Finder disc = discOf(o.$1, o.$2);
+    final double diameter = tester.getSize(disc).width;
+    expect(
+      diameter,
+      closeTo(cell * 0.5, 0.6),
+      reason:
+          '$where: seat ${o.$1} token ${o.$2} must be drawn in the shared '
+          'slot, 0.5 of the ${cell.toStringAsFixed(2)} dp cell, got '
+          '$diameter dp',
+    );
+    final Finder markFinder = find.descendant(
+      of: find.byKey(Key('token-${o.$1}-${o.$2}')),
+      matching: find.byType(SeatMark),
+    );
+    expect(
+      markFinder,
+      findsOneWidget,
+      reason: '$where: seat ${o.$1} token ${o.$2} must carry one SeatMark',
+    );
+    final SeatMark mark = tester.widget<SeatMark>(markFinder);
+    expect(
+      mark.seat,
+      o.$1,
+      reason:
+          '$where: the mark on seat ${o.$1}\'s disc is seat ${mark.seat}\'s',
+    );
+    expect(
+      mark.size,
+      closeTo(diameter * 0.62, 0.01),
+      reason:
+          '$where: C-600 D2, the mark on a shared disc of $diameter dp must '
+          'be 0.62 of it (${diameter * 0.62}), got ${mark.size}',
+    );
+    expect(
+      mark.size,
+      greaterThanOrEqualTo(6),
+      reason:
+          '$where: C-600 D2, the mark on seat ${o.$1}\'s shared disc must '
+          'clear the 6 dp floor, got ${mark.size} dp (board '
+          '${tester.getSize(boardFinder).width} dp wide)',
+    );
+    expect(
+      find.descendant(
+        of: markFinder,
+        matching: find.byWidgetPredicate(
+          (Widget w) => w is CustomPaint && w.painter != null,
+        ),
+      ),
+      findsOneWidget,
+      reason:
+          '$where: C-600 D2, the mark on seat ${o.$1}\'s disc must be a '
+          'painted CustomPaint, not the empty fallback (mark ${mark.size} dp)',
+    );
+    centres.add(tester.getCenter(disc));
+    readings.add(
+      'seat ${o.$1} token ${o.$2}: disc ${diameter.toStringAsFixed(2)} dp, '
+      'mark ${mark.size.toStringAsFixed(2)} dp',
+    );
+  }
+  for (int a = 0; a < centres.length; a++) {
+    for (int b = a + 1; b < centres.length; b++) {
+      expect(
+        (centres[a] - centres[b]).distance,
+        allOf(greaterThan(0), lessThan(cell)),
+        reason:
+            '$where: discs $a and $b must sit on one cell, in different '
+            'slots; centres ${centres[a]} and ${centres[b]}, cell $cell dp',
+      );
+    }
+  }
+
+  // ignore: avoid_print
+  print(
+    'screenshots_test: $capture replays "four_seats_1" from seat $viewerSeat '
+    'to $moment; surface ${surface.width} x ${surface.height} dp'
+    '${realDevice ? ' (a real device, its own size)' : ' (set by the harness)'}'
+    ', board ${tester.getSize(boardFinder).width} dp, cell '
+    '${cell.toStringAsFixed(2)} dp; ${readings.join('; ')}',
+  );
+  await _capture(binding, tester, shotName, frames: 6);
 }

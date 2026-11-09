@@ -292,6 +292,7 @@ class RoomSnapshot {
     required this.winner,
     this.verifyUrl,
     this.recentRolls = const <(int k, int face)>[],
+    this.recentRollSeats = const <int>[],
     this.rematch,
     this.lastSpentFace,
     required this.seq,
@@ -322,6 +323,12 @@ class RoomSnapshot {
   /// Client-only ring of the last three `(k, face)` pairs from `rolled`.
   /// Not a snapshot wire field; [fromJson] always starts this empty.
   final List<(int k, int face)> recentRolls;
+
+  /// Client-only, C-601. The seat that rolled each entry of [recentRolls]:
+  /// entry i is the `rolled` frame's `seat` for `recentRolls[i]`, same
+  /// length and order. Not a snapshot wire field; [fromJson] always starts
+  /// this empty, and every place that resets [recentRolls] resets this too.
+  final List<int> recentRollSeats;
 
   /// docs/PROTOCOL.md section 16.6. Present on the wire in every state, but
   /// decoded here the way every other optional field is: a missing key and
@@ -453,6 +460,7 @@ class RoomSnapshot {
     int? winner,
     String? verifyUrl,
     List<(int k, int face)>? recentRolls,
+    List<int>? recentRollSeats,
     RematchState? rematch,
     Object? lastSpentFace = _unset,
     int? seq,
@@ -472,6 +480,7 @@ class RoomSnapshot {
       winner: winner ?? this.winner,
       verifyUrl: verifyUrl ?? this.verifyUrl,
       recentRolls: recentRolls ?? this.recentRolls,
+      recentRollSeats: recentRollSeats ?? this.recentRollSeats,
       rematch: rematch ?? this.rematch,
       lastSpentFace: identical(lastSpentFace, _unset)
           ? this.lastSpentFace
