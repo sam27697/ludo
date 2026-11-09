@@ -3197,7 +3197,20 @@ class _RingPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Rect rect = (Offset.zero & size).deflate(strokeWidth / 2);
+    // C-604 D1: a near-white stroke 2 dp wider than the coloured band goes
+    // down first, so the band carries a 1 dp light edge on both sides and
+    // reads on a green seat's disc and yard as well as a white square. Both
+    // strokes share one oval, deflated by half the halo, so the wider one
+    // stays inside the box.
+    final double haloWidth = strokeWidth + 2.0;
+    final Rect rect = (Offset.zero & size).deflate(haloWidth / 2);
+    canvas.drawOval(
+      rect,
+      Paint()
+        ..color = LudoColors.actionOn.withValues(alpha: opacity)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = haloWidth,
+    );
     canvas.drawOval(
       rect,
       Paint()
@@ -3232,7 +3245,21 @@ class AutoMoveArcPainter extends CustomPainter {
     if (clamped <= 0) {
       return;
     }
-    final Rect rect = (Offset.zero & size).deflate(strokeWidth / 2);
+    // C-604 D2: the same near-white halo as the ring, same start and sweep,
+    // under the green arc; the rect is deflated by half the halo.
+    final double haloWidth = strokeWidth + 2.0;
+    final Rect rect = (Offset.zero & size).deflate(haloWidth / 2);
+    canvas.drawArc(
+      rect,
+      -math.pi / 2,
+      clamped * 2 * math.pi,
+      false,
+      Paint()
+        ..color = LudoColors.actionOn
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = haloWidth
+        ..strokeCap = StrokeCap.round,
+    );
     canvas.drawArc(
       rect,
       -math.pi / 2,
