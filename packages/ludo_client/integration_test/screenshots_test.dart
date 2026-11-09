@@ -22756,16 +22756,25 @@ const int _friendShotAfterMs = 150;
 /// entrance (C-599 D5a); checked right before the shot.
 const int _friendShotLatestMs = 290;
 
+/// The same under reduced motion, where the glow is held at full strength for
+/// 1200 ms instead: the shot must be inside that hold.
+const int _friendShotLatestReducedMs = 1100;
+
 /// Captures 148, 149 and 149a (order 602, C-599 D5). The device creates a
 /// room of four as the host and sits alone; each of [joins] (seat, name, shot)
 /// is then a `player_joined` pushed with the next `seq`, and the shot is taken
 /// about [_friendShotAfterMs] ms after it. The app is wrapped in a
 /// [FeedbackScope] over a recording service, the way app.dart puts the scope
 /// above the routes, so the one `friend_joined` cue per join is asserted too.
-/// At the shot: the new seat's card is mid-entrance (scale between 0.9 and
-/// 1.0) with its glow on, the seats already at the table have neither, and
+/// At the shot: the new seat's card has its glow on in the seat's colour, the
+/// seats already at the table have neither glow nor scale, and
 /// `lobby-friend-joined-line` reads `lobbyFriendJoined(name)` with that
-/// seat's painted `SeatMark` at its start.
+/// seat's painted `SeatMark` at its start. The card itself is asserted for the
+/// branch the lobby takes, read from `MediaQuery.disableAnimationsOf`: with
+/// motion it is mid-entrance (scale from 0.9 up to, not yet, 1.0) and the shot
+/// is inside the 320 ms entrance; with animations removed (the screenshots
+/// job's emulator) its scale is exactly 1.0 and the shot is inside the 1200 ms
+/// hold of the glow. Which branch ran is printed.
 Future<void> _shootFriendJoined(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -22909,12 +22918,23 @@ Future<void> _shootFriendJoined(
         code: roomCode,
         expectedSeatCount: seated.length,
       );
+      // The screenshots job boots its emulator with animations removed, the
+      // motion jobs do not: the card is asserted for the branch the lobby
+      // itself takes (C-599 D5a), read from its own context.
+      final bool reduced = MediaQuery.disableAnimationsOf(
+        tester.element(find.byType(LobbyScreen)),
+      );
+      final int latestMs = reduced
+          ? _friendShotLatestReducedMs
+          : _friendShotLatestMs;
       expect(
         ageMs,
-        lessThanOrEqualTo(_friendShotLatestMs),
-        reason:
-            '$step: expected the shot within $_friendShotLatestMs ms of the '
-            'push (the entrance lasts 320 ms), got $ageMs ms by wall time',
+        lessThanOrEqualTo(latestMs),
+        reason: reduced
+            ? '$step: expected the shot within $latestMs ms of the push (the '
+                  'held glow lasts 1200 ms), got $ageMs ms by wall time'
+            : '$step: expected the shot within $latestMs ms of the push (the '
+                  'entrance lasts 320 ms), got $ageMs ms by wall time',
       );
 
       // Sound and touch: one friend_joined per join, nothing else.
@@ -23012,14 +23032,25 @@ Future<void> _shootFriendJoined(
       final ScaleTransition entrance = tester.widget<ScaleTransition>(
         find.byKey(Key('lobby-seat-$seat-entrance')),
       );
-      expect(
-        entrance.scale.value,
-        allOf(greaterThanOrEqualTo(0.9), lessThan(1.0)),
-        reason:
-            '$step: C-599 D5a, expected the card mid-entrance (scale from '
-            '0.9 up to 1.0, not yet there) $ageMs ms after the join, got '
-            '${entrance.scale.value}',
-      );
+      if (reduced) {
+        expect(
+          entrance.scale.value,
+          1.0,
+          reason:
+              '$step: C-599 D5a, under reduced motion the card appears at '
+              'once with no scale, expected exactly 1.0 $ageMs ms after the '
+              'join, got ${entrance.scale.value}',
+        );
+      } else {
+        expect(
+          entrance.scale.value,
+          allOf(greaterThanOrEqualTo(0.9), lessThan(1.0)),
+          reason:
+              '$step: C-599 D5a, expected the card mid-entrance (scale from '
+              '0.9 up to 1.0, not yet there) $ageMs ms after the join, got '
+              '${entrance.scale.value}',
+        );
+      }
       expect(
         find.byKey(Key('lobby-seat-$seat-glow')),
         findsOneWidget,
@@ -23061,7 +23092,9 @@ Future<void> _shootFriendJoined(
 
       // ignore: avoid_print
       print(
-        'screenshots_test: $step: shot $ageMs ms after the push, card scale '
+        'screenshots_test: $step: ${reduced ? 'reduced motion (disableAnimations '
+                  'true): card at once, glow held' : 'full motion: card mid-entrance'}, '
+        'shot $ageMs ms after the push, card scale '
         '${entrance.scale.value.toStringAsFixed(3)}, glow on, line '
         '"$expectedLine", cues ${cues.played.map((FeedbackCue c) => c.name).toList()}',
       );
