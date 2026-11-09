@@ -3370,16 +3370,16 @@ class _StarPainter extends CustomPainter {
       oldDelegate.color != color;
 }
 
+/// How much of its colour a seat that is not in play keeps: yard, home
+/// column and entry square all use it. C-248 rule 4, C-600 D1.
+const double _kAbsentSeatFade = 0.35;
+
 /// Paints the static board: the grid, the four yards, the shared track, the
 /// four home columns and the centre. None of this determines where a token
 /// goes; it is drawn from the same [cellFor] a token uses, so the background
 /// and the tokens can never show a track that disagrees with each other.
 ///
 /// Seat fills and board inks come from [LudoColors]: one paintbox with theme.
-/// How much of its colour a seat that is not in play keeps: yard, home
-/// column and entry square all use it. C-248 rule 4, C-600 D1.
-const double _kAbsentSeatFade = 0.35;
-
 class _BoardPainter extends CustomPainter {
   const _BoardPainter({required this.seatsInPlay, this.mySeat});
 
