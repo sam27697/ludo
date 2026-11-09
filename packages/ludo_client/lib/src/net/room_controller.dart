@@ -1404,6 +1404,7 @@ class RoomController extends ChangeNotifier {
       turn: turn,
       seq: seqValue,
       recentRolls: const <(int k, int face)>[],
+      recentRollSeats: const <int>[],
     );
     _clearLastFinished();
     notifyListeners();
@@ -1563,6 +1564,7 @@ class RoomController extends ChangeNotifier {
       turn: turn,
       seq: seqValue,
       recentRolls: _appendRecentRoll(room.recentRolls, k, value),
+      recentRollSeats: _appendRecentRollSeat(room.recentRollSeats, seatValue),
       lastSpentFace: null,
     );
     notifyListeners();
@@ -2040,6 +2042,14 @@ List<(int k, int face)> _appendRecentRoll(
 ) {
   final List<(int k, int face)> next = List<(int k, int face)>.from(current)
     ..add((k, face));
+  const int limit = 3;
+  return next.length <= limit ? next : next.sublist(next.length - limit);
+}
+
+/// C-601: the seat that rolled, kept beside [_appendRecentRoll] with the
+/// same three-entry limit so the two lists stay the same length.
+List<int> _appendRecentRollSeat(List<int> current, int seat) {
+  final List<int> next = List<int>.from(current)..add(seat);
   const int limit = 3;
   return next.length <= limit ? next : next.sublist(next.length - limit);
 }
