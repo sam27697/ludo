@@ -232,5 +232,7 @@
   "gameYouAreNextAnnounce": "أنت التالي",
   "endRematchMayStartWithout": "قد تبدأ الجولة التالية دونك",
   "endRematchSitsOut": "خارج الجولة التالية: {names}",
-  "gameSeatMoved": "لونك الآن: {colour, select, red{الأحمر} green{الأخضر} yellow{الأصفر} blue{الأزرق} other{لون جديد}}"
+  "gameSeatMoved": "لونك الآن: {colour, select, red{الأحمر} green{الأخضر} yellow{الأصفر} blue{الأزرق} other{لون جديد}}",
+  "lobbyFriendJoined": "انضمّ {name}",
+  "gameRollHistoryEntrySpoken": "الرمية {k}: {face} لـ{name}"
 }
