@@ -6636,6 +6636,18 @@ class _GameScreenState extends State<GameScreen> {
     }
     final int? winnerSeat = winnerName == null ? null : finished.winner;
 
+    // C-606 D1: the ready chips and the sits-out list name whoever holds the
+    // seat now. A seat the live room does not name keeps the finished game's
+    // name; every other line on the card stays on finishedNames.
+    final Map<int, String> rematchSeatNames = <int, String>{
+      ...finishedNames,
+      for (final MapEntry<int, String> live in seatLabelsFor(
+        context,
+        room.seats,
+      ).entries)
+        if (live.value.trim().isNotEmpty) live.key: live.value,
+    };
+
     final RematchState? rematch = room.rematch;
     final String? rematchByName = _rematchByNameOf(context, room, finished);
 
@@ -6705,7 +6717,7 @@ class _GameScreenState extends State<GameScreen> {
         rematch: rematch,
         rematchByName: rematchByName,
         occupiedSeats: _seatsInPlayOf(room),
-        seatNames: finishedNames,
+        seatNames: rematchSeatNames,
         isHost: controller.isHost,
         hostSeat: _liveHostSeat(controller),
         rematchGone: rematchGone,
