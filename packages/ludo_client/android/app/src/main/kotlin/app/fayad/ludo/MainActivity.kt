@@ -46,6 +46,7 @@ class MainActivity : FlutterActivity() {
         "game_over" to longArrayOf(0, 90),
         "invalid_tap" to longArrayOf(0, 10),
         "tap" to longArrayOf(0, 14),
+        "friend_joined" to longArrayOf(0, 40),
     )
 
     // Same ids, 0..255 amplitude per segment of hapticTimings, used only
@@ -62,6 +63,7 @@ class MainActivity : FlutterActivity() {
         "game_over" to intArrayOf(0, 70),
         "invalid_tap" to intArrayOf(0, 50),
         "tap" to intArrayOf(0, 80),
+        "friend_joined" to intArrayOf(0, 160),
     )
 
     // Every id except invalid_tap and tap (doctrine section 3's table:
@@ -81,6 +83,7 @@ class MainActivity : FlutterActivity() {
         "die_land" to R.raw.fb_die_land,
         "gloat" to R.raw.fb_gloat,
         "capture_seen" to R.raw.fb_captured_other,
+        "friend_joined" to R.raw.fb_friend_joined,
     )
 
     // A capture between two other seats plays the capture clip at half
