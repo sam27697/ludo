@@ -26,6 +26,7 @@ import 'game_stats.dart';
 import 'net/snapshot.dart' show RematchState;
 import 'quick_chat.dart';
 import 'refusal_mark.dart';
+import 'seat_entrance.dart';
 import 'seat_mark.dart';
 import 'theme.dart';
 import 'verify_rolls_button.dart';
@@ -63,6 +64,25 @@ class _EndCardFrameScope extends InheritedWidget {
 
   @override
   bool updateShouldNotify(_EndCardFrameScope oldWidget) => false;
+}
+
+/// C-605 D1: a seat that sat down at the rematch table, as the game screen
+/// resolved it. [serial] counts joins, so a second join is a new line even
+/// when it names the same seat.
+class EndCardJoin {
+  const EndCardJoin({
+    required this.seat,
+    required this.name,
+    required this.serial,
+  });
+
+  /// 0..3, the seat whose colour disc and mark the line carries.
+  final int seat;
+
+  /// The label the room shows for that seat.
+  final String name;
+
+  final int serial;
 }
 
 /// Built by `GameScreen._gameOverBody`; never constructed from a
@@ -190,6 +210,11 @@ class EndCard extends StatefulWidget {
   /// it. Null draws the sheet the same and tracks nothing.
   final void Function(Route<void> route)? onFairHintRoute;
 
+  /// C-605 D1: the seat that has just sat down at the rematch table, shown as
+  /// a line above the ready chips while the caller holds it. Null draws no
+  /// line. The caller owns the line's lifetime.
+  final EndCardJoin? friendJoined;
+
   const EndCard({
     super.key,
     required this.mySeat,
@@ -218,6 +243,7 @@ class EndCard extends StatefulWidget {
     this.quickReplyCooling = false,
     this.onFairHintRoute,
     this.hostSeat,
+    this.friendJoined,
   });
 
   @override
@@ -251,6 +277,13 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
   /// inside the card runs after the build has finished, so the lines read
   /// this field, never `_onScreen`.
   bool _arriving = false;
+
+  /// C-605 D1: the seats occupied when the previous build ran, and the ones
+  /// that were not: a ready chip for a seat in [_freshSeats] enters with a
+  /// [SeatEntrance]. Both are read by the chips during the build that sets
+  /// them.
+  Set<int> _builtSeats = <int>{};
+  Set<int> _freshSeats = <int>{};
 
   /// True while the finished scroll still has content below the viewport,
   /// so the dock can show a soft top shadow. False when the scroll is at
@@ -312,6 +345,9 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
   Widget build(BuildContext context) {
     _arriving = _onScreen;
     _onScreen = true;
+    final Set<int> occupied = widget.occupiedSeats.toSet();
+    _freshSeats = _arriving ? occupied.difference(_builtSeats) : <int>{};
+    _builtSeats = occupied;
     final AppLocalizations loc = AppLocalizations.of(context);
     final bool isWinner =
         widget.winnerSeat != null && widget.winnerSeat == widget.mySeat;
@@ -934,6 +970,7 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: kSpace2),
+          _friendJoinedSlot(context, loc),
           _readyChipsRow(loc, rematch),
           if (offerStart) ...<Widget>[
             const SizedBox(height: kSpace3),
@@ -969,6 +1006,7 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
               leftLine,
               const SizedBox(height: kSpace3),
             ],
+            _friendJoinedSlot(context, loc),
             if (mayStart) ...<Widget>[
               _mayStartLine(context, loc),
               const SizedBox(height: kSpace2),
@@ -1020,8 +1058,10 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
           ),
           if (widget.occupiedSeats.length >= 3) ...<Widget>[
             const SizedBox(height: kSpace3),
+            _friendJoinedSlot(context, loc),
             _readyChipsRow(loc, rematch),
-          ],
+          ] else
+            _friendJoinedSlot(context, loc),
           const SizedBox(height: kSpace3),
           if (mayStart) ...<Widget>[
             _mayStartLine(context, loc),
@@ -1131,7 +1171,7 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
     final String label = ready
         ? loc.endRematchSeatReady(name ?? '')
         : loc.endRematchSeatWaiting(name ?? '');
-    return Semantics(
+    final Widget chip = Semantics(
       key: Key('end-card-ready-$seat'),
       container: true,
       label: label,
@@ -1185,6 +1225,103 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
           ),
         ),
       ),
+    );
+    // C-605 D1: the chip of a seat that sat down after the card first built
+    // enters the way the lobby's seat card does. Chips the card was first
+    // drawn with sit at their end state; the wrapper is always there, so a
+    // later rebuild never changes the tree under a chip.
+    return SeatEntrance(
+      key: ValueKey<String>('end-card-ready-entrance-$seat'),
+      seat: seat,
+      entering:
+          _arriving &&
+          (_freshSeats.contains(seat) || widget.friendJoined?.seat == seat),
+      child: chip,
+    );
+  }
+
+  /// C-605 D1: "Karim joined" above the ready chips, the joined seat's disc
+  /// with its mark at the start and the text in ink, the same line the first
+  /// lobby shows. The slot is always in the column, so the line grows into
+  /// place and collapses when the caller drops it, instead of the chips
+  /// jumping. It is out of the semantics tree: a screen reader hears the same
+  /// text once, as the announcement the game screen sends with the join.
+  Widget _friendJoinedSlot(BuildContext context, AppLocalizations loc) {
+    final EndCardJoin? join = widget.friendJoined;
+    final bool still = MediaQuery.disableAnimationsOf(context);
+    final Duration motion = still ? Duration.zero : kMotionShort;
+    final Widget content = join == null
+        ? const SizedBox(width: double.infinity)
+        : KeyedSubtree(
+            key: ValueKey<int>(join.serial),
+            child: ExcludeSemantics(
+              child: TweenAnimationBuilder<double>(
+                key: const Key('end-card-friend-joined-line'),
+                tween: Tween<double>(begin: 0, end: 1),
+                duration: motion,
+                curve: Curves.easeOut,
+                builder: (BuildContext context, double t, Widget? line) =>
+                    Opacity(opacity: t, child: line),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: kSpace2),
+                  child: Center(child: _friendJoinedRow(context, loc, join)),
+                ),
+              ),
+            ),
+          );
+    // AnimatedSize asserts on a zero duration, so under reduced motion the
+    // line simply is or is not there.
+    return still
+        ? content
+        : AnimatedSize(
+            duration: motion,
+            alignment: Alignment.topCenter,
+            child: content,
+          );
+  }
+
+  Widget _friendJoinedRow(
+    BuildContext context,
+    AppLocalizations loc,
+    EndCardJoin join,
+  ) {
+    final String text = loc.lobbyFriendJoined(join.name);
+    final TextStyle? base = Theme.of(context).textTheme.bodyMedium
+        ?.copyWith(color: LudoColors.ink, fontWeight: FontWeight.w600);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: _seatColor(join.seat),
+            shape: BoxShape.circle,
+          ),
+          child: SizedBox.square(
+            dimension: kSpace5,
+            child: Center(child: SeatMark(seat: join.seat, size: 10)),
+          ),
+        ),
+        const SizedBox(width: kSpace2),
+        Flexible(
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              return Text(
+                text,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: _fitTitleFontSize(
+                  text: text,
+                  base: base,
+                  maxWidth: constraints.maxWidth,
+                  scaler: MediaQuery.textScalerOf(context),
+                  direction: Directionality.of(context),
+                  locale: Localizations.maybeLocaleOf(context),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 

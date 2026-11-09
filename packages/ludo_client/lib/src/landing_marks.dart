@@ -224,6 +224,7 @@ class CapturedFlashMark extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final double side = constraints.biggest.shortestSide;
+            final double ringWidth = math.max(2.0, side * 0.1);
             return Stack(
               fit: StackFit.expand,
               clipBehavior: Clip.none,
@@ -236,14 +237,45 @@ class CapturedFlashMark extends StatelessWidget {
                 ),
                 Transform.scale(
                   scale: ringScale,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: LudoColors.error.withValues(alpha: ringOpacity),
-                        width: math.max(2.0, side * 0.1),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    clipBehavior: Clip.none,
+                    children: <Widget>[
+                      // C-604 D3: a near-white circle 2 dp wider in border
+                      // and 1 dp larger on every side, so the red band
+                      // carries a light edge on both of its sides. It
+                      // shares the ring's scale, centre and opacity.
+                      Positioned(
+                        left: -1,
+                        top: -1,
+                        right: -1,
+                        bottom: -1,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: LudoColors.actionOn.withValues(
+                                alpha: ringOpacity,
+                              ),
+                              width: ringWidth + 2.0,
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
+                      Positioned.fill(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: LudoColors.error.withValues(
+                                alpha: ringOpacity,
+                              ),
+                              width: ringWidth,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],

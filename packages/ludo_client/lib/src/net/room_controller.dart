@@ -1246,7 +1246,8 @@ class RoomController extends ChangeNotifier {
   /// -1..3; absent leaves `hostSeat` as it was. Any other value is treated as
   /// a malformed frame (no state change). A seat absent from `room.seats` is
   /// ignored entirely, ahead of the gap check, matching the behaviour
-  /// `presence` has always had.
+  /// `presence` has always had. A leaving seat that was in `rematch.ready` is
+  /// taken out of it (C-607); `by` is kept as it was.
   void _reducePlayerLeft(Frame frame, RoomSnapshot room) {
     final int? seatValue = _asInt(frame.data, 'seat');
     final int? seqValue = frame.seq;
@@ -1279,7 +1280,25 @@ class RoomController extends ChangeNotifier {
 
     final List<SeatState> seats = List<SeatState>.from(room.seats)
       ..removeAt(index);
-    _room = room.copyWith(seats: seats, hostSeat: hostSeat, seq: seqValue);
+    // The server drops a departing seat from `rematch.ready` and sends only
+    // this frame (section 16.6), so the phone drops the mark too; `by` stays.
+    final RematchState? rematch = room.rematch;
+    final RematchState? nextRematch =
+        rematch != null && rematch.ready.contains(seatValue)
+        ? RematchState(
+            by: rematch.by,
+            ready: <int>[
+              for (final int s in rematch.ready)
+                if (s != seatValue) s,
+            ],
+          )
+        : null;
+    _room = room.copyWith(
+      seats: seats,
+      hostSeat: hostSeat,
+      rematch: nextRematch,
+      seq: seqValue,
+    );
     notifyListeners();
   }
 
