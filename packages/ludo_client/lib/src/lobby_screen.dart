@@ -193,11 +193,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
   final Map<int, GlobalKey> _entranceKeys = <int, GlobalKey>{};
 
   /// C-599 D5(b), (c): the seat the "joined" line is about, while it shows,
-  /// and whether its announcement is still owed. The name is read from the
-  /// room at build time, because the frame reaches this screen before the
-  /// controller has added the seat.
+  /// and the seats whose announcement is still owed, in arrival order. The
+  /// name is read from the room at build time, because the frame reaches
+  /// this screen before the controller has added the seat; two joins can
+  /// land before the next build, so each owes its own announcement.
   int? _joinedSeat;
-  bool _joinedAnnouncePending = false;
+  final List<int> _joinedAnnounceQueue = <int>[];
   Timer? _joinedTimer;
 
   @override
@@ -341,12 +342,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
       }
       setState(() {
         _joinedSeat = null;
-        _joinedAnnouncePending = false;
+        _joinedAnnounceQueue.clear();
       });
     });
     setState(() {
       _joinedSeat = seat;
-      _joinedAnnouncePending = true;
+      _joinedAnnounceQueue.add(seat);
     });
   }
 
@@ -1282,6 +1283,36 @@ class _LobbyScreenState extends State<LobbyScreen> {
     );
   }
 
+  /// C-599 D5(c): speaks, in arrival order, the join of every queued seat
+  /// that is now in [room], each with its own seat's label. A seat is
+  /// taken off the queue as it is scheduled, so a second build in the same
+  /// frame announces nothing twice. The drain stops at the first seat the
+  /// room does not hold yet, so a later join is never spoken ahead of it.
+  void _drainJoinAnnouncements(AppLocalizations loc, RoomSnapshot room) {
+    if (_joinedAnnounceQueue.isEmpty) {
+      return;
+    }
+    final Map<int, String> labels = seatLabelsFor(context, room.seats);
+    while (_joinedAnnounceQueue.isNotEmpty) {
+      final String? name = labels[_joinedAnnounceQueue.first];
+      if (name == null) {
+        return;
+      }
+      _joinedAnnounceQueue.removeAt(0);
+      final String text = loc.lobbyFriendJoined(name);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        SemanticsService.sendAnnouncement(
+          View.of(context),
+          text,
+          Directionality.of(context),
+        );
+      });
+    }
+  }
+
   /// C-599 D5(b), (c): "Karim joined" directly under the seat grid, the
   /// joining seat's mark at its start and the text in ink, for
   /// [kFriendJoinedLineHold]; a newer join replaces it. The name is the
@@ -1294,19 +1325,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         ? null
         : seatLabelsFor(context, room.seats)[seat];
     final String? text = name == null ? null : loc.lobbyFriendJoined(name);
-    if (text != null && _joinedAnnouncePending) {
-      _joinedAnnouncePending = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) {
-          return;
-        }
-        SemanticsService.sendAnnouncement(
-          View.of(context),
-          text,
-          Directionality.of(context),
-        );
-      });
-    }
+    _drainJoinAnnouncements(loc, room);
     final bool still = MediaQuery.disableAnimationsOf(context);
     final Duration motion = still ? Duration.zero : kMotionShort;
     final Widget content = seat == null || text == null
