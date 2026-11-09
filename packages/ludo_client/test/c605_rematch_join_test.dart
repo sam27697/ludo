@@ -49,7 +49,7 @@ import 'package:ludo_client/src/net/snapshot.dart';
 import 'package:ludo_client/src/net/transport.dart';
 import 'package:ludo_client/src/seat_entrance.dart';
 import 'package:ludo_client/src/seat_mark.dart';
-import 'package:ludo_client/src/theme.dart' show buildAppTheme;
+import 'package:ludo_client/src/theme.dart' show buildAppTheme, kMotionShort;
 
 import 'net/fake_transport.dart';
 
@@ -589,20 +589,57 @@ void main() {
         );
 
         // The chips row is the first chip's row: its top is the chips' top.
-        double chipsTop = double.infinity;
-        for (final int seat in <int>[0, 1, 2]) {
-          expect(
-            find.byKey(_chipKey(seat)),
-            findsOneWidget,
-            reason:
-                'fixture: a ready chip for seat $seat (the joined seat has '
-                'one); ${rig.scn.why}',
-          );
-          final double top = tester.getRect(find.byKey(_chipKey(seat))).top;
-          if (top < chipsTop) {
-            chipsTop = top;
+        double chipsTopNow() {
+          double top = double.infinity;
+          for (final int seat in <int>[0, 1, 2]) {
+            expect(
+              find.byKey(_chipKey(seat)),
+              findsOneWidget,
+              reason:
+                  'fixture: a ready chip for seat $seat (the joined seat has '
+                  'one); ${rig.scn.why}',
+            );
+            final double t = tester.getRect(find.byKey(_chipKey(seat))).top;
+            if (t < top) {
+              top = t;
+            }
           }
+          return top;
         }
+
+        // In motion (the frame of the push) the join slot is still growing
+        // and clips its child, so only the clipped part is drawn: what is
+        // visible must never cross the chips' top.
+        final Finder slot = find.ancestor(
+          of: rig.line,
+          matching: find.byType(AnimatedSize),
+        );
+        expect(
+          slot,
+          findsOneWidget,
+          reason:
+              'fixture: the line sits in one growing slot (AnimatedSize); '
+              '${rig.scn.why}',
+        );
+        final double motionChipsTop = chipsTopNow();
+        final double visibleBottom = tester
+            .getRect(rig.line)
+            .intersect(tester.getRect(slot))
+            .bottom;
+        expect(
+          visibleBottom,
+          lessThanOrEqualTo(motionChipsTop + 0.5),
+          reason:
+              'C-605 D1: while the slot grows, the visible part of the line '
+              'stays above the ready chips row (visible bottom '
+              '$visibleBottom, chips top $motionChipsTop); ${rig.scn.why}',
+        );
+
+        // Settled: pump past the slot's growth, then the whole line is above
+        // the chips, directly.
+        await rig.pump(kMotionShort.inMilliseconds + 50);
+        await rig.pump();
+        final double chipsTop = chipsTopNow();
         final Rect lineRect = tester.getRect(rig.line);
         expect(
           lineRect.bottom,
