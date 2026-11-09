@@ -42,7 +42,8 @@ import 'feedback.dart';
 import 'game_die.dart';
 import 'game_stats.dart';
 import 'hint_button.dart';
-import 'lobby_screen.dart' show lobbyErrorMessage, seatLabelsFor;
+import 'lobby_screen.dart'
+    show kFriendJoinedLineHold, lobbyErrorMessage, seatLabelsFor;
 import 'move_hint.dart';
 import 'net/connection.dart';
 import 'net/frame.dart';
@@ -620,6 +621,13 @@ class _GameScreenState extends State<GameScreen> {
   Timer? _endHoldDwellTimer;
   Timer? _endHoldLimitTimer;
 
+  // C-605 D1: the seat that sat down at the rematch table, for the line the
+  // end card shows above its ready chips. [_rematchJoinSerial] counts joins,
+  // so a second join restarts the line's entrance as well as its hold.
+  EndCardJoin? _rematchJoin;
+  int _rematchJoinSerial = 0;
+  Timer? _rematchJoinTimer;
+
   // C-272 rule 4: true while the leave confirmation sheet is open, so a
   // second tap on the corner leave icon does not open a second sheet.
   bool _isLeaveConfirmOpen = false;
@@ -747,6 +755,7 @@ class _GameScreenState extends State<GameScreen> {
     _clearSafeCue();
     _endHoldDwellTimer?.cancel();
     _endHoldLimitTimer?.cancel();
+    _rematchJoinTimer?.cancel();
     _heldGameOverCues.clear();
     _isEndHeld = false;
     _mountTurnFrame = null;
@@ -961,6 +970,10 @@ class _GameScreenState extends State<GameScreen> {
         _playCue(feedback, cue, moverSeat: moverSeat, victimSeat: victimSeat);
       }
     }
+    if (frame.type == 'player_joined' &&
+        cues.contains(FeedbackCue.friendJoined)) {
+      _onRematchJoin(frame);
+    }
     // C-468 D4: my own roll that left neither canMove nor noMove after the
     // queue filter. Those two clips are themselves the landing.
     _maybePlayOwnDieLand(frame, cues);
@@ -1045,6 +1058,43 @@ class _GameScreenState extends State<GameScreen> {
     for (final FeedbackCue cue in cues) {
       _playCue(feedback, cue, moverSeat: moverSeat, victimSeat: victimSeat);
     }
+  }
+
+  /// C-605 D1: another seat sat down while the end card is up, so the card
+  /// says who, for [kFriendJoinedLineHold], and a screen reader hears the same
+  /// text once. The cue itself was played by the caller exactly as before
+  /// (D2); outside the end card nothing is shown or spoken. The name is the
+  /// live room's label for the seat, the frame's own name when the room has
+  /// not taken the seat yet.
+  void _onRematchJoin(Frame frame) {
+    if (!mounted || !_endCardOnScreen()) {
+      return;
+    }
+    final int? seat = _intAt(frame.data, 'seat');
+    if (seat == null || seat < 0 || seat >= LudoColors.seats.length) {
+      return;
+    }
+    final String name =
+        _seatNameFor(seat) ?? _stringAt(frame.data, 'name') ?? '';
+    if (name.isEmpty) {
+      return;
+    }
+    _rematchJoinTimer?.cancel();
+    _rematchJoinTimer = Timer(kFriendJoinedLineHold, () {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _rematchJoin = null);
+    });
+    setState(() {
+      _rematchJoinSerial += 1;
+      _rematchJoin = EndCardJoin(
+        seat: seat,
+        name: name,
+        serial: _rematchJoinSerial,
+      );
+    });
+    _announce(AppLocalizations.of(context).lobbyFriendJoined(name));
   }
 
   /// C-337 rule 1: the one place a cue is both played through the feedback
@@ -2187,6 +2237,9 @@ class _GameScreenState extends State<GameScreen> {
   /// rematch LOBBY in between), which a new game always passes through
   /// first.
   void _resetForNewGame() {
+    _rematchJoinTimer?.cancel();
+    _rematchJoinTimer = null;
+    _rematchJoin = null;
     _noMoveTimer?.cancel();
     _noMoveTimer = null;
     _noMoveVisible = false;
@@ -6672,6 +6725,7 @@ class _GameScreenState extends State<GameScreen> {
         onQuickReply: _onChatPick,
         quickReplyCooling: _chatCooling,
         onFairHintRoute: (Route<void> route) => _fairHintRoute = route,
+        friendJoined: _rematchJoin,
       ),
       trailing: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
