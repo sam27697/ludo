@@ -6,17 +6,21 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../l10n/gen/app_localizations.dart';
 import 'die_mark.dart';
+import 'feedback.dart';
 import 'game_screen.dart' show GameScreenResult;
 import 'net/connection.dart' show RoomToggles;
 import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
 import 'seat_card.dart';
+import 'seat_entrance.dart';
+import 'seat_mark.dart';
 import 'seat_names.dart';
 import 'sound_toggle.dart';
 import 'rule_off_strike.dart';
@@ -67,6 +71,9 @@ Map<int, String> seatLabelsFor(
         loc.seatNameNumbered(name, material.formatDecimal(number)),
   );
 }
+
+/// C-599 D5(b): how long the "Karim joined" line stays under the seat grid.
+const Duration kFriendJoinedLineHold = Duration(milliseconds: 2500);
 
 /// Maps a RoomController error code to a localised message. Pure and
 /// top-level so it can be tested without pumping a widget.
@@ -175,6 +182,25 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// the route, so a second such frame does nothing.
   bool _removedLeaveHandled = false;
 
+  /// C-599 D5(a): the seats the grid has already drawn. Null until the grid
+  /// first builds with a room; the seats it holds then are the ones that do
+  /// not animate. A seat that leaves drops out, so its next occupant does.
+  Set<int>? _drawnSeats;
+
+  /// The entrance widgets keep one state per seat through any regrouping of
+  /// the grid (two to a row, one to a row), so a card mid-entrance is never
+  /// restarted by a neighbour joining.
+  final Map<int, GlobalKey> _entranceKeys = <int, GlobalKey>{};
+
+  /// C-599 D5(b), (c): the seat the "joined" line is about, while it shows,
+  /// and the seats whose announcement is still owed, in arrival order. The
+  /// name is read from the room at build time, because the frame reaches
+  /// this screen before the controller has added the seat; two joins can
+  /// land before the next build, so each owes its own announcement.
+  int? _joinedSeat;
+  final List<int> _joinedAnnounceQueue = <int>[];
+  Timer? _joinedTimer;
+
   @override
   void initState() {
     super.initState();
@@ -185,6 +211,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   @override
   void dispose() {
+    _joinedTimer?.cancel();
     _framesSubscription?.cancel();
     _framesSubscription = null;
     widget.controller.removeListener(_onControllerChanged);
@@ -267,6 +294,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
   // C-316 rule 3: a player_left naming this seat while in lobby leaves with
   // GameScreenResult.removed (C-533 D1: through _leaveWith, once).
   void _onFrame(Frame frame) {
+    if (frame.type == 'player_joined') {
+      _onFriendJoined(frame);
+      return;
+    }
     if (frame.type == 'player_left') {
       final dynamic seatValue = frame.data['seat'];
       final int? seat = seatValue is int
@@ -281,6 +312,43 @@ class _LobbyScreenState extends State<LobbyScreen> {
         }
       }
     }
+  }
+
+  /// C-599 D4, D5: a friend sat down while this phone waits in the lobby.
+  /// The cue goes through the one feedback service, once for the frame; the
+  /// line under the grid restarts for the newest join, and its spoken twin
+  /// goes out from [_seatGrid] once the seat is in the room.
+  void _onFriendJoined(Frame frame) {
+    final RoomController controller = widget.controller;
+    if (!mounted || controller.room?.state != RoomState.lobby) {
+      return;
+    }
+    final List<FeedbackCue> cues = cuesForFrame(frame, mySeat: controller.seat);
+    if (cues.isEmpty) {
+      return;
+    }
+    final FeedbackService feedback = FeedbackScope.of(context);
+    for (final FeedbackCue cue in cues) {
+      feedback.play(cue);
+    }
+    final int seat = frame.data['seat'] as int;
+    if (seat < 0 || seat >= LudoColors.seats.length) {
+      return;
+    }
+    _joinedTimer?.cancel();
+    _joinedTimer = Timer(kFriendJoinedLineHold, () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _joinedSeat = null;
+        _joinedAnnounceQueue.clear();
+      });
+    });
+    setState(() {
+      _joinedSeat = seat;
+      _joinedAnnounceQueue.add(seat);
+    });
   }
 
   /// The one request this screen ever issues on its own initiative: the
@@ -961,6 +1029,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   ),
                   SizedBox(height: compact ? kSpace1 : kSpace6),
                   _seatGrid(loc, room, controller),
+                  _friendJoinedLine(loc, room),
                   // C-523 D6: a default room shows no rule chip; only a room
                   // an older client created with the bonus off says so.
                   if (!room.rules.captureBonus) ...[
@@ -1141,14 +1210,29 @@ class _LobbyScreenState extends State<LobbyScreen> {
   ) {
     final int openCount = room.players - room.seats.length;
     final Map<int, String> labels = seatLabelsFor(context, room.seats);
+    // C-599 D5(a): a seat the grid has not drawn before enters; the seats
+    // present when the grid first builds do not.
+    final Set<int> current = <int>{
+      for (final SeatState seat in room.seats) seat.seat,
+    };
+    final Set<int> drawnBefore = _drawnSeats ?? current;
+    _drawnSeats = current;
+    _entranceKeys.removeWhere(
+      (int seat, GlobalKey _) => !current.contains(seat),
+    );
     final List<Widget> cards = [
       for (final SeatState seat in room.seats)
-        SeatCard(
-          seat: seat,
-          displayName: labels[seat.seat],
-          isMine: controller.seat == seat.seat,
-          isHost: seat.seat == room.hostSeat,
-          youLabel: loc.seatYou,
+        SeatEntrance(
+          key: _entranceKeys.putIfAbsent(seat.seat, () => GlobalKey()),
+          seat: seat.seat,
+          entering: !drawnBefore.contains(seat.seat),
+          child: SeatCard(
+            seat: seat,
+            displayName: labels[seat.seat],
+            isMine: controller.seat == seat.seat,
+            isHost: seat.seat == room.hostSeat,
+            youLabel: loc.seatYou,
+          ),
         ),
       for (int i = 0; i < openCount; i++)
         OpenSeatCard(index: i, label: loc.lobbyOpenSeat),
@@ -1197,6 +1281,104 @@ class _LobbyScreenState extends State<LobbyScreen> {
         return Column(children: rows);
       },
     );
+  }
+
+  /// C-599 D5(c): speaks, in arrival order, the join of every queued seat
+  /// that is now in [room], each with its own seat's label. A seat is
+  /// taken off the queue as it is scheduled, so a second build in the same
+  /// frame announces nothing twice. The drain stops at the first seat the
+  /// room does not hold yet, so a later join is never spoken ahead of it.
+  void _drainJoinAnnouncements(AppLocalizations loc, RoomSnapshot room) {
+    if (_joinedAnnounceQueue.isEmpty) {
+      return;
+    }
+    final Map<int, String> labels = seatLabelsFor(context, room.seats);
+    while (_joinedAnnounceQueue.isNotEmpty) {
+      final String? name = labels[_joinedAnnounceQueue.first];
+      if (name == null) {
+        return;
+      }
+      _joinedAnnounceQueue.removeAt(0);
+      final String text = loc.lobbyFriendJoined(name);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        SemanticsService.sendAnnouncement(
+          View.of(context),
+          text,
+          Directionality.of(context),
+        );
+      });
+    }
+  }
+
+  /// C-599 D5(b), (c): "Karim joined" directly under the seat grid, the
+  /// joining seat's mark at its start and the text in ink, for
+  /// [kFriendJoinedLineHold]; a newer join replaces it. The name is the
+  /// label that seat's card shows. The line is out of the semantics tree:
+  /// TalkBack hears the same text once, as an announcement, sent here after
+  /// the frame in which the seat first shows up in the room.
+  Widget _friendJoinedLine(AppLocalizations loc, RoomSnapshot room) {
+    final int? seat = _joinedSeat;
+    final String? name = seat == null
+        ? null
+        : seatLabelsFor(context, room.seats)[seat];
+    final String? text = name == null ? null : loc.lobbyFriendJoined(name);
+    _drainJoinAnnouncements(loc, room);
+    final bool still = MediaQuery.disableAnimationsOf(context);
+    final Duration motion = still ? Duration.zero : kMotionShort;
+    final Widget content = seat == null || text == null
+        ? const SizedBox(width: double.infinity)
+        : ExcludeSemantics(
+            child: TweenAnimationBuilder<double>(
+              key: const Key('lobby-friend-joined-line'),
+              tween: Tween<double>(begin: 0, end: 1),
+              duration: motion,
+              curve: Curves.easeOut,
+              builder: (BuildContext context, double t, Widget? line) =>
+                  Opacity(opacity: t, child: line),
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: kSpace2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: LudoColors.seats[seat],
+                        shape: BoxShape.circle,
+                      ),
+                      child: SizedBox.square(
+                        dimension: kSpace5,
+                        child: Center(child: SeatMark(seat: seat, size: 10)),
+                      ),
+                    ),
+                    const SizedBox(width: kSpace2),
+                    Flexible(
+                      child: Text(
+                        text,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: LudoColors.ink,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+    // AnimatedSize asserts on a zero duration, so under reduced motion the
+    // line simply is or is not there.
+    return still
+        ? content
+        : AnimatedSize(
+            duration: motion,
+            alignment: Alignment.topCenter,
+            child: content,
+          );
   }
 
   /// C-347 decision 1: true while every seated player's name, measured in
