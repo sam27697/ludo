@@ -6754,11 +6754,11 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// C-601 D2: one recent roll. The mark sits on a disc of the seat's colour
-  /// that paints past its 16 dp box, so the 6 dp gap to the name is measured
-  /// from the mark. The name ellipsizes on one line; the `k: face` text is
-  /// laid out first and never cut. Without a seat, or a name for it, the row
-  /// is the bare text it was before.
+  /// C-601 D2: one recent roll. The seat's mark sits on a 22 dp disc of the
+  /// seat's colour, the way the end card's ready chips draw it. The name
+  /// ellipsizes on one line; the `k: face` text is laid out first and never
+  /// cut. Without a seat, or a name for it, the row is the bare text it was
+  /// before.
   Widget _rollHistoryRow(
     AppLocalizations loc,
     int k,
@@ -6788,26 +6788,15 @@ class _GameScreenState extends State<GameScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          SizedBox.square(
-            dimension: 16,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: <Widget>[
-                PositionedDirectional(
-                  start: -3,
-                  top: -3,
-                  end: -3,
-                  bottom: -3,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: LudoColors.seats[seat],
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-                Positioned.fill(child: SeatMark(seat: seat, size: 16)),
-              ],
+          Container(
+            width: 22,
+            height: 22,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: LudoColors.seats[seat],
+              shape: BoxShape.circle,
             ),
+            child: SeatMark(seat: seat, size: 14),
           ),
           const SizedBox(width: 6),
           Flexible(
