@@ -51,6 +51,10 @@ enum FeedbackCue {
   /// A capture between two other seats, heard softly by everyone else at
   /// the table, a spectator included. Sound only. C-588 D1, D2.
   captureSeen,
+
+  /// A friend sitting down in the lobby I am waiting in. Haptic and sound,
+  /// each behind its own switch. C-599 D1.
+  friendJoined,
 }
 
 /// C-225's wire ids, one per [FeedbackCue], exactly as the Kotlin side and
@@ -72,6 +76,7 @@ const Map<FeedbackCue, String> _cueIds = <FeedbackCue, String>{
   FeedbackCue.dieLand: 'die_land',
   FeedbackCue.gloat: 'gloat',
   FeedbackCue.captureSeen: 'capture_seen',
+  FeedbackCue.friendJoined: 'friend_joined',
 };
 
 extension FeedbackCueId on FeedbackCue {
@@ -208,6 +213,13 @@ List<FeedbackCue> cuesForFrame(Frame frame, {required int? mySeat}) {
           : const <FeedbackCue>[FeedbackCue.canMove];
     case 'moved':
       return _cuesForMoved(data, mySeat);
+    case 'player_joined':
+      // C-599 D3: another seat sitting down. Its own seat, a missing or
+      // mistyped seat answer nothing.
+      final int? joined = _intAt(data, 'seat');
+      return joined != null && joined != mySeat
+          ? const <FeedbackCue>[FeedbackCue.friendJoined]
+          : const <FeedbackCue>[];
     case 'game_over':
       final int? winner = _intAt(data, 'winner');
       if (winner == null) {

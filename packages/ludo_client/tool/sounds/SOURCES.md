@@ -49,6 +49,7 @@ Licence of every pack: CC0 1.0,
 | `game_over` | Music Jingles | `Audio/Pizzicato jingles/jingles_PIZZI13.ogg` | none beyond the common steps | -3 dB | CC0 1.0 |
 | `die_land` | Casino Audio | `Audio/die-throw-1.ogg` | none beyond the common steps | -6 dB | CC0 1.0 |
 | `gloat` | Music Jingles | `Audio/Sax jingles/jingles_SAX11.ogg` | none beyond the common steps | -3 dB | CC0 1.0 |
+| `friend_joined` | Music Jingles | `Audio/Pizzicato jingles/jingles_PIZZI00.ogg` | none beyond the common steps | -3 dB | CC0 1.0 |
 
 `invalid_tap` and `tap` have no clip. The 8-bit (`NES`) jingles are not
 used.

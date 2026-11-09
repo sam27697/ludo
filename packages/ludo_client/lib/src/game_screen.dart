@@ -1162,6 +1162,7 @@ class _GameScreenState extends State<GameScreen> {
       case FeedbackCue.tap:
       case FeedbackCue.dieLand:
       case FeedbackCue.gloat:
+      case FeedbackCue.friendJoined:
         return null;
     }
   }
