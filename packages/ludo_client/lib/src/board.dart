@@ -109,21 +109,28 @@ const List<(int, int)> _sharedQuad = <(int, int)>[
 /// a token still travelling toward [cell] (its own [progressOf] not yet
 /// equal to the square it is crossing) is not an occupant of it yet, and a
 /// token already drawn there (even if truth has since moved it on) still
-/// is. Other seats first, by [_seatRank] ascending, then the viewer's seat;
-/// within a seat by token index ascending. A spectator has no seat of
-/// their own, so the whole list is rank order.
+/// is. A token [isCrossing] reports true for is on an intermediate step of
+/// the walk being played: it is not an occupant of the square it is passing
+/// over, wherever [progressOf] draws it. Other seats first, by [_seatRank]
+/// ascending, then the viewer's seat; within a seat by token index
+/// ascending. A spectator has no seat of their own, so the whole list is
+/// rank order.
 List<_TokenOccupant> _occupantsOnCell({
   required BoardCell cell,
   required Map<int, List<int>> tokens,
   required List<int> seatsInPlay,
   required int? mySeat,
   int Function(int seat, int tokenIndex)? progressOf,
+  bool Function(int seat, int tokenIndex)? isCrossing,
 }) {
   final int Function(int seat, int tokenIndex) resolvedProgressOf =
       progressOf ?? ((int seat, int tokenIndex) => tokens[seat]![tokenIndex]);
   final List<_TokenOccupant> occupants = <_TokenOccupant>[];
   for (final int seat in seatsInPlay) {
     for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++) {
+      if (isCrossing != null && isCrossing(seat, tokenIndex)) {
+        continue;
+      }
       final int progress = resolvedProgressOf(seat, tokenIndex);
       if (cellFor(seat: seat, progress: progress, tokenIndex: tokenIndex) !=
           cell) {
@@ -192,7 +199,9 @@ bool _isSharedTrack(List<_TokenOccupant> occupants) {
 /// caller passes one (contract C-408 decision 3; see [_occupantsOnCell]).
 /// A token drawn at a [progress] it does not occupy (mid-step, or held on
 /// its old square before the flight home) is not an occupant of that
-/// cell, so it keeps the fan there.
+/// cell, so it keeps the fan there. [isCrossing] marks the one token whose
+/// drawn step is only a square it passes over (contract C-603): it is left
+/// out of every occupant list, its own included.
 _TokenLayout _tokenLayout({
   required int seat,
   required int tokenIndex,
@@ -202,6 +211,7 @@ _TokenLayout _tokenLayout({
   required Map<int, List<int>> tokens,
   required List<int> seatsInPlay,
   int Function(int seat, int tokenIndex)? progressOf,
+  bool Function(int seat, int tokenIndex)? isCrossing,
 }) {
   final BoardCell cell = cellFor(
     seat: seat,
@@ -215,6 +225,7 @@ _TokenLayout _tokenLayout({
     seatsInPlay: seatsInPlay,
     mySeat: mySeat,
     progressOf: progressOf,
+    isCrossing: isCrossing,
   );
 
   var slot = -1;
@@ -940,6 +951,26 @@ class _LudoBoardState extends State<LudoBoard> {
   /// the Semantics identifier never read this.
   int _drawnProgress(int seat, int token) =>
       _override[_key(seat, token)] ?? widget.tokens[seat]![token];
+
+  /// Contract C-603. True while (seat, token) is the mover of the walk being
+  /// played and its drawn square is one the walk only passes over (a step of
+  /// the path other than the last). Such a disc is not an occupant of that
+  /// square: it keeps the fan there and does not push a token standing on it
+  /// into a shared slot. The walk's last step, a mover held on its old square
+  /// before a queued walk starts, and a captured token held before its flight
+  /// are not crossing, so they count where they stand.
+  bool _isCrossing(int seat, int token) {
+    final _Move? move = _playingMove;
+    if (move == null || move.seat != seat || move.token != token) {
+      return false;
+    }
+    final int? drawn = _override[_key(seat, token)];
+    if (drawn == null) {
+      return false;
+    }
+    final List<int> path = _pathFor(move);
+    return drawn != path.last && path.contains(drawn);
+  }
 
   void _triggerShake(int tokenIndex) {
     _shakeTimer?.cancel();
@@ -1868,6 +1899,7 @@ class _LudoBoardState extends State<LudoBoard> {
         tokens: widget.tokens,
         seatsInPlay: widget.seatsInPlay,
         progressOf: _drawnProgress,
+        isCrossing: _isCrossing,
       );
     }
 
@@ -2185,6 +2217,7 @@ class _LudoBoardState extends State<LudoBoard> {
             tokens: widget.tokens,
             seatsInPlay: widget.seatsInPlay,
             progressOf: _drawnProgress,
+            isCrossing: _isCrossing,
           );
           final double side = cellSize * 3.2;
           marks.add(
@@ -2213,6 +2246,7 @@ class _LudoBoardState extends State<LudoBoard> {
             tokens: widget.tokens,
             seatsInPlay: widget.seatsInPlay,
             progressOf: _drawnProgress,
+            isCrossing: _isCrossing,
           );
           marks.add(
             Positioned(
@@ -2261,6 +2295,7 @@ class _LudoBoardState extends State<LudoBoard> {
       tokens: widget.tokens,
       seatsInPlay: widget.seatsInPlay,
       progressOf: _drawnProgress,
+      isCrossing: _isCrossing,
     );
     final bool namesFace = widget.hintNamesFace;
     // The ring's outer edge, as _tokenLayer sizes it. The auto-move arc
@@ -2426,6 +2461,7 @@ class _LudoBoardState extends State<LudoBoard> {
       tokens: widget.tokens,
       seatsInPlay: widget.seatsInPlay,
       progressOf: _drawnProgress,
+      isCrossing: _isCrossing,
     );
   }
 
