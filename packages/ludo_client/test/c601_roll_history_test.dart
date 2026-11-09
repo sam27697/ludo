@@ -134,6 +134,13 @@ class _PinnableController extends RoomController {
 
   @override
   RoomSnapshot? get room => pinned ?? super.room;
+
+  // The finished board is drawn from `lastFinished` whenever the room is
+  // finished and the game id matches (GameScreen._finishedOf), not from
+  // `room`. Pinning only `room` would leave the screen drawing the real
+  // snapshot with its real seats, so the pinned snapshot stands in for both.
+  @override
+  RoomSnapshot? get lastFinished => pinned ?? super.lastFinished;
 }
 
 class _Game {
