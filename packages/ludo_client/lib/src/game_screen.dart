@@ -6697,7 +6697,7 @@ class _GameScreenState extends State<GameScreen> {
           ],
           if (_showsRollHistory(finished)) ...[
             const SizedBox(height: kSpace4),
-            _rollHistory(loc, finished),
+            _rollHistory(loc, finished, finishedNames, mySeat),
           ],
         ],
       ),
@@ -6714,9 +6714,18 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   /// Last faces with their `k` on the finished board. Empty when no `rolled`
-  /// frames landed on this controller before game-over.
-  Widget _rollHistory(AppLocalizations loc, RoomSnapshot room) {
+  /// frames landed on this controller before game-over. C-601: each row says
+  /// whose roll it was, the seat's shape and name before the `k: face` text;
+  /// [names] is the finished game's [seatLabelsFor] and [mySeat] reads as the
+  /// "you" label, the way the board chips do.
+  Widget _rollHistory(
+    AppLocalizations loc,
+    RoomSnapshot room,
+    Map<int, String> names,
+    int? mySeat,
+  ) {
     final List<(int k, int face)> rolls = room.recentRolls;
+    final List<int> rollSeats = room.recentRollSeats;
     return Column(
       key: const Key('game-screen-roll-history'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -6730,14 +6739,78 @@ class _GameScreenState extends State<GameScreen> {
         if (rolls.isEmpty)
           Text(loc.gameRollHistoryEmpty, textAlign: TextAlign.center)
         else
-          for (final (int k, int face) in rolls) ...[
+          for (int i = 0; i < rolls.length; i++) ...[
             const SizedBox(height: kSpace1),
-            Text(
-              loc.gameRollHistoryEntry(k, face),
-              textAlign: TextAlign.center,
+            _rollHistoryRow(
+              loc,
+              rolls[i].$1,
+              rolls[i].$2,
+              i < rollSeats.length ? rollSeats[i] : null,
+              names,
+              mySeat,
             ),
           ],
       ],
+    );
+  }
+
+  /// C-601 D2: one recent roll. The seat's mark sits on a 22 dp disc of the
+  /// seat's colour, the way the end card's ready chips draw it. The name
+  /// ellipsizes on one line; the `k: face` text is laid out first and never
+  /// cut. Without a seat, or a name for it, the row is the bare text it was
+  /// before.
+  Widget _rollHistoryRow(
+    AppLocalizations loc,
+    int k,
+    int face,
+    int? seat,
+    Map<int, String> names,
+    int? mySeat,
+  ) {
+    final Text entry = Text(
+      loc.gameRollHistoryEntry(k, face),
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+        fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
+      ),
+    );
+    final String? name = seat == null
+        ? null
+        : (seat == mySeat ? loc.seatYou : names[seat]);
+    if (seat == null || seat < 0 || seat > 3 || name == null) {
+      return entry;
+    }
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      label: loc.gameRollHistoryEntrySpoken(k, name, face),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Container(
+            width: 22,
+            height: 22,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: LudoColors.seats[seat],
+              shape: BoxShape.circle,
+            ),
+            child: SeatMark(seat: seat, size: 14),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              softWrap: false,
+            ),
+          ),
+          const SizedBox(width: kSpace2),
+          entry,
+        ],
+      ),
     );
   }
 
