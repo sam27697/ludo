@@ -2036,9 +2036,15 @@ class _LudoBoardState extends State<LudoBoard> {
         // Rule 2: every token carries its seat's shape, centred, at half the
         // drawn disc's diameter, in every state this disc is ever drawn in
         // -- yard, track, home column, finished, mid-travel, mid-capture --
-        // since all of those share this one `token` widget.
+        // since all of those share this one `token` widget. C-600 D2: a disc
+        // drawn in a shared slot (smaller than the one-seat fan, read from
+        // [layoutAtDrawn] so a token mid-travel keeps the fan's mark) carries
+        // the mark at 0.62 so it still clears SeatMark's 6 dp floor.
         child: Center(
-          child: SeatMark(seat: seat, size: drawnSize * 0.5),
+          child: SeatMark(
+            seat: seat,
+            size: drawnSize * (drawnSize < cellSize * 0.7 ? 0.62 : 0.5),
+          ),
         ),
       ),
     );
@@ -3370,6 +3376,10 @@ class _StarPainter extends CustomPainter {
 /// and the tokens can never show a track that disagrees with each other.
 ///
 /// Seat fills and board inks come from [LudoColors]: one paintbox with theme.
+/// How much of its colour a seat that is not in play keeps: yard, home
+/// column and entry square all use it. C-248 rule 4, C-600 D1.
+const double _kAbsentSeatFade = 0.35;
+
 class _BoardPainter extends CustomPainter {
   const _BoardPainter({required this.seatsInPlay, this.mySeat});
 
@@ -3399,7 +3409,7 @@ class _BoardPainter extends CustomPainter {
         quarters: quarters,
       );
       final bool inPlay = seatsInPlay.contains(seat);
-      final double yardAlpha = inPlay ? 0.16 : 0.16 * 0.35;
+      final double yardAlpha = inPlay ? 0.16 : 0.16 * _kAbsentSeatFade;
       _fillCells(
         canvas,
         cellSize,
@@ -3412,13 +3422,18 @@ class _BoardPainter extends CustomPainter {
     }
 
     for (var seat = 0; seat < 4; seat++) {
+      // C-600 D1: an arm nobody sits at is muted by the same factor as its
+      // yard, so a two-player board does not show two live-looking arms.
+      final double homeAlpha = seatsInPlay.contains(seat)
+          ? 0.32
+          : 0.32 * _kAbsentSeatFade;
       for (var progress = 52; progress <= 56; progress++) {
         final cell = toView(cellFor(seat: seat, progress: progress), quarters);
         _fillCell(
           canvas,
           cellSize,
           cell,
-          LudoColors.seats[seat].withValues(alpha: 0.32),
+          LudoColors.seats[seat].withValues(alpha: homeAlpha),
         );
       }
     }
@@ -3438,11 +3453,14 @@ class _BoardPainter extends CustomPainter {
     // 2; the four absolute squares are 0, 13, 26, 39, one per seat.
     for (var seat = 0; seat < 4; seat++) {
       final cell = toView(cellFor(seat: seat, progress: 0), quarters);
+      final double entryAlpha = seatsInPlay.contains(seat)
+          ? 0.85
+          : 0.85 * _kAbsentSeatFade;
       _fillCell(
         canvas,
         cellSize,
         cell,
-        LudoColors.seats[seat].withValues(alpha: 0.85),
+        LudoColors.seats[seat].withValues(alpha: entryAlpha),
       );
     }
 
