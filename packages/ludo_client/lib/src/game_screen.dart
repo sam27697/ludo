@@ -62,6 +62,7 @@ import 'table_entrance.dart';
 import 'theme.dart';
 import 'token_face_picker.dart';
 import 'turn_order.dart';
+import 'verify_link.dart';
 import 'waiting_line.dart';
 
 /// Distinct [Navigator.pop] result from the finished-board next-table
@@ -4505,11 +4506,13 @@ class _GameScreenState extends State<GameScreen> {
     if (raw == null || raw.isEmpty) {
       return;
     }
-    final Uri? uri = Uri.tryParse(raw);
-    if (uri == null || (!uri.isScheme('https') && !uri.isScheme('http'))) {
+    final Uri? parsed = Uri.tryParse(raw);
+    if (parsed == null ||
+        (!parsed.isScheme('https') && !parsed.isScheme('http'))) {
       _showVerifyOpenFailed();
       return;
     }
+    final Uri uri = verifyUriFor(parsed, Localizations.localeOf(context));
     bool opened = false;
     try {
       opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
