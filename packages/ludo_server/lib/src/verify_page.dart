@@ -637,6 +637,12 @@ code {
   border-color: #b3261e;
   font-weight: bold;
 }
+#summary.verify-ok {
+  border-color: #1b5e20;
+}
+#summary.verify-fail {
+  border-color: #b3261e;
+}
 .verify-mismatch {
   color: #b3261e;
   font-weight: bold;
