@@ -1237,13 +1237,16 @@ class RoomRegistry {
       // (the store throws, or a record for this game_id somehow already
       // exists) must never cost a player a finished game: it is logged to
       // stderr, one line, and play continues exactly as if it had
-      // succeeded.
+      // succeeded -- except for the link: a record that is not there must
+      // not be promised, so `verify_url` goes out empty and a client shows
+      // no "Check the rolls" (docs/PROTOCOL.md section 11.2).
       final int winnerSeat =
           appliedOk.events.whereType<engine.GameWon>().first.seat;
       // buildVerifyRecord and jsonEncode run inside this same try: a throw
       // from either (a rollSeats index, a null gameId) is exactly as
       // recoverable here as a throw from verifyStore.save itself, and must
       // never escape move() and cost the players their finished game.
+      bool recordSaved = false;
       try {
         final String recordJson = jsonEncode(
           buildVerifyRecord(
@@ -1252,8 +1255,8 @@ class RoomRegistry {
             finishedAt: _clock.now,
           ),
         );
-        final bool saved = verifyStore.save(room.gameId!, recordJson);
-        if (!saved) {
+        recordSaved = verifyStore.save(room.gameId!, recordJson);
+        if (!recordSaved) {
           stderr.writeln(
             'verify_record_not_saved game_id=${room.gameId} reason=exists',
           );
@@ -1265,7 +1268,7 @@ class RoomRegistry {
       }
       room.seq++;
       gameOverSeq = room.seq;
-      verifyUrl = '$_verifyUrlBase${room.gameId}';
+      verifyUrl = recordSaved ? '$_verifyUrlBase${room.gameId}' : '';
     } else {
       // docs/PROTOCOL.md section 21.3 rule 4: a move that leaves only dead
       // faces in the queue gets its own `turn_passed` (reason

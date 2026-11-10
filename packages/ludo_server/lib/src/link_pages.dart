@@ -377,3 +377,225 @@ const String roomLinkJsSource = r'''
   });
 })();
 ''';
+
+/// The look the home page and the not-found pages share with the room page:
+/// the felt gradient, the light card, the four seat dots, 3 rem buttons and
+/// the 3 rem language switch. No script, so no rule here for one.
+const String _plainPageCss = '''
+html {
+  background: #0A3D38;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 1rem;
+  background: linear-gradient(160deg, #0A3D38, #14665C);
+  color: #0A2A27;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.card {
+  box-sizing: border-box;
+  max-width: 28rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem;
+  background: #F7FBFA;
+  border-radius: 1.25rem;
+  text-align: center;
+}
+.seats {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.seats span {
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+}
+.seats .red { background: #D32F2F; }
+.seats .green { background: #388E3C; }
+.seats .yellow { background: #FBC02D; }
+.seats .blue { background: #1976D2; }
+h1 {
+  margin: 1rem 0 0.25rem;
+  font-size: 1.5rem;
+  line-height: 1.25;
+}
+.lead {
+  margin: 0 0 1.25rem;
+  font-size: 1.0625rem;
+}
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.75rem;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:focus-visible, .switch:focus-visible {
+  outline: 3px solid #1976D2;
+  outline-offset: 2px;
+}
+#get-app {
+  min-height: 3.5rem;
+  background: #0F6B5F;
+  border: 2px solid #0F6B5F;
+  color: #F7FBFA;
+  font-size: 1.25rem;
+}
+.fair {
+  margin: 1rem 0 0;
+  font-size: 0.875rem;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  min-height: 3rem;
+  padding: 0 0.75rem;
+  color: #0F6B5F;
+}
+''';
+
+/// One language's words for the home page (C-615 D2).
+class _HomePageWords {
+  const _HomePageWords({
+    required this.lead,
+    required this.get,
+    required this.fair,
+    required this.privacy,
+  });
+
+  final String lead;
+  final String get;
+  final String fair;
+  final String privacy;
+}
+
+const _HomePageWords _enHomeWords = _HomePageWords(
+  lead: 'Ludo with your friends in a private room. Make a room, send the '
+      'link, play.',
+  get: 'Get Ludo RNG on Google Play',
+  fair: 'Every roll is verifiable. At the end of every game, Check the rolls '
+      'shows each one.',
+  privacy: 'Privacy',
+);
+
+const _HomePageWords _arHomeWords = _HomePageWords(
+  lead: 'لودو مع أصحابك في غرفة خاصة. أنشئ غرفة، أرسل الرابط، والعب.',
+  get: 'احصل على Ludo RNG من Google Play',
+  fair: 'كل رمية قابلة للتحقق. في نهاية كل لعبة، يعرض لك «تحقق من الرميات» '
+      'كل رمية.',
+  privacy: 'الخصوصية',
+);
+
+/// The `<html>` tag and the language-switch link every plain page carries.
+/// The switch is a bare `?lang=..`, so it stays on whatever path the person
+/// is on.
+String _plainHtmlOpen(bool isAr) =>
+    isAr ? '<html lang="ar" dir="rtl">' : '<html lang="en">';
+
+String _plainSwitchLink(bool isAr) => isAr
+    ? '<a id="lang-switch" class="switch" href="?lang=en" '
+        'hreflang="en" lang="en">English</a>'
+    : '<a id="lang-switch" class="switch" href="?lang=ar" '
+        'hreflang="ar" lang="ar">العربية</a>';
+
+String _plainPage({
+  required bool isAr,
+  required String title,
+  required String heading,
+  required String lead,
+  required String body,
+}) {
+  final String switchLink = _plainSwitchLink(isAr);
+  return '''
+<!DOCTYPE html>
+${_plainHtmlOpen(isAr)}
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$title</title>
+<style>
+$_plainPageCss</style>
+</head>
+<body>
+<main class="card">
+<div class="seats" aria-hidden="true"><span class="red"></span><span class="green"></span><span class="yellow"></span><span class="blue"></span></div>
+<h1>$heading</h1>
+<p class="lead">$lead</p>
+$body
+$switchLink
+</main>
+</body>
+</html>
+''';
+}
+
+/// Builds the page served at `GET /`, the bare domain a person reaches by
+/// trimming a verify or invite link back. It names the app, links the Play
+/// listing and the privacy page, and carries no script. [language] is
+/// whatever `resolveVerifyLanguage` picked; anything other than `'ar'`
+/// renders English.
+String buildHomePageHtml({String language = 'en'}) {
+  final bool isAr = language == 'ar';
+  final _HomePageWords words = isAr ? _arHomeWords : _enHomeWords;
+  final String playUrl = _attributeEscaper.convert(playStoreListingUrl);
+  return _plainPage(
+    isAr: isAr,
+    title: 'Ludo RNG',
+    heading: 'Ludo RNG',
+    lead: words.lead,
+    body: '<a id="get-app" class="btn" href="$playUrl">${words.get}</a>\n'
+        '<p class="fair">${words.fair}</p>\n'
+        '<a id="privacy" class="switch" href="/privacy">${words.privacy}</a>',
+  );
+}
+
+/// Builds the page served with a `404` for a path that names nothing. With
+/// [cutInvite] true it is the answer to a `/r/<x>` whose `x` is not a
+/// well-formed room code, the shape a half-copied invite takes, and points
+/// the friend at the next step. Neither the path nor the code is ever put in
+/// the page: the only input is [cutInvite] and [language].
+String buildLinkNotFoundHtml({
+  required bool cutInvite,
+  String language = 'en',
+}) {
+  final bool isAr = language == 'ar';
+  final String heading;
+  final String lead;
+  if (cutInvite) {
+    heading =
+        isAr ? 'يبدو أن رابط الدعوة ناقص' : 'This invite link looks cut off';
+    lead = isAr
+        ? 'اطلب من صديقك أن يرسل الرابط مرة ثانية، أو افتح Ludo RNG واكتب '
+            'رمز الغرفة الذي يعطيك إياه.'
+        : 'Ask your friend to send the link again, or open Ludo RNG and type '
+            'the room code they give you.';
+  } else {
+    heading = isAr ? 'لا شيء هنا' : 'Nothing here';
+    lead = isAr ? 'هذه الصفحة غير موجودة.' : 'This page does not exist.';
+  }
+  final String playUrl = _attributeEscaper.convert(playStoreListingUrl);
+  final String getWord = isAr ? _arHomeWords.get : _enHomeWords.get;
+  final String homeWord =
+      isAr ? 'الصفحة الرئيسية لـ Ludo RNG' : 'Ludo RNG home';
+  return _plainPage(
+    isAr: isAr,
+    title: 'Ludo RNG - $heading',
+    heading: heading,
+    lead: lead,
+    body: '<a id="get-app" class="btn" href="$playUrl">$getWord</a>\n'
+        '<a id="home" class="switch" href="/">$homeWord</a>',
+  );
+}
