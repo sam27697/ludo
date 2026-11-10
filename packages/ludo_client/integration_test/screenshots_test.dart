@@ -3731,6 +3731,74 @@ void main() {
   });
 
   // ==========================================================================
+  // 153-157: order 611 (X167, sweep 47 medium 4). The end card at system text
+  // scale 2.0 with four seats: frames and measurements, no production change.
+  // The recorded game four_seats_1 is replayed to its `game_over` as the
+  // winner (153), as a losing seat that is the host (154, 157 in Arabic), and
+  // 155 and 156 go on from 154's end state with a rematch `room` push that has
+  // the host and one other seat ready. Before each shot the live tree is
+  // measured and one `X167` line is printed: the card, its scrolling body, the
+  // dock under it, and whether each element a player needs can be scrolled
+  // fully on screen. Setting --dart-define=X167_PHONE=true runs the same five
+  // on a 360 x 640 dp surface where the harness can set one. Bodies live at
+  // the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 153-end-four-2x-winner-en', (tester) async {
+    await _shootEndFourLarge(
+      tester,
+      binding,
+      shotName: '153-end-four-2x-winner-en',
+      locale: const Locale('en'),
+      viewerWins: true,
+      rematch: false,
+    );
+  });
+
+  testWidgets('capture 154-end-four-2x-loser-en', (tester) async {
+    await _shootEndFourLarge(
+      tester,
+      binding,
+      shotName: '154-end-four-2x-loser-en',
+      locale: const Locale('en'),
+      viewerWins: false,
+      rematch: false,
+    );
+  });
+
+  testWidgets('capture 155-end-four-2x-rematch-host-en', (tester) async {
+    await _shootEndFourLarge(
+      tester,
+      binding,
+      shotName: '155-end-four-2x-rematch-host-en',
+      locale: const Locale('en'),
+      viewerWins: false,
+      rematch: true,
+    );
+  });
+
+  testWidgets('capture 156-end-four-2x-rematch-host-ar', (tester) async {
+    await _shootEndFourLarge(
+      tester,
+      binding,
+      shotName: '156-end-four-2x-rematch-host-ar',
+      locale: const Locale('ar'),
+      viewerWins: false,
+      rematch: true,
+    );
+  });
+
+  testWidgets('capture 157-end-four-2x-loser-ar', (tester) async {
+    await _shootEndFourLarge(
+      tester,
+      binding,
+      shotName: '157-end-four-2x-loser-ar',
+      locale: const Locale('ar'),
+      viewerWins: false,
+      rematch: false,
+    );
+  });
+
+  // ==========================================================================
   // 19, 20: order 240's (X14) winner's end view. `game_over` names my own
   // seat (0, Priya) as `winner`. No `turn` frame follows a `game_over`
   // (docs/PROTOCOL.md section 13's own last line); `_reduceGameOver`
@@ -23745,4 +23813,418 @@ Future<void> _shootSharedCellThreeSeats(
     '${cell.toStringAsFixed(2)} dp; ${readings.join('; ')}',
   );
   await _capture(binding, tester, shotName, frames: 6);
+}
+
+/// True when the five order 611 captures run on a 360 x 640 dp surface instead
+/// of the harness default: `--dart-define=X167_PHONE=true`. Ignored on a real
+/// device, which keeps its own size.
+const bool _x167Phone = bool.fromEnvironment('X167_PHONE');
+
+/// Captures 153 to 157 (order 611, X167). The recorded game four_seats_1 is
+/// replayed from the home screen to its `game_over` at system text scale 2.0,
+/// as the winner when [viewerWins], else as the losing seat that is the host
+/// (the lowest other seat when the winner is the host). With [rematch] the
+/// host's card then gets the rematch `room` pushes the way capture 144 gets
+/// them: the host alone in `ready`, then the host and the lowest other seat,
+/// so the dock holds the ready chips for four seats, the sits-out line and
+/// Start with 2. The end card is measured on the live tree right before the
+/// shot (see [_measureEndCardX167]) and the `X167` line is printed.
+Future<void> _shootEndFourLarge(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required bool viewerWins,
+  required bool rematch,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  final bool realDevice = !kIsWeb && Platform.isAndroid;
+  if (_x167Phone && !realDevice) {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+  }
+
+  final _RealGame game = _realGame('four_seats_1');
+  final List<int> seats = <int>[
+    for (final Object? s in game.json['seats']! as List<Object?>) s! as int,
+  ]..sort();
+  final int winnerSeat = game.winner;
+  final int hostSeat =
+      (game.view(winnerSeat)[1]['d']! as Map<String, Object?>)['host_seat']!
+          as int;
+  final int viewerSeat = viewerWins
+      ? winnerSeat
+      : (hostSeat != winnerSeat
+            ? hostSeat
+            : seats.firstWhere((int s) => s != winnerSeat));
+  final bool viewerIsHost = viewerSeat == hostSeat;
+  final String scenario =
+      'fixture game "four_seats_1", viewer seat $viewerSeat '
+      '(${viewerWins ? 'the winner' : 'a loser'}, '
+      '${viewerIsHost ? 'the host' : 'a guest, the host is seat $hostSeat'}), '
+      'winner seat $winnerSeat, locale ${locale.languageCode}, text scale 2.0'
+      '${rematch ? ', rematch frames pushed' : ''}'
+      '${_x167Phone && !realDevice ? ', surface 360 x 640' : ''}';
+  final String reproduce =
+      '`flutter test integration_test/screenshots_test.dart -d flutter-tester '
+      '--plain-name "capture $shotName"'
+      '${_x167Phone ? ' --dart-define=X167_PHONE=true' : ''}`';
+  expect(seats, <int>[
+    0,
+    1,
+    2,
+    3,
+  ], reason: '$shotName ($scenario): the recorded game must seat four');
+  if (rematch) {
+    expect(
+      viewerIsHost,
+      isTrue,
+      reason:
+          '$shotName ($scenario): the rematch frames are the host\'s card; '
+          'reproduce with $reproduce',
+    );
+  }
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(_replayHome(factory, locale));
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+  addTearDown(() {
+    for (final RoomController c in factory.controllers) {
+      c.dispose();
+    }
+  });
+  final _RealReplay replay = await _replayRealGame(
+    tester,
+    factory,
+    capture: 'capture $shotName',
+    gameName: 'four_seats_1',
+    seat: viewerSeat,
+    localeName: locale.languageCode,
+    seatAllBeforeStart: viewerIsHost,
+  );
+  final RoomController controller = replay.controller;
+  final FakeTransport transport = replay.transport;
+
+  // The scale goes up once the table is on screen: the harness's own taps on
+  // the home screen (a guest's Join) do not reach their buttons at 2.0 on
+  // this surface, and the end card is built after `game_over` either way.
+  tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+  await tester.pump();
+  replay.pushGameOver();
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(Key(viewerWins ? 'end-card-win' : 'end-card-lose')),
+    '$shotName ($scenario): the ${viewerWins ? 'winner' : 'loser'} end card',
+  );
+  // Past kEndCardDwell: the card is drawn after the winning move's dwell.
+  await _pumpRealDurationFrames(tester);
+
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+  expect(
+    <Object?>[
+      loc.localeName,
+      controller.room?.state,
+      controller.room?.winner,
+      controller.seat,
+      MediaQuery.textScalerOf(tester.element(find.byType(GameScreen)))
+          .scale(10),
+    ],
+    <Object?>[
+      locale.languageCode,
+      RoomState.finished,
+      winnerSeat,
+      viewerSeat,
+      20,
+    ],
+    reason:
+        '$shotName ($scenario): expected locale, FINISHED, winner, viewer '
+        'seat and a text scaler of 2.0, in that order; reproduce with '
+        '$reproduce',
+  );
+
+  final List<int> ready = <int>[
+    hostSeat,
+    seats.firstWhere((int s) => s != hostSeat),
+  ];
+  if (rematch) {
+    Map<String, Object?> rematchRoom(int seq, List<int> inReady) =>
+        <String, Object?>{
+          ..._roomJson(
+            code: replay.roomCode,
+            state: 'LOBBY',
+            hostSeat: hostSeat,
+            players: seats.length,
+            seats: <Map<String, Object?>>[
+              for (final int s in seats) _seatJson(s, name: game.nameOf(s)),
+            ],
+            seq: seq,
+          ),
+          'rematch': <String, Object?>{'by': hostSeat, 'ready': inReady},
+        };
+    int seq = replay.gameOverSeq + 1;
+    transport.pushText(
+      _frame(type: 'room', data: rematchRoom(seq, <int>[hostSeat])),
+    );
+    await tester.pump();
+    await tester.pump();
+    seq += 1;
+    transport.pushText(_frame(type: 'room', data: rematchRoom(seq, ready)));
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('end-card-rematch-start')),
+      '$shotName ($scenario): the host\'s Start with ${ready.length}',
+    );
+    await _pumpRealDurationFrames(tester);
+    expect(
+      <Object?>[
+        controller.hasDesynced,
+        controller.room?.state,
+        controller.room?.rematch?.ready,
+      ],
+      <Object?>[false, RoomState.lobby, unorderedEquals(ready)],
+      reason:
+          '$shotName ($scenario): the rematch pushes must leave the room in '
+          'LOBBY with ready $ready and no seq gap; reproduce with $reproduce',
+    );
+    for (final int s in seats) {
+      expect(
+        find.byKey(Key('end-card-ready-$s')),
+        findsOneWidget,
+        reason:
+            '$shotName ($scenario): expected end-card-ready-$s, one chip per '
+            'occupied seat; reproduce with $reproduce',
+      );
+    }
+    expect(
+      find.byKey(const Key('end-card-rematch-sits-out')),
+      findsOneWidget,
+      reason:
+          '$shotName ($scenario): expected the host\'s sits-out line above '
+          'Start with ${ready.length}; reproduce with $reproduce',
+    );
+  }
+
+  final List<String> problems = await _measureEndCardX167(
+    tester,
+    capture: shotName,
+    scenario: scenario,
+    reproduce: reproduce,
+    loc: loc,
+    seats: seats,
+    rematch: rematch,
+  );
+  await _capture(binding, tester, shotName, frames: 2);
+  if (problems.isNotEmpty) {
+    fail(
+      '$shotName ($scenario): ${problems.length} player-facing check(s) '
+      'failed; reproduce with $reproduce\n${problems.join('\n')}',
+    );
+  }
+}
+
+/// Measures the end card on the live tree and prints one `X167` line, in
+/// logical dp: the screen height, the card's top and bottom, the height of
+/// its scrolling body's viewport (the `Scrollable` inside the card), the
+/// dock's height (the card below that viewport), whether the dock's last
+/// control is fully on screen, the scroll extent, and, for the stats row, the
+/// verify line, the verify button and (with [rematch]) the first and last
+/// ready chip, whether it is fully on screen before and after
+/// `ensureVisible`. "On screen" for something in the scrolling body means
+/// inside the viewport (the body clips); for the dock, inside the screen.
+/// Nothing here depends on motion: each reading follows a `jumpTo` and a
+/// pump. The scroll is put back to the top before returning. Returns the
+/// problems a player would meet: the primary action off screen or not
+/// hittable, or an element that cannot be scrolled fully on screen.
+Future<List<String>> _measureEndCardX167(
+  WidgetTester tester, {
+  required String capture,
+  required String scenario,
+  required String reproduce,
+  required AppLocalizations loc,
+  required List<int> seats,
+  required bool rematch,
+}) async {
+  final Size screen = tester.view.physicalSize / tester.view.devicePixelRatio;
+  final Rect screenRect = Offset.zero & screen;
+  final Finder cardFinder = find.byType(EndCard);
+  expect(
+    cardFinder,
+    findsOneWidget,
+    reason:
+        '$capture ($scenario): expected one EndCard; reproduce with $reproduce',
+  );
+  final Finder scrollables = find.descendant(
+    of: cardFinder,
+    matching: find.byType(Scrollable),
+  );
+  expect(
+    scrollables.evaluate(),
+    isNotEmpty,
+    reason:
+        '$capture ($scenario): expected a Scrollable inside the end card; '
+        'reproduce with $reproduce',
+  );
+  final Finder scrollable = scrollables.first;
+  final ScrollableState scrollState = tester.state<ScrollableState>(scrollable);
+  final Rect card = tester.getRect(cardFinder);
+  final Rect viewport = tester.getRect(scrollable);
+  final double dockHeight = card.bottom - viewport.bottom;
+  final double maxExtent = scrollState.position.maxScrollExtent;
+
+  bool fits(Rect r, Rect clip) =>
+      r.left >= clip.left - 0.5 &&
+      r.right <= clip.right + 0.5 &&
+      r.top >= clip.top - 0.5 &&
+      r.bottom <= clip.bottom + 0.5;
+  bool inScroll(Finder f) =>
+      find.descendant(of: scrollable, matching: f).evaluate().isNotEmpty;
+  Rect clipFor(Finder f) =>
+      inScroll(f) ? viewport.intersect(screenRect) : screenRect;
+  String yn(bool v) => v ? 'yes' : 'no';
+
+  final List<String> problems = <String>[];
+
+  // The dock's last control: the lowest of the action buttons that sit
+  // outside the scrolling body.
+  String? dockLastKey;
+  Rect? dockLast;
+  for (final String key in <String>[
+    'end-card-rematch-start',
+    'end-card-rematch',
+    'game-screen-new-room-button',
+  ]) {
+    final Finder f = find.byKey(Key(key));
+    if (f.evaluate().isEmpty || inScroll(f)) {
+      continue;
+    }
+    final Rect r = tester.getRect(f);
+    if (dockLast == null || r.bottom > dockLast.bottom) {
+      dockLastKey = key;
+      dockLast = r;
+    }
+  }
+  bool dockLastOnScreen = false;
+  bool dockLastHittable = false;
+  if (dockLast == null) {
+    problems.add(
+      'expected a primary action (Play again, Start or New table) in the '
+      'dock, found none',
+    );
+  } else {
+    dockLastOnScreen = fits(dockLast, screenRect);
+    dockLastHittable = find
+        .byKey(Key(dockLastKey!))
+        .hitTestable()
+        .evaluate()
+        .isNotEmpty;
+    if (!dockLastOnScreen) {
+      problems.add(
+        'expected the primary action $dockLastKey fully on screen '
+        '(0..${screen.height}), it is at top ${dockLast.top} bottom '
+        '${dockLast.bottom}',
+      );
+    }
+    if (!dockLastHittable) {
+      problems.add(
+        'expected the primary action $dockLastKey to be hittable, a tap at '
+        'its centre does not reach it',
+      );
+    }
+  }
+
+  final Finder? statTile =
+      <String>[
+            'end-card-stat-rolls',
+            'end-card-stat-sixes',
+            'end-card-stat-captures',
+            'end-card-stat-home',
+          ]
+          .map((String k) => find.byKey(Key(k)))
+          .where((Finder f) => f.evaluate().isNotEmpty)
+          .firstOrNull;
+  final List<(String, Finder?)> targets = <(String, Finder?)>[
+    (
+      'stats_row',
+      statTile == null
+          ? null
+          : find.ancestor(of: statTile, matching: find.byType(Row)).first,
+    ),
+    (
+      'verify_line',
+      find.descendant(of: cardFinder, matching: find.text(loc.endFairLine)),
+    ),
+    ('verify_button', find.byKey(const Key('game-screen-verify-button'))),
+    if (rematch) ...<(String, Finder?)>[
+      (
+        'first_chip_seat${seats.first}',
+        find.byKey(Key('end-card-ready-${seats.first}')),
+      ),
+      (
+        'last_chip_seat${seats.last}',
+        find.byKey(Key('end-card-ready-${seats.last}')),
+      ),
+    ],
+  ];
+  final List<String> reach = <String>[];
+  for (final (String name, Finder? f) in targets) {
+    if (f == null || f.evaluate().isEmpty) {
+      reach.add('$name=absent');
+      if (name != 'stats_row') {
+        problems.add('expected $name on the card, it is not in the tree');
+      }
+      continue;
+    }
+    scrollState.position.jumpTo(0);
+    await tester.pump();
+    final Rect clip = clipFor(f);
+    final bool before = fits(tester.getRect(f), clip);
+    await tester.ensureVisible(f);
+    await tester.pump();
+    final Rect after = tester.getRect(f);
+    final bool afterFits = fits(after, clip);
+    reach.add(
+      '$name=${yn(afterFits)}(before=${yn(before)},h='
+      '${after.height.toStringAsFixed(1)},in_${inScroll(f) ? 'scroll' : 'dock'})',
+    );
+    if (!afterFits) {
+      problems.add(
+        'expected $name fully on screen after ensureVisible (clip '
+        '${clip.top.toStringAsFixed(1)}..${clip.bottom.toStringAsFixed(1)}), '
+        'it is at top ${after.top.toStringAsFixed(1)} bottom '
+        '${after.bottom.toStringAsFixed(1)}, ${after.height.toStringAsFixed(1)} '
+        'dp tall in a viewport of ${viewport.height.toStringAsFixed(1)}',
+      );
+    }
+  }
+  scrollState.position.jumpTo(0);
+  await tester.pump();
+  await tester.pump();
+
+  String d(double v) => v.toStringAsFixed(1);
+  // ignore: avoid_print
+  print(
+    'X167 $capture screen_h=${d(screen.height)} screen_w=${d(screen.width)} '
+    'card_top=${d(card.top)} card_bottom=${d(card.bottom)} '
+    'viewport_h=${d(viewport.height)} dock_h=${d(dockHeight)} '
+    'dock_last=${dockLastKey ?? 'none'} '
+    'dock_last_fully_on_screen=${yn(dockLastOnScreen)} '
+    'dock_last_hittable=${yn(dockLastHittable)} '
+    'max_scroll_extent=${d(maxExtent)} scrollables=${scrollables.evaluate().length} '
+    '${reach.join(' ')} | $scenario',
+  );
+  return problems;
 }
