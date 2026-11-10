@@ -671,8 +671,13 @@ class _GameScreenState extends State<GameScreen> {
         shownTurn.phase == TurnPhase.awaitRoll) {
       _yourTurnPlayedK = shownTurn.k;
     }
-    // C-590 D4: the turn the screen mounts onto counts as announced.
-    if (shownTurn != null && mountRoom?.state == RoomState.playing) {
+    // C-590 D4: the turn the screen mounts onto counts as announced, but
+    // C-612 D1: only when this device's record shows the game past its first
+    // turn (a `rolled` frame). A fresh game from the lobby leaves it null, so
+    // its first turn is weighed like the first turn after a rematch.
+    if (shownTurn != null &&
+        mountRoom?.state == RoomState.playing &&
+        _hasRolledFrame(widget.controller.gameTranscript)) {
       _nextSeenSeat = shownTurn.seat;
     }
     _seenRolls = List<(int k, int face)>.of(
@@ -700,6 +705,14 @@ class _GameScreenState extends State<GameScreen> {
       // C-540 D1: mounted onto a controller that was already refused.
       if (mounted) {
         _leaveIfSeatRefused();
+      }
+      // C-612 D2: no frame follows a fresh mount until the next turn, so the
+      // first turn's "you're next" is weighed once the first frame is laid
+      // out. A seat already weighed (a resume, or a frame that got here
+      // first) says nothing.
+      final RoomSnapshot? shownRoom = widget.controller.room;
+      if (mounted && shownRoom != null) {
+        _announceYouAreNext(shownRoom);
       }
     });
   }
@@ -1314,6 +1327,15 @@ class _GameScreenState extends State<GameScreen> {
     }
     _yourTurnPlayedK = turn.k;
     _playCue(FeedbackScope.of(context), FeedbackCue.yourTurn);
+  }
+
+  static bool _hasRolledFrame(List<Frame> transcript) {
+    for (final Frame frame in transcript) {
+      if (frame.type == 'rolled') {
+        return true;
+      }
+    }
+    return false;
   }
 
   static Frame? _lastTurnFrame(List<Frame> transcript) {
