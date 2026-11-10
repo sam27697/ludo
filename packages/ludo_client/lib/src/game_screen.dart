@@ -62,6 +62,7 @@ import 'table_entrance.dart';
 import 'theme.dart';
 import 'token_face_picker.dart';
 import 'turn_order.dart';
+import 'verify_link.dart';
 import 'waiting_line.dart';
 
 /// Distinct [Navigator.pop] result from the finished-board next-table
@@ -131,7 +132,6 @@ const Duration kSafeCueHold = Duration(milliseconds: 1400);
 /// C-384 S5. Skipped when animations are disabled.
 const Duration kSafeCueFade = Duration(milliseconds: 200);
 
-/// Dwell time after winning move lands before end card, contract C-270 rule 4a.
 /// C-592 D2: how long the "your seat moved" line stays in the notice slot.
 const Duration kSeatMovedHold = Duration(milliseconds: 4000);
 
@@ -144,6 +144,7 @@ const Map<int, String> kSeatColourWords = <int, String>{
   3: 'blue',
 };
 
+/// Dwell time after winning move lands before end card, contract C-270 rule 4a.
 const Duration kEndCardDwell = Duration(milliseconds: 600);
 
 /// Upper bound on end-card hold before forcing release, contract C-270 rule 4c.
@@ -671,8 +672,13 @@ class _GameScreenState extends State<GameScreen> {
         shownTurn.phase == TurnPhase.awaitRoll) {
       _yourTurnPlayedK = shownTurn.k;
     }
-    // C-590 D4: the turn the screen mounts onto counts as announced.
-    if (shownTurn != null && mountRoom?.state == RoomState.playing) {
+    // C-590 D4: the turn the screen mounts onto counts as announced, but
+    // C-612 D1: only when this device's record shows the game past its first
+    // turn (a `rolled` frame). A fresh game from the lobby leaves it null, so
+    // its first turn is weighed like the first turn after a rematch.
+    if (shownTurn != null &&
+        mountRoom?.state == RoomState.playing &&
+        _hasRolledFrame(widget.controller.gameTranscript)) {
       _nextSeenSeat = shownTurn.seat;
     }
     _seenRolls = List<(int k, int face)>.of(
@@ -700,6 +706,14 @@ class _GameScreenState extends State<GameScreen> {
       // C-540 D1: mounted onto a controller that was already refused.
       if (mounted) {
         _leaveIfSeatRefused();
+      }
+      // C-612 D2: no frame follows a fresh mount until the next turn, so the
+      // first turn's "you're next" is weighed once the first frame is laid
+      // out. A seat already weighed (a resume, or a frame that got here
+      // first) says nothing.
+      final RoomSnapshot? shownRoom = widget.controller.room;
+      if (mounted && shownRoom != null) {
+        _announceYouAreNext(shownRoom);
       }
     });
   }
@@ -1314,6 +1328,15 @@ class _GameScreenState extends State<GameScreen> {
     }
     _yourTurnPlayedK = turn.k;
     _playCue(FeedbackScope.of(context), FeedbackCue.yourTurn);
+  }
+
+  static bool _hasRolledFrame(List<Frame> transcript) {
+    for (final Frame frame in transcript) {
+      if (frame.type == 'rolled') {
+        return true;
+      }
+    }
+    return false;
   }
 
   static Frame? _lastTurnFrame(List<Frame> transcript) {
@@ -4483,11 +4506,13 @@ class _GameScreenState extends State<GameScreen> {
     if (raw == null || raw.isEmpty) {
       return;
     }
-    final Uri? uri = Uri.tryParse(raw);
-    if (uri == null || (!uri.isScheme('https') && !uri.isScheme('http'))) {
+    final Uri? parsed = Uri.tryParse(raw);
+    if (parsed == null ||
+        (!parsed.isScheme('https') && !parsed.isScheme('http'))) {
       _showVerifyOpenFailed();
       return;
     }
+    final Uri uri = verifyUriFor(parsed, Localizations.localeOf(context));
     bool opened = false;
     try {
       opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -6179,6 +6204,18 @@ class _GameScreenState extends State<GameScreen> {
     // way to a turning hourglass that says the time is up.
     final bool timeUp = _countdownRemainingSeconds == 0;
 
+    final double strokeWidth = runningOut
+        ? _CountdownRingPainter.warningStrokeWidth
+        : _CountdownRingPainter.restStrokeWidth;
+    // C-610 D1: the digits' box must sit inside the ring's inner edge with
+    // 1 dp to spare, at any text scale. A box of side
+    // sqrt(2) * (inner radius - 1) has its whole diagonal inside that
+    // circle, so the scaleDown FittedBox below shrinks the digits only
+    // when the scaler has made them larger than that square, and never
+    // grows them past what the scaler asked for.
+    final double digitsSide =
+        math.sqrt2 * (_countdownRingSize / 2 - strokeWidth - 1);
+
     final Widget face = Stack(
       alignment: Alignment.center,
       children: [
@@ -6186,24 +6223,31 @@ class _GameScreenState extends State<GameScreen> {
           key: const Key('game-header-countdown-ring'),
           color: ringColor,
           remainingFraction: remainingFraction,
-          strokeWidth: runningOut
-              ? _CountdownRingPainter.warningStrokeWidth
-              : _CountdownRingPainter.restStrokeWidth,
+          strokeWidth: strokeWidth,
         ),
         ExcludeSemantics(
           child: timeUp
               ? _TimeUpHourglass(color: ringColor)
-              : Text(
-                  loc.gameTurnCountdownDigits(_countdownRemainingSeconds),
-                  key: const Key('game-screen-turn-countdown'),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  softWrap: false,
-                  style: TextStyle(
-                    color: ringColor,
-                    fontWeight: runningOut ? FontWeight.w800 : FontWeight.w600,
-                    fontSize: kTypeLabel,
-                    height: 1,
+              : SizedBox(
+                  width: digitsSide,
+                  height: digitsSide,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      loc.gameTurnCountdownDigits(_countdownRemainingSeconds),
+                      key: const Key('game-screen-turn-countdown'),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        color: ringColor,
+                        fontWeight: runningOut
+                            ? FontWeight.w800
+                            : FontWeight.w600,
+                        fontSize: kTypeLabel,
+                        height: 1,
+                      ),
+                    ),
                   ),
                 ),
         ),

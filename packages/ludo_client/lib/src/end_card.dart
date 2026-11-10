@@ -530,6 +530,18 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
     final Color seatColor = _seatColor(widget.mySeat ?? widget.winnerSeat!);
     final TextStyle? titleStyle = Theme.of(context).textTheme.headlineLarge
         ?.copyWith(color: LudoColors.gold);
+    // C-609 D2: rim width is 0.12 of the font size as laid out, so it grows
+    // with the text scaler like the glyphs do.
+    final double titleSize = MediaQuery.textScalerOf(context).scale(
+      titleStyle?.fontSize ?? DefaultTextStyle.of(context).style.fontSize ?? 14,
+    );
+    final TextStyle? outlineStyle = titleStyle?.copyWith(
+      foreground: Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeJoin = StrokeJoin.round
+        ..strokeWidth = titleSize * 0.12
+        ..color = LudoColors.goldInk,
+    );
     final Widget? statRow = _statRow(loc, widget.stats);
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -565,11 +577,28 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
             ),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: kSpace4),
-              child: Text(
-                loc.endWinTitle,
-                key: const Key('game-screen-winner'),
-                textAlign: TextAlign.center,
-                style: titleStyle,
+              child: Stack(
+                alignment: Alignment.center,
+                children: <Widget>[
+                  // C-609: gold alone is 2.02:1 on the card. The same text is
+                  // drawn first as a goldInk rim, then the gold fill on top;
+                  // both layers share every layout input so the glyphs
+                  // coincide at any text scale. TalkBack hears the fill only.
+                  ExcludeSemantics(
+                    child: Text(
+                      loc.endWinTitle,
+                      key: const Key('game-screen-winner-outline'),
+                      textAlign: TextAlign.center,
+                      style: outlineStyle,
+                    ),
+                  ),
+                  Text(
+                    loc.endWinTitle,
+                    key: const Key('game-screen-winner'),
+                    textAlign: TextAlign.center,
+                    style: titleStyle,
+                  ),
+                ],
               ),
             ),
           ],

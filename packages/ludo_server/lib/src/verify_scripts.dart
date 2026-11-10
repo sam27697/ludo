@@ -172,33 +172,105 @@ if (typeof module !== 'undefined' && module.exports) {
     // "{reason}" as the one substitution each template makes. A page (or a
     // cached copy of one) that carries none of these gets exactly the
     // English this file always wrote.
-    const el = document.getElementById('record');
-    const record = JSON.parse(el.textContent);
-    const rollsTable = document.getElementById('rolls-table');
-    const rollsTableData = (rollsTable && rollsTable.dataset) || {};
-    const matchText = rollsTableData.match || 'checked: matches';
-    const mismatchText = rollsTableData.mismatch || 'checked: does not match';
-    verifyRecord(record).then(function (result) {
+    //
+    // C-613: a failed check must never read as a pass, and never as "not
+    // checked yet". The summary carries a state class (verify-ok or
+    // verify-fail) and a glyph in its text, so the state is not colour
+    // alone. The reason in a fail line is a sentence in the page's language
+    // from #summary's data-reason-<cause> attributes, never the token
+    // verifyRecord returned. Anything that throws -- an odd-length reveal, a
+    // browser with no crypto.subtle, a record that does not parse -- lands
+    // in the same fail state with the "error" sentence.
+    const CHECK_MARK = '✓ ';
+    const CROSS_MARK = '✗ ';
+    const REASON_FALLBACK = {
+      format: 'this record is in a format this page does not know',
+      client_seeds: 'the players\' seeds in the record disagree with each other',
+      roll_sequence: 'the rolls in the record are missing or out of order',
+      mismatch: 'at least one roll does not match what the server committed to',
+      error: 'this browser could not run the check',
+    };
+    const REASON_ATTRIBUTE = {
+      format: 'reasonFormat',
+      client_seeds: 'reasonClientSeeds',
+      roll_sequence: 'reasonRollSequence',
+      mismatch: 'reasonMismatch',
+      error: 'reasonError',
+    };
+
+    // The cause for a result: verifyRecord's own error token when it has
+    // one, "mismatch" when the record read fine and a roll did not match.
+    // A token this page does not know maps to "error".
+    function causeOf(result) {
+      if (result.error === null || result.error === undefined) {
+        return 'mismatch';
+      }
+      return Object.prototype.hasOwnProperty.call(REASON_FALLBACK, result.error)
+        ? result.error
+        : 'error';
+    }
+
+    function showFail(cause) {
+      const summary = document.getElementById('summary');
+      if (!summary) {
+        return;
+      }
+      const summaryData = summary.dataset || {};
+      const failTemplate = summaryData.fail || 'Check failed: {reason}.';
+      const reason = summaryData[REASON_ATTRIBUTE[cause]] || REASON_FALLBACK[cause];
+      summary.classList.add('verify-fail');
+      summary.textContent =
+        CROSS_MARK + failTemplate.replace('{reason}', function () { return reason; });
+    }
+
+    async function run() {
+      const el = document.getElementById('record');
+      const record = JSON.parse(el.textContent);
+      const rollsTable = document.getElementById('rolls-table');
+      const rollsTableData = (rollsTable && rollsTable.dataset) || {};
+      const matchText = rollsTableData.match || 'checked: matches';
+      const mismatchText = rollsTableData.mismatch || 'checked: does not match';
+      const result = await verifyRecord(record);
       for (let i = 0; i < result.rolls.length; i++) {
         const row = result.rolls[i];
         const chainCell = document.getElementById('chain-' + row.k);
         const dieCell = document.getElementById('die-' + row.k);
         if (chainCell) {
-          chainCell.textContent = row.chainOk ? matchText : mismatchText;
+          setCell(chainCell, row.chainOk, matchText, mismatchText);
         }
         if (dieCell) {
-          dieCell.textContent = row.dieOk ? matchText : mismatchText;
+          setCell(dieCell, row.dieOk, matchText, mismatchText);
         }
+      }
+      if (!result.ok) {
+        showFail(causeOf(result));
+        return;
       }
       const summary = document.getElementById('summary');
       if (summary) {
         const summaryData = summary.dataset || {};
         const okTemplate = summaryData.ok || 'checked: all {n} rolls verified';
-        const failTemplate = summaryData.fail || 'checked: failed ({reason})';
-        summary.textContent = result.ok
-          ? okTemplate.replace('{n}', result.rolls.length)
-          : failTemplate.replace('{reason}', result.error || 'a roll did not match');
+        summary.classList.add('verify-ok');
+        summary.textContent = CHECK_MARK + okTemplate.replace('{n}', result.rolls.length);
       }
+    }
+
+    // A matching cell is the match words and nothing else; a mismatched one
+    // is the mismatch words after a cross, in the fail colour and bold.
+    function setCell(cell, matched, matchText, mismatchText) {
+      if (matched) {
+        cell.textContent = matchText;
+        return;
+      }
+      cell.classList.add('verify-mismatch');
+      cell.textContent = CROSS_MARK + mismatchText;
+    }
+
+    run().catch(function (err) {
+      if (typeof console !== 'undefined') {
+        console.error(err);
+      }
+      showFail('error');
     });
   })();
 }

@@ -20,8 +20,8 @@
 // nothing but what this file puts there -- no `module`, so
 // `typeof module` reads 'undefined' and the script takes the DOM branch,
 // finding only the `document` stub (a tiny `getElementById` over plain
-// objects carrying `dataset` and `textContent`, built in `_driverSource`
-// below) this file supplies. `crypto.subtle`, `TextEncoder` and
+// objects carrying `dataset`, `textContent` and `classList`, built in
+// `_driverSource` below) this file supplies. `crypto.subtle`, `TextEncoder` and
 // `Uint8Array` are added to that context explicitly, since none of them
 // are language-level globals a fresh V8 context carries on its own.
 
@@ -74,11 +74,27 @@ const input = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 const record = input.record;
 const ks = record.rolls.map((r) => r.k);
 
+// The C-613 script marks the summary and the mismatched cells with a state
+// class, so every stub that can be written to carries a classList (add,
+// remove, contains) over a plain Set.
+function makeClassList() {
+  const classes = new Set();
+  return {
+    add: (...names) => names.forEach((n) => classes.add(n)),
+    remove: (...names) => names.forEach((n) => classes.delete(n)),
+    contains: (n) => classes.has(n),
+  };
+}
+
 const cells = {};
 cells['record'] = { textContent: JSON.stringify(record), dataset: {} };
 for (const k of ks) {
-  cells['chain-' + k] = { textContent: 'not checked', dataset: {} };
-  cells['die-' + k] = { textContent: 'not checked', dataset: {} };
+  cells['chain-' + k] = {
+    textContent: 'not checked', dataset: {}, classList: makeClassList(),
+  };
+  cells['die-' + k] = {
+    textContent: 'not checked', dataset: {}, classList: makeClassList(),
+  };
 }
 
 let resolveDone;
@@ -89,6 +105,7 @@ cells['summary'] = {
   dataset: input.summaryDataset || {},
   get textContent() { return summaryText; },
   set textContent(v) { summaryText = v; resolveDone(); },
+  classList: makeClassList(),
 };
 
 // Not read by verify.js as it stands on the commit this file targets --
@@ -256,7 +273,7 @@ void main() {
         good,
         summaryDataset: const <String, String>{
           'ok': 'تم التحقق: كل الرميات ({n}) سليمة',
-          'fail': 'تم التحقق: فشل ({reason})',
+          'fail': 'فشل الفحص: {reason}.',
         },
         tableDataset: const <String, String>{
           'match': 'تم الفحص: مطابق',
@@ -266,7 +283,7 @@ void main() {
 
       expect(
         result['summaryTextContent'],
-        'تم التحقق: كل الرميات (5) سليمة',
+        '✓ تم التحقق: كل الرميات (5) سليمة',
         reason: 'decision 5: with #summary[data-ok] set to the Arabic '
             'template, verify.js must write that template with {n} '
             'replaced by the roll count (5), not its own hardcoded '
@@ -287,18 +304,19 @@ void main() {
         broken,
         summaryDataset: const <String, String>{
           'ok': 'تم التحقق: كل الرميات ({n}) سليمة',
-          'fail': 'تم التحقق: فشل ({reason})',
+          'fail': 'فشل الفحص: {reason}.',
+          'reasonFormat': 'سجل اللعبة بصيغة لا تعرفها هذه الصفحة',
         },
       );
 
       expect(
         result['summaryTextContent'],
-        'تم التحقق: فشل (format)',
-        reason: 'decision 5: with #summary[data-fail] set to the Arabic '
-            'template, a record that fails with error "format" must '
-            'produce that template with {reason} replaced by "format", '
-            'not the script\'s own hardcoded English '
-            '("checked: failed (format)"); this must fail on ffe63fd; '
+        '✗ فشل الفحص: سجل اللعبة بصيغة لا تعرفها هذه الصفحة.',
+        reason: 'decision 5 and C-613 D1/D2: with #summary[data-fail] set '
+            'to the Arabic template and the Arabic format sentence in '
+            '#summary[data-reason-format], a record that fails with error '
+            '"format" must produce the template with {reason} replaced by '
+            'that sentence (never the token "format"), behind the cross; '
             'full driver result: $result',
       );
     });
@@ -353,11 +371,11 @@ void main() {
 
       expect(
         result['summaryTextContent'],
-        'checked: all 5 rolls verified',
-        reason: 'decision 5: an old cached page with no data-ok '
-            'attribute must still get today\'s exact English summary '
-            'for a fully-verifying 5-roll record; full driver result: '
-            '$result',
+        '✓ checked: all 5 rolls verified',
+        reason: 'decision 5 and C-613 D3: an old cached page with no '
+            'data-ok attribute must still get the exact English pass '
+            'summary, behind the check mark, for a fully-verifying '
+            '5-roll record; full driver result: $result',
       );
       for (int k = 1; k <= 5; k++) {
         expect(
@@ -385,11 +403,13 @@ void main() {
 
       expect(
         result['summaryTextContent'],
-        'checked: failed (format)',
-        reason: 'decision 5: with no data-fail attribute, a record that '
-            'fails with error "format" must get exactly today\'s '
-            'English summary "checked: failed (format)"; full driver '
-            'result: $result',
+        '✗ Check failed: this record is in a format this page does not '
+        'know.',
+        reason: 'decision 5 and C-613 D1/D2: with no data-fail attribute, '
+            'a record that fails with error "format" must get the English '
+            'D1 fail template with the English D2 sentence for that cause '
+            '(never the token), behind the cross; full driver result: '
+            '$result',
       );
     });
   });

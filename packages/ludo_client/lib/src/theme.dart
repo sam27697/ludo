@@ -38,6 +38,14 @@ abstract final class LudoColors {
   /// Never a seat colour and never used for anything but "you won".
   static const Color gold = Color(0xFFD4AF37);
 
+  /// C-609: the outline under gold text (the winner's end-card title), the
+  /// same hue as [gold] at HSL lightness 0.25, 6.88:1 on [paperElevated].
+  /// Derived from [gold] so the palette stays one gold. Never a fill and
+  /// never a seat colour.
+  static final Color goldInk = HSLColor.fromColor(gold)
+      .withLightness(0.25)
+      .toColor();
+
   /// Seat colours: single source for board yards/tokens and the brand die.
   static const List<Color> seats = <Color>[
     Color(0xFFD32F2F),

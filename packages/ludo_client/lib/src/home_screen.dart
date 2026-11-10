@@ -21,6 +21,7 @@ import 'server_config.dart';
 import 'session_memory.dart';
 import 'sound_toggle.dart';
 import 'theme.dart';
+import 'verify_link.dart';
 import 'verify_rolls_button.dart';
 
 /// How long the home scroll view takes to bring a link's target back into
@@ -798,11 +799,13 @@ class _HomeScreenState extends State<HomeScreen>
     if (game == null) {
       return;
     }
-    final Uri? uri = Uri.tryParse(game.verifyUrl);
-    if (uri == null || (!uri.isScheme('https') && !uri.isScheme('http'))) {
+    final Uri? parsed = Uri.tryParse(game.verifyUrl);
+    if (parsed == null ||
+        (!parsed.isScheme('https') && !parsed.isScheme('http'))) {
       _showLastGameVerifyOpenFailed();
       return;
     }
+    final Uri uri = verifyUriFor(parsed, Localizations.localeOf(context));
     bool opened = false;
     try {
       opened = await launchUrl(uri, mode: LaunchMode.externalApplication);

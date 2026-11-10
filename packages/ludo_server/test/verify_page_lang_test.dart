@@ -918,10 +918,11 @@ void main() {
               'data-ok="checked: all {n} rolls verified" (today\'s '
               'English, with the {n} placeholder literal); summary tag: '
               '$tag');
-      expect(tag.contains('data-fail="checked: failed ({reason})"'), isTrue,
-          reason: 'decision 5: #summary must carry '
-              'data-fail="checked: failed ({reason})" (today\'s English, '
-              'with the {reason} placeholder literal); summary tag: $tag');
+      expect(tag.contains('data-fail="Check failed: {reason}."'), isTrue,
+          reason: 'decision 5 and C-613 D1: #summary must carry '
+              'data-fail="Check failed: {reason}." (the English fail '
+              'template, failure word first, with the {reason} placeholder '
+              'literal); summary tag: $tag');
     });
 
     test(
@@ -980,11 +981,11 @@ void main() {
             'summary tag: $tag',
       );
       expect(
-        tag.contains('data-fail="تم التحقق: فشل ({reason})"'),
+        tag.contains('data-fail="فشل الفحص: {reason}."'),
         isTrue,
-        reason: 'decision 5: the ar page\'s #summary must carry the '
-            'Arabic data-fail string with the {reason} placeholder '
-            'literal; summary tag: $tag',
+        reason: 'decision 5 and C-613 D1: the ar page\'s #summary must '
+            'carry the Arabic data-fail string (failure word first) with '
+            'the {reason} placeholder literal; summary tag: $tag',
       );
     });
 
