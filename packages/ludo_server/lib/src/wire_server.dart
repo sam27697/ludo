@@ -97,6 +97,13 @@ final RegExp _roomLinkPathPattern = RegExp(r'^/r/([^/]+)$');
 /// reaches [VerifyStore.load] or [VerifyStore.save] to build a path from.
 final RegExp _verifyPathPattern = RegExp(r'^/v/(.*)$');
 
+/// The room page's `content-security-policy`, verbatim, which is the verify
+/// page's policy too. The C-615 pages carry it as well.
+const String _pageContentSecurityPolicy = "default-src 'none'; "
+    "script-src 'self'; style-src 'unsafe-inline'; "
+    "base-uri 'none'; form-action 'none'; "
+    "frame-ancestors 'none'";
+
 const String _verifyJsonSuffix = '.json';
 
 /// Builds the `assetlinks.json` body for [rawFingerprint], or returns null
@@ -232,6 +239,9 @@ class WireServer {
       final RegExpMatch? verifyMatch = _verifyPathPattern.firstMatch(path);
       if (verifyMatch != null) {
         return _handleVerify(request, verifyMatch.group(1)!);
+      }
+      if (!_isUpgradeRequest(request)) {
+        return _handlePlainRequest(request, path);
       }
       final String ip = _clientIp(request);
       final shelf.Handler upgrade = webSocketHandler(
@@ -449,6 +459,77 @@ class WireServer {
     }
   }
 
+  /// True when [request] asks for a WebSocket upgrade: its `upgrade` header
+  /// contains `websocket`, in any casing. Such a request is the game socket
+  /// on whatever path it names -- the client connects to path `/` -- and is
+  /// handed to `webSocketHandler` untouched. Everything else reaching
+  /// [_handlePlainRequest] is an ordinary HTTP request.
+  bool _isUpgradeRequest(shelf.Request request) {
+    final String? upgrade = request.headers['upgrade'];
+    return upgrade != null && upgrade.toLowerCase().contains('websocket');
+  }
+
+  /// C-615. Answers an ordinary (non-upgrade) request for a path no other
+  /// route matched: the home page at `/`, the generic not-found page
+  /// anywhere else. `HEAD` carries the status and headers of `GET` with an
+  /// empty body. Never reached by a WebSocket upgrade, see
+  /// [_isUpgradeRequest].
+  shelf.Response _handlePlainRequest(shelf.Request request, String path) {
+    final bool isGet = request.method == 'GET';
+    final bool isHead = request.method == 'HEAD';
+    if (path == '/') {
+      if (!isGet && !isHead) {
+        return shelf.Response(405, headers: const <String, String>{
+          'allow': 'GET, HEAD',
+        });
+      }
+      return _htmlPage(
+        request,
+        status: 200,
+        cacheControl: 'public, max-age=300',
+        build: (String language) => buildHomePageHtml(language: language),
+      );
+    }
+    if (!isGet && !isHead) {
+      return shelf.Response(404, body: '');
+    }
+    return _htmlPage(
+      request,
+      status: 404,
+      cacheControl: 'no-store',
+      build: (String language) =>
+          buildLinkNotFoundHtml(cutInvite: false, language: language),
+    );
+  }
+
+  /// One of the C-615 pages: [build] renders it in the language
+  /// `resolveVerifyLanguage` picks from the query and `Accept-Language`, so
+  /// the response varies on that header. `HEAD` gets the same status and
+  /// headers and an empty body.
+  shelf.Response _htmlPage(
+    shelf.Request request, {
+    required int status,
+    required String cacheControl,
+    required String Function(String language) build,
+  }) {
+    final String language = resolveVerifyLanguage(
+      query: request.url.queryParameters,
+      acceptLanguageHeader: request.headers['accept-language'],
+    );
+    return shelf.Response(
+      status,
+      body: request.method == 'HEAD' ? '' : build(language),
+      headers: <String, String>{
+        'content-type': 'text/html; charset=utf-8',
+        'vary': 'accept-language',
+        'cache-control': cacheControl,
+        'x-content-type-options': 'nosniff',
+        'referrer-policy': 'no-referrer',
+        'content-security-policy': _pageContentSecurityPolicy,
+      },
+    );
+  }
+
   /// `GET /r/<CODE>` and `HEAD` of the same, never reaching the WebSocket
   /// upgrade path either. [rawCode] is whatever text matched the path
   /// pattern in [start]'s handler, upper-cased and checked against
@@ -481,7 +562,15 @@ class WireServer {
         }
         final String code = rawCode.toUpperCase();
         if (!isWellFormedRoomCode(code)) {
-          return shelf.Response.notFound('');
+          // C-615: a cut or mistyped invite link gets a page that points at
+          // the next step. The code is never echoed into it.
+          return _htmlPage(
+            request,
+            status: 404,
+            cacheControl: 'no-store',
+            build: (String language) =>
+                buildLinkNotFoundHtml(cutInvite: true, language: language),
+          );
         }
         final String language = resolveVerifyLanguage(
           query: request.url.queryParameters,
@@ -495,11 +584,7 @@ class WireServer {
             'cache-control': 'no-store',
             'x-content-type-options': 'nosniff',
             'referrer-policy': 'no-referrer',
-            // The verify page's policy, verbatim.
-            'content-security-policy': "default-src 'none'; "
-                "script-src 'self'; style-src 'unsafe-inline'; "
-                "base-uri 'none'; form-action 'none'; "
-                "frame-ancestors 'none'",
+            'content-security-policy': _pageContentSecurityPolicy,
           },
         );
       default:

@@ -539,7 +539,8 @@ void main() {
 
   test(
       'a VerifyStore whose save throws still returns MoveOk for the '
-      'winning move, with the room FINISHED and verify_url still set', () {
+      'winning move, with the room FINISHED and verify_url the empty '
+      'string', () {
     final FakeClock clock = FakeClock(DateTime.utc(2026, 3, 6));
     final _ThrowingVerifyStore throwingStore = _ThrowingVerifyStore();
     final _PlayedGame played = _playToWin(
@@ -556,9 +557,10 @@ void main() {
     );
     expect(
       played.finalMove.verifyUrl,
-      'https://verify.example.test/v/${played.gameId}',
-      reason: 'verify_url must still be set on the winning MoveOk even '
-          'though the record could not be saved',
+      equals(''),
+      reason: 'verify_url must be the empty string on the winning MoveOk '
+          'when the record could not be saved: a link would open a page '
+          'for a record that does not exist',
     );
     expect(
       throwingStore.saveCalls,

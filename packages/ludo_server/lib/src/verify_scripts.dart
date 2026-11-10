@@ -210,7 +210,18 @@ if (typeof module !== 'undefined' && module.exports) {
         : 'error';
     }
 
+    // C-616: the proof table is folded under #proof; a failed check opens
+    // it so the mismatched rows are in sight. A page without #proof (a
+    // cached older copy) just skips this.
+    function openProof() {
+      const proof = document.getElementById('proof');
+      if (proof) {
+        proof.open = true;
+      }
+    }
+
     function showFail(cause) {
+      openProof();
       const summary = document.getElementById('summary');
       if (!summary) {
         return;

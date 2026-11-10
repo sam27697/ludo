@@ -141,7 +141,7 @@ different games.
 | `moved` | `{ "seat": int, "token": int, "from": int, "to": int, "captured": [{"seat":int,"token":int}], "extra_roll": bool }` |
 | `turn_passed` | `{ "seat": int, "reason": "no_legal_move"\|"three_sixes" }` |
 | `turn` | `{ "seat": int, "deadline_ms": int }` |
-| `game_over` | `{ "winner": int, "verify_url": string }`. **No `seed`.** Nothing is withheld until the end any more: every roll's secret was already published in its own `rolled` frame, so a client can finish verifying before this frame arrives. `verify_url` is the permalink for later and for strangers. Section 11. |
+| `game_over` | `{ "winner": int, "verify_url": string }`. **No `seed`.** Nothing is withheld until the end any more: every roll's secret was already published in its own `rolled` frame, so a client can finish verifying before this frame arrives. `verify_url` is the permalink for later and for strangers; it is the empty string when the server could not store the record, and a client then shows no link. Section 11. |
 | `error` | `{ "code": string, "message": string }`, with `re` set when it answers a specific message. |
 | `pong` | `{ }` |
 | `game_log` | `{ "game_id": string, "part": int, "parts": int, "frames": [ ... ] }`, one part of the answer to a `game_log` request, to that socket only. Section 17. |
@@ -549,7 +549,10 @@ this one, and the shared `packages/fair_dice` already takes `d` as a parameter.
 **`game_over`** drops `seed` and gains `verify_url`, the absolute
 `https://provefair.app/v/<game_id>`. It is a convenience for a stranger and for
 later. **A client must never need it to verify**; everything required was in the
-frames.
+frames. If the server could not store the record of the finished game, `verify_url`
+is the empty string, a client then shows no link, and the game ends exactly as it
+otherwise would: a link to a record that is not there is worse than no link. The
+reconnect snapshot carries the same value.
 
 ### 11.3 What the server must not do
 
