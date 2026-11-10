@@ -125,6 +125,10 @@ Answered before the WebSocket upgrade, like `/health`, `/privacy` and `/r/`.
 `GET` and `HEAD` only (`HEAD` = same status and headers, empty body); any other
 method is `405` with `allow: GET, HEAD`.
 
+Beyond the routes below (C-615): `GET /` is the home page and any other unmatched
+path a `404` page; only a request with an `Upgrade: websocket` header reaches
+the game socket.
+
 | Path | Found | Not found / malformed |
 |---|---|---|
 | `/v/<id>` | `200`, `text/html; charset=utf-8`, the page | `404`, `text/html; charset=utf-8`, a short page: no record for this id, records are kept for 90 days |
@@ -269,8 +273,11 @@ What would tell us it broke: a finished game whose `verify_url` does not answer
 
 ## 9. Not in this order
 
-A landing page at `provefair.app/`; records for games abandoned mid-play;
-the client showing anything new. Each is its own order.
+Records for games abandoned mid-play; the client showing anything new. Each is
+its own order. The landing page at `provefair.app/` shipped in C-615: `GET /`
+is the home page, a malformed `/r/<x>` and every other unmatched path answer
+`404` with a page, and an upgrade request on any path still reaches the game
+socket.
 
 The page's language (C-396): an explicit `?lang=ar` or `?lang=en` query
 parameter wins outright; otherwise the highest-`q` tag of the request's
