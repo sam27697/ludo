@@ -216,7 +216,7 @@ String buildVerifyPageHtml(
       ..write(_esc(seed['seat']))
       ..write('">')
       ..write(_seatMarkup(seed['seat'], isAr: isAr))
-      ..write('</td><td$ltrAttr>')
+      ..write('</td><td class="hex"$ltrAttr>')
       ..write(_esc(seed['seed']))
       ..write('</td><td>')
       ..write(_esc(originText))
@@ -237,7 +237,7 @@ String buildVerifyPageHtml(
       ..write(_seatMarkup(roll['seat'], isAr: isAr))
       ..write('</td><td$ltrAttr>')
       ..write(_esc(roll['die']))
-      ..write('</td><td class="reveal"$ltrAttr>')
+      ..write('</td><td class="reveal hex"$ltrAttr>')
       ..write(_esc(roll['reveal']))
       ..write('</td><td id="chain-')
       ..write(kEsc)
@@ -340,23 +340,27 @@ data-reason-error="$reasonError">$notCheckedSummary</p>
 <summary>اعرض كل رمية وطريقة التحقق منها بنفسك</summary>
 
 <h2>التثبيت</h2>
-<p>تثبيت السلسلة: <code$ltrAttr>${_esc(chainCommit)}</code></p>
+<p>تثبيت السلسلة: <code class="hex"$ltrAttr>${_esc(chainCommit)}</code></p>
 <p>طول السلسلة: <span$ltrAttr>${_esc(chainLength)}</span></p>
 
 <h2>البذور</h2>
+<div class="table-scroll">
 <table>
 <thead><tr><th>اللاعب</th><th>البذرة</th><th>المصدر</th></tr></thead>
 <tbody>
 $seedRows</tbody>
 </table>
+</div>
 
 <h2>الرميات</h2>
+<div class="table-scroll">
 <table id="rolls-table" data-match="$dataMatch" data-mismatch="$dataMismatch">
 <thead><tr><th>k</th><th>اللاعب</th><th>النرد</th><th>الكشف</th>
 <th>فحص السلسلة</th><th>فحص النرد</th></tr></thead>
 <tbody>
 $rollRows</tbody>
 </table>
+</div>
 
 <h2>تحقق بنفسك</h2>
 <p>$checkYourselfBody</p>
@@ -422,23 +426,27 @@ build, and neither is in place here.</li>
 <summary>Show every roll and how to check it yourself</summary>
 
 <h2>Commitment</h2>
-<p>Chain commitment: <code$ltrAttr>${_esc(chainCommit)}</code></p>
+<p>Chain commitment: <code class="hex"$ltrAttr>${_esc(chainCommit)}</code></p>
 <p>Chain length: <span$ltrAttr>${_esc(chainLength)}</span></p>
 
 <h2>Seeds</h2>
+<div class="table-scroll">
 <table>
 <thead><tr><th>Player</th><th>Seed</th><th>Origin</th></tr></thead>
 <tbody>
 $seedRows</tbody>
 </table>
+</div>
 
 <h2>Rolls</h2>
+<div class="table-scroll">
 <table id="rolls-table" data-match="checked: matches" data-mismatch="checked: does not match">
 <thead><tr><th>k</th><th>Player</th><th>Die</th><th>Reveal</th>
 <th>Chain check</th><th>Die check</th></tr></thead>
 <tbody>
 $rollRows</tbody>
 </table>
+</div>
 
 <h2>Check it yourself</h2>
 <p>Do not take this page's word for any of the above. Run the same checks
@@ -589,6 +597,12 @@ h1 {
 /// with `break-word` the seeds table still grows to the unbreakable seed
 /// and sticks out past the phone.
 ///
+/// C-618: that permission belongs to the hex alone. The body keeps it for
+/// prose (a long game id in the heading still wraps), but every header and
+/// every cell that is not `.hex` resets to `normal`, so a word never splits
+/// mid-letter; each table sits in `.table-scroll` and scrolls inside the card
+/// if its words cannot fit.
+///
 /// C-616: the table borders (#B7CFCB) and the `code` background (#E3EFEC)
 /// are chosen for the light card. The verdict block is white; its three
 /// text colours (#0A2A27, #1b5e20, #b3261e) each clear 4.5:1 against it.
@@ -610,9 +624,19 @@ th, td {
   text-align: start;
   vertical-align: top;
 }
+th, td:not(.hex) {
+  overflow-wrap: normal;
+  word-break: normal;
+}
 td.reveal {
   font-family: monospace;
+}
+.hex {
+  overflow-wrap: anywhere;
   word-break: break-all;
+}
+.table-scroll {
+  overflow-x: auto;
 }
 code {
   font-family: monospace;
