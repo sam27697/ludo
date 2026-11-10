@@ -12,7 +12,9 @@ answers 503.
 
 One record per finished game, written at the moment the game is won, **before**
 `move()` returns the result that carries `verify_url`. A client that taps
-Verify the instant `game_over` arrives must find the record already there.
+Verify the instant `game_over` arrives must find the record already there. If
+the record could not be stored, `verify_url` is the empty string and a client
+shows no link.
 
 Only finished games get a record. A room reaped mid-game has no `verify_url`
 and no record.
@@ -113,7 +115,9 @@ VerifyStore get verifyStore;
   `Map<String, Object?> buildVerifyRecord(Room room, {required int winner, required DateTime finishedAt})`),
   `jsonEncode`s it and calls `verifyStore.save`. If `save` throws or returns
   false, the game still ends normally and `move()` still returns its
-  `MoveOk`: a player must never lose a finished game to a full disk. The
+  `MoveOk`, with `verifyUrl` the empty string: a player must never lose a
+  finished game to a full disk, and must never be handed a link to a record
+  that is not there. The
   failure is written to stderr as one line,
   `verify_record_not_saved game_id=<id> reason=<exception text or "exists">`.
   It is not swallowed silently.
