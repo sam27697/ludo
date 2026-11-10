@@ -131,7 +131,6 @@ const Duration kSafeCueHold = Duration(milliseconds: 1400);
 /// C-384 S5. Skipped when animations are disabled.
 const Duration kSafeCueFade = Duration(milliseconds: 200);
 
-/// Dwell time after winning move lands before end card, contract C-270 rule 4a.
 /// C-592 D2: how long the "your seat moved" line stays in the notice slot.
 const Duration kSeatMovedHold = Duration(milliseconds: 4000);
 
@@ -144,6 +143,7 @@ const Map<int, String> kSeatColourWords = <int, String>{
   3: 'blue',
 };
 
+/// Dwell time after winning move lands before end card, contract C-270 rule 4a.
 const Duration kEndCardDwell = Duration(milliseconds: 600);
 
 /// Upper bound on end-card hold before forcing release, contract C-270 rule 4c.
@@ -6179,6 +6179,18 @@ class _GameScreenState extends State<GameScreen> {
     // way to a turning hourglass that says the time is up.
     final bool timeUp = _countdownRemainingSeconds == 0;
 
+    final double strokeWidth = runningOut
+        ? _CountdownRingPainter.warningStrokeWidth
+        : _CountdownRingPainter.restStrokeWidth;
+    // C-610 D1: the digits' box must sit inside the ring's inner edge with
+    // 1 dp to spare, at any text scale. A box of side
+    // sqrt(2) * (inner radius - 1) has its whole diagonal inside that
+    // circle, so the scaleDown FittedBox below shrinks the digits only
+    // when the scaler has made them larger than that square, and never
+    // grows them past what the scaler asked for.
+    final double digitsSide =
+        math.sqrt2 * (_countdownRingSize / 2 - strokeWidth - 1);
+
     final Widget face = Stack(
       alignment: Alignment.center,
       children: [
@@ -6186,24 +6198,31 @@ class _GameScreenState extends State<GameScreen> {
           key: const Key('game-header-countdown-ring'),
           color: ringColor,
           remainingFraction: remainingFraction,
-          strokeWidth: runningOut
-              ? _CountdownRingPainter.warningStrokeWidth
-              : _CountdownRingPainter.restStrokeWidth,
+          strokeWidth: strokeWidth,
         ),
         ExcludeSemantics(
           child: timeUp
               ? _TimeUpHourglass(color: ringColor)
-              : Text(
-                  loc.gameTurnCountdownDigits(_countdownRemainingSeconds),
-                  key: const Key('game-screen-turn-countdown'),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  softWrap: false,
-                  style: TextStyle(
-                    color: ringColor,
-                    fontWeight: runningOut ? FontWeight.w800 : FontWeight.w600,
-                    fontSize: kTypeLabel,
-                    height: 1,
+              : SizedBox(
+                  width: digitsSide,
+                  height: digitsSide,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      loc.gameTurnCountdownDigits(_countdownRemainingSeconds),
+                      key: const Key('game-screen-turn-countdown'),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        color: ringColor,
+                        fontWeight: runningOut
+                            ? FontWeight.w800
+                            : FontWeight.w600,
+                        fontSize: kTypeLabel,
+                        height: 1,
+                      ),
+                    ),
                   ),
                 ),
         ),
