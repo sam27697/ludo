@@ -76,6 +76,12 @@ const String _enLeadLine =
     'all of them before the game began, and this page checks each one '
     'in your browser.';
 
+/// C-613: what the page says where JavaScript is off and nothing is
+/// checked. A constant for the same reason as [_enLeadLine].
+const String _enNoscriptLine =
+    'This page checks the rolls with JavaScript, which is off in this '
+    'browser. The checks below can also be run with verify.py.';
+
 /// Default language for every caller that does not ask for one -- today's
 /// English, unchanged.
 const String defaultVerifyLanguage = 'en';
@@ -260,10 +266,19 @@ String buildVerifyPageHtml(
         'كل رمية في هذه اللعبة قابلة للتحقق: الخادم ثبّتها كلها قبل أن '
         'تبدأ اللعبة، وهذه الصفحة تفحص كل واحدة منها في متصفحك.';
     const String dataOk = 'تم التحقق: كل الرميات ({n}) سليمة';
-    const String dataFail = 'تم التحقق: فشل ({reason})';
+    const String dataFail = 'فشل الفحص: {reason}.';
+    const String reasonFormat = 'سجل اللعبة بصيغة لا تعرفها هذه الصفحة';
+    const String reasonClientSeeds = 'بذور اللاعبين في السجل لا تتفق مع بعضها';
+    const String reasonRollSequence = 'رميات السجل ناقصة أو بغير ترتيبها';
+    const String reasonMismatch =
+        'رمية واحدة على الأقل لا تطابق ما ثبّته الخادم';
+    const String reasonError = 'تعذّر على هذا المتصفح إجراء الفحص';
     const String dataMatch = 'تم الفحص: مطابق';
     const String dataMismatch = 'تم الفحص: غير مطابق';
     const String notCheckedSummary = 'لم يتم التحقق بعد';
+    const String noscriptLine =
+        'تفحص هذه الصفحة الرميات بجافاسكربت، وهي معطلة في هذا المتصفح. '
+        'يمكن أيضاً تشغيل الفحوص أدناه بـ verify.py.';
     const String proves2 =
         'ثبّت الخادم كل رميات هذه اللعبة قبل أن تبدأ، ولم يكن بإمكانه '
         'تغيير أي منها بعد ذلك.';
@@ -297,7 +312,13 @@ $_sharedStyle
 <p class="lang-switch"><a href="?lang=en">English</a></p>
 <h1>اللعبة ${_esc(gameId)}</h1>
 <p>$leadLine</p>
-<p id="summary" data-ok="$dataOk" data-fail="$dataFail">$notCheckedSummary</p>
+<p id="summary" data-ok="$dataOk" data-fail="$dataFail"
+data-reason-format="$reasonFormat"
+data-reason-client-seeds="$reasonClientSeeds"
+data-reason-roll-sequence="$reasonRollSequence"
+data-reason-mismatch="$reasonMismatch"
+data-reason-error="$reasonError">$notCheckedSummary</p>
+<noscript><p>$noscriptLine</p></noscript>
 
 <p>انتهت في <span dir="ltr">${_esc(finishedAt)} UTC</span>. الفائز: $winnerMarkup.</p>
 
@@ -362,7 +383,13 @@ $_sharedStyle
 <p class="lang-switch"><a href="?lang=ar">العربية</a></p>
 <h1>Game ${_esc(gameId)}</h1>
 <p>$_enLeadLine</p>
-<p id="summary" data-ok="checked: all {n} rolls verified" data-fail="checked: failed ({reason})">not checked</p>
+<p id="summary" data-ok="checked: all {n} rolls verified" data-fail="Check failed: {reason}."
+data-reason-format="this record is in a format this page does not know"
+data-reason-client-seeds="the players' seeds in the record disagree with each other"
+data-reason-roll-sequence="the rolls in the record are missing or out of order"
+data-reason-mismatch="at least one roll does not match what the server committed to"
+data-reason-error="this browser could not run the check">not checked</p>
+<noscript><p>$_enNoscriptLine</p></noscript>
 
 <p>Finished ${_esc(finishedAt)} UTC. Winner: $winnerMarkup.</p>
 
@@ -519,6 +546,17 @@ code {
   text-align: end;
   margin: 0 0 1em;
   font-size: 0.9em;
+}
+.verify-ok {
+  color: #1b5e20;
+}
+.verify-fail {
+  color: #b3261e;
+  font-weight: bold;
+}
+.verify-mismatch {
+  color: #b3261e;
+  font-weight: bold;
 }''';
 
 const String _sharedNotFoundStyle = '''
