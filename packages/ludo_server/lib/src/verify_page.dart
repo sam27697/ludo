@@ -309,7 +309,9 @@ $_sharedStyle
 </style>
 </head>
 <body>
-<p class="lang-switch"><a href="?lang=en">English</a></p>
+<p class="lang-switch"><a href="?lang=en" id="lang-switch" class="switch" hreflang="en" lang="en">English</a></p>
+<main class="card">
+<div class="seats" aria-hidden="true"><span class="red"></span><span class="green"></span><span class="yellow"></span><span class="blue"></span></div>
 <h1>اللعبة ${_esc(gameId)}</h1>
 <p>$leadLine</p>
 <p id="summary" data-ok="$dataOk" data-fail="$dataFail"
@@ -333,6 +335,9 @@ data-reason-error="$reasonError">$notCheckedSummary</p>
 <ul>
 <li>$notProves</li>
 </ul>
+
+<details id="proof">
+<summary>اعرض كل رمية وطريقة التحقق منها بنفسك</summary>
 
 <h2>التثبيت</h2>
 <p>تثبيت السلسلة: <code$ltrAttr>${_esc(chainCommit)}</code></p>
@@ -358,8 +363,10 @@ $rollRows</tbody>
 <p><code$ltrAttr>curl -sO https://provefair.app/v/verify.py &amp;&amp; python3
 verify.py ${_esc(gameId)}</code></p>
 <p>الكود: <a href="$_sourceUrl"$ltrAttr>$_sourceUrl</a></p>
+</details>
 
 <p>يُحفظ هذا السجل 90 يومًا بعد انتهاء اللعبة.</p>
+</main>
 
 <script type="application/json" id="record">$scriptSafeRecordJson</script>
 <script src="/v/verify.js"></script>
@@ -380,7 +387,9 @@ $_sharedStyle
 </style>
 </head>
 <body>
-<p class="lang-switch"><a href="?lang=ar">العربية</a></p>
+<p class="lang-switch"><a href="?lang=ar" id="lang-switch" class="switch" hreflang="ar" lang="ar">العربية</a></p>
+<main class="card">
+<div class="seats" aria-hidden="true"><span class="red"></span><span class="green"></span><span class="yellow"></span><span class="blue"></span></div>
 <h1>Game ${_esc(gameId)}</h1>
 <p>$_enLeadLine</p>
 <p id="summary" data-ok="checked: all {n} rolls verified" data-fail="Check failed: {reason}."
@@ -409,6 +418,9 @@ only fixes for that are a third-party randomness beacon or an audited
 build, and neither is in place here.</li>
 </ul>
 
+<details id="proof">
+<summary>Show every roll and how to check it yourself</summary>
+
 <h2>Commitment</h2>
 <p>Chain commitment: <code$ltrAttr>${_esc(chainCommit)}</code></p>
 <p>Chain length: <span$ltrAttr>${_esc(chainLength)}</span></p>
@@ -435,8 +447,10 @@ this page:</p>
 <p><code$ltrAttr>curl -sO https://provefair.app/v/verify.py &amp;&amp; python3
 verify.py ${_esc(gameId)}</code></p>
 <p>Source: <a href="$_sourceUrl"$ltrAttr>$_sourceUrl</a></p>
+</details>
 
 <p>This record is kept for 90 days after the game ends.</p>
+</main>
 
 <script type="application/json" id="record">$scriptSafeRecordJson</script>
 <script src="/v/verify.js"></script>
@@ -465,9 +479,12 @@ $_sharedNotFoundStyle
 </style>
 </head>
 <body>
-<p class="lang-switch"><a href="?lang=en">English</a></p>
+<p class="lang-switch"><a href="?lang=en" id="lang-switch" class="switch" hreflang="en" lang="en">English</a></p>
+<main class="card">
+<div class="seats" aria-hidden="true"><span class="red"></span><span class="green"></span><span class="yellow"></span><span class="blue"></span></div>
 <h1>لا يوجد سجل بهذا المعرّف</h1>
 <p>لا يوجد سجل تحقق بهذا المعرّف. تُحفظ السجلات 90 يومًا بعد انتهاء اللعبة التي تخصها.</p>
+</main>
 </body>
 </html>
 ''';
@@ -485,13 +502,81 @@ $_sharedNotFoundStyle
 </style>
 </head>
 <body>
-<p class="lang-switch"><a href="?lang=ar">العربية</a></p>
+<p class="lang-switch"><a href="?lang=ar" id="lang-switch" class="switch" hreflang="ar" lang="ar">العربية</a></p>
+<main class="card">
+<div class="seats" aria-hidden="true"><span class="red"></span><span class="green"></span><span class="yellow"></span><span class="blue"></span></div>
 <h1>No record for this id</h1>
 <p>There is no verification record for this id. Records are kept for 90 days after the game they belong to ends.</p>
+</main>
 </body>
 </html>
 ''';
 }
+
+/// The look both verify pages and the not-found page share with the room
+/// page (`link_pages.dart`): the teal ground, one light card, the four seat
+/// dots, and the language switch as a 3 rem tap target. [cardWidth] is the
+/// card's max width, the one thing the pages disagree on.
+String _cardStyle(String cardWidth) => '''
+html {
+  background: #0A3D38;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 1rem;
+  background: linear-gradient(160deg, #0A3D38, #14665C);
+  color: #0A2A27;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.card {
+  box-sizing: border-box;
+  max-width: $cardWidth;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem;
+  background: #F7FBFA;
+  border-radius: 1.25rem;
+  text-align: start;
+}
+.seats {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.seats span {
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+}
+.seats .red { background: #D32F2F; }
+.seats .green { background: #388E3C; }
+.seats .yellow { background: #FBC02D; }
+.seats .blue { background: #1976D2; }
+h1 {
+  margin: 1rem 0 0.25rem;
+  font-size: 1.5rem;
+  line-height: 1.25;
+}
+.lang-switch {
+  max-width: $cardWidth;
+  margin: 0 auto;
+  text-align: end;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  min-height: 3rem;
+  padding: 0 0.75rem;
+  color: #F7FBFA;
+}
+.switch:focus-visible {
+  outline: 3px solid #F7FBFA;
+  outline-offset: 2px;
+}''';
 
 /// Shared between both languages of [buildVerifyPageHtml]: nothing below
 /// depends on text direction except `text-align: start`, which already
@@ -503,33 +588,25 @@ $_sharedNotFoundStyle
 /// value that also counts those breaks in a table's min-content width:
 /// with `break-word` the seeds table still grows to the unbreakable seed
 /// and sticks out past the phone.
-const String _sharedStyle = '''
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    Helvetica, Arial, sans-serif;
-  max-width: 48em;
-  margin: 0 auto;
-  padding: 1.5em;
-  line-height: 1.5;
-  color: #1a1a1a;
-  overflow-wrap: anywhere;
-}
-h1 {
-  font-size: 1.3em;
-}
+///
+/// C-616: the table borders (#B7CFCB) and the `code` background (#E3EFEC)
+/// are chosen for the light card. The verdict block is white; its three
+/// text colours (#0A2A27, #1b5e20, #b3261e) each clear 4.5:1 against it.
+final String _sharedStyle = '''
+${_cardStyle('48rem')}
 h2 {
-  font-size: 1.05em;
-  margin-top: 1.5em;
+  font-size: 1.05rem;
+  margin-top: 1.5rem;
 }
 table {
   border-collapse: collapse;
   width: 100%;
-  margin-top: 0.5em;
-  font-size: 0.9em;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
 }
 th, td {
-  border: 1px solid #ccc;
-  padding: 0.3em 0.5em;
+  border: 1px solid #B7CFCB;
+  padding: 0.3rem 0.5rem;
   text-align: start;
   vertical-align: top;
 }
@@ -539,40 +616,63 @@ td.reveal {
 }
 code {
   font-family: monospace;
-  background: #f2f2f2;
-  padding: 0.1em 0.3em;
+  background: #E3EFEC;
+  padding: 0.1rem 0.3rem;
 }
-.lang-switch {
-  text-align: end;
-  margin: 0 0 1em;
-  font-size: 0.9em;
+#summary {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  background: #FFFFFF;
+  border: 2px solid #5C7C77;
+  border-radius: 0.75rem;
+  font-size: 1.25rem;
+  font-weight: 700;
 }
 .verify-ok {
   color: #1b5e20;
+  border-color: #1b5e20;
 }
 .verify-fail {
   color: #b3261e;
+  border-color: #b3261e;
   font-weight: bold;
 }
 .verify-mismatch {
   color: #b3261e;
   font-weight: bold;
+}
+#proof {
+  margin-top: 1.5rem;
+}
+#proof > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  min-height: 3rem;
+  padding: 0.5rem 1rem;
+  border: 2px solid #0F6B5F;
+  border-radius: 0.75rem;
+  color: #0F6B5F;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+#proof > summary::-webkit-details-marker {
+  display: none;
+}
+#proof > summary::after {
+  content: "+";
+  margin-inline-start: 0.75rem;
+}
+#proof[open] > summary::after {
+  content: "-";
+}
+#proof > summary:focus-visible {
+  outline: 3px solid #1976D2;
+  outline-offset: 2px;
 }''';
 
-const String _sharedNotFoundStyle = '''
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    Helvetica, Arial, sans-serif;
-  max-width: 32em;
-  margin: 0 auto;
-  padding: 1.5em;
-  line-height: 1.5;
-  color: #1a1a1a;
-}
-.lang-switch {
-  text-align: end;
-  margin: 0 0 1em;
-  font-size: 0.9em;
-}''';
+final String _sharedNotFoundStyle = _cardStyle('28rem');
 
 String _esc(Object? value) => _escaper.convert(value.toString());
