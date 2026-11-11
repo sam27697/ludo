@@ -629,19 +629,29 @@ void main() {
       });
     });
 
-    // Kills a region that renders every speak and not the last when two
-    // arrive before a frame: only the line spoken last is held.
-    testWidgets('two different lines before any frame: the later one is '
-        'shown, one node', (WidgetTester tester) async {
+    // C-629 D1: two different lines in one frame reach the region one per
+    // frame, in the order spoken. Kills a region that drops the first line
+    // or shows both on one frame.
+    testWidgets('two different lines before any frame: the first is shown, '
+        'then the second on the next frame, one node each', (
+      WidgetTester tester,
+    ) async {
       await _scenario(tester, 'd-same-frame', (_Rig r) async {
         r.speak('alpha');
         r.speak('bravo');
         await r.pump();
-        r.expectShowing('bravo', '(d) two speaks in one frame');
+        r.expectShowing('alpha', '(d) two speaks in one frame, frame 1');
+        expect(
+          r.carrying('bravo'),
+          isEmpty,
+          reason: '(d) bravo is queued behind alpha; ${r.why}',
+        );
+        await r.pump();
+        r.expectShowing('bravo', '(d) two speaks in one frame, frame 2');
         expect(
           r.carrying('alpha'),
           isEmpty,
-          reason: '(d) alpha was replaced before any frame; ${r.why}',
+          reason: '(d) alpha was replaced by bravo; ${r.why}',
         );
         await r.pump(hold);
         await r.pump();
