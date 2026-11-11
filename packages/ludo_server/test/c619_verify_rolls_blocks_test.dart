@@ -1522,6 +1522,24 @@ void main() {
           }
         });
 
+        final String d4 =
+            '(d) $tag: in the narrow view every label is set in the page font, never the hex font';
+        test(d4, () {
+          final _Page p = verifyPage(lang, record);
+          final _Node body = p.all('body').single;
+          final String? pageFont = p.valueOf(body, 'font-family');
+          expect(pageFont, isNotNull,
+              reason: _why(d4, 'the body to set the page font-family'));
+          for (final MapEntry<_Node, String> c in _labelledCells(p, lang)) {
+            final String? font = p.valueOf(c.key, 'font-family',
+                    narrow: true, pseudo: 'before') ??
+                p.inheritedValue(c.key, 'font-family', narrow: true);
+            expect(font, pageFont,
+                reason: _why(d4,
+                    'the label of ${_where(c.key)} in the page font $pageFont, resolved $font (a monospace label spaces Arabic letters apart)'));
+          }
+        });
+
         // -------------------------------------------------------------
         // (g) the failed-state mark keeps its colour in the narrow view (D4:
         // every colour C-616 chose stays, and the red mark must be on screen).
