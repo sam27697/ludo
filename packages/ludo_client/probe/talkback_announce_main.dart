@@ -21,6 +21,16 @@
 //   E  live region set, cleared 1.5 s later, set to the SAME text 2 s after that
 //   F  case C in Arabic, right-to-left
 //
+// Order 627 adds five cases with two different lines each (X179: what does
+// TalkBack speak when a second line follows the first within a frame or so):
+//   G  live region only, line 1, one frame later line 2
+//   H  live region only, line 1, 300 ms later line 2
+//   I  sendAnnouncement only, line 1 and line 2 in the same frame
+//   J  today's app shape: both announcements, then the live region set to
+//      line 2, all in the same frame
+//   K  the fix under consideration: announcement and live region for line 1,
+//      one frame later announcement and live region for line 2
+//
 // A live region is cleared 1.5 s after it was set in every case that uses one,
 // the way the fix under consideration would do it.
 //
@@ -33,7 +43,9 @@
 // Every case writes one line to logcat (tag "flutter") that the counting script
 // reads, so the case list exists in this file only:
 //   LUDO_PROBE_CASE_START|<letter>|<description>|<text>
-// and the end of the script writes LUDO_PROBE_DONE.
+// and a case with two lines writes both texts, separated by another bar:
+//   LUDO_PROBE_CASE_START|<letter>|<description>|<text 1>|<text 2>
+// The end of the script writes LUDO_PROBE_DONE.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -59,6 +71,13 @@ const Duration _repeatGap = Duration(seconds: 2);
 
 /// Offset of the live region after the announcement, case D.
 const Duration _lateLive = Duration(milliseconds: 300);
+
+/// Offset of the second line after the first, case H.
+const Duration _secondLine = Duration(milliseconds: 300);
+
+/// Pause between the locale going back to English at the end of case F and the
+/// start of case G, so the direction has reached the tree.
+const Duration _localeBack = Duration(milliseconds: 300);
 
 const Duration _tail = Duration(seconds: 5);
 
@@ -129,6 +148,12 @@ class _ProbeScreenState extends State<_ProbeScreen> {
     await _caseD();
     await _caseE();
     await _caseF();
+    await Future<void>.delayed(_localeBack);
+    await _caseG();
+    await _caseH();
+    await _caseI();
+    await _caseJ();
+    await _caseK();
     await Future<void>.delayed(_tail);
     _log('LUDO_PROBE_DONE');
     if (mounted) {
@@ -140,11 +165,12 @@ class _ProbeScreenState extends State<_ProbeScreen> {
     debugPrint(line);
   }
 
-  void _start(String letter, String description, String text) {
+  void _start(String letter, String description, String text, [String? next]) {
     if (!mounted) {
       return;
     }
-    _log('LUDO_PROBE_CASE_START|$letter|$description|$text');
+    final String texts = next == null ? text : '$text|$next';
+    _log('LUDO_PROBE_CASE_START|$letter|$description|$texts');
     setState(() {
       _caseName = letter;
     });
@@ -232,6 +258,71 @@ class _ProbeScreenState extends State<_ProbeScreen> {
     _clearLiveAfterHold();
     await Future<void>.delayed(_slot);
     widget.locale.value = const Locale('en');
+  }
+
+  Future<void> _caseG() async {
+    const String one = 'probe golf one';
+    const String two = 'probe golf two';
+    _start('G', 'live region only, line 2 one frame after line 1', one, two);
+    _setLive(one);
+    await WidgetsBinding.instance.endOfFrame;
+    _setLive(two);
+    _clearLiveAfterHold();
+    await Future<void>.delayed(_slot);
+  }
+
+  Future<void> _caseH() async {
+    const String one = 'probe hotel one';
+    const String two = 'probe hotel two';
+    _start('H', 'live region only, line 2 300 ms after line 1', one, two);
+    _setLive(one);
+    await Future<void>.delayed(_secondLine);
+    _setLive(two);
+    _clearLiveAfterHold();
+    await Future<void>.delayed(_slot);
+  }
+
+  Future<void> _caseI() async {
+    const String one = 'probe india one';
+    const String two = 'probe india two';
+    _start('I', 'sendAnnouncement only, two lines in the same frame', one, two);
+    _announce(one);
+    _announce(two);
+    await Future<void>.delayed(_slot);
+  }
+
+  Future<void> _caseJ() async {
+    const String one = 'probe juliet one';
+    const String two = 'probe juliet two';
+    _start(
+      'J',
+      'two announcements and the live region on line 2, same frame',
+      one,
+      two,
+    );
+    _announce(one);
+    _announce(two);
+    _setLive(two);
+    _clearLiveAfterHold();
+    await Future<void>.delayed(_slot);
+  }
+
+  Future<void> _caseK() async {
+    const String one = 'probe kilo one';
+    const String two = 'probe kilo two';
+    _start(
+      'K',
+      'announcement and live region per line, one frame apart',
+      one,
+      two,
+    );
+    _announce(one);
+    _setLive(one);
+    await WidgetsBinding.instance.endOfFrame;
+    _announce(two);
+    _setLive(two);
+    _clearLiveAfterHold();
+    await Future<void>.delayed(_slot);
   }
 
   @override
