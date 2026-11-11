@@ -505,7 +505,7 @@ void _expectHomePage(_Res res, String lang, String scenario) {
       _one(res, _tagsWithId(res.body, 'privacy'), 'id="privacy"', scenario);
   expect(
     privacy.attrs['href'],
-    '/privacy',
+    '/privacy?lang=$lang',
     reason: '#privacy href on ${res.path}. ${_repro(scenario)}. '
         '${res.describe()}',
   );

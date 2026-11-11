@@ -558,7 +558,8 @@ String buildHomePageHtml({String language = 'en'}) {
     lead: words.lead,
     body: '<a id="get-app" class="btn" href="$playUrl">${words.get}</a>\n'
         '<p class="fair">${words.fair}</p>\n'
-        '<a id="privacy" class="switch" href="/privacy">${words.privacy}</a>',
+        '<a id="privacy" class="switch" '
+        'href="/privacy?lang=${isAr ? 'ar' : 'en'}">${words.privacy}</a>',
   );
 }
 

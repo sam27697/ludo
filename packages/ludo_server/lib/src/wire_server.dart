@@ -152,6 +152,10 @@ class WireServer {
         _trustedProxies = trustedProxies,
         _hub = _ConnectionHub(registry),
         _privacyHtml = buildPrivacyPageHtml(contactEmail: privacyContactEmail),
+        _privacyHtmlAr = buildPrivacyPageHtml(
+          contactEmail: privacyContactEmail,
+          language: 'ar',
+        ),
         _assetLinksJson = _buildAssetLinksJsonOrNull(
           // `bin/server.dart` is the entry point that reads every other
           // piece of environment-driven configuration (PORT,
@@ -199,6 +203,9 @@ class WireServer {
   /// `privacyContactEmail` argument at construction time so serving it never
   /// touches the filesystem or re-renders anything at request time.
   final String _privacyHtml;
+
+  /// The Arabic twin of [_privacyHtml], built at the same moment.
+  final String _privacyHtmlAr;
 
   /// The complete `assetlinks.json` body, built once at construction time,
   /// or null when no shape-valid fingerprint was available. Null means
@@ -413,16 +420,29 @@ class WireServer {
   /// `GET /privacy` and `HEAD /privacy` (and their trailing-slash forms,
   /// which are matched identically, not redirected) never reach the
   /// WebSocket upgrade path either, for the same reason [_handleHealth]
-  /// doesn't. Any other method is a `405` naming `GET` and `HEAD` in
-  /// `allow`.
+  /// doesn't. The language is picked per request by
+  /// `resolveVerifyLanguage` between two documents built at construction, so
+  /// the response varies on `Accept-Language`. Any other method is a `405`
+  /// naming `GET` and `HEAD` in `allow`.
   shelf.Response _handlePrivacy(shelf.Request request) {
     const Map<String, String> headers = <String, String>{
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'public, max-age=3600',
+      'vary': 'accept-language',
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+      'content-security-policy': _pageContentSecurityPolicy,
     };
     switch (request.method) {
       case 'GET':
-        return shelf.Response.ok(_privacyHtml, headers: headers);
+        final String language = resolveVerifyLanguage(
+          query: request.url.queryParameters,
+          acceptLanguageHeader: request.headers['accept-language'],
+        );
+        return shelf.Response.ok(
+          language == 'ar' ? _privacyHtmlAr : _privacyHtml,
+          headers: headers,
+        );
       case 'HEAD':
         return shelf.Response.ok('', headers: headers);
       default:

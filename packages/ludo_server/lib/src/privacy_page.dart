@@ -17,6 +17,10 @@
 // ("Privacy Policy - Ludo RNG") was rewritten as a hyphen, because hard rule
 // 5 of the mission forbids an em-dash reaching a public page. Nothing else
 // was added, and nothing else was dropped.
+//
+// The Arabic document is a translation of the same text, kept in this file
+// beside the English, and a change to either language's wording changes
+// both and bumps `privacyLastUpdated`.
 
 import 'dart:convert';
 
@@ -34,13 +38,71 @@ const HtmlEscape _escaper = HtmlEscape();
 /// environment itself. Null or empty omits the contact section entirely
 /// rather than shipping an invented or a placeholder address; the value is
 /// HTML-escaped before it is interpolated, since it arrives from the
-/// environment and lands in a public page.
-String buildPrivacyPageHtml({String? contactEmail}) {
+/// environment and lands in a public page. [language] `'ar'` renders the
+/// Arabic document; anything else renders English.
+String buildPrivacyPageHtml({String? contactEmail, String language = 'en'}) {
   final String? trimmedEmail =
       (contactEmail != null && contactEmail.trim().isNotEmpty)
           ? contactEmail
           : null;
 
+  final bool isAr = language == 'ar';
+  final StringBuffer body =
+      isAr ? _arabicBody(trimmedEmail) : _englishBody(trimmedEmail);
+  final String switchLink = isAr
+      ? '<a id="lang-switch" class="switch" href="?lang=en" hreflang="en" '
+          'lang="en">English</a>'
+      : '<a id="lang-switch" class="switch" href="?lang=ar" hreflang="ar" '
+          'lang="ar">العربية</a>';
+  body.writeln(switchLink);
+  final String htmlTag =
+      isAr ? '<html lang="ar" dir="rtl">' : '<html lang="en">';
+  final String title =
+      isAr ? 'سياسة الخصوصية - Ludo RNG' : 'Privacy Policy - Ludo RNG';
+
+  return '''
+<!DOCTYPE html>
+$htmlTag
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$title</title>
+<style>
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  max-width: 40em;
+  margin: 0 auto;
+  padding: 1.5em;
+  line-height: 1.5;
+  color: #1a1a1a;
+}
+h1 {
+  font-size: 1.4em;
+}
+h2 {
+  font-size: 1.1em;
+  margin-top: 1.5em;
+}
+p.updated {
+  color: #555;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  min-height: 3rem;
+  padding: 0 0.75rem;
+  color: #0F6B5F;
+}
+</style>
+</head>
+<body>
+$body</body>
+</html>
+''';
+}
+
+StringBuffer _englishBody(String? trimmedEmail) {
   final StringBuffer body = StringBuffer()
     ..writeln('<h1>Privacy Policy - Ludo RNG</h1>')
     ..writeln('<p class="updated">Last updated: $privacyLastUpdated</p>')
@@ -123,37 +185,107 @@ String buildPrivacyPageHtml({String? contactEmail}) {
       ..writeln('<p>$escapedEmail</p>');
   }
 
-  return '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Privacy Policy - Ludo RNG</title>
-<style>
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    Helvetica, Arial, sans-serif;
-  max-width: 40em;
-  margin: 0 auto;
-  padding: 1.5em;
-  line-height: 1.5;
-  color: #1a1a1a;
+  return body;
 }
-h1 {
-  font-size: 1.4em;
-}
-h2 {
-  font-size: 1.1em;
-  margin-top: 1.5em;
-}
-p.updated {
-  color: #555;
-}
-</style>
-</head>
-<body>
-$body</body>
-</html>
-''';
+
+StringBuffer _arabicBody(String? trimmedEmail) {
+  final bool hasEmail = trimmedEmail != null;
+  final StringBuffer body = StringBuffer()
+    ..writeln(
+      '<h1>سياسة الخصوصية - Ludo RNG</h1>',
+    )
+    ..writeln(
+      '<p class="updated">آخر تحديث: '
+      '<span dir="ltr">$privacyLastUpdated</span></p>',
+    )
+    ..writeln(
+      '<p>Ludo RNG لعبة تلعبها عبر الإنترنت مع أشخاص تدعوهم أنت. '
+      'توضّح هذه السياسة ما يتعامل معه التطبيق وخادمه من '
+      'بيانات، وما لا يتعامل معه.</p>',
+    )
+    ..writeln(
+      '<h2>لا نجمع معلومات شخصية.</h2>',
+    )
+    ..writeln(
+      '<p>لا يوجد في Ludo RNG حساب، ولا تسجيل دخول، ولا بريد '
+      'إلكتروني، ولا كلمة مرور، ولا ملف شخصي. لا تخبرنا من أنت، '
+      'ولا نسألك.</p>',
+    )
+    ..writeln(
+      '<h2>لا إعلانات، ولا تحليلات، ولا تتبّع.</h2>',
+    )
+    ..writeln(
+      '<p>لا يحتوي التطبيق على أي شبكة إعلانات، ولا مكتبة تحليلات، '
+      'ولا أداة تقارير أعطال من طرف ثالث. لا نشارك أي شيء عن '
+      'استخدامك للتطبيق مع أي شركة أخرى. لا نجمع معرّف '
+      'الإعلانات ولا أي معرّف للجهاز.</p>',
+    )
+    ..writeln(
+      '<h2>ما تكتبه، وإلى أين يذهب.</h2>',
+    )
+    ..writeln(
+      '<p>لتلعب، تنشئ غرفة أو تنضم إلى غرفة برمزها. يمكنك أن تكتب '
+      'اسمًا يظهر على مقعدك. يُرسَل هذا الاسم ورمز الغرفة إلى '
+      'خادمنا حتى يراهما باقي اللاعبين في غرفتك، ويظهران لكل من '
+      'في تلك الغرفة. اختر اسمًا لا تمانع أن يراه من دعوتهم. '
+      'الغرف مؤقتة: تُحذف الغرفة وكل ما فيها، بما في ذلك أي '
+      'اسم، من الخادم عندما تنتهي الغرفة أو تنقضي مدتها.</p>',
+    )
+    ..writeln(
+      '<h2>ما يسجّله الخادم تلقائيًا.</h2>',
+    )
+    ..writeln(
+      '<p>مثل أي خادم على الإنترنت، يسجّل خادمنا التفاصيل التقنية '
+      'للاتصال حتى تبقى الخدمة تعمل ويمكن إيقاف إساءة '
+      'الاستخدام: عنوان IP للجهاز المتصل، ووقت الاتصال، '
+      'ومعلومات الأخطاء. تُحفظ هذه السجلات لفترة قصيرة، ولا '
+      'تُستخدم لبناء ملف عنك، ولا تُباع، ولا تُشارك مع أحد إلا '
+      'حيث يفرض القانون ذلك.</p>',
+    )
+    ..writeln(
+      '<h2>رميات قابلة للتحقق.</h2>',
+    )
+    ..writeln(
+      '<p>ترافق كل رمية نرد معلوماتٌ تتيح لك التحقق من أن الرمية '
+      'لم تُغيَّر بعد وقوعها. هذه المعلومات تخص اللعبة لا تخصك، '
+      'ولا تحتوي أي بيانات شخصية. عندما تنتهي اللعبة، يُحفظ سجل '
+      'رمياتها على خادمنا لمدة 90 يومًا على عنوان ويب لا يُعطى '
+      'إلا للاعبي تلك اللعبة، فيستطيع كل من يملك الرابط التحقق '
+      'من كل رمية. يذكر السجل اللاعبين برقم المقعد فقط، لا '
+      'بأسمائهم أبدًا، ولا يحتوي أي عنوان IP.</p>',
+    )
+    ..writeln(
+      '<h2>الأطفال.</h2>',
+    )
+    ..writeln(
+      '<p>Ludo RNG غير موجّهة للأطفال دون 13 عامًا. لا نجمع عن علم '
+      'أي معلومات شخصية من أي أحد، بمن في ذلك الأطفال.</p>',
+    )
+    ..writeln(
+      '<h2>بيانات يمكنك السؤال عنها.</h2>',
+    )
+    ..writeln(
+      hasEmail
+          ? '<p>لأننا لا نحتفظ بأي حساب ولا ملف شخصي، فعادةً لا يوجد ما '
+              'نعطيك نسخة منه أو نحذفه. إذا كنت تعتقد أننا نحتفظ بشيء '
+              'عنك وتريد إزالته، راسلنا على العنوان أدناه وسنتصرف بناءً '
+              'على طلبك.</p>'
+          : '<p>لأننا لا نحتفظ بأي حساب ولا ملف شخصي، فعادةً لا يوجد ما '
+              'نعطيك نسخة منه أو نحذفه.</p>',
+    )
+    ..writeln(
+      '<h2>التغييرات على هذه السياسة.</h2>',
+    )
+    ..writeln(
+      '<p>إذا تغيّرت هذه السياسة، تظهر النسخة الجديدة في هذه '
+      'الصفحة مع تاريخ جديد في أعلاها.</p>',
+    );
+
+  if (trimmedEmail != null) {
+    final String escapedEmail = _escaper.convert(trimmedEmail);
+    body
+      ..writeln('<h2>التواصل.</h2>')
+      ..writeln('<p><span dir="ltr">$escapedEmail</span></p>');
+  }
+  return body;
 }
