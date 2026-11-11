@@ -106,7 +106,26 @@ poll() {
   return 1
 }
 
-logcat_has() { adb logcat -d 2>/dev/null | grep -qF -- "$1"; }
+# A TalkBack log line is one whose logcat TAG starts with "talkback: " (LogUtils
+# prefix, see above), i.e. "... V talkback: SpeechControllerImpl: ...". A plain
+# substring match on "talkback: " is wrong: it also hits "com.android.talkback:
+# installer ..." from PackageManager and "ndroid.talkback: Late-enabling ..." from
+# the runtime (run 42964353017 passed this wait on exactly such lines).
+tb_tagged_line() { adb logcat -d 2>/dev/null | grep -qE '[VDIWEF] talkback: '; }
+# The accessibility manager's own view. Section names are the ones in the dump
+# artifact of run 42964353017 (Android 16 google_apis x86_64): the attribute
+# "installedServiceCount=N" inside the "attributes:{...}" line, and the lines
+# "     Bound services:{...}" and "     Enabled services:{...}".
+a11y_dump() { adb shell dumpsys accessibility 2>/dev/null | tr -d '\r'; }
+installed_count() { a11y_dump | sed -n 's/.*installedServiceCount=\([0-9][0-9]*\).*/\1/p' | head -n 1; }
+installed_count_grew() { _c="$(installed_count)"; [ -n "$_c" ] && [ "$_c" -gt "$BASE_COUNT" ]; }
+tb_bound() { a11y_dump | grep -F 'Bound services:' | grep -qF "$TB_PKG"; }
+tb_enabled_setting() { adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r' | grep -qF "$TB_COMPONENT"; }
+show_a11y_state() {
+  say "  enabled_accessibility_services = $(adb shell settings get secure enabled_accessibility_services | tr -d '\r')"
+  say "  accessibility_enabled = $(adb shell settings get secure accessibility_enabled | tr -d '\r')"
+  a11y_dump | grep -E 'installedServiceCount|Bound services:|Enabled services:|Binding services:|Crashed services:' | sed 's/^ */talkback-probe:   /' | cut -c1-400
+}
 spoke_any() { adb logcat -d 2>/dev/null | grep -F 'SpeechControllerImpl' | grep -qF -- "$SPOKEN_PATTERN"; }
 tb_running() { [ -n "$(adb shell pidof "$TB_PKG" 2>/dev/null | tr -d '\r')" ]; }
 
@@ -130,21 +149,61 @@ adb logcat -g
 adb logcat -c
 
 say "step 4: installing TalkBack ($TALKBACK_APK)"
-adb install -r -t "$TALKBACK_APK" || fail "adb install of TalkBack failed (INSTALL_FAILED_NO_MATCHING_ABIS means the APK has no x86_64 libraries)"
+BASE_COUNT="$(installed_count)"
+say "accessibility manager installedServiceCount before the install: ${BASE_COUNT:-unreadable}"
+# -g grants every runtime permission named in the manifest, -i sets the installer
+# to the Play Store package name. Both are belt and braces: the log of run
+# 42964353017 shows TalkBack was started as a service without them.
+adb install -r -t -g -i com.android.vending "$TALKBACK_APK" || fail "adb install of TalkBack failed (INSTALL_FAILED_NO_MATCHING_ABIS means the APK has no x86_64 libraries)"
 adb shell pm path "$TB_PKG" | grep -q '^package:' || fail "$TB_PKG is not installed after adb install"
 if adb shell cmd package query-services --brief -a android.accessibilityservice.AccessibilityService | tr -d '\r' | grep -qF "$TB_COMPONENT"; then
-  say "step 4 done: $TB_COMPONENT is installed and registered as an accessibility service"
+  say "package manager lists $TB_COMPONENT as an accessibility service"
 else
-  say "step 4 done: $TB_PKG is installed, but query-services did not list $TB_COMPONENT; the enable step below decides"
+  say "package manager did not list $TB_COMPONENT; the waits below decide"
 fi
+# The package manager knowing the service proves nothing about the accessibility
+# manager, which learns of it through its own package monitor a little later.
+# Its dump has no per-service list of installed services on this image, only the
+# count, so the key is: the count is greater than it was before the install.
+if [ -n "$BASE_COUNT" ]; then
+  say "waiting for the accessibility manager to count the new service (installedServiceCount > $BASE_COUNT)"
+  poll 60 "accessibility manager sees the installed TalkBack service" installed_count_grew || say "installedServiceCount is still $(installed_count); continuing, the bind wait below is the real check"
+else
+  say "installedServiceCount could not be read from dumpsys accessibility; skipping the installed-service wait"
+fi
+# Let the broadcasts the install queued (PACKAGE_ADDED and friends) drain, so a
+# late delivery cannot land after the enable write below. Not every image has
+# this am subcommand, so a failure only prints.
+timeout 60 adb shell am wait-for-broadcast-idle || say "am wait-for-broadcast-idle did not complete (older am, or timed out); continuing"
 
 say "step 5: granting the runtime permissions TalkBack would otherwise ask for with a dialog"
 for perm in android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE android.permission.RECORD_AUDIO; do
   if adb shell pm grant "$TB_PKG" "$perm"; then say "granted $perm"; else say "could not grant $perm (not fatal; a dialog may appear)"; fi
 done
+# Sideloaded accessibility services can be blocked as "restricted settings" on
+# Android 13+. Not needed on the run that failed (the service was started), kept
+# because it costs nothing.
+adb shell appops set "$TB_PKG" ACCESS_RESTRICTED_SETTINGS allow || say "appops set ACCESS_RESTRICTED_SETTINGS failed (not fatal)"
 
 say "step 6: writing TalkBack's preferences (log level VERBOSE, first-run screens off) with run-as"
-adb shell am force-stop "$TB_PKG"
+# No am force-stop here. The first version of this script force-stopped the
+# package at this point, and the system delivered the resulting
+# PACKAGE_RESTARTED broadcast to the accessibility manager only AFTER the enable
+# write of step 7 (run 42964353017: force stop 05:24:59.431, enable write
+# 05:24:59.648, PACKAGE_RESTARTED seen by AppWidgetService 05:25:00.617,
+# enabled_accessibility_services rewritten behind our back 05:25:01.077). The
+# accessibility manager treats a force stop of a package as "the user turned
+# that service off" and removes it from the enabled list. A freshly installed
+# package has no process to stop, so only a running one is handled, and then
+# with a drain afterwards.
+if tb_running; then
+  say "TalkBack is already running; stopping it so it re-reads its preferences"
+  adb shell am force-stop "$TB_PKG"
+  timeout 60 adb shell am wait-for-broadcast-idle || say "am wait-for-broadcast-idle did not complete; sleeping 10s instead"
+  sleep 10
+else
+  say "TalkBack has no process, nothing to stop"
+fi
 PREFS_XML="<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
 <map>
     <string name=\"pref_log_level\">2</string>
@@ -162,14 +221,38 @@ printf '%s\n' "$WRITTEN" | grep -q '"pref_log_level">2<' || fail "read-back of $
 say "step 6 done, file reads back as:"
 printf '%s\n' "$WRITTEN" | sed 's/^/talkback-probe:   /'
 
-say "step 7: enabling the accessibility service through secure settings"
-say "enabled_accessibility_services before: $(adb shell settings get secure enabled_accessibility_services | tr -d '\r')"
-adb shell settings put secure enabled_accessibility_services "$TB_COMPONENT" || fail "settings put enabled_accessibility_services failed"
-adb shell settings put secure accessibility_enabled 1 || fail "settings put accessibility_enabled failed"
-say "enabled_accessibility_services now: $(adb shell settings get secure enabled_accessibility_services | tr -d '\r')"
-say "accessibility_enabled now: $(adb shell settings get secure accessibility_enabled | tr -d '\r')"
-poll 90 "TalkBack process" tb_running || fail "TalkBack did not start after it was enabled"
-poll 60 "TalkBack verbose log lines" logcat_has 'talkback: ' || fail "no 'talkback: ' log lines after start, so the log level preference was not applied"
+say "step 7: enabling the accessibility service through secure settings, and waiting until it is bound"
+say "state before enabling:"
+show_a11y_state
+BOUND=0
+ATTEMPT=1
+while [ "$ATTEMPT" -le 3 ]; do
+  say "enable attempt $ATTEMPT of 3"
+  if [ "$ATTEMPT" -gt 1 ]; then
+    # Writing a value the setting already holds notifies nobody, so clear first.
+    say "re-reading enabled_accessibility_services before retrying: $(adb shell settings get secure enabled_accessibility_services | tr -d '\r')"
+    adb shell settings delete secure enabled_accessibility_services
+    sleep 2
+  fi
+  adb shell settings put secure enabled_accessibility_services "$TB_COMPONENT" || fail "settings put enabled_accessibility_services failed"
+  adb shell settings put secure accessibility_enabled 1 || fail "settings put accessibility_enabled failed"
+  say "written, state right after the write (this proves nothing about binding):"
+  show_a11y_state
+  if poll 60 "TalkBack listed under Bound services" tb_bound; then
+    BOUND=1
+    break
+  fi
+  say "attempt $ATTEMPT: TalkBack is not bound after 60s, state now:"
+  show_a11y_state
+  say "  accessibility manager and force-stop lines for TalkBack in logcat so far:"
+  adb logcat -d 2>/dev/null | grep -E 'Force stopping com.android.talkback|PACKAGE_RESTARTED|AccessibilityManagerService.*(talkback|Removing|remov)' | tail -n 15 | sed 's/^/talkback-probe:     /'
+  ATTEMPT=$((ATTEMPT + 1))
+done
+[ "$BOUND" -eq 1 ] || fail "TalkBack never appeared under Bound services in dumpsys accessibility after 3 enable attempts; see dumpsys-accessibility.txt and logcat-full.txt in the artifact"
+say "TalkBack is bound; state:"
+show_a11y_state
+poll 90 "TalkBack process" tb_running || fail "TalkBack is bound but has no process"
+poll 60 "first log line tagged 'talkback: '" tb_tagged_line || fail "TalkBack is bound but no log line carries a 'talkback: ' tag, so the log level preference was not applied"
 say "TTS engines on the device:"
 adb shell cmd package query-services --brief -a android.intent.action.TTS_SERVICE | tr -d '\r' | sed 's/^/talkback-probe:   /'
 say "default TTS engine setting: $(adb shell settings get secure tts_default_synth | tr -d '\r')"
@@ -191,7 +274,7 @@ say "step 9: collecting"
 collect
 LOG="$OUT_DIR/logcat-full.txt"
 [ -s "$LOG" ] || fail "logcat dump is empty"
-say "logcat lines: $(wc -l < "$LOG"), lines tagged by TalkBack: $(grep -c 'talkback: ' "$LOG")"
+say "logcat lines: $(wc -l < "$LOG"), lines tagged by TalkBack: $(grep -cE '[VDIWEF] talkback: ' "$LOG")"
 grep -qF "$MARKER" "$LOG" || fail "launch marker $MARKER is not in the logcat dump (buffer overwritten?)"
 
 # Lines before the marker are TalkBack's own start-up speech, lines after it are
@@ -222,5 +305,5 @@ for needle in 'TTS is not ready' 'Voice feedback is off' 'SilenceSpeech' 'TTS cl
   say "  lines containing '$needle': $(grep -cF -- "$needle" "$LOG")"
 done
 say "  last 25 TalkBack log lines after launch:"
-grep -F 'talkback: ' "$OUT_DIR/logcat-after-launch.txt" | tail -n 25 | sed 's/^/talkback-probe:     /'
+grep -E '[VDIWEF] talkback: ' "$OUT_DIR/logcat-after-launch.txt" | tail -n 25 | sed 's/^/talkback-probe:     /'
 fail "TalkBack spoke no line after the app was launched (spoken before launch: $BEFORE_COUNT); see logcat-full.txt in the artifact"
