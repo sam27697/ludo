@@ -4797,7 +4797,7 @@ class _GameScreenState extends State<GameScreen> {
                       ),
                     ),
                     if (controller.hasDesynced) _desyncBanner(context, loc),
-                    Expanded(child: body),
+                    Expanded(child: RepaintBoundary(child: body)),
                   ],
                 ),
                 // C-624 D4: the polite live region for every spoken line.
@@ -5329,21 +5329,23 @@ class _GameScreenState extends State<GameScreen> {
     // C-511 D1/D2: a Row hands its die slot an unbounded width, so the slot
     // (die plus the no-answer line) is capped at what the band leaves it.
     final bool withTray = trayFaces != null && boardRecord == null;
-    final Widget band = LayoutBuilder(
-      builder: (BuildContext _, BoxConstraints box) {
-        final double cap = box.hasBoundedWidth
-            ? math.max(
-                0.0,
-                box.maxWidth - reserved - overhang - (withTray ? kSpace2 : 0),
-              )
-            : double.infinity;
-        return _DieBand(
-          reserved: reserved,
-          overhang: overhang,
-          textDirection: Directionality.of(context),
-          child: rowFor(cap),
-        );
-      },
+    final Widget band = RepaintBoundary(
+      child: LayoutBuilder(
+        builder: (BuildContext _, BoxConstraints box) {
+          final double cap = box.hasBoundedWidth
+              ? math.max(
+                  0.0,
+                  box.maxWidth - reserved - overhang - (withTray ? kSpace2 : 0),
+                )
+              : double.infinity;
+          return _DieBand(
+            reserved: reserved,
+            overhang: overhang,
+            textDirection: Directionality.of(context),
+            child: rowFor(cap),
+          );
+        },
+      ),
     );
     if (!hinted) {
       return band;
@@ -5603,166 +5605,183 @@ class _GameScreenState extends State<GameScreen> {
           )
         : null;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: kSpace2,
-        vertical: kSpace2,
-      ),
-      // C-402 decision 2: the column measures its own shortfall from
-      // whatever height it actually has -- this `LayoutBuilder` sits under
-      // `SafeArea` already, so both system insets are already out of
-      // `constraints` by the time `_resolvePlayColumnMetrics` sees it.
-      child: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          final _PlayColumnMetrics metrics = _resolvePlayColumnMetrics(
-            context,
-            loc,
-            constraints.maxWidth,
-            constraints.maxHeight,
-          );
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _playHeaderRow(
-                loc,
-                room,
-                seat,
-                turn,
-                offlineTurnSeat,
-                clampScale: metrics.textScaleClamp,
-                stale: stale,
-              ),
-              SizedBox(height: metrics.headerGap),
-              Expanded(
-                child: LudoBoard(
-                  key: const Key('game-screen-board'),
-                  tokens: _tokensOf(room),
-                  seatsInPlay: _seatsInPlayOf(room),
-                  seatNames: names,
-                  awaySeats: <int, String>{
-                    for (final SeatState s in room.seats)
-                      if (!s.connected && s.seat != seat)
-                        s.seat: loc.gameSeatOffline(names[s.seat]!),
-                  },
-                  youLabel: loc.seatYou,
-                  turnSeat: turn?.seat,
-                  mySeat: seat,
-                  legal: legalTokens,
-                  autoMoveToken: _isEndHeld ? null : _pendingAutoMoveToken,
-                  sentToken: _moveSentToken,
-                  onTokenStep: (int stepSeat, int token) =>
-                      _onBoardTokenStep(controller, stepSeat),
-                  onMoveLanded: _onBoardMoveLanded,
-                  onTravelReset: _onBoardTravelReset,
-                  safeCue: _safeCue,
-                  facePick: _tokenFacePick(seat),
-                  onTokenTap: (int index) {
-                    if (_isEndHeld) {
-                      return;
-                    }
-                    if (_myTimeUp) {
-                      FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-                      return;
-                    }
-                    _cancelPendingHoldForManualMove();
-                    final TurnState? liveTurn = turn;
-                    final int? k = liveTurn?.k;
-                    if (liveTurn == null || k == null) {
-                      return;
-                    }
-                    final List<FaceLegal>? legalByFace = liveTurn.legalByFace;
-                    // K6: a server without the roll queue (`legalByFace`
-                    // null) sends the byte-identical frame it always did.
-                    if (legalByFace == null) {
-                      _sendTokenMove(index, k, face: null);
-                      return;
-                    }
-                    // C-462 D2. F is this token's faces, in legalByFace
-                    // order. The cue plays only when something is sent
-                    // or a picker opens, never when a picker closes.
-                    final List<int> faces = _facesForToken(legalByFace, index);
-                    final bool openHere =
-                        _facePick != null && _facePick!.token == index;
-                    if (faces.length >= 2 && openHere) {
-                      setState(() {
-                        _facePick = null;
-                      });
-                      return;
-                    }
-                    if (faces.length >= 2) {
-                      setState(() {
-                        _facePick = _OpenFacePick(
-                          token: index,
-                          k: liveTurn.k,
-                          queue: List<int>.from(liveTurn.queue),
-                          faces: faces,
-                        );
-                      });
-                      FeedbackScope.of(context).play(FeedbackCue.tap);
-                      // C-518 D3: the picker's own label, once per open.
-                      _announce(
-                        AppLocalizations.of(context).facePickerLabel(index + 1),
-                      );
-                      return;
-                    }
-                    if (faces.length == 1) {
-                      _sendTokenMove(index, k, face: faces.single);
-                    }
-                  },
-                  onIllegalTokenTap: (int index) {
-                    // Today's illegal tap, and an open picker closes with
-                    // it (C-462 D2). The cue is the one this tap already
-                    // played; closing adds none.
-                    FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-                    if (_facePick != null) {
-                      setState(() {
-                        _facePick = null;
-                      });
-                    }
-                  },
-                  overlay: _thrownDieOverlay(seat),
-                  seatDice: _seatDiceOf(room),
-                  seatRecord: boardRecord,
-                  gloat: _gloat,
-                  chatPop: _chat == null
-                      ? null
-                      : BoardChatPop(seat: _chat!.seat, serial: _chat!.serial),
-                  hint: _shownHint?.move,
-                  hintNamesFace: _shownHint?.namesFace ?? false,
+    return SizedBox.expand(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: kSpace2,
+          vertical: kSpace2,
+        ),
+        // C-402 decision 2: the column measures its own shortfall from
+        // whatever height it actually has -- this `LayoutBuilder` sits under
+        // `SafeArea` already, so both system insets are already out of
+        // `constraints` by the time `_resolvePlayColumnMetrics` sees it.
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final _PlayColumnMetrics metrics = _resolvePlayColumnMetrics(
+              context,
+              loc,
+              constraints.maxWidth,
+              constraints.maxHeight,
+            );
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                RepaintBoundary(
+                  child: _playHeaderRow(
+                    loc,
+                    room,
+                    seat,
+                    turn,
+                    offlineTurnSeat,
+                    clampScale: metrics.textScaleClamp,
+                    stale: stale,
+                  ),
                 ),
-              ),
-              SizedBox(height: metrics.boardGap),
-              // K1: the tray sits on the die's own row, after it in reading
-              // order -- a plain Row under the ambient Directionality
-              // already mirrors that for Arabic, nothing here flips it by
-              // hand.
-              _dieRow(
-                room,
-                seat,
-                loc,
-                turn,
-                fadeIdleDie,
-                dieFace,
-                dieSeatColor,
-                rollEnabled,
-                metrics,
-                trayFaces,
-                trayStates,
-                trayColor,
-                boardRecord,
-                trayOwnMove,
-              ),
-              SizedBox(height: metrics.dieGap),
-              _belowDieNoticeSlot(
-                loc,
-                offlineTurnSeat,
-                names,
-                clampScale: metrics.textScaleClamp,
-              ),
-              SizedBox(height: metrics.noticeGap),
-            ],
-          );
-        },
+                SizedBox(height: metrics.headerGap),
+                Expanded(
+                  child: RepaintBoundary(
+                    child: LudoBoard(
+                      key: const Key('game-screen-board'),
+                      tokens: _tokensOf(room),
+                      seatsInPlay: _seatsInPlayOf(room),
+                      seatNames: names,
+                      awaySeats: <int, String>{
+                        for (final SeatState s in room.seats)
+                          if (!s.connected && s.seat != seat)
+                            s.seat: loc.gameSeatOffline(names[s.seat]!),
+                      },
+                      youLabel: loc.seatYou,
+                      turnSeat: turn?.seat,
+                      mySeat: seat,
+                      legal: legalTokens,
+                      autoMoveToken: _isEndHeld ? null : _pendingAutoMoveToken,
+                      sentToken: _moveSentToken,
+                      onTokenStep: (int stepSeat, int token) =>
+                          _onBoardTokenStep(controller, stepSeat),
+                      onMoveLanded: _onBoardMoveLanded,
+                      onTravelReset: _onBoardTravelReset,
+                      safeCue: _safeCue,
+                      facePick: _tokenFacePick(seat),
+                      onTokenTap: (int index) {
+                        if (_isEndHeld) {
+                          return;
+                        }
+                        if (_myTimeUp) {
+                          FeedbackScope.of(context)
+                              .play(FeedbackCue.invalidTap);
+                          return;
+                        }
+                        _cancelPendingHoldForManualMove();
+                        final TurnState? liveTurn = turn;
+                        final int? k = liveTurn?.k;
+                        if (liveTurn == null || k == null) {
+                          return;
+                        }
+                        final List<FaceLegal>? legalByFace =
+                            liveTurn.legalByFace;
+                        // K6: a server without the roll queue (`legalByFace`
+                        // null) sends the byte-identical frame it always did.
+                        if (legalByFace == null) {
+                          _sendTokenMove(index, k, face: null);
+                          return;
+                        }
+                        // C-462 D2. F is this token's faces, in legalByFace
+                        // order. The cue plays only when something is sent
+                        // or a picker opens, never when a picker closes.
+                        final List<int> faces = _facesForToken(
+                          legalByFace,
+                          index,
+                        );
+                        final bool openHere =
+                            _facePick != null && _facePick!.token == index;
+                        if (faces.length >= 2 && openHere) {
+                          setState(() {
+                            _facePick = null;
+                          });
+                          return;
+                        }
+                        if (faces.length >= 2) {
+                          setState(() {
+                            _facePick = _OpenFacePick(
+                              token: index,
+                              k: liveTurn.k,
+                              queue: List<int>.from(liveTurn.queue),
+                              faces: faces,
+                            );
+                          });
+                          FeedbackScope.of(context).play(FeedbackCue.tap);
+                          // C-518 D3: the picker's own label, once per open.
+                          _announce(
+                            AppLocalizations.of(context)
+                                .facePickerLabel(index + 1),
+                          );
+                          return;
+                        }
+                        if (faces.length == 1) {
+                          _sendTokenMove(index, k, face: faces.single);
+                        }
+                      },
+                      onIllegalTokenTap: (int index) {
+                        // Today's illegal tap, and an open picker closes with
+                        // it (C-462 D2). The cue is the one this tap already
+                        // played; closing adds none.
+                        FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+                        if (_facePick != null) {
+                          setState(() {
+                            _facePick = null;
+                          });
+                        }
+                      },
+                      overlay: _thrownDieOverlay(seat),
+                      seatDice: _seatDiceOf(room),
+                      seatRecord: boardRecord,
+                      gloat: _gloat,
+                      chatPop: _chat == null
+                          ? null
+                          : BoardChatPop(
+                              seat: _chat!.seat,
+                              serial: _chat!.serial,
+                            ),
+                      hint: _shownHint?.move,
+                      hintNamesFace: _shownHint?.namesFace ?? false,
+                    ),
+                  ),
+                ),
+                SizedBox(height: metrics.boardGap),
+                // K1: the tray sits on the die's own row, after it in reading
+                // order -- a plain Row under the ambient Directionality
+                // already mirrors that for Arabic, nothing here flips it by
+                // hand.
+                _dieRow(
+                  room,
+                  seat,
+                  loc,
+                  turn,
+                  fadeIdleDie,
+                  dieFace,
+                  dieSeatColor,
+                  rollEnabled,
+                  metrics,
+                  trayFaces,
+                  trayStates,
+                  trayColor,
+                  boardRecord,
+                  trayOwnMove,
+                ),
+                SizedBox(height: metrics.dieGap),
+                RepaintBoundary(
+                  child: _belowDieNoticeSlot(
+                    loc,
+                    offlineTurnSeat,
+                    names,
+                    clampScale: metrics.textScaleClamp,
+                  ),
+                ),
+                SizedBox(height: metrics.noticeGap),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
