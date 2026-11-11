@@ -1774,18 +1774,20 @@ class _CelebrationState extends State<_Celebration>
     if (MediaQuery.disableAnimationsOf(context)) {
       return _staticGlow();
     }
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (BuildContext context, Widget? child) {
-        return CustomPaint(
-          size: const Size.square(_diameter),
-          painter: _BurstPainter(
-            progress: _controller.value,
-            goldColor: widget.goldColor,
-            seatColor: widget.seatColor,
-          ),
-        );
-      },
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (BuildContext context, Widget? child) {
+          return CustomPaint(
+            size: const Size.square(_diameter),
+            painter: _BurstPainter(
+              progress: _controller.value,
+              goldColor: widget.goldColor,
+              seatColor: widget.seatColor,
+            ),
+          );
+        },
+      ),
     );
   }
 
