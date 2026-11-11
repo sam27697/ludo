@@ -1,0 +1,81 @@
+name: perf-probe
+
+# Measures what a frame of the game costs on an Android emulator: plays the
+# motion scenario in profile mode with no screen recording running and
+# uploads the FrameTiming of every rendered frame. Manual, or a push to a
+# probe/perf-* branch. Never on pull_request or on main.
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - "probe/perf-*"
+
+permissions:
+  contents: read
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - locale: en
+            seat: 0
+          - locale: ar
+            seat: 2
+    # Job env, not an assignment inside `script:`. android-emulator-runner
+    # passes each script line to its own `sh -c`, which would drop an inline
+    # MOTION_LOCALE= or MOTION_SEAT= before perf_probe.sh starts.
+    env:
+      MOTION_LOCALE: ${{ matrix.locale }}
+      MOTION_SEAT: ${{ matrix.seat }}
+    defaults:
+      run:
+        working-directory: packages/ludo_client
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.47.1"
+          channel: "stable"
+
+      - run: flutter pub get
+
+      # Cheap check before the expensive emulator boot.
+      - name: confirm the drive script and target exist
+        run: |
+          set -euo pipefail
+          test -f test_driver/perf_probe_driver.dart || { echo "missing packages/ludo_client/test_driver/perf_probe_driver.dart" >&2; exit 1; }
+          test -f integration_test/perf_probe_test.dart || { echo "missing packages/ludo_client/integration_test/perf_probe_test.dart" >&2; exit 1; }
+          test -f integration_test/motion_test.dart || { echo "missing packages/ludo_client/integration_test/motion_test.dart" >&2; exit 1; }
+
+      # Makes /dev/kvm group-writable so the emulator gets hardware
+      # acceleration, as in screenshots.yml.
+      - name: enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Animations stay on so the probe sees the real motion curves.
+      - name: boot the emulator and measure frames
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: "Nexus 5"
+          disable-animations: false
+          script: bash packages/ludo_client/tool/perf_probe.sh
+
+      # `if: always()` so the drive log and device facts are kept when a
+      # step fails. perf_probe.sh fails the job on a failed drive, a missing
+      # report or a report that is not profile mode.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: perf-${{ matrix.locale }}-seat${{ matrix.seat }}
+          path: packages/ludo_client/perf/*
+          if-no-files-found: warn
