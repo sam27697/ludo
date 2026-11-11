@@ -201,6 +201,20 @@ String buildVerifyPageHtml(
   final String ltrAttr = isAr ? ' dir="ltr"' : '';
   final String notCheckedCell = isAr ? 'لم يُفحص' : 'not checked';
 
+  // C-619: the text of each column's `th` in the page language, repeated as
+  // `data-label` on every cell under it. On a phone the tables stop being
+  // tables and every row becomes a block; the label is how a cell still says
+  // what it is once the header row is gone. Keep these in step with the
+  // `th` text in the two templates below.
+  final String labelPlayer = isAr ? 'اللاعب' : 'Player';
+  final String labelSeed = isAr ? 'البذرة' : 'Seed';
+  final String labelOrigin = isAr ? 'المصدر' : 'Origin';
+  const String labelK = 'k';
+  final String labelDie = isAr ? 'النرد' : 'Die';
+  final String labelReveal = isAr ? 'الكشف' : 'Reveal';
+  final String labelChain = isAr ? 'فحص السلسلة' : 'Chain check';
+  final String labelDieCheck = isAr ? 'فحص النرد' : 'Die check';
+
   final StringBuffer seedRows = StringBuffer();
   for (final Object? entry in seeds) {
     final Map<String, Object?> seed = entry as Map<String, Object?>;
@@ -212,13 +226,13 @@ String buildVerifyPageHtml(
             : 'drawn by the server: this player added no randomness of '
                 'their own');
     seedRows
-      ..write('<tr><td data-seat="')
+      ..write('<tr><td data-label="$labelPlayer" data-seat="')
       ..write(_esc(seed['seat']))
       ..write('">')
       ..write(_seatMarkup(seed['seat'], isAr: isAr))
-      ..write('</td><td class="hex"$ltrAttr>')
+      ..write('</td><td data-label="$labelSeed" class="hex"$ltrAttr>')
       ..write(_esc(seed['seed']))
-      ..write('</td><td>')
+      ..write('</td><td data-label="$labelOrigin">')
       ..write(_esc(originText))
       ..write('</td></tr>\n');
   }
@@ -229,19 +243,19 @@ String buildVerifyPageHtml(
     final Object? k = roll['k'];
     final String kEsc = _esc(k);
     rollRows
-      ..write('<tr><td$ltrAttr>')
+      ..write('<tr><td data-label="$labelK"$ltrAttr>')
       ..write(kEsc)
-      ..write('</td><td data-seat="')
+      ..write('</td><td data-label="$labelPlayer" data-seat="')
       ..write(_esc(roll['seat']))
       ..write('">')
       ..write(_seatMarkup(roll['seat'], isAr: isAr))
-      ..write('</td><td$ltrAttr>')
+      ..write('</td><td data-label="$labelDie"$ltrAttr>')
       ..write(_esc(roll['die']))
-      ..write('</td><td class="reveal hex"$ltrAttr>')
+      ..write('</td><td data-label="$labelReveal" class="reveal hex"$ltrAttr>')
       ..write(_esc(roll['reveal']))
-      ..write('</td><td id="chain-')
+      ..write('</td><td data-label="$labelChain" id="chain-')
       ..write(kEsc)
-      ..write('">$notCheckedCell</td><td id="die-')
+      ..write('">$notCheckedCell</td><td data-label="$labelDieCheck" id="die-')
       ..write(kEsc)
       ..write('">$notCheckedCell</td></tr>\n');
   }
@@ -603,6 +617,20 @@ h1 {
 /// mid-letter; each table sits in `.table-scroll` and scrolls inside the card
 /// if its words cannot fit.
 ///
+/// C-619: with C-618's word rules the six-column rolls table is wider than a
+/// phone's card (315 px of table in a 273 px card at 360 px), and the column
+/// that scrolled out of sight was "Die check", the one that carries the red
+/// "does not match". Below 40 rem the two tables in `#proof` therefore stop
+/// being tables: the header row is hidden and each body row becomes a bordered
+/// block of cells, every cell led by its `data-label`. The hex cell (seed,
+/// reveal) takes a line of its own after the rest of the row, so the short
+/// cells sit together and only the hex wraps. Each cell is a flex box so the
+/// label and the value keep their order by the cell's own direction: in Arabic
+/// the label is at the right of its value, and a `dir="ltr"` cell, whose
+/// start is the left, runs in reverse to put its label at the right too. The
+/// label is #3E5E59, 6.8:1 against the #F7FBFA card and 7.1:1 against the
+/// #FFFFFF row.
+///
 /// C-616: the table borders (#B7CFCB) and the `code` background (#E3EFEC)
 /// are chosen for the light card. The verdict block is white; its three
 /// text colours (#0A2A27, #1b5e20, #b3261e) each clear 4.5:1 against it.
@@ -701,6 +729,52 @@ code {
 #proof > summary:focus-visible {
   outline: 3px solid #1976D2;
   outline-offset: 2px;
+}
+@media (max-width: 40rem) {
+  #proof thead {
+    display: none;
+  }
+  #proof table,
+  #proof tbody {
+    display: block;
+  }
+  #proof tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    box-sizing: border-box;
+    margin: 0 0 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: #FFFFFF;
+    border: 1px solid #B7CFCB;
+    border-radius: 0.5rem;
+  }
+  #proof td {
+    display: flex;
+    border-width: 0;
+    padding: 0;
+  }
+  #proof td[dir="ltr"] {
+    flex-direction: row-reverse;
+  }
+  #proof td::before {
+    content: attr(data-label);
+    flex: none;
+    margin-inline-end: 0.4em;
+    color: #3E5E59;
+    font-weight: 700;
+    overflow-wrap: normal;
+    word-break: normal;
+    white-space: nowrap;
+  }
+  #proof td[dir="ltr"]::before {
+    margin-inline-end: 0;
+    margin-inline-start: 0.4em;
+  }
+  #proof td.hex {
+    flex-basis: 100%;
+    order: 1;
+  }
 }''';
 
 final String _sharedNotFoundStyle = _cardStyle('28rem');
