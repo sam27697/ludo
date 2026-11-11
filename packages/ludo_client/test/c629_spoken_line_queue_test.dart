@@ -16,6 +16,13 @@
 // Frame accounting: "the same frame" means no frame has completed between two
 // `speak` calls. The first frame after a speak is the next zero-duration pump.
 //
+// Round 2 adds D6 (cases (i) and (j)): a queued line whose speak call is more
+// than kSpokenLineHold old when its turn comes is dropped. The age is read
+// from the controller's injectable clock, `SpokenLineController(clock: () =>
+// DateTime)`, with `clock` of type `DateTime Function()`. The constructor is
+// reached through Function.apply so the rest of this file still compiles and
+// runs against a controller that has no such parameter.
+//
 // Every failure message names the scenario and carries the step log (each
 // speak and pump with the fake time it happened at). The cases are
 // deterministic, so there is no seed: the scenario name plus its step log is
@@ -35,14 +42,43 @@ import 'support/roll_tray_harness.dart';
 
 const int _hold = 1500;
 
+/// The fake wall clock handed to the controller. It moves with every timed
+/// pump of a rig that owns it, and by itself through [_Rig.advanceClock]
+/// (time passing while no frame runs, as with the app in the background).
+class _Clock {
+  final DateTime base = DateTime.utc(2026, 11, 11, 12);
+  int ms = 0;
+
+  DateTime now() => base.add(Duration(milliseconds: ms));
+}
+
+/// A controller built with the clock parameter, through Function.apply so a
+/// constructor without it still lets this file compile.
+SpokenLineController _controllerWith(_Clock clock) {
+  final DateTime Function() read = clock.now;
+  try {
+    return Function.apply(
+      SpokenLineController.new,
+      const <Object?>[],
+      <Symbol, Object?>{#clock: read},
+    ) as SpokenLineController;
+  } on NoSuchMethodError catch (e) {
+    fail(
+      'D6: expected SpokenLineController(clock: () => DateTime) to be '
+      'accepted; the constructor refused the named argument: $e',
+    );
+  }
+}
+
 /// One mounted scenario: the controller, the fake-time bookkeeping and the
 /// step log every failure message carries.
 class _Rig {
-  _Rig(this.tester, this.name, this.controller);
+  _Rig(this.tester, this.name, this.controller, [this.clock]);
 
   final WidgetTester tester;
   final String name;
   final SpokenLineController controller;
+  final _Clock? clock;
   final List<String> steps = <String>[];
   int ms = 0;
 
@@ -55,9 +91,16 @@ class _Rig {
     controller.speak(line);
   }
 
+  /// Wall-clock time passes with no frame pumped and no fake timer firing.
+  void advanceClock(int dms) {
+    clock!.ms += dms;
+    steps.add('clock+${dms}ms (no frame)->${clock!.ms}ms');
+  }
+
   /// One frame after [dms] of fake time (0 = the next frame, no time passes).
   Future<void> pump([int dms = 0]) async {
     ms += dms;
+    clock?.ms += dms;
     steps.add('pump(${dms}ms)->${ms}ms');
     await tester.pump(Duration(milliseconds: dms));
   }
@@ -145,10 +188,13 @@ Future<void> _scenario(
   String name,
   Future<void> Function(_Rig rig) body, {
   Widget Function(Widget region)? wrap,
+  _Clock? clock,
 }) async {
   final SemanticsHandle handle = tester.ensureSemantics();
-  final SpokenLineController controller = SpokenLineController();
-  final _Rig rig = _Rig(tester, name, controller);
+  final SpokenLineController controller = clock == null
+      ? SpokenLineController()
+      : _controllerWith(clock);
+  final _Rig rig = _Rig(tester, name, controller, clock);
   try {
     final Widget region = SpokenLineRegion(controller: controller);
     await tester.pumpWidget(
@@ -1130,5 +1176,305 @@ void main() {
         }
       });
     }
+  });
+
+  // =========================================================================
+  // (i) and (j): D6, a queued line older than the hold is dropped.
+  // =========================================================================
+  group('(i) D6: the app was away longer than the hold', () {
+    testWidgets('alpha, bravo, charlie in one frame, clock +2 s with no '
+        'frame: bravo and charlie never reach the region', (
+      WidgetTester tester,
+    ) async {
+      final _Clock clock = _Clock();
+      await _scenario(tester, 'i-away-2s', clock: clock, (_Rig r) async {
+        final List<String> setValues = <String>[];
+        r.controller.addListener(() => setValues.add(r.controller.current));
+        r.speak('alpha');
+        r.speak('bravo');
+        r.speak('charlie');
+        r.advanceClock(2000);
+        final List<String> seen = await r.frames(6);
+        expect(
+          seen,
+          everyElement('alpha'),
+          reason:
+              '(i) D6: expected only alpha (already set when the app left) '
+              'on every frame and no bravo or charlie, both are 2000 ms old; '
+              'got $seen; ${r.why}',
+        );
+        expect(
+          setValues.where((String v) => v == 'bravo' || v == 'charlie'),
+          isEmpty,
+          reason:
+              '(i) D6: expected the controller never to set a dropped line; '
+              'values set: $setValues; ${r.why}',
+        );
+        await r.pump(_hold);
+        await r.pump();
+        expect(
+          r.shown(),
+          '',
+          reason:
+              '(i) D6: expected alpha to clear and nothing after it; got '
+              '"${r.shown()}"; ${r.why}',
+        );
+        final List<String> after = await r.frames(4);
+        expect(
+          after,
+          everyElement(''),
+          reason:
+              '(i) D6: expected the region to stay empty after the run; got '
+              '$after; ${r.why}',
+        );
+        expect(
+          r.controller.current,
+          '',
+          reason:
+              '(i) D6: expected controller.current "" at the end; got '
+              '"${r.controller.current}"; ${r.why}',
+        );
+      });
+    });
+
+    testWidgets('a long absence drops every queued line, ten of them, and '
+        'keeps only the one already set', (WidgetTester tester) async {
+      final _Clock clock = _Clock();
+      await _scenario(tester, 'i-away-ten', clock: clock, (_Rig r) async {
+        for (int i = 0; i < 10; i++) {
+          r.speak('line $i');
+        }
+        r.advanceClock(60000);
+        final List<String> seen = await r.frames(14);
+        expect(
+          _Rig.runs(seen),
+          <String>['line 0'],
+          reason:
+              '(i) D6: expected line 0 alone, lines 1 to 9 are a minute '
+              'old; got $seen; ${r.why}',
+        );
+      });
+    });
+
+    testWidgets('a line spoken alone is never dropped, however long the '
+        'clock ran before its frame', (WidgetTester tester) async {
+      final _Clock clock = _Clock();
+      await _scenario(tester, 'i-alone', clock: clock, (_Rig r) async {
+        r.speak('alpha');
+        r.advanceClock(600000);
+        await r.pump();
+        r.expectShown('alpha', '(i) a lone line, ten minutes of clock');
+        await r.pump(_hold - 1);
+        r.expectShown('alpha', '(i) held to its own deadline');
+      });
+    });
+
+    testWidgets('dropping skips to the next line that is still fresh: '
+        'alpha, bravo, charlie, bravo is 2 s old and charlie 1 s', (
+      WidgetTester tester,
+    ) async {
+      final _Clock clock = _Clock();
+      await _scenario(tester, 'i-skip-to-fresh', clock: clock, (_Rig r) async {
+        r.speak('alpha');
+        r.speak('bravo');
+        r.advanceClock(1000);
+        r.speak('charlie'); // still the same frame, spoken 1 s later
+        r.advanceClock(1000);
+        final List<String> seen = await r.frames(5);
+        expect(
+          seen,
+          <String>['alpha', 'charlie', 'charlie', 'charlie', 'charlie'],
+          reason:
+              '(i) D6: bravo (2000 ms old) is dropped and charlie '
+              '(1000 ms old) is shown on the next frame; got $seen; '
+              '${r.why}',
+        );
+      });
+    });
+
+    testWidgets('a dropped repeat does not clear the region: alpha, alpha '
+        'then a long absence', (WidgetTester tester) async {
+      final _Clock clock = _Clock();
+      await _scenario(tester, 'i-dropped-repeat', clock: clock, (_Rig r) async {
+        r.speak('alpha');
+        r.speak('alpha');
+        r.advanceClock(2000);
+        final List<String> seen = await r.frames(5);
+        expect(
+          _Rig.runs(seen),
+          <String>['alpha'],
+          reason:
+              '(i) D6 and D3: the second alpha is dropped, so it is never '
+              'shown and never clears the first; got $seen; ${r.why}',
+        );
+      });
+    });
+
+    testWidgets('after a drop the controller is back to normal: a new line '
+        'is shown on the next frame', (WidgetTester tester) async {
+      final _Clock clock = _Clock();
+      await _scenario(tester, 'i-then-normal', clock: clock, (_Rig r) async {
+        r.speak('alpha');
+        r.speak('bravo');
+        r.advanceClock(2000);
+        await r.frames(3);
+        await r.pump(_hold);
+        await r.pump();
+        r.expectShown('', '(i) fixture: the run has cleared');
+        r.speak('charlie');
+        r.speak('delta');
+        final List<String> seen = await r.frames(3);
+        expect(
+          seen,
+          <String>['charlie', 'delta', 'delta'],
+          reason:
+              '(i) D6: expected a fresh run after the drop to behave as '
+              'before, charlie then delta; got $seen; ${r.why}',
+        );
+      });
+    });
+
+    testWidgets('the hold runs from the line that was last set, the dropped '
+        'lines do not extend it', (WidgetTester tester) async {
+      final _Clock clock = _Clock();
+      await _scenario(tester, 'i-hold-after-drop', clock: clock, (
+        _Rig r,
+      ) async {
+        r.speak('alpha');
+        r.speak('bravo');
+        r.advanceClock(2000);
+        await r.pump();
+        r.expectShown('alpha', '(i) frame 1');
+        await r.pump(_hold - 1);
+        r.expectShown('alpha', '(i) 1 ms before the hold of alpha ends');
+        await r.pump(1);
+        await r.pump();
+        r.expectShown('', '(i) alpha cleared at its own deadline');
+      });
+    });
+
+    testWidgets('boundary: a line one millisecond past the hold is dropped', (
+      WidgetTester tester,
+    ) async {
+      final _Clock clock = _Clock();
+      await _scenario(tester, 'i-hold-plus-1', clock: clock, (_Rig r) async {
+        r.speak('alpha');
+        r.speak('bravo');
+        r.advanceClock(_hold + 1);
+        final List<String> seen = await r.frames(3);
+        expect(
+          seen,
+          everyElement('alpha'),
+          reason:
+              '(i) D6: bravo is ${_hold + 1} ms old, more than the hold, so '
+              'it is dropped; got $seen; ${r.why}',
+        );
+      });
+    });
+  });
+
+  group('(j) D6: the app was away less than the hold', () {
+    testWidgets('alpha, bravo, charlie in one frame, clock +1 s with no '
+        'frame: bravo and charlie are shown in order', (
+      WidgetTester tester,
+    ) async {
+      final _Clock clock = _Clock();
+      await _scenario(tester, 'j-away-1s', clock: clock, (_Rig r) async {
+        r.speak('alpha');
+        r.speak('bravo');
+        r.speak('charlie');
+        r.advanceClock(1000);
+        final List<String> seen = await r.frames(4);
+        expect(
+          seen,
+          <String>['alpha', 'bravo', 'charlie', 'charlie'],
+          reason:
+              '(j) D6: expected nothing dropped, the lines are 1000 ms '
+              'old and the hold is $_hold ms; got $seen; ${r.why}',
+        );
+      });
+    });
+
+    testWidgets('boundary: a line exactly one hold old is shown (the rule '
+        'says more than the hold)', (WidgetTester tester) async {
+      final _Clock clock = _Clock();
+      await _scenario(tester, 'j-exactly-hold', clock: clock, (_Rig r) async {
+        r.speak('alpha');
+        r.speak('bravo');
+        r.advanceClock(_hold);
+        final List<String> seen = await r.frames(3);
+        expect(
+          seen,
+          <String>['alpha', 'bravo', 'bravo'],
+          reason:
+              '(j) D6: bravo is exactly $_hold ms old, not more, so it is '
+              'shown; got $seen; ${r.why}',
+        );
+      });
+    });
+
+    testWidgets('lines are judged by their own age when their turn comes: '
+        'frames 400 ms apart drop the line that would be set past the hold', (
+      WidgetTester tester,
+    ) async {
+      final _Clock clock = _Clock();
+      await _scenario(tester, 'j-slow-frames', clock: clock, (_Rig r) async {
+        for (final String l in <String>[
+          'alpha',
+          'bravo',
+          'charlie',
+          'delta',
+          'echo',
+        ]) {
+          r.speak(l);
+        }
+        final List<String> seen = <String>[];
+        for (int i = 0; i < 7; i++) {
+          await r.pump(400);
+          seen.add(r.shown());
+        }
+        expect(
+          seen,
+          <String>[
+            'alpha', // t=400
+            'bravo', // t=800
+            'charlie', // t=1200
+            'delta', // t=1600, delta was set at 1200 (1200 ms old)
+            'delta', // t=2000, echo was 1600 ms old at 1600 and is dropped
+            'delta', // t=2400, held until 1200 + 1500 = 2700
+            '', // t=2800
+          ],
+          reason:
+              '(j) D6 and D2: echo is older than the hold when its turn '
+              'comes and is dropped; delta is held from when it was set; '
+              'got $seen; ${r.why}',
+        );
+      });
+    });
+
+    testWidgets('normal play: lines one frame apart are never dropped with '
+        'the clock moving 16 ms a frame', (WidgetTester tester) async {
+      final _Clock clock = _Clock();
+      await _scenario(tester, 'j-normal-play', clock: clock, (_Rig r) async {
+        final List<String> lines = <String>[
+          for (int i = 0; i < 10; i++) 'line $i',
+        ];
+        for (final String l in lines) {
+          r.speak(l);
+        }
+        final List<String> seen = <String>[];
+        for (int i = 0; i < 10; i++) {
+          await r.pump(16);
+          seen.add(r.shown());
+        }
+        expect(
+          seen,
+          lines,
+          reason:
+              '(j) D6: expected all ten lines in order, they are at most '
+              '160 ms old; got $seen; ${r.why}',
+        );
+      });
+    });
   });
 }
