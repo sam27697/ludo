@@ -122,7 +122,7 @@ class _Rig {
 
   /// Expects exactly one live-region node, labelled exactly [line], and no
   /// other node carrying [line].
-  void expectShowing(String line, String what) {
+  void expectShowing(String line, String what, {bool checkCurrent = true}) {
     expect(
       liveLabels(),
       <String>[line],
@@ -137,6 +137,9 @@ class _Rig {
           '$what: expected the live-region node to be the only node carrying '
           '"$line"; got ${carrying(line).length}; $why',
     );
+    if (!checkCurrent) {
+      return;
+    }
     expect(
       controller.current,
       line,
@@ -640,7 +643,13 @@ void main() {
         r.speak('alpha');
         r.speak('bravo');
         await r.pump();
-        r.expectShowing('alpha', '(d) two speaks in one frame, frame 1');
+        // `current` already holds bravo: C-629 D1 sets it once this frame
+        // has completed, and the region draws it on the next one.
+        r.expectShowing(
+          'alpha',
+          '(d) two speaks in one frame, frame 1',
+          checkCurrent: false,
+        );
         expect(
           r.carrying('bravo'),
           isEmpty,

@@ -121,13 +121,9 @@ class _Rig {
           '$what: expected the region to show "$line"; got "${shown()}"; '
           '$why',
     );
-    expect(
-      controller.current,
-      line,
-      reason:
-          '$what: expected controller.current "$line"; got '
-          '"${controller.current}"; $why',
-    );
+    // What the region drew on this frame is the contract. `current` may
+    // already hold the next queued line: D1 sets it once the frame that drew
+    // this one has completed, which is inside the same pump.
   }
 }
 
