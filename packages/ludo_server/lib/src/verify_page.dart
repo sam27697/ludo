@@ -550,8 +550,7 @@ body {
   padding: 1rem;
   background: linear-gradient(160deg, #0A3D38, #14665C);
   color: #0A2A27;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    Helvetica, Arial, sans-serif;
+  font-family: $_pageFont;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -599,6 +598,12 @@ h1 {
   outline: 3px solid #F7FBFA;
   outline-offset: 2px;
 }''';
+
+/// The page's body font stack. The narrow view's labels name it again because
+/// a label inherits its cell's font, and the reveal cell is monospace.
+const String _pageFont =
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,\n'
+    '    Helvetica, Arial, sans-serif';
 
 /// Shared between both languages of [buildVerifyPageHtml]: nothing below
 /// depends on text direction except `text-align: start`, which already
@@ -761,6 +766,7 @@ code {
     content: attr(data-label);
     flex: none;
     margin-inline-end: 0.4em;
+    font-family: $_pageFont;
     color: #3E5E59;
     font-weight: 700;
     overflow-wrap: normal;
