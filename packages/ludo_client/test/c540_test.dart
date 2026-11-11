@@ -941,6 +941,7 @@ Future<_Game> _startGame(
           state: 'FINISHED',
           winner: 0,
           gameId: _gameId,
+          verifyUrl: _verifyUrl,
         )
       : await connectPlaying(tester, turn: awaitRollTurn(1), seats: twoSeats());
   await tester.pumpWidget(
