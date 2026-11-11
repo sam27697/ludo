@@ -23,6 +23,7 @@ import 'seat_entrance.dart';
 import 'seat_mark.dart';
 import 'seat_names.dart';
 import 'sound_toggle.dart';
+import 'spoken_line.dart';
 import 'rule_off_strike.dart';
 import 'session_memory.dart' show SeatRecord;
 import 'theme.dart';
@@ -144,6 +145,10 @@ class LobbyScreen extends StatefulWidget {
 }
 
 class _LobbyScreenState extends State<LobbyScreen> {
+  /// C-624 D4: the polite live region the friend-joined line also goes to,
+  /// beside its announcement event.
+  final SpokenLineController _spokenLine = SpokenLineController();
+
   /// True from the moment [lobby-start-with-present-button] is tapped until
   /// [controller.setPlayers] and, when it runs, [controller.startGame] both
   /// settle. While true a second tap sends nothing.
@@ -211,6 +216,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   @override
   void dispose() {
+    _spokenLine.dispose();
     _joinedTimer?.cancel();
     _framesSubscription?.cancel();
     _framesSubscription = null;
@@ -551,67 +557,79 @@ class _LobbyScreenState extends State<LobbyScreen> {
       backgroundColor: LudoColors.paper,
       body: FeltBackdrop(
         child: SafeArea(
-          child: Column(
+          // C-624 D4: the polite live region rides beside the column, in this
+          // route's own semantics tree.
+          child: Stack(
+            fit: StackFit.passthrough,
             children: [
-              // Same signature chrome as GameScreen: felt edge frames the
-              // seat-pip strip so home→lobby→game stays one continuous table.
-              // C-284 rule 3: built when connected or stale so the chrome row
-              // and its corner close stay in place without jumping.
-              if (connected || stale) ...[
-                const FeltEdge(key: Key('game-felt-edge')),
-                // C-262 rules 1-2: lobby-leave-button lives in this chrome
-                // row, at the top start corner, beside the pip strip --
-                // never a new full-width row above the content. The fixed
-                // 48dp height keeps the Stack from sizing to the shorter pip
-                // strip alone, which would let the icon's tap target bleed
-                // above the row; the Stack itself keeps the strip centred on
-                // its own width, and PositionedDirectional gives Arabic the
-                // mirror (top right) for free, no hand-picked side.
-                SizedBox(
-                  height: 48,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      // C-254 rule 5: only the occupied seats get a pip
-                      // here, not the fixed four the strip draws by
-                      // default.
-                      SeatPipStrip(
-                        key: const Key('game-seat-pip-strip'),
-                        seats: controller.room!.seats
-                            .map((SeatState s) => s.seat)
-                            .toList(),
-                      ),
-                      PositionedDirectional(
-                        start: kSpace2,
-                        child: IconButton(
-                          key: const Key('lobby-leave-button'),
-                          style: IconButton.styleFrom(
-                            minimumSize: const Size(48, 48),
+              Column(
+                children: [
+                  // Same signature chrome as GameScreen: felt edge frames the
+                  // seat-pip strip so home→lobby→game stays one continuous table.
+                  // C-284 rule 3: built when connected or stale so the chrome row
+                  // and its corner close stay in place without jumping.
+                  if (connected || stale) ...[
+                    const FeltEdge(key: Key('game-felt-edge')),
+                    // C-262 rules 1-2: lobby-leave-button lives in this chrome
+                    // row, at the top start corner, beside the pip strip --
+                    // never a new full-width row above the content. The fixed
+                    // 48dp height keeps the Stack from sizing to the shorter pip
+                    // strip alone, which would let the icon's tap target bleed
+                    // above the row; the Stack itself keeps the strip centred on
+                    // its own width, and PositionedDirectional gives Arabic the
+                    // mirror (top right) for free, no hand-picked side.
+                    SizedBox(
+                      height: 48,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          // C-254 rule 5: only the occupied seats get a pip
+                          // here, not the fixed four the strip draws by
+                          // default.
+                          SeatPipStrip(
+                            key: const Key('game-seat-pip-strip'),
+                            seats: controller.room!.seats
+                                .map((SeatState s) => s.seat)
+                                .toList(),
                           ),
-                          tooltip: loc.gameLeaveButton,
-                          onPressed: _leaveLobby,
-                          icon: const Icon(Icons.close),
-                        ),
-                      ),
-                      // C-335 rule 1: the mirror of lobby-leave-button, at
-                      // the end corner, so a player waiting on friends can
-                      // mute sound and vibration without leaving. C-523 D7:
-                      // the one sound switch.
-                      PositionedDirectional(
-                        end: kSpace2,
-                        child: SoundToggleButton(
-                          key: const Key('lobby-sound-toggle'),
-                          style: IconButton.styleFrom(
-                            minimumSize: const Size(48, 48),
+                          PositionedDirectional(
+                            start: kSpace2,
+                            child: IconButton(
+                              key: const Key('lobby-leave-button'),
+                              style: IconButton.styleFrom(
+                                minimumSize: const Size(48, 48),
+                              ),
+                              tooltip: loc.gameLeaveButton,
+                              onPressed: _leaveLobby,
+                              icon: const Icon(Icons.close),
+                            ),
                           ),
-                        ),
+                          // C-335 rule 1: the mirror of lobby-leave-button, at
+                          // the end corner, so a player waiting on friends can
+                          // mute sound and vibration without leaving. C-523 D7:
+                          // the one sound switch.
+                          PositionedDirectional(
+                            end: kSpace2,
+                            child: SoundToggleButton(
+                              key: const Key('lobby-sound-toggle'),
+                              style: IconButton.styleFrom(
+                                minimumSize: const Size(48, 48),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-              ],
-              if (controller.hasDesynced) _desyncBanner(loc, controller),
-              Expanded(child: phaseBody),
+                    ),
+                  ],
+                  if (controller.hasDesynced) _desyncBanner(loc, controller),
+                  Expanded(child: phaseBody),
+                ],
+              ),
+              PositionedDirectional(
+                top: 0,
+                start: 0,
+                child: SpokenLineRegion(controller: _spokenLine),
+              ),
             ],
           ),
         ),
@@ -1309,6 +1327,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           text,
           Directionality.of(context),
         );
+        _spokenLine.speak(text);
       });
     }
   }

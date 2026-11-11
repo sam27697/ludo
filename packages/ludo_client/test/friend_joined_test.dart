@@ -40,6 +40,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
+import 'package:ludo_client/src/spoken_line.dart';
 import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
@@ -693,12 +694,25 @@ void main() {
           reason:
               'C-599 D5 c: the ambient direction (ltr in en); ${rig.scn.why}',
         );
+        // C-624 D4: the visible line stays out of semantics; the one node that
+        // carries the text is the screen's spoken-line live region, which
+        // TalkBack folds into the announcement (measured once, C-623).
         expect(
           find.bySemanticsLabel('Karim joined'),
-          findsNothing,
+          findsOneWidget,
           reason:
-              'C-599 D5 c: the line is excluded from semantics so the name '
-              'is not read twice; ${rig.scn.why}',
+              'C-599 D5 c with C-624 D4: one node carries "Karim joined"; '
+              '${rig.scn.why}',
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(kSpokenLineRegionKey),
+            matching: find.bySemanticsLabel('Karim joined'),
+          ),
+          findsOneWidget,
+          reason:
+              'C-624 D4: that node is the spoken-line region, never the '
+              'visible line; ${rig.scn.why}',
         );
         expect(
           find.text('Karim joined'),
@@ -1137,8 +1151,18 @@ void main() {
           );
           expect(
             find.bySemanticsLabel(expected),
-            findsNothing,
-            reason: 'the line is out of semantics; ${rig.scn.why}',
+            findsOneWidget,
+            reason:
+                'the line is out of semantics; the one node with the text is '
+                'the spoken-line region (C-624 D4); ${rig.scn.why}',
+          );
+          expect(
+            find.descendant(
+              of: find.byKey(kSpokenLineRegionKey),
+              matching: find.bySemanticsLabel(expected),
+            ),
+            findsOneWidget,
+            reason: 'C-624 D4: inside the spoken-line region; ${rig.scn.why}',
           );
           await rig.pump(2500);
           await rig.pump();
