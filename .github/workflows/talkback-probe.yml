@@ -1,0 +1,207 @@
+name: talkback-probe
+
+# Order 621 (X170 step 1): a measuring instrument, not a gate. Every spoken
+# game line leaves the app through SemanticsService.sendAnnouncement, Android 16
+# deprecated that event type, and the fix under consideration (a polite live
+# region carrying the same line) leans on TalkBack's duplicate filter so a
+# player hears the line once. That was read from TalkBack's source and never
+# heard. No Play-image emulator ships TalkBack, so this workflow builds it from
+# source and runs it on the same emulator device-smoke.yml uses, then records
+# what it sends to text-to-speech. Measuring the in-game announcements is the
+# next order; this one only proves the instrument works, by showing TalkBack
+# speak something when the app launches.
+#
+# Triggers: workflow_dispatch and push to probe/talkback-* branches, nothing
+# else (no schedule, no pull_request, not main). GitHub cannot dispatch a
+# workflow file by API until that file exists on the default branch, so the
+# push trigger on a probe/talkback-* branch is how this runs before it is
+# merged; once it is on main, dispatch works too. A push to such a branch runs
+# the copy of this file on that branch.
+#
+# No secret, token or key is used or needed. The job token is read-only.
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - "probe/talkback-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: talkback-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Newest commit on google/talkback's default branch (master) when this was
+  # written, committed 2026-03-23, "Push to GitHub 2026-03-18", version
+  # TfPu_release_16_2. Bumping it is a deliberate edit of this line; the cache
+  # key below contains it, so a new value rebuilds and an old value is reused.
+  TALKBACK_SHA: 229212fdf5842191d0a93fc95d9ca1423b346866
+  # TalkBack's tree has no Gradle wrapper. Its build.gradle uses AGP 8.11.1,
+  # whose VersionCheckPlugin refuses anything older than Gradle 8.13, so the
+  # oldest allowed release is pinned, verified against the sha256 published for
+  # gradle-8.13-bin.zip at services.gradle.org.
+  GRADLE_VERSION: "8.13"
+  GRADLE_SHA256: 20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78
+
+jobs:
+  build-talkback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: confirm the build script exists and parses
+        run: |
+          set -euo pipefail
+          echo "talkback-probe: checking tool/talkback_probe/build_talkback.sh"
+          test -f tool/talkback_probe/build_talkback.sh || { echo "missing tool/talkback_probe/build_talkback.sh" >&2; exit 1; }
+          bash -n tool/talkback_probe/build_talkback.sh
+          echo "talkback-probe: TalkBack commit to build is $TALKBACK_SHA"
+
+      # The key holds the TalkBack commit and a hash of the build script, so the
+      # APK is rebuilt only when either changes. On a hit the next three steps
+      # are skipped and the cached directory is uploaded as it stands.
+      - name: restore the cached TalkBack apk, if one exists for this commit
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: talkback-out
+          key: talkback-apk-${{ env.TALKBACK_SHA }}-${{ hashFiles('tool/talkback_probe/build_talkback.sh') }}
+
+      - name: report the cache result
+        run: |
+          echo "talkback-probe: cache hit = ${{ steps.cache.outputs.cache-hit || 'false' }}"
+
+      - name: set up JDK 17
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: build the TalkBack apk from source
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          WORK_DIR: ${{ runner.temp }}/talkback-work
+          OUT_DIR: ${{ github.workspace }}/talkback-out
+        run: |
+          set -euo pipefail
+          # ANDROID_HOME comes from the runner image, not from this file, so it
+          # is read here in the shell (the `env` expression context would not see it).
+          export ANDROID_SDK_ROOT="${ANDROID_HOME:?the runner image sets ANDROID_HOME}"
+          echo "talkback-probe: building TalkBack $TALKBACK_SHA with Gradle $GRADLE_VERSION against SDK $ANDROID_SDK_ROOT"
+          bash tool/talkback_probe/build_talkback.sh
+
+      - name: show what the cache or the build left in talkback-out
+        run: |
+          set -euo pipefail
+          echo "talkback-probe: contents of talkback-out"
+          ls -l talkback-out
+          test -s talkback-out/talkback-debug.apk || { echo "talkback-out/talkback-debug.apk is missing or empty" >&2; exit 1; }
+          cat talkback-out/talkback-build-info.txt
+          sha256sum talkback-out/talkback-debug.apk
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: talkback-apk
+          path: talkback-out/
+          if-no-files-found: error
+          retention-days: 14
+
+  probe:
+    needs: build-talkback
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: packages/ludo_client
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.47.1"
+          channel: "stable"
+
+      - run: flutter pub get
+
+      # Same app build as device-smoke.yml's probe step: profile mode, lib/main.dart.
+      # x64 only, because the emulator below is x86_64 and the other ABIs would
+      # only lengthen the build.
+      - name: build the app (profile, x86_64)
+        run: |
+          echo "talkback-probe: flutter build apk --profile --target-platform android-x64"
+          flutter build apk --profile --target-platform android-x64
+          ls -l build/app/outputs/flutter-apk/
+
+      - name: fetch the TalkBack apk built by the previous job
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: talkback-apk
+          path: ${{ github.workspace }}/talkback-out
+
+      - name: confirm the inputs of the emulator step exist
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          echo "talkback-probe: checking probe script and both apks"
+          test -f tool/talkback_probe/probe.sh || { echo "missing tool/talkback_probe/probe.sh" >&2; exit 1; }
+          bash -n tool/talkback_probe/probe.sh
+          test -s talkback-out/talkback-debug.apk || { echo "missing talkback-out/talkback-debug.apk" >&2; exit 1; }
+          test -s packages/ludo_client/build/app/outputs/flutter-apk/app-profile.apk || { echo "missing app-profile.apk" >&2; exit 1; }
+          cat talkback-out/talkback-build-info.txt
+
+      # Same boilerplate as device-smoke.yml: makes /dev/kvm group-writable so
+      # the emulator is hardware accelerated.
+      - name: enable KVM group perms
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # The emulator is the one device-smoke.yml boots: api-level 36, target
+      # google_apis, arch x86_64, profile "Nexus 5", same action sha. The one
+      # difference is ram-size, 4096M: TalkBack (a debug build, Compose and
+      # all) and the app run side by side here, and device-smoke runs the app
+      # alone on the profile's default memory.
+      #
+      # android-emulator-runner hands each line of `script:` to its own
+      # `sh -c`, which is the rule device-smoke.yml spends a page on: anything
+      # that must share a shell has to be one physical line. This script is
+      # therefore exactly one line, a call to tool/talkback_probe/probe.sh, and
+      # everything that needs shared state (variables, the exit trap, the
+      # polling loops) lives inside that file. Its comment block lists the
+      # steps. The action runs in the repository root, so the paths are
+      # relative to it, and it fails the step when that one line exits
+      # non-zero, which is how the "no spoken line" gate reaches the job.
+      - name: boot the emulator, enable TalkBack, launch the app, record what is spoken
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          OUT_DIR: probe-out
+          TALKBACK_APK: talkback-out/talkback-debug.apk
+          APP_APK: packages/ludo_client/build/app/outputs/flutter-apk/app-profile.apk
+          APP_ID: app.fayad.ludo
+          WAIT_SECONDS: "45"
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: "Nexus 5"
+          ram-size: 4096M
+          disable-animations: true
+          script: bash tool/talkback_probe/probe.sh
+
+      # Present on every run, pass or fail: the script's exit trap writes the
+      # full logcat before anything else can end the step. if-no-files-found is
+      # `warn` so a failure before the emulator booted reports its own reason
+      # rather than a second, differently worded one from this step.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: talkback-probe-logs
+          path: probe-out/
+          if-no-files-found: warn
+          retention-days: 14
