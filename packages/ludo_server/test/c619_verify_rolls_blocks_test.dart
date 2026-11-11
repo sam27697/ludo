@@ -7,13 +7,16 @@
 // Written from the contract, not from the implementation. The real
 // buildVerifyPageHtml output is parsed with a small tag-tree reader and a
 // small CSS reader (package:html is not a dependency of this package). The
-// CSS reader is the one of c618_verify_table_wrap_test.dart with three
+// CSS reader is the one of c618_verify_table_wrap_test.dart with four
 // additions: a rule inside `@media` is read and tagged with its condition; the
 // cascade can be asked for the narrow view (the one `@media (max-width: 40rem)`
-// block applies) or the wide view (it does not); and a `::before` pseudo
-// element is a target of its own. Selector forms the reader does not know
-// (attribute selectors, other pseudo-classes, `+` and `~` combinators) make a
-// rule unreadable, and a test says so by name instead of guessing.
+// block applies) or the wide view (it does not); a `::before` pseudo element
+// is a target of its own; and the attribute selectors `[attr]`,
+// `[attr="value"]` and `[attr='value']` (exact match, the weight of a class)
+// are matched against the attributes of the real element. Selector forms the
+// reader does not know (other pseudo-classes, `+` and `~` combinators, the
+// other attribute operators) make a rule unreadable, and a test says so by
+// name instead of guessing.
 //
 // Nothing here is random: every record is built from a fixed secret, so a
 // failure reproduces by running the one test named in its message:
@@ -379,11 +382,29 @@ _Node _parse(String html) {
 // A small CSS reader: selectors, specificity, media, cascade.
 // ---------------------------------------------------------------------
 
+/// One attribute selector: `[name]` (presence, [value] null) or
+/// `[name="value"]` (exact match).
+class _AttrSel {
+  _AttrSel(this.name, this.value);
+  final String name;
+  final String? value;
+
+  bool matches(Map<String, String> attrs) =>
+      attrs.containsKey(name) && (value == null || attrs[name] == value);
+
+  @override
+  String toString() => value == null ? '[$name]' : '[$name="$value"]';
+}
+
 class _Compound {
-  _Compound(this.tag, this.ids, this.classes, this.nots, this.pseudo);
+  _Compound(
+      this.tag, this.ids, this.classes, this.attrs, this.nots, this.pseudo);
   final String? tag;
   final List<String> ids;
   final List<String> classes;
+
+  /// The attribute selectors of the compound; each weighs a class.
+  final List<_AttrSel> attrs;
 
   /// The simple selectors inside `:not(...)`: `.x`, `#x` or a tag name.
   final List<String> nots;
@@ -409,7 +430,7 @@ class _Selector {
     int tags = 0;
     for (final _Compound c in parts) {
       ids += c.ids.length;
-      classes += c.classes.length;
+      classes += c.classes.length + c.attrs.length;
       tags += c.tag == null ? 0 : 1;
       tags += c.pseudo == null ? 0 : 1;
       for (final String n in c.nots) {
@@ -426,19 +447,65 @@ class _Selector {
   }
 }
 
+const String _attrSelSrc =
+    r'''\[\s*([\w:-]+)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([\w-]+)))?\s*\]''';
+
 final RegExp _compoundRe = RegExp(
-  r'^([a-zA-Z][\w-]*)?((?:[.#][\w-]+)*)((?::not\([.#]?[\w-]+\))*)(?:::?(before|after))?$',
+  r'^([a-zA-Z][\w-]*)?((?:[.#][\w-]+|' +
+      _attrSelSrc +
+      r')*)(?<nots>(?::not\([.#]?[\w-]+\))*)(?:::?(?<pseudo>before|after))?$',
 );
 
+/// Splits [text] at [sep] characters that sit outside brackets and quotes, so
+/// an attribute value can hold a space, a comma or a `>`.
+List<String> _splitOutside(String text, Set<String> sep) {
+  final List<String> out = <String>[];
+  final StringBuffer cur = StringBuffer();
+  int depth = 0;
+  String? quote;
+  for (int i = 0; i < text.length; i++) {
+    final String ch = text[i];
+    if (quote != null) {
+      if (ch == quote) {
+        quote = null;
+      }
+      cur.write(ch);
+      continue;
+    }
+    if (ch == '"' || ch == '\'') {
+      quote = ch;
+    } else if (ch == '[') {
+      depth++;
+    } else if (ch == ']') {
+      depth--;
+    } else if (depth == 0 && sep.contains(ch)) {
+      out.add(cur.toString());
+      cur.clear();
+      out.add(ch);
+      continue;
+    }
+    cur.write(ch);
+  }
+  out.add(cur.toString());
+  return out;
+}
+
 _Selector? _parseSelector(String text) {
-  final String spaced = text.trim().replaceAll(RegExp(r'\s*>\s*'), ' > ');
-  if (spaced.isEmpty) {
+  // Tokens are compounds and the `>` combinator; whitespace separates them.
+  final List<String> toks = <String>[];
+  for (final String piece
+      in _splitOutside(text.trim(), <String>{' ', '\t', '\n', '>'})) {
+    if (piece.trim().isNotEmpty) {
+      toks.add(piece.trim());
+    }
+  }
+  if (toks.isEmpty) {
     return null;
   }
   final List<_Compound> parts = <_Compound>[];
   final List<String> combs = <String>[];
   String pending = ' ';
-  for (final String tok in spaced.split(RegExp(r'\s+'))) {
+  for (final String tok in toks) {
     if (tok == '>') {
       pending = '>';
       continue;
@@ -447,23 +514,28 @@ _Selector? _parseSelector(String text) {
     if (m == null) {
       return null;
     }
+    final String simples = m.group(2) ?? '';
     final List<String> ids = <String>[];
     final List<String> classes = <String>[];
-    for (final RegExpMatch p
-        in RegExp(r'([.#])([\w-]+)').allMatches(m.group(2) ?? '')) {
+    for (final RegExpMatch p in RegExp(r'([.#])([\w-]+)').allMatches(simples)) {
       (p.group(1) == '#' ? ids : classes).add(p.group(2)!);
     }
+    final List<_AttrSel> attrs = <_AttrSel>[
+      for (final RegExpMatch p in RegExp(_attrSelSrc).allMatches(simples))
+        _AttrSel(
+            p.group(1)!.toLowerCase(), p.group(2) ?? p.group(3) ?? p.group(4)),
+    ];
     final List<String> nots = <String>[
-      for (final RegExpMatch p
-          in RegExp(r':not\(([.#]?[\w-]+)\)').allMatches(m.group(3) ?? ''))
+      for (final RegExpMatch p in RegExp(r':not\(([.#]?[\w-]+)\)')
+          .allMatches(m.namedGroup('nots') ?? ''))
         p.group(1)!,
     ];
     if (parts.isNotEmpty) {
       combs.add(pending);
     }
     pending = ' ';
-    parts.add(_Compound(m.group(1)?.toLowerCase(), ids, classes, nots,
-        m.group(4)?.toLowerCase()));
+    parts.add(_Compound(m.group(1)?.toLowerCase(), ids, classes, attrs, nots,
+        m.namedGroup('pseudo')?.toLowerCase()));
   }
   // A pseudo element can only end the selector.
   for (int i = 0; i < parts.length - 1; i++) {
@@ -546,8 +618,8 @@ List<_Rule> _parseCss(String css, {List<String>? atRules}) {
             continue;
           }
           final List<String> rawSels = <String>[
-            for (final String part in prelude.split(','))
-              if (part.trim().isNotEmpty) part.trim(),
+            for (final String part in _splitOutside(prelude, <String>{','}))
+              if (part != ',' && part.trim().isNotEmpty) part.trim(),
           ];
           final List<_Selector> sels = <_Selector>[
             for (final String part in rawSels)
@@ -629,6 +701,9 @@ class _Page {
       }
     }
     if (!c.classes.every(n.classes.contains)) {
+      return false;
+    }
+    if (!c.attrs.every((_AttrSel a) => a.matches(n.attrs))) {
       return false;
     }
     return !c.nots.any((String s) => _simpleMatches(s, n));
@@ -1604,9 +1679,79 @@ void main() {
         for (final _Rule r in p.rules.where((_Rule r) => r.media != null)) {
           expect(r.fullyReadable, isTrue,
               reason: _why(e3,
-                  'tag, #id, .class, :not(simple), > and descendant combinators and ::before only, got ${r.rawSelectors}'));
+                  'tag, #id, .class, [attr], [attr="value"], :not(simple), > and descendant combinators and ::before only, got ${r.rawSelectors}'));
         }
       });
+
+      // ---------------------------------------------------------------
+      // (b) D2 and P9: in Arabic a dir="ltr" cell draws its label the way
+      // every other cell does, whatever mechanism the page chose for it.
+      // ---------------------------------------------------------------
+
+      if (lang == 'ar') {
+        final String l1 =
+            '(b) ar: the ::before label of a dir="ltr" cell resolves the same colour, weight and word rules as the label of any other cell';
+        test(l1, () {
+          final _Page p = _Page(buildVerifyPageHtml(
+              jsonEncode(_record(
+                  rollCount: 4,
+                  seeds: _fourSeeds(),
+                  rollSeats: <int>[0, 1, 2, 3])),
+              language: lang));
+          final List<MapEntry<_Node, String>> cells = _labelledCells(p, lang);
+          final List<_Node> ltr = <_Node>[
+            for (final MapEntry<_Node, String> c in cells)
+              if (c.key.attrs['dir'] == 'ltr') c.key,
+          ];
+          final List<_Node> plain = <_Node>[
+            for (final MapEntry<_Node, String> c in cells)
+              if (!c.key.attrs.containsKey('dir')) c.key,
+          ];
+          // Seed value per seed row; k, die and reveal per roll row.
+          expect(ltr.length, 4 + 4 * 3,
+              reason: _why(l1,
+                  '16 dir="ltr" cells (4 seed values, k, die and reveal of 4 rolls), found ${ltr.length}'));
+          expect(plain, isNotEmpty,
+              reason: _why(l1, 'cells without dir to compare with'));
+
+          String? at(_Node c, String prop) =>
+              p.valueOf(c, prop, narrow: true, pseudo: 'before');
+          final _Node ref = plain.first;
+          final _Rgb refBg = p.backgroundBehindLabel(ref);
+          final _Rgb refColour = p.labelColour(ref, refBg);
+          for (final _Node c in ltr) {
+            for (final String prop in <String>[
+              'color',
+              'font-weight',
+              'overflow-wrap',
+              'word-break',
+              'opacity',
+              'background',
+              'background-color',
+            ]) {
+              expect(at(c, prop), at(ref, prop),
+                  reason: _why(l1,
+                      'the same ::before $prop as ${_where(ref)} (${at(ref, prop) ?? 'nothing'}) on ${_where(c)}, resolved ${at(c, prop) ?? 'nothing'}'));
+            }
+            final _Rgb bg = p.backgroundBehindLabel(c);
+            final _Rgb fg = p.labelColour(c, bg);
+            expect(fg.hex, refColour.hex,
+                reason: _why(l1,
+                    'label colour $refColour as on any other cell, on ${_where(c)} resolved $fg'));
+            expect(_contrast(fg, bg), greaterThanOrEqualTo(4.5),
+                reason: _why(l1,
+                    'label colour $fg on $bg to measure at least 4.5:1 on ${_where(c)}, measured ${_contrast(fg, bg).toStringAsFixed(2)}:1'));
+            final String? ow = at(c, 'overflow-wrap');
+            final String? wb = at(c, 'word-break');
+            expect(ow == 'anywhere' || ow == 'break-word', isFalse,
+                reason: _why(l1,
+                    'no overflow-wrap: $ow on the ::before of ${_where(c)}'));
+            expect(wb == 'break-all' || wb == 'break-word', isFalse,
+                reason: _why(
+                    l1, 'no word-break: $wb on the ::before of ${_where(c)}'));
+          }
+        });
+      }
 
       // ---------------------------------------------------------------
       // (e) D2: outside the media block nothing changes.
@@ -1631,4 +1776,122 @@ void main() {
       });
     });
   }
+
+  // -------------------------------------------------------------------
+  // The reader itself: the attribute selector forms the page may use.
+  // -------------------------------------------------------------------
+
+  group('C-619 reader: attribute selectors', () {
+    _Page page(String css, String body) => _Page(
+        '<html><head><style>$css</style></head><body>$body</body></html>');
+
+    String? colourOn(_Page p, String id, {String? pseudo}) =>
+        p.valueOf(p.byId(id)!, 'color', pseudo: pseudo);
+
+    const String body = '<table id="proof"><tr>'
+        '<td id="a" dir="ltr"></td>'
+        '<td id="b" dir="rtl"></td>'
+        '<td id="c"></td>'
+        '<td id="d" dir="ltr extra"></td>'
+        '<td id="e" data-x="a b"></td>'
+        '<td id="f" data-x="a,b"></td>'
+        '</tr></table>';
+
+    void check(String name, void Function() body) {
+      test('reader: $name', body);
+    }
+
+    check('[attr] matches presence only', () {
+      final _Page p = page('[dir] { color: #111 }', body);
+      expect(colourOn(p, 'a'), '#111');
+      expect(colourOn(p, 'b'), '#111');
+      expect(colourOn(p, 'c'), isNull);
+    });
+
+    check('[attr="value"] and [attr=\'value\'] and [attr=value] match exactly',
+        () {
+      for (final String sel in <String>[
+        '[dir="ltr"]',
+        "[dir='ltr']",
+        '[dir=ltr]'
+      ]) {
+        final _Page p = page('$sel { color: #111 }', body);
+        expect(colourOn(p, 'a'), '#111', reason: sel);
+        expect(colourOn(p, 'b'), isNull, reason: sel);
+        expect(colourOn(p, 'c'), isNull, reason: sel);
+        expect(colourOn(p, 'd'), isNull,
+            reason: '$sel is an exact match, not a word or prefix match');
+      }
+    });
+
+    check('an attribute selector weighs a class, more than a tag', () {
+      final _Page p = page(
+          'td[dir="ltr"] { color: #111 } td { color: #222 } '
+          '.k { color: #333 } [dir="ltr"] { color: #444 }',
+          body.replaceAll('id="a"', 'id="a" class="k"'));
+      expect(colourOn(p, 'a'), '#111',
+          reason: 'td[dir="ltr"] (0,1,1) beats .k and [dir="ltr"] (0,1,0) '
+              'whatever the order');
+      final _Page q =
+          page('td { color: #222 } [dir="ltr"] { color: #111 }', body);
+      expect(colourOn(q, 'a'), '#111',
+          reason: '[dir="ltr"] beats td whatever the order');
+      final _Page r =
+          page('[dir="ltr"] { color: #111 } td { color: #222 }', body);
+      expect(colourOn(r, 'a'), '#111',
+          reason: '[dir="ltr"] (0,1,0) beats td (0,0,1) even when td is later');
+      final _Page s = page(
+          '#proof td::before { color: #111 } '
+          '#proof td[dir="ltr"]::before { color: #222 }',
+          body);
+      expect(colourOn(s, 'a', pseudo: 'before'), '#222');
+      expect(colourOn(s, 'b', pseudo: 'before'), '#111');
+      final _Page t = page(
+          '#proof td[dir="ltr"]::before { color: #222 } '
+          '#proof td::before { color: #111 }',
+          body);
+      expect(colourOn(t, 'a', pseudo: 'before'), '#222',
+          reason:
+              'the attribute adds a class of weight, so the earlier rule wins');
+    });
+
+    check('a value may hold a space, a comma or a quote of the other kind', () {
+      final _Page p = page(
+          '[data-x="a b"] { color: #111 } [data-x="a,b"], #zz { color: #222 }',
+          body);
+      expect(colourOn(p, 'e'), '#111');
+      expect(colourOn(p, 'f'), '#222');
+      expect(p.rules.every((_Rule r) => r.fullyReadable), isTrue,
+          reason: 'both rules are readable: ${<List<String>>[
+            for (final _Rule r in p.rules) r.rawSelectors
+          ]}');
+      expect(p.rules.last.rawSelectors, <String>['[data-x="a,b"]', '#zz']);
+    });
+
+    check(
+        'an attribute selector works inside a descendant chain and a pseudo element',
+        () {
+      final _Page p = page(
+          '#proof td[dir="ltr"]::before { color: #111 } '
+          '#proof > tr > td[dir] { color: #222 }',
+          body);
+      expect(p.rules.every((_Rule r) => r.fullyReadable), isTrue);
+      expect(colourOn(p, 'a', pseudo: 'before'), '#111');
+      expect(colourOn(p, 'c', pseudo: 'before'), isNull);
+    });
+
+    check('forms the reader does not know stay unreadable, not guessed', () {
+      for (final String sel in <String>[
+        '[dir^="l"]',
+        '[dir~="ltr"]',
+        '[dir="ltr" i]',
+        'td:first-child',
+        'td + td',
+      ]) {
+        final _Page p = page('$sel { color: #111 }', body);
+        expect(p.rules.single.fullyReadable, isFalse,
+            reason: '$sel must be reported as unreadable');
+      }
+    });
+  });
 }
