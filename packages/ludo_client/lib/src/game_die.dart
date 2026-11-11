@@ -265,13 +265,16 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     } else if (widget.enabled && !reduced) {
       die = KeyedSubtree(
         key: const Key('game-die-pulse'),
-        child: AnimatedBuilder(
-          animation: _pulse,
-          builder: (context, child) {
-            final double scale = 1.0 + 0.08 * math.sin(_pulse.value * math.pi);
-            return Transform.scale(scale: scale, child: child);
-          },
-          child: die,
+        child: RepaintBoundary(
+          child: AnimatedBuilder(
+            animation: _pulse,
+            builder: (context, child) {
+              final double scale =
+                  1.0 + 0.08 * math.sin(_pulse.value * math.pi);
+              return Transform.scale(scale: scale, child: child);
+            },
+            child: RepaintBoundary(child: die),
+          ),
         ),
       );
     }
