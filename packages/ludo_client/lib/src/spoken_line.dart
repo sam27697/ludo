@@ -18,8 +18,17 @@ const Key kSpokenLineRegionKey = Key('spoken-line-region');
 /// C-629: the region's label changes at most once per frame, because only
 /// the last value of a frame is spoken. Lines spoken while an earlier line
 /// is still waiting for its frame are queued and set one per frame, in the
-/// order they were spoken. None is dropped and none is reordered.
+/// order they were spoken. None is reordered. A queued line that is more than
+/// [kSpokenLineHold] old when its turn comes is dropped: while the app is in
+/// the background no frame runs, and a returning player must not hear the
+/// backlog.
 class SpokenLineController extends ChangeNotifier {
+  /// [clock] reads the time a queued line is stamped with and judged by. It
+  /// exists so a test can move time without running frames.
+  SpokenLineController({@visibleForTesting DateTime Function()? clock})
+    : _clock = clock ?? DateTime.now;
+
+  final DateTime Function() _clock;
   String _current = '';
   Timer? _holdTimer;
   bool _disposed = false;
@@ -28,7 +37,7 @@ class SpokenLineController extends ChangeNotifier {
   /// True from the moment a line (or the empty frame before a repeated line)
   /// is set until the frame that draws it has completed.
   bool _busy = false;
-  final List<String> _queue = <String>[];
+  final List<_QueuedLine> _queue = <_QueuedLine>[];
 
   /// The line the region shows now, or '' when nothing is held.
   String get current => _current;
@@ -44,7 +53,7 @@ class SpokenLineController extends ChangeNotifier {
       return;
     }
     if (_busy) {
-      _queue.add(line);
+      _queue.add(_QueuedLine(line, _clock()));
       return;
     }
     _present(line);
@@ -86,8 +95,18 @@ class SpokenLineController extends ChangeNotifier {
       return;
     }
     _busy = false;
-    if (_queue.isNotEmpty) {
-      _present(_queue.removeAt(0));
+    while (_queue.isNotEmpty) {
+      final _QueuedLine next = _queue.removeAt(0);
+      if (_clock().difference(next.spokenAt) > kSpokenLineHold) {
+        continue;
+      }
+      _present(next.line);
+      return;
+    }
+    if (_holdTimer == null) {
+      // The hold ran out while lines were waiting and every one of them was
+      // dropped: nothing is left to clear the region later.
+      _set('');
     }
   }
 
@@ -148,6 +167,13 @@ class SpokenLineController extends ChangeNotifier {
     _holdTimer = null;
     super.dispose();
   }
+}
+
+class _QueuedLine {
+  const _QueuedLine(this.line, this.spokenAt);
+
+  final String line;
+  final DateTime spokenAt;
 }
 
 /// C-624 D2: one polite live region that paints nothing, takes no taps and
