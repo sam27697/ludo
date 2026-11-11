@@ -761,6 +761,7 @@ void main() {
             seats: seats,
             winner: 0,
             players: players,
+            verifyUrl: 'https://leave-end-card.invalid/v/rule2',
           );
           addTearDown(controller.dispose);
           await _mount(tester, controller);
@@ -793,20 +794,8 @@ void main() {
           );
           expect(
             find.byKey(_verifyKey),
-            findsNothing,
-            reason:
-                'C-620 D1: this fixture carries no verify_url, so no verify '
-                'button is drawn after the winner leaves',
-          );
-          expect(
-            find.text(
-              "This game's record could not be saved, so its rolls cannot be "
-              'checked.',
-            ),
             findsOneWidget,
-            reason:
-                'C-620 D1: with no verify_url the card says the record was '
-                'not saved',
+            reason: 'rule 2: the verify link stays after the winner leaves',
           );
           final String blob = _blobUnder(tester, find.byKey(_endLeftKey));
           final String expected = players == 2
