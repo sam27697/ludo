@@ -182,6 +182,7 @@ Map<String, Object?> _roomJson({
   String? gameId,
   String state = 'PLAYING',
   int? winner,
+  String? verifyUrl,
 }) => <String, Object?>{
   'code': 'K7M2QP',
   'state': state,
@@ -200,6 +201,7 @@ Map<String, Object?> _roomJson({
   'turn': turn,
   'winner': winner,
   'seq': seq,
+  'verify_url': ?verifyUrl,
 };
 
 /// A room snapshot body in wire shape, for a server-initiated `room` push
@@ -297,6 +299,7 @@ Future<RollTrayDrive> connectPlaying(
   int? winner,
   bool sendSeatAssigned = true,
   List<Duration> autoReconnectDelays = const <Duration>[],
+  String? verifyUrl,
 }) async {
   final _Connector connector = _Connector();
   final FakeTransport transport = FakeTransport();
@@ -329,6 +332,7 @@ Future<RollTrayDrive> connectPlaying(
         gameId: gameId,
         state: state,
         winner: winner,
+        verifyUrl: verifyUrl,
       ),
     ),
   );

@@ -3799,6 +3799,61 @@ void main() {
   });
 
   // ==========================================================================
+  // 158-161: order 622 (X178, the C-620 gate). The end card of a game whose
+  // record was not saved: the recorded two-seat game host_wins_1 is replayed
+  // to its `game_over`, which is the recorded frame with its `verify_url`
+  // set to the empty string and nothing else changed. 158: the loser, English,
+  // text scale 1.0. 159: the same in Arabic. 160: the winner, English. 161:
+  // 159 at text scale 2.0. The card is scrolled until its fairness area is on
+  // screen, and one `X178` line says which of the verify button, the info
+  // hint and the not-kept line are in the tree. Nothing asserts on them.
+  // Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 158-end-no-record-loser-en', (tester) async {
+    await _shootEndNoRecord(
+      tester,
+      binding,
+      shotName: '158-end-no-record-loser-en',
+      locale: const Locale('en'),
+      viewerWins: false,
+      textScale: 1.0,
+    );
+  });
+
+  testWidgets('capture 159-end-no-record-loser-ar', (tester) async {
+    await _shootEndNoRecord(
+      tester,
+      binding,
+      shotName: '159-end-no-record-loser-ar',
+      locale: const Locale('ar'),
+      viewerWins: false,
+      textScale: 1.0,
+    );
+  });
+
+  testWidgets('capture 160-end-no-record-winner-en', (tester) async {
+    await _shootEndNoRecord(
+      tester,
+      binding,
+      shotName: '160-end-no-record-winner-en',
+      locale: const Locale('en'),
+      viewerWins: true,
+      textScale: 1.0,
+    );
+  });
+
+  testWidgets('capture 161-end-no-record-loser-ar-2x', (tester) async {
+    await _shootEndNoRecord(
+      tester,
+      binding,
+      shotName: '161-end-no-record-loser-ar-2x',
+      locale: const Locale('ar'),
+      viewerWins: false,
+      textScale: 2.0,
+    );
+  });
+
+  // ==========================================================================
   // 19, 20: order 240's (X14) winner's end view. `game_over` names my own
   // seat (0, Priya) as `winner`. No `turn` frame follows a `game_over`
   // (docs/PROTOCOL.md section 13's own last line); `_reduceGameOver`
@@ -24227,4 +24282,200 @@ Future<List<String>> _measureEndCardX167(
     '${reach.join(' ')} | $scenario',
   );
   return problems;
+}
+
+/// Captures 158 to 161 (order 622, X178). The recorded two-seat game
+/// host_wins_1 is replayed from the home screen to its `game_over`, as the
+/// winner when [viewerWins], else as the losing seat, at system text scale
+/// [textScale]. The `game_over` pushed is the recorded frame with its
+/// `verify_url` set to the empty string and nothing else changed, so the
+/// server's "record not saved" answer reaches the card the way it would on the
+/// wire. The card is shown past its dwell, scrolled until its fairness area is
+/// on screen, and one `X178` line names, from the live tree, whether
+/// `game-screen-verify-button`, `end-card-fair-hint` and
+/// `end-card-record-not-kept` are present and what the last one reads. The
+/// line is a reading, not an assertion: only the replay's own preconditions
+/// are asserted here.
+Future<void> _shootEndNoRecord(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required bool viewerWins,
+  required double textScale,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+  final _RealGame game = _realGame('host_wins_1');
+  final List<int> seats = <int>[
+    for (final Object? s in game.json['seats']! as List<Object?>) s! as int,
+  ]..sort();
+  final int winnerSeat = game.winner;
+  final int viewerSeat = viewerWins
+      ? winnerSeat
+      : seats.firstWhere((int s) => s != winnerSeat);
+  final String scenario =
+      'fixture game "host_wins_1", viewer seat $viewerSeat '
+      '(${viewerWins ? 'the winner' : 'the loser'}), winner seat '
+      '$winnerSeat, locale ${locale.languageCode}, text scale $textScale, '
+      'game_over verify_url ""';
+  final String reproduce =
+      '`flutter test integration_test/screenshots_test.dart -d flutter-tester '
+      '--plain-name "capture $shotName"`';
+  expect(
+    seats,
+    hasLength(2),
+    reason: '$shotName ($scenario): the recorded game must seat two',
+  );
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(_replayHome(factory, locale));
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+  addTearDown(() {
+    for (final RoomController c in factory.controllers) {
+      c.dispose();
+    }
+  });
+  final _RealReplay replay = await _replayRealGame(
+    tester,
+    factory,
+    capture: 'capture $shotName',
+    gameName: 'host_wins_1',
+    seat: viewerSeat,
+    localeName: locale.languageCode,
+  );
+  final RoomController controller = replay.controller;
+
+  // The scale goes up once the table is on screen, as in capture 153: the
+  // harness's own taps on the home screen do not reach their buttons at 2.0.
+  if (textScale != 1.0) {
+    tester.platformDispatcher.textScaleFactorTestValue = textScale;
+    await tester.pump();
+  }
+
+  // The recorded game_over, one field changed.
+  final Map<String, Object?> recordedData =
+      replay.gameOver['d']! as Map<String, Object?>;
+  expect(
+    recordedData['verify_url'],
+    isA<String>().having((String s) => s.isNotEmpty, 'is not empty', isTrue),
+    reason:
+        '$shotName ($scenario): the recorded game_over must carry a '
+        'verify_url for the empty one to be the only change; reproduce with '
+        '$reproduce',
+  );
+  final Map<String, Object?> noRecordFrame = <String, Object?>{
+    ...replay.gameOver,
+    'd': <String, Object?>{...recordedData, 'verify_url': ''},
+  };
+  replay.transport.pushText(replay.re.wire(noRecordFrame));
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(Key(viewerWins ? 'end-card-win' : 'end-card-lose')),
+    '$shotName ($scenario): the ${viewerWins ? 'winner' : 'loser'} end card',
+  );
+  // Past kEndCardDwell: the card is drawn after the winning move's dwell.
+  await _pumpRealDurationFrames(tester);
+
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(GameScreen)),
+  );
+  expect(
+    <Object?>[
+      loc.localeName,
+      controller.room?.state,
+      controller.room?.winner,
+      controller.seat,
+      controller.room?.verifyUrl,
+      MediaQuery.textScalerOf(tester.element(find.byType(GameScreen)))
+          .scale(10),
+    ],
+    <Object?>[
+      locale.languageCode,
+      RoomState.finished,
+      winnerSeat,
+      viewerSeat,
+      '',
+      textScale * 10,
+    ],
+    reason:
+        '$shotName ($scenario): expected locale, FINISHED, winner, viewer '
+        'seat, an empty verify_url and the text scaler, in that order; '
+        'reproduce with $reproduce',
+  );
+
+  // Scroll the card's body until the fairness area is on screen: every part
+  // of it that is in the tree, top to bottom, so the last one is the lowest.
+  final Finder cardFinder = find.byType(EndCard);
+  expect(
+    cardFinder,
+    findsOneWidget,
+    reason:
+        '$shotName ($scenario): expected one EndCard; reproduce with '
+        '$reproduce',
+  );
+  final Finder fairLine = find.descendant(
+    of: cardFinder,
+    matching: find.text(loc.endFairLine),
+  );
+  final Finder fairHint = find.byKey(const Key('end-card-fair-hint'));
+  final Finder verifyButton = find.byKey(
+    const Key('game-screen-verify-button'),
+  );
+  final Finder notKept = find.byKey(const Key('end-card-record-not-kept'));
+  final List<Finder> fairness = <Finder>[
+    fairLine,
+    fairHint,
+    verifyButton,
+    notKept,
+  ].where((Finder f) => f.evaluate().isNotEmpty).toList();
+  expect(
+    fairness,
+    isNotEmpty,
+    reason:
+        '$shotName ($scenario): none of the fairness line, the info hint, '
+        'the verify button or the not-kept line is in the tree, so there is '
+        'no fairness area to scroll to; reproduce with $reproduce',
+  );
+  for (final Finder f in fairness) {
+    await tester.ensureVisible(f);
+    await tester.pump();
+  }
+  await tester.pump();
+  await _pumpRealDurationFrames(tester, frameCount: 4);
+
+  String yn(bool v) => v ? 'yes' : 'no';
+  String notKeptText = 'absent';
+  if (notKept.evaluate().isNotEmpty) {
+    final Widget w = notKept.evaluate().first.widget;
+    final Finder inner = w is Text
+        ? notKept
+        : find.descendant(of: notKept, matching: find.byType(Text));
+    notKeptText = inner.evaluate().isEmpty
+        ? '(no Text under the key)'
+        : <String>[
+            for (final Element e in inner.evaluate())
+              (e.widget as Text).data ??
+                  (e.widget as Text).textSpan?.toPlainText() ??
+                  '',
+          ].join(' | ');
+  }
+  // ignore: avoid_print
+  print(
+    'X178 $shotName '
+    'game-screen-verify-button=${yn(verifyButton.evaluate().isNotEmpty)} '
+    'end-card-fair-hint=${yn(fairHint.evaluate().isNotEmpty)} '
+    'end-card-record-not-kept=${yn(notKept.evaluate().isNotEmpty)} '
+    'record_not_kept_text="$notKeptText" '
+    'fair_line=${yn(fairLine.evaluate().isNotEmpty)} | $scenario',
+  );
+  await _capture(binding, tester, shotName, frames: 2);
 }

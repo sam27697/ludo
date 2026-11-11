@@ -118,8 +118,8 @@ class EndCard extends StatefulWidget {
   /// seat matched (spectator view or unconfirmed seat).
   final int? stepsLeft;
 
-  /// `room.verifyUrl`. Null or empty disables the Check button rather than
-  /// hiding it, so the fairness line always has somewhere to point.
+  /// `room.verifyUrl`. Null or empty means the game's record was not saved,
+  /// and the card says so in place of the fairness line, hint and Check button.
   final String? verifyUrl;
 
   /// Opens [verifyUrl] externally. Unchanged from the pre-card Verify
@@ -813,10 +813,20 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
   }
 
   /// Rule 6, on every variant: the fairness line, the Check-the-rolls text
-  /// button (key kept: `game-screen-verify-button`), and the info hint.
+  /// button (key kept: `game-screen-verify-button`), and the info hint. With
+  /// no verification page the card says the record was not kept instead.
   Widget _fairness(BuildContext context, AppLocalizations loc) {
-    final bool canVerify =
-        widget.verifyUrl != null && widget.verifyUrl!.isNotEmpty;
+    final String? url = widget.verifyUrl;
+    if (url == null || url.isEmpty) {
+      return Text(
+        loc.endRecordNotKept,
+        key: const Key('end-card-record-not-kept'),
+        style: const TextStyle(
+          color: LudoColors.inkMuted,
+          fontSize: kTypeLabel,
+        ),
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -844,7 +854,7 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
         Center(
           child: VerifyRollsButton(
             key: const Key('game-screen-verify-button'),
-            onPressed: canVerify ? widget.onVerify : null,
+            onPressed: widget.onVerify,
           ),
         ),
       ],

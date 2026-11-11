@@ -201,6 +201,20 @@ String buildVerifyPageHtml(
   final String ltrAttr = isAr ? ' dir="ltr"' : '';
   final String notCheckedCell = isAr ? 'لم يُفحص' : 'not checked';
 
+  // C-619: the text of each column's `th` in the page language, repeated as
+  // `data-label` on every cell under it. On a phone the tables stop being
+  // tables and every row becomes a block; the label is how a cell still says
+  // what it is once the header row is gone. Keep these in step with the
+  // `th` text in the two templates below.
+  final String labelPlayer = isAr ? 'اللاعب' : 'Player';
+  final String labelSeed = isAr ? 'البذرة' : 'Seed';
+  final String labelOrigin = isAr ? 'المصدر' : 'Origin';
+  const String labelK = 'k';
+  final String labelDie = isAr ? 'النرد' : 'Die';
+  final String labelReveal = isAr ? 'الكشف' : 'Reveal';
+  final String labelChain = isAr ? 'فحص السلسلة' : 'Chain check';
+  final String labelDieCheck = isAr ? 'فحص النرد' : 'Die check';
+
   final StringBuffer seedRows = StringBuffer();
   for (final Object? entry in seeds) {
     final Map<String, Object?> seed = entry as Map<String, Object?>;
@@ -212,13 +226,13 @@ String buildVerifyPageHtml(
             : 'drawn by the server: this player added no randomness of '
                 'their own');
     seedRows
-      ..write('<tr><td data-seat="')
+      ..write('<tr><td data-label="$labelPlayer" data-seat="')
       ..write(_esc(seed['seat']))
       ..write('">')
       ..write(_seatMarkup(seed['seat'], isAr: isAr))
-      ..write('</td><td$ltrAttr>')
+      ..write('</td><td data-label="$labelSeed" class="hex"$ltrAttr>')
       ..write(_esc(seed['seed']))
-      ..write('</td><td>')
+      ..write('</td><td data-label="$labelOrigin">')
       ..write(_esc(originText))
       ..write('</td></tr>\n');
   }
@@ -229,19 +243,19 @@ String buildVerifyPageHtml(
     final Object? k = roll['k'];
     final String kEsc = _esc(k);
     rollRows
-      ..write('<tr><td$ltrAttr>')
+      ..write('<tr><td data-label="$labelK"$ltrAttr>')
       ..write(kEsc)
-      ..write('</td><td data-seat="')
+      ..write('</td><td data-label="$labelPlayer" data-seat="')
       ..write(_esc(roll['seat']))
       ..write('">')
       ..write(_seatMarkup(roll['seat'], isAr: isAr))
-      ..write('</td><td$ltrAttr>')
+      ..write('</td><td data-label="$labelDie"$ltrAttr>')
       ..write(_esc(roll['die']))
-      ..write('</td><td class="reveal"$ltrAttr>')
+      ..write('</td><td data-label="$labelReveal" class="reveal hex"$ltrAttr>')
       ..write(_esc(roll['reveal']))
-      ..write('</td><td id="chain-')
+      ..write('</td><td data-label="$labelChain" id="chain-')
       ..write(kEsc)
-      ..write('">$notCheckedCell</td><td id="die-')
+      ..write('">$notCheckedCell</td><td data-label="$labelDieCheck" id="die-')
       ..write(kEsc)
       ..write('">$notCheckedCell</td></tr>\n');
   }
@@ -340,23 +354,27 @@ data-reason-error="$reasonError">$notCheckedSummary</p>
 <summary>اعرض كل رمية وطريقة التحقق منها بنفسك</summary>
 
 <h2>التثبيت</h2>
-<p>تثبيت السلسلة: <code$ltrAttr>${_esc(chainCommit)}</code></p>
+<p>تثبيت السلسلة: <code class="hex"$ltrAttr>${_esc(chainCommit)}</code></p>
 <p>طول السلسلة: <span$ltrAttr>${_esc(chainLength)}</span></p>
 
 <h2>البذور</h2>
+<div class="table-scroll">
 <table>
 <thead><tr><th>اللاعب</th><th>البذرة</th><th>المصدر</th></tr></thead>
 <tbody>
 $seedRows</tbody>
 </table>
+</div>
 
 <h2>الرميات</h2>
+<div class="table-scroll">
 <table id="rolls-table" data-match="$dataMatch" data-mismatch="$dataMismatch">
 <thead><tr><th>k</th><th>اللاعب</th><th>النرد</th><th>الكشف</th>
 <th>فحص السلسلة</th><th>فحص النرد</th></tr></thead>
 <tbody>
 $rollRows</tbody>
 </table>
+</div>
 
 <h2>تحقق بنفسك</h2>
 <p>$checkYourselfBody</p>
@@ -422,23 +440,27 @@ build, and neither is in place here.</li>
 <summary>Show every roll and how to check it yourself</summary>
 
 <h2>Commitment</h2>
-<p>Chain commitment: <code$ltrAttr>${_esc(chainCommit)}</code></p>
+<p>Chain commitment: <code class="hex"$ltrAttr>${_esc(chainCommit)}</code></p>
 <p>Chain length: <span$ltrAttr>${_esc(chainLength)}</span></p>
 
 <h2>Seeds</h2>
+<div class="table-scroll">
 <table>
 <thead><tr><th>Player</th><th>Seed</th><th>Origin</th></tr></thead>
 <tbody>
 $seedRows</tbody>
 </table>
+</div>
 
 <h2>Rolls</h2>
+<div class="table-scroll">
 <table id="rolls-table" data-match="checked: matches" data-mismatch="checked: does not match">
 <thead><tr><th>k</th><th>Player</th><th>Die</th><th>Reveal</th>
 <th>Chain check</th><th>Die check</th></tr></thead>
 <tbody>
 $rollRows</tbody>
 </table>
+</div>
 
 <h2>Check it yourself</h2>
 <p>Do not take this page's word for any of the above. Run the same checks
@@ -528,8 +550,7 @@ body {
   padding: 1rem;
   background: linear-gradient(160deg, #0A3D38, #14665C);
   color: #0A2A27;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    Helvetica, Arial, sans-serif;
+  font-family: $_pageFont;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -578,6 +599,12 @@ h1 {
   outline-offset: 2px;
 }''';
 
+/// The page's body font stack. The narrow view's labels name it again because
+/// a label inherits its cell's font, and the reveal cell is monospace.
+const String _pageFont =
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,\n'
+    '    Helvetica, Arial, sans-serif';
+
 /// Shared between both languages of [buildVerifyPageHtml]: nothing below
 /// depends on text direction except `text-align: start`, which already
 /// means "left in `ltr`, right in `rtl`" without a per-language rule --
@@ -588,6 +615,26 @@ h1 {
 /// value that also counts those breaks in a table's min-content width:
 /// with `break-word` the seeds table still grows to the unbreakable seed
 /// and sticks out past the phone.
+///
+/// C-618: that permission belongs to the hex alone. The body keeps it for
+/// prose (a long game id in the heading still wraps), but every header and
+/// every cell that is not `.hex` resets to `normal`, so a word never splits
+/// mid-letter; each table sits in `.table-scroll` and scrolls inside the card
+/// if its words cannot fit.
+///
+/// C-619: with C-618's word rules the six-column rolls table is wider than a
+/// phone's card (315 px of table in a 273 px card at 360 px), and the column
+/// that scrolled out of sight was "Die check", the one that carries the red
+/// "does not match". Below 40 rem the two tables in `#proof` therefore stop
+/// being tables: the header row is hidden and each body row becomes a bordered
+/// block of cells, every cell led by its `data-label`. The hex cell (seed,
+/// reveal) takes a line of its own after the rest of the row, so the short
+/// cells sit together and only the hex wraps. Each cell is a flex box so the
+/// label and the value keep their order by the cell's own direction: in Arabic
+/// the label is at the right of its value, and a `dir="ltr"` cell, whose
+/// start is the left, runs in reverse to put its label at the right too. The
+/// label is #3E5E59, 6.8:1 against the #F7FBFA card and 7.1:1 against the
+/// #FFFFFF row.
 ///
 /// C-616: the table borders (#B7CFCB) and the `code` background (#E3EFEC)
 /// are chosen for the light card. The verdict block is white; its three
@@ -610,9 +657,19 @@ th, td {
   text-align: start;
   vertical-align: top;
 }
+th, td:not(.hex) {
+  overflow-wrap: normal;
+  word-break: normal;
+}
 td.reveal {
   font-family: monospace;
+}
+.hex {
+  overflow-wrap: anywhere;
   word-break: break-all;
+}
+.table-scroll {
+  overflow-x: auto;
 }
 code {
   font-family: monospace;
@@ -677,6 +734,53 @@ code {
 #proof > summary:focus-visible {
   outline: 3px solid #1976D2;
   outline-offset: 2px;
+}
+@media (max-width: 40rem) {
+  #proof thead {
+    display: none;
+  }
+  #proof table,
+  #proof tbody {
+    display: block;
+  }
+  #proof tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    box-sizing: border-box;
+    margin: 0 0 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: #FFFFFF;
+    border: 1px solid #B7CFCB;
+    border-radius: 0.5rem;
+  }
+  #proof td {
+    display: flex;
+    border-width: 0;
+    padding: 0;
+  }
+  #proof td[dir="ltr"] {
+    flex-direction: row-reverse;
+  }
+  #proof td::before {
+    content: attr(data-label);
+    flex: none;
+    margin-inline-end: 0.4em;
+    font-family: $_pageFont;
+    color: #3E5E59;
+    font-weight: 700;
+    overflow-wrap: normal;
+    word-break: normal;
+    white-space: nowrap;
+  }
+  #proof td[dir="ltr"]::before {
+    margin-inline-end: 0;
+    margin-inline-start: 0.4em;
+  }
+  #proof td.hex {
+    flex-basis: 100%;
+    order: 1;
+  }
 }''';
 
 final String _sharedNotFoundStyle = _cardStyle('28rem');
