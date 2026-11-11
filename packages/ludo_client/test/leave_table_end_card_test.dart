@@ -793,8 +793,20 @@ void main() {
           );
           expect(
             find.byKey(_verifyKey),
+            findsNothing,
+            reason:
+                'C-620 D1: this fixture carries no verify_url, so no verify '
+                'button is drawn after the winner leaves',
+          );
+          expect(
+            find.text(
+              "This game's record could not be saved, so its rolls cannot be "
+              'checked.',
+            ),
             findsOneWidget,
-            reason: 'rule 2: the verify link stays after the winner leaves',
+            reason:
+                'C-620 D1: with no verify_url the card says the record was '
+                'not saved',
           );
           final String blob = _blobUnder(tester, find.byKey(_endLeftKey));
           final String expected = players == 2

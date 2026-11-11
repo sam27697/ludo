@@ -1301,20 +1301,32 @@ void main() {
       );
     });
 
-    testWidgets('endFairLine is shown on the ended-with-no-winner card too', (
-      tester,
-    ) async {
-      await _endedNoWinnerGame(tester);
-      final AppLocalizations loc = _locOf(tester);
-      final String blob = _blobUnder(tester, find.byType(GameScreen));
-      expect(
-        blob.contains(loc.endFairLine),
-        isTrue,
-        reason:
-            'endFairLine ("${loc.endFairLine}") must be shown even when no '
-            'winner is named; screen text was "$blob"',
-      );
-    });
+    testWidgets(
+      'endFairLine is not shown on the ended-with-no-winner card when the '
+      'game carried no verify_url (C-620 D1)',
+      (tester) async {
+        await _endedNoWinnerGame(tester);
+        final AppLocalizations loc = _locOf(tester);
+        final String blob = _blobUnder(tester, find.byType(GameScreen));
+        expect(
+          blob.contains(loc.endFairLine),
+          isFalse,
+          reason:
+              'endFairLine ("${loc.endFairLine}") must not be shown when '
+              'there is no verify_url (C-620 D1); screen text was "$blob"',
+        );
+        expect(
+          blob.contains(
+            "This game's record could not be saved, so its rolls cannot be "
+            'checked.',
+          ),
+          isTrue,
+          reason:
+              'with no verify_url the card must say the record was not '
+              'saved (C-620 D1); screen text was "$blob"',
+        );
+      },
+    );
 
     testWidgets('game-screen-verify-button is at least 48dp and opens verify_url from '
         'game_over', (tester) async {
@@ -1352,24 +1364,18 @@ void main() {
     });
 
     testWidgets(
-      'game-screen-verify-button is disabled when game_over carried no URL',
+      'game-screen-verify-button is absent when game_over carried no URL '
+      '(C-620 D1)',
       (tester) async {
         await _endedNoWinnerGame(tester);
 
-        final Finder verify = find.byKey(_verifyKey);
-        expect(verify, findsOneWidget);
-        final List<MethodCall> launches = _listenUrlLaunches(tester);
-        await tester.ensureVisible(verify);
-        await tester.tap(verify, warnIfMissed: false);
-        await tester.pump();
-
         expect(
-          launches,
-          isEmpty,
+          find.byKey(_verifyKey),
+          findsNothing,
           reason:
-              'with no verify_url, game-screen-verify-button must be '
-              'disabled and tapping it must open nothing; calls were '
-              '$launches',
+              'with no verify_url, game-screen-verify-button must not be '
+              'drawn at all (C-620 D1); a dead button under the card is '
+              'drawn',
         );
       },
     );
