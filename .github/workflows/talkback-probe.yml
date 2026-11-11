@@ -135,6 +135,21 @@ jobs:
           echo "talkback-probe: flutter build apk --profile --target-platform android-x64"
           flutter build apk --profile --target-platform android-x64
           ls -l build/app/outputs/flutter-apk/
+          # The next build writes the same output file name, so the app apk is
+          # copied out first.
+          mkdir -p "$GITHUB_WORKSPACE/apks"
+          cp build/app/outputs/flutter-apk/app-profile.apk "$GITHUB_WORKSPACE/apks/app-profile.apk"
+
+      # Order 623: the announcement probe, a second entry point outside lib/ so
+      # nothing in it ships. Same package id and same debug signing as the app,
+      # so probe.sh installs it over the app with adb install -r. If Flutter
+      # refused a target outside lib/ this step would fail with its own message.
+      - name: build the announcement probe (profile, x86_64)
+        run: |
+          echo "talkback-probe: flutter build apk --profile --target-platform android-x64 -t probe/talkback_announce_main.dart"
+          flutter build apk --profile --target-platform android-x64 -t probe/talkback_announce_main.dart
+          ls -l build/app/outputs/flutter-apk/
+          cp build/app/outputs/flutter-apk/app-profile.apk "$GITHUB_WORKSPACE/apks/probe-announce-profile.apk"
 
       - name: fetch the TalkBack apk built by the previous job
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -146,11 +161,19 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          echo "talkback-probe: checking probe script and both apks"
-          test -f tool/talkback_probe/probe.sh || { echo "missing tool/talkback_probe/probe.sh" >&2; exit 1; }
-          bash -n tool/talkback_probe/probe.sh
+          echo "talkback-probe: checking probe scripts and the three apks"
+          for f in tool/talkback_probe/probe.sh tool/talkback_probe/count_cases.sh; do
+            test -f "$f" || { echo "missing $f" >&2; exit 1; }
+            bash -n "$f"
+          done
           test -s talkback-out/talkback-debug.apk || { echo "missing talkback-out/talkback-debug.apk" >&2; exit 1; }
-          test -s packages/ludo_client/build/app/outputs/flutter-apk/app-profile.apk || { echo "missing app-profile.apk" >&2; exit 1; }
+          test -s apks/app-profile.apk || { echo "missing apks/app-profile.apk" >&2; exit 1; }
+          test -s apks/probe-announce-profile.apk || { echo "missing apks/probe-announce-profile.apk" >&2; exit 1; }
+          if cmp -s apks/app-profile.apk apks/probe-announce-profile.apk; then
+            echo "apks/app-profile.apk and apks/probe-announce-profile.apk are identical, the probe target was not built" >&2
+            exit 1
+          fi
+          sha256sum apks/*.apk
           cat talkback-out/talkback-build-info.txt
 
       # Same boilerplate as device-smoke.yml: makes /dev/kvm group-writable so
@@ -177,12 +200,13 @@ jobs:
       # steps. The action runs in the repository root, so the paths are
       # relative to it, and it fails the step when that one line exits
       # non-zero, which is how the "no spoken line" gate reaches the job.
-      - name: boot the emulator, enable TalkBack, launch the app, record what is spoken
+      - name: boot the emulator, enable TalkBack, launch the app, play the announcement probe, record what is spoken
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
           OUT_DIR: probe-out
           TALKBACK_APK: talkback-out/talkback-debug.apk
-          APP_APK: packages/ludo_client/build/app/outputs/flutter-apk/app-profile.apk
+          APP_APK: apks/app-profile.apk
+          PROBE_APK: apks/probe-announce-profile.apk
           APP_ID: app.fayad.ludo
           WAIT_SECONDS: "45"
         with:

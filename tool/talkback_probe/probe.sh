@@ -48,12 +48,27 @@
 #   APP_APK          path of the app apk to launch
 #   APP_ID           package id of the app (default app.fayad.ludo)
 #   WAIT_SECONDS     time to let the app run after launch (default 45)
-# Exit codes: 0 TalkBack spoke at least once after the app was launched;
-# 1 it did not (or an earlier step failed; the message says which).
+#   PROBE_APK        optional, order 623: the announcement probe apk built from
+#                    packages/ludo_client/probe/talkback_announce_main.dart. When
+#                    set, a second phase installs it over the app (same package id,
+#                    same debug signing, so adb install -r replaces it), launches
+#                    it and counts how often TalkBack spoke each case. Unset, the
+#                    script behaves as it did for order 621.
+#   PROBE_TIMEOUT    longest wait for the probe script to report LUDO_PROBE_DONE
+#                    (default 150 seconds; the script itself needs about 50)
+#   PROBE_TAIL       seconds to keep recording after LUDO_PROBE_DONE (default 6)
+# Exit codes: 0 TalkBack spoke at least once after the app was launched (and,
+# when PROBE_APK is set, the announcement probe ran; how often each case was
+# spoken is a measurement and never changes the exit code); 1 it did not, or an
+# earlier step failed, or the probe never ran (the message says which).
 
 OUT_DIR="${OUT_DIR:-probe-out}"
 APP_ID="${APP_ID:-app.fayad.ludo}"
 WAIT_SECONDS="${WAIT_SECONDS:-45}"
+PROBE_APK="${PROBE_APK:-}"
+PROBE_TIMEOUT="${PROBE_TIMEOUT:-150}"
+PROBE_TAIL="${PROBE_TAIL:-6}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TB_PKG="com.android.talkback"
 TB_SVC="com.google.android.marvin.talkback.TalkBackService"
 TB_COMPONENT="$TB_PKG/$TB_SVC"
@@ -316,13 +331,60 @@ if [ "$AFTER_COUNT" -gt 0 ]; then
   say "spoken text only:"
   sed 's/^/talkback-probe:   /' "$OUT_DIR/talkback-spoken-text.txt"
   say "PASS: TalkBack spoke $AFTER_COUNT line(s) after $APP_ID was launched"
+fi
+
+if [ "$AFTER_COUNT" -eq 0 ]; then
+  say "diagnostics for a run with no spoken line after launch:"
+  for needle in 'TTS is not ready' 'Voice feedback is off' 'SilenceSpeech' 'TTS client crashed'; do
+    say "  lines containing '$needle': $(grep -cF -- "$needle" "$LOG")"
+  done
+  say "  last 25 TalkBack log lines after launch:"
+  grep -E '[VDIWEF] talkback: ' "$OUT_DIR/logcat-after-launch.txt" | tail -n 25 | sed 's/^/talkback-probe:     /'
+  fail "TalkBack spoke no line after the app was launched (spoken before launch: $BEFORE_COUNT); see logcat-full.txt in the artifact"
+fi
+
+# Phase 2 (order 623): the announcement probe. Only when PROBE_APK is set, and
+# only after the gate above passed, so a red gate still reads as before.
+if [ -z "$PROBE_APK" ]; then
+  say "PROBE_APK is not set, the announcement probe is skipped"
   exit 0
 fi
 
-say "diagnostics for a run with no spoken line after launch:"
-for needle in 'TTS is not ready' 'Voice feedback is off' 'SilenceSpeech' 'TTS client crashed'; do
-  say "  lines containing '$needle': $(grep -cF -- "$needle" "$LOG")"
-done
-say "  last 25 TalkBack log lines after launch:"
-grep -E '[VDIWEF] talkback: ' "$OUT_DIR/logcat-after-launch.txt" | tail -n 25 | sed 's/^/talkback-probe:     /'
-fail "TalkBack spoke no line after the app was launched (spoken before launch: $BEFORE_COUNT); see logcat-full.txt in the artifact"
+say "step 10: announcement probe ($PROBE_APK), installed over $APP_ID"
+[ -f "$PROBE_APK" ] || fail "PROBE_APK is not a file: $PROBE_APK"
+# Let the exit trap dump the whole logcat again at the end, so a failure in this
+# phase still leaves the full log in the artifact.
+COLLECTED=0
+# Same package id, same debug signing in CI, so -r replaces the app in place. If
+# the signatures ever differ, remove the app and install again.
+if ! adb install -r "$PROBE_APK"; then
+  say "adb install -r of the probe failed, uninstalling $APP_ID and installing again"
+  adb uninstall "$APP_ID"
+  adb install "$PROBE_APK" || fail "adb install of the announcement probe failed"
+fi
+probe_done() { adb logcat -d 2>/dev/null | grep -qF 'LUDO_PROBE_DONE'; }
+PROBE_MARKER="PROBE-MARKER-$(date +%s)"
+adb shell log -t talkback-probe "$PROBE_MARKER"
+adb shell monkey -p "$APP_ID" -c android.intent.category.LAUNCHER 1 || fail "could not launch the announcement probe ($APP_ID)"
+say "launched the announcement probe, waiting up to ${PROBE_TIMEOUT}s for LUDO_PROBE_DONE"
+poll "$PROBE_TIMEOUT" "announcement probe script finished" probe_done || say "the probe did not report LUDO_PROBE_DONE in time, counting what was recorded"
+say "recording ${PROBE_TAIL}s more so the last utterance is in the log"
+sleep "$PROBE_TAIL"
+
+say "step 11: counting what TalkBack spoke for each case"
+PLOG="$OUT_DIR/logcat-probe-full.txt"
+timeout 90 adb logcat -d -v threadtime > "$PLOG" 2>&1
+[ -s "$PLOG" ] || fail "logcat dump after the announcement probe is empty"
+grep -qF "$PROBE_MARKER" "$PLOG" || fail "probe marker $PROBE_MARKER is not in the logcat dump (buffer overwritten?)"
+awk -v m="$PROBE_MARKER" 'index($0, m) { found = 1 } found' "$PLOG" > "$OUT_DIR/logcat-probe-announce.txt"
+grep -F 'SpeechControllerImpl' "$OUT_DIR/logcat-probe-announce.txt" | grep -F -- "$SPOKEN_PATTERN" > "$OUT_DIR/talkback-announce-spoken.txt"
+say "probe window: $(wc -l < "$OUT_DIR/logcat-probe-announce.txt") logcat lines, $(wc -l < "$OUT_DIR/talkback-announce-spoken.txt") spoken lines"
+bash "$SCRIPT_DIR/count_cases.sh" "$OUT_DIR/logcat-probe-announce.txt" "$OUT_DIR/talkback-announce-spoken.txt" > "$OUT_DIR/announce-cases.txt"
+CASES_RC=$?
+sed 's/^/talkback-probe: /' "$OUT_DIR/announce-cases.txt"
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+  { echo '### TalkBack announcement probe'; echo; echo '```'; cat "$OUT_DIR/announce-cases.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+fi
+[ "$CASES_RC" -eq 0 ] || fail "the announcement probe never ran: no LUDO_PROBE_CASE_START line after the launch (count_cases.sh exit $CASES_RC); see logcat-probe-full.txt in the artifact"
+say "PASS: the announcement probe ran; the counts above are the measurement"
+exit 0
