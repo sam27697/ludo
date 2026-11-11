@@ -58,6 +58,7 @@ import 'seat_die.dart';
 import 'seat_mark.dart';
 import 'session_memory.dart';
 import 'sound_toggle.dart';
+import 'spoken_line.dart';
 import 'table_entrance.dart';
 import 'theme.dart';
 import 'token_face_picker.dart';
@@ -170,6 +171,10 @@ class GameScreen extends StatefulWidget {
 }
 
 class _GameScreenState extends State<GameScreen> {
+  /// C-624 D4: the polite live region every spoken line also goes to, beside
+  /// its announcement event.
+  final SpokenLineController _spokenLine = SpokenLineController();
+
   // The turn countdown's own local clock. docs/PROTOCOL.md section 6:
   // TurnState.deadlineMs is milliseconds remaining as measured on the
   // server at the moment the frame carrying it was sent, never an
@@ -755,6 +760,7 @@ class _GameScreenState extends State<GameScreen> {
   @override
   void dispose() {
     _screenDisposed = true;
+    _spokenLine.dispose();
     _countdownTimer?.cancel();
     _autoMoveTimer?.cancel();
     _autoMoveCeilingTimer?.cancel();
@@ -1276,6 +1282,7 @@ class _GameScreenState extends State<GameScreen> {
       message,
       Directionality.of(context),
     );
+    _spokenLine.speak(message);
   }
 
   /// C-590 D4: speaks "You're next" once when a turn change makes my seat
@@ -4201,6 +4208,7 @@ class _GameScreenState extends State<GameScreen> {
       message,
       Directionality.of(context),
     );
+    _spokenLine.speak(message);
   }
 
   /// Restarts the countdown for the current turn, and arms or disarms the
@@ -4791,6 +4799,13 @@ class _GameScreenState extends State<GameScreen> {
                     if (controller.hasDesynced) _desyncBanner(context, loc),
                     Expanded(child: body),
                   ],
+                ),
+                // C-624 D4: the polite live region for every spoken line.
+                // Paints nothing, takes no taps, one logical pixel.
+                PositionedDirectional(
+                  top: 0,
+                  start: 0,
+                  child: SpokenLineRegion(controller: _spokenLine),
                 ),
                 if (chatLine != null)
                   _chatLayer(
