@@ -761,6 +761,7 @@ void main() {
             seats: seats,
             winner: 0,
             players: players,
+            verifyUrl: 'https://leave-end-card.invalid/v/rule2',
           );
           addTearDown(controller.dispose);
           await _mount(tester, controller);
