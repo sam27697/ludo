@@ -953,9 +953,12 @@ void main() {
               for (final _Node c in cells)
                 <String, String>{...c.attrs}..remove('class'),
             ], <Map<String, String>>[
-              <String, String>{'data-seat': '${s['seat']}'},
-              attrs(<String, String>{}),
-              <String, String>{},
+              <String, String>{
+                'data-seat': '${s['seat']}',
+                'data-label': _seedHeaders[lang]![0],
+              },
+              attrs(<String, String>{'data-label': _seedHeaders[lang]![1]}),
+              <String, String>{'data-label': _seedHeaders[lang]![2]},
             ], reason: _why(e2, 'the attributes of seed row $i'));
             expect(<Set<String>>[
               for (final _Node c in cells) c.classes
@@ -993,12 +996,21 @@ void main() {
               for (final _Node c in cells)
                 <String, String>{...c.attrs}..remove('class'),
             ], <Map<String, String>>[
-              attrs(<String, String>{}),
-              <String, String>{'data-seat': '${r['seat']}'},
-              attrs(<String, String>{}),
-              attrs(<String, String>{}),
-              <String, String>{'id': 'chain-${r['k']}'},
-              <String, String>{'id': 'die-${r['k']}'},
+              attrs(<String, String>{'data-label': _rollHeaders[lang]![0]}),
+              <String, String>{
+                'data-seat': '${r['seat']}',
+                'data-label': _rollHeaders[lang]![1],
+              },
+              attrs(<String, String>{'data-label': _rollHeaders[lang]![2]}),
+              attrs(<String, String>{'data-label': _rollHeaders[lang]![3]}),
+              <String, String>{
+                'id': 'chain-${r['k']}',
+                'data-label': _rollHeaders[lang]![4],
+              },
+              <String, String>{
+                'id': 'die-${r['k']}',
+                'data-label': _rollHeaders[lang]![5],
+              },
             ], reason: _why(e2, 'the attributes of roll row $i'));
             expect(<Set<String>>[
               for (final _Node c in cells) c.classes
