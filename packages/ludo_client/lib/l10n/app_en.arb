@@ -709,6 +709,10 @@
   "@endFairHint": {
     "description": "Longer explanation shown from the end card's info-hint button next to the fairness line, for a player who has never thought about how the dice are fair."
   },
+  "endRecordNotKept": "This game's record could not be saved, so its rolls cannot be checked.",
+  "@endRecordNotKept": {
+    "description": "Shown on every end card in place of the fairness line, hint and Check button when the server sent no verification page for the game because its record failed to save. Plain text, no button."
+  },
   "endRematch": "Play again",
   "@endRematch": {
     "description": "Primary action on the end card, and on the lobby screen for a joiner who has not yet accepted a rematch, that sends the rematch request. Also the label of the one-tap accept control a player sees when another seat has already asked for a rematch."
