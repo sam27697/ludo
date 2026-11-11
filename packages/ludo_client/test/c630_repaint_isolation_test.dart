@@ -29,6 +29,12 @@
 //   d. S2: the die pulse still changes the scale of the Transform under
 //      game-die-pulse between frame 0 and frame 15.
 //   e. The keys keep the widget types they find today.
+//   Round 2 adds two cases:
+//   b2. S4 walking: at least 50 of 60 frames have at most 150 paint entries
+//      (without the boundaries around the die band and the board it is 298).
+//   f. S2: the CustomPaint that draws the die face (_GameDiePainter, under
+//      game-die-pulse) is painted in at most 2 of 60 frames, so the scale
+//      animation reuses the face's recorded picture.
 //
 // There is no randomness: every scenario is a fixed frame script on the test
 // binding's clock. The scenario name, the frames pushed and the per-frame
@@ -61,6 +67,17 @@ const int _cheapEntries = 40;
 /// Fewest cheap frames out of [_frames].
 const int _cheapFramesNeeded = 56;
 
+/// Most paint entries a walking frame may have to count as cheap (a token
+/// step relayouts the board, so its own layer repaints; the rest must not).
+const int _walkCheapEntries = 150;
+
+/// Fewest cheap walking frames out of [_frames].
+const int _walkCheapFramesNeeded = 50;
+
+/// Most frames in which the die face's own CustomPaint may be painted (a
+/// countdown tick, one relayout).
+const int _dieFaceAllowance = 2;
+
 /// Fewest frames out of [_frames] in which an animation must still paint.
 const int _aliveFramesNeeded = 50;
 
@@ -87,6 +104,8 @@ class _Run {
   int get boardFrames => boardBase.where((bool b) => b).length;
 
   int get cheapFrames => entries.where((int n) => n <= _cheapEntries).length;
+
+  int framesAtMost(int limit) => entries.where((int n) => n <= limit).length;
 
   int framesPainted(RenderObject ro) =>
       tracked.where((Set<RenderObject> s) => s.contains(ro)).length;
@@ -337,6 +356,47 @@ void main() {
         }
       });
     }
+
+    testWidgets('S4 walking: at least $_walkCheapFramesNeeded of $_frames '
+        'frames have at most $_walkCheapEntries paint entries', (
+      WidgetTester tester,
+    ) async {
+      final EndGame g = await _reach(tester, _State.walking);
+      try {
+        final Finder token = find.byKey(const Key('token-0-0'));
+        final List<Offset> centres = <Offset>[];
+        final _Run run = await _count(
+          g.s,
+          'S4 walking',
+          onFrame: (int i) {
+            if (i == 0 || i == 20) {
+              centres.add(tester.getCenter(token));
+            }
+          },
+        );
+        expect(
+          centres[1],
+          isNot(centres[0]),
+          reason: g.why(
+            'S4 fixture: token-0-0 is walking (frame 0 ${centres[0]}, '
+            'frame 20 ${centres[1]})',
+          ),
+        );
+        final int cheap = run.framesAtMost(_walkCheapEntries);
+        expect(
+          cheap,
+          greaterThanOrEqualTo(_walkCheapFramesNeeded),
+          reason: g.why(
+            'S4 walking: at least $_walkCheapFramesNeeded of $_frames frames '
+            'with at most $_walkCheapEntries paint entries; only $cheap '
+            'were; entries per frame ${run.entriesText}; scenario S4 '
+            'walking, fixed script, no seed',
+          ),
+        );
+      } finally {
+        await g.done();
+      }
+    });
   });
 
   group('c. the animations still run', () {
@@ -440,6 +500,60 @@ void main() {
             '15; scale at frame 0 ${scales[0]}, at frame 15 ${scales[15]}; '
             'all 60 scales $scales; scenario S2 my turn, fixed script, no '
             'seed',
+          ),
+        );
+      } finally {
+        await g.done();
+      }
+    });
+  });
+
+  group('f. the die face is recorded once, not per pulse frame', () {
+    testWidgets('S2 my turn: the die face CustomPaint paints in at most '
+        '$_dieFaceAllowance of $_frames frames', (WidgetTester tester) async {
+      final EndGame g = await _reach(tester, _State.myTurn);
+      try {
+        final RenderCustomPaint face = _customPaintUnder(
+          tester,
+          g,
+          const Key('game-die-pulse'),
+          '_GameDiePainter',
+        );
+        final Finder transform = find
+            .descendant(
+              of: find.byKey(const Key('game-die-pulse')),
+              matching: find.byType(Transform),
+            )
+            .first;
+        final List<double> scales = <double>[];
+        final _Run run = await _count(
+          g.s,
+          'S2 my turn',
+          track: <RenderObject>[face],
+          onFrame: (int i) {
+            scales.add(
+              tester.widget<Transform>(transform).transform.getMaxScaleOnAxis(),
+            );
+          },
+        );
+        expect(
+          (scales[15] - scales[0]).abs(),
+          greaterThan(1e-4),
+          reason: g.why(
+            'S2 fixture: the pulse is running while the face is counted '
+            '(scale at frame 0 ${scales[0]}, at frame 15 ${scales[15]})',
+          ),
+        );
+        final int painted = run.framesPainted(face);
+        expect(
+          painted,
+          lessThanOrEqualTo(_dieFaceAllowance),
+          reason: g.why(
+            'S2: the _GameDiePainter CustomPaint under game-die-pulse is '
+            'painted in at most $_dieFaceAllowance of $_frames frames (the '
+            'face is its own layer, the scale animation reuses its '
+            'picture); it was painted in $painted; scenario S2 my turn, '
+            'fixed script, no seed',
           ),
         );
       } finally {
