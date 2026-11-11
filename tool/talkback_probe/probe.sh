@@ -119,7 +119,26 @@ tb_tagged_line() { adb logcat -d 2>/dev/null | grep -qE '[VDIWEF] talkback: '; }
 a11y_dump() { adb shell dumpsys accessibility 2>/dev/null | tr -d '\r'; }
 installed_count() { a11y_dump | sed -n 's/.*installedServiceCount=\([0-9][0-9]*\).*/\1/p' | head -n 1; }
 installed_count_grew() { _c="$(installed_count)"; [ -n "$_c" ] && [ "$_c" -gt "$BASE_COUNT" ]; }
-tb_bound() { a11y_dump | grep -F 'Bound services:' | grep -qF "$TB_PKG"; }
+# Bound means all three of these hold in one dump (run 42966781170 showed that
+# Android 16 prints the service LABEL on the Bound line, not the component):
+#   - the "Enabled services:" line holds the component name;
+#   - the "Bound services:" line is not "{}" and holds "label=TalkBack". The label
+#     is the TalkBack build's own: the manifest gives the service
+#     android:label="@string/talkback_title" (talkback/src/main/AndroidManifest.xml:75)
+#     and talkback/src/main/res/values/strings.xml:6 defines it as TalkBack_TfP;
+#   - the attributes line says touchExplorationEnabled=true, which TalkBack
+#     requests from the system when it connects.
+tb_bound() {
+  _dump="$(a11y_dump)"
+  printf '%s\n' "$_dump" | grep -F 'Enabled services:' | grep -qF "$TB_COMPONENT" || return 1
+  _bound="$(printf '%s\n' "$_dump" | grep -F 'Bound services:' | head -n 1)"
+  case "$_bound" in
+    *'Bound services:{}'*) return 1 ;;
+    *label=TalkBack*) ;;
+    *) return 1 ;;
+  esac
+  printf '%s\n' "$_dump" | grep -qF 'touchExplorationEnabled=true'
+}
 tb_enabled_setting() { adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r' | grep -qF "$TB_COMPONENT"; }
 show_a11y_state() {
   say "  enabled_accessibility_services = $(adb shell settings get secure enabled_accessibility_services | tr -d '\r')"
@@ -238,7 +257,7 @@ while [ "$ATTEMPT" -le 3 ]; do
   adb shell settings put secure accessibility_enabled 1 || fail "settings put accessibility_enabled failed"
   say "written, state right after the write (this proves nothing about binding):"
   show_a11y_state
-  if poll 60 "TalkBack listed under Bound services" tb_bound; then
+  if poll 60 "TalkBack enabled, bound (label=TalkBack) and touch exploration on" tb_bound; then
     BOUND=1
     break
   fi
