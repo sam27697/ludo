@@ -54,10 +54,13 @@ const String _expectedCsp = "default-src 'none'; script-src 'self'; "
     "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; "
     "frame-ancestors 'none'";
 
-String _intentUrl(String code) =>
+String _intentUrl(String code, {String lang = 'en'}) =>
     'intent://ludo.provefair.app/r/$code#Intent;scheme=https;'
     'package=app.fayad.ludo;'
-    'S.browser_fallback_url=${Uri.encodeComponent(_playListing)};end';
+    'S.browser_fallback_url=${Uri.encodeComponent(_testerStepsUrl(code, lang))};end';
+
+String _testerStepsUrl(String code, String lang) =>
+    'https://ludo.provefair.app/r/$code?lang=$lang#tester-steps';
 
 /// The D4 table. `<CODE>` stands for the room code.
 const Map<String, Map<String, String>> _strings = <String, Map<String, String>>{
@@ -68,8 +71,9 @@ const Map<String, Map<String, String>> _strings = <String, Map<String, String>>{
     'codeLabel': 'Room code',
     'copy': 'Copy code',
     'copied': 'Copied',
-    'newHere':
-        'New to Ludo RNG? Install it, then type this code on the home screen.',
+    'newHere': 'New to Ludo RNG? It is in testing on Google Play, so '
+        'installing it takes three steps, once. Use the Google account your '
+        "phone's Play Store uses.",
     'get': 'Get Ludo RNG on Google Play',
     'fair': 'Every roll in Ludo RNG is verifiable.',
   },
@@ -80,8 +84,9 @@ const Map<String, Map<String, String>> _strings = <String, Map<String, String>>{
     'codeLabel': 'رمز الغرفة',
     'copy': 'انسخ الرمز',
     'copied': 'تم النسخ',
-    'newHere': 'جديد على Ludo RNG؟ ثبّته، ثم اكتب هذا الرمز في الشاشة '
-        'الرئيسية.',
+    'newHere': 'جديد على Ludo RNG؟ اللعبة في مرحلة الاختبار على Google Play، '
+        'لذلك يحتاج تثبيتها إلى ثلاث خطوات، مرة واحدة فقط. استخدم حساب Google '
+        'نفسه الموجود في متجر Play على هاتفك.',
     'get': 'احصل على Ludo RNG من Google Play',
     'fair': 'كل رمية في Ludo RNG قابلة للتحقق.',
   },
@@ -932,8 +937,9 @@ void main() {
       const String name = 'D1 open-app href on the Arabic page';
       final _Res res = await _page('ar');
       final _Tag tag = _requireTag(res, 'open-app', name);
-      expect(tag.attrs['href'], _intentUrl(_code),
-          reason: 'the Arabic page must carry the same intent URL; got '
+      expect(tag.attrs['href'], _intentUrl(_code, lang: 'ar'),
+          reason: 'the Arabic page must carry the intent URL whose fallback '
+              'is the Arabic tester steps; got '
               '${tag.attrs['href']}. ${_repro(name)}');
     });
 
@@ -1400,7 +1406,7 @@ void main() {
         final Set<String> allowed = <String>{
           '/r/room.js',
           _playListing,
-          _intentUrl(_code),
+          _intentUrl(_code, lang: lang),
           '?lang=ar',
           '?lang=en',
         };
