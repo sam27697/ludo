@@ -40,6 +40,9 @@ import 'package:test/test.dart';
 const String _testFile = 'test/room_link_page_route_test.dart';
 
 /// The Play listing the page sends a person without the app to.
+const String _testerGroup = 'https://groups.google.com/g/ludo-rng-testers';
+const String _testerOptIn =
+    'https://play.google.com/apps/testing/app.fayad.ludo';
 const String _playListing =
     'https://play.google.com/store/apps/details?id=app.fayad.ludo';
 
@@ -1383,6 +1386,10 @@ void main() {
       for (final String allowed in <String>[
         'Ludo RNG',
         'Google Play',
+        // C-633: the closed-test steps name the Google account and the Play
+        // Store on their own, inside Arabic sentences.
+        'Google',
+        'Play',
         'English',
         _code,
       ]) {
@@ -1406,6 +1413,10 @@ void main() {
         final Set<String> allowed = <String>{
           '/r/room.js',
           _playListing,
+          // C-633 D1: the closed-test steps link the testers group and the
+          // Play opt-in page.
+          _testerGroup,
+          _testerOptIn,
           _intentUrl(_code, lang: lang),
           '?lang=ar',
           '?lang=en',
@@ -1445,9 +1456,10 @@ void main() {
         }
         final RegExp plainUrl = RegExp(r'https?://[^\s"<>]*');
         for (final RegExpMatch m in plainUrl.allMatches(_unescape(res.body))) {
-          expect(m.group(0), _playListing,
+          expect(m.group(0),
+              isIn(<String>[_playListing, _testerGroup, _testerOptIn]),
               reason: 'the $lang page mentions a URL other than the Play '
-                  'listing. ${_repro(name)}');
+                  'listing and the two closed-test steps. ${_repro(name)}');
         }
       }
     });
