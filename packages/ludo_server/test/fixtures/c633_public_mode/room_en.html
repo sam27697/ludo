@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ludo RNG - Join room ABCDEF</title>
+<style>
+html {
+  background: #0A3D38;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 1rem;
+  background: linear-gradient(160deg, #0A3D38, #14665C);
+  color: #0A2A27;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.card {
+  box-sizing: border-box;
+  max-width: 28rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem;
+  background: #F7FBFA;
+  border-radius: 1.25rem;
+  text-align: center;
+}
+.seats {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.seats span {
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+}
+.seats .red { background: #D32F2F; }
+.seats .green { background: #388E3C; }
+.seats .yellow { background: #FBC02D; }
+.seats .blue { background: #1976D2; }
+h1 {
+  margin: 1rem 0 0.25rem;
+  font-size: 1.5rem;
+  line-height: 1.25;
+}
+.lead {
+  margin: 0 0 1.25rem;
+  font-size: 1.0625rem;
+}
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.75rem;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:focus-visible, .switch:focus-visible {
+  outline: 3px solid #1976D2;
+  outline-offset: 2px;
+}
+#open-app {
+  min-height: 3.5rem;
+  background: #0F6B5F;
+  border: 2px solid #0F6B5F;
+  color: #F7FBFA;
+  font-size: 1.25rem;
+}
+.label {
+  margin: 1.5rem 0 0.25rem;
+  font-size: 0.875rem;
+}
+#room-code {
+  -webkit-user-select: all;
+  user-select: all;
+  margin: 0 0 0.75rem;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 2rem;
+  font-size: min(2.25rem, 11vw);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  padding-inline-start: 0.15em;
+}
+#copy-code {
+  background: transparent;
+  border: 2px solid #0F6B5F;
+  color: #0F6B5F;
+  font-size: 1rem;
+}
+.hint {
+  margin: 1.5rem 0 0.25rem;
+  font-size: 0.9375rem;
+}
+#get-app {
+  color: #0F6B5F;
+  font-size: 0.9375rem;
+  text-decoration: underline;
+}
+.fair {
+  margin: 1rem 0 0;
+  font-size: 0.875rem;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  min-height: 3rem;
+  padding: 0 0.75rem;
+  color: #0F6B5F;
+}
+</style>
+</head>
+<body>
+<main class="card">
+<div class="seats" aria-hidden="true"><span class="red"></span><span class="green"></span><span class="yellow"></span><span class="blue"></span></div>
+<h1>Join room ABCDEF</h1>
+<p class="lead">Your friend is waiting for you in Ludo RNG.</p>
+<a id="open-app" class="btn" href="intent://ludo.provefair.app/r/ABCDEF#Intent;scheme=https;package=app.fayad.ludo;S.browser_fallback_url=https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fid%3Dapp.fayad.ludo;end">Open in Ludo RNG</a>
+<p class="label">Room code</p>
+<div id="room-code" dir="ltr">ABCDEF</div>
+<button type="button" id="copy-code" class="btn" data-copy="Copy code" data-copied="Copied" aria-live="polite">Copy code</button>
+<p class="hint">New to Ludo RNG? Install it, then type this code on the home screen.</p>
+<a id="get-app" class="btn" href="https://play.google.com/store/apps/details?id=app.fayad.ludo">Get Ludo RNG on Google Play</a>
+<p class="fair">Every roll in Ludo RNG is verifiable.</p>
+<a id="lang-switch" class="switch" href="?lang=ar" hreflang="ar" lang="ar">العربية</a>
+</main>
+<script src="/r/room.js" defer></script>
+</body>
+</html>

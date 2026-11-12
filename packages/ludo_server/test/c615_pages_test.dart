@@ -54,6 +54,17 @@ const String _roomPageArSha =
 const String _roomJsSha =
     '1ec8b167bd6cb64d51047ff731148a1521cfcae17d9f033bda41f608ffbb6ff1';
 
+/// sha256 of the room page the server now serves (closed-test mode, order
+/// 633), for code ABCDEF, computed on 3a7af8a by calling
+/// `buildRoomLandingPageHtml('ABCDEF', language: ...)` in a scratch `dart run`
+/// file and hashing the UTF-8 bytes of the returned string. The words and the
+/// markup of that page are proved in c633_tester_path_test.dart; these two
+/// only freeze it.
+const String _roomPageClosedEnSha =
+    'e55adb2a0c72b4913dcfbaeb1ea35a7339fdbe8386f8249b1103fc2ff37f50b6';
+const String _roomPageClosedArSha =
+    'ffc31d265d2380f299a97da7ee2f8a74f9dd394dcf2f90adcdddeed2d568b407';
+
 /// The headers the room page answers with on the base, for `/r/ABCDEF`.
 const Map<String, String> _roomPageHeaders = <String, String>{
   'content-type': 'text/html; charset=utf-8',
@@ -969,7 +980,8 @@ void main() {
     const String enName = '(h) buildRoomLandingPageHtml en is byte-identical';
     test(enName, () {
       expect(
-        _sha(buildRoomLandingPageHtml('ABCDEF', language: 'en')),
+        _sha(buildRoomLandingPageHtml('ABCDEF',
+            language: 'en', closedTest: false)),
         _roomPageEnSha,
         reason: 'the English room page output changed from base 0f98f7c. '
             '${_repro(enName)}',
@@ -979,7 +991,8 @@ void main() {
     const String arName = '(h) buildRoomLandingPageHtml ar is byte-identical';
     test(arName, () {
       expect(
-        _sha(buildRoomLandingPageHtml('ABCDEF', language: 'ar')),
+        _sha(buildRoomLandingPageHtml('ABCDEF',
+            language: 'ar', closedTest: false)),
         _roomPageArSha,
         reason: 'the Arabic room page output changed from base 0f98f7c. '
             '${_repro(arName)}',
@@ -1010,8 +1023,8 @@ void main() {
       });
       expect(
         _sha(res.body),
-        _roomPageEnSha,
-        reason: 'served /r/ABCDEF body differs from the base page. '
+        _roomPageClosedEnSha,
+        reason: 'served /r/ABCDEF body differs from the closed-test page. '
             '${_repro(servedName)}. ${res.describe()}',
       );
     });
@@ -1023,8 +1036,9 @@ void main() {
       _expectStatus(res, 200, servedArName);
       expect(
         _sha(res.body),
-        _roomPageArSha,
-        reason: 'served Arabic /r/abcdef body differs from the base page. '
+        _roomPageClosedArSha,
+        reason: 'served Arabic /r/abcdef body differs from the closed-test '
+            'page. '
             '${_repro(servedArName)}. ${res.describe()}',
       );
     });
