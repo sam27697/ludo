@@ -179,7 +179,7 @@ class _GameScreenState extends State<GameScreen> {
   // TurnState.deadlineMs is milliseconds remaining as measured on the
   // server at the moment the frame carrying it was sent, never an
   // absolute time, so this widget owns counting the rest of it down
-  // itself: _countdownRemainingSeconds starts at the whole seconds the
+  // itself: _countdownRemaining starts at the whole seconds the
   // last fresh reading carried and a once-a-second Timer.periodic ticks
   // it down from there, rather than reading a wall clock. Deliberately
   // not built on DateTime.now(): flutter_test's fake time only fakes
@@ -193,7 +193,10 @@ class _GameScreenState extends State<GameScreen> {
   int? _countdownSeat;
   int? _countdownDeadlineMs;
   int? _countdownK;
-  int _countdownRemainingSeconds = 0;
+  // C-632 D1: the remaining whole seconds live in one notifier, so a tick
+  // that does not reach zero rebuilds only the countdown block (D4), never
+  // the whole screen.
+  final ValueNotifier<int> _countdownRemaining = ValueNotifier<int>(0);
 
   // C-554 D2/D3: a new game arrives through [TableEntrance] and is announced
   // once. `_entranceFromLobby` is the mount-time ask from RoomRoute, held
@@ -762,6 +765,7 @@ class _GameScreenState extends State<GameScreen> {
     _screenDisposed = true;
     _spokenLine.dispose();
     _countdownTimer?.cancel();
+    _countdownRemaining.dispose();
     _autoMoveTimer?.cancel();
     _autoMoveCeilingTimer?.cancel();
     _rollNoAnswerTimer?.cancel();
@@ -4257,7 +4261,7 @@ class _GameScreenState extends State<GameScreen> {
       _countdownSeat = null;
       _countdownDeadlineMs = null;
       _countdownK = null;
-      _countdownRemainingSeconds = 0;
+      _countdownRemaining.value = 0;
       return;
     }
 
@@ -4274,10 +4278,10 @@ class _GameScreenState extends State<GameScreen> {
     // Requirement 1: the whole seconds remaining, rounded up so a segment
     // that has not truly reached zero never reads as "0 seconds left" a
     // moment before it actually is.
-    _countdownRemainingSeconds = turn.deadlineMs <= 0
+    _countdownRemaining.value = turn.deadlineMs <= 0
         ? 0
         : (turn.deadlineMs + 999) ~/ 1000;
-    _countdownTimer = _countdownRemainingSeconds > 0
+    _countdownTimer = _countdownRemaining.value > 0
         ? _armCountdownTimer()
         : null;
   }
@@ -4291,17 +4295,20 @@ class _GameScreenState extends State<GameScreen> {
       if (!mounted) {
         return;
       }
+      // C-632 D3: a tick that stays above zero moves the notifier alone,
+      // which rebuilds the countdown block and nothing else. The tick that
+      // reaches zero flips `_myTimeUp`, so it goes through the screen.
+      if (_countdownRemaining.value > 1) {
+        _countdownRemaining.value -= 1;
+        return;
+      }
       setState(() {
-        if (_countdownRemainingSeconds > 1) {
-          _countdownRemainingSeconds -= 1;
-        } else {
-          _countdownRemainingSeconds = 0;
-          _countdownTimer?.cancel();
-          _countdownTimer = null;
-          // C-560 D3: the zero is my time up when the turn is mine, and a
-          // pending hold must not outlive it.
-          _syncAutoMove();
-        }
+        _countdownRemaining.value = 0;
+        _countdownTimer?.cancel();
+        _countdownTimer = null;
+        // C-560 D3: the zero is my time up when the turn is mine, and a
+        // pending hold must not outlive it.
+        _syncAutoMove();
       });
     });
   }
@@ -4326,7 +4333,7 @@ class _GameScreenState extends State<GameScreen> {
         turn.seat == _countdownSeat &&
         turn.deadlineMs == _countdownDeadlineMs &&
         turn.k == _countdownK &&
-        _countdownRemainingSeconds == 0;
+        _countdownRemaining.value == 0;
   }
 
   /// The one path every leave affordance on this screen goes through,
@@ -6199,7 +6206,19 @@ class _GameScreenState extends State<GameScreen> {
           ),
           if (turn != null && room.state == RoomState.playing) ...[
             const SizedBox(width: kSpace2),
-            _countdownBlock(loc, room, turn, seatColor),
+            ValueListenableBuilder<int>(
+              valueListenable: _countdownRemaining,
+              builder: (BuildContext context, int remaining, Widget? _) =>
+                  RepaintBoundary(
+                    child: _countdownBlock(
+                      loc,
+                      room,
+                      turn,
+                      seatColor,
+                      remaining,
+                    ),
+                  ),
+            ),
           ],
         ],
       ),
@@ -6218,6 +6237,7 @@ class _GameScreenState extends State<GameScreen> {
     RoomSnapshot room,
     TurnState turn,
     Color seatColor,
+    int remaining,
   ) {
     // C-495 decision 3: the ring measures the segment that is running (an
     // away seat's is 10s, not the room's turn length). An old server sends
@@ -6227,16 +6247,14 @@ class _GameScreenState extends State<GameScreen> {
         ? (segmentMs + 999) ~/ 1000
         : room.rules.turnSeconds;
     final bool shortClock = budget <= 10;
-    final bool runningOut = shortClock
-        ? _countdownRemainingSeconds <= 3
-        : _countdownRemainingSeconds <= 10;
+    final bool runningOut = shortClock ? remaining <= 3 : remaining <= 10;
     final Color ringColor = runningOut ? LudoColors.error : seatColor;
     final double remainingFraction = budget > 0
-        ? (_countdownRemainingSeconds / budget).clamp(0.0, 1.0)
+        ? (remaining / budget).clamp(0.0, 1.0)
         : 0.0;
     // C-554 D1: at zero the server has not yet moved on, so the digits give
     // way to a turning hourglass that says the time is up.
-    final bool timeUp = _countdownRemainingSeconds == 0;
+    final bool timeUp = remaining == 0;
 
     final double strokeWidth = runningOut
         ? _CountdownRingPainter.warningStrokeWidth
@@ -6268,7 +6286,7 @@ class _GameScreenState extends State<GameScreen> {
                   child: FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      loc.gameTurnCountdownDigits(_countdownRemainingSeconds),
+                      loc.gameTurnCountdownDigits(remaining),
                       key: const Key('game-screen-turn-countdown'),
                       textAlign: TextAlign.center,
                       maxLines: 1,
@@ -6290,9 +6308,7 @@ class _GameScreenState extends State<GameScreen> {
 
     return Semantics(
       key: const Key('game-header-countdown-semantics'),
-      label: timeUp
-          ? loc.gameTurnTimeUp
-          : loc.gameTurnCountdown(_countdownRemainingSeconds),
+      label: timeUp ? loc.gameTurnTimeUp : loc.gameTurnCountdown(remaining),
       child: SizedBox(
         width: _countdownRingSize,
         height: _countdownRingSize,
@@ -6302,7 +6318,7 @@ class _GameScreenState extends State<GameScreen> {
         child: runningOut
             ? _CountdownWarning(
                 key: const Key('game-header-countdown-warning'),
-                second: _countdownRemainingSeconds,
+                second: remaining,
                 beats: !timeUp,
                 child: face,
               )
