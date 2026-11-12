@@ -1584,10 +1584,12 @@ class _LudoBoardState extends State<LudoBoard> {
                 clipBehavior: widget.hint != null ? Clip.none : Clip.hardEdge,
                 children: [
                   Positioned.fill(
-                    child: CustomPaint(
-                      painter: _BoardPainter(
-                        seatsInPlay: widget.seatsInPlay,
-                        mySeat: widget.mySeat,
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        painter: _BoardPainter(
+                          seatsInPlay: widget.seatsInPlay,
+                          mySeat: widget.mySeat,
+                        ),
                       ),
                     ),
                   ),
@@ -3097,20 +3099,14 @@ class _PulsingRingState extends State<_PulsingRing>
   Widget build(BuildContext context) {
     final bool reduced = _reduced ?? false;
     return IgnorePointer(
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, _) {
-          final double t = _controller.value;
-          final double strokeWidth = reduced ? 3.5 : 2.0 + 2.0 * t;
-          final double opacity = reduced ? 1.0 : 0.45 + 0.55 * t;
-          return CustomPaint(
-            painter: _RingPainter(
-              color: LudoColors.success,
-              strokeWidth: strokeWidth,
-              opacity: opacity,
-            ),
-          );
-        },
+      child: RepaintBoundary(
+        child: CustomPaint(
+          painter: _RingPainter(
+            color: LudoColors.success,
+            reduced: reduced,
+            animation: _controller,
+          ),
+        ),
       ),
     );
   }
@@ -3172,34 +3168,33 @@ class _TurnGlowState extends State<_TurnGlow>
   @override
   Widget build(BuildContext context) {
     final bool reduced = _reduced ?? false;
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) {
-        final double t = _controller.value;
-        final double opacity = reduced ? 0.55 : 0.2 + 0.35 * t;
-        final double blurSigma = reduced ? 10.0 : 6.0 + 8.0 * t;
-        return CustomPaint(
-          painter: _GlowPainter(
-            color: widget.color,
-            opacity: opacity,
-            blurSigma: blurSigma,
-          ),
-        );
-      },
+    return RepaintBoundary(
+      child: CustomPaint(
+        painter: _GlowPainter(
+          color: widget.color,
+          reduced: reduced,
+          animation: _controller,
+        ),
+      ),
     );
   }
 }
 
 class _GlowPainter extends CustomPainter {
-  const _GlowPainter({
+  _GlowPainter({
     required this.color,
-    required this.opacity,
-    required this.blurSigma,
-  });
+    required this.reduced,
+    required this.animation,
+  }) : super(repaint: animation);
 
   final Color color;
-  final double opacity;
-  final double blurSigma;
+  final bool reduced;
+  final Animation<double> animation;
+
+  /// The opacity and blur the glow paints with right now: read from the
+  /// animation at paint time, so the breathing never needs a widget rebuild.
+  double get opacity => reduced ? 0.55 : 0.2 + 0.35 * animation.value;
+  double get blurSigma => reduced ? 10.0 : 6.0 + 8.0 * animation.value;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -3216,20 +3211,25 @@ class _GlowPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _GlowPainter oldDelegate) =>
       oldDelegate.color != color ||
-      oldDelegate.opacity != opacity ||
-      oldDelegate.blurSigma != blurSigma;
+      oldDelegate.reduced != reduced ||
+      oldDelegate.animation != animation;
 }
 
 class _RingPainter extends CustomPainter {
-  const _RingPainter({
+  _RingPainter({
     required this.color,
-    required this.strokeWidth,
-    required this.opacity,
-  });
+    required this.reduced,
+    required this.animation,
+  }) : super(repaint: animation);
 
   final Color color;
-  final double strokeWidth;
-  final double opacity;
+  final bool reduced;
+  final Animation<double> animation;
+
+  /// The stroke and opacity the ring paints with right now: read from the
+  /// animation at paint time, so the pulse never needs a widget rebuild.
+  double get strokeWidth => reduced ? 3.5 : 2.0 + 2.0 * animation.value;
+  double get opacity => reduced ? 1.0 : 0.45 + 0.55 * animation.value;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -3258,7 +3258,9 @@ class _RingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RingPainter oldDelegate) =>
-      oldDelegate.strokeWidth != strokeWidth || oldDelegate.opacity != opacity;
+      oldDelegate.color != color ||
+      oldDelegate.reduced != reduced ||
+      oldDelegate.animation != animation;
 }
 
 /// The unique-legal hold's own countdown, contract C-417 D1: a stroke in

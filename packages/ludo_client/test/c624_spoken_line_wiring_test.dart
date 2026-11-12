@@ -165,9 +165,9 @@ class _Obs {
 
 /// After an event whose announcements start at index [from]: checks the
 /// channel got at least one line, that the live region shows the LAST line
-/// sent (a later speak replaces an earlier one at once, contract D3) on the
-/// next frame, in [dir], and that it is gone 1500 ms after the speak plus a
-/// frame. Returns the line.
+/// sent (C-629 D1: the lines of a batch arrive one per frame, in order) once
+/// as many frames as the batch has lines have passed, in [dir], and that it is
+/// gone 1500 ms after the speak plus a frame. Returns the line.
 Future<String> _expectSpoken(
   _Obs o, {
   required int from,
@@ -192,7 +192,13 @@ Future<String> _expectSpoken(
         '${last.dirIndex}, expected ${dir.index} (${dir.name}); ${o.why}',
   );
 
-  await o.pump(); // the next frame after the speak
+  // C-629 D1: a batch of N lines reaches the region one per frame, so the
+  // last of them is there after N frames (the first N - 1 are the earlier
+  // lines of the batch, each on its own frame), then it is held 1500 ms.
+  for (int i = 1; i < batch.length; i++) {
+    await o.pump();
+  }
+  await o.pump(); // the frame that shows the last line of the batch
   final List<SemanticsNode> nodes = o.liveWith(last.message);
   expect(
     nodes.length,
