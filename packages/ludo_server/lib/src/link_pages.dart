@@ -20,9 +20,24 @@ import 'dart:convert';
 const String androidPackageName = 'app.fayad.ludo';
 
 /// The Play Store listing a person without the app is sent to from the
-/// `/r/<CODE>` landing page.
+/// `/r/<CODE>` landing page. While the app is on the closed testing track
+/// this URL answers 404 for anyone who has not joined the testers group and
+/// opted in, which is why the pages lead with the steps below first.
 const String playStoreListingUrl =
     'https://play.google.com/store/apps/details?id=$androidPackageName';
+
+/// The Google Group a person joins to be allowed onto the closed test.
+const String testerGroupUrl = 'https://groups.google.com/g/ludo-rng-testers';
+
+/// The Play opt-in page that makes the signed-in account a tester.
+const String testerOptInUrl =
+    'https://play.google.com/apps/testing/$androidPackageName';
+
+/// True while the app is on the closed testing track only. Every page
+/// builder below takes `closedTest` defaulting to this, so flipping this one
+/// constant to `false` on the day the app is promoted to production restores
+/// the public-listing pages byte for byte.
+const bool playClosedTest = true;
 
 /// The shape a Play App Signing SHA-256 fingerprint must have: 32 hex byte
 /// pairs, uppercase, colon-separated -- `AB:CD:...`, 95 characters. A value
@@ -72,10 +87,21 @@ const String _roomLinkHost = 'ludo.provefair.app';
 /// it into a VIEW intent for `https://ludo.provefair.app/r/<CODE>` with the
 /// package set, so the installed app gets the room even while the domain is
 /// still unverified; with the app absent Chrome follows
-/// `S.browser_fallback_url` to the Play listing instead. This function does
-/// not validate or reject; it only formats.
-String buildOpenInAppUrl(String code) {
-  final String fallback = Uri.encodeComponent(playStoreListingUrl);
+/// `S.browser_fallback_url` instead: the Play listing when [closedTest] is
+/// false, or the page's own install steps (in [language], `ar` or `en`) when
+/// it is true, because the listing answers 404 until the person has joined
+/// the testers group. This function does not validate or reject; it only
+/// formats.
+String buildOpenInAppUrl(
+  String code, {
+  String language = 'en',
+  bool closedTest = playClosedTest,
+}) {
+  final String fallbackTarget = closedTest
+      ? 'https://$_roomLinkHost/r/$code'
+          '?lang=${language == 'ar' ? 'ar' : 'en'}#tester-steps'
+      : playStoreListingUrl;
+  final String fallback = Uri.encodeComponent(fallbackTarget);
   return 'intent://$_roomLinkHost/r/$code#Intent;scheme=https;'
       'package=$androidPackageName;S.browser_fallback_url=$fallback;end';
 }
@@ -139,6 +165,123 @@ const _RoomPageWords _arWords = _RoomPageWords(
   fair: 'كل رمية في Ludo RNG قابلة للتحقق.',
 );
 
+/// The words of the closed-test install block, one language's worth.
+class _TesterWords {
+  const _TesterWords({
+    required this.introRoom,
+    required this.introPlain,
+    required this.join,
+    required this.become,
+    required this.get,
+    required this.waitRoom,
+    required this.waitPlain,
+    required this.stay,
+  });
+
+  final String introRoom;
+  final String introPlain;
+  final String join;
+  final String become;
+  final String get;
+  final String waitRoom;
+  final String waitPlain;
+  final String stay;
+}
+
+const _TesterWords _enTesterWords = _TesterWords(
+  introRoom: 'New to Ludo RNG? It is in testing on Google Play, so installing '
+      "it takes three steps, once. Use the Google account your phone's Play "
+      'Store uses.',
+  introPlain: 'Ludo RNG is in testing on Google Play, so installing it takes '
+      "three steps, once. Use the Google account your phone's Play Store uses.",
+  join: 'Join the Ludo RNG testers group',
+  become: 'Become a tester on Google Play',
+  get: 'Get Ludo RNG on Google Play',
+  waitRoom: 'If Play says the app is not found, wait a few minutes and try '
+      'again. Then come back here and tap Open in Ludo RNG, or type the code '
+      'on the home screen.',
+  waitPlain: 'If Play says the app is not found, wait a few minutes and try '
+      'again.',
+  stay: 'Please stay in the group while the test runs.',
+);
+
+const _TesterWords _arTesterWords = _TesterWords(
+  introRoom: 'جديد على Ludo RNG؟ اللعبة في مرحلة الاختبار على Google Play، '
+      'لذلك يحتاج تثبيتها إلى ثلاث خطوات، مرة واحدة فقط. استخدم حساب Google '
+      'نفسه الموجود في متجر Play على هاتفك.',
+  introPlain: 'Ludo RNG في مرحلة الاختبار على Google Play، لذلك يحتاج تثبيتها '
+      'إلى ثلاث خطوات، مرة واحدة فقط. استخدم حساب Google نفسه الموجود في متجر '
+      'Play على هاتفك.',
+  join: 'انضم إلى مجموعة مختبري Ludo RNG',
+  become: 'سجّل كمختبر على Google Play',
+  get: 'احصل على Ludo RNG من Google Play',
+  waitRoom: 'إذا ظهر في Play أن التطبيق غير موجود، انتظر بضع دقائق وحاول مرة '
+      'أخرى. ثم ارجع إلى هنا واضغط «افتح في Ludo RNG»، أو اكتب الرمز في '
+      'الشاشة الرئيسية.',
+  waitPlain: 'إذا ظهر في Play أن التطبيق غير موجود، انتظر بضع دقائق وحاول مرة '
+      'أخرى.',
+  stay: 'من فضلك ابقَ في المجموعة طوال فترة الاختبار.',
+);
+
+/// The `.hint` rule the room page already carries, for the plain pages that
+/// have none.
+const String _plainHintCss = '''
+.hint {
+  margin: 1.25rem 0 0.25rem;
+  font-size: 0.9375rem;
+}
+''';
+
+/// The CSS the closed-test block needs, appended to a page's stylesheet only
+/// when [closedTest] is true so the public-listing pages stay byte for byte
+/// what they were. The `#tester-steps a` selector outranks the page's own
+/// `#get-app` rule, so all three links look alike: full width, at least
+/// 3 rem tall, wrapping rather than overflowing.
+String _testerStepsCss(bool closedTest, {bool withHint = false}) => closedTest
+    ? '''
+${withHint ? _plainHintCss : ''}.steps {
+  margin: 1rem 0 0;
+  padding: 0;
+  padding-inline-start: 1.75rem;
+  list-style: decimal;
+  text-align: start;
+}
+.steps li {
+  margin: 0 0 0.75rem;
+  padding-inline-start: 0.25rem;
+}
+#tester-steps a {
+  min-height: 3rem;
+  background: #0F6B5F;
+  border: 2px solid #0F6B5F;
+  color: #F7FBFA;
+  font-size: 1rem;
+  text-align: center;
+  text-decoration: none;
+}
+'''
+    : '';
+
+/// The closed-test install block (C-633 D4b): the intro, the three steps in
+/// order, and the two closing hints. [room] picks the room page's intro and
+/// wait text, which point back at the invite.
+String _testerBlockHtml({required bool isAr, required bool room}) {
+  final _TesterWords w = isAr ? _arTesterWords : _enTesterWords;
+  final String groupUrl = _attributeEscaper.convert(testerGroupUrl);
+  final String optInUrl = _attributeEscaper.convert(testerOptInUrl);
+  final String playUrl = _attributeEscaper.convert(playStoreListingUrl);
+  return '<p id="tester-intro" class="hint">'
+      '${room ? w.introRoom : w.introPlain}</p>\n'
+      '<ol id="tester-steps" class="steps">\n'
+      '<li><a id="join-group" class="btn" href="$groupUrl">${w.join}</a></li>\n'
+      '<li><a id="become-tester" class="btn" href="$optInUrl">${w.become}</a>'
+      '</li>\n'
+      '<li><a id="get-app" class="btn" href="$playUrl">${w.get}</a></li>\n'
+      '</ol>\n'
+      '<p id="tester-wait" class="hint">${room ? w.waitRoom : w.waitPlain}</p>\n'
+      '<p id="tester-stay" class="hint">${w.stay}</p>';
+}
+
 /// Builds the landing page a person lands on after tapping a shared
 /// `https://ludo.provefair.app/r/<CODE>` link.
 ///
@@ -159,12 +302,26 @@ const _RoomPageWords _arWords = _RoomPageWords(
 /// One language per page: [language] is whatever `resolveVerifyLanguage`
 /// picked, and anything other than `'ar'` renders English. The Arabic page
 /// is the same layout mirrored by `dir="rtl"`, not a patched copy.
-String buildRoomLandingPageHtml(String code, {String language = 'en'}) {
+///
+/// With [closedTest] true the install offer is the three-step tester block
+/// instead of a bare Play link, and the Open button's fallback lands on it.
+String buildRoomLandingPageHtml(
+  String code, {
+  String language = 'en',
+  bool closedTest = playClosedTest,
+}) {
   final bool isAr = language == 'ar';
   final _RoomPageWords words = isAr ? _arWords : _enWords;
   final String escapedCode = _escaper.convert(code);
-  final String openUrl = _attributeEscaper.convert(buildOpenInAppUrl(code));
+  final String openUrl = _attributeEscaper.convert(
+    buildOpenInAppUrl(code, language: language, closedTest: closedTest),
+  );
   final String playUrl = _attributeEscaper.convert(playStoreListingUrl);
+  final String installOffer = closedTest
+      ? _testerBlockHtml(isAr: isAr, room: true)
+      : '<p class="hint">${words.newHere}</p>\n'
+          '<a id="get-app" class="btn" href="$playUrl">${words.get}</a>';
+  final String stepsCss = _testerStepsCss(closedTest);
   final String copyWord = _attributeEscaper.convert(words.copy);
   final String copiedWord = _attributeEscaper.convert(words.copied);
   final String heading = '${words.title} $escapedCode';
@@ -297,7 +454,7 @@ h1 {
   padding: 0 0.75rem;
   color: #0F6B5F;
 }
-</style>
+$stepsCss</style>
 </head>
 <body>
 <main class="card">
@@ -308,8 +465,7 @@ h1 {
 <p class="label">${words.codeLabel}</p>
 <div id="room-code" dir="ltr">$escapedCode</div>
 <button type="button" id="copy-code" class="btn" data-copy="$copyWord" data-copied="$copiedWord" aria-live="polite">${words.copy}</button>
-<p class="hint">${words.newHere}</p>
-<a id="get-app" class="btn" href="$playUrl">${words.get}</a>
+$installOffer
 <p class="fair">${words.fair}</p>
 $switchLink
 </main>
@@ -517,6 +673,7 @@ String _plainPage({
   required String heading,
   required String lead,
   required String body,
+  required bool closedTest,
 }) {
   final String switchLink = _plainSwitchLink(isAr);
   return '''
@@ -527,7 +684,7 @@ ${_plainHtmlOpen(isAr)}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>$title</title>
 <style>
-$_plainPageCss</style>
+$_plainPageCss${_testerStepsCss(closedTest, withHint: true)}</style>
 </head>
 <body>
 <main class="card">
@@ -546,17 +703,25 @@ $switchLink
 /// trimming a verify or invite link back. It names the app, links the Play
 /// listing and the privacy page, and carries no script. [language] is
 /// whatever `resolveVerifyLanguage` picked; anything other than `'ar'`
-/// renders English.
-String buildHomePageHtml({String language = 'en'}) {
+/// renders English. With [closedTest] true the Play link becomes the
+/// three-step tester block.
+String buildHomePageHtml({
+  String language = 'en',
+  bool closedTest = playClosedTest,
+}) {
   final bool isAr = language == 'ar';
   final _HomePageWords words = isAr ? _arHomeWords : _enHomeWords;
   final String playUrl = _attributeEscaper.convert(playStoreListingUrl);
+  final String installOffer = closedTest
+      ? _testerBlockHtml(isAr: isAr, room: false)
+      : '<a id="get-app" class="btn" href="$playUrl">${words.get}</a>';
   return _plainPage(
     isAr: isAr,
     title: 'Ludo RNG',
     heading: 'Ludo RNG',
     lead: words.lead,
-    body: '<a id="get-app" class="btn" href="$playUrl">${words.get}</a>\n'
+    closedTest: closedTest,
+    body: '$installOffer\n'
         '<p class="fair">${words.fair}</p>\n'
         '<a id="privacy" class="switch" '
         'href="/privacy?lang=${isAr ? 'ar' : 'en'}">${words.privacy}</a>',
@@ -567,10 +732,11 @@ String buildHomePageHtml({String language = 'en'}) {
 /// [cutInvite] true it is the answer to a `/r/<x>` whose `x` is not a
 /// well-formed room code, the shape a half-copied invite takes, and points
 /// the friend at the next step. Neither the path nor the code is ever put in
-/// the page: the only input is [cutInvite] and [language].
+/// the page: the only input is [cutInvite], [language] and [closedTest].
 String buildLinkNotFoundHtml({
   required bool cutInvite,
   String language = 'en',
+  bool closedTest = playClosedTest,
 }) {
   final bool isAr = language == 'ar';
   final String heading;
@@ -591,12 +757,16 @@ String buildLinkNotFoundHtml({
   final String getWord = isAr ? _arHomeWords.get : _enHomeWords.get;
   final String homeWord =
       isAr ? 'الصفحة الرئيسية لـ Ludo RNG' : 'Ludo RNG home';
+  final String installOffer = closedTest
+      ? _testerBlockHtml(isAr: isAr, room: false)
+      : '<a id="get-app" class="btn" href="$playUrl">$getWord</a>';
   return _plainPage(
     isAr: isAr,
     title: 'Ludo RNG - $heading',
     heading: heading,
     lead: lead,
-    body: '<a id="get-app" class="btn" href="$playUrl">$getWord</a>\n'
+    closedTest: closedTest,
+    body: '$installOffer\n'
         '<a id="home" class="switch" href="/">$homeWord</a>',
   );
 }

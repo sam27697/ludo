@@ -1071,7 +1071,9 @@ void main() {
             'a8f7d5fe81dede644f3db8987430f651ab852d8312149a44d2a98e9efafb445f',
       };
       for (final String lang in <String>['en', 'ar']) {
-        final String html = buildHomePageHtml(language: lang)
+        // C-633: the base digest is of the public-listing page; the
+        // closed-test install block is pinned in c633_tester_path_test.dart.
+        final String html = buildHomePageHtml(language: lang, closedTest: false)
             .replaceFirst('href="/privacy?lang=$lang"', 'href="/privacy"');
         expect(
           sha256.convert(utf8.encode(html)).toString(),
