@@ -27,7 +27,7 @@
 //   a. S1 watching and S2 my turn: in every tick frame no GameScreen element
 //      is rebuilt, and at most 60 elements are rebuilt in total.
 //   b. S1 and S2: in every tick frame the _BoardPainter is not painted, and
-//      there are at most 40 paint entries.
+//      there are at most 45 paint entries.
 //   c. S1 and S2: the countdown still counts, N, N-1 ... N-4 over the five
 //      ticks, and the semantics label always equals gameTurnCountdown(n) for
 //      the shown n.
@@ -73,8 +73,12 @@ const int _ticksExpected = 5;
 /// Most elements a tick frame may rebuild in total (base: 234-236).
 const int _rebuildCeiling = 60;
 
-/// Most paint entries a tick frame may have.
-const int _paintCeiling = 40;
+/// Most paint entries a tick frame may have (base: 192-194). Order 632 set
+/// 40 before the S2 floor was measured: since C-630 every S2 frame paints
+/// 31-33 entries for the die pulse alone, and the countdown block's own
+/// subtree is 9 more, so an S2 tick frame cannot go below 42 without
+/// changing the block's widgets, which D5 forbids. Master, run 144.
+const int _paintCeiling = 45;
 
 /// A deadline long enough that no counted tick reaches zero, and the last
 /// seconds' warning (the last 10) is never entered either.
