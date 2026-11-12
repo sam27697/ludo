@@ -434,6 +434,8 @@ Future<_Res> _get(String pathAndQuery) async {
 
 // ---------------------------------------------------------------------
 
+final String _emDash = String.fromCharCode(0x2014);
+
 void main() {
   group('D1 constants', () {
     test('D1 the three constants and the unchanged listing', () {
@@ -853,7 +855,7 @@ void main() {
       const String name = 'D4c table hygiene';
       for (final String l in _words.keys) {
         _words[l]!.forEach((String key, String text) {
-          expect(text, isNot(contains('—')),
+          expect(text, isNot(contains(_emDash)),
               reason: '$l $key. ${_repro(name)}');
         });
       }
@@ -1079,7 +1081,7 @@ void main() {
     test('every closed-test page has no em-dash and no "provably fair"', () {
       const String name = '7 no em-dash, no provably fair';
       for (final _PageCase p in _closedPages()) {
-        expect(p.html, isNot(contains('—')),
+        expect(p.html, isNot(contains(_emDash)),
             reason: 'the ${p.name} contains an em-dash. ${_repro(name)}');
         expect(p.html.toLowerCase(), isNot(contains('provably fair')),
             reason: 'the ${p.name} says "provably fair". ${_repro(name)}');
@@ -1189,7 +1191,7 @@ void main() {
       const String name = '7 served pages wording';
       for (final List<Object?> r in routes) {
         final _Res res = await _get(r[0]! as String);
-        expect(res.body, isNot(contains('—')),
+        expect(res.body, isNot(contains(_emDash)),
             reason: 'GET ${r[0]} has an em-dash. ${_repro(name)}');
         expect(res.body.toLowerCase(), isNot(contains('provably fair')),
             reason: 'GET ${r[0]} says "provably fair". ${_repro(name)}');
