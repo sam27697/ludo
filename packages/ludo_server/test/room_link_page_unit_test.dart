@@ -55,7 +55,7 @@ void main() {
   group('buildOpenInAppUrl', () {
     test('equals the literal intent URL for K7M2QP', () {
       expect(
-        buildOpenInAppUrl(_code),
+        buildOpenInAppUrl(_code, closedTest: false),
         _expectedIntent(_code),
         reason: 'D1: intent://ludo.provefair.app/r/<CODE>#Intent;'
             'scheme=https;package=app.fayad.ludo;'
@@ -65,7 +65,7 @@ void main() {
     });
 
     test('the fallback is the percent-encoded Play listing', () {
-      final String url = buildOpenInAppUrl(_code);
+      final String url = buildOpenInAppUrl(_code, closedTest: false);
       expect(
         url,
         contains(
@@ -78,8 +78,10 @@ void main() {
     });
 
     test('puts the code it is given in the path, unchanged', () {
-      expect(buildOpenInAppUrl('ABCDEF'), _expectedIntent('ABCDEF'));
-      expect(buildOpenInAppUrl('Z98765'), _expectedIntent('Z98765'));
+      expect(buildOpenInAppUrl('ABCDEF', closedTest: false),
+          _expectedIntent('ABCDEF'));
+      expect(buildOpenInAppUrl('Z98765', closedTest: false),
+          _expectedIntent('Z98765'));
     });
 
     test('is pure: the same code gives the same string', () {
@@ -87,7 +89,7 @@ void main() {
     });
 
     test('uses the shared constants for package and listing', () {
-      final String url = buildOpenInAppUrl(_code);
+      final String url = buildOpenInAppUrl(_code, closedTest: false);
       expect(url, contains('package=$androidPackageName;'),
           reason: 'package must be androidPackageName, got $url');
       expect(url, contains(Uri.encodeComponent(playStoreListingUrl)),
@@ -128,10 +130,11 @@ void main() {
 
     test('both languages carry the same open-app href', () {
       for (final String language in <String>['en', 'ar']) {
-        final String html = buildRoomLandingPageHtml(_code, language: language);
+        final String html = buildRoomLandingPageHtml(_code,
+            language: language, closedTest: false);
         expect(
           _openAppHref(html),
-          buildOpenInAppUrl(_code),
+          buildOpenInAppUrl(_code, closedTest: false),
           reason: 'the $language page open-app href must equal '
               'buildOpenInAppUrl(code) once HTML-unescaped',
         );
