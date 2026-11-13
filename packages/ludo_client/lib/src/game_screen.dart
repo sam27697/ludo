@@ -3267,6 +3267,7 @@ class _GameScreenState extends State<GameScreen> {
 
   void _onControllerChanged() {
     final RoomController controller = widget.controller;
+    _latchSeatLoss();
     // C-540 D3 item 3: the link dropped under an open sheet. The
     // connection-lost card brings its own Leave. A route that is already
     // leaving has nothing to show it for (D5).
@@ -3316,7 +3317,13 @@ class _GameScreenState extends State<GameScreen> {
   /// or a reconnect-and-rematch, PROTOCOL 16.4, 16.9, section 18 rule 3), so
   /// the seat is gone whatever the room held. The 4004 takeover carries no
   /// error code and is not this.
-  bool get _seatRefused =>
+  ///
+  /// C-637 D5: latched for the life of this State (see [_latchSeatLoss]), so
+  /// Home's `leave()` moving the phase on to closed during the pop does not
+  /// bring the live table back.
+  bool get _seatRefused => _seatRefusedLatched || _seatRefusedNow;
+
+  bool get _seatRefusedNow =>
       widget.controller.phase == RoomPhase.failed &&
       widget.controller.errorCode == 'BAD_SEAT_TOKEN';
 
@@ -3352,7 +3359,7 @@ class _GameScreenState extends State<GameScreen> {
         controller.phase == RoomPhase.closed ||
         controller.phase == RoomPhase.connecting;
     return isOffline &&
-        !controller.seatTakenOver &&
+        !_seatTakenOver &&
         !controller.updateRequired &&
         room != null &&
         ((room.state == RoomState.finished && !_isEndHeld) ||
@@ -3722,11 +3729,7 @@ class _GameScreenState extends State<GameScreen> {
     }
     _announcedConnectionLost = true;
     final AppLocalizations loc = AppLocalizations.of(context);
-    _announce(
-      widget.controller.seatTakenOver
-          ? loc.seatMovedLine
-          : loc.lobbyConnectionLost,
-    );
+    _announce(_seatTakenOver ? loc.seatMovedLine : loc.lobbyConnectionLost);
   }
 
   /// Section 27 rule 6: the first time the controller says the server refused
@@ -3751,7 +3754,12 @@ class _GameScreenState extends State<GameScreen> {
   /// as PLAYING. Nobody can finish that game, so it is not drawn as an end
   /// card: the route goes home with [GameScreenResult.gameGone]. FINISHED and
   /// rematch-LOBBY rooms keep the gone end card (C-316 rule 4).
-  bool get _roomGoneWhilePlaying {
+  ///
+  /// C-637 D5: latched like [_seatRefused].
+  bool get _roomGoneWhilePlaying =>
+      _roomGoneLatched || _roomGoneWhilePlayingNow;
+
+  bool get _roomGoneWhilePlayingNow {
     final RoomController controller = widget.controller;
     final RoomSnapshot? room = controller.room;
     return controller.phase == RoomPhase.failed &&
@@ -3760,13 +3768,37 @@ class _GameScreenState extends State<GameScreen> {
         room.state == RoomState.playing;
   }
 
+  /// C-637 D5: the seat moved to another phone, latched like [_seatRefused].
+  bool get _seatTakenOver =>
+      _seatTakenOverLatched || widget.controller.seatTakenOver;
+
+  /// C-637 D5: the first build or controller change that sees a lost seat
+  /// keeps it for the life of this State, never cleared. The route pops on a
+  /// refused seat or a room gone mid-game and Home's `leave()` then moves the
+  /// phase to closed while the exit transition is still drawing; without the
+  /// latch the live table would come back for those frames.
+  void _latchSeatLoss() {
+    if (_seatRefusedNow) {
+      _seatRefusedLatched = true;
+    }
+    if (_roomGoneWhilePlayingNow) {
+      _roomGoneLatched = true;
+    }
+    if (widget.controller.seatTakenOver) {
+      _seatTakenOverLatched = true;
+    }
+  }
+
+  bool _seatRefusedLatched = false;
+  bool _roomGoneLatched = false;
+  bool _seatTakenOverLatched = false;
+
   /// C-637 D5: this phone no longer holds its seat: it moved to another
   /// phone, the server refused its token, or the room is gone under a game in
   /// play. A plain dropped connection is not this, the seat is still mine
   /// there (C-282, C-290). While it holds, nothing the table draws says this
   /// phone can act or that it is its turn.
-  bool get _seatLost =>
-      widget.controller.seatTakenOver || _seatRefused || _roomGoneWhilePlaying;
+  bool get _seatLost => _seatTakenOver || _seatRefused || _roomGoneWhilePlaying;
 
   /// C-540 D5: a card that was not up when the route began to leave is not
   /// drawn for the rest of the exit, so the body the player last saw stays.
@@ -3811,7 +3843,7 @@ class _GameScreenState extends State<GameScreen> {
             (room.state == RoomState.lobby && controller.lastFinished != null));
     if (isOfflineEndCard) {
       // C-547 D3: a seat moved to another phone has no offline end card.
-      return controller.seatTakenOver;
+      return _seatTakenOver;
     }
 
     if (room != null && isOffline) {
@@ -4598,6 +4630,7 @@ class _GameScreenState extends State<GameScreen> {
     final AppLocalizations loc = AppLocalizations.of(context);
     final RoomController controller = widget.controller;
     final RoomSnapshot? room = controller.room;
+    _latchSeatLoss();
 
     // C-246 rule 8, and this file's own ambiguity note: every rematch
     // failure alike lands the controller in RoomPhase.failed (room 1's
@@ -4632,7 +4665,7 @@ class _GameScreenState extends State<GameScreen> {
             (room.state == RoomState.lobby && controller.lastFinished != null));
     // C-547 D3: the seat moved to another phone, so the finished table draws
     // the takeover card and never the offline end card with its Play again.
-    final bool seatTakenOverOnEnd = finishedTable && controller.seatTakenOver;
+    final bool seatTakenOverOnEnd = finishedTable && _seatTakenOver;
     final bool isOfflineEndCard = finishedTable && !seatTakenOverOnEnd;
 
     // C-462 D4: the picker closes, with no send and no cue, on the rebuild
@@ -4640,7 +4673,7 @@ class _GameScreenState extends State<GameScreen> {
     _syncFacePick(
       playingOnScreen:
           !controller.updateRequired &&
-          !controller.seatTakenOver &&
+          !_seatTakenOver &&
           !seatRefused &&
           !rematchGone &&
           !roomGonePlaying &&
@@ -4683,18 +4716,20 @@ class _GameScreenState extends State<GameScreen> {
       // C-529 D3: the route is already leaving with gameGone. The frames of
       // the pop keep the last table, dimmed, and never a card that says the
       // connection was lost or the game is over.
-      body = KeyedSubtree(
-        key: const Key('game-screen-stale-table'),
-        child: IgnorePointer(
-          ignoring: true,
-          child: ExcludeSemantics(
-            child: Opacity(
-              opacity: 0.35,
-              child: _connectedBody(loc, controller, room!, stale: true),
-            ),
-          ),
-        ),
-      );
+      body = room == null
+          ? const SizedBox.expand()
+          : KeyedSubtree(
+              key: const Key('game-screen-stale-table'),
+              child: IgnorePointer(
+                ignoring: true,
+                child: ExcludeSemantics(
+                  child: Opacity(
+                    opacity: 0.35,
+                    child: _connectedBody(loc, controller, room, stale: true),
+                  ),
+                ),
+              ),
+            );
     } else if (rematchGone) {
       body = _gameOverBody(loc, controller, room, rematchGone: true);
     } else if (seatTakenOverOnEnd) {
@@ -4982,7 +5017,7 @@ class _GameScreenState extends State<GameScreen> {
   /// and reconnecting line without a Reconnect button; given up shows the
   /// Reconnect button; Leave is always last.
   Widget _connectionLostBody(AppLocalizations loc, RoomController controller) {
-    if (controller.seatTakenOver) {
+    if (_seatTakenOver) {
       return _seatMovedBody(loc);
     }
     // C-529 D5: the server's own `message` is English and aimed at a log, so
