@@ -17,15 +17,16 @@
 //
 // Cases:
 //   D1.a    unsolicited BAD_SEAT_TOKEN then close: true, errorCode null
-//   D1.b    true and notified at the frame, before the close
+//   D1.b    true and notified at the frame, phase already closed, the client
+//           closed the transport
 //   D1.c    unsolicited error of any other code, or no usable code: false
 //   D1.d    an error with `re` set (a reply), however it is addressed: false
-//   D1.e    a later resume reaching connected clears it; a resume still in
-//           flight or refused does not
+//   D1.e    reconnect() on a moved seat opens nothing; a later joinRoom that
+//           reaches connected clears it, one in flight or refused does not
 //   D1.f    no automatic reconnect attempt follows the takeover
 //   D1.g    leave() and dispose() leave it as it is
-//   D1.h    the same frame replayed, the frame and the close in one burst,
-//           the frame before any room is held
+//   D1.h    the frame then the server's close is one takeover, the frame and
+//           the close in one burst, the frame before any room is held
 //
 // There is no random input. Each failure reason names the case, what was
 // expected and what the controller said, and ends with the command that
@@ -161,6 +162,9 @@ class _Table {
   /// What seatTakenOver read at each notification the controller sent.
   final List<bool> seenAtNotify = <bool>[];
 
+  /// The phase and seatTakenOver a listener saw at each notification.
+  final List<(RoomPhase, bool)> seenPairs = <(RoomPhase, bool)>[];
+
   static Future<_Table> connect(
     WidgetTester tester,
     String id, {
@@ -200,9 +204,10 @@ class _Table {
     );
     final _Table table = _Table(controller, transport, connector);
     addTearDown(table.dispose);
-    controller.addListener(
-      () => table.seenAtNotify.add(controller.seatTakenOver),
-    );
+    controller.addListener(() {
+      table.seenAtNotify.add(controller.seatTakenOver);
+      table.seenPairs.add((controller.phase, controller.seatTakenOver));
+    });
     return table;
   }
 
@@ -263,8 +268,8 @@ void main() {
   );
 
   testWidgets(
-    'D1.b: seatTakenOver is true, and listeners are told, at the frame, '
-    'before the close',
+    'D1.b: at the frame listeners are told seatTakenOver true with the phase '
+    'already closed, and the client closed the transport',
     (tester) async {
       const String id = 'D1.b';
       final _Table table = await _Table.connect(tester, id);
@@ -277,13 +282,44 @@ void main() {
             'frame; notifications saw ${table.seenAtNotify}. '
             '${_reproduce(id)}',
       );
+      expect(
+        table.seenPairs,
+        isNot(contains((RoomPhase.connected, true))),
+        reason:
+            '$id: expected no listener to see (connected, true); '
+            'notifications saw ${table.seenPairs}. ${_reproduce(id)}',
+      );
+      expect(
+        table.seenPairs.last,
+        (RoomPhase.closed, true),
+        reason:
+            '$id: expected the notification at the frame to read '
+            '(closed, true); the last one read ${table.seenPairs.last}. '
+            '${_reproduce(id)}',
+      );
       _expectTaken(table.controller, id, true, 'at the frame');
       expect(
         table.controller.phase,
-        RoomPhase.connected,
+        RoomPhase.closed,
         reason:
-            '$id: fixture: the frame alone does not end the connection; '
-            'phase was ${table.controller.phase}',
+            '$id: expected phase closed at the frame, before the server '
+            'closes anything; saw ${table.controller.phase}. '
+            '${_reproduce(id)}',
+      );
+      expect(
+        table.transport.closeCalls.length,
+        1,
+        reason:
+            '$id: expected the client to close the transport once at the '
+            'frame; close calls ${table.transport.closeCalls}. '
+            '${_reproduce(id)}',
+      );
+      expect(
+        table.transport.isClosed,
+        isTrue,
+        reason:
+            '$id: expected the transport closed by the client; it is still '
+            'open. ${_reproduce(id)}',
       );
     },
   );
@@ -353,36 +389,75 @@ void main() {
     },
   );
 
+  /// A controller whose first create is still in flight when the takeover
+  /// frame lands: the one route on which a moved seat leaves the phase
+  /// `failed`, from which joinRoom is accepted again. Returns it with the
+  /// first transport, after the create has failed.
+  Future<(RoomController, _Connector, FakeTransport)> failedAfterTakeover(
+    WidgetTester tester,
+    String id,
+  ) async {
+    final _Connector connector = _Connector();
+    final FakeTransport first = FakeTransport();
+    connector.enqueue(first);
+    final RoomController controller = RoomController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: connector.call,
+    );
+    addTearDown(controller.dispose);
+    unawaited(controller.createRoom(name: 'Sam', players: 2));
+    await tester.runAsync(() => pumpEventQueue());
+    await tester.pump();
+    first.pushText(_unsolicited('BAD_SEAT_TOKEN'));
+    await tester.runAsync(() => pumpEventQueue());
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 11));
+    expect(
+      controller.phase,
+      RoomPhase.failed,
+      reason:
+          '$id: fixture: the create that lost its seat must end failed; '
+          'phase ${controller.phase}, errorCode ${controller.errorCode}. '
+          '${_reproduce(id)}',
+    );
+    _expectTaken(controller, id, true, 'after the create that lost its seat');
+    return (controller, connector, first);
+  }
+
   testWidgets(
-    'D1.e: a later resume that reaches connected clears seatTakenOver; '
-    'the attempt in flight does not',
+    'D1.e: a joinRoom that reaches connected clears seatTakenOver; the '
+    'attempt in flight does not',
     (tester) async {
-      const String id = 'D1.e resume';
-      final _Table table = await _Table.connect(tester, id);
-      await table.push(tester, _unsolicited('BAD_SEAT_TOKEN'));
-      await table.drop(tester);
-      _expectTaken(table.controller, id, true, 'after the takeover');
+      const String id = 'D1.e join';
+      final (RoomController controller, _Connector connector, _) =
+          await failedAfterTakeover(tester, id);
 
       final FakeTransport second = FakeTransport();
-      table.connector.enqueue(second);
-      unawaited(table.controller.reconnect());
+      connector.enqueue(second);
+      unawaited(controller.joinRoom(code: _code, name: 'Sam'));
       await tester.runAsync(() => pumpEventQueue());
       await tester.pump();
       expect(
-        table.controller.phase,
+        controller.phase,
         RoomPhase.connecting,
         reason:
-            '$id: fixture: the manual reconnect must be in flight; phase '
-            '${table.controller.phase}. ${_reproduce(id)}',
+            '$id: fixture: the join must be in flight; phase '
+            '${controller.phase}. ${_reproduce(id)}',
       );
-      expect(_typeOf(second.sentRaw.last), 'resume');
+      expect(_typeOf(second.sentRaw.last), 'join_room');
       _expectTaken(
-        table.controller,
+        controller,
         id,
         true,
-        'while the resume is still in flight (phase connecting)',
+        'while the join is still in flight (phase connecting)',
       );
 
+      second.pushText(
+        _frame(
+          type: 'seat_assigned',
+          data: <String, Object?>{'seat': 1, 'seat_token': 'tok-c547-002'},
+        ),
+      );
       second.pushText(
         _frame(
           type: 'room',
@@ -393,49 +468,144 @@ void main() {
       await tester.runAsync(() => pumpEventQueue());
       await tester.pump();
       expect(
-        table.controller.phase,
+        controller.phase,
         RoomPhase.connected,
-        reason: '$id: fixture: the resume reply must land connected',
+        reason: '$id: fixture: the join reply must land connected',
       );
-      _expectTaken(table.controller, id, false, 'once connected again');
+      _expectTaken(controller, id, false, 'once the join has connected');
     },
   );
 
-  testWidgets('D1.e: a resume that is refused leaves seatTakenOver true', (
+  testWidgets(
+    'D1.e: a joinRoom after a takeover on a held room is not accepted, opens '
+    'no transport, and leaves seatTakenOver true',
+    (tester) async {
+      const String id = 'D1.e closed';
+      final _Table table = await _Table.connect(tester, id);
+      await table.push(tester, _unsolicited('BAD_SEAT_TOKEN'));
+      await table.drop(tester);
+      _expectTaken(table.controller, id, true, 'after the takeover');
+      final int connects = table.connector.calls.length;
+
+      final FakeTransport second = FakeTransport();
+      table.connector.enqueue(second);
+      unawaited(table.controller.joinRoom(code: _code, name: 'Sam'));
+      await tester.runAsync(() => pumpEventQueue());
+      await tester.pump();
+      expect(
+        table.connector.calls.length,
+        connects,
+        reason:
+            '$id: expected no transport opened by joinRoom from the closed '
+            'phase; connects went from $connects to '
+            '${table.connector.calls.length}. ${_reproduce(id)}',
+      );
+      expect(
+        second.sentRaw,
+        isEmpty,
+        reason:
+            '$id: expected nothing sent; saw ${second.sentRaw}. '
+            '${_reproduce(id)}',
+      );
+      expect(
+        table.controller.phase,
+        RoomPhase.closed,
+        reason:
+            '$id: expected phase closed; saw ${table.controller.phase}. '
+            '${_reproduce(id)}',
+      );
+      _expectTaken(table.controller, id, true, 'after the refused joinRoom');
+    },
+  );
+
+  testWidgets('D1.e: a refused joinRoom leaves seatTakenOver true', (
     tester,
   ) async {
     const String id = 'D1.e refused';
-    final _Table table = await _Table.connect(tester, id);
-    await table.push(tester, _unsolicited('BAD_SEAT_TOKEN'));
-    await table.drop(tester);
+    final (RoomController controller, _Connector connector, _) =
+        await failedAfterTakeover(tester, id);
 
     final FakeTransport second = FakeTransport();
-    table.connector.enqueue(second);
-    unawaited(table.controller.reconnect());
+    connector.enqueue(second);
+    unawaited(controller.joinRoom(code: _code, name: 'Sam'));
     await tester.runAsync(() => pumpEventQueue());
     await tester.pump();
     second.pushText(
       _frame(
         type: 'error',
         re: _idOf(second.sentRaw.last),
-        data: <String, Object?>{'code': 'BAD_SEAT_TOKEN', 'message': ''},
+        data: <String, Object?>{'code': 'NO_SUCH_ROOM', 'message': ''},
       ),
     );
     await tester.runAsync(() => pumpEventQueue());
     await tester.pump();
     expect(
-      table.controller.phase,
+      controller.phase,
       RoomPhase.failed,
       reason:
-          '$id: fixture: the refused resume must fail the phase; phase '
-          '${table.controller.phase}. ${_reproduce(id)}',
+          '$id: fixture: the refused join must fail the phase; phase '
+          '${controller.phase}. ${_reproduce(id)}',
+    );
+    expect(
+      controller.errorCode,
+      'NO_SUCH_ROOM',
+      reason:
+          '$id: expected errorCode NO_SUCH_ROOM from the refused join; saw '
+          '${controller.errorCode}. ${_reproduce(id)}',
     );
     _expectTaken(
-      table.controller,
+      controller,
       id,
       true,
-      'after a resume that never reached connected',
+      'after a join that never reached connected',
     );
+  });
+
+  testWidgets('D1.e: reconnect() on a moved seat opens no transport and leaves '
+      'seatTakenOver true', (tester) async {
+    const String id = 'D1.e reconnect';
+    final _Table table = await _Table.connect(tester, id);
+    await table.push(tester, _unsolicited('BAD_SEAT_TOKEN'));
+    await table.drop(tester);
+    final int connects = table.connector.calls.length;
+    final int notified = table.seenAtNotify.length;
+
+    final FakeTransport second = FakeTransport();
+    table.connector.enqueue(second);
+    unawaited(table.controller.reconnect());
+    await tester.runAsync(() => pumpEventQueue());
+    await tester.pump();
+    expect(
+      table.connector.calls.length,
+      connects,
+      reason:
+          '$id: expected no transport opened by reconnect() on a moved '
+          'seat; connects went from $connects to '
+          '${table.connector.calls.length}. ${_reproduce(id)}',
+    );
+    expect(
+      second.sentRaw,
+      isEmpty,
+      reason:
+          '$id: expected no resume sent; saw ${second.sentRaw}. '
+          '${_reproduce(id)}',
+    );
+    expect(
+      table.seenAtNotify.length,
+      notified,
+      reason:
+          '$id: expected no notification from reconnect(); '
+          '${table.seenAtNotify.length - notified} arrived. '
+          '${_reproduce(id)}',
+    );
+    expect(
+      table.controller.phase,
+      RoomPhase.closed,
+      reason:
+          '$id: expected phase closed; saw ${table.controller.phase}. '
+          '${_reproduce(id)}',
+    );
+    _expectTaken(table.controller, id, true, 'after reconnect()');
   });
 
   testWidgets('D1.f: no automatic reconnect attempt follows the takeover', (
@@ -523,22 +693,78 @@ void main() {
   });
 
   testWidgets(
-    'D1.h: the same takeover frame twice, then the close, is still one '
-    'takeover',
+    'D1.h: the takeover frame then the close arriving is still one takeover: '
+    'one client close, and the close changes nothing and notifies no one',
     (tester) async {
       const String id = 'D1.h replay';
-      final _Table table = await _Table.connect(tester, id);
+      final _Table table = await _Table.connect(tester, id, delays: _delays);
+      final RoomController c = table.controller;
       await table.push(tester, _unsolicited('BAD_SEAT_TOKEN'));
-      await table.push(tester, _unsolicited('BAD_SEAT_TOKEN'));
-      _expectTaken(table.controller, id, true, 'after the replay');
-      await table.drop(tester);
-      _expectTaken(table.controller, id, true, 'after the close');
+      _expectTaken(c, id, true, 'after the frame');
       expect(
-        table.controller.errorCode,
+        table.transport.closeCalls.length,
+        1,
+        reason:
+            '$id: expected one client close at the frame; close calls '
+            '${table.transport.closeCalls}. ${_reproduce(id)}',
+      );
+      expect(
+        c.phase,
+        RoomPhase.closed,
+        reason:
+            '$id: expected phase closed after the frame; saw ${c.phase}. '
+            '${_reproduce(id)}',
+      );
+      String fields() =>
+          'phase ${c.phase}, seatTakenOver ${c.seatTakenOver}, errorCode '
+          '${c.errorCode}, room ${identityHashCode(c.room)}, seat ${c.seat}, '
+          'token ${c.seatToken}, hasDesynced ${c.hasDesynced}, isResyncing '
+          '${c.isResyncing}, updateRequired ${c.updateRequired}, '
+          'autoReconnectPending ${c.autoReconnectPending}';
+      final String before = fields();
+      final int notified = table.seenPairs.length;
+
+      // The server's own close arrives after the client's: nothing further.
+      await table.drop(tester);
+      await tester.pump(_delays[0]);
+      await tester.pump(_delays[1]);
+      await tester.pump(const Duration(seconds: 30));
+
+      expect(
+        table.seenPairs.length,
+        notified,
+        reason:
+            '$id: expected no notification after the close; got '
+            '${table.seenPairs.sublist(notified)}. ${_reproduce(id)}',
+      );
+      expect(
+        fields(),
+        before,
+        reason:
+            '$id: expected no field to change when the close arrived. '
+            '${_reproduce(id)}',
+      );
+      expect(
+        table.transport.closeCalls.length,
+        1,
+        reason:
+            '$id: expected exactly one close call from the client; close '
+            'calls ${table.transport.closeCalls}. ${_reproduce(id)}',
+      );
+      expect(
+        table.connector.calls.length,
+        1,
+        reason:
+            '$id: expected no reconnect after the close; saw '
+            '${table.connector.calls.length} connects. ${_reproduce(id)}',
+      );
+      _expectTaken(c, id, true, 'after the close');
+      expect(
+        c.errorCode,
         isNull,
         reason:
-            '$id: expected errorCode null; saw '
-            '${table.controller.errorCode}. ${_reproduce(id)}',
+            '$id: expected errorCode null; saw ${c.errorCode}. '
+            '${_reproduce(id)}',
       );
     },
   );
