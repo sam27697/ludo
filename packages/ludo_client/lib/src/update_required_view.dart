@@ -11,7 +11,6 @@
 // see the card needs.
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n/gen/app_localizations.dart';
@@ -68,11 +67,9 @@ class _UpdateRequiredViewState extends State<UpdateRequiredView> {
       if (!opened) {
         try {
           await _launcher(kUpdateWebUri);
-        } on PlatformException {
-          // Nothing opens a web page either. The card stays as it is, with
-          // its button, so the player can tap again.
-        } on ArgumentError {
-          // Same: the card stays.
+        } catch (_) {
+          // Nothing opens a web page either, whatever the reason. The card
+          // stays as it is, with its button, so the player can tap again.
         }
       }
     } finally {

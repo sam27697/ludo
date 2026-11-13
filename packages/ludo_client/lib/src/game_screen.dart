@@ -3729,15 +3729,18 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// Section 27 rule 6: speaks the update card's title once, the first time
-  /// the controller says the server refused this build. The card itself is
-  /// [UpdateRequiredView]; it has no cue, so this line is all a player who is
-  /// not looking at the screen gets.
+  /// Section 27 rule 6: the first time the controller says the server refused
+  /// this build, closes the sheets this screen opened (the leave confirm, the
+  /// quick messages, the fair hint), the way `yourTurn` does, so the card is
+  /// the only thing on screen, and speaks the card's title once. The card
+  /// itself is [UpdateRequiredView]; it has no cue, so this line is all a
+  /// player who is not looking at the screen gets.
   void _syncUpdateRequiredAnnouncement() {
     if (_announcedUpdateRequired || !widget.controller.updateRequired) {
       return;
     }
     _announcedUpdateRequired = true;
+    _closeOwnSheets();
     _announce(AppLocalizations.of(context).updateRequiredTitle);
   }
 
@@ -4836,7 +4839,8 @@ class _GameScreenState extends State<GameScreen> {
                         ],
                       ),
                     ),
-                    if (controller.hasDesynced) _desyncBanner(context, loc),
+                    if (controller.hasDesynced && !controller.updateRequired)
+                      _desyncBanner(context, loc),
                     Expanded(child: RepaintBoundary(child: body)),
                   ],
                 ),
@@ -4847,7 +4851,7 @@ class _GameScreenState extends State<GameScreen> {
                   start: 0,
                   child: SpokenLineRegion(controller: _spokenLine),
                 ),
-                if (chatLine != null)
+                if (chatLine != null && !controller.updateRequired)
                   _chatLayer(
                     loc,
                     chatLine,
