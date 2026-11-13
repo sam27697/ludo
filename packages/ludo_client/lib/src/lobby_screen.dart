@@ -619,12 +619,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           // C-254 rule 5: only the occupied seats get a pip
                           // here, not the fixed four the strip draws by
                           // default.
-                          SeatPipStrip(
-                            key: const Key('game-seat-pip-strip'),
-                            seats: controller.room!.seats
-                                .map((SeatState s) => s.seat)
-                                .toList(),
-                          ),
+                          // C-637 D4: a phone that no longer holds its seat, or
+                          // one this server refuses, draws no seat strip, as
+                          // the game screen does.
+                          if (!controller.seatTakenOver &&
+                              !controller.updateRequired)
+                            SeatPipStrip(
+                              key: const Key('game-seat-pip-strip'),
+                              seats: controller.room!.seats
+                                  .map((SeatState s) => s.seat)
+                                  .toList(),
+                            ),
                           PositionedDirectional(
                             start: kSpace2,
                             child: IconButton(
@@ -654,7 +659,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       ),
                     ),
                   ],
-                  if (controller.hasDesynced && !controller.updateRequired)
+                  // C-637 D4: Resync would resume a seat that is no longer
+                  // this phone's, so the strip is not drawn once it moved.
+                  if (controller.hasDesynced &&
+                      !controller.updateRequired &&
+                      !controller.seatTakenOver)
                     _desyncBanner(loc, controller),
                   Expanded(child: phaseBody),
                 ],
