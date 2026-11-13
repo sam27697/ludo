@@ -41,6 +41,10 @@ enum ProtocolError {
   seedAlreadySet,
   gameOver,
   internal,
+
+  /// Section 27: the app's build is below the server's minimum. Never a
+  /// reply to a frame; sent once, unsolicited, as a socket is refused.
+  updateRequired,
 }
 
 sealed class CreateResult {}
