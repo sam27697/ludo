@@ -1270,6 +1270,47 @@ void main() {
     });
 
     testWidgets(
+      'C5.d: reconnectAndRematch() after the frame sends no rematch and opens '
+      'no connection, with the link up and after the close',
+      (tester) async {
+        const String id = 'C5.d';
+        final _Table table = await _Table.connect(
+          tester,
+          id,
+          delays: kAutoReconnectDelays,
+        );
+        table.connector.enqueue(FakeTransport());
+        await table.push(tester, _updateFrame());
+        final int sentBefore = table.transport.sentRaw.length;
+        await _poke(tester, table.controller.reconnectAndRematch());
+        expect(
+          table.transport.sentRaw.length,
+          sentBefore,
+          reason:
+              '$id: expected nothing sent by reconnectAndRematch() while the '
+              'refused link is still up; saw '
+              '${table.transport.sentRaw.skip(sentBefore).toList()}. '
+              '${_reproduce(id)}',
+        );
+        _expectConnects(table, id, 1, 'after reconnectAndRematch(), link up');
+        await table.drop(tester);
+        await _poke(tester, table.controller.reconnectAndRematch());
+        await tester.runAsync(() => pumpEventQueue());
+        await tester.pump(const Duration(minutes: 1));
+        _expectConnects(table, id, 1, 'after reconnectAndRematch(), closed');
+        expect(
+          table.transport.sentRaw.length,
+          sentBefore,
+          reason:
+              '$id: expected nothing sent once the link closed; saw '
+              '${table.transport.sentRaw.skip(sentBefore).toList()}. '
+              '${_reproduce(id)}',
+        );
+        _expectRequired(table.controller, id, true, 'after both calls');
+      },
+    );
+
+    testWidgets(
       'C6.a: the same frame replayed, then the close, is still one refusal '
       'and still no reconnect',
       (tester) async {
@@ -2204,6 +2245,171 @@ void main() {
               _note(tester, rig.controllers.last),
             ),
           );
+        } finally {
+          await _finish(tester, rig);
+        }
+      },
+    );
+
+    Future<void> expectResumable(
+      WidgetTester tester,
+      _Rig rig,
+      String id,
+      String when,
+    ) async {
+      final String saw = _note(tester, rig.controllers.last);
+      expect(
+        _homeIsCurrent(tester),
+        isTrue,
+        reason: _why(id, 'Home to be the current route $when', saw),
+      );
+      final SessionMemory now = await memory(tester);
+      expect(
+        now.seatRecord,
+        held,
+        reason: _why(
+          id,
+          'session.seat unchanged $when',
+          'saw ${now.seatRecord}; $saw',
+        ),
+      );
+      expect(
+        now.recentCodes,
+        _recentCodes,
+        reason: _why(
+          id,
+          'the recent codes unchanged $when',
+          'saw ${now.recentCodes}',
+        ),
+      );
+      expect(
+        find.byKey(_rejoinKey),
+        findsOneWidget,
+        reason: _why(id, 'Home to still offer Back to game $when', saw),
+      );
+    }
+
+    Future<void> resumeAgain(WidgetTester tester, _Rig rig, String id) async {
+      final int before = rig.sent('resume').length;
+      await tester.ensureVisible(find.byKey(_rejoinKey));
+      await tester.tap(find.byKey(_rejoinKey));
+      await _pumpBounded(tester, frames: 3);
+      final List<String> resumes = rig.sent('resume');
+      expect(
+        resumes.length,
+        before + 1,
+        reason: _why(
+          id,
+          'one more resume from the Home button',
+          '${resumes.length - before} more; ${_note(tester, null)}',
+        ),
+      );
+      final Map<String, Object?> data =
+          _decode(resumes.last)['d']! as Map<String, Object?>;
+      expect(
+        <Object?>[data['code'], data['seat_token']],
+        <Object?>[_code, _token],
+        reason: _why(
+          id,
+          'the resume to name the same room and seat token',
+          '${data['code']} / ${data['seat_token']}',
+        ),
+      );
+    }
+
+    testWidgets(
+      'K.home.game: Back to home on the update card of a PLAYING table lands '
+      'on Home with the seat record and recent codes unchanged and the '
+      'resume still offered',
+      (tester) async {
+        const String id = 'K.home.game';
+        _seedFreshSeat();
+        final _Rig rig = _Rig();
+        final _RouteLog log = _RouteLog();
+        await _mount(tester, rig, log);
+        try {
+          await _gameRoute(tester, rig, id, room: _Room.playing);
+          rig.last.pushText(_updateFrame());
+          await tester.pump();
+          rig.last.endFromFarSide();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          _expectUpdateView(tester, id, rig.controllers.last, locale: _en);
+          await _tapHome(tester);
+          await _settleHome(tester);
+          expect(
+            rig.controllers.last.wasDisposed,
+            isTrue,
+            reason: _why(
+              id,
+              'the owned controller retired by Home',
+              _note(tester, rig.controllers.last),
+            ),
+          );
+          await expectResumable(tester, rig, id, 'after Back to home');
+          await resumeAgain(tester, rig, id);
+        } finally {
+          await _finish(tester, rig);
+        }
+      },
+    );
+
+    testWidgets(
+      'K.home.lobby: Back to home on the update card of a seated lobby '
+      'lands on Home with the seat record and recent codes unchanged and '
+      'the resume still offered',
+      (tester) async {
+        const String id = 'K.home.lobby';
+        _seedFreshSeat();
+        final _Rig rig = _Rig();
+        final _RouteLog log = _RouteLog();
+        await _mount(tester, rig, log);
+        try {
+          expect(
+            rig.sent('resume'),
+            hasLength(1),
+            reason: '$id: fixture: a fresh record resumes on its own',
+          );
+          _answerRoom(
+            rig.last,
+            rig.lastRequestId('resume'),
+            _lobbyRoom(),
+            seat: 0,
+          );
+          await _pumpBounded(tester, frames: 3);
+          expect(
+            find.byType(LobbyScreen),
+            findsOneWidget,
+            reason: '$id: fixture: a resume of a LOBBY room shows LobbyScreen',
+          );
+          rig.last.pushText(_updateFrame());
+          await tester.pump();
+          rig.last.endFromFarSide();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          _expectUpdateView(tester, id, rig.controllers.last, locale: _en);
+          await _tapHome(tester);
+          await _settleHome(tester);
+          expect(
+            find.byType(LobbyScreen, skipOffstage: false),
+            findsNothing,
+            reason: _why(
+              id,
+              'the lobby route gone after Back to home',
+              _note(tester, rig.controllers.last),
+            ),
+          );
+          expect(
+            rig.controllers.last.wasDisposed,
+            isTrue,
+            reason: _why(
+              id,
+              'the owned controller retired by Home',
+              _note(tester, rig.controllers.last),
+            ),
+          );
+          await expectResumable(tester, rig, id, 'after Back to home');
+          await resumeAgain(tester, rig, id);
         } finally {
           await _finish(tester, rig);
         }
