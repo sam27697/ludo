@@ -1,6 +1,7 @@
 package app.fayad.ludo
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.SoundPool
@@ -27,6 +28,7 @@ import io.flutter.plugin.common.MethodChannel
  */
 class MainActivity : FlutterActivity() {
     private val channelName = "app.fayad.ludo/feedback"
+    private val appChannelName = "app.fayad.ludo/app"
     private var soundPool: SoundPool? = null
     private val soundIds = HashMap<String, Int>()
 
@@ -127,6 +129,40 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, appChannelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "build" -> {
+                        try {
+                            result.success(installedVersionCode())
+                        } catch (e: Exception) {
+                            result.error("build_unavailable", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    // docs/PROTOCOL.md section 27 rule 1: the app reads its own versionCode
+    // and Dart sends it on every upgrade. Nothing is decided here; a failure
+    // is an error result, which Dart reads as "build unknown".
+    private fun installedVersionCode(): Long {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val info = packageManager.getPackageInfo(
+                packageName,
+                PackageManager.PackageInfoFlags.of(0),
+            )
+            return info.longVersionCode
+        }
+        @Suppress("DEPRECATION")
+        val info = packageManager.getPackageInfo(packageName, 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return info.longVersionCode
+        }
+        @Suppress("DEPRECATION")
+        return info.versionCode.toLong()
     }
 
     override fun onDestroy() {

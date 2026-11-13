@@ -27,6 +27,7 @@ import 'spoken_line.dart';
 import 'rule_off_strike.dart';
 import 'session_memory.dart' show SeatRecord;
 import 'theme.dart';
+import 'update_required_view.dart';
 import 'waiting_line.dart';
 
 /// The one request LobbyScreen issues, once, from initState.
@@ -226,7 +227,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   void _onControllerChanged() {
     setState(() {});
-    if (_resumeRefusalHandled) {
+    _syncUpdateRequiredAnnouncement();
+    if (_resumeRefusalHandled || widget.controller.updateRequired) {
       return;
     }
     if (_resumeRefused) {
@@ -246,6 +248,32 @@ class _LobbyScreenState extends State<LobbyScreen> {
             : GameScreenResult.roomClosedGuest,
       );
     }
+  }
+
+  /// True once the update card's title has been spoken for this route, so a
+  /// rebuild never says it twice (section 27 rule 6).
+  bool _announcedUpdateRequired = false;
+
+  /// Speaks the update card's title once, the moment the controller says the
+  /// server refused this build, through the same spoken line the lobby uses
+  /// for its other lines.
+  void _syncUpdateRequiredAnnouncement() {
+    if (_announcedUpdateRequired || !widget.controller.updateRequired) {
+      return;
+    }
+    _announcedUpdateRequired = true;
+    final String title = AppLocalizations.of(context).updateRequiredTitle;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      SemanticsService.sendAnnouncement(
+        View.of(context),
+        title,
+        Directionality.of(context),
+      );
+      _spokenLine.speak(title);
+    });
   }
 
   /// Hands [result] to Home. A popup above this route (the settings sheet)
@@ -519,7 +547,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
             retryableFailure);
 
     final Widget phaseBody;
-    if (stale) {
+    if (controller.updateRequired) {
+      // Section 27 rule 6, and it outranks every body below, the seat-moved
+      // card included: this build cannot play on this server, so there is
+      // nothing else to show. Home is what the corner close does.
+      phaseBody = UpdateRequiredView(onHome: _leaveLobby);
+    } else if (stale) {
       // C-284 rules 1 and 2: a dropped or retrying connection keeps the
       // room in view (dimmed, untappable) under the connection-lost card.
       phaseBody = Stack(
@@ -621,7 +654,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       ),
                     ),
                   ],
-                  if (controller.hasDesynced) _desyncBanner(loc, controller),
+                  if (controller.hasDesynced && !controller.updateRequired)
+                    _desyncBanner(loc, controller),
                   Expanded(child: phaseBody),
                 ],
               ),
