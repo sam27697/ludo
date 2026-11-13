@@ -4786,26 +4786,32 @@ class _GameScreenState extends State<GameScreen> {
                         // the strip.
                         alignment: Alignment.bottomCenter,
                         children: [
-                          SeatPipStrip(
-                            key: const Key('game-seat-pip-strip'),
-                            // C-590 D2: 12 dp so every pip's seat mark draws.
-                            pipSize: 12,
-                            seats: room == null ? null : _seatsInPlayOf(room),
-                            turnSeat:
-                                (room != null &&
-                                    room.state == RoomState.playing)
-                                ? room.turn?.seat
-                                : null,
-                            nextSeat:
-                                (room != null &&
-                                    room.state == RoomState.playing &&
-                                    room.turn != null)
-                                ? nextSeatInPlay(
-                                    _seatsInPlayOf(room),
-                                    room.turn!.seat,
-                                  )
-                                : null,
-                          ),
+                          // A table this phone can never play again (a refused
+                          // build, or a seat that moved to another phone) has no
+                          // turn state worth drawing: the corner close and the
+                          // sound switch stay, the strip goes.
+                          if (!controller.updateRequired &&
+                              !controller.seatTakenOver)
+                            SeatPipStrip(
+                              key: const Key('game-seat-pip-strip'),
+                              // C-590 D2: 12 dp so every pip's seat mark draws.
+                              pipSize: 12,
+                              seats: room == null ? null : _seatsInPlayOf(room),
+                              turnSeat:
+                                  (room != null &&
+                                      room.state == RoomState.playing)
+                                  ? room.turn?.seat
+                                  : null,
+                              nextSeat:
+                                  (room != null &&
+                                      room.state == RoomState.playing &&
+                                      room.turn != null)
+                                  ? nextSeatInPlay(
+                                      _seatsInPlayOf(room),
+                                      room.turn!.seat,
+                                    )
+                                  : null,
+                            ),
                           PositionedDirectional(
                             start: kSpace2,
                             child: IconButton(
