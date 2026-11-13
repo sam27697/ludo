@@ -448,6 +448,7 @@ class RoomController extends ChangeNotifier {
     final String? token = _cachedSeatToken;
     if (_disposed ||
         _updateRequired ||
+        _seatTakenOver ||
         !(_phase == RoomPhase.closed || _phase == RoomPhase.failed) ||
         room == null ||
         token == null) {
@@ -466,7 +467,8 @@ class RoomController extends ChangeNotifier {
   /// a verdict from the server, or a failure that is not a verdict -- or at
   /// once when it started nothing.
   Future<void> resync() async {
-    if (_disposed) {
+    // C-637 D2: a seat another phone has taken is never resumed from here.
+    if (_disposed || _seatTakenOver) {
       return;
     }
     if (_phase == RoomPhase.closed || _phase == RoomPhase.failed) {
@@ -793,7 +795,7 @@ class RoomController extends ChangeNotifier {
   /// the connection-lost card's Reconnect starts, and sends `rematch` once
   /// the resume succeeds.
   Future<void> reconnectAndRematch() async {
-    if (_disposed || _updateRequired) {
+    if (_disposed || _updateRequired || _seatTakenOver) {
       return;
     }
     if (_phase == RoomPhase.connected) {
@@ -992,6 +994,11 @@ class RoomController extends ChangeNotifier {
           // dispose() before this fired: not "ended on its own".
           return;
         }
+        if (_seatTakenOver) {
+          // C-637 D1: the takeover already closed this phone's side and set
+          // the phase; this is that close arriving, nothing left to change.
+          return;
+        }
         _phase = RoomPhase.closed;
         notifyListeners();
         // C5: the current connection ended on its own. If eligible and no
@@ -1122,7 +1129,19 @@ class RoomController extends ChangeNotifier {
         notifyListeners();
       }
       if (frame.data['code'] == 'BAD_SEAT_TOKEN') {
+        // C-637 D1: this phone no longer holds the seat, so the connection
+        // is closed here and now rather than when the server's close
+        // arrives. No listener ever sees a connected phase with the seat
+        // taken, and nothing can send for it in between.
+        // C-637 D3: no resync state outlives the takeover.
         _seatTakenOver = true;
+        _phase = RoomPhase.closed;
+        _hasDesynced = false;
+        _resyncInFlight = false;
+        final RoomConnection? taken = _connection;
+        if (taken != null) {
+          unawaited(taken.close());
+        }
         notifyListeners();
       }
     }
@@ -1851,6 +1870,10 @@ class RoomController extends ChangeNotifier {
   /// only the attempt to resolve it has failed, and the next gapped frame
   /// will try again.
   void _beginResync(RoomSnapshot room) {
+    if (_seatTakenOver) {
+      // C-637 D3: a late gapped frame must not raise the desync state again.
+      return;
+    }
     _hasDesynced = true;
     notifyListeners();
 
@@ -1865,7 +1888,9 @@ class RoomController extends ChangeNotifier {
         .resume(code: room.code, seatToken: token)
         .then(
           (RoomSnapshot snapshot) {
-            if (_disposed) {
+            if (_disposed || _seatTakenOver) {
+              // C-637 D3: a reply that lands after the takeover re-bases
+              // nothing.
               return;
             }
             _resyncInFlight = false;
@@ -1875,7 +1900,7 @@ class RoomController extends ChangeNotifier {
             notifyListeners();
           },
           onError: (Object error) {
-            if (_disposed) {
+            if (_disposed || _seatTakenOver) {
               return;
             }
             _resyncInFlight = false;

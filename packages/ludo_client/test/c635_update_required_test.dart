@@ -38,7 +38,10 @@
 //           seated, game PLAYING, finished table, finished table with a
 //           rematch asked; the view replaces the card, the home button
 //           leaves the way the corner close does
-//   S.both  seatTakenOver and updateRequired together, in both orders
+//   S.both  seatTakenOver and updateRequired together: the update view wins
+//           when UPDATE_REQUIRED comes first; a takeover closes the transport
+//           at once (C-637), so nothing can follow it and the seat-moved card
+//           stands
 //   S.reply an UPDATE_REQUIRED reply (re set) draws no update view
 //   K.*     Home keeps the stored seat and the recent codes; a relaunch
 //           resumes the same seat
@@ -2139,8 +2142,8 @@ void main() {
     }
 
     testWidgets(
-      'S.both.takeoverFirst: a takeover frame and then UPDATE_REQUIRED on '
-      'the game screen draws the update view, not the seat-moved card',
+      'S.both.takeoverFirst: a takeover frame on the game screen closes the '
+      'transport at once and draws the seat-moved card, not the update view',
       (tester) async {
         const String id = 'S.both.takeoverFirst';
         _seedFreshSeat();
@@ -2149,14 +2152,85 @@ void main() {
         await _mount(tester, rig, log);
         try {
           await _gameRoute(tester, rig, id, room: _Room.playing);
-          rig.last.pushText(_takeoverFrame());
+          final FakeTransport taken = rig.last;
+          final RoomController controller = rig.controllers.last;
+          final int transportsBefore = rig.transports.length;
+          taken.pushText(_takeoverFrame());
           await tester.pump();
-          rig.last.pushText(_updateFrame());
-          await tester.pump();
-          rig.last.endFromFarSide();
+          final String saw = _note(tester, controller);
+          expect(
+            taken.isClosed,
+            isTrue,
+            reason: _why(id, 'the client to have closed the transport', saw),
+          );
+          expect(
+            taken.closeCalls.length,
+            1,
+            reason: _why(
+              id,
+              'one client close at the frame',
+              '${taken.closeCalls}; $saw',
+            ),
+          );
+          expect(
+            controller.phase,
+            RoomPhase.closed,
+            reason: _why(id, 'phase closed at the frame', saw),
+          );
+          expect(
+            controller.seatTakenOver,
+            isTrue,
+            reason: _why(id, 'seatTakenOver true at the frame', saw),
+          );
+          taken.endFromFarSide();
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 400));
-          _expectUpdateView(tester, id, rig.controllers.last, locale: _en);
+          final String after = _note(tester, controller);
+          expect(
+            controller.updateRequired,
+            isFalse,
+            reason: _why(
+              id,
+              'updateRequired false, nothing more can arrive on a closed '
+              'transport',
+              after,
+            ),
+          );
+          expect(
+            controller.seatTakenOver,
+            isTrue,
+            reason: _why(id, 'seatTakenOver still true after the close', after),
+          );
+          expect(
+            rig.transports.length,
+            transportsBefore,
+            reason: _why(
+              id,
+              'no transport opened after the takeover',
+              '${rig.transports.length - transportsBefore} new; $after',
+            ),
+          );
+          _expectNoUpdateView(tester, id, 'after a takeover');
+          expect(
+            find.text(_enMoved),
+            findsOneWidget,
+            reason: _why(id, 'the seat-moved line "$_enMoved" once', after),
+          );
+          expect(
+            find.byIcon(Icons.phonelink_rounded),
+            findsOneWidget,
+            reason: _why(id, 'the seat-moved icon once on the card', after),
+          );
+          expect(
+            find.byIcon(Icons.wifi_off_rounded, skipOffstage: false),
+            findsNothing,
+            reason: _why(id, 'no wifi-off icon on a moved seat', after),
+          );
+          expect(
+            find.byKey(_gameReconnectKey, skipOffstage: false),
+            findsNothing,
+            reason: _why(id, 'no Reconnect button on a moved seat', after),
+          );
         } finally {
           await _finish(tester, rig);
         }
@@ -2189,7 +2263,7 @@ void main() {
     );
 
     testWidgets(
-      'S.both.lobby: a takeover frame and then UPDATE_REQUIRED on a seated '
+      'S.both.lobby: UPDATE_REQUIRED and then a takeover frame on a seated '
       'lobby draws the update view, not the seat-moved card',
       (tester) async {
         const String id = 'S.both.lobby';
@@ -2199,10 +2273,82 @@ void main() {
           answered: true,
         );
         try {
-          await lobby.push(tester, _takeoverFrame());
           await lobby.push(tester, _updateFrame());
+          await lobby.push(tester, _takeoverFrame());
           await lobby.drop(tester);
           _expectUpdateView(tester, id, lobby.controller, locale: _en);
+        } finally {
+          await lobby.finish(tester);
+        }
+      },
+    );
+
+    testWidgets(
+      'S.both.lobbyTakeoverFirst: a takeover frame on a seated lobby closes '
+      'the transport at once and draws the seat-moved card, not the update '
+      'view',
+      (tester) async {
+        const String id = 'S.both.lobbyTakeoverFirst';
+        final _LobbyRig lobby = await _LobbyRig.open(
+          tester,
+          id,
+          answered: true,
+        );
+        try {
+          await lobby.push(tester, _takeoverFrame());
+          final String saw = _note(tester, lobby.controller);
+          expect(
+            lobby.transport.isClosed,
+            isTrue,
+            reason: _why(id, 'the client to have closed the transport', saw),
+          );
+          expect(
+            lobby.transport.closeCalls.length,
+            1,
+            reason: _why(
+              id,
+              'one client close at the frame',
+              '${lobby.transport.closeCalls}; $saw',
+            ),
+          );
+          expect(
+            lobby.controller.phase,
+            RoomPhase.closed,
+            reason: _why(id, 'phase closed at the frame', saw),
+          );
+          expect(
+            lobby.controller.seatTakenOver,
+            isTrue,
+            reason: _why(id, 'seatTakenOver true at the frame', saw),
+          );
+          await lobby.drop(tester);
+          final String after = _note(tester, lobby.controller);
+          expect(
+            lobby.controller.updateRequired,
+            isFalse,
+            reason: _why(id, 'updateRequired false after the close', after),
+          );
+          _expectNoUpdateView(tester, id, 'after a takeover');
+          expect(
+            find.text(_enMoved),
+            findsOneWidget,
+            reason: _why(id, 'the seat-moved line "$_enMoved" once', after),
+          );
+          expect(
+            find.byIcon(Icons.phonelink_rounded),
+            findsOneWidget,
+            reason: _why(id, 'the seat-moved icon once on the card', after),
+          );
+          expect(
+            find.byIcon(Icons.wifi_off_rounded, skipOffstage: false),
+            findsNothing,
+            reason: _why(id, 'no wifi-off icon on a moved seat', after),
+          );
+          expect(
+            find.byKey(_lobbyReconnectKey, skipOffstage: false),
+            findsNothing,
+            reason: _why(id, 'no Reconnect button on a moved seat', after),
+          );
         } finally {
           await lobby.finish(tester);
         }
