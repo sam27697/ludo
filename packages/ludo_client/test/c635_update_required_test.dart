@@ -42,6 +42,11 @@
 //   S.reply an UPDATE_REQUIRED reply (re set) draws no update view
 //   K.*     Home keeps the stored seat and the recent codes; a relaunch
 //           resumes the same seat
+//   R2.*    a leave confirm or the quick message sheet open when the frame
+//           lands is closed, and the card is the only thing on screen
+//   R3.*    a desync banner (game and lobby) and a chat bubble (game, once
+//           with a desync and once without) that were showing are not drawn
+//           over the card
 //   A1      the four ARB keys and their descriptions
 //
 // There is no random input. Each failure reason names the case, what was
@@ -112,6 +117,14 @@ const Key _offlineKey = Key('end-card-offline');
 const Key _endWinKey = Key('end-card-win');
 const Key _endLoseKey = Key('end-card-lose');
 const Key _openLobbyKey = Key('c635-open-lobby');
+const Key _appBarLeaveKey = Key('game-screen-appbar-leave');
+const Key _leaveConfirmKey = Key('game-leave-confirm');
+const Key _chatButtonKey = Key('game-chat-button');
+const Key _chatSheetKey = Key('quick-chat-sheet');
+const Key _gameDesyncKey = Key('game-screen-desync-banner');
+const Key _lobbyDesyncKey = Key('lobby-desync-banner');
+const Key _chatLinesKey = Key('end-card-chat-lines');
+const Key _chatBubbleKey = Key('end-card-chat-1');
 
 const String _testUrl = 'wss://c635-test.invalid/ws';
 const String _code = 'K7M2QP';
@@ -767,6 +780,102 @@ class _LobbyRig {
     await tester.pump();
     await tester.pump();
   }
+
+  Future<void> finish(WidgetTester tester) async {
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    controller.dispose();
+  }
+}
+
+/// A bare GameScreen over a PLAYING two seat table, on a controller of its
+/// own. [seated] false sends no `seat_assigned`: a later seq gap then sets
+/// `hasDesynced` without sending a resume, so no request timer is left
+/// running (test/c549_test.dart does the same).
+class _GameRig {
+  _GameRig._(this.connector, this.transport, this.controller);
+
+  final _Connector connector;
+  final FakeTransport transport;
+  final RoomController controller;
+
+  static Future<_GameRig> open(
+    WidgetTester tester,
+    String id, {
+    Locale? locale,
+    required bool seated,
+  }) async {
+    final _Connector connector = _Connector();
+    final FakeTransport transport = FakeTransport();
+    connector.enqueue(transport);
+    final RoomController controller = RoomController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: connector.call,
+    );
+    final Future<void> created = controller.createRoom(name: 'Sam', players: 2);
+    await tester.runAsync(() => pumpEventQueue());
+    await tester.pump();
+    if (seated) {
+      transport.pushText(
+        _frame(
+          type: 'seat_assigned',
+          data: <String, Object?>{'seat': 0, 'seat_token': _token},
+        ),
+      );
+    }
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: _idOf(transport.sentRaw.last),
+        data: _playingRoom(),
+      ),
+    );
+    await created;
+    expect(
+      controller.phase,
+      RoomPhase.connected,
+      reason: '$id: fixture: the create reply must land connected',
+    );
+    await tester.pumpWidget(
+      _localized(GameScreen(controller: controller), locale: locale),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      find.byType(GameScreen),
+      findsOneWidget,
+      reason: '$id: fixture: the game screen must be mounted',
+    );
+    return _GameRig._(connector, transport, controller);
+  }
+
+  Future<void> push(WidgetTester tester, String text) async {
+    transport.pushText(text);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  Future<void> tap(WidgetTester tester, Key key) async {
+    await tester.tap(find.byKey(key));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  /// The seq gap: a presence frame far ahead of the room's seq 3.
+  Future<void> gap(WidgetTester tester) => push(
+    tester,
+    _frame(
+      type: 'presence',
+      data: <String, Object?>{'seat': 0, 'connected': false, 'seq': 999},
+    ),
+  );
+
+  /// A quick message from seat 1, which the screen draws as a bubble.
+  Future<void> chat(WidgetTester tester) => push(
+    tester,
+    _frame(type: 'emote', data: <String, Object?>{'seat': 1, 'emote': 'hi'}),
+  );
 
   Future<void> finish(WidgetTester tester) async {
     await tester.pump(const Duration(seconds: 11));
@@ -2529,6 +2638,364 @@ void main() {
         }
       },
     );
+  });
+
+  // ---------------------------------------------------------------- R
+  // 635 RETURN round 1, defects 2 and 3 (work/ludo/orders/634-update-required.md).
+  group('R what the update card must be alone with', () {
+    void expectCardAlone(WidgetTester tester, String id, String when) {
+      final String saw = _note(tester, null);
+      expect(
+        find.byKey(_viewKey, skipOffstage: false),
+        findsOneWidget,
+        reason: _why(id, 'exactly one update-required-view $when', saw),
+      );
+      for (final Key key in <Key>[
+        _leaveConfirmKey,
+        _chatSheetKey,
+        _gameCardKey,
+        _lobbyCardKey,
+      ]) {
+        expect(
+          find.byKey(key, skipOffstage: false),
+          findsNothing,
+          reason: _why(id, '$key gone $when, the card is the only card', saw),
+        );
+      }
+      expect(
+        find.byType(BottomSheet, skipOffstage: false),
+        findsNothing,
+        reason: _why(id, 'no bottom sheet of any kind $when', saw),
+      );
+    }
+
+    for (final Locale locale in <Locale>[_en, _ar]) {
+      final String tag = locale.languageCode;
+      final Locale? appLocale = locale == _en ? null : locale;
+
+      testWidgets(
+        'R2.leave.$tag: the leave confirm open over a PLAYING table is '
+        'closed by UPDATE_REQUIRED, and the card is alone',
+        (tester) async {
+          final String id = 'R2.leave.$tag';
+          final _GameRig rig = await _GameRig.open(
+            tester,
+            id,
+            locale: appLocale,
+            seated: true,
+          );
+          try {
+            await rig.tap(tester, _appBarLeaveKey);
+            expect(
+              find.byKey(_leaveConfirmKey),
+              findsOneWidget,
+              reason: _why(
+                id,
+                'fixture: the corner close opens the leave confirm',
+                _note(tester, rig.controller),
+              ),
+            );
+            await rig.push(tester, _updateFrame());
+            expect(
+              rig.controller.updateRequired,
+              isTrue,
+              reason: _why(id, 'updateRequired true after the frame', 'false'),
+            );
+            expect(
+              rig.controller.phase,
+              RoomPhase.connected,
+              reason: _why(
+                id,
+                'fixture: the frame alone leaves the phase connected, so '
+                    'the phase-change sheet closing is not what is measured',
+                '${rig.controller.phase}',
+              ),
+            );
+            expectCardAlone(tester, id, 'after the frame');
+          } finally {
+            await rig.finish(tester);
+          }
+        },
+      );
+
+      testWidgets(
+        'R2.chat.$tag: the quick message sheet open over a PLAYING table is '
+        'closed by UPDATE_REQUIRED, and the card is alone',
+        (tester) async {
+          final String id = 'R2.chat.$tag';
+          final _GameRig rig = await _GameRig.open(
+            tester,
+            id,
+            locale: appLocale,
+            seated: true,
+          );
+          try {
+            await rig.tap(tester, _chatButtonKey);
+            expect(
+              find.byKey(_chatSheetKey),
+              findsOneWidget,
+              reason: _why(
+                id,
+                'fixture: the chat button opens the quick message sheet',
+                _note(tester, rig.controller),
+              ),
+            );
+            await rig.push(tester, _updateFrame());
+            expect(
+              rig.controller.updateRequired,
+              isTrue,
+              reason: _why(id, 'updateRequired true after the frame', 'false'),
+            );
+            expect(
+              rig.controller.phase,
+              RoomPhase.connected,
+              reason: _why(
+                id,
+                'fixture: the frame alone leaves the phase connected',
+                '${rig.controller.phase}',
+              ),
+            );
+            expectCardAlone(tester, id, 'after the frame');
+          } finally {
+            await rig.finish(tester);
+          }
+        },
+      );
+
+      testWidgets(
+        'R3.game.$tag: a desync banner and a chat bubble that were showing '
+        'are not drawn once UPDATE_REQUIRED lands',
+        (tester) async {
+          final String id = 'R3.game.$tag';
+          final _GameRig rig = await _GameRig.open(
+            tester,
+            id,
+            locale: appLocale,
+            seated: false,
+          );
+          try {
+            await rig.gap(tester);
+            await rig.chat(tester);
+            expect(
+              rig.controller.hasDesynced,
+              isTrue,
+              reason: _why(
+                id,
+                'fixture: the seq gap sets hasDesynced',
+                'false',
+              ),
+            );
+            expect(
+              find.byKey(_gameDesyncKey),
+              findsOneWidget,
+              reason: _why(
+                id,
+                'fixture: the banner is drawn before the frame',
+                _note(tester, rig.controller),
+              ),
+            );
+            expect(
+              find.byKey(_chatBubbleKey),
+              findsOneWidget,
+              reason: _why(
+                id,
+                'fixture: the chat bubble is drawn before the frame',
+                _note(tester, rig.controller),
+              ),
+            );
+            await rig.push(tester, _updateFrame());
+            expect(
+              rig.controller.hasDesynced,
+              isTrue,
+              reason: _why(
+                id,
+                'fixture: hasDesynced is still true, so only the screen can '
+                    'hide the banner',
+                'false',
+              ),
+            );
+            expect(
+              find.byKey(_viewKey),
+              findsOneWidget,
+              reason: _why(
+                id,
+                'the update card is up',
+                _note(tester, rig.controller),
+              ),
+            );
+            expect(
+              find.byKey(_gameDesyncKey, skipOffstage: false),
+              findsNothing,
+              reason: _why(
+                id,
+                'no desync banner over the update card',
+                _note(tester, rig.controller),
+              ),
+            );
+            expect(
+              find.byKey(_chatBubbleKey, skipOffstage: false),
+              findsNothing,
+              reason: _why(
+                id,
+                'no chat bubble over the update card',
+                _note(tester, rig.controller),
+              ),
+            );
+            expect(
+              find.byKey(_chatLinesKey, skipOffstage: false),
+              findsNothing,
+              reason: _why(
+                id,
+                'no chat layer over the update card',
+                _note(tester, rig.controller),
+              ),
+            );
+          } finally {
+            await rig.finish(tester);
+          }
+        },
+      );
+
+      // The screen clears its chat bubbles on every notification while
+      // hasDesynced is true, so the case above cannot tell whether the chat
+      // layer itself is gated. This one holds a bubble with no desync.
+      testWidgets(
+        'R3.chat.$tag: a chat bubble that was showing, with the table in '
+        'sync, is not drawn once UPDATE_REQUIRED lands',
+        (tester) async {
+          final String id = 'R3.chat.$tag';
+          final _GameRig rig = await _GameRig.open(
+            tester,
+            id,
+            locale: appLocale,
+            seated: false,
+          );
+          try {
+            await rig.chat(tester);
+            expect(
+              rig.controller.hasDesynced,
+              isFalse,
+              reason: _why(id, 'fixture: the table is in sync', 'desynced'),
+            );
+            expect(
+              find.byKey(_chatBubbleKey),
+              findsOneWidget,
+              reason: _why(
+                id,
+                'fixture: the chat bubble is drawn before the frame',
+                _note(tester, rig.controller),
+              ),
+            );
+            await rig.push(tester, _updateFrame());
+            expect(
+              find.byKey(_viewKey),
+              findsOneWidget,
+              reason: _why(
+                id,
+                'the update card is up',
+                _note(tester, rig.controller),
+              ),
+            );
+            expect(
+              find.byKey(_chatBubbleKey, skipOffstage: false),
+              findsNothing,
+              reason: _why(
+                id,
+                'no chat bubble over the update card',
+                _note(tester, rig.controller),
+              ),
+            );
+            expect(
+              find.byKey(_chatLinesKey, skipOffstage: false),
+              findsNothing,
+              reason: _why(
+                id,
+                'no chat layer over the update card',
+                _note(tester, rig.controller),
+              ),
+            );
+          } finally {
+            await rig.finish(tester);
+          }
+        },
+      );
+
+      testWidgets(
+        'R3.lobby.$tag: a desync banner that was showing is not drawn once '
+        'UPDATE_REQUIRED lands',
+        (tester) async {
+          final String id = 'R3.lobby.$tag';
+          final _LobbyRig lobby = await _LobbyRig.open(
+            tester,
+            id,
+            locale: appLocale,
+            answered: true,
+          );
+          try {
+            await lobby.push(
+              tester,
+              _frame(
+                type: 'presence',
+                data: <String, Object?>{
+                  'seat': 0,
+                  'connected': false,
+                  'seq': 9,
+                },
+              ),
+            );
+            expect(
+              lobby.controller.hasDesynced,
+              isTrue,
+              reason: _why(
+                id,
+                'fixture: the seq gap sets hasDesynced',
+                'false',
+              ),
+            );
+            expect(
+              find.byKey(_lobbyDesyncKey),
+              findsOneWidget,
+              reason: _why(
+                id,
+                'fixture: the banner is drawn before the frame',
+                _note(tester, lobby.controller),
+              ),
+            );
+            await lobby.push(tester, _updateFrame());
+            expect(
+              lobby.controller.hasDesynced,
+              isTrue,
+              reason: _why(
+                id,
+                'fixture: hasDesynced is still true, so only the screen can '
+                    'hide the banner',
+                'false',
+              ),
+            );
+            expect(
+              find.byKey(_viewKey),
+              findsOneWidget,
+              reason: _why(
+                id,
+                'the update card is up',
+                _note(tester, lobby.controller),
+              ),
+            );
+            expect(
+              find.byKey(_lobbyDesyncKey, skipOffstage: false),
+              findsNothing,
+              reason: _why(
+                id,
+                'no desync banner over the update card',
+                _note(tester, lobby.controller),
+              ),
+            );
+          } finally {
+            await lobby.finish(tester);
+          }
+        },
+      );
+    }
   });
 
   // ---------------------------------------------------------------- A1

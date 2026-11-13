@@ -654,7 +654,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       ),
                     ),
                   ],
-                  if (controller.hasDesynced) _desyncBanner(loc, controller),
+                  if (controller.hasDesynced && !controller.updateRequired)
+                    _desyncBanner(loc, controller),
                   Expanded(child: phaseBody),
                 ],
               ),
