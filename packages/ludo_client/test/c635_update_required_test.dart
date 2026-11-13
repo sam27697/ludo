@@ -1426,7 +1426,9 @@ void main() {
           expect(
             find.descendant(
               of: find.byKey(_viewKey),
-              matching: find.byType(ButtonStyleButton),
+              matching: find.byWidgetPredicate(
+                (Widget w) => w is ButtonStyleButton,
+              ),
             ),
             findsNWidgets(2),
             reason: _why(
