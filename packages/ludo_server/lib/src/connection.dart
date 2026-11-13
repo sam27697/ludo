@@ -74,6 +74,9 @@ const int closeCodeProtocolVersion = 4002;
 const int closeCodeRateLimited = 4003;
 const int closeCodeSeatTakenOver = 4004;
 
+/// Section 27 rule 4: the app's build is below the server's minimum.
+const int closeCodeUpdateRequired = 4005;
+
 /// The exact rule `package:web_socket`'s `checkCloseCode` enforces
 /// (`package:web_socket/src/utils.dart`), duplicated here so [Connection]
 /// can apply it to itself before ever calling into that library. See the
@@ -156,6 +159,7 @@ class Connection {
     required this.clock,
     required this.hub,
     required this.random,
+    this.clientBuild = 0,
   });
 
   final WebSocketChannel channel;
@@ -165,6 +169,15 @@ class Connection {
   final Clock clock;
   final RoomHub hub;
   final Random random;
+
+  /// The build the upgrade request's header carried, section 27 rule 2; `0`
+  /// when it was absent or unreadable. Informational: only the log line
+  /// [refuseUpdateRequired] writes reads it.
+  final int clientBuild;
+
+  /// True once [refuseUpdateRequired] has run. A refused socket's inbound
+  /// frames are drained and dropped by [handleFrame].
+  bool _refused = false;
 
   /// Set on a successful `create_room`, `join_room` or `resume`; cleared on
   /// a voluntary `leave_room` or when this socket is displaced by a resume
@@ -181,6 +194,11 @@ class Connection {
   /// the first five ladder steps; hands a validated envelope to [_dispatch]
   /// for the rest.
   Future<void> handleFrame(Object rawFrame) async {
+    // Section 27 rule 4: nothing a refused socket sends is processed, logged
+    // against a room, or counted against a rate limit.
+    if (_refused) {
+      return;
+    }
     final List<int> bytes =
         rawFrame is String ? utf8.encode(rawFrame) : rawFrame as List<int>;
 
@@ -241,6 +259,29 @@ class Connection {
     }
 
     await _dispatch(envelope);
+  }
+
+  /// Section 27 rule 4. Sends the one `UPDATE_REQUIRED` error, with no `re`
+  /// and the minimum in `min_build`, logs the refusal, and closes with
+  /// [closeCodeUpdateRequired]. Called by the socket layer before any
+  /// inbound frame is read; every frame that arrives afterwards is dropped.
+  Future<void> refuseUpdateRequired({required int minBuild}) async {
+    _refused = true;
+    final Map<String, Object?> data = errorPayload(
+      ProtocolError.updateRequired,
+      defaultErrorMessage(ProtocolError.updateRequired),
+    )..['min_build'] = minBuild;
+    _send(type: 'error', data: data, re: null);
+    _log(
+      type: '-',
+      id: '-',
+      outcome: '${wireErrorCode(ProtocolError.updateRequired)} '
+          'build=$clientBuild',
+    );
+    await close(
+      code: closeCodeUpdateRequired,
+      reason: wireErrorCode(ProtocolError.updateRequired),
+    );
   }
 
   Future<void> _dispatch(ParsedEnvelope envelope) async {

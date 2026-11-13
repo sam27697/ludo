@@ -71,6 +71,8 @@ String wireErrorCode(ProtocolError error) {
       return 'GAME_OVER';
     case ProtocolError.internal:
       return 'INTERNAL';
+    case ProtocolError.updateRequired:
+      return 'UPDATE_REQUIRED';
   }
 }
 
@@ -262,6 +264,8 @@ String defaultErrorMessage(ProtocolError error) {
       return 'the game is over';
     case ProtocolError.internal:
       return 'internal error';
+    case ProtocolError.updateRequired:
+      return 'this version of the app is too old for this server';
   }
 }
 
