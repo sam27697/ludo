@@ -9,6 +9,19 @@ import 'net/ws_transport.dart';
 /// The deployed game server. Production, which is live and current.
 const String kDefaultServerUrl = 'wss://ludo.provefair.app';
 
+int? _clientBuild;
+
+/// The build number [defaultRoomControllerFactory] puts on every upgrade.
+/// `main()` sets it once from `readAppBuild()` before `runApp`; it stays null
+/// everywhere else (a widget test never calls `main()`), and null sends no
+/// header. A value below 1 is stored as null for the same reason.
+set clientBuild(int? value) {
+  _clientBuild = (value != null && value >= 1) ? value : null;
+}
+
+/// The value last given to the [clientBuild] setter, or null.
+int? get clientBuild => _clientBuild;
+
 /// Builds the controller the app uses for real. Injected as a default so
 /// a widget test can substitute a controller over a fake transport
 /// without a socket.
@@ -22,7 +35,7 @@ typedef RoomControllerFactory = RoomController Function();
 RoomController defaultRoomControllerFactory() {
   return RoomController(
     serverUrl: Uri.parse(kDefaultServerUrl),
-    connect: connectWsTransport,
+    connect: (Uri url) => connectWsTransport(url, clientBuild: _clientBuild),
     autoReconnectDelays: kAutoReconnectDelays,
   );
 }

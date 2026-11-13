@@ -61,6 +61,7 @@ import 'sound_toggle.dart';
 import 'spoken_line.dart';
 import 'table_entrance.dart';
 import 'theme.dart';
+import 'update_required_view.dart';
 import 'token_face_picker.dart';
 import 'turn_order.dart';
 import 'verify_link.dart';
@@ -758,6 +759,7 @@ class _GameScreenState extends State<GameScreen> {
     _releaseMoveGuard();
     _syncAutoMove();
     _syncConnectionLostAnnouncement();
+    _syncUpdateRequiredAnnouncement();
   }
 
   @override
@@ -1827,6 +1829,7 @@ class _GameScreenState extends State<GameScreen> {
   /// is connected to a table in play. C-500 D4.
   bool _showsChatButton(RoomController controller, RoomSnapshot? room) {
     return controller.phase == RoomPhase.connected &&
+        !controller.updateRequired &&
         room != null &&
         room.state == RoomState.playing &&
         controller.seat != null;
@@ -3189,6 +3192,7 @@ class _GameScreenState extends State<GameScreen> {
     final RoomSnapshot? room = controller.room;
     if (room == null ||
         controller.phase != RoomPhase.connected ||
+        controller.updateRequired ||
         _seatRefused) {
       return false;
     }
@@ -3298,6 +3302,7 @@ class _GameScreenState extends State<GameScreen> {
       _syncRollWait();
     });
     _syncConnectionLostAnnouncement();
+    _syncUpdateRequiredAnnouncement();
     _maybeFetchGameLog();
     if (_roomGoneWhilePlaying && !_roomGonePopHandled) {
       _roomGonePopHandled = true;
@@ -3348,6 +3353,7 @@ class _GameScreenState extends State<GameScreen> {
         controller.phase == RoomPhase.connecting;
     return isOffline &&
         !controller.seatTakenOver &&
+        !controller.updateRequired &&
         room != null &&
         ((room.state == RoomState.finished && !_isEndHeld) ||
             (room.state == RoomState.lobby && controller.lastFinished != null));
@@ -3723,6 +3729,21 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
+  /// Section 27 rule 6: speaks the update card's title once, the first time
+  /// the controller says the server refused this build. The card itself is
+  /// [UpdateRequiredView]; it has no cue, so this line is all a player who is
+  /// not looking at the screen gets.
+  void _syncUpdateRequiredAnnouncement() {
+    if (_announcedUpdateRequired || !widget.controller.updateRequired) {
+      return;
+    }
+    _announcedUpdateRequired = true;
+    _announce(AppLocalizations.of(context).updateRequiredTitle);
+  }
+
+  /// True once the update card's title has been spoken on this screen.
+  bool _announcedUpdateRequired = false;
+
   /// C-529 D3: the server answered NO_SUCH_ROOM for a room this screen held
   /// as PLAYING. Nobody can finish that game, so it is not drawn as an end
   /// card: the route goes home with [GameScreenResult.gameGone]. FINISHED and
@@ -3754,8 +3775,9 @@ class _GameScreenState extends State<GameScreen> {
     final RoomController controller = widget.controller;
     final RoomSnapshot? room = controller.room;
 
-    // C-540 D1: a refused seat has no card; the route is leaving.
-    if (_seatRefused) {
+    // C-540 D1: a refused seat has no card; the route is leaving. Section 27
+    // rule 6: a refused build has the update card, not this one.
+    if (_seatRefused || controller.updateRequired) {
       return false;
     }
 
@@ -4395,6 +4417,11 @@ class _GameScreenState extends State<GameScreen> {
     if (room.state != RoomState.playing) {
       return false;
     }
+    // Section 27 rule 6: the table is over for this build, so leaving costs
+    // nothing and asks nothing.
+    if (controller.updateRequired) {
+      return false;
+    }
     final int? seat = controller.seat;
     if (seat == null) {
       return false;
@@ -4598,6 +4625,7 @@ class _GameScreenState extends State<GameScreen> {
     // that makes any of its conditions true.
     _syncFacePick(
       playingOnScreen:
+          !controller.updateRequired &&
           !seatRefused &&
           !rematchGone &&
           !roomGonePlaying &&
@@ -4608,7 +4636,12 @@ class _GameScreenState extends State<GameScreen> {
     _syncShownHint();
 
     final Widget body;
-    if (seatRefused) {
+    if (controller.updateRequired) {
+      // Section 27 rule 6: outranks every other body, the takeover card and
+      // the offline end card included. The table behind it is not drawn: a
+      // refused build has no table to show.
+      body = UpdateRequiredView(onHome: _leave);
+    } else if (seatRefused) {
       // C-540 D1: the route is leaving with GameScreenResult.removed. The
       // frames of the pop never draw the offline end card's Play again or the
       // connection-lost card's Reconnect, which cannot succeed for a seat that
