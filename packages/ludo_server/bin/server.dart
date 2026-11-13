@@ -88,6 +88,19 @@ Future<void> _run() async {
     exit(1);
   }
 
+  // docs/PROTOCOL.md section 27 rule 3: the lowest app build allowed to play.
+  // Absent or empty is 0, the check off. A malformed value stops the server
+  // before the port opens, so a bad minimum fails the deploy's health check
+  // rather than refusing every player or none. 64 is EX_USAGE.
+  final int minClientBuild;
+  try {
+    minClientBuild =
+        parseMinClientBuild(Platform.environment['MIN_CLIENT_BUILD']);
+  } on FormatException catch (error) {
+    stderr.writeln('${error.message}');
+    exit(64);
+  }
+
   final RoomRegistry registry = RoomRegistry(
     clock: const SystemClock(),
     secure: Random.secure(),
@@ -102,6 +115,7 @@ Future<void> _run() async {
     trustedProxies: trustedProxies,
     version: version,
     privacyContactEmail: privacyContactEmail,
+    minClientBuild: minClientBuild,
   );
 
   // Startup is everything up to and including the socket being bound and

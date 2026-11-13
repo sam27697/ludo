@@ -18,6 +18,7 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'client_build.dart';
 import 'clock.dart';
 import 'connection.dart';
 import 'link_pages.dart';
@@ -121,6 +122,13 @@ const String _verifyJsonSuffix = '.json';
 /// gets checked against [appSigningFingerprintShape] and what is passed to
 /// [buildAssetLinksJson], so the served document always carries the
 /// canonical upper-case form.
+int _checkedMinClientBuild(int value) {
+  if (value < 0) {
+    throw ArgumentError.value(value, 'minClientBuild', 'must not be negative');
+  }
+  return value;
+}
+
 String? _buildAssetLinksJsonOrNull(String? rawFingerprint) {
   if (rawFingerprint == null || rawFingerprint.isEmpty) {
     return null;
@@ -147,7 +155,9 @@ class WireServer {
     String? appSigningSha256,
     this.automaticTurnExpiry = true,
     Duration? keepaliveInterval,
+    int minClientBuild = 0,
   })  : keepaliveInterval = keepaliveInterval ?? defaultKeepaliveInterval,
+        minClientBuild = _checkedMinClientBuild(minClientBuild),
         _random = random ?? Random.secure(),
         _trustedProxies = trustedProxies,
         _hub = _ConnectionHub(registry),
@@ -187,6 +197,10 @@ class WireServer {
   /// `pingInterval` to `webSocketHandler`. Defaults to
   /// [defaultKeepaliveInterval]; a test passes a shorter one.
   final Duration keepaliveInterval;
+
+  /// Section 27 rule 3: the lowest app build this server lets play. `0`
+  /// turns the check off. Deliberately not reported by `GET /health`.
+  final int minClientBuild;
 
   /// The build identifier reported by `GET /health`. Not otherwise used;
   /// this server does not act differently for one version than another.
@@ -251,12 +265,15 @@ class WireServer {
         return _handlePlainRequest(request, path);
       }
       final String ip = _clientIp(request);
+      final int build = parseClientBuildHeader(
+        request.headers[clientBuildHeader],
+      );
       final shelf.Handler upgrade = webSocketHandler(
         (
           WebSocketChannel channel,
           String? protocol,
         ) {
-          _accept(channel, ip);
+          _accept(channel, ip, build);
         },
         pingInterval: keepaliveInterval,
       );
@@ -357,7 +374,11 @@ class WireServer {
     rateLimiter.prune();
   }
 
-  void _accept(WebSocketChannel channel, String ip) {
+  void _accept(WebSocketChannel channel, String ip, int build) {
+    // Section 27 rule 5: one line per accepted upgrade, before anything else
+    // happens on the socket. The build only; no address, code or name.
+    // ignore: avoid_print
+    print('connect build=$build');
     final Connection conn = Connection(
       channel: channel,
       ip: ip,
@@ -366,7 +387,14 @@ class WireServer {
       clock: clock,
       hub: _hub,
       random: _random,
+      clientBuild: build,
     );
+    if (minClientBuild > 0 && build < minClientBuild) {
+      // Sent before the first inbound frame is read. `_pump` still runs so
+      // the close handshake completes; `Connection.handleFrame` drops what
+      // the peer sends.
+      unawaited(conn.refuseUpdateRequired(minBuild: minClientBuild));
+    }
     unawaited(_pump(channel, conn));
   }
 
