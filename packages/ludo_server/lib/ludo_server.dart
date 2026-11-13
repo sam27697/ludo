@@ -62,6 +62,8 @@ export 'src/envelope.dart'
         encodeEnvelope,
         generateMessageId;
 export 'src/connection.dart' show Connection, RoomHub;
+export 'src/client_build.dart'
+    show clientBuildHeader, parseClientBuildHeader, parseMinClientBuild;
 // The turn timer's frames: the registry decides the turn, this builds
 // what section 12 says goes on the wire for it, and the wire layer only
 // broadcasts. Exported so both halves are testable without a socket.
