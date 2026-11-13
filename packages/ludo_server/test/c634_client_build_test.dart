@@ -25,6 +25,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -528,14 +529,22 @@ Future<void> _until(bool Function() condition, String what, _Fixture f) async {
 // Running bin/server.dart as a child process.
 // ---------------------------------------------------------------------------
 
-/// The package directory, where `dart test` runs and `bin/server.dart` lives.
-Directory _packageRoot() {
-  final Directory dir = Directory.current;
-  if (!File('${dir.path}/bin/server.dart').existsSync()) {
+/// The package directory `bin/server.dart` lives in, resolved from the
+/// package URI so it is the same whether `dart test` runs here or from the
+/// repository root, as `bin/ludo-verify.sh` and CI run it.
+Future<Directory> _packageRoot() async {
+  final Uri? libUri = await Isolate.resolvePackageUri(
+    Uri.parse('package:ludo_server/ludo_server.dart'),
+  );
+  if (libUri == null) {
     throw TestFailure(
-      'expected to run from packages/ludo_server (bin/server.dart under the '
-      'working directory) but the working directory is ${dir.path}',
+      'could not resolve package:ludo_server/ludo_server.dart to a file URI; '
+      'cannot locate bin/server.dart',
     );
+  }
+  final Directory dir = File.fromUri(libUri).parent.parent;
+  if (!File('${dir.path}/bin/server.dart').existsSync()) {
+    throw TestFailure('no bin/server.dart under ${dir.path}');
   }
   return dir;
 }
@@ -1833,7 +1842,7 @@ void main() {
     test(
         'S1: a bad MIN_CLIENT_BUILD stops the start with rc 64 before the '
         'port opens', () async {
-      final Directory root = _packageRoot();
+      final Directory root = await _packageRoot();
       for (final String bad in <String>['abc', '-1', '5.5']) {
         final int port = await _freePort();
         final Process process = await Process.start(
@@ -1890,7 +1899,7 @@ void main() {
         'S2: MIN_CLIENT_BUILD=${jsonEncode(minimum)} starts, and a no-header '
         'socket is ${minimum == '560' ? 'refused' : 'served'}',
         () async {
-          final Directory root = _packageRoot();
+          final Directory root = await _packageRoot();
           final int port = await _freePort();
           final Process process = await Process.start(
             Platform.resolvedExecutable,
