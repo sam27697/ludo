@@ -277,6 +277,7 @@ Every error is one of these codes. A code is never invented at a call site.
 | `SEED_ALREADY_SET` | a second `set_seed` from a seat that already has one. Section 11. |
 | `GAME_OVER` | any action against a FINISHED room, except `rematch`, `resume`, `leave_room`, `game_log` and `ping`. |
 | `INTERNAL` | a bug. Logged with the room code and the sequence number. |
+| `UPDATE_REQUIRED` | the app that opened this socket is older than the server accepts. Sent once, unsolicited, then the connection is closed. Section 27. |
 
 Every inbound message is validated in this order and rejected at the first
 failure, before any state is touched: size, JSON parse, `v`, `t`, `id` shape,
@@ -360,6 +361,7 @@ are, and it is inside what the library accepts:
 | `4002` | unsupported `v` | `PROTOCOL_VERSION` |
 | `4003` | the 60-per-second ceiling | `RATE_LIMITED` |
 | `4004` | this seat was taken over by a newer socket | `BAD_SEAT_TOKEN` |
+| `4005` | the app's build is below the server's minimum (section 27) | `UPDATE_REQUIRED` |
 
 Rules that go with them:
 
@@ -1549,3 +1551,101 @@ move) on every one of that seat's turns for as long as the game lasted.
    - a two-seat game with one seat dropped before its first turn
      reaches `game_over` on the timer with every one of that seat's
      segments after its first turn at 10 000 ms.
+
+## 27. An app too old for the server, 2026-11-13
+
+Until now nothing on the wire said which build of the app opened a socket,
+so the server had no way to turn away an app older than a change it
+depends on, and the player of that app would meet a table that misbehaved
+or a socket that failed for no reason they could see. Once testers have a
+build installed, a build without this section can never be told to
+update, so it ships before the closed test's clock starts.
+
+1. **The header.** On the WebSocket upgrade request (the HTTP `GET` that
+   carries `Upgrade: websocket`), the Android app sends one header:
+
+       Ludo-Client-Build: <decimal integer>
+
+   The value is the app's Android `versionCode`, the integer Google Play
+   orders builds by (`verify.yml` sets it to the commit count). The app
+   omits the header when it cannot read its own build or reads a value
+   below 1. Apps before this section send nothing. It is not part of any
+   frame, so a server that predates this section ignores it, and no
+   payload changes: section 4's "unknown key is `BAD_FIELD`" is untouched.
+
+2. **Reading it.** The server reads the header once per upgrade, case
+   insensitively as HTTP requires. The build is the header's value when it
+   is 1 to 9 ASCII digits (`[0-9]{1,9}`, leading zeros allowed, surrounding
+   whitespace trimmed) and its integer value is at least 1; anything else,
+   including an absent header, an empty value, a sign, a decimal point, ten
+   or more digits, or several comma-joined values, is build `0`.
+
+3. **The minimum.** The server's environment carries `MIN_CLIENT_BUILD`, a
+   non-negative decimal integer. Absent or empty means `0`. `0` turns the
+   check off: no socket is ever refused under this section. A value that
+   is present and not `[0-9]{1,9}` after trimming stops the server at
+   start with a line on stderr naming the variable, before the port
+   opens; a misconfigured minimum must fail the deploy's health check, not
+   silently refuse every player or none.
+
+4. **Refusing.** When the minimum is above `0` and the build is below it,
+   the server completes the upgrade, sends exactly one frame,
+
+       { "v": 1, "t": "error", "id": "<server id>",
+         "d": { "code": "UPDATE_REQUIRED", "message": "<text>", "min_build": <minimum> } }
+
+   with no `re`, and then closes the socket with close code `4005`
+   (section 7.1). The frame is sent before any inbound frame is read. Any
+   frame the client sends on that socket is never processed: it creates no
+   room, joins and resumes nothing, and counts against no rate limit. The
+   refusal is logged as one line,
+   `room=- type=- id=- seat=- outcome=UPDATE_REQUIRED build=<build>`.
+
+5. **Every socket says its build.** Every upgrade the server accepts, refused
+   or not, is logged as one line `connect build=<build>` before anything
+   else happens on it. The build is not personal data; it is how the
+   operator knows which builds are still out there before raising the
+   minimum. No address, code or name goes on that line.
+
+6. **What the app does.** An unsolicited `error` with code
+   `UPDATE_REQUIRED` means this build cannot play on this server. The app
+   does not reconnect, automatically or on a retry tap, on that
+   controller. It replaces whatever the player was looking at (home after
+   create or join, the lobby, the game, the end card) with one screen that
+   says the app needs updating and offers one primary action that opens
+   the app's Google Play page (`market://details?id=app.fayad.ludo`,
+   falling back to `https://play.google.com/store/apps/details?id=app.fayad.ludo`
+   when nothing handles `market:`), and one quiet action back to the home
+   screen. `min_build` is not shown to the player.
+
+7. **Raising the minimum is an operator act, and a careful one.** It is a
+   line in `/srv/apps/ludo/<env>/.env` and a redeploy. It refuses
+   `resume` too, so a game in progress on an older build ends for that
+   player: raise it only when the `connect build=` lines show no live
+   table on an older build, or when the old build is broken anyway. The
+   CI device workflows (`device-smoke.yml`, `screenshots.yml`,
+   `device-matrix.yml`) build without `--build-number` and so carry the
+   pubspec's build number; a minimum above it on production turns
+   device-smoke red until those builds pass a real one.
+
+8. **What does not change.** Every frame, payload, error ordering of
+   section 7 and every existing close code. `/health` does not report the
+   minimum (it reports no configuration value).
+
+9. **Tests this section requires before it is implemented.**
+   - the header parse table of rule 2, each row (absent, empty, `"0"`,
+     `"1"`, `"0007"`, `" 42 "`, `"999999999"`, `"1000000000"`, `"-5"`,
+     `"4.2"`, `"12,13"`, `"abc"`) to its build;
+   - `MIN_CLIENT_BUILD` parse: absent, empty, `"0"`, `"560"` accepted,
+     `"abc"`, `"-1"`, `"5.5"` refused;
+   - minimum `0`: a socket with no header creates a room as today;
+   - minimum `N`: a socket at build `N` and one at `N+1` play as today;
+     a socket at `N-1` and one with no header receive exactly one frame,
+     the `UPDATE_REQUIRED` error with `min_build` `N` and no `re`, then
+     close code `4005`; a `create_room` sent on that socket creates no room
+     and gets no answer;
+   - the app: the header is sent with the build it read and omitted when
+     the build is unknown; on `UPDATE_REQUIRED` the update screen shows in
+     English and Arabic from every screen named in rule 6, its primary
+     action asks to open the `market:` page then the `https` page when the
+     first fails, and no reconnect follows.
