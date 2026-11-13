@@ -52,10 +52,15 @@ const Duration kConnectTimeout = Duration(seconds: 10);
 /// [HttpClient] that is force-closed when it fires. That tears down the
 /// pending connection, and closing the sink first makes a socket that
 /// completes in the same instant close itself as soon as it is wired up.
+///
+/// [clientBuild] is the app's build number (docs/PROTOCOL.md section 27 rule
+/// 1). At 1 or more the upgrade request carries `Ludo-Client-Build` with it
+/// in decimal; null, or anything below 1, sends no such header.
 Future<WireTransport> connectWsTransport(
   Uri url, {
   Duration pingInterval = kKeepaliveInterval,
   Duration connectTimeout = kConnectTimeout,
+  int? clientBuild,
 }) async {
   final client = HttpClient();
   final IOWebSocketChannel channel;
@@ -64,6 +69,9 @@ Future<WireTransport> connectWsTransport(
       url,
       pingInterval: pingInterval,
       customClient: client,
+      headers: (clientBuild != null && clientBuild >= 1)
+          ? <String, Object>{'Ludo-Client-Build': '$clientBuild'}
+          : null,
     );
   } catch (_) {
     client.close(force: true);

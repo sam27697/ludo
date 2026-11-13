@@ -110,6 +110,14 @@
 //                             system text scale 2.0, the slow line showing
 //   133-lobby-connecting-large-text-ar.png  lobby connecting body, Arabic,
 //                             the same
+//   162-game-update-required-en.png  game, English, a PLAYING two seat
+//                             table after the unsolicited UPDATE_REQUIRED
+//                             and the close: the update card alone
+//   163-game-update-required-ar.png  game, Arabic, the same card
+//   164-lobby-update-required-en.png  lobby holding a room, English, the same
+//                             frame: the update card in place of the lobby body
+//   165-game-update-required-ar-2x.png  game, Arabic, system text scale 2.0,
+//                             the same card
 //   (114 stays unused: dropped in run 124, a 360 x 640 surface hung the
 //   emulator. 117, the lobby closed card with no room held, is not built:
 //   the controller cannot be left in that state by any frame sequence.)
@@ -3849,6 +3857,59 @@ void main() {
       shotName: '161-end-no-record-loser-ar-2x',
       locale: const Locale('ar'),
       viewerWins: false,
+      textScale: 2.0,
+    );
+  });
+
+  // ==========================================================================
+  // 162-165: order 636 (C-636), the update card of section 27 rule 6 after the
+  // server's unsolicited UPDATE_REQUIRED and the 4005 close. 162, 163 and 165
+  // are the game screen of a PLAYING table, 164 a lobby holding a room.
+  // Bodies live at the bottom of the file, beside the seat-moved shots.
+  // ==========================================================================
+  testWidgets('capture 162-game-update-required-en', (tester) async {
+    await _shootGameUpdateRequired(
+      tester,
+      binding,
+      shotName: '162-game-update-required-en',
+      locale: const Locale('en'),
+      roomCode: 'UR2E4A',
+      seatToken: 'tok-shot-162',
+      textScale: 1.0,
+    );
+  });
+
+  testWidgets('capture 163-game-update-required-ar', (tester) async {
+    await _shootGameUpdateRequired(
+      tester,
+      binding,
+      shotName: '163-game-update-required-ar',
+      locale: const Locale('ar'),
+      roomCode: 'UR3A5K',
+      seatToken: 'tok-shot-163',
+      textScale: 1.0,
+    );
+  });
+
+  testWidgets('capture 164-lobby-update-required-en', (tester) async {
+    await _shootLobbyUpdateRequired(
+      tester,
+      binding,
+      shotName: '164-lobby-update-required-en',
+      locale: const Locale('en'),
+      roomCode: 'UR4L6W',
+      seatToken: 'tok-shot-164',
+    );
+  });
+
+  testWidgets('capture 165-game-update-required-ar-2x', (tester) async {
+    await _shootGameUpdateRequired(
+      tester,
+      binding,
+      shotName: '165-game-update-required-ar-2x',
+      locale: const Locale('ar'),
+      roomCode: 'UR5G7M',
+      seatToken: 'tok-shot-165',
       textScale: 2.0,
     );
   });
@@ -20315,6 +20376,308 @@ Future<void> _shootLobbySeatMoved(
         reason:
             'capture $shotName ($scenario) $moment: the wifi-off icon belongs '
             'to the plain card',
+      );
+    }
+
+    expectCard('right after the close');
+    await _pumpRealDurationFrames(tester);
+    expectCard('after the settle, before the capture');
+    await _capture(binding, tester, shotName, frames: 0);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// The frame the server sends an app older than its minimum build, and then
+/// the close. The fake transport carries no close code, so the 4005 that
+/// follows the frame on the wire is the end of the stream here.
+Future<void> _refuseBuild(WidgetTester tester, FakeTransport transport) async {
+  transport.pushText(
+    _frame(
+      type: 'error',
+      data: const <String, Object?>{
+        'code': 'UPDATE_REQUIRED',
+        'message': 'x',
+        'min_build': 600,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  transport.endFromFarSide();
+  await tester.pump();
+  await tester.pump();
+}
+
+/// What every update card capture asserts before it shoots: the controller
+/// says the build was refused, the card is the one on screen in the right
+/// language and direction with its two buttons, and none of the cards it
+/// outranks or the banners that must stay under it is drawn.
+void _expectUpdateCard(
+  WidgetTester tester,
+  RoomController controller, {
+  required String shotName,
+  required String scenario,
+  required String moment,
+  required Type screen,
+  required Locale locale,
+}) {
+  final String where = 'capture $shotName ($scenario) $moment';
+  expect(
+    <Object?>[controller.updateRequired, controller.phase],
+    <Object?>[true, RoomPhase.closed],
+    reason:
+        '$where: expected updateRequired true and phase closed, got '
+        '${controller.updateRequired}, ${controller.phase}',
+  );
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(screen)),
+  );
+  expect(
+    loc.localeName,
+    locale.languageCode,
+    reason:
+        '$where: expected locale ${locale.languageCode}, got ${loc.localeName}',
+  );
+  expect(
+    Directionality.of(
+      tester.element(find.byKey(const Key('update-required-view'))),
+    ),
+    locale.languageCode == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+    reason: '$where: the card must follow the locale direction',
+  );
+  expect(
+    find.byKey(const Key('update-required-view')),
+    findsOneWidget,
+    reason:
+        '$where: expected update-required-view on screen; the texts on '
+        'screen are ${_viewText(tester)}',
+  );
+  for (final String text in <String>[
+    loc.updateRequiredTitle,
+    loc.updateRequiredBody,
+    loc.updateRequiredStoreButton,
+    loc.updateRequiredHomeButton,
+  ]) {
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('update-required-view')),
+        matching: find.text(text),
+      ),
+      findsOneWidget,
+      reason: '$where: the card must say "$text"',
+    );
+  }
+  for (final String key in <String>[
+    'update-required-store-button',
+    'update-required-home-button',
+  ]) {
+    expect(
+      find.byKey(Key(key)),
+      findsOneWidget,
+      reason: '$where: expected $key, one widget',
+    );
+  }
+  expect(
+    find.byIcon(Icons.system_update_rounded),
+    findsOneWidget,
+    reason: '$where: the update icon',
+  );
+  for (final String gone in <String>[
+    'game-screen-connection-lost',
+    'game-screen-reconnect-button',
+    'game-screen-reconnecting',
+    'lobby-closed',
+    'lobby-reconnect-button',
+    'lobby-reconnecting',
+    'game-leave-confirm',
+    'quick-chat-sheet',
+  ]) {
+    expect(
+      find.byKey(Key(gone), skipOffstage: false),
+      findsNothing,
+      reason: '$where: $gone must not be drawn next to the update card',
+    );
+  }
+  for (final IconData icon in <IconData>[
+    Icons.phonelink_rounded,
+    Icons.wifi_off_rounded,
+  ]) {
+    expect(
+      find.byIcon(icon),
+      findsNothing,
+      reason: '$where: the icon of a card the update card outranks',
+    );
+  }
+}
+
+/// 162, 163 and 165 (order 636). A PLAYING game, then the server's unsolicited
+/// UPDATE_REQUIRED and the close. The screen's body is the update card and
+/// nothing else of the connection-lost family. [textScale] above 1.0 goes up
+/// once the table is on screen, as in capture 153.
+Future<void> _shootGameUpdateRequired(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String seatToken,
+  required double textScale,
+}) async {
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, text scale $textScale, '
+      'unsolicited UPDATE_REQUIRED min_build 600 then a far-side close';
+  RoomController? controller;
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  try {
+    final _OpenedTrayGame opened = await _openBareGame(
+      tester,
+      binding,
+      shotName: shotName,
+      locale: locale,
+      roomCode: roomCode,
+      seatToken: seatToken,
+    );
+    controller = opened.controller;
+    if (textScale != 1.0) {
+      tester.platformDispatcher.textScaleFactorTestValue = textScale;
+      await tester.pump();
+      final double scaled = MediaQuery.textScalerOf(
+        tester.element(find.byType(GameScreen)),
+      ).scale(10);
+      expect(
+        scaled,
+        10 * textScale,
+        reason:
+            'capture $shotName ($scenario): fixture is broken, expected the '
+            'screen to see text scale $textScale, MediaQuery says ${scaled / 10}',
+      );
+    }
+    await _refuseBuild(tester, opened.transport);
+
+    void expectCard(String moment) => _expectUpdateCard(
+      tester,
+      controller!,
+      shotName: shotName,
+      scenario: scenario,
+      moment: moment,
+      screen: GameScreen,
+      locale: locale,
+    );
+
+    expectCard('right after the close');
+    // The card fades in over 240 ms; 30 frames of 32 ms is past it.
+    await _pumpRealDurationFrames(tester);
+    expectCard('after the settle, before the capture');
+    if (textScale > 1.0) {
+      _expectRectInsideView(
+        tester,
+        find.byKey(const Key('update-required-store-button')),
+        label: 'update-required-store-button',
+        context: 'in capture $shotName ($scenario)',
+      );
+    }
+    await _capture(binding, tester, shotName, frames: 0);
+  } finally {
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+    await _releaseTrayGame(tester, controller);
+  }
+}
+
+/// 164 (order 636). A host lobby holding its room, then the same frame and
+/// close. Unlike the seat-moved card of 124, the update card replaces the lobby
+/// body: the held room is not drawn dimmed under it.
+Future<void> _shootLobbyUpdateRequired(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String seatToken,
+}) async {
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, unsolicited '
+      'UPDATE_REQUIRED min_build 600 then a far-side close';
+  RoomController? controller;
+  try {
+    binding.testTextInput.register();
+    _stubScreenshotChannel(tester);
+    await binding.convertFlutterSurfaceToImage();
+    await (await SharedPreferences.getInstance()).clear();
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+    final FakeTransport transport = FakeTransport();
+    controller = RoomController(
+      serverUrl: Uri.parse(_testUrl),
+      connect: (Uri url) async => transport,
+    );
+    await tester.pumpWidget(
+      _reconnectingCaptureHarness(
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.create,
+          playerName: 'Dee',
+          players: 4,
+        ),
+        locale: locale,
+      ),
+    );
+    await tester.pump();
+    expect(
+      transport.sentRaw,
+      isNotEmpty,
+      reason:
+          'capture $shotName ($scenario): fixture is broken, '
+          'LobbyScreen.initState must have sent create_room',
+    );
+    final String createId = _idOf(transport.sentRaw.last);
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: createId,
+        data: _roomJson(
+          code: roomCode,
+          players: 4,
+          seats: <Map<String, Object?>>[_seatJson(0, name: 'Dee')],
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(
+      controller.phase,
+      RoomPhase.connected,
+      reason:
+          'capture $shotName ($scenario): fixture is broken, the create '
+          'reply must land connected, got ${controller.phase}',
+    );
+
+    await _refuseBuild(tester, transport);
+
+    void expectCard(String moment) {
+      _expectUpdateCard(
+        tester,
+        controller!,
+        shotName: shotName,
+        scenario: scenario,
+        moment: moment,
+        screen: LobbyScreen,
+        locale: locale,
+      );
+      expect(
+        find.byKey(const Key('lobby-stale-room'), skipOffstage: false),
+        findsNothing,
+        reason:
+            'capture $shotName ($scenario) $moment: the update card replaces '
+            'the lobby body, so the held room $roomCode is not drawn under it; '
+            'expected no lobby-stale-room on screen',
       );
     }
 

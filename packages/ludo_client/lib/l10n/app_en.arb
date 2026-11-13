@@ -109,6 +109,22 @@
   "@seatMovedLine": {
     "description": "Title of the card on the game screen and the lobby screen when the server closed this connection because another phone of the same player took the seat over. Its one action is Leave."
   },
+  "updateRequiredTitle": "Update to keep playing",
+  "@updateRequiredTitle": {
+    "description": "Title of the card that replaces the lobby, the table and the end card when the server refuses this build of the app as too old. Also spoken once when the card first appears."
+  },
+  "updateRequiredBody": "This table needs the newest Ludo RNG. Update it on Google Play, then open the same link or code again.",
+  "@updateRequiredBody": {
+    "description": "One line under the title of the update card: what to do, and that the same link or room code works again afterwards. The app name is Ludo RNG."
+  },
+  "updateRequiredStoreButton": "Update on Google Play",
+  "@updateRequiredStoreButton": {
+    "description": "The one filled action of the update card: opens the app's Google Play page."
+  },
+  "updateRequiredHomeButton": "Back to home",
+  "@updateRequiredHomeButton": {
+    "description": "The quiet action of the update card: leaves it for the home screen."
+  },
   "connectionSlowLine": "Taking longer than usual. Check your internet.",
   "@connectionSlowLine": {
     "description": "Second line under a connecting or reconnecting line once it has been showing for 4 seconds: the wait is still going and the player can check their internet."

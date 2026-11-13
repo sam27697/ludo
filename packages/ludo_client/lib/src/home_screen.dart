@@ -687,6 +687,7 @@ class _HomeScreenState extends State<HomeScreen>
     final RoomSnapshot? room = controller.room;
     if (controller.phase == RoomPhase.connected &&
         !controller.seatTakenOver &&
+        !controller.updateRequired &&
         room != null &&
         room.state != RoomState.finished) {
       final int? seat = controller.seat;
@@ -711,11 +712,14 @@ class _HomeScreenState extends State<HomeScreen>
     final bool finished = room != null && room.state == RoomState.finished;
     // C-547 D4: a seat another phone took over is gone for this phone too;
     // keeping the record would let a relaunch resume and take it back.
+    // Section 27 rule 6: a refused build says nothing about the seat. The
+    // record stays, so the same seat resumes after the update.
     final bool seatGone =
-        controller.seatTakenOver ||
-        (controller.phase == RoomPhase.failed &&
-            (controller.errorCode == 'BAD_SEAT_TOKEN' ||
-                controller.errorCode == 'NO_SUCH_ROOM'));
+        !controller.updateRequired &&
+        (controller.seatTakenOver ||
+            (controller.phase == RoomPhase.failed &&
+                (controller.errorCode == 'BAD_SEAT_TOKEN' ||
+                    controller.errorCode == 'NO_SUCH_ROOM')));
     if ((finished || seatGone) && !_seatClearedForOwned) {
       _seatClearedForOwned = true;
       unawaited(SessionMemory.clearSeat());
@@ -859,7 +863,13 @@ class _HomeScreenState extends State<HomeScreen>
     controller.removeListener(_onOwnedControllerChanged);
     _ownedController = null;
     await controller.leave();
+    // Section 27 rule 6: a build the server refused walks home with its seat
+    // record intact, so the same seat resumes once the app is updated.
+    final bool refusedBuild = controller.updateRequired;
     controller.dispose();
+    if (refusedBuild) {
+      return;
+    }
     unawaited(SessionMemory.clearSeat());
     // `_screenDisposed` is set synchronously at the top of dispose(), ahead
     // of the framework's own unmount bookkeeping that `mounted` reads; kept
