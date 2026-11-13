@@ -195,6 +195,12 @@ class RoomController extends ChangeNotifier {
   /// [leave] and [dispose] leave it as it is.
   bool _seatTakenOver = false;
 
+  /// Set by an unsolicited `UPDATE_REQUIRED` error frame (docs/PROTOCOL.md
+  /// section 27 rule 6): the server refused this build. One-way, for the life
+  /// of the controller; nothing clears it, because a reconnect with the same
+  /// build would be refused again.
+  bool _updateRequired = false;
+
   /// True once [leave] has been called, ever. One-way, like [_disposed].
   bool _leftCalled = false;
 
@@ -245,6 +251,11 @@ class RoomController extends ChangeNotifier {
   /// phase next reaches [RoomPhase.connected]. Screens draw the takeover card
   /// instead of the connection-lost card, with no Reconnect.
   bool get seatTakenOver => _seatTakenOver;
+
+  /// Section 27 rule 6: true once the server has refused this build of the
+  /// app. Screens draw the update card instead of anything else, and it
+  /// outranks [seatTakenOver]. No reconnect, automatic or manual, follows.
+  bool get updateRequired => _updateRequired;
   String? get errorCode => _errorCode;
   String? get errorMessage => _errorMessage;
 
@@ -265,7 +276,8 @@ class RoomController extends ChangeNotifier {
       _room!.state != RoomState.finished &&
       !_leftCalled &&
       !_disposed &&
-      !_blocked;
+      !_blocked &&
+      !_updateRequired;
 
   /// Every inbound frame, in arrival order, forwarded from whichever
   /// [RoomConnection] is current. A broadcast controller of its own, not the
@@ -435,6 +447,7 @@ class RoomController extends ChangeNotifier {
     final RoomSnapshot? room = _room;
     final String? token = _cachedSeatToken;
     if (_disposed ||
+        _updateRequired ||
         !(_phase == RoomPhase.closed || _phase == RoomPhase.failed) ||
         room == null ||
         token == null) {
@@ -780,7 +793,7 @@ class RoomController extends ChangeNotifier {
   /// the connection-lost card's Reconnect starts, and sends `rematch` once
   /// the resume succeeds.
   Future<void> reconnectAndRematch() async {
-    if (_disposed) {
+    if (_disposed || _updateRequired) {
       return;
     }
     if (_phase == RoomPhase.connected) {
@@ -1104,6 +1117,10 @@ class RoomController extends ChangeNotifier {
       // and retrying that one would make two phones of one player fight
       // over the seat forever.
       _blocked = true;
+      if (frame.data['code'] == 'UPDATE_REQUIRED' && !_updateRequired) {
+        _updateRequired = true;
+        notifyListeners();
+      }
       if (frame.data['code'] == 'BAD_SEAT_TOKEN') {
         _seatTakenOver = true;
         notifyListeners();
