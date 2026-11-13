@@ -30,7 +30,9 @@ import 'dart:typed_data';
 
 import 'package:ludo_server/ludo_server.dart';
 import 'package:ludo_server/src/connection.dart' show closeCodeUpdateRequired;
+import 'package:stream_channel/stream_channel.dart' show StreamChannelMixin;
 import 'package:test/test.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// The header as the app spells it on the wire (rule 1). Deliberately a
 /// literal here, and not `clientBuildHeader`, so the wire cases do not
@@ -582,6 +584,202 @@ Future<bool> _isListening(int port) async {
   } on TimeoutException {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// An in-memory socket for driving one Connection directly, with no network.
+// ---------------------------------------------------------------------------
+
+/// The sending half of [_MemoryChannel]: records every text frame written and
+/// every close, in order.
+class _MemorySink implements WebSocketSink {
+  final List<Object?> sent = <Object?>[];
+  final List<({int? code, String? reason})> closes =
+      <({int? code, String? reason})>[];
+  final Completer<void> _done = Completer<void>();
+
+  @override
+  void add(Object? data) => sent.add(data);
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) {}
+
+  @override
+  Future<void> addStream(Stream<Object?> stream) => stream.forEach(add);
+
+  @override
+  Future<void> close([int? closeCode, String? closeReason]) async {
+    closes.add((code: closeCode, reason: closeReason));
+    if (!_done.isCompleted) {
+      _done.complete();
+    }
+  }
+
+  @override
+  Future<void> get done => _done.future;
+}
+
+/// A [WebSocketChannel] whose peer is the test: nothing crosses a network, so
+/// the order frames reach `Connection.handleFrame` is exactly the order the
+/// test calls it in.
+class _MemoryChannel extends StreamChannelMixin<Object?>
+    implements WebSocketChannel {
+  final _MemorySink _sink = _MemorySink();
+  final StreamController<Object?> _inbound = StreamController<Object?>();
+
+  @override
+  WebSocketSink get sink => _sink;
+
+  @override
+  Stream<Object?> get stream => _inbound.stream;
+
+  @override
+  String? get protocol => null;
+
+  @override
+  int? get closeCode => _sink.closes.isEmpty ? null : _sink.closes.last.code;
+
+  @override
+  String? get closeReason =>
+      _sink.closes.isEmpty ? null : _sink.closes.last.reason;
+
+  @override
+  Future<void> get ready => Future<void>.value();
+
+  /// Every frame the server side wrote, decoded.
+  List<Map<String, Object?>> get received => _sink.sent
+      .map((Object? raw) => jsonDecode(raw! as String) as Map<String, Object?>)
+      .toList();
+}
+
+/// A hub that remembers every call and delivers nothing, so a frame that
+/// reaches a handler shows up as an attach or a broadcast.
+class _RecordingHub implements RoomHub {
+  final List<String> calls = <String>[];
+
+  @override
+  Connection? attach({required String code, required Connection conn}) {
+    calls.add('attach $code');
+    return null;
+  }
+
+  @override
+  void detach(Connection conn) => calls.add('detach');
+
+  @override
+  void broadcast({
+    required String code,
+    required String type,
+    required Map<String, Object?> data,
+    Connection? exceptConn,
+  }) =>
+      calls.add('broadcast $code $type');
+
+  @override
+  void sendToSeatToken({
+    required String code,
+    required String seatToken,
+    required String type,
+    required Map<String, Object?> data,
+  }) =>
+      calls.add('sendToSeatToken $code $type');
+
+  @override
+  Connection? detachSeatToken({
+    required String code,
+    required String seatToken,
+  }) {
+    calls.add('detachSeatToken $code');
+    return null;
+  }
+}
+
+/// Everything one in-memory scenario shares, built the way the socket layer
+/// builds a connection: one registry, one rate limiter, one hub, one
+/// connection. The random source is seeded, so a failure names a seed that
+/// reproduces it.
+class _Bench {
+  _Bench(this.scenario, {required int clientBuild}) {
+    clock = FakeClock(DateTime.utc(2026, 11, 13));
+    registry = RoomRegistry(clock: clock, secure: Random(seed));
+    rateLimiter = RateLimiter(clock: clock);
+    conn = Connection(
+      channel: channel,
+      ip: ip,
+      registry: registry,
+      rateLimiter: rateLimiter,
+      clock: clock,
+      hub: hub,
+      random: Random(seed),
+      clientBuild: clientBuild,
+    );
+  }
+
+  static const int seed = 634;
+  static const String ip = '203.0.113.34';
+
+  final String scenario;
+  final _MemoryChannel channel = _MemoryChannel();
+  final _RecordingHub hub = _RecordingHub();
+  late final FakeClock clock;
+  late final RoomRegistry registry;
+  late final RateLimiter rateLimiter;
+  late final Connection conn;
+  int _ids = 0;
+
+  String get context => 'scenario="$scenario", seed=$seed, ip=$ip, '
+      'frames received by the peer: ${channel.received}, hub calls: '
+      '${hub.calls}, rooms: ${registry.roomCount}';
+
+  /// A well-formed envelope as the text the wire carries.
+  String frame(String type, Map<String, Object?> data) => jsonEncode(
+        <String, Object?>{
+          'v': 1,
+          't': type,
+          'id': 'c634-unit-${(++_ids).toString().padLeft(4, '0')}',
+          'd': data,
+        },
+      );
+
+  /// A room that exists before the connection under test does anything,
+  /// hosted by somebody else.
+  CreateOk liveRoom() {
+    final CreateResult result = registry.createRoom(
+      name: 'Host',
+      players: 2,
+      rules: const RulesConfig(),
+    );
+    if (result is! CreateOk) {
+      throw TestFailure('the live room could not be made: $result ($context)');
+    }
+    return result;
+  }
+}
+
+/// Runs [body] with `print` captured and returns the lines it printed.
+Future<List<String>> _captureLines(Future<void> Function() body) async {
+  final List<String> lines = <String>[];
+  Object? failure;
+  StackTrace? failureStack;
+  await runZoned(
+    () async {
+      try {
+        await body();
+      } on Object catch (error, stack) {
+        failure = error;
+        failureStack = stack;
+      }
+    },
+    zoneSpecification: ZoneSpecification(
+      print: (Zone self, ZoneDelegate parent, Zone zone, String line) {
+        lines.add(line);
+      },
+    ),
+  );
+  if (failure != null) {
+    Error.throwWithStackTrace(failure!, failureStack!);
+  }
+  return lines;
 }
 
 void main() {
@@ -1391,6 +1589,244 @@ void main() {
         expect(f.registry.roomCount, 1, reason: f._context);
       });
     });
+  });
+
+  group('rule 4: a refused connection drops every frame (no network)', () {
+    const int n = 600;
+
+    test(
+      'D1: create_room, join_room, resume and 70 more frames after the '
+      'refusal change nothing and are never answered',
+      () async {
+        final _Bench b = _Bench(
+          'D1 build 559 refused at minimum $n, create_room, join_room, '
+          'resume, then 6 create_room / 25 join_room / 39 ping',
+          clientBuild: 559,
+        );
+        final CreateOk live = b.liveRoom();
+        final String code = live.room.code;
+        final String hostToken = live.seat.seatToken;
+        final List<String> lines = await _captureLines(() async {
+          await b.conn.refuseUpdateRequired(minBuild: n);
+
+          await b.conn.handleFrame(
+            b.frame('create_room', <String, Object?>{
+              'name': 'Late',
+              'players': 2,
+            }),
+          );
+          await b.conn.handleFrame(
+            b.frame('join_room', <String, Object?>{
+              'code': code,
+              'name': 'Sneak',
+            }),
+          );
+          await b.conn.handleFrame(
+            b.frame('resume', <String, Object?>{
+              'code': code,
+              'seat_token': hostToken,
+            }),
+          );
+          for (int i = 0; i < 6; i++) {
+            await b.conn.handleFrame(
+              b.frame('create_room', <String, Object?>{
+                'name': 'Spam',
+                'players': 2,
+              }),
+            );
+          }
+          for (int i = 0; i < 25; i++) {
+            await b.conn.handleFrame(
+              b.frame('join_room', <String, Object?>{
+                'code': code,
+                'name': 'Spam',
+              }),
+            );
+          }
+          for (int i = 0; i < 39; i++) {
+            await b.conn.handleFrame(b.frame('ping', <String, Object?>{}));
+          }
+        });
+
+        expect(
+          b.registry.roomCount,
+          1,
+          reason: 'rule 4: no create_room on a refused connection makes a '
+              'room; only the live room made before it may exist. '
+              '${b.context}',
+        );
+        expect(
+          b.registry.lookup(code)!.seats,
+          hasLength(1),
+          reason: 'rule 4: the join_room on a refused connection seats '
+              'nobody, so the live room keeps its one seat. ${b.context}',
+        );
+        expect(
+          b.registry.lookup(code)!.seats.single.seatToken,
+          hostToken,
+          reason: 'the live room still holds its original seat. ${b.context}',
+        );
+        expect(
+          b.hub.calls,
+          isEmpty,
+          reason: 'rule 4: nothing a refused connection sends may attach it '
+              'to a room or broadcast to one. ${b.context}',
+        );
+        expect(
+          b.channel.received,
+          hasLength(1),
+          reason: 'rule 4: the only frame the peer ever gets is the one '
+              'UPDATE_REQUIRED error. ${b.context}',
+        );
+        final Map<String, Object?> only = b.channel.received.single;
+        expect(only['t'], 'error', reason: 'got $only. ${b.context}');
+        expect(
+          only.containsKey('re'),
+          isFalse,
+          reason: 'rule 4: the refusal answers nothing, so it has no re. '
+              'got $only. ${b.context}',
+        );
+        final Map<String, Object?> d = only['d']! as Map<String, Object?>;
+        expect(d['code'], 'UPDATE_REQUIRED', reason: '$d. ${b.context}');
+        expect(d['min_build'], n, reason: '$d. ${b.context}');
+        expect(
+          b.channel._sink.closes,
+          hasLength(1),
+          reason: 'the connection is closed once, by the refusal. '
+              '${b.context}',
+        );
+        expect(
+          b.channel._sink.closes.single.code,
+          closeCodeUpdateRequired,
+          reason: 'close code 4005. ${b.context}',
+        );
+        expect(
+          lines.map((String l) => l.trim()).toList(),
+          <String>[
+            'room=- type=- id=- seat=- outcome=UPDATE_REQUIRED build=559',
+          ],
+          reason: 'rule 4: the refusal is the only line logged; nothing '
+              'sent afterwards is logged as handled. ${b.context}',
+        );
+
+        for (int i = 1; i <= 5; i++) {
+          expect(
+            b.rateLimiter.recordCreateRoom(_Bench.ip),
+            isTrue,
+            reason: 'rule 4: the refused connection used none of the 5 '
+                'create_room attempts its IP gets per hour, so attempt $i '
+                'must still be admitted. ${b.context}',
+          );
+        }
+        for (int i = 1; i <= 20; i++) {
+          expect(
+            b.rateLimiter.recordJoinOrResume(_Bench.ip),
+            isTrue,
+            reason: 'rule 4: the refused connection used none of the 20 '
+                'join or resume attempts its IP gets, so attempt $i must '
+                'still be admitted. ${b.context}',
+          );
+        }
+        expect(
+          b.rateLimiter.recordMessage(b.conn),
+          MessageRateOutcome.allowed,
+          reason: 'rule 4: the refused connection counted no message against '
+              'its own per-second window. ${b.context}',
+        );
+      },
+    );
+
+    test(
+      'D2: frames that are not valid envelopes are dropped without an '
+      'error frame or a second close',
+      () async {
+        final _Bench b = _Bench(
+          'D2 build 0 refused at minimum $n, text that is not JSON, binary, '
+          'v 2 and a frame over $maxFrameBytes bytes',
+          clientBuild: 0,
+        );
+        final List<String> lines = await _captureLines(() async {
+          await b.conn.refuseUpdateRequired(minBuild: n);
+          await b.conn.handleFrame('this is not json');
+          await b.conn.handleFrame(<int>[1, 2, 3]);
+          await b.conn.handleFrame(
+            jsonEncode(<String, Object?>{
+              'v': 2,
+              't': 'ping',
+              'id': 'c634-unit-v2-frame',
+              'd': <String, Object?>{},
+            }),
+          );
+          await b.conn.handleFrame(
+            b.frame('create_room', <String, Object?>{
+              'name': 'x' * (maxFrameBytes + 1),
+              'players': 2,
+            }),
+          );
+        });
+        expect(
+          b.channel.received,
+          hasLength(1),
+          reason: 'rule 4: a malformed frame on a refused connection is '
+              'dropped, not answered with BAD_FIELD, TOO_LARGE or '
+              'PROTOCOL_VERSION. ${b.context}',
+        );
+        expect(
+          b.channel._sink.closes,
+          hasLength(1),
+          reason: 'rule 4: no second close (4001 or 4002) follows the '
+              '4005. Closes: ${b.channel._sink.closes}. ${b.context}',
+        );
+        expect(
+          b.channel._sink.closes.single.code,
+          closeCodeUpdateRequired,
+          reason: b.context,
+        );
+        expect(
+          lines,
+          hasLength(1),
+          reason: 'only the refusal line is logged. Lines: $lines. '
+              '${b.context}',
+        );
+      },
+    );
+
+    test(
+      'D3: control, the same create_room and join_room on a connection that '
+      'was not refused are handled',
+      () async {
+        final _Bench b = _Bench(
+          'D3 build 600 not refused, create_room then join_room',
+          clientBuild: 600,
+        );
+        final CreateOk live = b.liveRoom();
+        await _captureLines(() async {
+          await b.conn.handleFrame(
+            b.frame('create_room', <String, Object?>{
+              'name': 'Fine',
+              'players': 2,
+            }),
+          );
+          await b.conn.handleFrame(
+            b.frame('join_room', <String, Object?>{
+              'code': live.room.code,
+              'name': 'Guest',
+            }),
+          );
+        });
+        expect(
+          b.registry.roomCount,
+          2,
+          reason: 'the frames used by D1 are valid: on an ordinary '
+              'connection create_room makes a room. ${b.context}',
+        );
+        expect(
+          b.channel.received.map((Map<String, Object?> f) => f['t']),
+          contains('seat_assigned'),
+          reason: 'an ordinary connection is answered. ${b.context}',
+        );
+      },
+    );
   });
 
   group('rule 3: bin/server.dart as a real process', () {
