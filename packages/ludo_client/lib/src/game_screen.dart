@@ -3760,6 +3760,14 @@ class _GameScreenState extends State<GameScreen> {
         room.state == RoomState.playing;
   }
 
+  /// C-637 D5: this phone no longer holds its seat: it moved to another
+  /// phone, the server refused its token, or the room is gone under a game in
+  /// play. A plain dropped connection is not this, the seat is still mine
+  /// there (C-282, C-290). While it holds, nothing the table draws says this
+  /// phone can act or that it is its turn.
+  bool get _seatLost =>
+      widget.controller.seatTakenOver || _seatRefused || _roomGoneWhilePlaying;
+
   /// C-540 D5: a card that was not up when the route began to leave is not
   /// drawn for the rest of the exit, so the body the player last saw stays.
   bool get _lostCardSuppressed => _leaving && !_lostCardUpAtLeave;
@@ -3963,7 +3971,9 @@ class _GameScreenState extends State<GameScreen> {
     // with it: the only way back to `connected` is a snapshot, and the
     // decision is then taken afresh from the turn that snapshot shows. A
     // decision the server refused over a live link stays latched below.
-    if (widget.controller.phase != RoomPhase.connected) {
+    // C-637 D5: a lost seat sends nothing, whatever phase the controller
+    // still reports.
+    if (widget.controller.phase != RoomPhase.connected || _seatLost) {
       _autoMoveHandledK = null;
       _autoMoveHandledQueue = null;
       _clearPendingHold();
@@ -4278,7 +4288,8 @@ class _GameScreenState extends State<GameScreen> {
         room != null &&
         room.state == RoomState.playing &&
         room.seats.length >= 2;
-    final TurnState? turn = showingPlayingBody ? room.turn : null;
+    // C-637 D5b: a lost seat has no clock to run, and none is re-armed.
+    final TurnState? turn = showingPlayingBody && !_seatLost ? room.turn : null;
 
     if (turn == null) {
       _countdownTimer?.cancel();
@@ -4629,6 +4640,7 @@ class _GameScreenState extends State<GameScreen> {
     _syncFacePick(
       playingOnScreen:
           !controller.updateRequired &&
+          !controller.seatTakenOver &&
           !seatRefused &&
           !rematchGone &&
           !roomGonePlaying &&
@@ -4790,8 +4802,7 @@ class _GameScreenState extends State<GameScreen> {
                           // build, or a seat that moved to another phone) has no
                           // turn state worth drawing: the corner close and the
                           // sound switch stay, the strip goes.
-                          if (!controller.updateRequired &&
-                              !controller.seatTakenOver)
+                          if (!controller.updateRequired && !_seatLost)
                             SeatPipStrip(
                               key: const Key('game-seat-pip-strip'),
                               // C-590 D2: 12 dp so every pip's seat mark draws.
@@ -4845,7 +4856,9 @@ class _GameScreenState extends State<GameScreen> {
                         ],
                       ),
                     ),
-                    if (controller.hasDesynced && !controller.updateRequired)
+                    if (controller.hasDesynced &&
+                        !controller.updateRequired &&
+                        !_seatLost)
                       _desyncBanner(context, loc),
                     Expanded(child: RepaintBoundary(child: body)),
                   ],
@@ -5407,18 +5420,21 @@ class _GameScreenState extends State<GameScreen> {
       clipBehavior: Clip.none,
       children: <Widget>[
         band,
-        PositionedDirectional(
-          start: 0,
-          top: 0,
-          bottom: 0,
-          child: Center(
-            child: HintButton(
-              state: hintState,
-              seatColor: LudoColors.seats[seat.clamp(0, 3)],
-              onTap: _onHintTap,
+        // C-637 D5c: the bulb's room stays so the die does not shift, the
+        // bulb itself goes with the seat.
+        if (!_seatLost)
+          PositionedDirectional(
+            start: 0,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: HintButton(
+                state: hintState,
+                seatColor: LudoColors.seats[seat.clamp(0, 3)],
+                onTap: _onHintTap,
+              ),
             ),
           ),
-        ),
       ],
     );
   }
@@ -5545,6 +5561,7 @@ class _GameScreenState extends State<GameScreen> {
     final int? mySeat = widget.controller.seat;
     final TurnState? turn = room?.turn;
     final bool still =
+        !_seatLost &&
         room != null &&
         room.state == RoomState.playing &&
         room.gameId == shown.gameId &&
@@ -5576,7 +5593,12 @@ class _GameScreenState extends State<GameScreen> {
     // C-560 D2: my time up disables the die like any other turn that is not
     // mine to play; a tap on it plays the die's own invalid-tap shake.
     final bool timeUp = _myTimeUp;
+    // C-637 D5c: the table of a lost seat is drawn as a spectator would see
+    // it, with this phone's seat kept only for the board's own rotation and
+    // colours, so nothing moves. No roll, no ring, no glow, no hint.
+    final bool lost = _seatLost;
     final bool rollEnabled =
+        !lost &&
         !_isEndHeld &&
         !timeUp &&
         !_roomIsFinished(room) &&
@@ -5589,6 +5611,7 @@ class _GameScreenState extends State<GameScreen> {
     // C-462 D1: under the roll queue the rings are every token any alive
     // face can move. Without `legalByFace`, `turn.legal` exactly as before.
     final bool myAwaitMove =
+        !lost &&
         !_isEndHeld &&
         turn != null &&
         turn.seat == seat &&
@@ -5685,6 +5708,7 @@ class _GameScreenState extends State<GameScreen> {
                     offlineTurnSeat,
                     clampScale: metrics.textScaleClamp,
                     stale: stale,
+                    seatLost: lost,
                   ),
                 ),
                 SizedBox(height: metrics.headerGap),
@@ -5701,17 +5725,19 @@ class _GameScreenState extends State<GameScreen> {
                             s.seat: loc.gameSeatOffline(names[s.seat]!),
                       },
                       youLabel: loc.seatYou,
-                      turnSeat: turn?.seat,
+                      turnSeat: lost ? null : turn?.seat,
                       mySeat: seat,
                       legal: legalTokens,
-                      autoMoveToken: _isEndHeld ? null : _pendingAutoMoveToken,
+                      autoMoveToken: _isEndHeld || lost
+                          ? null
+                          : _pendingAutoMoveToken,
                       sentToken: _moveSentToken,
                       onTokenStep: (int stepSeat, int token) =>
                           _onBoardTokenStep(controller, stepSeat),
                       onMoveLanded: _onBoardMoveLanded,
                       onTravelReset: _onBoardTravelReset,
                       safeCue: _safeCue,
-                      facePick: _tokenFacePick(seat),
+                      facePick: lost ? null : _tokenFacePick(seat),
                       onTokenTap: (int index) {
                         if (_isEndHeld) {
                           return;
@@ -5792,8 +5818,10 @@ class _GameScreenState extends State<GameScreen> {
                               seat: _chat!.seat,
                               serial: _chat!.serial,
                             ),
-                      hint: _shownHint?.move,
-                      hintNamesFace: _shownHint?.namesFace ?? false,
+                      hint: lost ? null : _shownHint?.move,
+                      hintNamesFace: lost
+                          ? false
+                          : (_shownHint?.namesFace ?? false),
                     ),
                   ),
                 ),
@@ -6153,7 +6181,18 @@ class _GameScreenState extends State<GameScreen> {
     SeatState? offlineTurnSeat, {
     required double clampScale,
     bool stale = false,
+    bool seatLost = false,
   }) {
+    // C-637 D5a: a lost seat has no turn to announce and no clock. The row
+    // keeps its height so the board does not move.
+    if (seatLost) {
+      return SizedBox(
+        height: _headerRowHeightFor(
+          context,
+          _clampedScaler(context, clampScale),
+        ),
+      );
+    }
     // C-417 D4: the glow is visible exactly while `_autoMoveTimer` is the
     // real 1500ms countdown -- it is only armed (`_startAutoMoveTimer`)
     // once C-408's own wait for the held token's walk has let it start,
