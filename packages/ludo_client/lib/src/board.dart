@@ -67,15 +67,12 @@ double _tokenHitSize(double tokenSize) => math.max(48.0, tokenSize);
 
 /// C-641: the disc of a token as a raised piece lit from above. The fill is
 /// a radial gradient centred above the middle (lighter at the top, the seat
-/// colour through the middle, darker at the bottom), the border is the same
-/// ink edge the flat disc had, and one hard contact shadow sits under it: a
-/// disc the size of the token pushed down by 0.07 of its diameter, so it
-/// shows as a crescent below the bottom edge. It has no blur on purpose: a
-/// blurred mask per token is costly under the dimmed board (it took the CI
-/// emulator down), and a hard crescent reads as contact just as well. The
-/// shadow offset is a fixed logical `Offset`, not run through
-/// Directionality, so light comes from above in Arabic as well. All of it is
-/// static decoration: no image, no shader, nothing animated per frame.
+/// colour through the middle, darker at the bottom) and the border is the
+/// same ink edge the flat disc had. There is no shadow on purpose: a shadow
+/// and the gradient together on every token, under the dimmed board, took the
+/// CI emulator down in four of four runs, and either one alone did not. The
+/// shading in the gradient carries the depth. All of it is static decoration:
+/// no image, no animation, nothing per frame.
 BoxDecoration _tokenBodyDecoration(Color seat, double diameter) {
   final Color lighter = Color.lerp(seat, Colors.white, 0.35)!;
   final Color darker = Color.lerp(seat, Colors.black, 0.22)!;
@@ -91,14 +88,6 @@ BoxDecoration _tokenBodyDecoration(Color seat, double diameter) {
       color: LudoColors.ink.withValues(alpha: 0.55),
       width: math.max(1, diameter * 0.06),
     ),
-    boxShadow: <BoxShadow>[
-      BoxShadow(
-        color: LudoColors.ink.withValues(alpha: 0.30),
-        blurRadius: 0,
-        spreadRadius: 0,
-        offset: Offset(0, diameter * 0.07),
-      ),
-    ],
   );
 }
 
