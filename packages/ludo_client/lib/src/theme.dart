@@ -397,8 +397,9 @@ ThemeData buildAppTheme() {
 }
 
 /// Full-bleed felt atmosphere used behind the home composition. A soft
-/// vertical wash plus a faint grid so the screen does not read as a flat
-/// fill, without competing with the die mark.
+/// vertical wash plus a soft radial light so the screen does not read as a
+/// flat fill, without competing with the die mark. No straight lines: a
+/// ruled pattern reads as graph paper.
 class FeltBackdrop extends StatelessWidget {
   const FeltBackdrop({super.key, required this.child});
 
@@ -429,18 +430,6 @@ class _FeltGrainPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint line = Paint()
-      ..color = LudoColors.feltMid.withValues(alpha: 0.045)
-      ..strokeWidth = 1;
-
-    const double step = 28;
-    for (double x = 0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), line);
-    }
-    for (double y = 0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
-    }
-
     final Paint wash = Paint()
       ..shader = RadialGradient(
         center: const Alignment(0, -0.35),
