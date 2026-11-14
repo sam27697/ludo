@@ -100,6 +100,18 @@ jobs:
           # only exit is the decision at the bottom.
           #
           # Sequence:
+          #  0. Every command that can wait on a device or a build is bound
+          #     by timeout: flutter drive and flutter build apk --profile
+          #     `timeout -k 10 900`, adb install `timeout -k 5 240`, every
+          #     other adb call ADBT (`timeout -k 5 55`, at most 60 s). Run
+          #     43560422414 (api 24) sat in the en-phase adb install from
+          #     05:20:17 until the job was cancelled at 05:57:48, so the en
+          #     phase is bound too. timeout exits 124 on expiry (137 once
+          #     the -k kill was needed); tmo() then prints one plain line
+          #     naming the command and its bound. The exit code is kept, so
+          #     a timed-out drive is a nonzero DRIVE_EXIT and a timed-out
+          #     install a nonzero INSTALL_EXIT, and the gate below treats
+          #     them as it treats any other nonzero code.
           #  1. flutter drive of the launch smoke test, exit code in
           #     DRIVE_EXIT, exactly as device-smoke.yml runs it (--profile
           #     because release strips the VM service the driver needs).
@@ -114,7 +126,7 @@ jobs:
           #     then cleared, and the Arabic phase is appended, so the one
           #     file holds each line once and survives anything the zygote
           #     restart does to the buffer.
-          #  4. Arabic (every adb call from here on is bounded, see below):
+          #  4. Arabic:
           #     adb root, persist.sys.locale=ar, restart zygote, wait
           #     for a new system_server and a working package manager, settle,
           #     then read the configuration back from dumpsys. Only a
@@ -124,8 +136,7 @@ jobs:
           #     does not fail the job: the locale alone is never a gate.
           #     Run 42816615685 (api 30) lost its emulator in this phase and
           #     then sat in a bare `adb logcat -d` ("- waiting for device -")
-          #     until the job timeout, so from the en logcat clear on every adb
-          #     call runs under `timeout -k 5 55` (ADBT, at most 60 s) and
+          #     until the job timeout, so every adb call runs under ADBT and
           #     adb wait-for-device is a poll of adb get-state. up() asks
           #     get-state, lost() prints the one line "emulator lost during
           #     <step>, the Arabic phase was not run" (or "was cut short",
@@ -145,37 +156,49 @@ jobs:
             echo "device-matrix: api-level ${{ matrix.api }}, device emulator-5554, profile Nexus 5, target google_apis, arch x86_64" &&
             set +e;
             API=${{ matrix.api }};
-            flutter drive --profile --driver=test_driver/integration_test.dart --target=integration_test/launch_smoke_test.dart -d emulator-5554;
+            ADBT="timeout -k 5 55";
+            tmo() { if [ "$1" -eq 124 ] || [ "$1" -eq 137 ]; then echo "device-matrix: api $API: $2 timed out after $3 s"; fi; };
+            timeout -k 10 900 flutter drive --profile --driver=test_driver/integration_test.dart --target=integration_test/launch_smoke_test.dart -d emulator-5554;
             DRIVE_EXIT=$?;
+            tmo $DRIVE_EXIT "flutter drive" 900;
             echo "device-matrix: api $API: flutter drive exit code $DRIVE_EXIT";
             echo "device-matrix: api $API: building app.fayad.ludo from lib/main.dart";
-            flutter build apk --profile;
+            timeout -k 10 900 flutter build apk --profile;
             BUILD_EXIT=$?;
+            tmo $BUILD_EXIT "flutter build apk --profile" 900;
             echo "device-matrix: api $API: flutter build apk --profile exit code $BUILD_EXIT";
             INSTALL_EXIT=1;
             if [ "$BUILD_EXIT" -eq 0 ]; then
-            adb install -r build/app/outputs/flutter-apk/app-profile.apk;
+            timeout -k 5 240 adb install -r build/app/outputs/flutter-apk/app-profile.apk;
             INSTALL_EXIT=$?;
+            tmo $INSTALL_EXIT "adb install" 240;
             fi;
             echo "device-matrix: api $API: install exit code $INSTALL_EXIT";
-            adb shell am start -W -n app.fayad.ludo/.MainActivity;
-            echo "device-matrix: api $API: am start exit code $?, waiting 15 s";
+            $ADBT adb shell am start -W -n app.fayad.ludo/.MainActivity;
+            AM_EXIT=$?;
+            tmo $AM_EXIT "adb shell am start -W" 55;
+            echo "device-matrix: api $API: am start exit code $AM_EXIT, waiting 15 s";
             sleep 15;
-            PIDOF_OUT=$(adb shell pidof app.fayad.ludo 2>&1);
+            PIDOF_OUT=$($ADBT adb shell pidof app.fayad.ludo 2>&1);
             PIDOF_EXIT=$?;
+            tmo $PIDOF_EXIT "adb shell pidof" 55;
             PID=$(printf '%s' "$PIDOF_OUT" | tr -d '\r');
             if [ "$PIDOF_EXIT" -eq 127 ]; then
             echo "device-matrix: api $API: pidof is missing on this image, falling back to ps";
-            PID=$(adb shell ps 2>&1 | tr -d '\r' | grep ' app.fayad.ludo$' | awk '{print $2}');
+            PS_OUT=$($ADBT adb shell ps 2>&1);
+            tmo $? "adb shell ps" 55;
+            PID=$(printf '%s' "$PS_OUT" | tr -d '\r' | grep ' app.fayad.ludo$' | awk '{print $2}');
             fi;
             ALIVE=0;
             if printf '%s' "$PID" | grep -qE '^[0-9 ]+$'; then ALIVE=1; fi;
             echo "device-matrix: api $API: process app.fayad.ludo alive=$ALIVE pid=[$PID]";
-            adb exec-out screencap -p > home-api${API}.png;
-            echo "device-matrix: api $API: home-api${API}.png screencap exit code $?, $(wc -c < home-api${API}.png) bytes";
-            adb logcat -d > logcat-api${API}.txt;
+            $ADBT adb exec-out screencap -p > home-api${API}.png;
+            SC_EXIT=$?;
+            tmo $SC_EXIT "adb exec-out screencap" 55;
+            echo "device-matrix: api $API: home-api${API}.png screencap exit code $SC_EXIT, $(wc -c < home-api${API}.png) bytes";
+            $ADBT adb logcat -d > logcat-api${API}.txt;
+            tmo $? "adb logcat -d" 55;
             echo "device-matrix: api $API: en run logcat has $(grep -c 'FATAL EXCEPTION' logcat-api${API}.txt) FATAL EXCEPTION lines and $(grep -cE 'E/flutter|E flutter +:' logcat-api${API}.txt) E/flutter lines";
-            ADBT="timeout -k 5 55";
             LOST="";
             up() { [ "$($ADBT adb get-state 2>/dev/null | tr -d '\r')" = device ]; };
             waitdev() { n=0; while [ "$n" -lt 20 ]; do if up; then return 0; fi; n=$((n+1)); sleep 3; done; return 1; };
