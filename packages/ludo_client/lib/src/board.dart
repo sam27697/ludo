@@ -178,10 +178,14 @@ bool _isSharedTrack(List<_TokenOccupant> occupants) {
 
 /// Centre and diameter of token [tokenIndex] of [seat] drawn at [progress].
 ///
-/// One seat on the cell keeps the old fan: diameter `cellSize * 0.7`,
+/// A token in the yard ([progress] -1) sits on the centre of its yard slot
+/// cell, diameter `cellSize * 0.7`, with no fan: the slot is a marked well
+/// and the token fills it.
+///
+/// One seat on any other cell keeps the old fan: diameter `cellSize * 0.7`,
 /// offset `cellSize * 0.12`, x by even or odd index, y by index below 2.
-/// That is every yard slot, every finished slot, a home-column cell, and
-/// any main-track cell a single seat occupies.
+/// That is every finished slot, a home-column cell, and any main-track cell
+/// a single seat occupies.
 ///
 /// Two or more seats on a main-track cell use the shared slots. Four or
 /// fewer occupants: diameter `cellSize * 0.5`, centre at the cell centre
@@ -238,7 +242,7 @@ _TokenLayout _tokenLayout({
   }
 
   if (slot < 0 || !_isSharedTrack(occupants)) {
-    final double fan = cellSize * 0.12;
+    final double fan = progress == -1 ? 0 : cellSize * 0.12;
     final double fanDx = tokenIndex.isEven ? -fan : fan;
     final double fanDy = tokenIndex < 2 ? -fan : fan;
     return _TokenLayout(
