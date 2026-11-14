@@ -65,6 +65,10 @@ const double _fanDisc = 0.7;
 const double _sharedDisc = 0.5;
 const double _crowdedDisc = 0.36;
 
+// A finished piece's own spot in the centre triangle (C-644): smaller than a
+// fan disc, so it takes the small-disc mark fraction.
+const double _finishedDisc = 0.55;
+
 // SeatMark draws nothing below this (lib/src/seat_mark.dart, rule 4).
 const double _markFloor = 6;
 
@@ -883,8 +887,9 @@ void main() {
       );
     });
 
-    testWidgets('a home column token and a finished token of every seat, '
-        '344 board', (WidgetTester tester) async {
+    testWidgets('a home column token of every seat, 344 board', (
+      WidgetTester tester,
+    ) async {
       const List<int> seats = <int>[0, 1, 2, 3];
       await tester.pumpWidget(
         _boardHarness(
@@ -900,12 +905,12 @@ void main() {
         tester,
         <_Slot>[
           for (final int seat in seats)
-            for (int i = 0; i < 4; i++) (seat, i),
+            for (int i = 0; i < 2; i++) (seat, i),
         ],
         side: 344,
         discFraction: _fanDisc,
         markFraction: _fanMarkFraction,
-        scenario: 'home column progress 52 and 56, finished 57 (x2)',
+        scenario: 'home column progress 52 and 56 (finished 57 x2 alongside)',
       );
     });
 
@@ -930,6 +935,42 @@ void main() {
         discFraction: _fanDisc,
         markFraction: _fanMarkFraction,
         scenario: 'seat 0 alone on progress 30, 280 board',
+      );
+    });
+  });
+
+  // =========================================================================
+  // D2 -- a finished disc (C-644) is under 0.7 of a cell, so it takes 0.62.
+  // This case used to sit in the "keeps 0.5" group above, when a finished
+  // piece was a 0.7 fan disc; C-644 moved it onto its own 0.55 spot, and the
+  // mark follows the disc size.
+  // =========================================================================
+  group('D2: a finished disc (0.55 of a cell) takes the mark at 0.62 '
+      '(C-644)', () {
+    testWidgets('a finished token of every seat, 344 board', (
+      WidgetTester tester,
+    ) async {
+      const List<int> seats = <int>[0, 1, 2, 3];
+      await tester.pumpWidget(
+        _boardHarness(
+          tokens: <int, List<int>>{
+            for (final int seat in seats) seat: <int>[52, 56, 57, 57],
+          },
+          seatsInPlay: seats,
+        ),
+      );
+      await tester.pump();
+
+      _expectAll(
+        tester,
+        <_Slot>[
+          for (final int seat in seats)
+            for (int i = 2; i < 4; i++) (seat, i),
+        ],
+        side: 344,
+        discFraction: _finishedDisc,
+        markFraction: _sharedMarkFraction,
+        scenario: 'finished progress 57 (x2), with home column 52 and 56',
       );
     });
   });
