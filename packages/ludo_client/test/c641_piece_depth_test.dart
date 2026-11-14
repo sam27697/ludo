@@ -1,7 +1,15 @@
 // Pixel proof of order 641 (work/ludo/orders/641-pieces-have-depth.md),
-// decisions D1 (body gradient) and D3' (hard contact shadow, run 149 respec),
-// written from that contract's text alone. D2 (border) and D4 (cost) are not
-// pixel claims.
+// decision D1 (body gradient), written from that contract's text alone. D2
+// (border) and D4 (cost) are not pixel claims.
+//
+// Round 4 (RESPEC 2, run 149). The contact shadow, D3 and its round 2 and 3
+// replacement D3', is withdrawn: four screenshots runs in a row lost the CI
+// emulator at a capture where the board sits under an Opacity layer, and the
+// probe runs showed the shadow, not the gradient, was the cause. The token has
+// no boxShadow. P3 (contact shadow) and P5 (hard shadow edge) are therefore
+// removed. P4 is rewritten for the finished geometry of C-644 (discs of 0.55
+// cell at four fixed spots inside the seat's own centre triangle) and P6 (no
+// shadow) is new.
 //
 // Method. LudoBoard is mounted in a 450 x 450 physical viewport at device
 // pixel ratio 1.0, so one cell is 30 px, inside one RepaintBoundary that is
@@ -17,14 +25,9 @@
 // point 0.62 d to the right reads the paper, so the box is neither larger nor
 // smaller than the painted circle.
 //
-// D3' is one hard ink ellipse the size of the disc, offset 0.07 d down, so it
-// reaches 0.57 d below the centre and has no blur. P3 probes inside it (0.55 d)
-// and P5 probes beyond its edge (0.57 d + 2 px), where a blurred shadow of
-// radius 0.10 d would still darken the paper and a hard one does not.
-//
 // Every probe sits on the vertical axis through the centre. The seat mark
-// covers the middle half of the disc (radius 0.25 d) and the border starts at
-// 0.44 d, so 0.36 d above and below is body only.
+// covers the middle half of the disc on the track (radius 0.25 d) and the
+// border starts at 0.44 d, so 0.36 d above and below is body only.
 //
 // Every case runs twice, with mySeat null and with mySeat 2 (the board
 // rotates, so a seat's finished triangle and track arms change screen side).
@@ -34,31 +37,34 @@
 //
 // Reading choices, reported rather than invented around:
 //
-//   1. P1 to P3 need a main-track cell that is not a safe square, not an
+//   1. P1, P2 and P6 need a main-track cell that is not a safe square, not an
 //      entry square, has no other token on it, and whose probe points fall on
 //      plain track paper. The token of tokenIndex 0 sits 0.12 cell up and to
-//      the left of its cell centre (the one-token fan), so a probe 0.55 d
-//      above its centre lands 0.15 px beyond the cell's top edge, in the
-//      neighbouring cell and on that edge's grid line. Cells are therefore
-//      taken from the two vertical arms (view column 6 or 8, rows 1 to 4 or
-//      10 to 13) whose neighbour above and below is also a plain track cell,
-//      and a P3 probe that falls on a grid line is moved 1 px away from the
-//      disc and named in the failure text.
-//   2. P4 puts the token of tokenIndex 1 on its finished cell, the middle of
-//      its triangle's base. The probe 0.55 d below the centre is checked to be
-//      at least 3 px inside the seat's triangle (clear of the divider lines,
-//      which are the triangle's edges); if it is not, the side point 0.55 d to
-//      the left or right is used, and the case says so.
-//   3. P5 probes 0.57 d + 2 px below the centre. If that pixel is on a grid
+//      the left of its cell centre (the one-token fan). Cells are taken from
+//      the two vertical arms (view column 6 or 8, rows 1 to 4 or 10 to 13)
+//      whose neighbour above and below is also a plain track cell.
+//   2. P4 finishes all sixteen tokens (progress 57), so every one of the four
+//      spots of every triangle is probed. "The triangle's own colour" is read
+//      from the very same pixel of a capture of the same board with no
+//      finished token, so it is what the board paints there, not a colour
+//      assumed from the palette. A harness failure is raised if that bare
+//      pixel is not near the seat colour. The two probes are straight down
+//      (screen space) from the disc centre: 0.36 d is body below the seat
+//      mark, 0.47 d is the middle of the border ring (0.44 d to 0.50 d).
+//   3. P6 probes 0.57 d + 1 px below the centre, as ordered, and also 0.55 d.
+//      The first alone cannot see a hard shadow of the token's size offset
+//      0.07 d down: measured on a track token with d 21 px, that shadow ends at
+//      0.57 d (row 53, partly covered) and the pixel row of 0.57 d + 1 px is
+//      plain paper (0.957) with the shadow present, so the ordered probe
+//      passes on the round-3 code. The 0.55 d point (row 52, luminance 0.488
+//      with that shadow) is the one P3 used. If a probe pixel is on a grid
 //      line it is moved 1 px up (towards the token, never down onto the next
 //      line) and named. Its plain-paper reference is the pixel at the same row,
-//      28 px right of the cell's left edge: same cell, clear of the disc and
-//      its shadow by more than 0.2 d, off the grid lines at pixels 29 and 30.
+//      28 px right of the cell's left edge: same cell, clear of the disc by
+//      more than 0.2 d, off the grid lines at pixels 29 and 30.
 //   4. flutter_test paints every BoxShadow without its blur by default
-//      (debugDisableShadows), so P5 switches that flag off for its own capture
+//      (debugDisableShadows), so P6 switches that flag off for its own capture
 //      and restores it. The other cases run under the default.
-//   5. The triangle's own colour is the seat colour at alpha 1.0 over dieFace
-//      (all four seats are in play), computed from LudoColors.
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -80,9 +86,8 @@ const List<int> _allSeats = <int>[0, 1, 2, 3];
 
 /// Minimum relative-luminance gaps the contract asks for.
 const double _litGap = 0.04;
-const double _shadowGap = 0.02;
 const double _finishedGap = 0.03;
-const double _hardEdgeTolerance = 0.012;
+const double _noShadowTolerance = 0.012;
 
 // ---------------------------------------------------------------------------
 // Harness (copied from test/c639_board_art_test.dart).
@@ -309,59 +314,17 @@ Map<int, List<int>> _tokensFor(List<_Placed> placed) => <int, List<int>>{
     ],
 };
 
-/// A seat's finished token: tokenIndex 1, the middle of the triangle's base.
+/// Every token of every seat finished, on its fixed spot in its triangle.
 List<_Placed> _finishedPlacements(int quarters) => <_Placed>[
   for (final int seat in _allSeats)
-    _Placed(
-      seat,
-      1,
-      57,
-      toView(cellFor(seat: seat, progress: 57, tokenIndex: 1), quarters),
-    ),
+    for (int i = 0; i < 4; i++)
+      _Placed(
+        seat,
+        i,
+        57,
+        toView(cellFor(seat: seat, progress: 57, tokenIndex: i), quarters),
+      ),
 ];
-
-/// The three corners, in board-local px, of [seat]'s centre triangle in the
-/// view: the base on the side of the centre block that its progress-56 cell
-/// touches, the apex at the board centre.
-List<Offset> _triangle(int seat, int quarters) {
-  const double near = 6 * _cell;
-  const double far = 9 * _cell;
-  const Offset middle = Offset(7.5 * _cell, 7.5 * _cell);
-  final BoardCell last = toView(cellFor(seat: seat, progress: 56), quarters);
-  final int dx = last.col - 7;
-  final int dy = last.row - 7;
-  if (dx.abs() > dy.abs()) {
-    final double x = dx < 0 ? near : far;
-    return <Offset>[Offset(x, near), Offset(x, far), middle];
-  }
-  final double y = dy < 0 ? near : far;
-  return <Offset>[Offset(near, y), Offset(far, y), middle];
-}
-
-/// Distance in px from [p] to the nearest edge of the triangle, negative when
-/// [p] is outside it.
-double _insideMargin(Offset p, List<Offset> t) {
-  double signed(Offset a, Offset b) =>
-      (b.dx - a.dx) * (p.dy - a.dy) - (b.dy - a.dy) * (p.dx - a.dx);
-  final double s0 = signed(t[0], t[1]);
-  final double s1 = signed(t[1], t[2]);
-  final double s2 = signed(t[2], t[0]);
-  final bool inside =
-      (s0 >= 0 && s1 >= 0 && s2 >= 0) || (s0 <= 0 && s1 <= 0 && s2 <= 0);
-  double edge(Offset a, Offset b) {
-    final Offset ab = b - a;
-    final double len = ab.distance;
-    return ((b.dx - a.dx) * (p.dy - a.dy) - (b.dy - a.dy) * (p.dx - a.dx))
-            .abs() /
-        len;
-  }
-
-  final double m = math.min(
-    edge(t[0], t[1]),
-    math.min(edge(t[1], t[2]), edge(t[2], t[0])),
-  );
-  return inside ? m : -m;
-}
 
 /// A cell-grid line is drawn 1 px wide on every multiple of one cell, half on
 /// each pixel beside it: pixels 30k - 1 and 30k.
@@ -567,76 +530,75 @@ void main() {
       s.done();
     });
 
-    // P3: contact shadow. The point 0.55 d under the centre (just below the
-    // disc's bottom edge, inside the hard shadow that reaches 0.57 d) is
-    // darker than the point 0.55 d over the centre (just above its top edge)
-    // by at least 0.02 relative luminance.
-    testWidgets('P3 contact shadow on the track, $view', (tester) async {
-      final String name = 'P3 contact shadow on the track, $view';
+    // P4: a finished piece stands apart from its own triangle with no shadow.
+    // Every token of every seat is finished (progress 57), so each sits on one
+    // of the four fixed spots. The point 0.36 d below its centre (inside the
+    // disc, below the seat mark, the darker half of the gradient) and the point
+    // 0.47 d below it (the border ring) each differ from the triangle's own
+    // colour by at least 0.03 relative luminance. The triangle's own colour is
+    // read from the same pixel of a capture with no finished token.
+    testWidgets('P4 finished piece apart from its triangle, $view', (
+      tester,
+    ) async {
+      final String name = 'P4 finished piece apart from its triangle, $view';
+      final _Scene bare = await _render(
+        tester,
+        caseName: name,
+        mySeat: mySeat,
+        placed: const <_Placed>[],
+      );
       final _Scene s = await _render(
         tester,
         caseName: name,
         mySeat: mySeat,
-        placed: _plainTrackPlacements(q),
+        placed: _finishedPlacements(q),
       );
       for (final _Placed p in s.placed) {
         final Rect r = s.discs[p]!;
         final double d = r.width;
-        Offset under = r.center + Offset(0, 0.55 * d);
-        Offset over = r.center - Offset(0, 0.55 * d);
-        final List<String> moved = <String>[];
-        // Move a probe that lands on a grid line by 1 px away from the disc.
-        if (_onGridLine(over.dy.floor())) {
-          moved.add(
-            'above probe ${_px(over)} was on the grid line at pixel row '
-            '${over.dy.floor()}, moved 1 px up',
-          );
-          over = over - const Offset(0, 1);
-        }
-        if (_onGridLine(under.dy.floor())) {
-          moved.add(
-            'below probe ${_px(under)} was on the grid line at pixel row '
-            '${under.dy.floor()}, moved 1 px down',
-          );
-          under = under + const Offset(0, 1);
-        }
-        if (_onGridLine(over.dy.floor()) ||
-            _onGridLine(under.dy.floor()) ||
-            _onGridLine(over.dx.floor())) {
-          fail(
-            'C-641t harness: ${p.label}: a P3 probe is still on a grid line '
-            'after a 1 px move (above ${_px(over)}, below ${_px(under)}). '
-            'Scenario: ${s.scenario}',
-          );
-        }
-        final pu = s.frame.at(under);
-        final po = s.frame.at(over);
-        final double gap = po.rgb.luminance - pu.rgb.luminance;
-        if (gap < _shadowGap) {
-          s.misses.add(
-            '${p.label}, P3 below the disc ${_px(under)} = px (${pu.x}, '
-            '${pu.y}) ${pu.rgb.hex} luminance ${_lum(pu.rgb)}; above the disc '
-            '${_px(over)} = px (${po.x}, ${po.y}) ${po.rgb.hex} luminance '
-            '${_lum(po.rgb)}: expected below darker than above by at least '
-            '$_shadowGap, read ${gap.toStringAsFixed(3)} '
-            '(d ${d.toStringAsFixed(2)} px)'
-            '${moved.isEmpty ? '' : '; ${moved.join('; ')}'}',
-          );
+        final _Rgb own = _Rgb.of(LudoColors.seats[p.seat]);
+        final Map<String, Offset> probes = <String, Offset>{
+          '0.36 d below the centre (body)': r.center + Offset(0, 0.36 * d),
+          '0.47 d below the centre (border ring)':
+              r.center + Offset(0, 0.47 * d),
+        };
+        for (final MapEntry<String, Offset> e in probes.entries) {
+          final px = s.frame.at(e.value);
+          final ground = bare.frame.at(e.value);
+          if (ground.rgb.distanceTo(own) > 60) {
+            fail(
+              'C-641t harness: ${p.label}: the bare-board pixel '
+              '(${ground.x}, ${ground.y}) for the probe ${e.key} reads '
+              '${ground.rgb.hex}, not near the seat colour ${own.hex}, so it '
+              'is not the triangle. Scenario: ${s.scenario}',
+            );
+          }
+          final double gap = (px.rgb.luminance - ground.rgb.luminance).abs();
+          if (gap < _finishedGap) {
+            s.misses.add(
+              '${p.label}, P4 ${e.key} ${_px(e.value)} = px (${px.x}, ${px.y}) '
+              '${px.rgb.hex} luminance ${_lum(px.rgb)}; triangle colour in '
+              'the same pixel with no token ${ground.rgb.hex} luminance '
+              '${_lum(ground.rgb)}: expected a difference of at least '
+              '$_finishedGap, read ${gap.toStringAsFixed(3)} '
+              '(d ${d.toStringAsFixed(2)} px)',
+            );
+          }
         }
       }
       s.done();
     });
 
-    // P5: hard edge. A point 0.57 d + 2 px under the centre, beyond the edge of
-    // a hard shadow, is within 0.012 relative luminance of plain paper in the
-    // same cell away from the token. A blurred shadow of radius 0.10 d
-    // darkens it.
-    testWidgets('P5 shadow has a hard edge, $view', (tester) async {
-      final String name = 'P5 shadow has a hard edge, $view';
+    // P6: no shadow. Two points under the centre of a token on the track are
+    // each within 0.012 relative luminance of plain paper in the same cell
+    // away from the token: 0.57 d + 1 px (just beyond where a hard shadow of
+    // the token's size offset 0.07 d down would end), and 0.55 d (just under
+    // the disc's bottom edge, inside such a shadow).
+    testWidgets('P6 no shadow under the token, $view', (tester) async {
+      final String name = 'P6 no shadow under the token, $view';
       // flutter_test replaces every BoxShadow blur with a hard block
-      // (debugDisableShadows is true under testWidgets), which would make
-      // a blurred shadow look hard here. Draw the real shadows for this
-      // capture only and put the flag back before the test ends.
+      // (debugDisableShadows is true under testWidgets). Draw the real shadows
+      // for this capture only and put the flag back before the test ends.
       debugDisableShadows = false;
       final _Scene s;
       try {
@@ -652,98 +614,45 @@ void main() {
       for (final _Placed p in s.placed) {
         final Rect r = s.discs[p]!;
         final double d = r.width;
-        Offset beyond = r.center + Offset(0, 0.57 * d + 2);
-        String moved = '';
-        if (_onGridLine(beyond.dy.floor())) {
-          moved =
-              '; the probe ${_px(beyond)} was on the grid line at pixel row '
-              '${beyond.dy.floor()}, moved 1 px up';
-          beyond = beyond - const Offset(0, 1);
-        }
-        final Offset reference = Offset(p.cell.col * _cell + 28.5, beyond.dy);
-        final Offset shadowCentre = r.center + Offset(0, 0.07 * d);
-        if (_onGridLine(beyond.dy.floor()) ||
-            _onGridLine(beyond.dx.floor()) ||
-            _onGridLine(reference.dx.floor()) ||
-            beyond.dy >= (p.cell.row + 1) * _cell ||
-            (reference - shadowCentre).distance < 0.7 * d) {
-          fail(
-            'C-641t harness: ${p.label}: a P5 probe is unusable (probe '
-            '${_px(beyond)}, reference ${_px(reference)}, disc centre '
-            '${_px(r.center)}, d ${d.toStringAsFixed(2)}). '
-            'Scenario: ${s.scenario}',
-          );
-        }
-        final pb = s.frame.at(beyond);
-        final pr = s.frame.at(reference);
-        final double gap = (pb.rgb.luminance - pr.rgb.luminance).abs();
-        if (gap > _hardEdgeTolerance) {
-          s.misses.add(
-            '${p.label}, P5 beyond the shadow edge ${_px(beyond)} = px '
-            '(${pb.x}, ${pb.y}) ${pb.rgb.hex} luminance ${_lum(pb.rgb)}; paper '
-            'reference in the same cell ${_px(reference)} = px (${pr.x}, '
-            '${pr.y}) ${pr.rgb.hex} luminance ${_lum(pr.rgb)}: expected a '
-            'difference of at most $_hardEdgeTolerance, read '
-            '${gap.toStringAsFixed(3)} (d ${d.toStringAsFixed(2)} px)$moved',
-          );
-        }
-      }
-      s.done();
-    });
-
-    // P4: a finished piece on its own triangle. The point 0.55 d below the
-    // centre differs from the triangle's own colour by relative luminance at
-    // least 0.03. If that point is not inside the triangle, the side point
-    // 0.55 d left or right is used, whichever stays inside.
-    testWidgets('P4 finished piece on its triangle, $view', (tester) async {
-      final String name = 'P4 finished piece on its triangle, $view';
-      final _Scene s = await _render(
-        tester,
-        caseName: name,
-        mySeat: mySeat,
-        placed: _finishedPlacements(q),
-      );
-      for (final _Placed p in s.placed) {
-        final Rect r = s.discs[p]!;
-        final double d = r.width;
-        final List<Offset> tri = _triangle(p.seat, q);
-        final _Rgb ground = _Rgb.of(LudoColors.seats[p.seat]);
-        // Opaque seat colour over dieFace is the seat colour itself.
-        Offset at = r.center + Offset(0, 0.55 * d);
-        String which = '0.55 d below the centre';
-        if (_insideMargin(at, tri) < 3) {
-          final Offset left = r.center - Offset(0.55 * d, 0);
-          final Offset right = r.center + Offset(0.55 * d, 0);
-          final Offset? side = _insideMargin(left, tri) >= 3
-              ? left
-              : _insideMargin(right, tri) >= 3
-              ? right
-              : null;
-          if (side == null) {
+        final Map<String, double> depths = <String, double>{
+          '0.57 d + 1 px': 0.57 * d + 1,
+          '0.55 d': 0.55 * d,
+        };
+        for (final MapEntry<String, double> e in depths.entries) {
+          Offset below = r.center + Offset(0, e.value);
+          String moved = '';
+          if (_onGridLine(below.dy.floor())) {
+            moved =
+                '; the probe ${_px(below)} was on the grid line at pixel row '
+                '${below.dy.floor()}, moved 1 px up';
+            below = below - const Offset(0, 1);
+          }
+          final Offset reference = Offset(p.cell.col * _cell + 28.5, below.dy);
+          if (_onGridLine(below.dy.floor()) ||
+              _onGridLine(below.dx.floor()) ||
+              _onGridLine(reference.dx.floor()) ||
+              below.dy >= (p.cell.row + 1) * _cell ||
+              (reference - r.center).distance < 0.7 * d) {
             fail(
-              'C-641t harness: ${p.label}: neither the point below ${_px(at)} '
-              'nor the side points ${_px(left)} and ${_px(right)} lie 3 px '
-              'inside the seat triangle ${tri.map(_px).join(', ')}. '
+              'C-641t harness: ${p.label}: a P6 probe is unusable (probe '
+              '${e.key} ${_px(below)}, reference ${_px(reference)}, disc '
+              'centre ${_px(r.center)}, d ${d.toStringAsFixed(2)}). '
               'Scenario: ${s.scenario}',
             );
           }
-          at = side;
-          which = side == left
-              ? '0.55 d left of the centre (the point below left the triangle)'
-              : '0.55 d right of the centre (the point below left the '
-                    'triangle)';
-        }
-        final px = s.frame.at(at);
-        final double gap = (px.rgb.luminance - ground.luminance).abs();
-        if (gap < _finishedGap) {
-          s.misses.add(
-            '${p.label}, P4 $which ${_px(at)} = px (${px.x}, ${px.y}) '
-            '${px.rgb.hex} luminance ${_lum(px.rgb)}; triangle colour '
-            '${ground.hex} luminance ${_lum(ground)}: expected a difference '
-            'of at least $_finishedGap, read ${gap.toStringAsFixed(3)} '
-            '(d ${d.toStringAsFixed(2)} px, triangle '
-            '${tri.map(_px).join(' ')})',
-          );
+          final pb = s.frame.at(below);
+          final pr = s.frame.at(reference);
+          final double gap = (pb.rgb.luminance - pr.rgb.luminance).abs();
+          if (gap > _noShadowTolerance) {
+            s.misses.add(
+              '${p.label}, P6 ${e.key} under the centre ${_px(below)} = px '
+              '(${pb.x}, ${pb.y}) ${pb.rgb.hex} luminance ${_lum(pb.rgb)}; '
+              'paper reference in the same cell ${_px(reference)} = px '
+              '(${pr.x}, ${pr.y}) ${pr.rgb.hex} luminance ${_lum(pr.rgb)}: '
+              'expected a difference of at most $_noShadowTolerance, read '
+              '${gap.toStringAsFixed(3)} (d ${d.toStringAsFixed(2)} px)$moved',
+            );
+          }
         }
       }
       s.done();
