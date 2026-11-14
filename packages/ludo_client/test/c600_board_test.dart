@@ -51,7 +51,7 @@ import 'package:ludo_client/src/theme.dart';
 // The contract's numbers, written out once. The factor is the one the yard
 // already uses for a seat not in play.
 const double _mutedFactor = 0.35;
-const double _homeAlpha = 0.32;
+const double _homeAlpha = 0.45;
 const double _entryAlpha = 0.85;
 const double _trackAlpha = 0.65;
 
@@ -159,7 +159,7 @@ Color _expectedHome(int seat, {required bool muted}) => Color.alphaBlend(
   LudoColors.seats[seat].withValues(
     alpha: muted ? _homeAlpha * _mutedFactor : _homeAlpha,
   ),
-  LudoColors.dieFace,
+  LudoColors.paperElevated,
 );
 
 Color _expectedEntry(int seat, {required bool muted}) => Color.alphaBlend(

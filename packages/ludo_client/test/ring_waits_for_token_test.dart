@@ -54,7 +54,8 @@ Map<int, List<int>> _allInYard() => <int, List<int>>{
 /// cell: `toView` of `cellFor`'s cell centre under `viewQuarters(mySeat)`
 /// plus the fan offset `_tokenLayer` documents (`cellSize * 0.12`, negated
 /// for an even index on one axis, negated again for index < 2 on the
-/// other). Mirrors board.dart's own math rather than inventing a second
+/// other; a token in the yard takes no fan, it sits on its slot cell's
+/// centre). Mirrors board.dart's own math rather than inventing a second
 /// formula that could silently disagree with the widget under test, the
 /// same reasoning test/token_travel_test.dart's identical helper gives.
 Offset _expectedFanCenter({
@@ -67,7 +68,7 @@ Offset _expectedFanCenter({
     cellFor(seat: seat, progress: progress, tokenIndex: tokenIndex),
     viewQuarters(mySeat),
   );
-  final double fan = _cellSize * 0.12;
+  final double fan = progress == -1 ? 0 : _cellSize * 0.12;
   final double fanDx = tokenIndex.isEven ? -fan : fan;
   final double fanDy = tokenIndex < 2 ? -fan : fan;
   return Offset(
