@@ -199,6 +199,8 @@ jobs:
           arch: x86_64
           profile: "Nexus 5"
           disable-animations: false
+          # Motion ran 119-155 s against the 150 s bound (default 2 cores); the runner has 4 vCPU.
+          cores: 4
           script: bash packages/ludo_client/tool/record_motion.sh
 
       # `if: always()` so artifacts and drive logs collected up to any point of
