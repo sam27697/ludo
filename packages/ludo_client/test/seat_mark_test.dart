@@ -442,19 +442,25 @@ void main() {
   });
 
   // ===========================================================================
-  // Rule 2 -- every token carries its seat's mark, centred, at 50% of the
-  // drawn token diameter, in every state.
+  // Rule 2 -- every token carries its seat's mark, centred, sized by its own
+  // drawn diameter: 50% of a disc of 0.7 cell and up, 62% of a smaller one
+  // (shared slots, and the finished spots of C-644), in every state.
   // ===========================================================================
-  group('Rule 2: every token carries its seat mark at 50% of its diameter', () {
+  group('Rule 2: every token carries its seat mark at 50% of its diameter '
+      '(62% under 0.7 cell)', () {
     testWidgets(
       'all four seats, each with a token in the yard, on the track, in the '
       r'home column and finished: each token-$seat-$i has exactly one '
-      'SeatMark of that seat at 50% of the token diameter',
+      'SeatMark of that seat at the ratio its own drawn size calls for',
       (tester) async {
         await tester.pumpWidget(
           _staticBoardHarness(tokens: _tokensInEveryState()),
         );
         await tester.pump();
+
+        final double cell = tester.getSize(find.byType(LudoBoard)).width / 15;
+        int smallDiscs = 0;
+        int largeDiscs = 0;
 
         for (final int seat in _seats) {
           for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++) {
@@ -493,20 +499,49 @@ void main() {
 
             final double tokenDiameter = tester.getSize(tokenFinder).width;
             final double markDiameter = tester.getSize(markFinder).width;
+            // The size rule: a disc under 0.7 cell takes 0.62, any other 0.5.
+            final bool small = tokenDiameter < cell * 0.7 - 0.01;
+            final double ratio = small ? 0.62 : 0.5;
+            if (small) {
+              smallDiscs++;
+            } else {
+              largeDiscs++;
+            }
             // Kills: the mark given a fixed size regardless of the token's
-            // own drawn diameter, or a size fraction other than 50%
-            // (e.g. 100% of the disc, which would draw outside it).
+            // own drawn diameter, a single fraction for every disc (0.5 on a
+            // small finished disc clears the floor too narrowly, 0.62 on a
+            // full disc crowds it), or 100% of the disc, which would draw
+            // outside it.
             expect(
-              (markDiameter - tokenDiameter / 2).abs() <= 1.0,
-              isTrue,
+              markDiameter,
+              closeTo(tokenDiameter * ratio, 0.05),
               reason:
                   'token-$seat-$tokenIndex is drawn at diameter '
-                  '$tokenDiameter; its SeatMark must be $tokenDiameter / 2 '
-                  '= ${tokenDiameter / 2} within 1 logical px, got '
-                  '$markDiameter (seed: seat=$seat, token=$tokenIndex)',
+                  '$tokenDiameter (${tokenDiameter / cell} cell); its '
+                  'SeatMark must be $ratio x that = '
+                  '${tokenDiameter * ratio}, got $markDiameter (seed: '
+                  'seat=$seat, token=$tokenIndex, '
+                  'progress=${_tokensInEveryState()[seat]![tokenIndex]}, '
+                  'board=$_boardSide)',
             );
           }
         }
+
+        // The fixture holds both classes, so the rule is not checked
+        // against one ratio only: yard, track and home column discs are
+        // full size, the finished one is the small spot.
+        expect(
+          smallDiscs,
+          _seats.length,
+          reason:
+              'expected one small (under 0.7 cell) disc per seat, got '
+              '$smallDiscs; the fixture no longer covers the finished spot',
+        );
+        expect(
+          largeDiscs,
+          _seats.length * 3,
+          reason: 'expected three full-size discs per seat, got $largeDiscs',
+        );
       },
     );
 

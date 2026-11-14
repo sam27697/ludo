@@ -176,16 +176,83 @@ bool _isSharedTrack(List<_TokenOccupant> occupants) {
   return seats.length >= 2;
 }
 
+/// Base ends `a` and `b` and the apex of [seat]'s triangle in the centre
+/// block, in view coordinates. The base lies on the side of the block `[6c,
+/// 9c]` that cell 56 of the seat's home column touches, `a` the end with the
+/// smaller coordinate along it; the apex is the middle of the block. The
+/// board painter and the finished-token layout both read this, so a token
+/// can only rest on the triangle that is drawn.
+(Offset, Offset, Offset) _centreTriangle(
+  int seat,
+  int quarters,
+  double cellSize,
+) {
+  final double near = 6 * cellSize;
+  final double far = 9 * cellSize;
+  final BoardCell last = toView(cellFor(seat: seat, progress: 56), quarters);
+  final int dx = last.col - 7;
+  final int dy = last.row - 7;
+  final Offset a;
+  final Offset b;
+  if (dx.abs() > dy.abs()) {
+    final double x = dx < 0 ? near : far;
+    a = Offset(x, near);
+    b = Offset(x, far);
+  } else {
+    final double y = dy < 0 ? near : far;
+    a = Offset(near, y);
+    b = Offset(far, y);
+  }
+  return (a, b, Offset(7.5 * cellSize, 7.5 * cellSize));
+}
+
+/// The four fixed spots of a finished token inside its seat's triangle, as
+/// (u, v) in cells: u along the base from `a` towards `b`, v from the base
+/// towards the apex. Index 0 to 2 in a row against the base, 3 above the
+/// middle one. Each disc (diameter `cellSize * 0.55`) clears both slanted
+/// sides and its neighbours.
+const List<(double, double)> _finishedSpots = <(double, double)>[
+  (0.86, 0.31),
+  (1.50, 0.31),
+  (2.14, 0.31),
+  (1.50, 0.95),
+];
+
+/// Centre and diameter of finished token [tokenIndex] of [seat]: one of the
+/// four [_finishedSpots] of the seat's own triangle, whoever else is home.
+_TokenLayout _finishedLayout({
+  required int seat,
+  required int tokenIndex,
+  required double cellSize,
+  required int quarters,
+}) {
+  final (Offset a, Offset b, Offset apex) = _centreTriangle(
+    seat,
+    quarters,
+    cellSize,
+  );
+  final Offset along = (b - a) / (b - a).distance;
+  final Offset baseMiddle = (a + b) / 2;
+  final Offset inward = (apex - baseMiddle) / (apex - baseMiddle).distance;
+  final (double u, double v) = _finishedSpots[tokenIndex];
+  return _TokenLayout(
+    center: a + along * (u * cellSize) + inward * (v * cellSize),
+    size: cellSize * 0.55,
+  );
+}
+
 /// Centre and diameter of token [tokenIndex] of [seat] drawn at [progress].
 ///
 /// A token in the yard ([progress] -1) sits on the centre of its yard slot
 /// cell, diameter `cellSize * 0.7`, with no fan: the slot is a marked well
 /// and the token fills it.
 ///
+/// A finished token ([progress] 57) rests in its own seat's centre triangle
+/// whatever else is on the board: see [_finishedLayout].
+///
 /// One seat on any other cell keeps the old fan: diameter `cellSize * 0.7`,
 /// offset `cellSize * 0.12`, x by even or odd index, y by index below 2.
-/// That is every finished slot, a home-column cell, and any main-track cell
-/// a single seat occupies.
+/// That is a home-column cell and any main-track cell a single seat occupies.
 ///
 /// Two or more seats on a main-track cell use the shared slots. Four or
 /// fewer occupants: diameter `cellSize * 0.5`, centre at the cell centre
@@ -217,6 +284,14 @@ _TokenLayout _tokenLayout({
   int Function(int seat, int tokenIndex)? progressOf,
   bool Function(int seat, int tokenIndex)? isCrossing,
 }) {
+  if (progress == 57) {
+    return _finishedLayout(
+      seat: seat,
+      tokenIndex: tokenIndex,
+      cellSize: cellSize,
+      quarters: viewQuarters(mySeat),
+    );
+  }
   final BoardCell cell = cellFor(
     seat: seat,
     progress: progress,
@@ -1010,13 +1085,24 @@ class _LudoBoardState extends State<LudoBoard> {
     final List<_CellGroup> groups = <_CellGroup>[];
     for (final MapEntry<BoardCell, List<int>> entry in byCell.entries) {
       final BoardCell viewed = toView(entry.key, quarters);
+      final List<int> indices = entry.value..sort();
+      // A finished token is drawn on its spot in the seat's triangle, not on
+      // its cell, and a cell never holds two finished tokens of one seat.
+      final bool finished = progresses[indices.first] == 57;
       groups.add(
         _CellGroup(
-          center: Offset(
-            viewed.col * cellSize + cellSize / 2,
-            viewed.row * cellSize + cellSize / 2,
-          ),
-          indices: entry.value..sort(),
+          center: finished
+              ? _finishedLayout(
+                  seat: mySeat,
+                  tokenIndex: indices.first,
+                  cellSize: cellSize,
+                  quarters: quarters,
+                ).center
+              : Offset(
+                  viewed.col * cellSize + cellSize / 2,
+                  viewed.row * cellSize + cellSize / 2,
+                ),
+          indices: indices,
         ),
       );
     }
@@ -1351,8 +1437,8 @@ class _LudoBoardState extends State<LudoBoard> {
 
     // A1: pull back further only if a yard token's actual painted disc (not
     // its enlarged hit box) reaches into the row. At this board's own
-    // proportions a yard slot's disc never does -- its own fan offset keeps
-    // it inside the row next to the edge one -- but the rule reads "never
+    // proportions a yard slot's disc never does -- it sits on the centre of
+    // its cell, inside the row next to the edge one -- but the rule reads "never
     // overlaps the disc", not "never overlaps it given today's numbers", so
     // the clamp stays rather than being assumed away.
     for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++) {
@@ -3605,25 +3691,12 @@ class _BoardPainter extends CustomPainter {
   void _paintCentreHome(Canvas canvas, double cellSize, int quarters) {
     final double near = 6 * cellSize;
     final double far = 9 * cellSize;
-    final Offset middle = Offset(7.5 * cellSize, 7.5 * cellSize);
     for (var seat = 0; seat < 4; seat++) {
-      final BoardCell last = toView(
-        cellFor(seat: seat, progress: 56),
+      final (Offset a, Offset b, Offset middle) = _centreTriangle(
+        seat,
         quarters,
+        cellSize,
       );
-      final int dx = last.col - 7;
-      final int dy = last.row - 7;
-      final Offset a;
-      final Offset b;
-      if (dx.abs() > dy.abs()) {
-        final double x = dx < 0 ? near : far;
-        a = Offset(x, near);
-        b = Offset(x, far);
-      } else {
-        final double y = dy < 0 ? near : far;
-        a = Offset(near, y);
-        b = Offset(far, y);
-      }
       final Path triangle = Path()
         ..moveTo(a.dx, a.dy)
         ..lineTo(b.dx, b.dy)
