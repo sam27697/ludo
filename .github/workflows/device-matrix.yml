@@ -16,7 +16,12 @@ name: device-matrix
 # is off the hour and off minute 0 for the queueing reason given there, and on
 # a different minute from device-smoke's daily 37.
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      kill_emulator_before_ar:
+        description: "Run adb emu kill right before the Arabic phase, to prove the emulator-lost path on a real runner"
+        type: boolean
+        default: false
   schedule:
     - cron: "11 4 * * 2"
   pull_request:
@@ -109,13 +114,28 @@ jobs:
           #     then cleared, and the Arabic phase is appended, so the one
           #     file holds each line once and survives anything the zygote
           #     restart does to the buffer.
-          #  4. Arabic: adb root, persist.sys.locale=ar, restart zygote, wait
+          #  4. Arabic (every adb call from here on is bounded, see below):
+          #     adb root, persist.sys.locale=ar, restart zygote, wait
           #     for a new system_server and a working package manager, settle,
           #     then read the configuration back from dumpsys. Only a
           #     configuration that shows ar (or ldrtl) counts as switched, and
           #     only then is the app relaunched and home-ar-api<N>.png taken.
           #     Anything else prints plainly that no Arabic frame exists and
           #     does not fail the job: the locale alone is never a gate.
+          #     Run 42816615685 (api 30) lost its emulator in this phase and
+          #     then sat in a bare `adb logcat -d` ("- waiting for device -")
+          #     until the job timeout, so from the en logcat clear on every adb
+          #     call runs under `timeout -k 5 55` (ADBT, at most 60 s) and
+          #     adb wait-for-device is a poll of adb get-state. up() asks
+          #     get-state, lost() prints the one line "emulator lost during
+          #     <step>, the Arabic phase was not run" (or "was cut short",
+          #     once the locale property was sent) and sets LOST, and every
+          #     later Arabic step is guarded by [ -z "$LOST" ], so the script
+          #     falls through to the decision with whatever logcat can be read.
+          #     Losing the emulator here does not fail the job by itself.
+          #     The dispatch input kill_emulator_before_ar runs adb emu kill
+          #     right before the phase to prove that path; empty or false (the
+          #     schedule, a pull request) is today's behaviour.
           #  5. the gate: fail on a nonzero drive exit, a process not alive
           #     after 15 s (a failed build or install lands here too, with
           #     their exit codes printed), or a FATAL EXCEPTION whose Process
@@ -155,37 +175,68 @@ jobs:
             echo "device-matrix: api $API: home-api${API}.png screencap exit code $?, $(wc -c < home-api${API}.png) bytes";
             adb logcat -d > logcat-api${API}.txt;
             echo "device-matrix: api $API: en run logcat has $(grep -c 'FATAL EXCEPTION' logcat-api${API}.txt) FATAL EXCEPTION lines and $(grep -cE 'E/flutter|E flutter +:' logcat-api${API}.txt) E/flutter lines";
-            adb logcat -c;
+            ADBT="timeout -k 5 55";
+            LOST="";
+            up() { [ "$($ADBT adb get-state 2>/dev/null | tr -d '\r')" = device ]; };
+            waitdev() { n=0; while [ "$n" -lt 20 ]; do if up; then return 0; fi; n=$((n+1)); sleep 3; done; return 1; };
+            lost() { LOST="$1"; echo "device-matrix: api $API: emulator lost during $1, the Arabic phase $2"; };
+            $ADBT adb logcat -c;
             AR_OK=0;
-            adb shell am force-stop app.fayad.ludo;
-            ROOT_OUT=$(adb root 2>&1);
+            KILL_AR="${{ inputs.kill_emulator_before_ar }}";
+            if [ "$KILL_AR" = "true" ]; then
+            echo "device-matrix: api $API: kill_emulator_before_ar is set, running adb emu kill before the Arabic phase";
+            $ADBT adb emu kill;
+            echo "device-matrix: api $API: adb emu kill exit code $?";
+            sleep 5;
+            fi;
+            $ADBT adb shell am force-stop app.fayad.ludo;
+            if ! up; then lost "the force-stop of the app" "was not run"; fi;
+            if [ -z "$LOST" ]; then
+            ROOT_OUT=$($ADBT adb root 2>&1);
             echo "device-matrix: api $API: adb root said: $ROOT_OUT";
-            adb wait-for-device;
+            if ! waitdev; then lost "adb root" "was not run"; fi;
+            fi;
+            if [ -z "$LOST" ]; then
             if printf '%s' "$ROOT_OUT" | grep -q 'cannot run as root'; then
             echo "device-matrix: api $API: locale NOT switched, adbd refuses root on this image, no Arabic frame will be taken";
             else
-            SS_BEFORE=$(adb shell pidof system_server | tr -d '\r');
-            adb shell "setprop persist.sys.locale ar; setprop ctl.restart zygote";
+            SS_BEFORE=$($ADBT adb shell pidof system_server | tr -d '\r');
+            $ADBT adb shell "setprop persist.sys.locale ar; setprop ctl.restart zygote";
             echo "device-matrix: api $API: locale property set and zygote restarted, system_server was pid [$SS_BEFORE], waiting for the framework";
-            for i in $(seq 1 90); do SS_NOW=$(adb shell pidof system_server | tr -d '\r'); if [ -n "$SS_NOW" ] && [ "$SS_NOW" != "$SS_BEFORE" ]; then break; fi; sleep 2; done;
-            for i in $(seq 1 90); do if adb shell pm path android 2>/dev/null | grep -q '^package:'; then break; fi; sleep 2; done;
+            if ! up; then lost "the locale switch" "was cut short"; fi;
+            if [ -z "$LOST" ]; then
+            DOWN=0; for i in $(seq 1 90); do SS_NOW=$($ADBT adb shell pidof system_server | tr -d '\r'); if [ -n "$SS_NOW" ] && [ "$SS_NOW" != "$SS_BEFORE" ]; then break; fi; if up; then DOWN=0; else DOWN=$((DOWN+1)); fi; if [ "$DOWN" -ge 10 ]; then lost "the wait for a new system_server" "was cut short"; break; fi; sleep 2; done;
+            fi;
+            if [ -z "$LOST" ]; then
+            DOWN=0; for i in $(seq 1 90); do if $ADBT adb shell pm path android 2>/dev/null | grep -q '^package:'; then break; fi; if up; then DOWN=0; else DOWN=$((DOWN+1)); fi; if [ "$DOWN" -ge 10 ]; then lost "the wait for the package manager" "was cut short"; break; fi; sleep 2; done;
+            fi;
+            if [ -z "$LOST" ]; then
             sleep 20;
-            adb shell input keyevent 82;
-            CONFIG_LINE=$(adb shell dumpsys activity 2>&1 | tr -d '\r' | grep -m1 -E 'mGlobalConfiguration|mConfiguration');
+            $ADBT adb shell input keyevent 82;
+            if ! up; then lost "the settle after the locale switch" "was cut short"; fi;
+            fi;
+            if [ -z "$LOST" ]; then
+            CONFIG_LINE=$($ADBT adb shell dumpsys activity 2>&1 | tr -d '\r' | grep -m1 -E 'mGlobalConfiguration|mConfiguration');
             echo "device-matrix: api $API: configuration after the switch: $CONFIG_LINE";
             if printf '%s' "$CONFIG_LINE" | grep -qE ' ldrtl|[ \[]ar([_-]|\]| )'; then AR_OK=1; fi;
+            if ! up; then lost "the configuration read" "was cut short"; AR_OK=0; fi;
+            fi;
+            if [ -z "$LOST" ]; then
             if [ "$AR_OK" -eq 1 ]; then
             echo "device-matrix: api $API: locale switch confirmed from the configuration, relaunching";
-            adb shell am start -W -n app.fayad.ludo/.MainActivity;
+            $ADBT adb shell am start -W -n app.fayad.ludo/.MainActivity;
             sleep 15;
-            adb exec-out screencap -p > home-ar-api${API}.png;
+            $ADBT adb exec-out screencap -p > home-ar-api${API}.png;
             echo "device-matrix: api $API: home-ar-api${API}.png screencap exit code $?, $(wc -c < home-ar-api${API}.png) bytes";
+            if ! up; then lost "the relaunch and screencap" "was cut short"; [ -s home-ar-api${API}.png ] || rm -f home-ar-api${API}.png; fi;
             else
             echo "device-matrix: api $API: locale NOT switched, the configuration does not show ar, no Arabic frame was taken";
             fi;
             fi;
+            fi;
+            fi;
             echo "=== device-matrix: api $API: logcat from the Arabic phase on ===" >> logcat-api${API}.txt;
-            adb logcat -d >> logcat-api${API}.txt;
+            if up; then $ADBT adb logcat -d >> logcat-api${API}.txt; else if [ -z "$LOST" ]; then lost "the final logcat read" "was cut short"; fi; echo "device-matrix: api $API: the emulator is not reachable, the Arabic phase logcat could not be read"; fi;
             FATAL_APP=$(grep -A6 'FATAL EXCEPTION' logcat-api${API}.txt | grep -c 'Process: app.fayad.ludo');
             echo "device-matrix: api $API: whole run logcat has $(grep -c 'FATAL EXCEPTION' logcat-api${API}.txt) FATAL EXCEPTION lines ($FATAL_APP for app.fayad.ludo) and $(grep -cE 'E/flutter|E flutter +:' logcat-api${API}.txt) E/flutter lines";
             FAIL=0;
