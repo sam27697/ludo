@@ -1,6 +1,7 @@
 // Pixel proof of order 641 (work/ludo/orders/641-pieces-have-depth.md),
-// decisions D1 (body gradient) and D3 (contact shadow), written from that
-// contract's text alone. D2 (border) and D4 (cost) are not pixel claims.
+// decisions D1 (body gradient) and D3' (hard contact shadow, run 149 respec),
+// written from that contract's text alone. D2 (border) and D4 (cost) are not
+// pixel claims.
 //
 // Method. LudoBoard is mounted in a 450 x 450 physical viewport at device
 // pixel ratio 1.0, so one cell is 30 px, inside one RepaintBoundary that is
@@ -15,6 +16,11 @@
 // (inside the border, outside the seat mark) reads the seat colour, and a
 // point 0.62 d to the right reads the paper, so the box is neither larger nor
 // smaller than the painted circle.
+//
+// D3' is one hard ink ellipse the size of the disc, offset 0.07 d down, so it
+// reaches 0.57 d below the centre and has no blur. P3 probes inside it (0.55 d)
+// and P5 probes beyond its edge (0.57 d + 3 px), where a blurred shadow of
+// radius 0.10 d would still darken the paper and a hard one does not.
 //
 // Every probe sits on the vertical axis through the centre. The seat mark
 // covers the middle half of the disc (radius 0.25 d) and the border starts at
@@ -43,7 +49,15 @@
 //      at least 3 px inside the seat's triangle (clear of the divider lines,
 //      which are the triangle's edges); if it is not, the side point 0.55 d to
 //      the left or right is used, and the case says so.
-//   3. The triangle's own colour is the seat colour at alpha 1.0 over dieFace
+//   3. P5 probes 0.57 d + 3 px below the centre. If that pixel is on a grid
+//      line it is moved 1 px up (towards the token, never down onto the next
+//      line) and named. Its plain-paper reference is the pixel at the same row,
+//      28 px right of the cell's left edge: same cell, clear of the disc and
+//      its shadow by more than 0.2 d, off the grid lines at pixels 29 and 30.
+//   4. flutter_test paints every BoxShadow without its blur by default
+//      (debugDisableShadows), so P5 switches that flag off for its own capture
+//      and restores it. The other cases run under the default.
+//   5. The triangle's own colour is the seat colour at alpha 1.0 over dieFace
 //      (all four seats are in play), computed from LudoColors.
 
 import 'dart:math' as math;
@@ -68,6 +82,7 @@ const List<int> _allSeats = <int>[0, 1, 2, 3];
 const double _litGap = 0.04;
 const double _shadowGap = 0.02;
 const double _finishedGap = 0.03;
+const double _hardEdgeTolerance = 0.012;
 
 // ---------------------------------------------------------------------------
 // Harness (copied from test/c639_board_art_test.dart).
@@ -553,8 +568,9 @@ void main() {
     });
 
     // P3: contact shadow. The point 0.55 d under the centre (just below the
-    // disc's bottom edge) is darker than the point 0.55 d over the centre
-    // (just above its top edge) by at least 0.02 relative luminance.
+    // disc's bottom edge, inside the hard shadow that reaches 0.57 d) is
+    // darker than the point 0.55 d over the centre (just above its top edge)
+    // by at least 0.02 relative luminance.
     testWidgets('P3 contact shadow on the track, $view', (tester) async {
       final String name = 'P3 contact shadow on the track, $view';
       final _Scene s = await _render(
@@ -605,6 +621,70 @@ void main() {
             '$_shadowGap, read ${gap.toStringAsFixed(3)} '
             '(d ${d.toStringAsFixed(2)} px)'
             '${moved.isEmpty ? '' : '; ${moved.join('; ')}'}',
+          );
+        }
+      }
+      s.done();
+    });
+
+    // P5: hard edge. A point 0.57 d + 3 px under the centre, beyond the edge of
+    // a hard shadow, is within 0.012 relative luminance of plain paper in the
+    // same cell away from the token. A blurred shadow of radius 0.10 d
+    // darkens it.
+    testWidgets('P5 shadow has a hard edge, $view', (tester) async {
+      final String name = 'P5 shadow has a hard edge, $view';
+      // flutter_test replaces every BoxShadow blur with a hard block
+      // (debugDisableShadows is true under testWidgets), which would make
+      // a blurred shadow look hard here. Draw the real shadows for this
+      // capture only and put the flag back before the test ends.
+      debugDisableShadows = false;
+      final _Scene s;
+      try {
+        s = await _render(
+          tester,
+          caseName: name,
+          mySeat: mySeat,
+          placed: _plainTrackPlacements(q),
+        );
+      } finally {
+        debugDisableShadows = true;
+      }
+      for (final _Placed p in s.placed) {
+        final Rect r = s.discs[p]!;
+        final double d = r.width;
+        Offset beyond = r.center + Offset(0, 0.57 * d + 3);
+        String moved = '';
+        if (_onGridLine(beyond.dy.floor())) {
+          moved =
+              '; the probe ${_px(beyond)} was on the grid line at pixel row '
+              '${beyond.dy.floor()}, moved 1 px up';
+          beyond = beyond - const Offset(0, 1);
+        }
+        final Offset reference = Offset(p.cell.col * _cell + 28.5, beyond.dy);
+        final Offset shadowCentre = r.center + Offset(0, 0.07 * d);
+        if (_onGridLine(beyond.dy.floor()) ||
+            _onGridLine(beyond.dx.floor()) ||
+            _onGridLine(reference.dx.floor()) ||
+            beyond.dy >= (p.cell.row + 1) * _cell ||
+            (reference - shadowCentre).distance < 0.7 * d) {
+          fail(
+            'C-641t harness: ${p.label}: a P5 probe is unusable (probe '
+            '${_px(beyond)}, reference ${_px(reference)}, disc centre '
+            '${_px(r.center)}, d ${d.toStringAsFixed(2)}). '
+            'Scenario: ${s.scenario}',
+          );
+        }
+        final pb = s.frame.at(beyond);
+        final pr = s.frame.at(reference);
+        final double gap = (pb.rgb.luminance - pr.rgb.luminance).abs();
+        if (gap > _hardEdgeTolerance) {
+          s.misses.add(
+            '${p.label}, P5 beyond the shadow edge ${_px(beyond)} = px '
+            '(${pb.x}, ${pb.y}) ${pb.rgb.hex} luminance ${_lum(pb.rgb)}; paper '
+            'reference in the same cell ${_px(reference)} = px (${pr.x}, '
+            '${pr.y}) ${pr.rgb.hex} luminance ${_lum(pr.rgb)}: expected a '
+            'difference of at most $_hardEdgeTolerance, read '
+            '${gap.toStringAsFixed(3)} (d ${d.toStringAsFixed(2)} px)$moved',
           );
         }
       }
