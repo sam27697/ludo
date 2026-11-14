@@ -13,7 +13,8 @@
 //     painted at); every disc's size and fan offset comes from the layout
 //     documented on `_tokenLayout` in lib/src/board.dart (single seat:
 //     diameter cellSize * 0.7, fan offset cellSize * 0.12, x by even or odd
-//     token index, y by index below 2). Each of my own discs is cross-checked
+//     token index, y by index below 2; a token in the yard takes no fan and
+//     sits on its slot cell's centre). Each of my own discs is cross-checked
 //     against its hit widget's centre, so a wrong derivation fails loudly
 //     as a broken fixture instead of skewing a rect. Opponent discs have no
 //     key and are derived from the documented layout only;
@@ -231,7 +232,8 @@ class _Disc {
 }
 
 /// Every disc the board paints for [scene] at [cell] pixels per cell: the
-/// documented fan for a single seat on a cell (yard, home column, track).
+/// documented fan for a single seat on a cell (home column, track) and the
+/// slot cell's centre for a token in the yard.
 /// Finished tokens are not discs on a cell (C-508 D2) and are left out.
 List<_Disc> _discs(_Scene scene, double cell) {
   final int quarters = viewQuarters(scene.mySeat);
@@ -248,7 +250,7 @@ List<_Disc> _discs(_Scene scene, double cell) {
         quarters,
       );
       seatsOn.putIfAbsent(view, () => <int>{}).add(entry.key);
-      final double fan = cell * 0.12;
+      final double fan = progress == -1 ? 0 : cell * 0.12;
       discs.add(
         _Disc(
           entry.key,

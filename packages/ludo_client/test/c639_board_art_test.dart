@@ -718,5 +718,65 @@ void main() {
       }
       probe.done();
     });
+
+    // D3' (round 2): a token at progress -1 takes no fan. Its centre is the
+    // centre of its yard slot cell, so it sits in its well. Read from the
+    // `token-<seat>-<index>` widget, not recomputed from the layout.
+    testWidgets('B9 yard tokens sit in their wells, $view', (tester) async {
+      final String name = 'B9 yard tokens sit in their wells, $view';
+      _pinViewportToBoard(tester);
+      await tester.pumpWidget(
+        _pixelHarness(
+          tokens: <int, List<int>>{
+            for (final int seat in _allSeats) seat: <int>[-1, -1, -1, -1],
+          },
+          seatsInPlay: _allSeats,
+          mySeat: mySeat,
+        ),
+      );
+      await tester.pump();
+      final Offset origin = tester.getTopLeft(find.byType(LudoBoard));
+      final List<String> misses = <String>[];
+      for (final int seat in _allSeats) {
+        for (int index = 0; index < 4; index++) {
+          final Finder token = find.byKey(Key('token-$seat-$index'));
+          if (token.evaluate().length != 1) {
+            misses.add(
+              'seat $seat token $index: expected exactly one '
+              'token-$seat-$index widget, found ${token.evaluate().length}',
+            );
+            continue;
+          }
+          final BoardCell slot = toView(
+            cellFor(seat: seat, progress: -1, tokenIndex: index),
+            q,
+          );
+          final Offset want = _cellCentre(slot);
+          final Offset got = tester.getCenter(token) - origin;
+          final double off = (got - want).distance;
+          if (off > 0.5) {
+            misses.add(
+              'seat $seat token $index: expected centre ${_cells(want)} '
+              '(px ${want.dx.toStringAsFixed(2)}, '
+              '${want.dy.toStringAsFixed(2)}, the centre of yard slot view '
+              'cell $slot), read px ${got.dx.toStringAsFixed(2)}, '
+              '${got.dy.toStringAsFixed(2)}, ${off.toStringAsFixed(2)} px '
+              'off (tolerance 0.5 px)',
+            );
+          }
+        }
+      }
+      if (misses.isNotEmpty) {
+        fail(
+          'C-639t $name: ${misses.length} yard token(s) are not centred in '
+          'their well.\n'
+          '${misses.map((String m) => '  - $m').join('\n')}\n'
+          'Scenario: LudoBoard 450x450 dpr 1.0, seatsInPlay $_allSeats, '
+          'mySeat $mySeat, every token at progress -1. Reproduce: cd '
+          'packages/ludo_client && flutter test '
+          "test/c639_board_art_test.dart --plain-name '$name'",
+        );
+      }
+    });
   }
 }
