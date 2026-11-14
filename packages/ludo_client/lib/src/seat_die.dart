@@ -143,11 +143,22 @@ class SeatYardRecord extends StatelessWidget {
               : slotW * kRollTraySlot / slotH;
           return FittedBox(
             fit: BoxFit.scaleDown,
-            child: RollTray(
-              faces: record.faces,
-              states: record.states,
-              seatColor: record.seatColor,
-              fitWidth: budget,
+            // C-643: the record straddles the panel edge, so half of it
+            // sits on the solid seat band. An opaque stadium the size of
+            // the tray, with the yard name chip's rim, keeps the numerals
+            // readable on either ground.
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: LudoColors.dieFace,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: LudoColors.dieFace, width: 1.5),
+              ),
+              child: RollTray(
+                faces: record.faces,
+                states: record.states,
+                seatColor: record.seatColor,
+                fitWidth: budget,
+              ),
             ),
           );
         },
