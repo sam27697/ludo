@@ -1085,13 +1085,24 @@ class _LudoBoardState extends State<LudoBoard> {
     final List<_CellGroup> groups = <_CellGroup>[];
     for (final MapEntry<BoardCell, List<int>> entry in byCell.entries) {
       final BoardCell viewed = toView(entry.key, quarters);
+      final List<int> indices = entry.value..sort();
+      // A finished token is drawn on its spot in the seat's triangle, not on
+      // its cell, and a cell never holds two finished tokens of one seat.
+      final bool finished = progresses[indices.first] == 57;
       groups.add(
         _CellGroup(
-          center: Offset(
-            viewed.col * cellSize + cellSize / 2,
-            viewed.row * cellSize + cellSize / 2,
-          ),
-          indices: entry.value..sort(),
+          center: finished
+              ? _finishedLayout(
+                  seat: mySeat,
+                  tokenIndex: indices.first,
+                  cellSize: cellSize,
+                  quarters: quarters,
+                ).center
+              : Offset(
+                  viewed.col * cellSize + cellSize / 2,
+                  viewed.row * cellSize + cellSize / 2,
+                ),
+          indices: indices,
         ),
       );
     }
