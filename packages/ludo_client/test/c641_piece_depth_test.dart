@@ -48,20 +48,24 @@
 //      from the very same pixel of a capture of the same board with no
 //      finished token, so it is what the board paints there, not a colour
 //      assumed from the palette. A harness failure is raised if that bare
-//      pixel is not near the seat colour. The two probes are straight down
-//      (screen space) from the disc centre: 0.36 d is body below the seat
-//      mark, 0.47 d is the middle of the border ring (0.44 d to 0.50 d).
-//   3. P6 probes 0.57 d + 1 px below the centre, as ordered, and also 0.55 d.
-//      The first alone cannot see a hard shadow of the token's size offset
-//      0.07 d down: measured on a track token with d 21 px, that shadow ends at
-//      0.57 d (row 53, partly covered) and the pixel row of 0.57 d + 1 px is
-//      plain paper (0.957) with the shadow present, so the ordered probe
-//      passes on the round-3 code. The 0.55 d point (row 52, luminance 0.488
-//      with that shadow) is the one P3 used. If a probe pixel is on a grid
-//      line it is moved 1 px up (towards the token, never down onto the next
-//      line) and named. Its plain-paper reference is the pixel at the same row,
-//      28 px right of the cell's left edge: same cell, clear of the disc by
-//      more than 0.2 d, off the grid lines at pixels 29 and 30.
+//      pixel is not near the seat colour. The probe is straight down (screen
+//      space) from the disc centre, 0.47 d, the middle of the border ring
+//      (0.44 d to 0.50 d). The ordered 0.36 d body probe is not asserted: on
+//      a 0.55 cell disc a correct D1 gradient is only 0.012 to 0.027 relative
+//      luminance away from the seat colour there (seat 2 alone reaches 0.03),
+//      so the threshold cannot be met by any correct implementation. The
+//      gradient is proven by P1 on the track, where the disc is larger.
+//   3. P6 probes 0.55 d below the centre of a track token. The ordered
+//      0.57 d + 1 px probe is dropped: a hard shadow of the token's size
+//      offset 0.07 d down ends at 0.57 d, so that pixel reads plain paper
+//      (0.957) with the shadow present as well as without it, and it adds
+//      nothing. The 0.55 d point (the pixel row just under the disc,
+//      luminance 0.488 with such a shadow, a gap of 0.469) is the one that
+//      sees it. If the probe pixel is on a grid line it is moved 1 px up
+//      (towards the token, never down onto the next line) and named. Its
+//      plain-paper reference is the pixel at the same row, 28 px right of
+//      the cell's left edge: same cell, clear of the disc by more than 0.2 d,
+//      off the grid lines at pixels 29 and 30.
 //   4. flutter_test paints every BoxShadow without its blur by default
 //      (debugDisableShadows), so P6 switches that flag off for its own capture
 //      and restores it. The other cases run under the default.
@@ -532,11 +536,10 @@ void main() {
 
     // P4: a finished piece stands apart from its own triangle with no shadow.
     // Every token of every seat is finished (progress 57), so each sits on one
-    // of the four fixed spots. The point 0.36 d below its centre (inside the
-    // disc, below the seat mark, the darker half of the gradient) and the point
-    // 0.47 d below it (the border ring) each differ from the triangle's own
-    // colour by at least 0.03 relative luminance. The triangle's own colour is
-    // read from the same pixel of a capture with no finished token.
+    // of the four fixed spots. The point 0.47 d below its centre (the border
+    // ring) differs from the triangle's own colour by at least 0.03 relative
+    // luminance. The triangle's own colour is read from the same pixel of a
+    // capture with no finished token.
     testWidgets('P4 finished piece apart from its triangle, $view', (
       tester,
     ) async {
@@ -558,7 +561,6 @@ void main() {
         final double d = r.width;
         final _Rgb own = _Rgb.of(LudoColors.seats[p.seat]);
         final Map<String, Offset> probes = <String, Offset>{
-          '0.36 d below the centre (body)': r.center + Offset(0, 0.36 * d),
           '0.47 d below the centre (border ring)':
               r.center + Offset(0, 0.47 * d),
         };
@@ -589,11 +591,10 @@ void main() {
       s.done();
     });
 
-    // P6: no shadow. Two points under the centre of a token on the track are
-    // each within 0.012 relative luminance of plain paper in the same cell
-    // away from the token: 0.57 d + 1 px (just beyond where a hard shadow of
-    // the token's size offset 0.07 d down would end), and 0.55 d (just under
-    // the disc's bottom edge, inside such a shadow).
+    // P6: no shadow. The point 0.55 d under the centre of a token on the
+    // track, just under the disc's bottom edge where a hard shadow of the
+    // token's size offset 0.07 d down would show, is within 0.012 relative
+    // luminance of plain paper in the same cell away from the token.
     testWidgets('P6 no shadow under the token, $view', (tester) async {
       final String name = 'P6 no shadow under the token, $view';
       // flutter_test replaces every BoxShadow blur with a hard block
@@ -614,10 +615,7 @@ void main() {
       for (final _Placed p in s.placed) {
         final Rect r = s.discs[p]!;
         final double d = r.width;
-        final Map<String, double> depths = <String, double>{
-          '0.57 d + 1 px': 0.57 * d + 1,
-          '0.55 d': 0.55 * d,
-        };
+        final Map<String, double> depths = <String, double>{'0.55 d': 0.55 * d};
         for (final MapEntry<String, double> e in depths.entries) {
           Offset below = r.center + Offset(0, e.value);
           String moved = '';
