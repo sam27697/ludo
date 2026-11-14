@@ -19,7 +19,7 @@
 //
 // D3' is one hard ink ellipse the size of the disc, offset 0.07 d down, so it
 // reaches 0.57 d below the centre and has no blur. P3 probes inside it (0.55 d)
-// and P5 probes beyond its edge (0.57 d + 3 px), where a blurred shadow of
+// and P5 probes beyond its edge (0.57 d + 2 px), where a blurred shadow of
 // radius 0.10 d would still darken the paper and a hard one does not.
 //
 // Every probe sits on the vertical axis through the centre. The seat mark
@@ -49,7 +49,7 @@
 //      at least 3 px inside the seat's triangle (clear of the divider lines,
 //      which are the triangle's edges); if it is not, the side point 0.55 d to
 //      the left or right is used, and the case says so.
-//   3. P5 probes 0.57 d + 3 px below the centre. If that pixel is on a grid
+//   3. P5 probes 0.57 d + 2 px below the centre. If that pixel is on a grid
 //      line it is moved 1 px up (towards the token, never down onto the next
 //      line) and named. Its plain-paper reference is the pixel at the same row,
 //      28 px right of the cell's left edge: same cell, clear of the disc and
@@ -627,7 +627,7 @@ void main() {
       s.done();
     });
 
-    // P5: hard edge. A point 0.57 d + 3 px under the centre, beyond the edge of
+    // P5: hard edge. A point 0.57 d + 2 px under the centre, beyond the edge of
     // a hard shadow, is within 0.012 relative luminance of plain paper in the
     // same cell away from the token. A blurred shadow of radius 0.10 d
     // darkens it.
@@ -652,7 +652,7 @@ void main() {
       for (final _Placed p in s.placed) {
         final Rect r = s.discs[p]!;
         final double d = r.width;
-        Offset beyond = r.center + Offset(0, 0.57 * d + 3);
+        Offset beyond = r.center + Offset(0, 0.57 * d + 2);
         String moved = '';
         if (_onGridLine(beyond.dy.floor())) {
           moved =
