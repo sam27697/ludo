@@ -81,12 +81,7 @@ BoxDecoration _tokenBodyDecoration(Color seat, double diameter) {
   final Color darker = Color.lerp(seat, Colors.black, 0.22)!;
   return BoxDecoration(
     shape: BoxShape.circle,
-    gradient: RadialGradient(
-      center: const Alignment(0, -0.45),
-      radius: 0.95,
-      colors: <Color>[lighter, seat, darker],
-      stops: const <double>[0.0, 0.5, 1.0],
-    ),
+    color: seat,
     border: Border.all(
       color: LudoColors.ink.withValues(alpha: 0.55),
       width: math.max(1, diameter * 0.06),
