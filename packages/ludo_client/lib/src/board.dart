@@ -68,8 +68,12 @@ double _tokenHitSize(double tokenSize) => math.max(48.0, tokenSize);
 /// C-641: the disc of a token as a raised piece lit from above. The fill is
 /// a radial gradient centred above the middle (lighter at the top, the seat
 /// colour through the middle, darker at the bottom), the border is the same
-/// ink edge the flat disc had, and one soft contact shadow sits under it.
-/// The shadow offset is a fixed logical `Offset`, not run through
+/// ink edge the flat disc had, and one hard contact shadow sits under it: a
+/// disc the size of the token pushed down by 0.07 of its diameter, so it
+/// shows as a crescent below the bottom edge. It has no blur on purpose: a
+/// blurred mask per token is costly under the dimmed board (it took the CI
+/// emulator down), and a hard crescent reads as contact just as well. The
+/// shadow offset is a fixed logical `Offset`, not run through
 /// Directionality, so light comes from above in Arabic as well. All of it is
 /// static decoration: no image, no shader, nothing animated per frame.
 BoxDecoration _tokenBodyDecoration(Color seat, double diameter) {
@@ -90,7 +94,8 @@ BoxDecoration _tokenBodyDecoration(Color seat, double diameter) {
     boxShadow: <BoxShadow>[
       BoxShadow(
         color: LudoColors.ink.withValues(alpha: 0.30),
-        blurRadius: diameter * 0.10,
+        blurRadius: 0,
+        spreadRadius: 0,
         offset: Offset(0, diameter * 0.07),
       ),
     ],
