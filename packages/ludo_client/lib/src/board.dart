@@ -17,7 +17,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart' show Icons;
+import 'package:flutter/material.dart' show Colors, Icons;
 import 'package:flutter/semantics.dart';
 import 'package:flutter/widgets.dart';
 
@@ -64,6 +64,38 @@ const Set<int> _entrySquares = <int>{0, 13, 26, 39};
 /// tap handler, the Semantics hit box and the C-248 chip-placement check
 /// below can never disagree about where a token is actually tappable.
 double _tokenHitSize(double tokenSize) => math.max(48.0, tokenSize);
+
+/// C-641: the disc of a token as a raised piece lit from above. The fill is
+/// a radial gradient centred above the middle (lighter at the top, the seat
+/// colour through the middle, darker at the bottom), the border is the same
+/// ink edge the flat disc had, and one soft contact shadow sits under it.
+/// The shadow offset is a fixed logical `Offset`, not run through
+/// Directionality, so light comes from above in Arabic as well. All of it is
+/// static decoration: no image, no shader, nothing animated per frame.
+BoxDecoration _tokenBodyDecoration(Color seat, double diameter) {
+  final Color lighter = Color.lerp(seat, Colors.white, 0.35)!;
+  final Color darker = Color.lerp(seat, Colors.black, 0.22)!;
+  return BoxDecoration(
+    shape: BoxShape.circle,
+    gradient: RadialGradient(
+      center: const Alignment(0, -0.45),
+      radius: 0.95,
+      colors: <Color>[lighter, seat, darker],
+      stops: const <double>[0.0, 0.5, 1.0],
+    ),
+    border: Border.all(
+      color: LudoColors.ink.withValues(alpha: 0.55),
+      width: math.max(1, diameter * 0.06),
+    ),
+    boxShadow: <BoxShadow>[
+      BoxShadow(
+        color: LudoColors.ink.withValues(alpha: 0.30),
+        blurRadius: diameter * 0.10,
+        offset: Offset(0, diameter * 0.07),
+      ),
+    ],
+  );
+}
 
 /// Rank of [seat] relative to the viewer. My seat is 0, then the seats
 /// after it around the table. A spectator (`mySeat` null) ranks a seat as
@@ -2066,14 +2098,7 @@ class _LudoBoardState extends State<LudoBoard> {
       identifier: 'cell-${cell.col}-${cell.row}',
       sortKey: tokenSortKey,
       child: DecoratedBox(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: LudoColors.seats[seat],
-          border: Border.all(
-            color: LudoColors.ink.withValues(alpha: 0.55),
-            width: math.max(1, drawnSize * 0.06),
-          ),
-        ),
+        decoration: _tokenBodyDecoration(LudoColors.seats[seat], drawnSize),
         // Rule 2: every token carries its seat's shape, centred, at half the
         // drawn disc's diameter, in every state this disc is ever drawn in
         // -- yard, track, home column, finished, mid-travel, mid-capture --
