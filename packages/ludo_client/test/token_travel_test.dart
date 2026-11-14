@@ -24,10 +24,10 @@
 // A board's drawn-token centre is read back from find.byKey(Key(
 // 'token-S-T')) and compared with _expectedCenter below, which mirrors
 // board.dart's own _tokenLayer math today (cellFor's cell, plus the same
-// cellSize * 0.12 fan offset by token index, sign by token index) rather
-// than inventing a second formula that could silently disagree with the
-// widget under test. Tolerance is 0.5 logical pixels, this order's named
-// slack.
+// cellSize * 0.12 fan offset by token index, sign by token index, no fan in
+// the yard) rather than inventing a second formula that could silently
+// disagree with the widget under test. Tolerance is 0.5 logical pixels, this
+// order's named slack.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -52,7 +52,8 @@ Map<int, List<int>> _allInYard() => <int, List<int>>{
 /// at, when it sits still at [progress]: `toView` of `cellFor`'s cell centre
 /// under `viewQuarters(mySeat)` plus the fan offset `_tokenLayer` applies
 /// today by token index (`cellSize * 0.12`, negated for an even index on one
-/// axis, negated again for index < 2 on the other) -- the same arithmetic
+/// axis, negated again for index < 2 on the other; none for a token in the
+/// yard, which sits on its slot cell's centre) -- the same arithmetic
 /// `_tokenHitRect` uses for a hit target's centre, which is why this one
 /// function covers both.
 Offset _expectedCenter({
@@ -65,7 +66,7 @@ Offset _expectedCenter({
     cellFor(seat: seat, progress: progress, tokenIndex: tokenIndex),
     viewQuarters(mySeat),
   );
-  final double fan = _cellSize * 0.12;
+  final double fan = progress == -1 ? 0 : _cellSize * 0.12;
   final double fanDx = tokenIndex.isEven ? -fan : fan;
   final double fanDy = tokenIndex < 2 ? -fan : fan;
   return Offset(

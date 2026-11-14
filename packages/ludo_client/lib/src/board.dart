@@ -178,10 +178,14 @@ bool _isSharedTrack(List<_TokenOccupant> occupants) {
 
 /// Centre and diameter of token [tokenIndex] of [seat] drawn at [progress].
 ///
-/// One seat on the cell keeps the old fan: diameter `cellSize * 0.7`,
+/// A token in the yard ([progress] -1) sits on the centre of its yard slot
+/// cell, diameter `cellSize * 0.7`, with no fan: the slot is a marked well
+/// and the token fills it.
+///
+/// One seat on any other cell keeps the old fan: diameter `cellSize * 0.7`,
 /// offset `cellSize * 0.12`, x by even or odd index, y by index below 2.
-/// That is every yard slot, every finished slot, a home-column cell, and
-/// any main-track cell a single seat occupies.
+/// That is every finished slot, a home-column cell, and any main-track cell
+/// a single seat occupies.
 ///
 /// Two or more seats on a main-track cell use the shared slots. Four or
 /// fewer occupants: diameter `cellSize * 0.5`, centre at the cell centre
@@ -238,7 +242,7 @@ _TokenLayout _tokenLayout({
   }
 
   if (slot < 0 || !_isSharedTrack(occupants)) {
-    final double fan = cellSize * 0.12;
+    final double fan = progress == -1 ? 0 : cellSize * 0.12;
     final double fanDx = tokenIndex.isEven ? -fan : fan;
     final double fanDy = tokenIndex < 2 ? -fan : fan;
     return _TokenLayout(
@@ -1453,6 +1457,9 @@ class _LudoBoardState extends State<LudoBoard> {
                   decoration: BoxDecoration(
                     color: seatColor,
                     borderRadius: BorderRadius.circular(chipHeight),
+                    // C-639 D7: the chip now sits on a band of its own
+                    // colour, the rim keeps it a separate object.
+                    border: Border.all(color: LudoColors.dieFace, width: 1.5),
                   ),
                   child: Padding(
                     padding: EdgeInsets.symmetric(
@@ -3439,19 +3446,24 @@ class _StarPainter extends CustomPainter {
 /// column and entry square all use it. C-248 rule 4, C-600 D1.
 const double _kAbsentSeatFade = 0.35;
 
-/// Paints the static board: the grid, the four yards, the shared track, the
-/// four home columns and the centre. None of this determines where a token
-/// goes; it is drawn from the same [cellFor] a token uses, so the background
-/// and the tokens can never show a track that disagrees with each other.
+/// Paints the static board: the four yards, the shared track, the four home
+/// columns and the centre home. None of this determines where a token goes;
+/// it is drawn from the same [cellFor] a token uses, so the background and
+/// the tokens can never show a track that disagrees with each other.
+///
+/// A yard is a solid band of its seat colour round a light panel with four
+/// marked token wells; grid lines exist only round the track and home-column
+/// cells; the centre is four triangles, one per seat, pointing at the middle.
+/// C-639.
 ///
 /// Seat fills and board inks come from [LudoColors]: one paintbox with theme.
 class _BoardPainter extends CustomPainter {
   const _BoardPainter({required this.seatsInPlay, this.mySeat});
 
   /// Which seats are playing, same list [LudoBoard] was given. A seat not
-  /// in it gets its yard fill muted -- C-248 rule 4, the one default change
-  /// this contract makes: today's drawing painted every yard the same
-  /// whether or not anyone sat there.
+  /// in it gets its yard, arm and home triangle muted -- C-248 rule 4, the
+  /// one default change this contract makes: today's drawing painted every
+  /// yard the same whether or not anyone sat there.
   final List<int> seatsInPlay;
 
   /// The seat this board is drawn for. Null is today's unrotated layout.
@@ -3465,35 +3477,23 @@ class _BoardPainter extends CustomPainter {
     canvas.drawRect(Offset.zero & size, Paint()..color = LudoColors.dieFace);
 
     for (var seat = 0; seat < 4; seat++) {
-      final BoardCell origin = yardQuadrantOrigin(seat);
-      final ({int col, int row, int width, int height}) viewed = _viewBlock(
-        col: origin.col,
-        row: origin.row,
-        width: yardQuadrantSide,
-        height: yardQuadrantSide,
-        quarters: quarters,
-      );
-      final bool inPlay = seatsInPlay.contains(seat);
-      final double yardAlpha = inPlay ? 0.16 : 0.16 * _kAbsentSeatFade;
-      _fillCells(
-        canvas,
-        cellSize,
-        viewed.col,
-        viewed.row,
-        viewed.width,
-        viewed.height,
-        LudoColors.seats[seat].withValues(alpha: yardAlpha),
-      );
+      _paintYard(canvas, cellSize, quarters, seat);
+    }
+
+    for (var progress = 0; progress < 52; progress++) {
+      final cell = toView(cellFor(seat: 0, progress: progress), quarters);
+      _fillCell(canvas, cellSize, cell, LudoColors.paperElevated);
     }
 
     for (var seat = 0; seat < 4; seat++) {
       // C-600 D1: an arm nobody sits at is muted by the same factor as its
       // yard, so a two-player board does not show two live-looking arms.
       final double homeAlpha = seatsInPlay.contains(seat)
-          ? 0.32
-          : 0.32 * _kAbsentSeatFade;
+          ? 0.45
+          : 0.45 * _kAbsentSeatFade;
       for (var progress = 52; progress <= 56; progress++) {
         final cell = toView(cellFor(seat: seat, progress: progress), quarters);
+        _fillCell(canvas, cellSize, cell, LudoColors.paperElevated);
         _fillCell(
           canvas,
           cellSize,
@@ -3501,16 +3501,6 @@ class _BoardPainter extends CustomPainter {
           LudoColors.seats[seat].withValues(alpha: homeAlpha),
         );
       }
-    }
-
-    for (var progress = 0; progress < 52; progress++) {
-      final cell = toView(cellFor(seat: 0, progress: progress), quarters);
-      _fillCell(
-        canvas,
-        cellSize,
-        cell,
-        LudoColors.paperElevated.withValues(alpha: 0.65),
-      );
     }
 
     // Each seat's own entry square, filled in that seat's colour after the
@@ -3529,42 +3519,176 @@ class _BoardPainter extends CustomPainter {
       );
     }
 
-    final ({int col, int row, int width, int height}) centre = _viewBlock(
-      col: 6,
-      row: 6,
-      width: 3,
-      height: 3,
-      quarters: quarters,
-    );
-    _fillCells(
-      canvas,
-      cellSize,
-      centre.col,
-      centre.row,
-      centre.width,
-      centre.height,
-      LudoColors.inkMuted.withValues(alpha: 0.5),
-    );
-
-    final gridPaint = Paint()
-      ..color = LudoColors.inkMuted.withValues(alpha: 0.6)
-      ..strokeWidth = 1;
-    for (var i = 0; i <= 15; i++) {
-      final offset = i * cellSize;
-      canvas.drawLine(
-        Offset(offset, 0),
-        Offset(offset, size.height),
-        gridPaint,
-      );
-      canvas.drawLine(Offset(0, offset), Offset(size.width, offset), gridPaint);
-    }
+    _paintCentreHome(canvas, cellSize, quarters);
+    _paintTrackOutlines(canvas, cellSize, quarters);
 
     canvas.drawRect(
       Offset.zero & size,
       Paint()
-        ..color = LudoColors.ink
+        ..color = LudoColors.feltDeep
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2,
+    );
+  }
+
+  /// One seat's yard: the solid band over the whole 6 by 6 quadrant, the
+  /// light rounded panel inset half a cell, and a well under each of the four
+  /// token slots. C-639 D1 to D3.
+  void _paintYard(Canvas canvas, double cellSize, int quarters, int seat) {
+    final BoardCell origin = yardQuadrantOrigin(seat);
+    final ({int col, int row, int width, int height}) viewed = _viewBlock(
+      col: origin.col,
+      row: origin.row,
+      width: yardQuadrantSide,
+      height: yardQuadrantSide,
+      quarters: quarters,
+    );
+    final bool inPlay = seatsInPlay.contains(seat);
+    final double fade = inPlay ? 1.0 : _kAbsentSeatFade;
+    final Color seatColor = LudoColors.seats[seat];
+
+    _fillCells(
+      canvas,
+      cellSize,
+      viewed.col,
+      viewed.row,
+      viewed.width,
+      viewed.height,
+      seatColor.withValues(alpha: fade),
+    );
+
+    final RRect panel = RRect.fromRectAndRadius(
+      Rect.fromLTWH(
+        (viewed.col + 0.5) * cellSize,
+        (viewed.row + 0.5) * cellSize,
+        (viewed.width - 1) * cellSize,
+        (viewed.height - 1) * cellSize,
+      ),
+      Radius.circular(0.4 * cellSize),
+    );
+    canvas.drawRRect(panel, Paint()..color = LudoColors.dieFace);
+    canvas.drawRRect(
+      panel,
+      Paint()..color = seatColor.withValues(alpha: 0.10 * fade),
+    );
+
+    for (var tokenIndex = 0; tokenIndex < 4; tokenIndex++) {
+      final BoardCell slot = toView(
+        cellFor(seat: seat, progress: -1, tokenIndex: tokenIndex),
+        quarters,
+      );
+      final Offset centre = Offset(
+        (slot.col + 0.5) * cellSize,
+        (slot.row + 0.5) * cellSize,
+      );
+      canvas.drawCircle(
+        centre,
+        0.40 * cellSize,
+        Paint()..color = seatColor.withValues(alpha: 0.28 * fade),
+      );
+      // The rim stays in the outer 0.06 of the well so the disc a token
+      // draws over it never covers it.
+      canvas.drawCircle(
+        centre,
+        0.37 * cellSize,
+        Paint()
+          ..color = seatColor.withValues(alpha: 0.55 * fade)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.06 * cellSize,
+      );
+    }
+  }
+
+  /// The centre 3 by 3 block as four triangles meeting at its middle. Seat
+  /// k's triangle has its base on the side of the block that cell 56 of its
+  /// home column touches, so each arm runs into its own colour. C-639 D6.
+  void _paintCentreHome(Canvas canvas, double cellSize, int quarters) {
+    final double near = 6 * cellSize;
+    final double far = 9 * cellSize;
+    final Offset middle = Offset(7.5 * cellSize, 7.5 * cellSize);
+    for (var seat = 0; seat < 4; seat++) {
+      final BoardCell last = toView(
+        cellFor(seat: seat, progress: 56),
+        quarters,
+      );
+      final int dx = last.col - 7;
+      final int dy = last.row - 7;
+      final Offset a;
+      final Offset b;
+      if (dx.abs() > dy.abs()) {
+        final double x = dx < 0 ? near : far;
+        a = Offset(x, near);
+        b = Offset(x, far);
+      } else {
+        final double y = dy < 0 ? near : far;
+        a = Offset(near, y);
+        b = Offset(far, y);
+      }
+      final Path triangle = Path()
+        ..moveTo(a.dx, a.dy)
+        ..lineTo(b.dx, b.dy)
+        ..lineTo(middle.dx, middle.dy)
+        ..close();
+      final double fade = seatsInPlay.contains(seat) ? 1.0 : _kAbsentSeatFade;
+      canvas.drawPath(triangle, Paint()..color = LudoColors.dieFace);
+      canvas.drawPath(
+        triangle,
+        Paint()..color = LudoColors.seats[seat].withValues(alpha: fade),
+      );
+    }
+    final Paint divider = Paint()
+      ..color = LudoColors.dieFace
+      ..strokeWidth = 1;
+    canvas.drawLine(Offset(near, near), Offset(far, far), divider);
+    canvas.drawLine(Offset(far, near), Offset(near, far), divider);
+  }
+
+  /// A 1 px outline round each of the 52 track cells and the 20 home-column
+  /// cells, and nowhere else. An edge two cells share is drawn once, so the
+  /// line is the same strength everywhere. C-639 D4.
+  void _paintTrackOutlines(Canvas canvas, double cellSize, int quarters) {
+    final Set<int> horizontal = <int>{};
+    final Set<int> vertical = <int>{};
+    void outline(BoardCell cell) {
+      final BoardCell v = toView(cell, quarters);
+      horizontal
+        ..add(v.row * 16 + v.col)
+        ..add((v.row + 1) * 16 + v.col);
+      vertical
+        ..add(v.row * 16 + v.col)
+        ..add(v.row * 16 + v.col + 1);
+    }
+
+    for (var progress = 0; progress < 52; progress++) {
+      outline(cellFor(seat: 0, progress: progress));
+    }
+    for (var seat = 0; seat < 4; seat++) {
+      for (var progress = 52; progress <= 56; progress++) {
+        outline(cellFor(seat: seat, progress: progress));
+      }
+    }
+
+    final Path lines = Path();
+    for (final int key in horizontal) {
+      final double x = (key % 16) * cellSize;
+      final double y = (key ~/ 16) * cellSize;
+      lines
+        ..moveTo(x, y)
+        ..lineTo(x + cellSize, y);
+    }
+    for (final int key in vertical) {
+      final double x = (key % 16) * cellSize;
+      final double y = (key ~/ 16) * cellSize;
+      lines
+        ..moveTo(x, y)
+        ..lineTo(x, y + cellSize);
+    }
+    canvas.drawPath(
+      lines,
+      Paint()
+        ..color = LudoColors.inkMuted.withValues(alpha: 0.45)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
     );
   }
 
