@@ -91,14 +91,6 @@ BoxDecoration _tokenBodyDecoration(Color seat, double diameter) {
       color: LudoColors.ink.withValues(alpha: 0.55),
       width: math.max(1, diameter * 0.06),
     ),
-    boxShadow: <BoxShadow>[
-      BoxShadow(
-        color: LudoColors.ink.withValues(alpha: 0.30),
-        blurRadius: 0,
-        spreadRadius: 0,
-        offset: Offset(0, diameter * 0.07),
-      ),
-    ],
   );
 }
 
