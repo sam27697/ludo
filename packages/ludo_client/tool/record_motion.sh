@@ -53,6 +53,34 @@ adb shell settings put global animator_duration_scale 1
   echo "animator_duration_scale: $(adb shell settings get global animator_duration_scale | tr -d '\r')"
 } > motion/animation-scales.txt
 
+# The emulator draws with SwiftShader on the host CPU, so the wall time of the
+# scripted game follows the pixels drawn per frame. On the 1080x1920 Nexus 5
+# profile it ran 119-155s on 2 cores and 134-163s on 4 (C-645), with frames at
+# 58-91 ms. 720x1280 at density 320 is the same 360x640 dp screen, so the
+# layout does not change, with 44 percent of the pixels. Set before the app is
+# installed or launched, read back, and refuse to drive if it did not take.
+adb shell wm size 720x1280
+adb shell wm density 320
+
+wm_size="$(adb shell wm size 2>&1 | tr -d '\r' || true)"
+wm_density="$(adb shell wm density 2>&1 | tr -d '\r' || true)"
+{
+  echo "$wm_size"
+  echo "$wm_density"
+} >> motion/animation-scales.txt
+
+# wm prints "Override size: WxH" and "Override density: D" only when the value
+# differs from the physical one, so both lines must be present.
+if ! printf '%s\n' "$wm_size" | grep -qx 'Override size: 720x1280' ||
+   ! printf '%s\n' "$wm_density" | grep -qx 'Override density: 320'; then
+  echo "Display override did not take; expected Override size: 720x1280 and Override density: 320" >&2
+  echo "wm size:" >&2
+  printf '%s\n' "$wm_size" >&2
+  echo "wm density:" >&2
+  printf '%s\n' "$wm_density" >&2
+  exit 1
+fi
+
 STOP_FILE="$CLIENT_DIR/motion/.stop_recording"
 rm -f "$STOP_FILE"
 
