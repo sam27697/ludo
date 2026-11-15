@@ -167,7 +167,8 @@ once the server order lands. It requires `rollQueue`; a config with
     carries across turns.
 10r. A roll of 6 sets the drought to 0. A roll that is not a 6 adds 1 when
     all four of the seat's tokens are in the yard, and sets it to 0
-    otherwise.
+    otherwise. A token leaving the yard sets it to 0 (so 6 then 3 counts
+    nothing once the 6 brings a token out).
 11r. When a non-6 brings the drought to 10, the seat is granted one
     **release** and the drought returns to 0. Every player is told: that
     seat rolled no 6 for 10 rolls in a row with every token in the yard.

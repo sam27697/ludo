@@ -592,6 +592,13 @@ is `illegalMove`; a token that is not releasable is `illegalMove`.
    seat, no further event. Otherwise 10.4 step 6: `TurnEnded(noLegalMove)`
    then `TurnBegan`, queue `[]`, next seat, `awaitRoll`, `sixes = 0`.
 
+A move that takes a token from -1 to 0 (on a spent 6, or a release) sets
+the mover's drought to 0 (rule 9r: a seat with a token out has drought 0).
+Without it, 6 then 3 under `rollQueue` would leave drought 1 after the 6
+brings a token out, because the 3 was rolled with all four still in the
+yard. With this, drought is 0 in every state where the seat has a token off
+-1, and a capture back to the yard leaves it 0.
+
 A seat change never touches another seat's drought. A capture that sends a
 seat's last token on the board back to the yard leaves its drought at 0;
 counting starts with that seat's next roll.
