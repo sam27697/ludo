@@ -45,6 +45,33 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # The emulator goes offline mid-run on the stills job (C-641: 6 of 8
+      # runs, each at a capture whose board sits under an Opacity layer, no
+      # crash line in the job log) and the job keeps nothing but the PNGs.
+      # This starts the sampler in the background before the emulator step
+      # so a death leaves host and guest memory over time and the logcat
+      # around it. A process started in a step keeps running until the job
+      # ends, which is how it outlives this step; stdout and stderr go to a
+      # file so the step does not wait on them. continue-on-error and the
+      # trailing `exit 0`: this must never change the job's result.
+      - name: start the emulator watcher
+        continue-on-error: true
+        env:
+          DIAG_DIR: ${{ runner.temp }}/emulator-diag
+        run: |
+          set +e
+          mkdir -p "$DIAG_DIR"
+          touch "$DIAG_DIR/start.stamp"
+          nohup bash tool/emulator_watch.sh "$DIAG_DIR" > "$DIAG_DIR/watch.stderr" 2>&1 &
+          echo $! > "$DIAG_DIR/watch.pid"
+          sleep 1
+          if kill -0 "$(cat "$DIAG_DIR/watch.pid")" 2>/dev/null; then
+            echo "watcher running, pid $(cat "$DIAG_DIR/watch.pid")"
+          else
+            echo "watcher is not running; see $DIAG_DIR/watch.stderr"
+          fi
+          exit 0
+
       # API 34 (Android 14): inside the app's [minSdk 24, targetSdk 36]
       # range, and picked over something closer to 36 because it is a level
       # this action and the emulator's KVM acceleration are long
@@ -95,6 +122,92 @@ jobs:
             --target=integration_test/screenshots_test.dart
             -d emulator-5554
 
+      # `if: always()`: the evidence matters most when the step above went
+      # red. Stops the watcher by its PID file (checked against its command
+      # line first, so a reused PID is never signalled), then gathers what
+      # only the host has: the kernel log (did it run out of memory, did it
+      # kill or crash qemu) and any crash files the emulator left since the
+      # start stamp. summary.txt is the one-screen answer; the raw files sit
+      # next to it. Every command tolerates failure and the step ends with
+      # `exit 0`, so the job's result stays what the steps above decided.
+      - name: stop the emulator watcher and collect host evidence
+        if: always()
+        continue-on-error: true
+        env:
+          DIAG_DIR: ${{ runner.temp }}/emulator-diag
+        run: |
+          set +e
+          mkdir -p "$DIAG_DIR/crash"
+          wpid=$(cat "$DIAG_DIR/watch.pid" 2>/dev/null)
+          case "$wpid" in
+            '' | *[!0-9]*) echo "no usable watch.pid: '$wpid'" ;;
+            *)
+              if tr '\0' ' ' < "/proc/$wpid/cmdline" 2>/dev/null | grep -q emulator_watch; then
+                kill -TERM "$wpid"
+                for _ in $(seq 1 20); do
+                  kill -0 "$wpid" 2>/dev/null || break
+                  sleep 0.5
+                done
+                if kill -0 "$wpid" 2>/dev/null; then
+                  kill -KILL "$wpid"
+                  echo "watcher $wpid needed SIGKILL"
+                else
+                  echo "watcher $wpid stopped"
+                fi
+              else
+                echo "watcher $wpid was not running at job end"
+              fi
+              ;;
+          esac
+
+          sudo -n dmesg -T > "$DIAG_DIR/dmesg.txt" 2>&1
+          dmesg_rc=$?
+
+          # Looked at: ~/.android, /tmp and $RUNNER_TEMP (not the diag dir
+          # itself) for files newer than start.stamp named *.dmp, *crash* or
+          # emu-*; and the AVD's *.log under ~/.android/avd. Files over 64 MB
+          # are skipped. Copies are flattened so the hidden ~/.android path
+          # component does not make the artifact upload drop them.
+          rt="${RUNNER_TEMP:-$(dirname "$DIAG_DIR")}"
+          {
+            echo "dirs: $HOME/.android /tmp $rt (excluding $DIAG_DIR)"
+            echo "names: *.dmp *crash* emu-*, and $HOME/.android/avd *.log"
+            echo "newer than: $DIAG_DIR/start.stamp"
+          } > "$DIAG_DIR/crash/searched.txt"
+          {
+            find "$HOME/.android" /tmp "$rt" -maxdepth 6 -path "$DIAG_DIR" -prune -o \
+              -type f -newer "$DIAG_DIR/start.stamp" -size -64M \
+              \( -name '*.dmp' -o -name '*crash*' -o -name 'emu-*' \) -print
+            find "$HOME/.android/avd" -type f -newer "$DIAG_DIR/start.stamp" -size -64M -name '*.log' -print
+          } 2>/dev/null | sort -u > "$DIAG_DIR/crash/found.txt"
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            flat=$(printf '%s' "$f" | sed 's#^/##; s#/#__#g; s#^\.##')
+            cp -p "$f" "$DIAG_DIR/crash/$flat" 2>/dev/null
+          done < "$DIAG_DIR/crash/found.txt"
+
+          hl="$DIAG_DIR/host.log"
+          gl="$DIAG_DIR/guest.log"
+          lc="$DIAG_DIR/logcat.txt"
+          dm="$DIAG_DIR/dmesg.txt"
+          cnt() { if [ -s "$2" ]; then grep -c -E "$1" "$2"; else echo "n/a (no data)"; fi; }
+          {
+            if [ "$dmesg_rc" -eq 0 ]; then
+              echo "dmesg: $(cnt 'Out of memory|oom-kill|Killed process|segfault' "$dm") lines matching Out of memory, oom-kill, Killed process, segfault"
+            else
+              echo "dmesg: unavailable (sudo dmesg exit $dmesg_rc)"
+            fi
+            echo "logcat: $(cnt "FATAL EXCEPTION|lowmemorykiller|lmkd|Kill '|am_kill|am_proc_died" "$lc") lines matching FATAL EXCEPTION, lowmemorykiller, lmkd, Kill ', am_kill, am_proc_died"
+            echo "peak qemu rss: $(awk '/^=== /{t=$2} $1 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $8 ~ /qemu-system/ && $3 > m {m=$3; at=t} END{ if (m) printf "%d KiB (%d MiB) at %s", m, m/1024, at; else print "n/a (no qemu process sampled)" }' "$hl" 2>/dev/null)"
+            echo "lowest host available: $(awk '/^=== /{t=$2} $1 == "Mem:" && (min == "" || $7 + 0 < min + 0) {min=$7; at=t} END{ if (min != "") printf "%d MiB at %s", min, at; else print "n/a (no free -m sample)" }' "$hl" 2>/dev/null)"
+            echo "last guest sample: $(grep -E '^=== .* guest$' "$gl" 2>/dev/null | tail -n 1 | cut -d' ' -f2)"
+            echo "last guest sample with device online: $(awk '/^=== /{t=$2} /^device: online$/{last=t} END{ if (last != "") print last; else print "none" }' "$gl" 2>/dev/null)"
+            echo "last host sample: $(grep -E '^=== .* host$' "$hl" 2>/dev/null | tail -n 1 | cut -d' ' -f2)"
+            echo "crash files copied: $(grep -c . "$DIAG_DIR/crash/found.txt" 2>/dev/null)"
+          } > "$DIAG_DIR/summary.txt"
+          cat "$DIAG_DIR/summary.txt"
+          exit 0
+
       # flutter drive's driver adaptor (test_driver/integration_test.dart)
       # writes each captured PNG to screenshots/<name>.png relative to
       # wherever flutter drive itself ran, which the script step above
@@ -137,6 +250,15 @@ jobs:
         with:
           name: store-screenshots
           path: packages/ludo_client/screenshots/*.png
+          if-no-files-found: warn
+
+      # The sampler's output (see "start the emulator watcher"), uploaded on
+      # green runs too so a death can be compared against a run without one.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: emulator-diag-stills
+          path: ${{ runner.temp }}/emulator-diag
           if-no-files-found: warn
 
   motion:
