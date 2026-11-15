@@ -18,10 +18,13 @@ export 'src/events.dart'
         TurnEnded,
         TurnBegan,
         GameWon,
-        YardReleased;
+        YardReleased,
+        SeatFinished,
+        SeatRetired;
 export 'src/game_config.dart' show GameConfig;
 export 'src/game_state.dart' show GameState;
-export 'src/intentions.dart' show Intention, RollIntention, MoveIntention;
+export 'src/intentions.dart'
+    show Intention, RollIntention, MoveIntention, RetireIntention;
 export 'src/rules_config.dart' show RulesConfig;
 export 'src/hash.dart' show stateHash;
 export 'src/engine_core.dart'
