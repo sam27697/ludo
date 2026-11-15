@@ -65,25 +65,54 @@ const Set<int> _entrySquares = <int>{0, 13, 26, 39};
 /// below can never disagree about where a token is actually tappable.
 double _tokenHitSize(double tokenSize) => math.max(48.0, tokenSize);
 
-/// C-641: the disc of a token as a raised piece lit from above. The fill is
-/// a radial gradient centred above the middle (lighter at the top, the seat
-/// colour through the middle, darker at the bottom) and the border is the
-/// same ink edge the flat disc had. There is no shadow on purpose: a shadow
-/// and the gradient together on every token, under the dimmed board, took the
-/// CI emulator down in four of four runs, and either one alone did not. The
-/// shading in the gradient carries the depth. All of it is static decoration:
-/// no image, no animation, nothing per frame.
-BoxDecoration _tokenBodyDecoration(Color seat, double diameter) {
-  final Color lighter = Color.lerp(seat, Colors.white, 0.35)!;
-  final Color darker = Color.lerp(seat, Colors.black, 0.22)!;
+/// C-641: the body of a token as a raised piece lit from above, built from
+/// four flat fills and no shader. A darker base disc fills the whole token; a
+/// body disc in the seat colour sits a little above the middle and leaves a
+/// darker crescent along the bottom edge; a lighter oval near the top is the
+/// highlight; the ink border goes on last, over the rim. There is no gradient,
+/// no blur, no shadow and no layer in this paint on purpose: a shader drawn
+/// inside the dimmed table's offscreen layer hangs the host's software
+/// renderer on the CI emulator, and flat fills are also what a cheap phone's
+/// GPU prefers. Light comes from above in every locale, so nothing here is
+/// mirrored. The geometry is fractions of the drawn diameter, y down from the
+/// disc centre.
+class _TokenBodyPainter extends CustomPainter {
+  const _TokenBodyPainter({required this.seat});
+
+  final Color seat;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double d = math.min(size.width, size.height);
+    final Offset c = size.center(Offset.zero);
+    final Color lighter = Color.lerp(seat, Colors.white, 0.35)!;
+    final Color darker = Color.lerp(seat, Colors.black, 0.22)!;
+    canvas.drawCircle(c, d * 0.50, Paint()..color = darker);
+    canvas.drawCircle(
+      c.translate(0, d * -0.06),
+      d * 0.40,
+      Paint()..color = seat,
+    );
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: c.translate(0, d * -0.30),
+        width: d * 0.44,
+        height: d * 0.20,
+      ),
+      Paint()..color = lighter,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_TokenBodyPainter old) => old.seat != seat;
+}
+
+/// The ink edge of a token, the same circle border the flat disc had. It is
+/// the foreground of the token's [DecoratedBox] so it lands over the fills
+/// [_TokenBodyPainter] draws underneath.
+BoxDecoration _tokenBorderDecoration(double diameter) {
   return BoxDecoration(
     shape: BoxShape.circle,
-    gradient: RadialGradient(
-      center: const Alignment(0, -0.45),
-      radius: 0.95,
-      colors: <Color>[lighter, seat, darker],
-      stops: const <double>[0.0, 0.5, 1.0],
-    ),
     border: Border.all(
       color: LudoColors.ink.withValues(alpha: 0.55),
       width: math.max(1, diameter * 0.06),
@@ -2178,7 +2207,8 @@ class _LudoBoardState extends State<LudoBoard> {
       identifier: 'cell-${cell.col}-${cell.row}',
       sortKey: tokenSortKey,
       child: DecoratedBox(
-        decoration: _tokenBodyDecoration(LudoColors.seats[seat], drawnSize),
+        position: DecorationPosition.foreground,
+        decoration: _tokenBorderDecoration(drawnSize),
         // Rule 2: every token carries its seat's shape, centred, at half the
         // drawn disc's diameter, in every state this disc is ever drawn in
         // -- yard, track, home column, finished, mid-travel, mid-capture --
@@ -2186,10 +2216,13 @@ class _LudoBoardState extends State<LudoBoard> {
         // drawn in a shared slot (smaller than the one-seat fan, read from
         // [layoutAtDrawn] so a token mid-travel keeps the fan's mark) carries
         // the mark at 0.62 so it still clears SeatMark's 6 dp floor.
-        child: Center(
-          child: SeatMark(
-            seat: seat,
-            size: drawnSize * (drawnSize < cellSize * 0.7 ? 0.62 : 0.5),
+        child: CustomPaint(
+          painter: _TokenBodyPainter(seat: LudoColors.seats[seat]),
+          child: Center(
+            child: SeatMark(
+              seat: seat,
+              size: drawnSize * (drawnSize < cellSize * 0.7 ? 0.62 : 0.5),
+            ),
           ),
         ),
       ),
