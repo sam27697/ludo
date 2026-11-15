@@ -293,6 +293,36 @@ once the server order lands. It requires `rollQueue`; a config with
 35. A game state where a winner exists is terminal. No further roll, move or
     timer is accepted against it.
 
+### 5.1 Playing out the places (`playOut`), Sam's ruling of 2026-11-15
+
+Sam: «عند وجود اكثر من لاعبين، لازم اللعبة تكفي مشان ينافس اللاعبين عالمراكز،
+فمثلا نخلي لاعب مركز ثاني وثالث ورابع». Engine toggle `playOut`, default off
+in the engine (older records replay unchanged), on for every server room once
+the server order lands. With `playOut` on, rules 33 to 35 are replaced by
+33p to 39p.
+
+33p. A seat that brings its fourth token home takes the next free place
+    (1st, then 2nd, ...) and leaves the turn order. Its unspent faces are
+    discarded and it is owed no roll: rule 11a gives no bonus to the move
+    that finishes a seat.
+34p. A seat may be **retired** by the server (it left the game, or it was
+    removed for absence). A retired seat takes no place by finishing and
+    leaves the turn order; its tokens not at home return to the yard and
+    take no further part (they cannot block, be captured or capture). If
+    it was the seat to act, its unspent faces are discarded and the turn
+    passes.
+35p. While two or more seats are still playing, the game goes on; the turn
+    passes to the next playing seat in ascending order, wrapping.
+36p. When exactly one seat is still playing, it takes the next free place
+    and the game ends. When none is (every other seat retired at once), the
+    game ends with the places already taken.
+37p. Retired seats hold no place. The places are the finishing order, then
+    the last seat standing.
+38p. The winner is the 1st place. A game with a winner is terminal, as rule
+    35.
+39p. With two seats nothing a player sees changes: the first seat home is
+    1st and the other is 2nd, at once.
+
 ## 6. Determinism
 
 36. Given the same ordered list of intentions, the engine produces
