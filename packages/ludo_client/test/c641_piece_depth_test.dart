@@ -1,15 +1,55 @@
 // Pixel proof of order 641 (work/ludo/orders/641-pieces-have-depth.md),
-// decision D1 (body gradient), written from that contract's text alone. D2
-// (border) and D4 (cost) are not pixel claims.
+// decision D1' (flat-layer body, no shader), written from that contract's text
+// alone. D2 (border) and D4 (cost) are not pixel claims.
 //
-// Round 4 (RESPEC 2, run 149). The contact shadow, D3 and its round 2 and 3
-// replacement D3', is withdrawn: four screenshots runs in a row lost the CI
-// emulator at a capture where the board sits under an Opacity layer, and the
-// probe runs showed the shadow, not the gradient, was the cause. The token has
-// no boxShadow. P3 (contact shadow) and P5 (hard shadow edge) are therefore
-// removed. P4 is rewritten for the finished geometry of C-644 (discs of 0.55
-// cell at four fixed spots inside the seat's own centre triangle) and P6 (no
-// shadow) is new.
+// Round 6 (RESPEC 3, run 150). Measured by order 646's instrument: with the
+// radial gradient of D1 on every token (no shadow) both stills runs died at
+// capture 10; the guest froze for every process within about 1 s, the host
+// emulator process went into an uninterruptible wait and grew about 200 MB, no
+// OOM anywhere. The hang is the host's software renderer drawing the gradient
+// shader inside the dimmed table's offscreen layer. The round 4 statement that
+// the contact shadow, not the gradient, was the cause was a one-run bisect and
+// was wrong: gradient-only has four deaths in four runs. The token therefore
+// has no Gradient, no Shader, no MaskFilter, no BoxShadow and no saveLayer; the
+// depth comes from flat fills. P3 (contact shadow) and P5 (hard shadow edge)
+// stay removed since round 4.
+//
+// D1' geometry the probes are derived from. d is the drawn diameter and y is
+// measured from the disc centre, down positive, in fractions of d:
+//   1. base disc, radius 0.50, colour darker = lerp(seat, black, 0.22);
+//   2. body disc, radius 0.40, centre y = -0.06 (bottom edge at y = +0.34,
+//      leaving a darker crescent below it), colour seat;
+//   3. highlight oval, width 0.44, height 0.20, centre y = -0.30 (so it spans
+//      y = -0.40 to -0.20), colour lighter = lerp(seat, white, 0.35);
+//   4. the border ring of D2, ink at 0.55, width max(1, 0.06 d), inside the
+//      disc edge (0.44 d to 0.50 d).
+// The seat mark (radius 0.25 d on the track) is drawn over the middle.
+//
+// What still holds for D1', and why:
+//   P1 holds. 0.36 d above the centre falls inside the highlight oval, 0.36 d
+//      below falls in the darker crescent (0.34 d to 0.44 d). The gap needed
+//      is 0.04 relative luminance.
+//   P2 holds. 0.36 d below is the darker crescent, which is the seat colour
+//      mixed 22 percent with black and stays nearest to its own seat colour.
+//   P4 holds unchanged. It probes the border ring at 0.47 d, which D1' keeps
+//      exactly as it was.
+//   P6 holds unchanged. It probes 0.55 d, outside the disc, where D1' paints
+//      nothing.
+//   H1 holds. 0.40 d to the right is just outside the body disc, so it reads
+//      the darker base disc, still nearer to the seat colour than to paper;
+//      0.62 d to the right is paper.
+//   P7 is new, below.
+//
+// P7 flat body. On the vertical axis of each P1 track token the colour must
+// take flat values, not ramp. From 0.27 d to 0.42 d below the centre every
+// pixel is within 4 per channel of the seat colour or of darker, except at
+// most 2 (the antialiased edge of the body disc at 0.34 d). From 0.33 d to
+// 0.39 d above the centre every pixel is within 4 per channel of lighter,
+// except at most 2. A gradient passes through every colour between and fails.
+// The 0.27 d start clears the seat mark (radius 0.25 d on the track): measured
+// on D1', no pixel of either band is mark-coloured. The band is taken as the
+// pixel rows whose centre lies inside it, in the pixel column that contains the
+// disc centre.
 //
 // Method. LudoBoard is mounted in a 450 x 450 physical viewport at device
 // pixel ratio 1.0, so one cell is 30 px, inside one RepaintBoundary that is
@@ -69,6 +109,11 @@
 //   4. flutter_test paints every BoxShadow without its blur by default
 //      (debugDisableShadows), so P6 switches that flag off for its own capture
 //      and restores it. The other cases run under the default.
+//   5. P7 on a track token of d = 21 px holds 3 pixel rows in its lower band
+//      and 1 in its upper band, so "at most 2 exceptions" cannot fail the
+//      upper band and fails the lower band only when all three rows miss. The
+//      numbers are the contract's and are kept as given; the measured effect
+//      is in the report that came with this file.
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -652,6 +697,98 @@ void main() {
             );
           }
         }
+      }
+      s.done();
+    });
+
+    // P7: flat body. D1' draws the body from flat fills only: a darker base
+    // disc, a seat-colour body disc, a lighter highlight oval. So on the
+    // vertical axis the colour takes a few values and steps between them, it
+    // does not ramp. Below the centre, from 0.27 d to 0.42 d, every pixel is
+    // within 4 per channel of the seat colour or of darker (at most 2 misses,
+    // the antialiased edge of the body disc). Above the centre, from 0.33 d to
+    // 0.39 d, every pixel is within 4 per channel of lighter (at most 2
+    // misses). A gradient fails this: it passes through every colour between.
+    testWidgets('P7 flat body, $view', (tester) async {
+      final String name = 'P7 flat body, $view';
+      final _Scene s = await _render(
+        tester,
+        caseName: name,
+        mySeat: mySeat,
+        placed: _plainTrackPlacements(q),
+      );
+      for (final _Placed p in s.placed) {
+        final Rect r = s.discs[p]!;
+        final double d = r.width;
+        final Color seatColor = LudoColors.seats[p.seat];
+        final _Rgb seat = _Rgb.of(seatColor);
+        final _Rgb darker = _Rgb.of(Color.lerp(seatColor, Colors.black, 0.22)!);
+        final _Rgb lighter = _Rgb.of(
+          Color.lerp(seatColor, Colors.white, 0.35)!,
+        );
+        final int column = r.center.dx.floor();
+
+        // The pixel rows whose centre lies in [from, to] times d from the
+        // disc centre, down positive.
+        List<int> rows(double from, double to) => <int>[
+          for (
+            int y = (r.center.dy + from * d - 0.5).ceil();
+            y + 0.5 <= r.center.dy + to * d;
+            y++
+          )
+            y,
+        ];
+
+        void probe(
+          String band,
+          List<int> ys,
+          Map<String, _Rgb> allowed,
+          int maxMisses,
+        ) {
+          if (ys.isEmpty) {
+            fail(
+              'C-641t harness: ${p.label}: P7 band $band holds no pixel row '
+              '(d ${d.toStringAsFixed(2)} px, centre ${_px(r.center)}). '
+              'Scenario: ${s.scenario}',
+            );
+          }
+          final List<String> missed = <String>[];
+          for (final int y in ys) {
+            final px = s.frame.at(Offset(column + 0.5, y + 0.5));
+            final bool near = allowed.values.any(
+              (_Rgb a) =>
+                  (px.rgb.r - a.r).abs() <= 4 &&
+                  (px.rgb.g - a.g).abs() <= 4 &&
+                  (px.rgb.b - a.b).abs() <= 4,
+            );
+            if (!near) {
+              missed.add('px (${px.x}, ${px.y}) ${px.rgb.hex}');
+            }
+          }
+          if (missed.length > maxMisses) {
+            s.misses.add(
+              '${p.label}, P7 band $band on the axis, pixel rows '
+              '${ys.first}..${ys.last} of column $column: expected every '
+              'pixel within 4 per channel of ${allowed.entries.map((e) => '${e.key} ${e.value.hex}').join(' or ')} '
+              'with at most $maxMisses exceptions, read ${missed.length} '
+              'exceptions of ${ys.length}: ${missed.join(', ')} '
+              '(d ${d.toStringAsFixed(2)} px)',
+            );
+          }
+        }
+
+        probe(
+          '0.27 d to 0.42 d below the centre',
+          rows(0.27, 0.42),
+          <String, _Rgb>{'seat': seat, 'darker': darker},
+          2,
+        );
+        probe(
+          '0.33 d to 0.39 d above the centre',
+          rows(-0.39, -0.33),
+          <String, _Rgb>{'lighter': lighter},
+          2,
+        );
       }
       s.done();
     });
