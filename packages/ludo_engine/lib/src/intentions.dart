@@ -56,3 +56,20 @@ class MoveIntention extends Intention {
   @override
   String toString() => 'MoveIntention(seat: $seat, token: $token, face: $face)';
 }
+
+/// docs/ENGINE_API.md section 12.1: the server removes [seat] from the game
+/// (it left, or it was absent too long). Issued by the server only; there is
+/// no wire message for it, and it is accepted from any seat's turn.
+class RetireIntention extends Intention {
+  const RetireIntention(super.seat);
+
+  @override
+  bool operator ==(Object other) =>
+      other is RetireIntention && other.seat == seat;
+
+  @override
+  int get hashCode => Object.hash(RetireIntention, seat);
+
+  @override
+  String toString() => 'RetireIntention(seat: $seat)';
+}

@@ -101,3 +101,38 @@ class GameWon extends GameEvent {
   @override
   String toString() => 'GameWon(seat: $seat)';
 }
+
+/// docs/ENGINE_API.md section 11.1, rule 11r: the seat rolled no 6 for 10
+/// rolls in a row with every token in the yard and is granted one release.
+/// Emitted right after the `Rolled` of the tenth roll, whether or not a token
+/// can come out (rule 14r).
+class YardReleased extends GameEvent {
+  const YardReleased({required this.seat});
+
+  final int seat;
+
+  @override
+  String toString() => 'YardReleased(seat: $seat)';
+}
+
+/// docs/ENGINE_API.md section 12.1, rule 33p: `seat` brought its fourth token
+/// home, or was the last seat playing, and takes `place` (1-based).
+class SeatFinished extends GameEvent {
+  const SeatFinished({required this.seat, required this.place});
+
+  final int seat;
+  final int place;
+
+  @override
+  String toString() => 'SeatFinished(seat: $seat, place: $place)';
+}
+
+/// docs/ENGINE_API.md section 12.1, rule 34p: the server retired `seat`.
+class SeatRetired extends GameEvent {
+  const SeatRetired({required this.seat});
+
+  final int seat;
+
+  @override
+  String toString() => 'SeatRetired(seat: $seat)';
+}

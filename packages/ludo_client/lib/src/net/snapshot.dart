@@ -435,16 +435,17 @@ class RoomSnapshot {
 
   /// A copy with the given fields replaced. Every omitted parameter keeps
   /// this instance's value; there is no way to null out [gameId],
-  /// [clientSeeds], [turn], [winner], [verifyUrl] or [rematch] through this
-  /// method, because nothing that constructs a [RoomSnapshot] copy today
-  /// needs to -- every reducer that needs `rematch` to actually change
-  /// (become non-null, change its `ready`, or go back to null) replaces the
-  /// whole snapshot with a fresh [RoomSnapshot.fromJson] instead of copying.
+  /// [clientSeeds], [turn], [winner] or [verifyUrl] through this method,
+  /// because nothing that constructs a [RoomSnapshot] copy today needs to.
   ///
-  /// [lastSpentFace] is the one exception: `_reduceRolled` (A3) has to put
-  /// it back to null on every roll, so omitting it and passing it as `null`
-  /// are different calls here. Passing nothing at all keeps the current
-  /// value; passing `null` explicitly sets it to null.
+  /// [lastSpentFace] and [rematch] are the exceptions: omitting them and
+  /// passing them as `null` are different calls. Passing nothing at all keeps
+  /// the current value; passing `null` explicitly sets it to null.
+  /// `_reduceRolled` (A3) puts [lastSpentFace] back to null on every roll, and
+  /// `_reduceGameStarted` clears [rematch] because docs/PROTOCOL.md sections
+  /// 16.4 and 16.6 make it non-null only in a rematch LOBBY. A `room` frame
+  /// that carries a different [rematch] still replaces the whole snapshot
+  /// with a fresh [RoomSnapshot.fromJson].
   RoomSnapshot copyWith({
     String? code,
     RoomState? state,
@@ -461,7 +462,7 @@ class RoomSnapshot {
     String? verifyUrl,
     List<(int k, int face)>? recentRolls,
     List<int>? recentRollSeats,
-    RematchState? rematch,
+    Object? rematch = _unset,
     Object? lastSpentFace = _unset,
     int? seq,
   }) {
@@ -481,7 +482,9 @@ class RoomSnapshot {
       verifyUrl: verifyUrl ?? this.verifyUrl,
       recentRolls: recentRolls ?? this.recentRolls,
       recentRollSeats: recentRollSeats ?? this.recentRollSeats,
-      rematch: rematch ?? this.rematch,
+      rematch: identical(rematch, _unset)
+          ? this.rematch
+          : rematch as RematchState?,
       lastSpentFace: identical(lastSpentFace, _unset)
           ? this.lastSpentFace
           : lastSpentFace as int?,
@@ -491,7 +494,8 @@ class RoomSnapshot {
 }
 
 /// Sentinel distinguishing "omitted" from "explicitly null" for
-/// [RoomSnapshot.copyWith]'s [RoomSnapshot.lastSpentFace] parameter.
+/// [RoomSnapshot.copyWith]'s [RoomSnapshot.lastSpentFace] and
+/// [RoomSnapshot.rematch] parameters.
 const Object _unset = Object();
 
 // --- decoding helpers -------------------------------------------------

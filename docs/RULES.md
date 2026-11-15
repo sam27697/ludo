@@ -151,6 +151,42 @@ server room. With `rollQueue` on, rules 9, 12 and 13 are replaced by 9q to
     queued face that has a legal move on its first legal token, in queue
     order then ascending token order.
 
+### 3.2b The yard release (`yardRelease`), Sam's ruling of 2026-11-15
+
+Sam: «اقصى حد لتكرار عدد غير 6 عند وجود الاربع احجار الخاصة في اللاعب في
+داخل مركز الانطلاق الخاص به هو 10، في النقلة العاشرة اذا ظهر رقم غير 6
+بالتالي يظهر اشعار للاعبين ... سيتم السماح له باخراج حجرة واحدة من حجاره
+(اي كما لو ظهر له رقم 6 استثنائي)». Engine toggle `yardRelease`, default
+off in the engine (older records replay unchanged), on for every server room
+once the server order lands. It requires `rollQueue`; a config with
+`yardRelease` on and `rollQueue` off is malformed.
+
+9r. A seat's **drought** counts its consecutive rolls without a 6 while all
+    four of its tokens are in the yard (`progress = -1`). A seat with a token
+    on the track, in the home column or at home has drought 0. The count
+    carries across turns.
+10r. A roll of 6 sets the drought to 0. A roll that is not a 6 adds 1 when
+    all four of the seat's tokens are in the yard, and sets it to 0
+    otherwise. A token leaving the yard sets it to 0 (so 6 then 3 counts
+    nothing once the 6 brings a token out).
+11r. When a non-6 brings the drought to 10, the seat is granted one
+    **release** and the drought returns to 0. Every player is told: that
+    seat rolled no 6 for 10 rolls in a row with every token in the yard.
+12r. A release brings one token out of the yard onto the seat's entry
+    square, exactly as a 6 would under rule 17, with the same legality
+    (rule 22 applies to the entry square). It is not a 6: it grants no
+    extra roll, it does not count towards three 6s, and it is not a face.
+13r. The release is spent first. After it, the face that was drawn stays in
+    the queue and is spent normally (the released token may move it, rule
+    11q); if no queued face has a legal move, rule 13q passes the turn.
+14r. If no token can be released (an opponent block on the entry square),
+    the release lapses: the turn passes as rule 13q, and the drought starts
+    again from 0.
+15r. The drawn face is always the fair draw of `docs/FAIRNESS.md` and is
+    recorded as rolled. The release is a published rule applied on top of
+    it, never a changed face. Under the timer (rule 15q), the server spends
+    a release before any face, on the lowest-index token.
+
 ### 3.3 The timer
 
 14. A seat has 45 seconds from the moment the roll is delivered to it to select
@@ -257,6 +293,36 @@ server room. With `rollQueue` on, rules 9, 12 and 13 are replaced by 9q to
     and there is no second or third place.
 35. A game state where a winner exists is terminal. No further roll, move or
     timer is accepted against it.
+
+### 5.1 Playing out the places (`playOut`), Sam's ruling of 2026-11-15
+
+Sam: «عند وجود اكثر من لاعبين، لازم اللعبة تكفي مشان ينافس اللاعبين عالمراكز،
+فمثلا نخلي لاعب مركز ثاني وثالث ورابع». Engine toggle `playOut`, default off
+in the engine (older records replay unchanged), on for every server room once
+the server order lands. With `playOut` on, rules 33 to 35 are replaced by
+33p to 39p.
+
+33p. A seat that brings its fourth token home takes the next free place
+    (1st, then 2nd, ...) and leaves the turn order. Its unspent faces are
+    discarded and it is owed no roll: rule 11a gives no bonus to the move
+    that finishes a seat.
+34p. A seat may be **retired** by the server (it left the game, or it was
+    removed for absence). A retired seat takes no place by finishing and
+    leaves the turn order; its tokens not at home return to the yard and
+    take no further part (they cannot block, be captured or capture). If
+    it was the seat to act, its unspent faces are discarded and the turn
+    passes.
+35p. While two or more seats are still playing, the game goes on; the turn
+    passes to the next playing seat in ascending order, wrapping.
+36p. When exactly one seat is still playing, it takes the next free place
+    and the game ends. When none is (every other seat retired at once), the
+    game ends with the places already taken.
+37p. Retired seats hold no place. The places are the finishing order, then
+    the last seat standing.
+38p. The winner is the 1st place. A game with a winner is terminal, as rule
+    35.
+39p. With two seats nothing a player sees changes: the first seat home is
+    1st and the other is 2nd, at once.
 
 ## 6. Determinism
 
