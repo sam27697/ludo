@@ -43,13 +43,25 @@
 // P7 flat body. On the vertical axis of each P1 track token the colour must
 // take flat values, not ramp. From 0.27 d to 0.42 d below the centre every
 // pixel is within 4 per channel of the seat colour or of darker, except at
-// most 2 (the antialiased edge of the body disc at 0.34 d). From 0.33 d to
-// 0.39 d above the centre every pixel is within 4 per channel of lighter,
-// except at most 2. A gradient passes through every colour between and fails.
+// most 1 (the antialiased edge of the body disc at 0.34 d). From 0.33 d to
+// 0.39 d above the centre every pixel is within 4 per channel of lighter, with
+// no exception. A gradient passes through every colour between and fails.
 // The 0.27 d start clears the seat mark (radius 0.25 d on the track): measured
 // on D1', no pixel of either band is mark-coloured. The band is taken as the
 // pixel rows whose centre lies inside it, in the pixel column that contains the
 // disc centre.
+//
+// The exception counts are tighter than the first contract text (2 and 2),
+// by the master's decision after this measurement. At d = 21 px the lower band
+// holds 3 pixel rows and the upper band 1, so 2 exceptions could never fail
+// the upper band and failed the lower band only when all three rows missed.
+// Misses per token with no exception allowed, band lower (3 rows) / upper
+// (1 row):
+//   base gradient, seat 2 (yellow)         3 / 1
+//   base gradient, seats 0, 1 and 3        2 / 1
+//   D1' flat layers, every seat            1 / 0
+// With 2 and 2 only seat 2 was red on the gradient. With 1 and 0 every seat
+// is red on the gradient and green on D1'.
 //
 // Method. LudoBoard is mounted in a 450 x 450 physical viewport at device
 // pixel ratio 1.0, so one cell is 30 px, inside one RepaintBoundary that is
@@ -109,11 +121,8 @@
 //   4. flutter_test paints every BoxShadow without its blur by default
 //      (debugDisableShadows), so P6 switches that flag off for its own capture
 //      and restores it. The other cases run under the default.
-//   5. P7 on a track token of d = 21 px holds 3 pixel rows in its lower band
-//      and 1 in its upper band, so "at most 2 exceptions" cannot fail the
-//      upper band and fails the lower band only when all three rows miss. The
-//      numbers are the contract's and are kept as given; the measured effect
-//      is in the report that came with this file.
+//   5. P7 allows 1 exception in the lower band and none in the upper band;
+//      see the P7 paragraph above for the row counts and the measurement.
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -705,10 +714,10 @@ void main() {
     // disc, a seat-colour body disc, a lighter highlight oval. So on the
     // vertical axis the colour takes a few values and steps between them, it
     // does not ramp. Below the centre, from 0.27 d to 0.42 d, every pixel is
-    // within 4 per channel of the seat colour or of darker (at most 2 misses,
+    // within 4 per channel of the seat colour or of darker (at most 1 miss,
     // the antialiased edge of the body disc). Above the centre, from 0.33 d to
-    // 0.39 d, every pixel is within 4 per channel of lighter (at most 2
-    // misses). A gradient fails this: it passes through every colour between.
+    // 0.39 d, every pixel is within 4 per channel of lighter (no
+    // miss). A gradient fails this: it passes through every colour between.
     testWidgets('P7 flat body, $view', (tester) async {
       final String name = 'P7 flat body, $view';
       final _Scene s = await _render(
@@ -770,7 +779,7 @@ void main() {
               '${p.label}, P7 band $band on the axis, pixel rows '
               '${ys.first}..${ys.last} of column $column: expected every '
               'pixel within 4 per channel of ${allowed.entries.map((e) => '${e.key} ${e.value.hex}').join(' or ')} '
-              'with at most $maxMisses exceptions, read ${missed.length} '
+              'with at most $maxMisses exception(s), read ${missed.length} '
               'exceptions of ${ys.length}: ${missed.join(', ')} '
               '(d ${d.toStringAsFixed(2)} px)',
             );
@@ -781,13 +790,13 @@ void main() {
           '0.27 d to 0.42 d below the centre',
           rows(0.27, 0.42),
           <String, _Rgb>{'seat': seat, 'darker': darker},
-          2,
+          1,
         );
         probe(
           '0.33 d to 0.39 d above the centre',
           rows(-0.39, -0.33),
           <String, _Rgb>{'lighter': lighter},
-          2,
+          0,
         );
       }
       s.done();
