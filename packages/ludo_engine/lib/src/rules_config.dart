@@ -1,5 +1,5 @@
 // docs/ENGINE_API.md section 2, verbatim shape; section 10.1 adds rollQueue,
-// section 11.1 adds yardRelease.
+// section 11.1 adds yardRelease, section 12.1 adds playOut.
 
 /// Toggles the server may set per room.
 class RulesConfig {
@@ -9,6 +9,7 @@ class RulesConfig {
     this.rollQueue = false,
     this.homeBonus = false,
     this.yardRelease = false,
+    this.playOut = false,
   });
 
   /// Rule 21: two or more of a seat's tokens on one main-track square block
@@ -37,6 +38,13 @@ class RulesConfig {
   /// other (docs/ENGINE_API.md section 11.1).
   final bool yardRelease;
 
+  /// Rules 33p to 39p (docs/RULES.md section 5.1): a seat that brings its
+  /// fourth token home takes a place and leaves the turn order, the game
+  /// goes on until one seat is left, and the server may retire a seat.
+  /// Defaults off so older records replay unchanged (docs/ENGINE_API.md
+  /// section 12.1).
+  final bool playOut;
+
   @override
   bool operator ==(Object other) =>
       other is RulesConfig &&
@@ -44,14 +52,21 @@ class RulesConfig {
       other.captureBonus == captureBonus &&
       other.rollQueue == rollQueue &&
       other.homeBonus == homeBonus &&
-      other.yardRelease == yardRelease;
+      other.yardRelease == yardRelease &&
+      other.playOut == playOut;
 
   @override
-  int get hashCode =>
-      Object.hash(blocks, captureBonus, rollQueue, homeBonus, yardRelease);
+  int get hashCode => Object.hash(
+        blocks,
+        captureBonus,
+        rollQueue,
+        homeBonus,
+        yardRelease,
+        playOut,
+      );
 
   @override
   String toString() => 'RulesConfig(blocks: $blocks, '
       'captureBonus: $captureBonus, rollQueue: $rollQueue, '
-      'homeBonus: $homeBonus, yardRelease: $yardRelease)';
+      'homeBonus: $homeBonus, yardRelease: $yardRelease, playOut: $playOut)';
 }
