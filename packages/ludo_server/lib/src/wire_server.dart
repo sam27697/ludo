@@ -326,6 +326,7 @@ class WireServer {
   /// cannot stop the publish for every other room this same sweep decided
   /// on.
   void _runTurnExpiry() {
+    _runAbsentRetirement();
     final List<ExpiredTurn> expired;
     try {
       expired = registry.expireTurns();
@@ -344,6 +345,10 @@ class WireServer {
             data: frame.data,
           );
         }
+        final MoveOk? timerMove = one.move;
+        if (timerMove != null) {
+          detachFreedSeats(_hub, one.code, timerMove.freed);
+        }
         final String phase = one.roll != null
             ? 'await_roll'
             : one.move != null
@@ -361,6 +366,47 @@ class WireServer {
         // ignore: avoid_print
         print('turn-expiry publish failed room=${one.code} '
             'seat=${one.seat} error=$error\n$stack');
+      }
+    }
+  }
+
+  /// `docs/PROTOCOL.md` section 28 rule 4 "absent", the other half of the
+  /// 1 s sweep: retires every playing seat of a 2026-11 game whose socket has
+  /// been down for 120 s, and publishes what the engine's events say follows,
+  /// to every socket in the room with no `re` (no request is answered). Run
+  /// first, so a seat that has just become due is retired rather than played
+  /// for by the turn timer one more time. Guarded the way the turn-expiry
+  /// sweep is, in two layers: a throw working out which seats are due cannot
+  /// escape the timer, and a throw publishing one room's retirement cannot
+  /// stop the next room's.
+  void _runAbsentRetirement() {
+    final List<RetireOk> retired;
+    try {
+      retired = registry.retireAbsentSeats();
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('absent-retire sweep failed error=$error\n$stack');
+      return;
+    }
+    for (final RetireOk one in retired) {
+      try {
+        final List<OutFrame> frames = buildRetireFrames(one);
+        for (final OutFrame frame in frames) {
+          _hub.broadcast(
+            code: one.room.code,
+            type: frame.type,
+            data: frame.data,
+          );
+        }
+        detachFreedSeats(_hub, one.room.code, one.freed);
+        // ignore: avoid_print
+        print('room=${one.room.code} type=- id=- seat=${one.seat.seat} '
+            'outcome=seat_retired reason=${one.reason} '
+            'seq=${one.gameOverSeq ?? one.turnSeq ?? one.retiredSeq}');
+      } catch (error, stack) {
+        // ignore: avoid_print
+        print('absent-retire publish failed room=${one.room.code} '
+            'seat=${one.seat.seat} error=$error\n$stack');
       }
     }
   }

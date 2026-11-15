@@ -15,6 +15,7 @@ import 'package:ludo_engine/ludo_engine.dart' as engine;
 import 'clock.dart';
 import 'room.dart';
 import 'room_code.dart';
+import 'ruleset.dart';
 import 'seat_token.dart';
 import 'snapshot.dart' show buildRoomSnapshot;
 import 'verify_record.dart';
@@ -45,6 +46,9 @@ enum ProtocolError {
   /// Section 27: the app's build is below the server's minimum. Never a
   /// reply to a frame; sent once, unsolicited, as a socket is refused.
   updateRequired,
+
+  /// Section 28 rule 4: a `kick` named a playing seat whose socket is up.
+  notAbsent,
 }
 
 sealed class CreateResult {}
@@ -315,8 +319,11 @@ class MoveOk extends MoveResult {
     required this.events,
     required this.movedSeq,
     required this.face,
+    this.release = false,
+    this.seatFinishedSeq,
     this.gameOverSeq,
     this.verifyUrl,
+    this.freed = const <FreedSeat>[],
     this.turnPassedSeq,
     this.turnSeq,
     this.nextDeadlineMs,
@@ -334,11 +341,29 @@ class MoveOk extends MoveResult {
   /// engine used, rather than guessed from `from`/`to` -- a token leaving
   /// the yard moves to progress `0` however large the spent face, so a
   /// `to - from` reconstruction is wrong for exactly that move.
-  final int face;
+  ///
+  /// Null exactly when [release] is true: a yard release spends no face
+  /// (`docs/PROTOCOL.md` section 28 rule 2), so there is none to report.
+  final int? face;
+
+  /// Section 28 rule 2: this move spent a yard release (rule 11r), not a
+  /// face of the queue.
+  final bool release;
+
+  /// Section 28 rule 3: set only when this move brought a seat's fourth
+  /// token home and the game goes on. `seat_finished` takes this `seq`,
+  /// after the `moved` and before the `turn`.
+  final int? seatFinishedSeq;
 
   /// Set together, and only, when this move won the game.
   final int? gameOverSeq;
   final String? verifyUrl;
+
+  /// Section 28 rule 4 "At the end": the retired seats this win freed, in
+  /// retirement order, each with the `seq` of its own `player_left`, which
+  /// follows `game_over`. Empty unless this move won a 2026-11 game that had
+  /// retired seats.
+  final List<FreedSeat> freed;
 
   /// Set only when the move left faces queued that no token could spend:
   /// `docs/PROTOCOL.md` section 21.3 rule 4, "move, only dead faces left".
@@ -405,8 +430,13 @@ class SetPlayersFailure extends SetPlayersResult {
 sealed class LeaveResult {}
 
 class LeaveOk extends LeaveResult {
-  LeaveOk({required this.room, required this.seat});
+  LeaveOk({required this.room, required this.seat, this.retire});
   final Room room;
+
+  /// Section 28 rule 4 "left": set exactly when this `leave_room` retired a
+  /// playing seat of a 2026-11 game. The wire layer then publishes the
+  /// retirement instead of a `presence`.
+  final RetireOk? retire;
 
   /// The seat that left. In LOBBY and FINISHED it has already been removed
   /// from `room.seats`; in PLAYING it is still there, marked disconnected,
@@ -459,6 +489,87 @@ class RematchFailure extends RematchResult {
   RematchFailure(this.error);
   final ProtocolError error;
 }
+
+class _Concluded {
+  _Concluded({
+    required this.gameOverSeq,
+    required this.verifyUrl,
+    required this.freed,
+  });
+  final int gameOverSeq;
+  final String verifyUrl;
+  final List<FreedSeat> freed;
+}
+
+/// One retired seat removed from the room when a 2026-11 game ended,
+/// `docs/PROTOCOL.md` section 28 rule 4 "At the end". [seat] is the seat as
+/// it stood before removal; [seq] is the `seq` of its `player_left` and
+/// [hostSeat] the room's host after it was freed.
+class FreedSeat {
+  FreedSeat({required this.seat, required this.seq, required this.hostSeat});
+  final Seat seat;
+  final int seq;
+  final int hostSeat;
+}
+
+sealed class RetireResult {}
+
+/// A seat retired by the server, `docs/PROTOCOL.md` section 28 rule 4.
+/// Carries what the wire layer needs to build `seat_retired` and whatever
+/// the engine's events add to it, with every `seq` already fixed, in the
+/// order the frames go out: `seat_retired` at [retiredSeq], then either a
+/// `turn` at [turnSeq], or a `game_over` at [gameOverSeq] followed by one
+/// `player_left` per entry of [freed], or nothing.
+class RetireOk extends RetireResult {
+  RetireOk({
+    required this.room,
+    required this.seat,
+    required this.reason,
+    required this.events,
+    required this.retiredSeq,
+    required this.hostSeat,
+    this.turnSeq,
+    this.nextDeadlineMs,
+    this.gameOverSeq,
+    this.verifyUrl,
+    this.freed = const <FreedSeat>[],
+  });
+
+  final Room room;
+
+  /// The seat that was retired. Still in `room.seats` unless [freed] holds it.
+  final Seat seat;
+
+  /// `"left"`, `"absent"` or `"kicked"`.
+  final String reason;
+
+  /// `Applied.events` of the engine's `RetireIntention`, unmodified.
+  final List<engine.GameEvent> events;
+  final int retiredSeq;
+
+  /// `host_seat` after the retirement, changed or not.
+  final int hostSeat;
+
+  /// Set, with [nextDeadlineMs], when the retired seat was to act and the
+  /// turn went to the next playing seat.
+  final int? turnSeq;
+  final int? nextDeadlineMs;
+
+  /// Set, with [verifyUrl], when the retirement left one playing seat and
+  /// the game ended.
+  final int? gameOverSeq;
+  final String? verifyUrl;
+  final List<FreedSeat> freed;
+}
+
+class RetireFailure extends RetireResult {
+  RetireFailure(this.error);
+  final ProtocolError error;
+}
+
+/// `docs/PROTOCOL.md` section 28 rule 4: how long a playing seat's socket
+/// must have been down, without a break, before the sweep retires it.
+const Duration _absentRetireAfter = Duration(milliseconds: 120000);
 
 /// `docs/PROTOCOL.md` section 26 rule 3: the budget of every segment that
 /// starts for an away seat. Fixed, not a rules field, the same in every room.
@@ -513,10 +624,18 @@ class RoomRegistry {
     required Random secure,
     VerifyStore? verifyStore,
     String verifyUrlBase = defaultVerifyUrlBase,
+    String ruleset = ruleset202610,
   })  : _clock = clock,
         _secure = secure,
         verifyStore = verifyStore ?? MemoryVerifyStore(clock),
-        _verifyUrlBase = verifyUrlBase;
+        _verifyUrlBase = verifyUrlBase,
+        ruleset = _checkedRuleset(ruleset);
+
+  /// `docs/PROTOCOL.md` section 28 rule 1: the ruleset every room created
+  /// from here on takes, [ruleset202610] or [ruleset202611]. `bin/server.dart`
+  /// reads it once from `RULESET` at start; a room copies it at `create_room`
+  /// and never looks at this again.
+  final String ruleset;
 
   final Clock _clock;
   final Random _secure;
@@ -596,6 +715,7 @@ class RoomRegistry {
       seats: <Seat>[hostSeat],
       game: null,
       chain: chain,
+      ruleset: ruleset,
     );
     _rooms[code] = room;
     _refreshIdleTracking(room);
@@ -645,6 +765,9 @@ class RoomRegistry {
     }
     final bool reconnected = !seat.connected;
     seat.connected = true;
+    // Section 28 rule 4: a resume that reconnects the seat ends the absence
+    // count; a later drop starts a new one.
+    seat.absentSince = null;
     // docs/PROTOCOL.md section 26 rule 2: a seat reconnected at any point of
     // the turn that would have made it away is not made away by that turn.
     seat.connectedThisTurn = true;
@@ -866,6 +989,11 @@ class RoomRegistry {
         captureBonus: room.rules.captureBonus,
         rollQueue: true,
         homeBonus: true,
+        // docs/PROTOCOL.md section 28 rule 1: the yard release and the
+        // places played out are the 2026-11 ruleset, and only it. The room
+        // took its ruleset at create_room, so a rematch plays the same one.
+        yardRelease: room.isRuleset202611,
+        playOut: room.isRuleset202611,
       ),
       seed: _secureSeed(),
     );
@@ -1009,6 +1137,7 @@ class RoomRegistry {
     room.clientSeeds = null;
     room.rollCount = 0;
     room.rollSeats.clear();
+    room.releases.clear();
     room.turnSegmentStartedAt = null;
     for (final Seat s in room.seats) {
       s.clientSeed = null;
@@ -1100,6 +1229,12 @@ class RoomRegistry {
     // so appending here, and only here, keeps rollSeats.length == rollCount
     // true without a second place either could drift from the other.
     room.rollSeats.add(seat.seat);
+    // docs/PROTOCOL.md section 28 rule 2: the roll numbers whose roll granted
+    // a yard release, lapses included, for the verify record. The engine's
+    // YardReleased event is the only source; nothing is re-derived.
+    if (appliedOk.events.whereType<engine.YardReleased>().isNotEmpty) {
+      room.releases.add(k);
+    }
 
     room.seq++;
     final int rolledSeq = room.seq;
@@ -1219,7 +1354,12 @@ class RoomRegistry {
     // `defaultFace(game)` (ENGINE_API.md section 10.4), read here off the
     // same pre-move `game` the engine itself read it from, never
     // recomputed from any legality rule of this file's own.
-    final int faceSpent = face ?? engine.defaultFace(game)!;
+    final int? faceSpent =
+        game.releaseOwed ? null : face ?? engine.defaultFace(game)!;
+    // docs/PROTOCOL.md section 28 rule 2: a move made while a release was
+    // owed spent the release, not a face. Read off the pre-move state, the
+    // same one the engine read it from.
+    final bool releaseSpent = game.releaseOwed;
 
     room.seq++;
     final int movedSeq = room.seq;
@@ -1228,52 +1368,27 @@ class RoomRegistry {
 
     int? gameOverSeq;
     String? verifyUrl;
+    List<FreedSeat> freed = const <FreedSeat>[];
+    int? seatFinishedSeq;
     int? turnPassedSeq;
     int? turnSeq;
     int? nextDeadlineMs;
 
     if (won) {
-      room.state = RoomState.finished;
-      // docs/VERIFY.md section 1: the record is written the moment the game
-      // is won, before this method returns the MoveOk that carries
-      // verify_url below -- so a client that taps Verify the instant
-      // game_over arrives finds the record already there. A failed save
-      // (the store throws, or a record for this game_id somehow already
-      // exists) must never cost a player a finished game: it is logged to
-      // stderr, one line, and play continues exactly as if it had
-      // succeeded -- except for the link: a record that is not there must
-      // not be promised, so `verify_url` goes out empty and a client shows
-      // no "Check the rolls" (docs/PROTOCOL.md section 11.2).
       final int winnerSeat =
           appliedOk.events.whereType<engine.GameWon>().first.seat;
-      // buildVerifyRecord and jsonEncode run inside this same try: a throw
-      // from either (a rollSeats index, a null gameId) is exactly as
-      // recoverable here as a throw from verifyStore.save itself, and must
-      // never escape move() and cost the players their finished game.
-      bool recordSaved = false;
-      try {
-        final String recordJson = jsonEncode(
-          buildVerifyRecord(
-            room,
-            winner: winnerSeat,
-            finishedAt: _clock.now,
-          ),
-        );
-        recordSaved = verifyStore.save(room.gameId!, recordJson);
-        if (!recordSaved) {
-          stderr.writeln(
-            'verify_record_not_saved game_id=${room.gameId} reason=exists',
-          );
-        }
-      } catch (error) {
-        stderr.writeln(
-          'verify_record_not_saved game_id=${room.gameId} reason=$error',
-        );
-      }
-      room.seq++;
-      gameOverSeq = room.seq;
-      verifyUrl = recordSaved ? '$_verifyUrlBase${room.gameId}' : '';
+      final _Concluded concluded = _concludeGame(room, winnerSeat);
+      gameOverSeq = concluded.gameOverSeq;
+      verifyUrl = concluded.verifyUrl;
+      freed = concluded.freed;
     } else {
+      // docs/PROTOCOL.md section 28 rule 3: a move that brought a seat's
+      // fourth token home with the game going on is followed by
+      // `seat_finished`, then by the `turn` for the next playing seat.
+      if (appliedOk.events.whereType<engine.SeatFinished>().isNotEmpty) {
+        room.seq++;
+        seatFinishedSeq = room.seq;
+      }
       // docs/PROTOCOL.md section 21.3 rule 4: a move that leaves only dead
       // faces in the queue gets its own `turn_passed` (reason
       // `no_legal_move`), ahead of the `turn` below, exactly as a `roll`
@@ -1299,11 +1414,87 @@ class RoomRegistry {
       events: appliedOk.events,
       movedSeq: movedSeq,
       face: faceSpent,
+      release: releaseSpent,
+      seatFinishedSeq: seatFinishedSeq,
       gameOverSeq: gameOverSeq,
       verifyUrl: verifyUrl,
+      freed: freed,
       turnPassedSeq: turnPassedSeq,
       turnSeq: turnSeq,
       nextDeadlineMs: nextDeadlineMs,
+    );
+  }
+
+  /// The one place a game is concluded, whichever intention concluded it (a
+  /// move that won, or, under 2026-11, a retirement that left one playing
+  /// seat). `docs/VERIFY.md` section 1: the record is written the moment the
+  /// game is won, before the caller returns the result that carries
+  /// `verify_url`, so a client that taps Verify the instant `game_over`
+  /// arrives finds the record already there. A failed save (the store
+  /// throws, or a record for this game_id somehow already exists) must never
+  /// cost a player a finished game: it is logged to stderr, one line, and
+  /// play continues exactly as if it had succeeded -- except for the link: a
+  /// record that is not there must not be promised, so `verify_url` goes out
+  /// empty and a client shows no "Check the rolls" (docs/PROTOCOL.md section
+  /// 11.2).
+  ///
+  /// Section 28 rule 4 "At the end": once `game_over` has its `seq`, every
+  /// retired seat is freed, in retirement order, one `seq` each. The record
+  /// is built first, so it still lists every seat that played.
+  _Concluded _concludeGame(Room room, int winnerSeat) {
+    room.state = RoomState.finished;
+    // buildVerifyRecord and jsonEncode run inside this same try: a throw
+    // from either (a rollSeats index, a null gameId) is exactly as
+    // recoverable here as a throw from verifyStore.save itself, and must
+    // never escape and cost the players their finished game.
+    bool recordSaved = false;
+    try {
+      final String recordJson = jsonEncode(
+        buildVerifyRecord(
+          room,
+          winner: winnerSeat,
+          finishedAt: _clock.now,
+        ),
+      );
+      recordSaved = verifyStore.save(room.gameId!, recordJson);
+      if (!recordSaved) {
+        stderr.writeln(
+          'verify_record_not_saved game_id=${room.gameId} reason=exists',
+        );
+      }
+    } catch (error) {
+      stderr.writeln(
+        'verify_record_not_saved game_id=${room.gameId} reason=$error',
+      );
+    }
+    room.seq++;
+    final int gameOverSeq = room.seq;
+    final String verifyUrl = recordSaved ? '$_verifyUrlBase${room.gameId}' : '';
+
+    final List<FreedSeat> freed = <FreedSeat>[];
+    if (room.isRuleset202611) {
+      for (final int retiredIndex in room.game!.retired) {
+        final Seat? gone = _seatAt(room, retiredIndex);
+        if (gone == null) {
+          continue;
+        }
+        room.seats = room.seats.where((Seat s) => !identical(s, gone)).toList();
+        if (room.hostSeat == gone.seat) {
+          room.hostSeat = room.seats.isEmpty
+              ? -1
+              : room.seats.map((Seat s) => s.seat).reduce(min);
+        }
+        room.seq++;
+        freed.add(
+          FreedSeat(seat: gone, seq: room.seq, hostSeat: room.hostSeat),
+        );
+      }
+      _refreshIdleTracking(room);
+    }
+    return _Concluded(
+      gameOverSeq: gameOverSeq,
+      verifyUrl: verifyUrl,
+      freed: freed,
     );
   }
 
@@ -1438,10 +1629,31 @@ class RoomRegistry {
       return LeaveFailure(ProtocolError.badSeatToken);
     }
     if (room.state == RoomState.playing) {
+      final engine.GameState? game = room.game;
+      if (room.isRuleset202611 &&
+          game != null &&
+          game.phase != engine.GamePhase.finished &&
+          _isPlayingSeat(game, seat.seat)) {
+        // docs/PROTOCOL.md section 28 rule 4 "left": under 2026-11 a playing
+        // seat that leaves is retired, not left to the timer. The leaver's
+        // `seat_retired` replaces the `presence` of the branch below, so
+        // there is one `seq` step for the whole call, taken by the retire.
+        final RetireResult retired = _retire(room, seat, 'left');
+        if (retired is RetireFailure) {
+          return LeaveFailure(retired.error);
+        }
+        return LeaveOk(
+          room: room,
+          seat: seat,
+          retire: retired as RetireOk,
+        );
+      }
       // PLAYING: the seat stays in the game and is later played by the
       // timer, per docs/PROTOCOL.md section 3. The seat is simply marked
-      // not connected.
+      // not connected. Under 2026-11 this is a finished or retired seat,
+      // whose leaving changes nothing in the game (section 28 rule 3).
       seat.connected = false;
+      seat.absentSince ??= _clock.now;
       _refreshIdleTracking(room);
     } else {
       // LOBBY and FINISHED: frees the seat, per docs/PROTOCOL.md section 3
@@ -1493,9 +1705,220 @@ class RoomRegistry {
       return false;
     }
     seat.connected = connected;
+    // Section 28 rule 4: the absence count starts at the flip whose
+    // `presence` the caller broadcasts next, and ends with the reconnect.
+    seat.absentSince = connected ? null : _clock.now;
     _refreshIdleTracking(room);
     room.seq++;
     return true;
+  }
+
+  /// `kick`, `docs/PROTOCOL.md` section 28 rule 4 "kicked". The host retires
+  /// a playing seat whose socket is down. [data] is the message's whole `d`,
+  /// because the ladder puts `NOT_HOST` and the phase check ahead of the
+  /// payload check, so the payload is only looked at here, in that order:
+  /// room exists, seat authorised, `NOT_HOST`, state not PLAYING
+  /// (`WRONG_PHASE`, a lobby kick is X202), `seat` an int 0..3 and no other
+  /// key (`BAD_FIELD`), a playing seat (`ILLEGAL_MOVE`), its socket down
+  /// (`NOT_ABSENT`).
+  RetireResult kick({
+    required String code,
+    required String seatToken,
+    required Map<String, Object?> data,
+  }) {
+    final Room? room = _rooms[code];
+    if (room == null) {
+      return RetireFailure(ProtocolError.noSuchRoom);
+    }
+    final Seat? caller = _findSeat(room, seatToken);
+    if (caller == null) {
+      return RetireFailure(ProtocolError.badSeatToken);
+    }
+    if (caller.seat != room.hostSeat) {
+      return RetireFailure(ProtocolError.notHost);
+    }
+    final engine.GameState? game = room.game;
+    if (room.state != RoomState.playing ||
+        game == null ||
+        game.phase == engine.GamePhase.finished) {
+      return RetireFailure(ProtocolError.wrongPhase);
+    }
+    final Object? rawSeat = data['seat'];
+    if (data.length != 1 || rawSeat is! int || rawSeat < 0 || rawSeat > 3) {
+      return RetireFailure(ProtocolError.badField);
+    }
+    final Seat? target = _seatAt(room, rawSeat);
+    if (target == null || !_isPlayingSeat(game, rawSeat)) {
+      return RetireFailure(ProtocolError.illegalMove);
+    }
+    if (target.connected) {
+      return RetireFailure(ProtocolError.notAbsent);
+    }
+    return _retire(room, target, 'kicked');
+  }
+
+  /// The absent half of the turn timer's 1 s sweep, `docs/PROTOCOL.md`
+  /// section 28 rule 4 "absent": retires every playing seat of a 2026-11
+  /// game whose socket has been down for [_absentRetireAfter] without a
+  /// break, measured on the injected clock from `Seat.absentSince`, and
+  /// returns what it did, in the order it was done. A seat whose socket went
+  /// down longest ago goes first (ties by seat index); the game is looked at
+  /// again after each retirement, since the last one before a win ends it.
+  ///
+  /// A disconnected playing seat with no stamp (its flag was cleared by
+  /// something other than [setConnected], [leaveRoom] or [resume]) is
+  /// stamped now, so the count never starts late and never starts at all
+  /// only by accident; a connected one has any stamp cleared.
+  List<RetireOk> retireAbsentSeats() {
+    final List<RetireOk> done = <RetireOk>[];
+    final DateTime now = _clock.now;
+    for (final Room room in _rooms.values.toList(growable: false)) {
+      if (!room.isRuleset202611 || room.state != RoomState.playing) {
+        continue;
+      }
+      while (true) {
+        final engine.GameState? game = room.game;
+        if (game == null || game.phase == engine.GamePhase.finished) {
+          break;
+        }
+        Seat? due;
+        for (final Seat seat in room.seats) {
+          if (!_isPlayingSeat(game, seat.seat)) {
+            continue;
+          }
+          if (seat.connected) {
+            seat.absentSince = null;
+            continue;
+          }
+          final DateTime since = seat.absentSince ??= now;
+          if (now.difference(since) < _absentRetireAfter) {
+            continue;
+          }
+          if (due == null || since.isBefore(due.absentSince!)) {
+            due = seat;
+          }
+        }
+        if (due == null) {
+          break;
+        }
+        final RetireResult result = _retire(room, due, 'absent');
+        if (result is RetireOk) {
+          done.add(result);
+        } else {
+          // _retire refuses only a state it cannot apply. Say so, and stop
+          // working on this room for this sweep rather than retry forever.
+          // ignore: avoid_print
+          print('retire skipped room=${room.code} seat=${due.seat} '
+              'reason=absent error=${(result as RetireFailure).error.name}');
+          break;
+        }
+      }
+    }
+    return done;
+  }
+
+  /// A seat is playing (`docs/ENGINE_API.md` section 12.1) when it is in the
+  /// game's seats and in neither `placings` nor `retired`.
+  bool _isPlayingSeat(engine.GameState game, int seat) =>
+      game.config.seats.contains(seat) &&
+      !game.placings.contains(seat) &&
+      !game.retired.contains(seat);
+
+  /// The one place a seat is retired, whichever of the three reasons caused
+  /// it. The caller has already decided that it may be: the seat is playing
+  /// in a PLAYING 2026-11 room. Everything that follows is the engine's, read
+  /// off its events (`docs/ENGINE_API.md` section 12.4), never derived from a
+  /// state difference.
+  RetireResult _retire(Room room, Seat seat, String reason) {
+    final engine.GameState game = room.game!;
+    // A retirement that would leave no playing seat has no `game_over` to
+    // announce (the engine ends such a game without `GameWon`). A running
+    // game always has two playing seats or more, so this is a guard, and it
+    // refuses before anything is touched.
+    final int playing =
+        game.config.seats.where((int s) => _isPlayingSeat(game, s)).length;
+    if (playing < 2) {
+      return RetireFailure(ProtocolError.internal);
+    }
+    final int previousTurnOwner = game.currentSeat;
+    final engine.ApplyResult applied =
+        engine.apply(game, engine.RetireIntention(seat.seat));
+    if (applied is engine.Rejected) {
+      return RetireFailure(_mapEngineError(applied.error));
+    }
+    final engine.Applied appliedOk = applied as engine.Applied;
+    room.game = appliedOk.state;
+    if (reason == 'left') {
+      // The leaver's socket is gone from the room (the wire layer detaches
+      // it); the seat stays, as `connected: false`. No `presence` is sent for
+      // it: `seat_retired` is the only frame, and takes the only `seq`.
+      seat.connected = false;
+      seat.absentSince ??= _clock.now;
+    }
+    _refreshIdleTracking(room);
+    room.seq++;
+    final int retiredSeq = room.seq;
+
+    if (room.hostSeat == seat.seat) {
+      room.hostSeat = _hostAfterRetire(room);
+    }
+    final int hostSeat = room.hostSeat;
+
+    final bool won = appliedOk.events.whereType<engine.GameWon>().isNotEmpty;
+    final bool turnBegan =
+        appliedOk.events.whereType<engine.TurnBegan>().isNotEmpty;
+
+    int? turnSeq;
+    int? nextDeadlineMs;
+    int? gameOverSeq;
+    String? verifyUrl;
+    List<FreedSeat> freed = const <FreedSeat>[];
+    if (won) {
+      final _Concluded concluded = _concludeGame(
+        room,
+        appliedOk.events.whereType<engine.GameWon>().first.seat,
+      );
+      gameOverSeq = concluded.gameOverSeq;
+      verifyUrl = concluded.verifyUrl;
+      freed = concluded.freed;
+    } else if (turnBegan) {
+      room.seq++;
+      turnSeq = room.seq;
+      _noteTurnOwner(room, previousTurnOwner);
+      nextDeadlineMs = _restartSegment(room);
+    }
+
+    return RetireOk(
+      room: room,
+      seat: seat,
+      reason: reason,
+      events: appliedOk.events,
+      retiredSeq: retiredSeq,
+      hostSeat: hostSeat,
+      turnSeq: turnSeq,
+      nextDeadlineMs: nextDeadlineMs,
+      gameOverSeq: gameOverSeq,
+      verifyUrl: verifyUrl,
+      freed: freed,
+    );
+  }
+
+  /// `docs/PROTOCOL.md` section 28 rule 4 "The host": the lowest seat that is
+  /// still playing, else the lowest seat still connected, else -1.
+  int _hostAfterRetire(Room room) {
+    final engine.GameState game = room.game!;
+    final List<int> playing = <int>[
+      for (final Seat s in room.seats)
+        if (_isPlayingSeat(game, s.seat)) s.seat,
+    ]..sort();
+    if (playing.isNotEmpty) {
+      return playing.first;
+    }
+    final List<int> connected = <int>[
+      for (final Seat s in room.seats)
+        if (s.connected) s.seat,
+    ]..sort();
+    return connected.isEmpty ? -1 : connected.first;
   }
 
   /// Removes every room one of whose state's rules says it is over, and
@@ -1881,6 +2304,17 @@ ProtocolError _mapEngineError(engine.EngineError error) {
       // in 1..6; a badFace rejection here means that stopped being true.
       return ProtocolError.internal;
   }
+}
+
+String _checkedRuleset(String value) {
+  if (!isKnownRuleset(value)) {
+    throw ArgumentError.value(
+      value,
+      'ruleset',
+      'must be $ruleset202610 or $ruleset202611',
+    );
+  }
+  return value;
 }
 
 List<int> _seatIndicesFor(int players) {

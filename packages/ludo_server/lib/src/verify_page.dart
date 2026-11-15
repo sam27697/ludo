@@ -237,11 +237,29 @@ String buildVerifyPageHtml(
       ..write('</td></tr>\n');
   }
 
+  // docs/PROTOCOL.md section 28 rule 2 and docs/VERIFY.md section 1.1: the
+  // roll numbers whose roll granted a yard release. Absent in a 2026-10
+  // record, so such a page is byte for byte what it was.
+  final Object? rawReleases = record['releases'];
+  final Set<int> releaseKs = <int>{
+    if (rawReleases is List<Object?>)
+      for (final Object? k in rawReleases)
+        if (k is int) k,
+  };
+  final String releaseLine = isAr
+      ? 'ما طلع 6 بعشر رميات وكل القطع بالبيت: بتطلع قطعة وحدة (القاعدة 11r)'
+      : 'No 6 for 10 rolls with every piece at home: one piece comes out '
+          '(rule 11r)';
+
   final StringBuffer rollRows = StringBuffer();
   for (final Object? entry in rolls) {
     final Map<String, Object?> roll = entry as Map<String, Object?>;
     final Object? k = roll['k'];
     final String kEsc = _esc(k);
+    final String releaseMarkup = k is int && releaseKs.contains(k)
+        ? '<br><span class="release-note" data-release="$kEsc">'
+            '${_esc(releaseLine)}</span>'
+        : '';
     rollRows
       ..write('<tr><td data-label="$labelK"$ltrAttr>')
       ..write(kEsc)
@@ -251,6 +269,7 @@ String buildVerifyPageHtml(
       ..write(_seatMarkup(roll['seat'], isAr: isAr))
       ..write('</td><td data-label="$labelDie"$ltrAttr>')
       ..write(_esc(roll['die']))
+      ..write(releaseMarkup)
       ..write('</td><td data-label="$labelReveal" class="reveal hex"$ltrAttr>')
       ..write(_esc(roll['reveal']))
       ..write('</td><td data-label="$labelChain" id="chain-')
