@@ -524,3 +524,84 @@ Records with `"rollQueue": true` in `rules` carry `face` on every `move`
 intention (mandatory there, absent elsewhere). The 40 legacy records stay
 byte-identical. The generator spends, on each move, the face and token its
 seeded choice picks among `legalByFace`.
+
+## 11. The yard release (`yardRelease`), 2026-11-15
+
+`docs/RULES.md` section 3.2b is the rule. With `rules.yardRelease` false
+nothing in sections 1 to 10 changes, byte for byte.
+
+### 11.1 Types
+
+```dart
+class RulesConfig {
+  final bool yardRelease;    // rules 9r-15r, default false; needs rollQueue
+}
+
+class GameState {
+  final List<int> drought;   // one count per seat index 0..3, always
+                             // [0, 0, 0, 0] when !yardRelease; a seat not
+                             // in config.seats stays 0
+  final bool releaseOwed;    // currentSeat holds an unspent release
+}
+
+class YardReleased extends GameEvent { final int seat; }   // rule 11r
+```
+
+`newGame` throws `ArgumentError` when `yardRelease` is on and `rollQueue`
+is off. It starts with `drought = [0, 0, 0, 0]`, `releaseOwed = false`.
+
+### 11.2 Serialisation
+
+`yardRelease` is written in `rules` after `homeBonus`, only when true.
+`drought` (list of 4 ints) and `releaseOwed` (bool) are written in that
+order right after `sixes`, only when `yardRelease` is true (then always).
+`fromJson()` reads them absent as `[0, 0, 0, 0]` / false and rejects:
+an explicit `yardRelease: false`, `yardRelease` without `rollQueue`,
+either key on a state whose rules lack `yardRelease`, either key missing
+when `yardRelease` is true, a drought list not of length 4, a negative
+count or a count above 9, and `releaseOwed: true` outside `awaitMove`.
+
+### 11.3 RollIntention with `yardRelease`
+
+After section 10.3's `badFace` check and before its steps 2 to 4:
+
+- face 6: `drought[seat] = 0`, then 10.3 as written.
+- non-6 with some token of the seat not at -1: `drought[seat] = 0`, then
+  10.3 as written.
+- non-6 with all four at -1: `drought[seat] + 1`. Below 10: 10.3 as
+  written (the queue face has no legal token, so step 4 passes the turn).
+  At 10: append the face (`sixes = 0`), set `drought[seat] = 0`, emit
+  `Rolled` then `YardReleased`. If any token is releasable (the legality
+  of a 6 leaving the yard, rule 17 and 22): `releaseOwed = true`, phase
+  `awaitMove`. Otherwise (rule 14r): emit `TurnEnded(noLegalMove)` then
+  `TurnBegan`; queue `[]`, next seat, `awaitRoll`, `sixes = 0`.
+
+`Rolled.legal` for the releasing roll is the releasable tokens.
+
+### 11.4 Moving with a release owed
+
+While `releaseOwed` is true: `legalTokens(state)` is the releasable tokens,
+ascending; `legalByFace(state)` is empty; `defaultFace(state)` is null.
+A `MoveIntention` with `face == null` spends the release; one with any face
+is `illegalMove`; a token that is not releasable is `illegalMove`.
+
+1. The token goes from -1 to 0. `Moved` is emitted as for any move. The
+   entry square is safe, so no capture.
+2. `releaseOwed = false`. No `ExtraRoll`, `sixes` unchanged (0).
+3. `legalByFace` of the new state non-empty: phase `awaitMove`, same
+   seat, no further event. Otherwise 10.4 step 6: `TurnEnded(noLegalMove)`
+   then `TurnBegan`, queue `[]`, next seat, `awaitRoll`, `sixes = 0`.
+
+A seat change never touches another seat's drought. A capture that sends a
+seat's last token on the board back to the yard leaves its drought at 0;
+counting starts with that seat's next roll.
+
+### 11.5 Wire and corpus
+
+The wire mapping (`YardReleased` to a frame every seat sees, a release move
+without `face`) is the server order's, not this one. Corpus records with
+`"yardRelease": true` write a release move as
+`{"type":"move","seat":s,"token":t,"release":true}` with no `face`; every
+other move in such a record carries `face` as in 10.5. The 40 legacy records
+and every `rollQueue` record stay byte-identical.
+
