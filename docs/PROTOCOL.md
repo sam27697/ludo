@@ -1649,3 +1649,106 @@ update, so it ships before the closed test's clock starts.
      English and Arabic from every screen named in rule 6, its primary
      action asks to open the `market:` page then the `https` page when the
      first fails, and no reconnect follows.
+
+## 28. The ruleset of 2026-11-15: the yard release, places played out, an absent seat removed
+
+Sam's notes of 2026-11-15 (X191, X189, X204 in `work/ludo/EXPERIENCE.md` of the ops workspace):
+`docs/RULES.md` rules 9r-15r and 33p-39p, `docs/ENGINE_API.md` sections 11 and 12. This section is
+how they reach the wire. Nothing in it applies to a room created under the old ruleset.
+
+1. **The switch.** The server environment carries `RULESET`, `2026-10` (absent or empty means
+   this) or `2026-11`; any other value stops the server at start with a line on stderr naming the
+   variable, as section 27 rule 3. A room takes the server's ruleset when `create_room` is
+   answered and keeps it for its life, rematches included. Under `2026-11` the engine config of
+   every game in the room has `yardRelease` and `playOut` on (with `rollQueue` and `homeBonus`, as
+   today). The snapshot's `rules` gains `"ruleset": "2026-11"`; under `2026-10` the key is absent.
+   **Operations:** `RULESET=2026-11` is set in the same `.env` change that raises
+   `MIN_CLIENT_BUILD` (section 27) to the first app build that implements this section. A client
+   that does not read this section is never seated in a `2026-11` room.
+
+2. **The yard release on the wire.** Under `2026-11`:
+   - The `rolled` frame of the roll that grants a release (rule 11r) carries `"release": true`,
+     `legal` = the releasable tokens, `queue` as section 21.1 (it holds the drawn face), and no
+     `legal_by_face`. On a lapse (rule 14r) it carries `"release": true` and `legal: []`, followed
+     by `turn_passed` `no_legal_move` and `turn` for the next seat, as any pass. Every other
+     `rolled` frame omits `release`.
+   - While a release is owed, the snapshot's `turn` (phase `await_move`) carries `"release": true`,
+     `legal` = the releasable tokens, `queue`, no `value`, no `legal_by_face`. Every seat object in
+     the snapshot carries `drought`, an integer 0..9 (rule 9r), under `2026-11` only.
+   - `move` while a release is owed: `face` must be absent; present (any value) is `ILLEGAL_MOVE`.
+     A token that is not releasable is `ILLEGAL_MOVE`. A valid one spends the release.
+   - The `moved` frame of a release: `from: -1`, `to: 0`, `captured: []`, `extra_roll: false`,
+     `"release": true`, no `face`. Then a `turn` for the same seat in `await_move` when the queued
+     face has a legal move, otherwise `turn_passed` `no_legal_move` and `turn` for the next seat.
+   - The timer (rule 15r): on expiry with a release owed, the server spends it on the lowest
+     releasable token; the `moved` frame carries `by` as section 22.
+   - The segment restarts on the releasing `rolled` exactly as on a `rolled` that leaves a move
+     pending (section 21.2), and on the release `moved` when it leaves faces.
+   - **The verify record** (docs/VERIFY.md section 1.1) gains `"ruleset": "2026-11"` and
+     `"releases": [k, ...]`, the roll numbers `k` whose roll granted a release (lapses included),
+     ascending; both keys absent under `2026-10`. The fair draw of roll `k` is unchanged and still
+     verifies on its own. The page shows, next to each such roll, one line: en "No 6 for 10 rolls
+     with every piece at home: one piece comes out (rule 11r)", ar «ما طلع 6 بعشر رميات وكل
+     القطع بالبيت: بتطلع قطعة وحدة (القاعدة 11r)».
+
+3. **Places on the wire.** Under `2026-11`:
+   - `seat_finished` `{ "seat": int, "place": int }` (with `seq`) is broadcast after the `moved`
+     that brings a seat's fourth token home **when the game goes on**; it is followed by `turn` for
+     the next playing seat. When that move ends the game, no `seat_finished` is sent: `game_over`
+     carries the outcome.
+   - `game_over` gains `placings` (seats in place order, the last seat standing included) and
+     `retired` (seats in retirement order). `winner` is `placings[0]`. Under `2026-10` both keys are
+     absent.
+   - The snapshot gains `placings` and `retired` (lists of seats, possibly empty) under `2026-11`.
+   - A finished seat stays seated, keeps its socket, receives every frame and is never `turn.seat`.
+     Its `roll` and `move` are `NOT_YOUR_TURN`. Its `leave_room` in PLAYING is answered as today
+     (section 4: `presence`), and nothing in the game changes.
+   - The verify record gains `placings` and `retired` under `2026-11`.
+
+4. **Retiring a seat.** Under `2026-11`, the server applies the engine's `RetireIntention` for a
+   playing seat (in `seats`, not in `placings`, not in `retired`) in three cases, each broadcast as
+   `seat_retired` `{ "seat": int, "reason": "left"|"absent"|"kicked", "host_seat": int }` (with
+   `seq`), followed by what the engine's events say: nothing more, or `turn` for the next playing
+   seat (the retired seat was to act), or `game_over` (one playing seat left; it takes the next
+   place).
+   - **left:** `leave_room` from a playing seat in PLAYING. The leaver's socket gets the same
+     `seat_retired` with `re`. This replaces section 4's "the seat remains and is played by the
+     timer" for `2026-11` rooms.
+   - **absent:** a playing seat whose socket has been down for **120 000 ms** without a break (from
+     the moment its `presence` `connected: false` was broadcast; a `resume` that reconnects it ends
+     the count; a later drop starts a new one). The check runs with the turn timer sweep (1 s), so
+     the retire lands within 121 s. Section 26's 10 s away budget still applies until then.
+   - **kicked:** the new client message `kick` `{ "seat": int }`, host only, PLAYING only. The
+     target must be a playing seat whose socket is down at that moment. Errors, in this order:
+     `NOT_HOST`; state not PLAYING: `WRONG_PHASE` (a lobby kick is a later section, X202); `seat`
+     not an int 0..3: `BAD_FIELD`; not a playing seat: `ILLEGAL_MOVE`; its socket is up:
+     `NOT_ABSENT` (a new error code). Answered on the host's socket by the broadcast `seat_retired`
+     with `re`.
+   - A retired seat stays in `seats` (its name is still shown) with its tokens as the engine left
+     them (in the yard, or home), `connected` as it is. It may `resume` and watch; it never acts. A
+     finished seat is never retired.
+   - **The host.** When the retired seat was the host, `host_seat` becomes the lowest seat that is
+     still playing, else the lowest seat still connected, else -1; `seat_retired` carries the value
+     after the change (changed or not), as `player_left` does (section 18).
+   - **At the end.** When `game_over` is sent, every retired seat is freed: one `player_left` per
+     retired seat, in retirement order, each with its own `seq`, after `game_over`. A rematch then
+     follows section 16 with the seats that are left.
+   - Neither `absent` nor `kicked` is ever a strike against anyone (X203, later).
+
+5. **Rate and size.** `kick` counts against the same per-socket message limit as every message.
+
+6. **Tests this section requires before it is implemented** (server, real sockets, fake clock):
+   the switch (absent, `2026-10`, `2026-11`, a bad value stops the server); a `2026-11` room's
+   snapshot `rules.ruleset`, seats' `drought`, `placings`, `retired`; ten non-6 rolls with every
+   token in the yard give `rolled` `release: true` with the releasable `legal`, a `move` with a
+   `face` is `ILLEGAL_MOVE`, without one it gives `moved` `release: true` then the right `turn`;
+   the lapse; the timer spends a release; the verify record's `releases`; a three-seat game where
+   one seat finishes (`seat_finished` then `turn` for the next playing seat), play goes on, the
+   finished seat's `roll` is `NOT_YOUR_TURN`, the game ends with `game_over` `placings` of three
+   and no second `seat_finished`; a two-seat game ends exactly as under `2026-10` plus `placings`;
+   `leave_room` from a playing seat retires it (`reason: left`, `re` to the leaver), with three
+   seats play goes on, with two the other wins; an absent seat retired at 120 s and not at
+   119.999 s, a resume at 119 s resets the count; `kick` accepted on a dropped seat and each error
+   in the stated order; host retired hands `host_seat` on; retired seats freed after `game_over`
+   with one `player_left` each; a `2026-10` room on a `2026-11` server is impossible (the ruleset
+   is taken at create) and a `2026-10` server is byte-identical to today on the existing suites.
