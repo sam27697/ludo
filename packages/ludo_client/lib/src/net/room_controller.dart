@@ -1283,7 +1283,9 @@ class RoomController extends ChangeNotifier {
   /// a malformed frame (no state change). A seat absent from `room.seats` is
   /// ignored entirely, ahead of the gap check, matching the behaviour
   /// `presence` has always had. A leaving seat that was in `rematch.ready` is
-  /// taken out of it (C-607); `by` is kept as it was.
+  /// taken out of it (C-607); `by` is kept as it was. A rematch that does
+  /// not list the leaver is passed through unchanged, since `copyWith` now
+  /// treats an explicit null as a clear.
   void _reducePlayerLeft(Frame frame, RoomSnapshot room) {
     final int? seatValue = _asInt(frame.data, 'seat');
     final int? seqValue = frame.seq;
@@ -1328,7 +1330,7 @@ class RoomController extends ChangeNotifier {
                 if (s != seatValue) s,
             ],
           )
-        : null;
+        : rematch;
     _room = room.copyWith(
       seats: seats,
       hostSeat: hostSeat,
@@ -1425,6 +1427,11 @@ class RoomController extends ChangeNotifier {
   /// room-level field, not an index into a seat, so the absent-seat rule
   /// does not apply to it: that rule only guards a frame field literally
   /// named `seat`.
+  ///
+  /// C-649: `rematch` is set to null here. PROTOCOL 16.4 and 16.6 make it
+  /// non-null only in a rematch LOBBY, and the rematch LOBBY this frame
+  /// leaves still carries `{by, ready}`; keeping it made the next end card
+  /// read "my seat is ready" and hide Play again.
   void _reduceGameStarted(Frame frame, RoomSnapshot room) {
     final int? turnSeat = _asInt(frame.data, 'turn');
     final String? gameId = _asString(frame.data, 'game_id');
@@ -1457,6 +1464,7 @@ class RoomController extends ChangeNotifier {
       gameId: gameId,
       clientSeeds: clientSeeds,
       turn: turn,
+      rematch: null,
       seq: seqValue,
       recentRolls: const <(int k, int face)>[],
       recentRollSeats: const <int>[],
