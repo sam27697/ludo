@@ -536,6 +536,13 @@ ApplyResult _applyMoveQueued(
 
   final queueAfterSpend = _removeFirstOccurrence(state.queue, faceToUse);
 
+  // Rule 10r (docs/ENGINE_API.md section 11.4): a token leaving the yard
+  // clears the mover's drought. With the toggle off the list is all zeros and
+  // stays untouched.
+  final droughtAfter = state.config.rules.yardRelease && fromProgress == -1
+      ? _withDrought(state.drought, seat, 0)
+      : state.drought;
+
   final allHome = newTokens[seat].every((p) => p == 57);
   if (allHome) {
     // Rule 14q: winning discards whatever is left unspent.
@@ -551,7 +558,7 @@ ApplyResult _applyMoveQueued(
       seq: state.seq + 1,
       rngState: state.rngState,
       queue: const <int>[],
-      drought: state.drought,
+      drought: droughtAfter,
     );
     return Applied(newState, events);
   }
@@ -574,7 +581,7 @@ ApplyResult _applyMoveQueued(
       seq: state.seq + 1,
       rngState: state.rngState,
       queue: queueAfterSpend,
-      drought: state.drought,
+      drought: droughtAfter,
     );
     return Applied(newState, events);
   }
@@ -590,7 +597,7 @@ ApplyResult _applyMoveQueued(
     seq: state.seq + 1,
     rngState: state.rngState,
     queue: queueAfterSpend,
-    drought: state.drought,
+    drought: droughtAfter,
   );
 
   if (legalByFace(tentativeState).isNotEmpty) {
@@ -617,7 +624,7 @@ ApplyResult _applyMoveQueued(
     seq: state.seq + 1,
     rngState: state.rngState,
     queue: const <int>[],
-    drought: state.drought,
+    drought: droughtAfter,
   );
   return Applied(newState, events);
 }
