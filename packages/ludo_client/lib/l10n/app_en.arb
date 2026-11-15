@@ -298,6 +298,10 @@
   "@gameRollAgainSix": {
     "description": "Turn banner shown on the game screen in place of the plain roll line when this player's six has left a roll owed, so the die being theirs again has a reason. Cleared by their next roll."
   },
+  "gameDieRollAgain": "Roll again",
+  "@gameDieRollAgain": {
+    "description": "Spoken label of the green circular-arrow mark on this player's own die while their six is held on the face, so a six that owes another roll is read on the die itself."
+  },
   "gameRollAgainCapture": "You captured. Roll again.",
   "@gameRollAgainCapture": {
     "description": "Turn banner shown on the game screen in place of the plain roll line when this player's move captured a token and the capture bonus leaves a roll owed. Cleared by their next roll."
