@@ -612,3 +612,92 @@ without `face`) is the server order's, not this one. Corpus records with
 other move in such a record carries `face` as in 10.5. The 40 legacy records
 and every `rollQueue` record stay byte-identical.
 
+## 12. Playing out the places (`playOut`), 2026-11-15
+
+`docs/RULES.md` section 5.1 is the rule. With `rules.playOut` false nothing
+in sections 1 to 11 changes, byte for byte.
+
+### 12.1 Types
+
+```dart
+class RulesConfig {
+  final bool playOut;        // rules 33p-39p, default false
+}
+
+class GameState {
+  final List<int> placings;  // seats in place order; [] until the first
+                             // seat finishes; always [] when !playOut
+  final List<int> retired;   // seats in retirement order; always [] when !playOut
+  final int? winner;         // with playOut: null until the game ends,
+                             // then placings.first (null if placings is
+                             // empty at the end, rule 36p)
+}
+
+class RetireIntention extends Intention { const RetireIntention(int seat); }
+                                         // server-issued, no wire message
+
+class SeatFinished extends GameEvent { final int seat; final int place; } // 1-based
+class SeatRetired  extends GameEvent { final int seat; }
+```
+
+A seat is **playing** when it is in `config.seats`, not in `placings` and
+not in `retired`. "Next seat" everywhere in sections 5, 10 and 11 means the
+next playing seat after `currentSeat` in `config.seats`, cyclically.
+
+### 12.2 Serialisation
+
+`playOut` is written in `rules` after `yardRelease` (or after `homeBonus`
+when `yardRelease` is absent), only when true. `placings` then `retired`
+(lists of ints) are written right after `winner`, only when `playOut` is
+true (then always). `fromJson()` reads both absent as `[]` and rejects: an
+explicit `playOut: false`, either key on a state whose rules lack
+`playOut`, either key missing when `playOut` is true, a seat not in
+`config.seats`, a seat in both lists or twice in one, `winner` non-null
+while `phase != finished`, and `winner` not equal to `placings.first`
+when finished with a non-empty `placings`.
+
+### 12.3 A move that finishes a seat
+
+Section 5 step 4 (and 10.4 step 2) with `playOut` on: when the moving seat
+now has all four tokens at 57, after `TokenHome`:
+
+1. Append the seat to `placings`; emit `SeatFinished(seat, placings.length)`.
+   `queue = []`, `sixes = 0`, `releaseOwed = false`. No bonus (rule 33p).
+2. Two or more seats still playing: `currentSeat` = next playing seat,
+   phase `awaitRoll`, emit `TurnBegan`.
+3. Exactly one playing seat left: append it to `placings`, emit
+   `SeatFinished(it, placings.length)`, then `winner = placings.first`,
+   phase `finished`, emit `GameWon(winner)`. Nothing after it.
+
+`apply` check 1 (`isTerminal`) and the step order of section 4 are
+unchanged. A seat in `placings` or `retired` can never be `currentSeat` of
+a non-finished state.
+
+### 12.4 RetireIntention
+
+Checks, in order: `isTerminal` -> `gameFinished`; `playOut` off ->
+`wrongPhase`; seat not in `config.seats` -> `seatNotInPlay`; seat not
+playing -> `illegalMove`. It is accepted in `awaitRoll` and `awaitMove`
+and from any seat's turn (the server issues it; there is no turn check).
+
+1. Every token of the seat not at 57 is set to -1. Append the seat to
+   `retired`; emit `SeatRetired(seat)`.
+2. Two or more seats still playing: if the seat was `currentSeat`,
+   `queue = []`, `sixes = 0`, `releaseOwed = false`, `currentSeat` = next
+   playing seat, phase `awaitRoll`, emit `TurnBegan`. Otherwise nothing
+   else changes (the seat to act keeps its phase, queue and roll).
+3. Exactly one playing seat left: 12.3 step 3 for it.
+4. None left: `winner = placings.isEmpty ? null : placings.first`, phase
+   `finished`, emit `GameWon(winner)` only when `winner` is not null.
+
+`seq` increments on every applied `RetireIntention`, as for a move.
+
+### 12.5 What is not here
+
+The wire (frames for `SeatFinished` and `SeatRetired`, a finished player who
+keeps watching, the end card's places, the verify record's `placings`) and
+when the server retires a seat (leave, X204's 120 s absence) are server and
+client orders. Corpus records with `"playOut": true` may carry
+`{"type":"retire","seat":s}`; the legacy, rollQueue and yardRelease records
+stay byte-identical.
+
