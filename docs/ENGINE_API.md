@@ -524,3 +524,180 @@ Records with `"rollQueue": true` in `rules` carry `face` on every `move`
 intention (mandatory there, absent elsewhere). The 40 legacy records stay
 byte-identical. The generator spends, on each move, the face and token its
 seeded choice picks among `legalByFace`.
+
+## 11. The yard release (`yardRelease`), 2026-11-15
+
+`docs/RULES.md` section 3.2b is the rule. With `rules.yardRelease` false
+nothing in sections 1 to 10 changes, byte for byte.
+
+### 11.1 Types
+
+```dart
+class RulesConfig {
+  final bool yardRelease;    // rules 9r-15r, default false; needs rollQueue
+}
+
+class GameState {
+  final List<int> drought;   // one count per seat index 0..3, always
+                             // [0, 0, 0, 0] when !yardRelease; a seat not
+                             // in config.seats stays 0
+  final bool releaseOwed;    // currentSeat holds an unspent release
+}
+
+class YardReleased extends GameEvent { final int seat; }   // rule 11r
+```
+
+`newGame` throws `ArgumentError` when `yardRelease` is on and `rollQueue`
+is off. It starts with `drought = [0, 0, 0, 0]`, `releaseOwed = false`.
+
+### 11.2 Serialisation
+
+`yardRelease` is written in `rules` after `homeBonus`, only when true.
+`drought` (list of 4 ints) and `releaseOwed` (bool) are written in that
+order right after `sixes`, only when `yardRelease` is true (then always).
+`fromJson()` reads them absent as `[0, 0, 0, 0]` / false and rejects:
+an explicit `yardRelease: false`, `yardRelease` without `rollQueue`,
+either key on a state whose rules lack `yardRelease`, either key missing
+when `yardRelease` is true, a drought list not of length 4, a negative
+count or a count above 9, and `releaseOwed: true` outside `awaitMove`.
+
+### 11.3 RollIntention with `yardRelease`
+
+After section 10.3's `badFace` check and before its steps 2 to 4:
+
+- face 6: `drought[seat] = 0`, then 10.3 as written.
+- non-6 with some token of the seat not at -1: `drought[seat] = 0`, then
+  10.3 as written.
+- non-6 with all four at -1: `drought[seat] + 1`. Below 10: 10.3 as
+  written (the queue face has no legal token, so step 4 passes the turn).
+  At 10: append the face (`sixes = 0`), set `drought[seat] = 0`, emit
+  `Rolled` then `YardReleased`. If any token is releasable (the legality
+  of a 6 leaving the yard, rule 17 and 22): `releaseOwed = true`, phase
+  `awaitMove`. Otherwise (rule 14r): emit `TurnEnded(noLegalMove)` then
+  `TurnBegan`; queue `[]`, next seat, `awaitRoll`, `sixes = 0`.
+
+`Rolled.legal` for the releasing roll is the releasable tokens.
+
+### 11.4 Moving with a release owed
+
+While `releaseOwed` is true: `legalTokens(state)` is the releasable tokens,
+ascending; `legalByFace(state)` is empty; `defaultFace(state)` is null.
+A `MoveIntention` with `face == null` spends the release; one with any face
+is `illegalMove`; a token that is not releasable is `illegalMove`.
+
+1. The token goes from -1 to 0. `Moved` is emitted as for any move. The
+   entry square is safe, so no capture.
+2. `releaseOwed = false`. No `ExtraRoll`, `sixes` unchanged (0).
+3. `legalByFace` of the new state non-empty: phase `awaitMove`, same
+   seat, no further event. Otherwise 10.4 step 6: `TurnEnded(noLegalMove)`
+   then `TurnBegan`, queue `[]`, next seat, `awaitRoll`, `sixes = 0`.
+
+A move that takes a token from -1 to 0 (on a spent 6, or a release) sets
+the mover's drought to 0 (rule 9r: a seat with a token out has drought 0).
+Without it, 6 then 3 under `rollQueue` would leave drought 1 after the 6
+brings a token out, because the 3 was rolled with all four still in the
+yard. With this, drought is 0 in every state where the seat has a token off
+-1, and a capture back to the yard leaves it 0.
+
+A seat change never touches another seat's drought. A capture that sends a
+seat's last token on the board back to the yard leaves its drought at 0;
+counting starts with that seat's next roll.
+
+### 11.5 Wire and corpus
+
+The wire mapping (`YardReleased` to a frame every seat sees, a release move
+without `face`) is the server order's, not this one. Corpus records with
+`"yardRelease": true` write a release move as
+`{"type":"move","seat":s,"token":t,"release":true}` with no `face`; every
+other move in such a record carries `face` as in 10.5. The 40 legacy records
+and every `rollQueue` record stay byte-identical.
+
+## 12. Playing out the places (`playOut`), 2026-11-15
+
+`docs/RULES.md` section 5.1 is the rule. With `rules.playOut` false nothing
+in sections 1 to 11 changes, byte for byte.
+
+### 12.1 Types
+
+```dart
+class RulesConfig {
+  final bool playOut;        // rules 33p-39p, default false
+}
+
+class GameState {
+  final List<int> placings;  // seats in place order; [] until the first
+                             // seat finishes; always [] when !playOut
+  final List<int> retired;   // seats in retirement order; always [] when !playOut
+  final int? winner;         // with playOut: null until the game ends,
+                             // then placings.first (null if placings is
+                             // empty at the end, rule 36p)
+}
+
+class RetireIntention extends Intention { const RetireIntention(int seat); }
+                                         // server-issued, no wire message
+
+class SeatFinished extends GameEvent { final int seat; final int place; } // 1-based
+class SeatRetired  extends GameEvent { final int seat; }
+```
+
+A seat is **playing** when it is in `config.seats`, not in `placings` and
+not in `retired`. "Next seat" everywhere in sections 5, 10 and 11 means the
+next playing seat after `currentSeat` in `config.seats`, cyclically.
+
+### 12.2 Serialisation
+
+`playOut` is written in `rules` after `yardRelease` (or after `homeBonus`
+when `yardRelease` is absent), only when true. `placings` then `retired`
+(lists of ints) are written right after `winner`, only when `playOut` is
+true (then always). `fromJson()` reads both absent as `[]` and rejects: an
+explicit `playOut: false`, either key on a state whose rules lack
+`playOut`, either key missing when `playOut` is true, a seat not in
+`config.seats`, a seat in both lists or twice in one, `winner` non-null
+while `phase != finished`, and `winner` not equal to `placings.first`
+when finished with a non-empty `placings`.
+
+### 12.3 A move that finishes a seat
+
+Section 5 step 4 (and 10.4 step 2) with `playOut` on: when the moving seat
+now has all four tokens at 57, after `TokenHome`:
+
+1. Append the seat to `placings`; emit `SeatFinished(seat, placings.length)`.
+   `queue = []`, `sixes = 0`, `releaseOwed = false`. No bonus (rule 33p).
+2. Two or more seats still playing: `currentSeat` = next playing seat,
+   phase `awaitRoll`, emit `TurnBegan`.
+3. Exactly one playing seat left: append it to `placings`, emit
+   `SeatFinished(it, placings.length)`, then `winner = placings.first`,
+   phase `finished`, emit `GameWon(winner)`. Nothing after it.
+
+`apply` check 1 (`isTerminal`) and the step order of section 4 are
+unchanged. A seat in `placings` or `retired` can never be `currentSeat` of
+a non-finished state.
+
+### 12.4 RetireIntention
+
+Checks, in order: `isTerminal` -> `gameFinished`; `playOut` off ->
+`wrongPhase`; seat not in `config.seats` -> `seatNotInPlay`; seat not
+playing -> `illegalMove`. It is accepted in `awaitRoll` and `awaitMove`
+and from any seat's turn (the server issues it; there is no turn check).
+
+1. Every token of the seat not at 57 is set to -1. Append the seat to
+   `retired`; emit `SeatRetired(seat)`.
+2. Two or more seats still playing: if the seat was `currentSeat`,
+   `queue = []`, `sixes = 0`, `releaseOwed = false`, `currentSeat` = next
+   playing seat, phase `awaitRoll`, emit `TurnBegan`. Otherwise nothing
+   else changes (the seat to act keeps its phase, queue and roll).
+3. Exactly one playing seat left: 12.3 step 3 for it.
+4. None left: `winner = placings.isEmpty ? null : placings.first`, phase
+   `finished`, emit `GameWon(winner)` only when `winner` is not null.
+
+`seq` increments on every applied `RetireIntention`, as for a move.
+
+### 12.5 What is not here
+
+The wire (frames for `SeatFinished` and `SeatRetired`, a finished player who
+keeps watching, the end card's places, the verify record's `placings`) and
+when the server retires a seat (leave, X204's 120 s absence) are server and
+client orders. Corpus records with `"playOut": true` may carry
+`{"type":"retire","seat":s}`; the legacy, rollQueue and yardRelease records
+stay byte-identical.
+

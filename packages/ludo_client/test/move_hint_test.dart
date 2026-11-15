@@ -1,6 +1,14 @@
-// Pure-function proof for C-471 D1 and D2: recommendMove picks the hint.
-// Written from the contract (work/ludo/orders/C-471), not from any
-// implementation. No widgets, no I/O.
+// Pure-function proof for C-471 D1 and D2, re-scored for C-648 D1..D7:
+// recommendMove picks the hint. Written from the contracts (work/ludo/orders/
+// C-471 and 648-risk-aware-move-hint.md), not from any implementation. No
+// widgets, no I/O.
+//
+// C-648 re-score. The C-471 tiers no longer exist: the pick is the lowest
+// loss (D5), then the highest gain (D6), then the earlier candidate in D1
+// order (D7). Cases whose pick changed carry a "C-648 re-score" comment with
+// the loss and gain of every candidate; the tier wording in the older
+// comments below them is the C-471 reading and is superseded. D1 (null
+// cases) is unchanged. The new risk cases live in move_hint_risk_test.dart.
 //
 // Reading a board. Progress values follow RULES.md 1.2: -1 is the yard, 0..51
 // the main track, 52..56 the home column, 57 home. A seat's token at progress
@@ -122,6 +130,13 @@ void main() {
     // 1..6, q + d = 3 <= 51, 16 is not safe, so it is threatened now. It
     // moves to 21, a safe square: not threatened after, no capture (safe):
     // tier 3. Token 1: 52 + 5 = 57, tier 2. Tier 2 wins.
+    // C-648 re-score. Old pick (5, token 1) by tier; new pick (5, token 0).
+    // Seat 1's token stands on 14. Face 5, legal {5: [0, 1]}.
+    //   (5, token 0): 16 -> 21 (safe). Token 1 on 52 is in the home column. loss 0,
+    //     gain 5.
+    //   (5, token 1): 52 -> 57. Token 0 stays on 16: d = 2, q + d = 3, F_1 = {2},
+    //     hit216 = 216 - 5 * 36 = 36, loss 36 * 17 = 612. gain 5 + 6 = 11.
+    // 0 < 612: (5, token 0). The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'tier 2 over 3: reaching home beats an escape',
       tokens: {
@@ -132,7 +147,7 @@ void main() {
         (5, [0, 1]),
       ],
       face: 5,
-      token: 1,
+      token: 0,
     );
 
     // Catches: an entry ranked above an escape. Token 0 (the D1 first) is
@@ -210,6 +225,16 @@ void main() {
     // wins. (After the capture token 1 stands on 6 with the q 40 token on 1:
     // d = 5, q + d = 45, threatened; token 0 on 14 is not. The contract ranks
     // the captured progress first, so this does not matter.)
+    // C-648 re-score. Old pick (4, token 1) by captured progress; new pick (4,
+    // token 0). Seat 1's tokens stand on 6 (q 45), 14 (q 1) and 1 (q 40).
+    //   (4, token 0): 10 -> 14, captures q 1. Token 0 on 14 is 8 and 13 ahead of
+    //     the tokens on 6 and 1: unhit. Token 1 on 2: from 1, d = 1, q + d = 41,
+    //     F_1 = {1}, hit216 = 36, loss 36 * 3 = 108. gain 4 + (1 + 1) = 6.
+    //   (4, token 1): 2 -> 6, captures q 45. Token 1 on 6: from 1, d = 5, q + d =
+    //     45, F_1 = {5}, hit216 = 36, loss 36 * 7 = 252. Token 0 on 10 is 9 ahead
+    //     of the token on 1 and behind the one on 14: unhit. gain 4 + (45 + 1) =
+    //     50.
+    // 108 < 252: (4, token 0). The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'capture tie: the greater captured progress wins',
       tokens: {
@@ -220,7 +245,7 @@ void main() {
         (4, [0, 1]),
       ],
       face: 4,
-      token: 1,
+      token: 0,
     );
 
     // Catches: the second tie-break ignored, so the D1 first (token 0) wins.
@@ -294,6 +319,14 @@ void main() {
     );
 
     // Same board with the wire order flipped: now (3, token 0) is first.
+    // C-648 re-score. Old pick (3, token 0) by D1 order; new pick (4, token 1).
+    // Seat 1's token stands on 33 (q 20), seat 2's on 46 (q 20). Legal {3: [0], 4:
+    // [1]}.
+    //   (3, token 0): 30 -> 33, captures q 20: loss 0, gain 3 + 21 = 24.
+    //   (4, token 1): 42 -> 46, captures q 20: loss 0, gain 4 + 21 = 25.
+    // Loss ties at 0, gain 25 > 24: (4, token 1) in either wire order, so this
+    // board no longer shows the order tie-break (the risk file's group h does).
+    // The case name is kept. The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'capture tie: flipping the wire order flips the answer',
       tokens: {
@@ -305,8 +338,8 @@ void main() {
         (3, [0]),
         (4, [1]),
       ],
-      face: 3,
-      token: 0,
+      face: 4,
+      token: 1,
     );
   });
 
@@ -320,6 +353,12 @@ void main() {
     // capture; it stands on a safe square, so not threatened after: tier 5.
     // Token 1: 20 + 5 = 25, the other token is 17 behind: not threatened:
     // tier 5. Tier 5 tie: greatest current progress, 20 > 3: token 1.
+    // C-648 re-score. Old pick (5, token 1) by progress; new pick (5, token 0).
+    // Seat 1's token stands on 8 (safe). Face 5.
+    //   (5, token 0): 3 -> 8 (safe, no capture): token 1 on 20 is 12 ahead of
+    //     square 8: loss 0, gain 5.
+    //   (5, token 1): 20 -> 25: token 0 on 3 is behind square 8: loss 0, gain 5.
+    // Tie on loss and gain: D7 takes the earlier candidate, (5, token 0). The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'no capture on safe square 8',
       tokens: {
@@ -330,7 +369,7 @@ void main() {
         (5, [0, 1]),
       ],
       face: 5,
-      token: 1,
+      token: 0,
     );
 
     // Catches: the same on the other safe square the contract names, 21.
@@ -339,6 +378,13 @@ void main() {
     // token stands on 13 + 8 = 21. Token 0: 16 + 5 = 21, safe: no capture,
     // not threatened after: tier 5. Token 1: 30 + 5 = 35, the other token
     // is behind by 14: tier 5. Tie: greatest progress, token 1.
+    // C-648 re-score. Old pick (5, token 1) by progress; new pick (5, token 0).
+    // Seat 1's token stands on 21 (safe). Face 5.
+    //   (5, token 0): 16 -> 21 (safe, no capture): token 1 on 30 is 9 ahead of
+    //     square 21: loss 0, gain 5.
+    //   (5, token 1): 30 -> 35: token 0 on 16 is 5 behind square 21: unhit. loss
+    //     0, gain 5.
+    // Tie on loss and gain: (5, token 0). The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'no capture on safe square 21',
       tokens: {
@@ -349,7 +395,7 @@ void main() {
         (5, [0, 1]),
       ],
       face: 5,
-      token: 1,
+      token: 0,
     );
 
     // Catches: a capture counted when two tokens of different seats share
@@ -361,6 +407,14 @@ void main() {
     // there: no capture. Nothing stands 1..6 behind square 14 (squares 8 to
     // 13 are empty), so token 0 is not threatened after: tier 5. Token 1:
     // 22 + 4 = 26, safe: tier 5. Tie: greatest progress, 22 > 10: token 1.
+    // C-648 re-score. Old pick (4, token 1) by progress; new pick (4, token 0).
+    // Squares 14 hold seat 1 and seat 2 tokens. Face 4.
+    //   (4, token 0): 10 -> 14, two tokens there: no capture. Token 0 shares the
+    //     square (distance 0 is not a hit); token 1 on 22 is 8 ahead of it. loss
+    //     0, gain 4.
+    //   (4, token 1): 22 -> 26 (safe). Token 0 on 10 is behind square 14: loss 0,
+    //     gain 4.
+    // Tie: (4, token 0). The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'no capture on a square with two tokens of different seats',
       tokens: {
@@ -373,7 +427,7 @@ void main() {
         (4, [0, 1]),
       ],
       face: 4,
-      token: 1,
+      token: 0,
     );
 
     // Catches: a block of one seat counted as a single capturable token.
@@ -381,6 +435,12 @@ void main() {
     // Board: me [10, 22, yard, yard]; seat 1 [1, 1, yard, yard]. Face 4. Two
     // seat 1 tokens on 14. Token 0: 10 + 4 = 14: two tokens, no capture,
     // tier 5. Token 1: 22 + 4 = 26, safe, tier 5. Tie: token 1 (22 > 10).
+    // C-648 re-score. Old pick (4, token 1) by progress; new pick (4, token 0).
+    // Seat 1's block of two stands on 14. Face 4.
+    //   (4, token 0): 10 -> 14, two tokens there: no capture. Token 1 on 22 is 8
+    //     ahead of 14: loss 0, gain 4.
+    //   (4, token 1): 22 -> 26 (safe). Token 0 on 10 is behind 14: loss 0, gain 4.
+    // Tie: (4, token 0). The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'no capture on a block of one opponent',
       tokens: {
@@ -391,7 +451,7 @@ void main() {
         (4, [0, 1]),
       ],
       face: 4,
-      token: 1,
+      token: 0,
     );
 
     // Catches: a capture credited to a move into the home column because its
@@ -476,6 +536,12 @@ void main() {
     // Token 1: 30 + 4 = 34, safe: tier 5. Tie: greatest progress: token 1.
     // An implementation that counts the q 50 token as a threat sees token 0
     // as an escape (tier 3) and answers token 0.
+    // C-648 re-score. Old pick (4, token 1) by progress; new pick (4, token 0).
+    // Seat 1's token (q 50) stands on 11. For my token on 14, d = 3 and q + d = 53
+    // > 51: no hit. Face 4.
+    //   (4, token 0): 14 -> 18 (d = 7): loss 0, gain 4. Token 1 on 30 is 19 ahead.
+    //   (4, token 1): 30 -> 34 (safe): token 0 on 14 is unhit: loss 0, gain 4.
+    // Tie: (4, token 0). The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'q + d edge: an opponent about to enter its home column is no threat',
       tokens: {
@@ -486,7 +552,7 @@ void main() {
         (4, [0, 1]),
       ],
       face: 4,
-      token: 1,
+      token: 0,
     );
 
     // The same geometry, d = 3, with the opponent at progress 40: it stands
@@ -557,6 +623,9 @@ void main() {
     // other-seat token is on the track, so nobody is threatened. Token 0: 15
     // + 5 = 20, tier 5. Token 1: 30 + 5 = 35, tier 5. Tie: greatest progress:
     // token 1.
+    // C-648 re-score. Old pick (5, token 1) by progress; new pick (5, token 0).
+    // Seat 1 is all in the yard. Face 5: (5, token 0) loss 0 gain 5, (5, token 1)
+    // loss 0 gain 5. Tie: (5, token 0). The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'yard tokens are no threat',
       tokens: {
@@ -567,7 +636,7 @@ void main() {
         (5, [0, 1]),
       ],
       face: 5,
-      token: 1,
+      token: 0,
     );
 
     // Catches: a token in the home column treated as standing on the track
@@ -580,6 +649,10 @@ void main() {
     // An implementation that sees token 0 (alias square 1, d = 3) as
     // threatened and the move to 54 as safe makes it an escape and answers
     // token 0.
+    // C-648 re-score. Old pick (1, token 1) by progress; new pick (1, token 0).
+    // Both tokens are in the home column (53, 55), sheltered by D3. Face 1:
+    // (1, token 0) 53 -> 54 loss 0 gain 1; (1, token 1) 55 -> 56 loss 0 gain 1.
+    // Tie: (1, token 0). The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'home column: a token at 53 is never threatened (escape not offered)',
       tokens: {
@@ -590,7 +663,7 @@ void main() {
         (1, [0, 1]),
       ],
       face: 1,
-      token: 1,
+      token: 0,
     );
 
     // The same alias, caught from the other side: if both ends of the move
@@ -621,6 +694,12 @@ void main() {
     // 4. Token 0 stands on 20: d = 4, q + d = 7, threatened; 20 + 4 = 24: d
     // = 8, not threatened after: tier 3. Token 1: 53 + 4 = 57: tier 2. Tier
     // 2 wins: token 1.
+    // C-648 re-score. Old pick (4, token 1) by tier; new pick (4, token 0).
+    // Seat 1's token stands on 16. Face 4.
+    //   (4, token 0): 20 -> 24, 8 ahead of square 16: loss 0, gain 4.
+    //   (4, token 1): 53 -> 57. Token 0 stays on 20: d = 4, q + d = 7, F_1 = {4},
+    //     hit216 = 36, loss 36 * 21 = 756. gain 4 + 6 = 10.
+    // 0 < 756: (4, token 0). The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'home column: a move from 53 to 57 is tier 2',
       tokens: {
@@ -631,7 +710,7 @@ void main() {
         (4, [0, 1]),
       ],
       face: 4,
-      token: 1,
+      token: 0,
     );
   });
 
@@ -679,6 +758,13 @@ void main() {
     // on 25: d = 2; 25 + 3 = 28 (not safe): d = 5, threatened after. No
     // capture (nobody on 27 or 28), no home, no escape, no entry: both tier
     // 6. The greater progress, 25, wins: token 1.
+    // C-648 re-score. Old pick (3, token 1) by progress; new pick (3, token 0).
+    // Seat 1's token stands on 23. Face 3.
+    //   (3, token 0): 24 -> 27. Token 0 on 27: d = 4, hit216 = 36, 36 * 28 = 1008.
+    //     Token 1 on 25: d = 2, 36 * 26 = 936. loss 1944, gain 3.
+    //   (3, token 1): 25 -> 28. Token 1 on 28: d = 5, 36 * 29 = 1044. Token 0 on
+    //     24: d = 1, 36 * 25 = 900. loss 1944, gain 3.
+    // Loss and gain tie: (3, token 0), the earlier. The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'tier 6: every move ends threatened, the greater progress wins (token 1)',
       tokens: {
@@ -689,7 +775,7 @@ void main() {
         (3, [0, 1]),
       ],
       face: 3,
-      token: 1,
+      token: 0,
     );
 
     // The same board swapped: token 0 is on 25 (28 after), token 1 on 24 (27
@@ -842,6 +928,9 @@ void main() {
     // needs the same face). Board: me [20, 20, yard, yard], no other-seat
     // token on the track. (3, t0) 23 and (4, t1) 24 are both tier 5 with
     // current progress 20: D1 order, face 3 first: (3, token 0).
+    // C-648 re-score. Old pick (3, token 0) by D1 order; new pick (4, token 1).
+    // No opponent on the track: loss 0 for both. (3, token 0): 20 -> 23, gain 3.
+    // (4, token 1): 20 -> 24, gain 4. 4 > 3: (4, token 1). The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'stacked tokens under two different faces are two choices',
       tokens: {
@@ -852,14 +941,18 @@ void main() {
         (3, [0]),
         (4, [1]),
       ],
-      face: 3,
-      token: 0,
+      face: 4,
+      token: 1,
     );
 
     // Catches: all stacked-tokens collapsed even when a third token exists.
     // Tokens 0 and 1 (progress 20) are one choice, token 2 (progress 40) a
     // second. All three moves are tier 5 (nobody else on the track). Tier 5
     // tie: greatest current progress, 40: token 2.
+    // C-648 re-score. Old pick (3, token 2) by progress; new pick (3, token 0).
+    // No opponent on the track: loss 0 and gain 3 for (3, token 0), (3, token 1)
+    // and (3, token 2). Full tie: the earliest candidate, (3, token 0).
+    // The tier text in the comment above is the C-471 reading and is superseded.
     hintCase(
       'a stack plus one other token are two choices',
       tokens: {
@@ -870,7 +963,7 @@ void main() {
         (3, [0, 1, 2]),
       ],
       face: 3,
-      token: 2,
+      token: 0,
     );
   });
 

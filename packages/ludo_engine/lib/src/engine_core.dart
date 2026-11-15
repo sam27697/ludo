@@ -38,6 +38,11 @@ GameState newGame(GameConfig config) {
 }
 
 void _validateConfig(GameConfig config) {
+  if (config.rules.yardRelease && !config.rules.rollQueue) {
+    throw ArgumentError(
+      'GameConfig.rules.yardRelease requires rules.rollQueue',
+    );
+  }
   final seats = config.seats;
   if (seats.length < 2 || seats.length > 4) {
     throw ArgumentError(
@@ -67,6 +72,11 @@ List<int> legalTokens(GameState state) {
   if (state.phase != GamePhase.awaitMove) {
     return const <int>[];
   }
+  if (state.releaseOwed) {
+    // Section 11.4: while a release is owed the legal tokens are the ones a
+    // 6 would bring out of the yard.
+    return _releasableTokens(state, state.currentSeat);
+  }
   if (state.config.rules.rollQueue) {
     final face = defaultFace(state);
     if (face == null) {
@@ -82,7 +92,7 @@ List<int> legalTokens(GameState state) {
 /// `awaitRoll` and `finished`. With `!rollQueue`, this is
 /// `{state.roll: legalTokens(state)}` in `awaitMove`.
 Map<int, List<int>> legalByFace(GameState state) {
-  if (state.phase != GamePhase.awaitMove) {
+  if (state.phase != GamePhase.awaitMove || state.releaseOwed) {
     return const <int, List<int>>{};
   }
   if (!state.config.rules.rollQueue) {
@@ -106,7 +116,7 @@ Map<int, List<int>> legalByFace(GameState state) {
 /// token. Null outside `awaitMove` (a queue may be non-empty in `awaitRoll`,
 /// e.g. a queued 6 that owes another roll) and when no face can move.
 int? defaultFace(GameState state) {
-  if (state.phase != GamePhase.awaitMove) {
+  if (state.phase != GamePhase.awaitMove || state.releaseOwed) {
     return null;
   }
   for (final face in state.queue) {
@@ -126,6 +136,11 @@ ApplyResult apply(GameState state, Intention intention) {
   if (isTerminal(state)) {
     return const Rejected(EngineError.gameFinished);
   }
+  if (intention is RetireIntention) {
+    // Section 12.4: the server's own intention, checked in its own order and
+    // never against the turn.
+    return _applyRetire(state, intention);
+  }
   if (!state.config.seats.contains(intention.seat)) {
     return const Rejected(EngineError.seatNotInPlay);
   }
@@ -135,7 +150,157 @@ ApplyResult apply(GameState state, Intention intention) {
   return switch (intention) {
     RollIntention() => _applyRoll(state, intention),
     MoveIntention() => _applyMove(state, intention),
+    RetireIntention() => _applyRetire(state, intention),
   };
+}
+
+/// Rule 33p, docs/ENGINE_API.md section 12.3: [seat] has all four tokens at
+/// 57 after a move that produced [events]. It takes the next place, its queue
+/// and release are discarded and it earns no bonus. The turn passes to the
+/// next playing seat, or, with one seat left, that seat takes the last place
+/// and the game ends (rule 36p).
+ApplyResult _finishSeat(
+  GameState state,
+  List<List<int>> newTokens,
+  int seat,
+  List<GameEvent> events,
+  List<int> drought,
+) {
+  final placings = <int>[...state.placings, seat];
+  events.add(SeatFinished(seat: seat, place: placings.length));
+  return _afterSeatLeft(
+    state: state,
+    tokens: newTokens,
+    placings: placings,
+    retired: state.retired,
+    drought: drought,
+    events: events,
+    leaver: seat,
+  );
+}
+
+/// Rule 34p, docs/ENGINE_API.md section 12.4: the server removes a seat.
+ApplyResult _applyRetire(GameState state, RetireIntention intention) {
+  if (!state.config.rules.playOut) {
+    return const Rejected(EngineError.wrongPhase);
+  }
+  final seat = intention.seat;
+  if (!state.config.seats.contains(seat)) {
+    return const Rejected(EngineError.seatNotInPlay);
+  }
+  if (state.placings.contains(seat) || state.retired.contains(seat)) {
+    return const Rejected(EngineError.illegalMove);
+  }
+
+  final newTokens = <List<int>>[
+    for (final row in state.tokens) List<int>.of(row),
+  ];
+  for (var t = 0; t < 4; t++) {
+    if (newTokens[seat][t] != 57) {
+      newTokens[seat][t] = -1;
+    }
+  }
+  final retired = <int>[...state.retired, seat];
+  final events = <GameEvent>[SeatRetired(seat: seat)];
+
+  final playing = _playingSeats(state.config.seats, state.placings, retired);
+  if (playing.length >= 2 && seat != state.currentSeat) {
+    // The seat to act keeps its phase, queue and roll.
+    return Applied(
+      GameState(
+        config: state.config,
+        placings: state.placings,
+        retired: retired,
+        tokens: newTokens,
+        currentSeat: state.currentSeat,
+        phase: state.phase,
+        roll: state.roll,
+        sixes: state.sixes,
+        winner: state.winner,
+        seq: state.seq + 1,
+        rngState: state.rngState,
+        queue: state.queue,
+        drought: state.drought,
+        releaseOwed: state.releaseOwed,
+      ),
+      events,
+    );
+  }
+  return _afterSeatLeft(
+    state: state,
+    tokens: newTokens,
+    placings: state.placings,
+    retired: retired,
+    drought: state.drought,
+    events: events,
+    leaver: seat,
+  );
+}
+
+/// What follows once [leaver] has left the turn order (finished or retired)
+/// and [leaver] was the seat to act, or the game may be over. Two or more
+/// seats still playing: the turn passes. One: it takes the next place and the
+/// game ends. None: the game ends with the places already taken.
+ApplyResult _afterSeatLeft({
+  required GameState state,
+  required List<List<int>> tokens,
+  required List<int> placings,
+  required List<int> retired,
+  required List<int> drought,
+  required List<GameEvent> events,
+  required int leaver,
+}) {
+  final seats = state.config.seats;
+  final playing = _playingSeats(seats, placings, retired);
+  if (playing.length >= 2) {
+    final nextSeat = _nextPlaying(seats, placings, retired, leaver);
+    events.add(TurnBegan(seat: nextSeat));
+    return Applied(
+      GameState(
+        config: state.config,
+        placings: placings,
+        retired: retired,
+        tokens: tokens,
+        currentSeat: nextSeat,
+        phase: GamePhase.awaitRoll,
+        roll: null,
+        sixes: 0,
+        winner: state.winner,
+        seq: state.seq + 1,
+        rngState: state.rngState,
+        queue: const <int>[],
+        drought: drought,
+      ),
+      events,
+    );
+  }
+  var finalPlacings = placings;
+  if (playing.length == 1) {
+    finalPlacings = <int>[...placings, playing.first];
+    events.add(SeatFinished(seat: playing.first, place: finalPlacings.length));
+  }
+  final winner = finalPlacings.isEmpty ? null : finalPlacings.first;
+  if (winner != null) {
+    events.add(GameWon(seat: winner));
+  }
+  return Applied(
+    GameState(
+      config: state.config,
+      placings: finalPlacings,
+      retired: retired,
+      tokens: tokens,
+      currentSeat: state.currentSeat,
+      phase: GamePhase.finished,
+      roll: null,
+      sixes: 0,
+      winner: winner,
+      seq: state.seq + 1,
+      rngState: state.rngState,
+      queue: const <int>[],
+      drought: drought,
+    ),
+    events,
+  );
 }
 
 ApplyResult _applyRoll(GameState state, RollIntention intention) {
@@ -180,6 +345,8 @@ ApplyResult _applyRoll(GameState state, RollIntention intention) {
   final newSixes = value == 6 ? state.sixes + 1 : 0;
   final newState = GameState(
     config: state.config,
+    placings: state.placings,
+    retired: state.retired,
     tokens: state.tokens,
     currentSeat: seat,
     phase: GamePhase.awaitMove,
@@ -200,9 +367,11 @@ ApplyResult _passTurn({
   required Rolled rolledEvent,
   required TurnEndReason turnEndReason,
 }) {
-  final nextSeat = _nextSeat(state.config.seats, seat);
+  final nextSeat = _nextSeat(state, seat);
   final newState = GameState(
     config: state.config,
+    placings: state.placings,
+    retired: state.retired,
     tokens: state.tokens,
     currentSeat: nextSeat,
     phase: GamePhase.awaitRoll,
@@ -226,6 +395,10 @@ ApplyResult _applyMove(GameState state, MoveIntention intention) {
   final token = intention.token;
   if (token < 0 || token > 3) {
     return const Rejected(EngineError.noSuchToken);
+  }
+
+  if (state.releaseOwed) {
+    return _applyRelease(state, intention, token);
   }
 
   if (state.config.rules.rollQueue) {
@@ -277,10 +450,15 @@ ApplyResult _applyMove(GameState state, MoveIntention intention) {
   }
 
   final allHome = newTokens[seat].every((p) => p == 57);
+  if (allHome && state.config.rules.playOut) {
+    return _finishSeat(state, newTokens, seat, events, state.drought);
+  }
   if (allHome) {
     events.add(GameWon(seat: seat));
     final newState = GameState(
       config: state.config,
+      placings: state.placings,
+      retired: state.retired,
       tokens: newTokens,
       currentSeat: seat,
       phase: GamePhase.finished,
@@ -301,6 +479,8 @@ ApplyResult _applyMove(GameState state, MoveIntention intention) {
     events.add(ExtraRoll(seat: seat));
     final newState = GameState(
       config: state.config,
+      placings: state.placings,
+      retired: state.retired,
       tokens: newTokens,
       currentSeat: seat,
       phase: GamePhase.awaitRoll,
@@ -313,10 +493,12 @@ ApplyResult _applyMove(GameState state, MoveIntention intention) {
     return Applied(newState, events);
   }
 
-  final nextSeat = _nextSeat(state.config.seats, seat);
+  final nextSeat = _nextSeat(state, seat);
   events.add(TurnBegan(seat: nextSeat));
   final newState = GameState(
     config: state.config,
+    placings: state.placings,
+    retired: state.retired,
     tokens: newTokens,
     currentSeat: nextSeat,
     phase: GamePhase.awaitRoll,
@@ -335,12 +517,33 @@ ApplyResult _applyMove(GameState state, MoveIntention intention) {
 /// it, because the two share nothing past the face-range check -- the queue
 /// changes what "the turn passes" and "the move is offered" mean.
 ApplyResult _applyRollQueued(GameState state, int seat, int value) {
+  // Rules 9r and 10r (docs/ENGINE_API.md section 11.3): the drought moves
+  // first, then section 10.3 runs as written on the updated count.
+  var drought = state.drought;
+  var releaseGranted = false;
+  if (state.config.rules.yardRelease) {
+    if (value == 6 || state.tokens[seat].any((p) => p != -1)) {
+      drought = _withDrought(drought, seat, 0);
+    } else if (drought[seat] + 1 >= _releaseAfter) {
+      drought = _withDrought(drought, seat, 0);
+      releaseGranted = true;
+    } else {
+      drought = _withDrought(drought, seat, drought[seat] + 1);
+    }
+  }
+
+  if (releaseGranted) {
+    return _grantRelease(state, seat, value, drought);
+  }
+
   if (value == 6 && state.sixes == 2) {
     // Rule 10q: the third consecutive 6 is not queued; every unspent face is
     // discarded and the turn passes. Moves already made this turn stand.
-    final nextSeat = _nextSeat(state.config.seats, seat);
+    final nextSeat = _nextSeat(state, seat);
     final newState = GameState(
       config: state.config,
+      placings: state.placings,
+      retired: state.retired,
       tokens: state.tokens,
       currentSeat: nextSeat,
       phase: GamePhase.awaitRoll,
@@ -350,6 +553,7 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
       seq: state.seq + 1,
       rngState: state.rngState,
       queue: const <int>[],
+      drought: drought,
     );
     return Applied(newState, <GameEvent>[
       Rolled(seat: seat, value: value, legal: const <int>[]),
@@ -366,6 +570,8 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
     // nothing is movable yet -- Rolled.legal is [], not the 6's own set.
     final newState = GameState(
       config: state.config,
+      placings: state.placings,
+      retired: state.retired,
       tokens: state.tokens,
       currentSeat: seat,
       phase: GamePhase.awaitRoll,
@@ -375,6 +581,7 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
       seq: state.seq + 1,
       rngState: state.rngState,
       queue: newQueue,
+      drought: drought,
     );
     return Applied(newState, <GameEvent>[
       Rolled(seat: seat, value: value, legal: const <int>[]),
@@ -385,6 +592,8 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
   // Rule 11q: a non-6 ends the rolling. sixes resets to 0 either way below.
   final tentativeState = GameState(
     config: state.config,
+    placings: state.placings,
+    retired: state.retired,
     tokens: state.tokens,
     currentSeat: seat,
     phase: GamePhase.awaitMove,
@@ -394,14 +603,17 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
     seq: state.seq + 1,
     rngState: state.rngState,
     queue: newQueue,
+    drought: drought,
   );
 
   if (legalByFace(tentativeState).isEmpty) {
     // Rule 13q: no queued face has a legal move. The faces are discarded and
     // the turn passes, so Rolled.legal is [], not the closing face's set.
-    final nextSeat = _nextSeat(state.config.seats, seat);
+    final nextSeat = _nextSeat(state, seat);
     final newState = GameState(
       config: state.config,
+      placings: state.placings,
+      retired: state.retired,
       tokens: state.tokens,
       currentSeat: nextSeat,
       phase: GamePhase.awaitRoll,
@@ -411,6 +623,7 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
       seq: state.seq + 1,
       rngState: state.rngState,
       queue: const <int>[],
+      drought: drought,
     );
     return Applied(newState, <GameEvent>[
       Rolled(seat: seat, value: value, legal: const <int>[]),
@@ -499,12 +712,24 @@ ApplyResult _applyMoveQueued(
 
   final queueAfterSpend = _removeFirstOccurrence(state.queue, faceToUse);
 
+  // Rule 10r (docs/ENGINE_API.md section 11.4): a token leaving the yard
+  // clears the mover's drought. With the toggle off the list is all zeros and
+  // stays untouched.
+  final droughtAfter = state.config.rules.yardRelease && fromProgress == -1
+      ? _withDrought(state.drought, seat, 0)
+      : state.drought;
+
   final allHome = newTokens[seat].every((p) => p == 57);
+  if (allHome && state.config.rules.playOut) {
+    return _finishSeat(state, newTokens, seat, events, droughtAfter);
+  }
   if (allHome) {
     // Rule 14q: winning discards whatever is left unspent.
     events.add(GameWon(seat: seat));
     final newState = GameState(
       config: state.config,
+      placings: state.placings,
+      retired: state.retired,
       tokens: newTokens,
       currentSeat: seat,
       phase: GamePhase.finished,
@@ -514,6 +739,7 @@ ApplyResult _applyMoveQueued(
       seq: state.seq + 1,
       rngState: state.rngState,
       queue: const <int>[],
+      drought: droughtAfter,
     );
     return Applied(newState, events);
   }
@@ -527,6 +753,8 @@ ApplyResult _applyMoveQueued(
     events.add(ExtraRoll(seat: seat));
     final newState = GameState(
       config: state.config,
+      placings: state.placings,
+      retired: state.retired,
       tokens: newTokens,
       currentSeat: seat,
       phase: GamePhase.awaitRoll,
@@ -536,12 +764,15 @@ ApplyResult _applyMoveQueued(
       seq: state.seq + 1,
       rngState: state.rngState,
       queue: queueAfterSpend,
+      drought: droughtAfter,
     );
     return Applied(newState, events);
   }
 
   final tentativeState = GameState(
     config: state.config,
+    placings: state.placings,
+    retired: state.retired,
     tokens: newTokens,
     currentSeat: seat,
     phase: GamePhase.awaitMove,
@@ -551,6 +782,7 @@ ApplyResult _applyMoveQueued(
     seq: state.seq + 1,
     rngState: state.rngState,
     queue: queueAfterSpend,
+    drought: droughtAfter,
   );
 
   if (legalByFace(tentativeState).isNotEmpty) {
@@ -558,7 +790,7 @@ ApplyResult _applyMoveQueued(
     return Applied(tentativeState, events);
   }
 
-  final nextSeat = _nextSeat(state.config.seats, seat);
+  final nextSeat = _nextSeat(state, seat);
   if (queueAfterSpend.isEmpty) {
     events.add(TurnBegan(seat: nextSeat));
   } else {
@@ -568,6 +800,8 @@ ApplyResult _applyMoveQueued(
   }
   final newState = GameState(
     config: state.config,
+    placings: state.placings,
+    retired: state.retired,
     tokens: newTokens,
     currentSeat: nextSeat,
     phase: GamePhase.awaitRoll,
@@ -577,6 +811,140 @@ ApplyResult _applyMoveQueued(
     seq: state.seq + 1,
     rngState: state.rngState,
     queue: const <int>[],
+    drought: droughtAfter,
+  );
+  return Applied(newState, events);
+}
+
+/// Rule 11r: the roll that brings the drought to this count grants a release.
+const int _releaseAfter = 10;
+
+/// [drought] with [seat]'s count replaced by [count]; the input is untouched.
+List<int> _withDrought(List<int> drought, int seat, int count) {
+  final result = List<int>.of(drought);
+  result[seat] = count;
+  return result;
+}
+
+/// Tokens of [seat] a 6 would bring out of the yard: the same legality as a
+/// rolled 6 (rules 17 and 22), restricted to tokens in the yard.
+List<int> _releasableTokens(GameState state, int seat) => <int>[
+      for (final t in _legalTokensFor(state, seat, 6))
+        if (state.tokens[seat][t] == -1) t,
+    ];
+
+/// Rules 11r and 14r, docs/ENGINE_API.md section 11.3: the tenth non-6 with
+/// every token in the yard. The face is queued as drawn (rule 15r), the seat
+/// is told, and either a release is owed or, with the entry square blocked,
+/// it lapses and the turn passes.
+ApplyResult _grantRelease(
+  GameState state,
+  int seat,
+  int value,
+  List<int> drought,
+) {
+  final newQueue = <int>[...state.queue, value];
+  final releasable = _releasableTokens(state, seat);
+  if (releasable.isNotEmpty) {
+    final newState = GameState(
+      config: state.config,
+      placings: state.placings,
+      retired: state.retired,
+      tokens: state.tokens,
+      currentSeat: seat,
+      phase: GamePhase.awaitMove,
+      roll: null,
+      sixes: 0,
+      winner: state.winner,
+      seq: state.seq + 1,
+      rngState: state.rngState,
+      queue: newQueue,
+      drought: drought,
+      releaseOwed: true,
+    );
+    return Applied(newState, <GameEvent>[
+      Rolled(seat: seat, value: value, legal: releasable),
+      YardReleased(seat: seat),
+    ]);
+  }
+  final nextSeat = _nextSeat(state, seat);
+  final newState = GameState(
+    config: state.config,
+    placings: state.placings,
+    retired: state.retired,
+    tokens: state.tokens,
+    currentSeat: nextSeat,
+    phase: GamePhase.awaitRoll,
+    roll: null,
+    sixes: 0,
+    winner: state.winner,
+    seq: state.seq + 1,
+    rngState: state.rngState,
+    queue: const <int>[],
+    drought: drought,
+  );
+  return Applied(newState, <GameEvent>[
+    Rolled(seat: seat, value: value, legal: const <int>[]),
+    YardReleased(seat: seat),
+    TurnEnded(seat: seat, reason: TurnEndReason.noLegalMove),
+    TurnBegan(seat: nextSeat),
+  ]);
+}
+
+/// Rules 12r and 13r, docs/ENGINE_API.md section 11.4: a `MoveIntention`
+/// against a state with a release owed. It spends the release and never a
+/// face; the drawn face stays queued.
+ApplyResult _applyRelease(GameState state, MoveIntention intention, int token) {
+  if (intention.face != null) {
+    return const Rejected(EngineError.illegalMove);
+  }
+  if (!_releasableTokens(state, state.currentSeat).contains(token)) {
+    return const Rejected(EngineError.illegalMove);
+  }
+
+  final seat = state.currentSeat;
+  final newTokens = <List<int>>[
+    for (final row in state.tokens) List<int>.of(row),
+  ];
+  newTokens[seat][token] = 0;
+  final events = <GameEvent>[Moved(seat: seat, token: token, from: -1, to: 0)];
+
+  final tentativeState = GameState(
+    config: state.config,
+    placings: state.placings,
+    retired: state.retired,
+    tokens: newTokens,
+    currentSeat: seat,
+    phase: GamePhase.awaitMove,
+    roll: null,
+    sixes: state.sixes,
+    winner: state.winner,
+    seq: state.seq + 1,
+    rngState: state.rngState,
+    queue: state.queue,
+    drought: state.drought,
+  );
+  if (legalByFace(tentativeState).isNotEmpty) {
+    return Applied(tentativeState, events);
+  }
+
+  final nextSeat = _nextSeat(state, seat);
+  events.add(TurnEnded(seat: seat, reason: TurnEndReason.noLegalMove));
+  events.add(TurnBegan(seat: nextSeat));
+  final newState = GameState(
+    config: state.config,
+    placings: state.placings,
+    retired: state.retired,
+    tokens: newTokens,
+    currentSeat: nextSeat,
+    phase: GamePhase.awaitRoll,
+    roll: null,
+    sixes: 0,
+    winner: state.winner,
+    seq: state.seq + 1,
+    rngState: state.rngState,
+    queue: const <int>[],
+    drought: state.drought,
   );
   return Applied(newState, events);
 }
@@ -697,7 +1065,35 @@ List<(int seat, int token)> _opponentsAt(
   return result;
 }
 
-int _nextSeat(List<int> seats, int currentSeat) {
+/// docs/ENGINE_API.md section 12.1: the next playing seat after
+/// [currentSeat] in `config.seats`, cyclically. A seat is playing when it is
+/// in `config.seats` and in neither `placings` nor `retired`; with `playOut`
+/// off both lists are empty, so this is the plain next seat.
+int _nextSeat(GameState state, int currentSeat) => _nextPlaying(
+    state.config.seats, state.placings, state.retired, currentSeat);
+
+int _nextPlaying(
+  List<int> seats,
+  List<int> placings,
+  List<int> retired,
+  int currentSeat,
+) {
   final index = seats.indexOf(currentSeat);
-  return seats[(index + 1) % seats.length];
+  for (var k = 1; k <= seats.length; k++) {
+    final candidate = seats[(index + k) % seats.length];
+    if (!placings.contains(candidate) && !retired.contains(candidate)) {
+      return candidate;
+    }
+  }
+  return currentSeat;
 }
+
+List<int> _playingSeats(
+  List<int> seats,
+  List<int> placings,
+  List<int> retired,
+) =>
+    <int>[
+      for (final seat in seats)
+        if (!placings.contains(seat) && !retired.contains(seat)) seat,
+    ];
