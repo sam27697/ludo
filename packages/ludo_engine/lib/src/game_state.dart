@@ -1,5 +1,6 @@
 // docs/ENGINE_API.md section 2 (the GameState shape), section 8 (the
-// serialisation) and section 10 (the roll queue). The toJson key order below
+// serialisation), section 10 (the roll queue) and section 11 (the yard
+// release). The toJson key order below
 // is normative: the golden corpus hash is pinned to it.
 
 import 'enums.dart';
@@ -18,8 +19,11 @@ class GameState {
     required this.seq,
     required this.rngState,
     List<int> queue = const <int>[],
+    List<int> drought = const <int>[0, 0, 0, 0],
+    this.releaseOwed = false,
   })  : tokens = _freezeTokens(tokens),
-        queue = List<int>.unmodifiable(queue);
+        queue = List<int>.unmodifiable(queue),
+        drought = List<int>.unmodifiable(drought);
 
   final GameConfig config;
 
@@ -41,6 +45,16 @@ class GameState {
 
   /// Consecutive 6s already rolled this turn, 0..2.
   final int sixes;
+
+  /// docs/ENGINE_API.md section 11.1, rule 9r: per seat index 0..3, the
+  /// consecutive rolls without a 6 while all four of that seat's tokens are in
+  /// the yard. Always `[0, 0, 0, 0]` when `rules.yardRelease` is off; a seat
+  /// not in `config.seats` stays 0.
+  final List<int> drought;
+
+  /// docs/ENGINE_API.md section 11.1: `currentSeat` holds an unspent release
+  /// (rule 11r). Only ever true in `awaitMove`.
+  final bool releaseOwed;
 
   /// null until a seat wins, then that seat.
   final int? winner;
@@ -67,14 +81,16 @@ class GameState {
 
   Map<String, Object?> toJson() => <String, Object?>{
         'config': _configToJson(config),
-        'tokens': <List<int>>[
-          for (final row in tokens) List<int>.of(row),
-        ],
+        'tokens': <List<int>>[for (final row in tokens) List<int>.of(row)],
         'currentSeat': currentSeat,
         'phase': _phaseToWire(phase),
         'roll': roll,
         if (config.rules.rollQueue) 'queue': List<int>.of(queue),
         'sixes': sixes,
+        if (config.rules.yardRelease) ...<String, Object?>{
+          'drought': List<int>.of(drought),
+          'releaseOwed': releaseOwed,
+        },
         'winner': winner,
         'seq': seq,
         'rngState': rngState,
@@ -88,17 +104,24 @@ class GameState {
       for (final row in tokensJson)
         <int>[for (final v in row! as List<Object?>) _asInt(v)],
     ];
+    final phase = _phaseFromWire(json['phase']! as String);
+    final releaseOwed = _releaseOwedFromJson(json, config.rules.yardRelease);
+    if (releaseOwed && phase != GamePhase.awaitMove) {
+      throw FormatException('releaseOwed is true outside awaitMove: $phase');
+    }
     return GameState(
       config: config,
       tokens: tokens,
       currentSeat: _asInt(json['currentSeat']),
-      phase: _phaseFromWire(json['phase']! as String),
+      phase: phase,
       roll: _asIntOrNull(json['roll']),
       sixes: _asInt(json['sixes']),
       winner: _asIntOrNull(json['winner']),
       seq: _asInt(json['seq']),
       rngState: _asInt(json['rngState']),
       queue: _queueFromJson(json, config.rules.rollQueue),
+      drought: _droughtFromJson(json, config.rules.yardRelease),
+      releaseOwed: releaseOwed,
     );
   }
 
@@ -114,7 +137,8 @@ class GameState {
         sixes != other.sixes ||
         winner != other.winner ||
         seq != other.seq ||
-        rngState != other.rngState) {
+        rngState != other.rngState ||
+        releaseOwed != other.releaseOwed) {
       return false;
     }
     if (tokens.length != other.tokens.length) {
@@ -140,6 +164,14 @@ class GameState {
         return false;
       }
     }
+    if (drought.length != other.drought.length) {
+      return false;
+    }
+    for (var i = 0; i < drought.length; i++) {
+      if (drought[i] != other.drought[i]) {
+        return false;
+      }
+    }
     return true;
   }
 
@@ -155,12 +187,15 @@ class GameState {
         seq,
         rngState,
         Object.hashAll(queue),
+        Object.hashAll(drought),
+        releaseOwed,
       );
 
   @override
   String toString() =>
       'GameState(config: $config, tokens: $tokens, currentSeat: $currentSeat, '
       'phase: $phase, roll: $roll, queue: $queue, sixes: $sixes, '
+      'drought: $drought, releaseOwed: $releaseOwed, '
       'winner: $winner, seq: $seq, rngState: $rngState)';
 }
 
@@ -171,6 +206,7 @@ Map<String, Object?> _configToJson(GameConfig config) => <String, Object?>{
         'captureBonus': config.rules.captureBonus,
         if (config.rules.rollQueue) 'rollQueue': true,
         if (config.rules.homeBonus) 'homeBonus': true,
+        if (config.rules.yardRelease) 'yardRelease': true,
       },
       'seed': config.seed,
     };
@@ -182,7 +218,13 @@ GameConfig _configFromJson(Map<String, Object?> json) {
     captureBonus: rulesJson['captureBonus']! as bool,
     rollQueue: _rollQueueFromJson(rulesJson['rollQueue']),
     homeBonus: _homeBonusFromJson(rulesJson['homeBonus']),
+    yardRelease: _yardReleaseFromJson(rulesJson['yardRelease']),
   );
+  if (rules.yardRelease && !rules.rollQueue) {
+    throw const FormatException(
+      'rules.yardRelease is set but rules.rollQueue is not',
+    );
+  }
   final seatsJson = json['seats']! as List<Object?>;
   final seats = <int>[for (final s in seatsJson) _asInt(s)];
   return GameConfig(seats: seats, rules: rules, seed: _asInt(json['seed']));
@@ -240,6 +282,78 @@ int _asQueueFace(Object? value) {
     throw FormatException('queue face must be 1..6, got $face');
   }
   return face;
+}
+
+/// docs/ENGINE_API.md section 11.2: same shape as [_homeBonusFromJson] --
+/// absent means false, `true` is accepted, an explicit `false` or any
+/// non-bool is malformed.
+bool _yardReleaseFromJson(Object? value) {
+  if (value == null) {
+    return false;
+  }
+  if (value == true) {
+    return true;
+  }
+  throw FormatException('rules.yardRelease must be absent or true, got $value');
+}
+
+/// docs/ENGINE_API.md section 11.2: `drought` is present, and only present,
+/// exactly when `yardRelease` is on; a mismatch in either direction is
+/// malformed, as is a list not of length 4 or a count outside 0..9.
+List<int> _droughtFromJson(Map<String, Object?> json, bool yardRelease) {
+  final hasDrought = json.containsKey('drought');
+  if (!yardRelease) {
+    if (hasDrought) {
+      throw FormatException(
+        'drought is present but rules.yardRelease is not set: '
+        '${json['drought']}',
+      );
+    }
+    return const <int>[0, 0, 0, 0];
+  }
+  if (!hasDrought) {
+    throw const FormatException(
+      'rules.yardRelease is set but drought is '
+      'missing',
+    );
+  }
+  final list = json['drought']! as List<Object?>;
+  if (list.length != 4) {
+    throw FormatException('drought must have length 4, got ${list.length}');
+  }
+  return <int>[
+    for (final v in list)
+      if (_asInt(v) < 0 || _asInt(v) > 9)
+        throw FormatException('drought count must be 0..9, got $v')
+      else
+        _asInt(v),
+  ];
+}
+
+/// docs/ENGINE_API.md section 11.2: `releaseOwed` is present, and only
+/// present, exactly when `yardRelease` is on, and is a bool.
+bool _releaseOwedFromJson(Map<String, Object?> json, bool yardRelease) {
+  final hasKey = json.containsKey('releaseOwed');
+  if (!yardRelease) {
+    if (hasKey) {
+      throw FormatException(
+        'releaseOwed is present but rules.yardRelease is not set: '
+        '${json['releaseOwed']}',
+      );
+    }
+    return false;
+  }
+  if (!hasKey) {
+    throw const FormatException(
+      'rules.yardRelease is set but releaseOwed is '
+      'missing',
+    );
+  }
+  final value = json['releaseOwed'];
+  if (value is! bool) {
+    throw FormatException('releaseOwed must be a bool, got $value');
+  }
+  return value;
 }
 
 String _phaseToWire(GamePhase phase) => switch (phase) {

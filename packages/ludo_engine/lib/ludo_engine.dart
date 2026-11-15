@@ -17,7 +17,8 @@ export 'src/events.dart'
         ExtraRoll,
         TurnEnded,
         TurnBegan,
-        GameWon;
+        GameWon,
+        YardReleased;
 export 'src/game_config.dart' show GameConfig;
 export 'src/game_state.dart' show GameState;
 export 'src/intentions.dart' show Intention, RollIntention, MoveIntention;
