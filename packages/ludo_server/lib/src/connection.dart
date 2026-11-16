@@ -562,6 +562,7 @@ class Connection {
           legal: fields.legal,
           legalByFace: fields.legalByFace,
           release: fields.release,
+          graceMs: ok.turnGraceMs,
         ),
         exceptConn: this,
       );

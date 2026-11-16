@@ -313,6 +313,42 @@ class Room {
   /// `_restartSegment`, and published as `turn.segment_ms`.
   int turnSegmentMs;
 
+  /// `docs/PROTOCOL.md` section 29 rule 3: when the grace of the segment that
+  /// began at [turnSegmentStartedAt] runs out, on the registry's injected
+  /// clock. Null for a segment with no grace (every `2026-10` segment, and
+  /// every `2026-11` one that did not pass the turn). The segment's budget
+  /// counts from this moment, not from its start.
+  DateTime? turnGraceEndsAt;
+
+  /// Section 29 rule 3: the grace still to run at [now], or 0 once it has run
+  /// out (exactly at [turnGraceEndsAt] counts as run out) or when there was
+  /// none.
+  int graceLeftMs(DateTime now) {
+    final DateTime? endsAt = turnGraceEndsAt;
+    if (endsAt == null) {
+      return 0;
+    }
+    final int left = endsAt.difference(now).inMilliseconds;
+    return left > 0 ? left : 0;
+  }
+
+  /// Section 6, section 26 rule 3 and section 29 rule 3: `max(0, budget -
+  /// elapsed)` for the segment running at [now], where elapsed counts from the
+  /// segment's start, or from the end of its grace when that is later. During
+  /// a grace this is the full budget. Zero when no segment has started.
+  int segmentRemainingMs(DateTime now) {
+    final DateTime? startedAt = turnSegmentStartedAt;
+    if (startedAt == null) {
+      return 0;
+    }
+    final DateTime? graceEnd = turnGraceEndsAt;
+    final DateTime countFrom =
+        graceEnd != null && graceEnd.isAfter(startedAt) ? graceEnd : startedAt;
+    final int elapsedMs = now.difference(countFrom).inMilliseconds;
+    final int remaining = turnSegmentMs - (elapsedMs > 0 ? elapsedMs : 0);
+    return remaining > 0 ? remaining : 0;
+  }
+
   /// `docs/PROTOCOL.md` section 16.6. Null except while this room is a
   /// rematch LOBBY: set by `RoomRegistry.rematch`'s first call in a FINISHED
   /// room (section 16.2 item 3) and cleared back to null the moment a game
