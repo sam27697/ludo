@@ -530,6 +530,14 @@ class RoomConnection {
     return request('move', <String, Object?>{'token': token, 'face': ?face});
   }
 
+  /// docs/PROTOCOL.md section 28 rule 4: host only, in a game. Asks the
+  /// server to retire the seat, whose socket must be down. The answer is the
+  /// `seat_retired` broadcast itself, the host's own copy carrying `re` set
+  /// to this request's id; a refusal is a [ProtocolErrorException].
+  Future<Frame> kick(int seat) {
+    return request('kick', <String, Object?>{'seat': seat});
+  }
+
   Future<Frame> leaveRoom() {
     return request('leave_room', const <String, Object?>{});
   }

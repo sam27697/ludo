@@ -900,10 +900,14 @@ void main() {
       );
     });
 
-    group('host_seat range 0..3', () {
-      test('-1, just under the minimum, throws', () {
+    group('host_seat range -1..3', () {
+      // PROTOCOL 28.4: -1 is "no seat left to host" after a retirement.
+      test('-1, no host, is accepted', () {
+        expect(RoomSnapshot.fromJson(_validRoom(hostSeat: -1)).hostSeat, -1);
+      });
+      test('-2, just under the minimum, throws', () {
         expect(
-          () => RoomSnapshot.fromJson(_validRoom(hostSeat: -1)),
+          () => RoomSnapshot.fromJson(_validRoom(hostSeat: -2)),
           throwsA(isA<SnapshotFormatException>()),
         );
       });

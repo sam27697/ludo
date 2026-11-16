@@ -20,6 +20,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'board.dart' show placeWord;
 import 'chat_bubble.dart';
 import 'feedback.dart';
 import 'game_stats.dart';
@@ -83,6 +84,29 @@ class EndCardJoin {
   final String name;
 
   final int serial;
+}
+
+/// One row of the places list (PROTOCOL 28): a seat that finished, in place
+/// order, or a seat that left the game ([place] null, [out] true) after them.
+class EndCardPlace {
+  const EndCardPlace({
+    required this.seat,
+    required this.name,
+    required this.place,
+    required this.out,
+  });
+
+  /// 0..3, the seat whose colour the medal carries.
+  final int seat;
+
+  /// The label the room shows for that seat.
+  final String name;
+
+  /// 1 based finishing place; null for a seat that left the game.
+  final int? place;
+
+  /// True for a seat that was retired from the game.
+  final bool out;
 }
 
 /// Built by `GameScreen._gameOverBody`; never constructed from a
@@ -215,6 +239,19 @@ class EndCard extends StatefulWidget {
   /// line. The caller owns the line's lifetime.
   final EndCardJoin? friendJoined;
 
+  /// PROTOCOL 28: the places list, one row per seat that finished and then
+  /// per seat that left. Empty (a game under the old ruleset) draws no list
+  /// and leaves the card exactly as it was.
+  final List<EndCardPlace> places;
+
+  /// My own finishing place (1 based), or null when I did not finish. From
+  /// second on, the card is the lose variant with the place for its title.
+  final int? myPlace;
+
+  /// My seat was retired from the game: the ended variant, the rematch is
+  /// not offered and New table is the one action.
+  final bool iAmOut;
+
   const EndCard({
     super.key,
     required this.mySeat,
@@ -244,6 +281,9 @@ class EndCard extends StatefulWidget {
     this.onFairHintRoute,
     this.hostSeat,
     this.friendJoined,
+    this.places = const <EndCardPlace>[],
+    this.myPlace,
+    this.iAmOut = false,
   });
 
   @override
@@ -322,7 +362,8 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
 
   /// Whether [w] draws New table as the one primary action (C-246 rules 3
   /// and 8): the table closed, or everyone else gone.
-  static bool _primaryNewTable(EndCard w) => w.rematchGone || w.everyoneLeft;
+  static bool _primaryNewTable(EndCard w) =>
+      w.rematchGone || w.everyoneLeft || w.iAmOut;
 
   /// Whether [w] draws `end-card-rematch`, mirroring the branches of
   /// `_actionArea`: every branch but the closed table, everyone gone, and
@@ -350,8 +391,11 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
     _builtSeats = occupied;
     final AppLocalizations loc = AppLocalizations.of(context);
     final bool isWinner =
-        widget.winnerSeat != null && widget.winnerSeat == widget.mySeat;
-    final bool isLoser = widget.winnerSeat != null && !isWinner;
+        !widget.iAmOut &&
+        widget.winnerSeat != null &&
+        widget.winnerSeat == widget.mySeat;
+    final bool isLoser =
+        !widget.iAmOut && widget.winnerSeat != null && !isWinner;
     final Key panelKey = isWinner
         ? const Key('end-card-win')
         : isLoser
@@ -390,7 +434,8 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
     // table is the only action left (rematchGone, everyoneLeft) it is
     // already the one next step and stays in the dock, primary, same as
     // before.
-    final Widget? scrolledNewTable = widget.rematchGone || widget.everyoneLeft
+    final Widget? scrolledNewTable =
+        widget.rematchGone || widget.everyoneLeft || widget.iAmOut
         ? null
         : _newTableButton(loc, primary: false);
     return Column(
@@ -603,6 +648,7 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
             ),
           ],
         ),
+        ..._placesBlock(loc),
         if (statRow != null) ...<Widget>[
           const SizedBox(height: kSpace3),
           statRow,
@@ -629,7 +675,11 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
     final String loseLine = stepsLeft != null && stepsLeft <= kNearFinishSquares
         ? loc.endLoseNear(stepsLeft)
         : loc.endLoseNudge;
-    final String titleText = loc.endLoseTitle(name);
+    final int? myPlace = widget.myPlace;
+    final bool placed = myPlace != null && myPlace >= 2;
+    final String titleText = placed
+        ? loc.endPlaceTitle(placeWord(loc, myPlace))
+        : loc.endLoseTitle(name);
     final Widget? statRow = _statRow(loc, widget.stats);
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -647,12 +697,9 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
             );
             return Text.rich(
               TextSpan(
-                children: _nameHighlightSpans(
-                  titleText,
-                  name,
-                  seatColor,
-                  fitStyle,
-                ),
+                children: placed
+                    ? <InlineSpan>[TextSpan(text: titleText, style: fitStyle)]
+                    : _nameHighlightSpans(titleText, name, seatColor, fitStyle),
               ),
               key: const Key('game-screen-winner'),
               textAlign: TextAlign.center,
@@ -665,6 +712,7 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
           key: const Key('end-card-lose-line'),
           textAlign: TextAlign.center,
         ),
+        ..._placesBlock(loc),
         if (statRow != null) ...<Widget>[
           const SizedBox(height: kSpace3),
           statRow,
@@ -694,6 +742,15 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.headlineLarge,
         ),
+        if (widget.iAmOut) ...<Widget>[
+          const SizedBox(height: kSpace2),
+          Text(
+            loc.endOutLine,
+            key: const Key('end-card-out-line'),
+            textAlign: TextAlign.center,
+          ),
+        ],
+        ..._placesBlock(loc),
         const SizedBox(height: kSpace3),
         _fairness(context, loc),
         if (includeAction) ...<Widget>[
@@ -701,6 +758,108 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
           _actionArea(context, loc),
         ],
       ],
+    );
+  }
+
+  /// The places list (PROTOCOL 28), with the gap above it, or nothing when
+  /// the game was not played out to places.
+  List<Widget> _placesBlock(AppLocalizations loc) {
+    if (widget.places.isEmpty) {
+      return const <Widget>[];
+    }
+    return <Widget>[
+      const SizedBox(height: kSpace3),
+      Column(
+        key: const Key('end-card-places'),
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          for (int i = 0; i < widget.places.length; i++)
+            _PlaceRowEntrance(
+              index: i,
+              child: _placeRow(loc, widget.places[i]),
+            ),
+        ],
+      ),
+    ];
+  }
+
+  /// One place: a medal disc (first in gold, the others in the seat's colour,
+  /// each with its number, a retired seat with a cross), the name, and for a
+  /// seat that left the word "out". The number or the word is always there,
+  /// so no place rests on colour.
+  Widget _placeRow(AppLocalizations loc, EndCardPlace row) {
+    final Color seatColor = _seatColor(row.seat);
+    final bool first = !row.out && row.place == 1;
+    final Color disc = first ? LudoColors.gold : seatColor;
+    final Color ink = contrastingInk(disc);
+    final bool mine = row.seat == widget.mySeat;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: kSpace1),
+      child: Semantics(
+        key: Key('end-card-place-${row.seat}'),
+        container: true,
+        child: Row(
+          children: <Widget>[
+            Container(
+              width: 32,
+              height: 32,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: disc,
+                shape: BoxShape.circle,
+                border: first
+                    ? Border.all(color: LudoColors.goldInk, width: 2)
+                    : null,
+              ),
+              child: row.out
+                  ? Icon(Icons.close_rounded, size: 18, color: ink)
+                  : Text(
+                      row.place.toString(),
+                      style: TextStyle(
+                        color: ink,
+                        fontWeight: FontWeight.w800,
+                        fontSize: kTypeLabel + 2,
+                        height: 1,
+                      ),
+                    ),
+            ),
+            const SizedBox(width: kSpace2),
+            Flexible(
+              child: Text(
+                row.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: LudoColors.ink,
+                  fontWeight: mine ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+            ),
+            if (mine) ...<Widget>[
+              const SizedBox(width: kSpace2),
+              Text(
+                loc.seatYou,
+                style: const TextStyle(
+                  color: LudoColors.inkMuted,
+                  fontSize: kTypeLabel,
+                ),
+              ),
+            ],
+            if (row.out) ...<Widget>[
+              const SizedBox(width: kSpace2),
+              Text(
+                loc.endPlaceOut,
+                style: const TextStyle(
+                  color: LudoColors.inkMuted,
+                  fontSize: kTypeLabel,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -920,6 +1079,10 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
           _newTableButton(loc, primary: true),
         ],
       );
+    }
+
+    if (widget.iAmOut) {
+      return _newTableButton(loc, primary: true);
     }
 
     if (widget.everyoneLeft) {
@@ -1843,5 +2006,70 @@ class _BurstPainter extends CustomPainter {
     return oldDelegate.progress != progress ||
         oldDelegate.goldColor != goldColor ||
         oldDelegate.seatColor != seatColor;
+  }
+}
+
+/// A places row rising into view, each a beat after the one above, so the
+/// list reads top to bottom as it arrives. Under reduced motion the row is
+/// simply there: the order is the meaning, the motion only the manner.
+class _PlaceRowEntrance extends StatefulWidget {
+  const _PlaceRowEntrance({required this.index, required this.child});
+
+  final int index;
+  final Widget child;
+
+  @override
+  State<_PlaceRowEntrance> createState() => _PlaceRowEntranceState();
+}
+
+class _PlaceRowEntranceState extends State<_PlaceRowEntrance>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: Duration(milliseconds: 240 + 90 * widget.index),
+  );
+  late final Animation<double> _rise = CurvedAnimation(
+    parent: _controller,
+    curve: Interval(
+      (90 * widget.index) / (240 + 90 * widget.index),
+      1,
+      curve: Curves.easeOutCubic,
+    ),
+  );
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) {
+      return;
+    }
+    _started = true;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller.value = 1;
+    } else {
+      _controller.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _rise,
+      child: widget.child,
+      builder: (BuildContext context, Widget? child) => Opacity(
+        opacity: _rise.value,
+        child: Transform.translate(
+          offset: Offset(0, 10 * (1 - _rise.value)),
+          child: child,
+        ),
+      ),
+    );
   }
 }

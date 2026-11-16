@@ -101,11 +101,23 @@ Future<void> _run() async {
     exit(64);
   }
 
+  // docs/PROTOCOL.md section 28 rule 1: the ruleset every room created from
+  // here on plays. Absent or empty is 2026-10. Anything but 2026-10 and
+  // 2026-11 stops the server before the port opens, as MIN_CLIENT_BUILD does.
+  final String ruleset;
+  try {
+    ruleset = parseRuleset(Platform.environment['RULESET']);
+  } on FormatException catch (error) {
+    stderr.writeln(error.message);
+    exit(64);
+  }
+
   final RoomRegistry registry = RoomRegistry(
     clock: const SystemClock(),
     secure: Random.secure(),
     verifyStore: verifyStore,
     verifyUrlBase: verifyUrlBase,
+    ruleset: ruleset,
   );
   final RateLimiter rateLimiter = RateLimiter(clock: const SystemClock());
   final WireServer server = WireServer(

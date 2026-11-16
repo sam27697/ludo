@@ -298,6 +298,10 @@
   "@gameRollAgainSix": {
     "description": "Turn banner shown on the game screen in place of the plain roll line when this player's six has left a roll owed, so the die being theirs again has a reason. Cleared by their next roll."
   },
+  "gameDieRollAgain": "Roll again",
+  "@gameDieRollAgain": {
+    "description": "Spoken label of the green circular-arrow mark on this player's own die while their six is held on the face, so a six that owes another roll is read on the die itself."
+  },
   "gameRollAgainCapture": "You captured. Roll again.",
   "@gameRollAgainCapture": {
     "description": "Turn banner shown on the game screen in place of the plain roll line when this player's move captured a token and the capture bonus leaves a roll owed. Cleared by their next roll."
@@ -525,6 +529,14 @@
   "gameLeaveConfirmBody": "Your tokens stay on the board and the timer plays your turns.",
   "@gameLeaveConfirmBody": {
     "description": "Body of the confirmation bottom sheet shown when leaving an active game."
+  },
+  "gameLeaveConfirmBodyOut": "You will be out of this game for good, and your pieces still in play leave the board.",
+  "@gameLeaveConfirmBodyOut": {
+    "description": "Body of the leave confirmation sheet in a 2026-11 game while my seat is still playing: leaving retires the seat for good and every token not home leaves the board."
+  },
+  "gameLeaveConfirmBodyWatching": "The game goes on without you.",
+  "@gameLeaveConfirmBodyWatching": {
+    "description": "Body of the leave confirmation sheet when my seat has already finished or is retired and the game is still playing: leaving changes nothing in the game."
   },
   "gameLeaveConfirmStay": "Keep playing",
   "@gameLeaveConfirmStay": {
@@ -1012,5 +1024,159 @@
         "example": "4"
       }
     }
+  },
+  "placeFirst": "1st",
+  "@placeFirst": {
+    "description": "First place written as an ordinal word, used inside the places notices, the place badge and the end card."
+  },
+  "placeSecond": "2nd",
+  "@placeSecond": {
+    "description": "Second place written as an ordinal word."
+  },
+  "placeThird": "3rd",
+  "@placeThird": {
+    "description": "Third place written as an ordinal word."
+  },
+  "placeFourth": "4th",
+  "@placeFourth": {
+    "description": "Fourth place written as an ordinal word."
+  },
+  "gameReleaseNoticeOther": "{name}: no 6 in 10 rolls. One piece comes out.",
+  "@gameReleaseNoticeOther": {
+    "description": "Below-die notice for 2500 ms on every phone when another seat's roll earned a yard release (PROTOCOL 28 rule 2): ten rolls with no 6 and every piece at home.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "gameReleaseNoticeMine": "No 6 in 10 rolls. Bring one piece out.",
+  "@gameReleaseNoticeMine": {
+    "description": "Below-die notice for 2500 ms on my own phone when my roll earned a yard release: tap a ringed piece in the yard."
+  },
+  "gameSeatFinishedOther": "{name} finished {ordinal}",
+  "@gameSeatFinishedOther": {
+    "description": "Below-die notice for 2500 ms when another seat brings its fourth piece home and the game goes on. The ordinal is the place word.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      },
+      "ordinal": {
+        "type": "String",
+        "example": "1st"
+      }
+    }
+  },
+  "gameSeatFinishedMine": "You finished {ordinal}!",
+  "@gameSeatFinishedMine": {
+    "description": "Below-die notice for 2500 ms on my own phone when my fourth piece is home and the game goes on.",
+    "placeholders": {
+      "ordinal": {
+        "type": "String",
+        "example": "1st"
+      }
+    }
+  },
+  "gameBannerFinishedWatching": "You finished {ordinal}. Watching the rest.",
+  "@gameBannerFinishedWatching": {
+    "description": "Turn banner while my seat has finished and the game goes on.",
+    "placeholders": {
+      "ordinal": {
+        "type": "String",
+        "example": "2nd"
+      }
+    }
+  },
+  "gameBannerOutWatching": "You are out of this game. Watching.",
+  "@gameBannerOutWatching": {
+    "description": "Turn banner while my seat was retired from the game (left, away too long or removed) and I am still watching."
+  },
+  "gameSeatRetiredLeft": "{name} left the game",
+  "@gameSeatRetiredLeft": {
+    "description": "Below-die notice for 2500 ms when a seat left a game that goes on.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "gameSeatRetiredAbsent": "{name} was away 2 minutes and is out",
+  "@gameSeatRetiredAbsent": {
+    "description": "Below-die notice for 2500 ms when a seat was disconnected for two minutes and the server took it out of the game.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "gameSeatRetiredKicked": "The host removed {name}",
+  "@gameSeatRetiredKicked": {
+    "description": "Below-die notice for 2500 ms when the host removed an absent seat from the game.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "kickSheetTitle": "Remove {name} from this game?",
+  "@kickSheetTitle": {
+    "description": "Title of the small sheet the host gets after tapping an absent seat's away mark.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "kickSheetRemove": "Remove",
+  "@kickSheetRemove": {
+    "description": "Host's button on the remove sheet: take the absent seat out of the game."
+  },
+  "kickSheetWait": "Wait",
+  "@kickSheetWait": {
+    "description": "Host's button on the remove sheet: close it and keep waiting for the absent seat."
+  },
+  "gameKickRefusedBack": "{name} is back",
+  "@gameKickRefusedBack": {
+    "description": "Below-die notice for 2500 ms when the host tried to remove a seat that has since reconnected.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "gameKickFailed": "Could not remove {name}",
+  "@gameKickFailed": {
+    "description": "Below-die notice for 2500 ms when the server refused to remove a seat for any reason other than the seat being back.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "endPlaceTitle": "You came {ordinal}",
+  "@endPlaceTitle": {
+    "description": "End-card title for a player who finished second or later in a game played out to places.",
+    "placeholders": {
+      "ordinal": {
+        "type": "String",
+        "example": "2nd"
+      }
+    }
+  },
+  "endPlaceOut": "out",
+  "@endPlaceOut": {
+    "description": "Word on the end card's places list beside a seat that left the game before it ended."
+  },
+  "endOutLine": "You were out of this game.",
+  "@endOutLine": {
+    "description": "End-card line for a player whose seat was retired from the game before it ended."
   }
 }

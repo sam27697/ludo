@@ -34,6 +34,10 @@ A JSON object with exactly these keys:
 | `seeds` | list | one object per seat in the game, ascending seat: `{"seat": int, "seed": string, "origin": "player" or "server"}` |
 | `rolls` | list | one object per roll, ascending `k`, `k` = 1 .. `room.rollCount` with no gap: `{"k": int, "seat": int, "reveal": string, "die": int}` |
 | `winner` | int | the seat of the engine's `GameWon` event |
+| `ruleset` | string | `"2026-11"`; absent under `2026-10` (PROTOCOL.md section 28 rule 2) |
+| `releases` | list | the roll numbers `k` whose roll granted a yard release, lapses included, ascending; absent under `2026-10` |
+| `placings` | list | the seats in place order, the last seat standing included; present under `2026-11` only (section 28 rule 3) |
+| `retired` | list | the seats in retirement order; present under `2026-11` only |
 | `finished_at` | string | the registry clock's `now` at the win, UTC, whole seconds, `YYYY-MM-DDTHH:MM:SSZ` |
 
 `reveal` is `room.chain.reveal(k)`; `die` is the face that roll produced;
@@ -191,7 +195,11 @@ shows, in this order:
    and "die", which read "not checked" in the HTML and are filled in by
    `verify.js`. The player cell is the swatch and colour word of item 5 with
    `data-seat="<n>"` on the `<td>`, and follows the page direction (no
-   `dir="ltr"`).
+   `dir="ltr"`). Under `2026-11`, next to each roll whose `k` is in
+   `releases`, one line in the die cell: en "No 6 for 10 rolls with every
+   piece at home: one piece comes out (rule 11r)", ar
+   «ما طلع 6 بعشر رميات وكل القطع بالبيت: بتطلع قطعة وحدة (القاعدة 11r)»
+   (PROTOCOL.md section 28 rule 2).
 9. How to check it without trusting this page: the command
    `curl -sO https://provefair.app/v/verify.py && python3 verify.py <game_id>`
    and the link to the source, `https://github.com/sam27697/ludo`.

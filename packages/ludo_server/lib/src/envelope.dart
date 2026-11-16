@@ -73,6 +73,8 @@ String wireErrorCode(ProtocolError error) {
       return 'INTERNAL';
     case ProtocolError.updateRequired:
       return 'UPDATE_REQUIRED';
+    case ProtocolError.notAbsent:
+      return 'NOT_ABSENT';
   }
 }
 
@@ -138,11 +140,15 @@ const Set<String> knownMessageTypes = <String>{
   'emote',
 };
 
+/// `docs/PROTOCOL.md` section 28 rule 4: `kick` exists only on a server that
+/// plays the 2026-11 ruleset. On any other it is as unknown as it always was.
+const String kickMessageType = 'kick';
+
 /// Steps 2 through 6 of the section 7 ladder: JSON parse, `v`, `t`, `id`
 /// shape, `d` presence. Step 1 (frame size) happens before this is ever
 /// called, on the raw bytes, because an oversized frame must never reach
 /// `jsonDecode`.
-EnvelopeResult parseEnvelope(String text) {
+EnvelopeResult parseEnvelope(String text, {bool kickKnown = false}) {
   Object? decoded;
   try {
     decoded = jsonDecode(text);
@@ -175,7 +181,8 @@ EnvelopeResult parseEnvelope(String text) {
   }
 
   final Object? t = envelope['t'];
-  if (t is! String || !knownMessageTypes.contains(t)) {
+  if (t is! String ||
+      !(knownMessageTypes.contains(t) || (kickKnown && t == kickMessageType))) {
     return EnvelopeError(
       error: ProtocolError.badType,
       closeConnection: false,
@@ -266,6 +273,8 @@ String defaultErrorMessage(ProtocolError error) {
       return 'internal error';
     case ProtocolError.updateRequired:
       return 'this version of the app is too old for this server';
+    case ProtocolError.notAbsent:
+      return 'that seat is connected';
   }
 }
 

@@ -24,6 +24,7 @@ import 'room.dart';
 /// directly -- so the caller (`connection.dart`, holding the same injected
 /// `Clock` the registry was built with) passes the reading in.
 Map<String, Object?> buildRoomSnapshot(Room room, {required DateTime now}) {
+  final engine.GameState? game = room.game;
   return <String, Object?>{
     'code': room.code,
     'state': _wireState(room.state),
@@ -36,6 +37,8 @@ Map<String, Object?> buildRoomSnapshot(Room room, {required DateTime now}) {
       'blocks': false,
       'capture_bonus': room.rules.captureBonus,
       'turn_seconds': room.rules.turnSeconds,
+      // docs/PROTOCOL.md section 28 rule 1: present under 2026-11 only.
+      if (room.isRuleset202611) 'ruleset': room.ruleset,
     },
     // docs/PROTOCOL.md section 11.2: present in every state, including
     // LOBBY, from the moment the room exists. `chain_commit` is
@@ -48,7 +51,12 @@ Map<String, Object?> buildRoomSnapshot(Room room, {required DateTime now}) {
       for (final Seat seat in room.seats) _seatSnapshot(room, seat),
     ],
     'turn': _turnSnapshot(room, now),
-    'winner': room.game?.winner,
+    'winner': game?.winner,
+    // docs/PROTOCOL.md section 28 rule 3: seats in place order and seats in
+    // retirement order, empty lists before there is a game. 2026-11 only.
+    if (room.isRuleset202611)
+      'placings': List<int>.of(game?.placings ?? <int>[]),
+    if (room.isRuleset202611) 'retired': List<int>.of(game?.retired ?? <int>[]),
     // docs/PROTOCOL.md section 16.6: null, or { "by": seat, "ready": [seat,
     // ...] } with `ready` in ascending seat order. Present in every state;
     // non-null only in a rematch LOBBY.
@@ -83,6 +91,9 @@ Map<String, Object?> _seatSnapshot(Room room, Seat seat) {
     // docs/PROTOCOL.md section 23 rule 1: always present, an int >= 0, in
     // every state; LOBBY reads 0 because the registry resets it there.
     'timer_steps': seat.timerSteps,
+    // docs/PROTOCOL.md section 28 rule 2: rule 9r's count, 0..9, 2026-11
+    // only. 0 before there is a game.
+    if (room.isRuleset202611) 'drought': room.game?.drought[seat.seat] ?? 0,
   };
 }
 
@@ -103,16 +114,31 @@ Map<String, Object?>? _turnSnapshot(Room room, DateTime now) {
     'queue': queueFields.queue,
   };
   if (game.phase == engine.GamePhase.awaitMove) {
-    // docs/PROTOCOL.md section 21.3 rule 2: `value` is `defaultFace`, not
-    // `game.roll` -- `game.roll` is always null under the queue
-    // (ENGINE_API.md section 10.1) and `defaultFace` is the one thing that
-    // decides which queued face an omitted `move.face` would spend.
-    turn['value'] = queueFields.value;
-    turn['legal'] = queueFields.legal;
-    turn['sixes'] = game.sixes;
-    turn['legal_by_face'] = queueFields.legalByFace;
+    if (queueFields.release) {
+      // docs/PROTOCOL.md section 28 rule 2: while a release is owed the turn
+      // carries `release: true` and the releasable tokens, and no `value`
+      // and no `legal_by_face`: there is no face to spend.
+      turn['release'] = true;
+      turn['legal'] = queueFields.legal;
+      turn['sixes'] = game.sixes;
+    } else {
+      // docs/PROTOCOL.md section 21.3 rule 2: `value` is `defaultFace`, not
+      // `game.roll` -- `game.roll` is always null under the queue
+      // (ENGINE_API.md section 10.1) and `defaultFace` is the one thing that
+      // decides which queued face an omitted `move.face` would spend.
+      turn['value'] = queueFields.value;
+      turn['legal'] = queueFields.legal;
+      turn['sixes'] = game.sixes;
+      turn['legal_by_face'] = queueFields.legalByFace;
+    }
   }
   turn['deadline_ms'] = _deadlineMs(room, now);
+  // docs/PROTOCOL.md section 29 rule 3: while the grace runs, the grace left;
+  // once it has run out the key is absent, never 0.
+  final int graceLeftMs = room.graceLeftMs(now);
+  if (graceLeftMs > 0) {
+    turn['grace_ms'] = graceLeftMs;
+  }
   // docs/PROTOCOL.md section 26 rule 4: present exactly when `deadline_ms`
   // is, and the budget that countdown runs against.
   turn['segment_ms'] = room.turnSegmentMs;
@@ -135,7 +161,12 @@ class TurnQueueFields {
     this.value,
     this.legal,
     this.legalByFace,
+    this.release = false,
   });
+
+  /// Section 28 rule 2: a yard release is owed. Then [legal] is the
+  /// releasable tokens and [value] and [legalByFace] are null.
+  final bool release;
 
   final String phase;
   final List<int> queue;
@@ -149,6 +180,14 @@ TurnQueueFields turnQueueFields(engine.GameState game) {
   final List<int> queue = List<int>.of(game.queue);
   if (game.phase != engine.GamePhase.awaitMove) {
     return TurnQueueFields(phase: phase, queue: queue);
+  }
+  if (game.releaseOwed) {
+    return TurnQueueFields(
+      phase: phase,
+      queue: queue,
+      legal: engine.legalTokens(game),
+      release: true,
+    );
   }
   return TurnQueueFields(
     phase: phase,
@@ -179,16 +218,7 @@ List<Map<String, Object?>> _wireLegalByFace(engine.GameState game) {
 /// the `deadline_ms` on a `rolled` or `turn` push, which the registry fixed
 /// once, at the instant that specific frame was decided, and which this
 /// file never recomputes.
-int _deadlineMs(Room room, DateTime now) {
-  final DateTime? startedAt = room.turnSegmentStartedAt;
-  if (startedAt == null) {
-    return 0;
-  }
-  final int budgetMs = room.turnSegmentMs;
-  final int elapsedMs = now.difference(startedAt).inMilliseconds;
-  final int remaining = budgetMs - elapsedMs;
-  return remaining > 0 ? remaining : 0;
-}
+int _deadlineMs(Room room, DateTime now) => room.segmentRemainingMs(now);
 
 String _wireState(RoomState state) {
   switch (state) {
@@ -309,6 +339,7 @@ Map<String, Object?> buildRolled({
   List<int>? queue,
   List<Map<String, Object?>>? legalByFace,
   String? by,
+  bool release = false,
 }) {
   return <String, Object?>{
     'seat': seat,
@@ -320,6 +351,9 @@ Map<String, Object?> buildRolled({
     'seq': seq,
     if (queue != null) 'queue': queue,
     if (legalByFace != null) 'legal_by_face': legalByFace,
+    // docs/PROTOCOL.md section 28 rule 2: given, and only given, as `true`
+    // on the roll that grants a yard release, a lapse included.
+    if (release) 'release': true,
     if (by != null) 'by': by,
   };
 }
@@ -340,6 +374,7 @@ Map<String, Object?> buildTurnPassed({
 /// spend. `phase` and `queue` are given on every call since every room
 /// plays the queue (section 21.3 rule 5); `value`, `legal` and
 /// `legalByFace` are given, and only given, when `phase` is `await_move`.
+/// [graceMs] is section 29's `grace_ms`.
 Map<String, Object?> buildTurn({
   required int seat,
   required int deadlineMs,
@@ -349,16 +384,23 @@ Map<String, Object?> buildTurn({
   int? value,
   List<int>? legal,
   List<Map<String, Object?>>? legalByFace,
+  bool release = false,
+  int? graceMs,
 }) {
   return <String, Object?>{
     'seat': seat,
     'deadline_ms': deadlineMs,
+    // docs/PROTOCOL.md section 29 rule 3: given, and only given, on the
+    // `turn` of a pass in a 2026-11 room; the key is never 0.
+    if (graceMs != null && graceMs > 0) 'grace_ms': graceMs,
     'seq': seq,
     if (phase != null) 'phase': phase,
     if (queue != null) 'queue': queue,
     if (value != null) 'value': value,
     if (legal != null) 'legal': legal,
     if (legalByFace != null) 'legal_by_face': legalByFace,
+    // docs/PROTOCOL.md section 28 rule 2: a yard release is owed.
+    if (release) 'release': true,
   };
 }
 
@@ -381,6 +423,7 @@ Map<String, Object?> buildMoved({
   required int seq,
   int? face,
   String? by,
+  bool release = false,
 }) {
   return <String, Object?>{
     'seat': seat,
@@ -391,6 +434,9 @@ Map<String, Object?> buildMoved({
     'extra_roll': extraRoll,
     'seq': seq,
     if (face != null) 'face': face,
+    // docs/PROTOCOL.md section 28 rule 2: the move spent a yard release and
+    // so carries no `face`.
+    if (release) 'release': true,
     if (by != null) 'by': by,
   };
 }
@@ -399,14 +445,47 @@ Map<String, Object?> buildMoved({
 /// was already published in its own `rolled` frame -- and `verify_url` is
 /// the permalink, `https://provefair.app/v/<game_id>`, built by the
 /// registry from `room.gameId` and handed in here unchanged.
+///
+/// [placings] and [retired], given together and only under 2026-11
+/// (`docs/PROTOCOL.md` section 28 rule 3), are the seats in place order and
+/// the seats in retirement order.
 Map<String, Object?> buildGameOver({
   required int winner,
   required String verifyUrl,
   required int seq,
+  List<int>? placings,
+  List<int>? retired,
 }) {
   return <String, Object?>{
     'winner': winner,
     'verify_url': verifyUrl,
+    'seq': seq,
+    if (placings != null) 'placings': List<int>.of(placings),
+    if (retired != null) 'retired': List<int>.of(retired),
+  };
+}
+
+/// `seat_finished`, `docs/PROTOCOL.md` section 28 rule 3: [place] is 1-based.
+Map<String, Object?> buildSeatFinished({
+  required int seat,
+  required int place,
+  required int seq,
+}) {
+  return <String, Object?>{'seat': seat, 'place': place, 'seq': seq};
+}
+
+/// `seat_retired`, `docs/PROTOCOL.md` section 28 rule 4: [reason] is `left`,
+/// `absent` or `kicked`, [hostSeat] the host after the retirement.
+Map<String, Object?> buildSeatRetired({
+  required int seat,
+  required String reason,
+  required int hostSeat,
+  required int seq,
+}) {
+  return <String, Object?>{
+    'seat': seat,
+    'reason': reason,
+    'host_seat': hostSeat,
     'seq': seq,
   };
 }
@@ -436,76 +515,96 @@ String wireTurnEndReason(engine.TurnEndReason reason) {
 
 /// Every frame a timer-played turn publishes, in section 21.3 rule 4's own
 /// order, which replaces section 12 for every room since every room plays
-/// the queue: for a roll, `rolled` and then whichever of `turn_passed` +
-/// `turn` or a bare `turn` applies, exactly as the client-driven path in
-/// `connection.dart` decides it (`rolled.turnPassedSeq`/`rolled.turnSeq`);
-/// for a move, `moved` and then `game_over`, or whichever of `turn_passed` +
-/// `turn` or a bare `turn` applies (`moved.turnPassedSeq`/`moved.turnSeq`).
+/// the queue: for a roll, [buildRollFrames]; for a move, [buildMoveFrames].
 /// None of them carries `re`: no client request is being answered, so there
 /// is no id to answer. Section 22: the `rolled` or `moved` this produces
 /// carries `by: "timer"`; `turn_passed`, `turn` and `game_over` never do,
 /// whoever caused them.
 List<OutFrame> buildExpiryFrames(ExpiredTurn expired) {
-  final List<OutFrame> frames = <OutFrame>[];
-
   final RollOk? rolled = expired.roll;
   if (rolled != null) {
-    final engine.Rolled event = rolled.events.whereType<engine.Rolled>().single;
-    final engine.GameState afterRoll = rolled.room.game!;
-    final TurnQueueFields afterRollFields = turnQueueFields(afterRoll);
+    return buildRollFrames(rolled, by: 'timer');
+  }
+  return buildMoveFrames(expired.move!, by: 'timer');
+}
+
+/// Every frame `RoomRegistry.roll` decided on, in section 21.3 rule 4's
+/// order: `rolled` always, carrying the queue after the roll and, when a
+/// move is now pending, `legal_by_face`; then, exactly when [ok] set them,
+/// `turn_passed` and/or a `turn` for whichever seat holds the segment next.
+/// Section 28 rule 2: the `rolled` of a roll that granted a yard release
+/// (the engine's `YardReleased` event) carries `release: true` and, with
+/// the release owed, no `legal_by_face`. [by] is section 22's, given for a
+/// roll the turn timer made. One builder for the client-driven path and the
+/// timer's, so the two cannot drift.
+List<OutFrame> buildRollFrames(RollOk ok, {String? by}) {
+  final List<OutFrame> frames = <OutFrame>[];
+  final engine.Rolled event = ok.events.whereType<engine.Rolled>().single;
+  final engine.GameState afterRoll = ok.room.game!;
+  final TurnQueueFields afterRollFields = turnQueueFields(afterRoll);
+  frames.add(
+    OutFrame(
+      'rolled',
+      buildRolled(
+        seat: event.seat,
+        value: event.value,
+        legal: event.legal,
+        deadlineMs: ok.rolledDeadlineMs,
+        k: ok.k,
+        reveal: ok.reveal,
+        seq: ok.rolledSeq,
+        queue: afterRollFields.queue,
+        legalByFace: afterRollFields.legalByFace,
+        by: by,
+        release: ok.events.whereType<engine.YardReleased>().isNotEmpty,
+      ),
+    ),
+  );
+  if (ok.turnPassedSeq != null) {
+    final engine.TurnEnded ended =
+        ok.events.whereType<engine.TurnEnded>().single;
     frames.add(
       OutFrame(
-        'rolled',
-        buildRolled(
-          seat: event.seat,
-          value: event.value,
-          legal: event.legal,
-          deadlineMs: rolled.rolledDeadlineMs,
-          k: rolled.k,
-          reveal: rolled.reveal,
-          seq: rolled.rolledSeq,
-          queue: afterRollFields.queue,
-          legalByFace: afterRollFields.legalByFace,
-          by: 'timer',
+        'turn_passed',
+        buildTurnPassed(
+          seat: ended.seat,
+          reason: wireTurnEndReason(ended.reason),
+          seq: ok.turnPassedSeq!,
         ),
       ),
     );
-    if (rolled.turnPassedSeq != null) {
-      final engine.TurnEnded ended =
-          rolled.events.whereType<engine.TurnEnded>().single;
-      frames.add(
-        OutFrame(
-          'turn_passed',
-          buildTurnPassed(
-            seat: ended.seat,
-            reason: wireTurnEndReason(ended.reason),
-            seq: rolled.turnPassedSeq!,
-          ),
-        ),
-      );
-    }
-    if (rolled.turnSeq != null) {
-      frames.add(
-        OutFrame(
-          'turn',
-          buildTurn(
-            seat: afterRoll.currentSeat,
-            deadlineMs: rolled.nextDeadlineMs!,
-            seq: rolled.turnSeq!,
-            phase: afterRollFields.phase,
-            queue: afterRollFields.queue,
-            value: afterRollFields.value,
-            legal: afterRollFields.legal,
-            legalByFace: afterRollFields.legalByFace,
-          ),
-        ),
-      );
-    }
-    return frames;
   }
+  if (ok.turnSeq != null) {
+    frames.add(
+      OutFrame(
+        'turn',
+        buildTurn(
+          seat: afterRoll.currentSeat,
+          deadlineMs: ok.nextDeadlineMs!,
+          seq: ok.turnSeq!,
+          phase: afterRollFields.phase,
+          queue: afterRollFields.queue,
+          value: afterRollFields.value,
+          legal: afterRollFields.legal,
+          legalByFace: afterRollFields.legalByFace,
+          release: afterRollFields.release,
+          graceMs: ok.nextGraceMs,
+        ),
+      ),
+    );
+  }
+  return frames;
+}
 
-  final MoveOk moved = expired.move!;
-  final engine.Moved event = moved.events.whereType<engine.Moved>().single;
+/// Every frame `RoomRegistry.move` decided on: `moved` always, carrying the
+/// face it spent (none for a yard release, which carries `release: true`
+/// instead, section 28 rule 2), then exactly one of: `game_over` followed
+/// by one `player_left` per freed retired seat (section 28 rule 4); or
+/// `seat_finished` (section 28 rule 3) then `turn`; or `turn_passed`
+/// followed by `turn`; or a bare `turn`. [by] is section 22's.
+List<OutFrame> buildMoveFrames(MoveOk ok, {String? by}) {
+  final List<OutFrame> frames = <OutFrame>[];
+  final engine.Moved event = ok.events.whereType<engine.Moved>().single;
   frames.add(
     OutFrame(
       'moved',
@@ -516,43 +615,58 @@ List<OutFrame> buildExpiryFrames(ExpiredTurn expired) {
         to: event.to,
         captured: <Map<String, Object?>>[
           for (final engine.Captured c
-              in moved.events.whereType<engine.Captured>())
+              in ok.events.whereType<engine.Captured>())
             <String, Object?>{'seat': c.seat, 'token': c.token},
         ],
-        extraRoll: moved.events.whereType<engine.ExtraRoll>().isNotEmpty,
-        seq: moved.movedSeq,
-        face: moved.face,
-        by: 'timer',
+        extraRoll: ok.events.whereType<engine.ExtraRoll>().isNotEmpty,
+        seq: ok.movedSeq,
+        face: ok.face,
+        by: by,
+        release: ok.release,
       ),
     ),
   );
   final List<engine.GameWon> won =
-      moved.events.whereType<engine.GameWon>().toList();
+      ok.events.whereType<engine.GameWon>().toList();
   if (won.isNotEmpty) {
-    frames.add(
-      OutFrame(
-        'game_over',
-        buildGameOver(
-          winner: won.single.seat,
-          verifyUrl: moved.verifyUrl!,
-          seq: moved.gameOverSeq!,
-        ),
+    frames.addAll(
+      _gameOverFrames(
+        game: ok.room.game!,
+        room: ok.room,
+        winner: won.single.seat,
+        verifyUrl: ok.verifyUrl!,
+        gameOverSeq: ok.gameOverSeq!,
+        freed: ok.freed,
       ),
     );
     return frames;
   }
-  final engine.GameState afterMove = moved.room.game!;
+  if (ok.seatFinishedSeq != null) {
+    final engine.SeatFinished finished =
+        ok.events.whereType<engine.SeatFinished>().first;
+    frames.add(
+      OutFrame(
+        'seat_finished',
+        buildSeatFinished(
+          seat: finished.seat,
+          place: finished.place,
+          seq: ok.seatFinishedSeq!,
+        ),
+      ),
+    );
+  }
+  final engine.GameState afterMove = ok.room.game!;
   final TurnQueueFields afterMoveFields = turnQueueFields(afterMove);
-  if (moved.turnPassedSeq != null) {
+  if (ok.turnPassedSeq != null) {
     final engine.TurnEnded ended =
-        moved.events.whereType<engine.TurnEnded>().single;
+        ok.events.whereType<engine.TurnEnded>().single;
     frames.add(
       OutFrame(
         'turn_passed',
         buildTurnPassed(
           seat: ended.seat,
           reason: wireTurnEndReason(ended.reason),
-          seq: moved.turnPassedSeq!,
+          seq: ok.turnPassedSeq!,
         ),
       ),
     );
@@ -562,15 +676,102 @@ List<OutFrame> buildExpiryFrames(ExpiredTurn expired) {
       'turn',
       buildTurn(
         seat: afterMove.currentSeat,
-        deadlineMs: moved.nextDeadlineMs!,
-        seq: moved.turnSeq!,
+        deadlineMs: ok.nextDeadlineMs!,
+        seq: ok.turnSeq!,
         phase: afterMoveFields.phase,
         queue: afterMoveFields.queue,
         value: afterMoveFields.value,
         legal: afterMoveFields.legal,
         legalByFace: afterMoveFields.legalByFace,
+        release: afterMoveFields.release,
+        graceMs: ok.nextGraceMs,
       ),
     ),
   );
   return frames;
+}
+
+/// Every frame a retirement decided on, `docs/PROTOCOL.md` section 28 rule 4,
+/// in the order the engine's events say: `seat_retired`, then nothing more,
+/// or a `turn` for the next playing seat, or a `game_over` followed by one
+/// `player_left` per freed retired seat.
+List<OutFrame> buildRetireFrames(RetireOk ok) {
+  final List<OutFrame> frames = <OutFrame>[
+    OutFrame(
+      'seat_retired',
+      buildSeatRetired(
+        seat: ok.seat.seat,
+        reason: ok.reason,
+        hostSeat: ok.hostSeat,
+        seq: ok.retiredSeq,
+      ),
+    ),
+  ];
+  if (ok.gameOverSeq != null) {
+    final engine.GameWon won = ok.events.whereType<engine.GameWon>().single;
+    frames.addAll(
+      _gameOverFrames(
+        game: ok.after,
+        room: ok.room,
+        winner: won.seat,
+        verifyUrl: ok.verifyUrl!,
+        gameOverSeq: ok.gameOverSeq!,
+        freed: ok.freed,
+      ),
+    );
+    return frames;
+  }
+  if (ok.turnSeq != null) {
+    final engine.GameState after = ok.after;
+    final TurnQueueFields fields = turnQueueFields(after);
+    frames.add(
+      OutFrame(
+        'turn',
+        buildTurn(
+          seat: after.currentSeat,
+          deadlineMs: ok.nextDeadlineMs!,
+          seq: ok.turnSeq!,
+          phase: fields.phase,
+          queue: fields.queue,
+          value: fields.value,
+          legal: fields.legal,
+          legalByFace: fields.legalByFace,
+          release: fields.release,
+          graceMs: ok.nextGraceMs,
+        ),
+      ),
+    );
+  }
+  return frames;
+}
+
+/// `game_over`, then, section 28 rule 4 "At the end", one `player_left` per
+/// retired seat the end freed, in retirement order, each at its own `seq`.
+/// `placings` and `retired` go on `game_over` under 2026-11 only.
+List<OutFrame> _gameOverFrames({
+  required engine.GameState game,
+  required Room room,
+  required int winner,
+  required String verifyUrl,
+  required int gameOverSeq,
+  required List<FreedSeat> freed,
+}) {
+  final bool ruleset202611 = room.isRuleset202611;
+  return <OutFrame>[
+    OutFrame(
+      'game_over',
+      buildGameOver(
+        winner: winner,
+        verifyUrl: verifyUrl,
+        seq: gameOverSeq,
+        placings: ruleset202611 ? game.placings : null,
+        retired: ruleset202611 ? game.retired : null,
+      ),
+    ),
+    for (final FreedSeat gone in freed)
+      OutFrame(
+        'player_left',
+        buildPlayerLeft(gone.seat.seat, gone.hostSeat, gone.seq),
+      ),
+  ];
 }

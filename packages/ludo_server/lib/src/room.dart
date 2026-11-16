@@ -20,6 +20,8 @@
 import 'package:fair_dice/fair_dice.dart' show DiceChain;
 import 'package:ludo_engine/ludo_engine.dart' show GameState;
 
+import 'ruleset.dart';
+
 /// The rule toggles a room is created with. Mirrors the wire shape of
 /// `docs/PROTOCOL.md` section 4 exactly, including the toggle the engine
 /// itself does not know about.
@@ -124,6 +126,13 @@ class Seat {
   /// publishes it. Never negative.
   int timerSteps = 0;
 
+  /// `docs/PROTOCOL.md` section 28 rule 4 ("absent"): the registry clock's
+  /// reading at the moment this seat's socket went down, that is, when the
+  /// `presence` with `connected: false` was decided. Null while the seat is
+  /// connected. Cleared by the `resume` that reconnects the seat, so a later
+  /// drop starts a new count. Room state, never on the wire.
+  DateTime? absentSince;
+
   /// `docs/PROTOCOL.md` section 26 rule 1: the seat has been away for one
   /// whole turn of its own and has not reconnected since, so every segment
   /// that starts for it has the fixed away budget. Room state, never on the
@@ -163,6 +172,7 @@ class Room {
     this.clientSeeds,
     this.seq = 0,
     this.rematch,
+    this.ruleset = ruleset202610,
     DateTime? lifetimeStartedAt,
     List<Map<String, Object?>>? gameLog,
   })  : lifetimeStartedAt = lifetimeStartedAt ?? createdAt,
@@ -171,6 +181,14 @@ class Room {
 
   final String code;
   final DateTime createdAt;
+
+  /// `docs/PROTOCOL.md` section 28 rule 1: the ruleset this room was created
+  /// under, [ruleset202610] or [ruleset202611]. Taken from the server at
+  /// `create_room` and kept for the life of the room, rematches included.
+  final String ruleset;
+
+  /// True when this room plays the 2026-11 ruleset (section 28).
+  bool get isRuleset202611 => ruleset == ruleset202611;
 
   /// The moment this room's current lifetime budget began.
   /// `docs/PROTOCOL.md` section 3, as amended by C-451: a LOBBY is reaped 60
@@ -271,6 +289,12 @@ class Room {
   /// reverse.
   final List<int> rollSeats = <int>[];
 
+  /// `docs/PROTOCOL.md` section 28 rule 2: the roll numbers `k` of this game
+  /// whose roll granted a yard release (rule 11r), lapses included,
+  /// ascending. `RoomRegistry.roll()` appends to it on the one code path
+  /// that also appends to [rollSeats]. Always empty under 2026-10.
+  final List<int> releases = <int>[];
+
   /// The moment the currently active turn segment began, per section 6: a
   /// segment starts, and the full `rules.turnSeconds` is restored, on a
   /// seat's turn beginning, on a `rolled` that leaves a legal move pending,
@@ -288,6 +312,42 @@ class Room {
   /// case the fixed away budget. Set only by the registry's
   /// `_restartSegment`, and published as `turn.segment_ms`.
   int turnSegmentMs;
+
+  /// `docs/PROTOCOL.md` section 29 rule 3: when the grace of the segment that
+  /// began at [turnSegmentStartedAt] runs out, on the registry's injected
+  /// clock. Null for a segment with no grace (every `2026-10` segment, and
+  /// every `2026-11` one that did not pass the turn). The segment's budget
+  /// counts from this moment, not from its start.
+  DateTime? turnGraceEndsAt;
+
+  /// Section 29 rule 3: the grace still to run at [now], or 0 once it has run
+  /// out (exactly at [turnGraceEndsAt] counts as run out) or when there was
+  /// none.
+  int graceLeftMs(DateTime now) {
+    final DateTime? endsAt = turnGraceEndsAt;
+    if (endsAt == null) {
+      return 0;
+    }
+    final int left = endsAt.difference(now).inMilliseconds;
+    return left > 0 ? left : 0;
+  }
+
+  /// Section 6, section 26 rule 3 and section 29 rule 3: `max(0, budget -
+  /// elapsed)` for the segment running at [now], where elapsed counts from the
+  /// segment's start, or from the end of its grace when that is later. During
+  /// a grace this is the full budget. Zero when no segment has started.
+  int segmentRemainingMs(DateTime now) {
+    final DateTime? startedAt = turnSegmentStartedAt;
+    if (startedAt == null) {
+      return 0;
+    }
+    final DateTime? graceEnd = turnGraceEndsAt;
+    final DateTime countFrom =
+        graceEnd != null && graceEnd.isAfter(startedAt) ? graceEnd : startedAt;
+    final int elapsedMs = now.difference(countFrom).inMilliseconds;
+    final int remaining = turnSegmentMs - (elapsedMs > 0 ? elapsedMs : 0);
+    return remaining > 0 ? remaining : 0;
+  }
 
   /// `docs/PROTOCOL.md` section 16.6. Null except while this room is a
   /// rematch LOBBY: set by `RoomRegistry.rematch`'s first call in a FINISHED
