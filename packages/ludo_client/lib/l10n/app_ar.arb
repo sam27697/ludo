@@ -66,6 +66,7 @@
   "gameYourTurnStale": "دورك",
   "gameYourTurnTimeUp": "انتهى الوقت. نلعب عنك.",
   "gameRollAgainSix": "ستّة! ارمِ مرة أخرى.",
+  "gameDieRollAgain": "ارمِ مرة أخرى",
   "gameRollAgainCapture": "ضربت قطعة. ارمِ مرة أخرى.",
   "gameRollAgainHome": "قطعة في البيت. ارمِ مرة أخرى.",
   "gameGoesAgain": "دور {name} مجددًا",

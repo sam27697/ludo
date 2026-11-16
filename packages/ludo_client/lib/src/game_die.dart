@@ -42,6 +42,8 @@ class GameDie extends StatefulWidget {
     this.onInvalidTap,
     this.badgeHeadroom = double.infinity,
     this.idleOpacity = 1,
+    this.rollAgain = false,
+    this.popSerial = 0,
   });
 
   /// The last known roll, straight from `turn.value`. Null when none is
@@ -91,6 +93,19 @@ class GameDie extends StatefulWidget {
   /// strength.
   final double idleOpacity;
 
+  /// C-653 D3: true while my own six is held on the face and another roll
+  /// is owed. Draws the green circular-arrow mark
+  /// (`own-die-roll-again`) on the die's bottom-right corner, clear of
+  /// every pip, over whatever the face shows. The shape is the signal, not
+  /// the green alone (doctrine P9). The caller decides when; this widget
+  /// only draws it.
+  final bool rollAgain;
+
+  /// C-653 D4: a number the caller raises each time a roll of mine lands
+  /// and is held. A change plays the 300 ms landing pop on the face (1.0
+  /// to 1.2 and back). Under reduced motion the pop is not played.
+  final int popSerial;
+
   /// Fires on a tap while [enabled]. The widget itself still guards this:
   /// a tap while disabled never calls it, even if a caller passes one.
   final VoidCallback? onTap;
@@ -108,6 +123,7 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
   late final AnimationController _pulse;
   late final AnimationController _tumble;
   late final AnimationController _shake;
+  late final AnimationController _pop;
 
   // C-520 D3: a refused tap under reduced motion wears a mark for 300 ms.
   Timer? _markTimer;
@@ -129,6 +145,11 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 300),
       value: 1,
     );
+    _pop = AnimationController(
+      vsync: this,
+      duration: kLandingPopDuration,
+      value: 1,
+    );
   }
 
   @override
@@ -145,6 +166,9 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     _syncTumble();
     if (!oldWidget.noAnswer && widget.noAnswer) {
       _shake.forward(from: 0);
+    }
+    if (oldWidget.popSerial != widget.popSerial && !_reducedMotion) {
+      _pop.forward(from: 0);
     }
   }
 
@@ -234,6 +258,7 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     _pulse.dispose();
     _tumble.dispose();
     _shake.dispose();
+    _pop.dispose();
     super.dispose();
   }
 
@@ -289,6 +314,18 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
       child: die,
     );
 
+    // C-653 D4: the landing pop, 1.0 to 1.2 (ease out) and back over
+    // 300 ms. Always built, so the die's element keeps its slot; it is the
+    // identity when the controller rests and under reduced motion.
+    die = AnimatedBuilder(
+      animation: _pop,
+      builder: (context, child) {
+        final double scale = reduced ? 1 : landingPopScale(_pop.value);
+        return Transform.scale(scale: scale, child: child);
+      },
+      child: die,
+    );
+
     // C-236 rule 4: the no-move badge sits in its own stack layer, above
     // whatever `die` is doing (resting face, tumble, shake), so it is never
     // delayed or hidden by the die's own animation state. It hangs off the
@@ -311,6 +348,7 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
       clipBehavior: Clip.none,
       children: <Widget>[
         Opacity(opacity: widget.idleOpacity, child: dieArt),
+        if (widget.rollAgain) _rollAgainMark(loc),
         if (_marked)
           const Positioned.fill(
             child: RefusalMark(
@@ -366,6 +404,34 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
     );
   }
 
+  /// C-653 D3: the "roll again" mark. A [kRollAgainMarkSide] disc centred
+  /// [kRollAgainMarkInset] in from the die's bottom-right corner, physical
+  /// like the no-move badge so Arabic does not mirror it. Its bounding
+  /// square starts at 59 dp on both axes, past the 58.3 dp where the corner
+  /// pip of a six ends, so no pip is covered even by the square. It hangs
+  /// 7 dp past the die, less than the 8 dp the row keeps between the die
+  /// and its neighbours.
+  Widget _rollAgainMark(AppLocalizations loc) {
+    const double side = kRollAgainMarkSide;
+    const double centre = _kDieSize - kRollAgainMarkInset;
+    return Positioned(
+      left: centre - side / 2,
+      top: centre - side / 2,
+      width: side,
+      height: side,
+      child: IgnorePointer(
+        child: Semantics(
+          key: const Key('own-die-roll-again'),
+          container: true,
+          label: loc.gameDieRollAgain,
+          child: const ExcludeSemantics(
+            child: CustomPaint(painter: _RollAgainPainter()),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// C-380 D4: `game-die-no-move-mark` sits on the badge, not on the face.
   /// Physical top-right, not [PositionedDirectional], so Arabic does not
   /// mirror it.
@@ -410,6 +476,89 @@ class _GameDieState extends State<GameDie> with TickerProviderStateMixin {
       child: _dieArt(edgeColor: widget.seatColor, shown: shown),
     );
   }
+}
+
+/// C-653 D3: the mark's disc, in logical pixels. At least 20 dp.
+const double kRollAgainMarkSide = 20;
+
+/// C-653 D3: how far in from the die's bottom-right corner the mark's
+/// centre sits.
+const double kRollAgainMarkInset = 3;
+
+/// C-653 D4: the landing pop's length.
+const Duration kLandingPopDuration = Duration(milliseconds: 300);
+
+/// C-653 D4: the pop's scale at [t] (0..1) through its 300 ms. Up to 1.2
+/// with an ease-out over the first half, back to 1.0 over the second.
+double landingPopScale(double t) {
+  if (t <= 0 || t >= 1) {
+    return 1;
+  }
+  if (t < 0.5) {
+    return 1 + 0.2 * Curves.easeOut.transform(t * 2);
+  }
+  return 1 + 0.2 * (1 - Curves.easeIn.transform((t - 0.5) * 2));
+}
+
+/// C-653 D3: a dark disc with a green circular arrow, the arrowhead on the
+/// open end of a three-quarter turn. Green is [LudoColors.success], the
+/// colour the legal-piece ring already uses; the arrow shape carries the
+/// meaning without it.
+class _RollAgainPainter extends CustomPainter {
+  const _RollAgainPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double side = math.min(size.width, size.height);
+    final Offset c = Offset(size.width / 2, size.height / 2);
+    canvas.drawCircle(c, side / 2, Paint()..color = LudoColors.ink);
+    canvas.drawCircle(
+      c,
+      side / 2 - side * 0.04,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = side * 0.07,
+    );
+
+    final double r = side * 0.27;
+    const double start = -math.pi * 0.35;
+    const double sweep = math.pi * 1.5;
+    final Paint stroke = Paint()
+      ..color = LudoColors.success
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = side * 0.12;
+    canvas.drawArc(
+      Rect.fromCircle(center: c, radius: r),
+      start,
+      sweep,
+      false,
+      stroke,
+    );
+
+    // The head sits on the arc's end and points along the clockwise tangent.
+    const double end = start + sweep;
+    final Offset radial = Offset(math.cos(end), math.sin(end));
+    final Offset tangent = Offset(-math.sin(end), math.cos(end));
+    final Offset p = c + radial * r;
+    final double w = side * 0.17;
+    final double h = side * 0.22;
+    final Path head = Path()
+      ..moveTo(p.dx + radial.dx * w, p.dy + radial.dy * w)
+      ..lineTo(p.dx - radial.dx * w, p.dy - radial.dy * w)
+      ..lineTo(p.dx + tangent.dx * h, p.dy + tangent.dy * h)
+      ..close();
+    canvas.drawPath(
+      head,
+      Paint()
+        ..color = LudoColors.success
+        ..style = PaintingStyle.fill,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RollAgainPainter oldDelegate) => false;
 }
 
 class _GameDiePainter extends CustomPainter {

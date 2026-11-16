@@ -85,6 +85,12 @@ enum GameScreenResult {
   roomClosedGuest,
 }
 
+/// C-653 D1: how long the face of a roll of mine stays on my die from the
+/// `rolled` frame's arrival, whatever frames follow and whether or not
+/// motion is reduced. Presentation only: the controller already holds the
+/// truth, and nothing here delays a frame or a cue.
+const Duration kOwnRollHold = Duration(milliseconds: 900);
+
 /// C-432 D4: what a snapshot's own-seat `timer_steps` asks of the C-426 D3
 /// notice. `none` is an older server's absent field, a seat that is not in
 /// the snapshot, or a LOBBY snapshot.
@@ -437,6 +443,15 @@ class _GameScreenState extends State<GameScreen> {
   Timer? _noMoveTimer;
   bool _noMoveVisible = false;
   int? _noMoveFace;
+  // C-653 D1-D4: the face of my own latest roll, held on my die for
+  // `kOwnRollHold` from the `rolled` frame. `_ownRollAgain` is D3's mark (a
+  // six that owes another roll); `_ownRollPop` is raised once per hold so the
+  // die plays D4's landing pop. A newer `rolled` of mine restarts the hold.
+  Timer? _ownRollHoldTimer;
+  final GlobalKey _gameDieKey = GlobalKey(debugLabel: 'game-die-widget');
+  int? _ownRollHoldFace;
+  bool _ownRollAgain = false;
+  int _ownRollPop = 0;
   // C-474 D1: why the armed notice has no move. Fixed when the notice arms
   // and untouched while it is up, even when a snapshot lands under it.
   NoMoveReason _noMoveReason = NoMoveReason.plain;
@@ -772,6 +787,7 @@ class _GameScreenState extends State<GameScreen> {
     _autoMoveCeilingTimer?.cancel();
     _rollNoAnswerTimer?.cancel();
     _noMoveTimer?.cancel();
+    _ownRollHoldTimer?.cancel();
     _timerPlayedOtherTimer?.cancel();
     _trayDeadTimer?.cancel();
     _watchDeadTimer?.cancel();
@@ -894,6 +910,7 @@ class _GameScreenState extends State<GameScreen> {
           .toList();
     }
     _trackExtraRoll(frame, owesRoll: owesRoll);
+    _armOwnRollHold(frame, owesRoll: owesRoll);
     // C-474 D3.3: the announcement below plays before the notice arms, so
     // the reason is taken first and both read the same one.
     if (frame.type == 'rolled' && cues.contains(FeedbackCue.noMove)) {
@@ -2282,6 +2299,10 @@ class _GameScreenState extends State<GameScreen> {
     _noMoveVisible = false;
     _noMoveFace = null;
     _noMoveReason = NoMoveReason.plain;
+    _ownRollHoldTimer?.cancel();
+    _ownRollHoldTimer = null;
+    _ownRollHoldFace = null;
+    _ownRollAgain = false;
     _timerPlayedOtherTimer?.cancel();
     _timerPlayedOtherTimer = null;
     _timerPlayedMineVisible = false;
@@ -2403,6 +2424,56 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {
       _noMoveVisible = true;
       _noMoveFace = face;
+    });
+  }
+
+  /// C-653 D1/D3: a live `rolled` for my seat puts its `value` on my die for
+  /// [kOwnRollHold] from now. A frame a resync ignored changed nothing
+  /// underneath, so it holds nothing. The mark is for a six that owes
+  /// another roll: [owesRoll] is what [_trackRollQueue] read off the turn
+  /// this frame left (my seat, await_roll, a non-empty queue), which is the
+  /// same-seat await_roll `turn` of a roll queue and nothing else. A live
+  /// `rolled` of another seat drops the hold instead.
+  void _armOwnRollHold(Frame frame, {required bool owesRoll}) {
+    if (frame.type != 'rolled' || widget.controller.hasDesynced) {
+      return;
+    }
+    final int? mySeat = widget.controller.seat;
+    final int? value = _intAt(frame.data, 'value');
+    // Rule 4a: a `rolled` of another seat ends my hold at once, like it ends
+    // the no-move hold; that roll is thrown on its own seat's die.
+    if (mySeat != null &&
+        value != null &&
+        _intAt(frame.data, 'seat') != mySeat) {
+      _dropOwnRollHold();
+      return;
+    }
+    if (mySeat == null ||
+        _intAt(frame.data, 'seat') != mySeat ||
+        value == null ||
+        value < 1 ||
+        value > 6 ||
+        !mounted) {
+      return;
+    }
+    _ownRollHoldTimer?.cancel();
+    _ownRollHoldTimer = Timer(kOwnRollHold, _dropOwnRollHold);
+    setState(() {
+      _ownRollHoldFace = value;
+      _ownRollAgain = value == 6 && owesRoll;
+      _ownRollPop++;
+    });
+  }
+
+  void _dropOwnRollHold() {
+    _ownRollHoldTimer?.cancel();
+    _ownRollHoldTimer = null;
+    if (!mounted || _ownRollHoldFace == null) {
+      return;
+    }
+    setState(() {
+      _ownRollHoldFace = null;
+      _ownRollAgain = false;
     });
   }
 
@@ -5363,6 +5434,7 @@ class _GameScreenState extends State<GameScreen> {
     Color trayColor,
     SeatRollRecord? boardRecord,
     bool trayOwnMove,
+    int? ownRollHeld,
   ) {
     final HintControlState? hintState = _hintControlState(room, seat);
     final bool hinted = hintState != null && seat != null;
@@ -5383,10 +5455,16 @@ class _GameScreenState extends State<GameScreen> {
           child: _boardDieSlot(
             loc,
             turn,
+            ownRollHeld,
             // C-468 D7: the die fades its own art (idleOpacity); the key on
             // the die is unchanged. C-520 A2: the fade lives inside GameDie
             // so the refusal mark stays outside it.
             GameDie(
+              // C-653 D4: the slot above wraps the die in a Semantics node
+              // only while a face is announced, which moves the die in the
+              // tree at the very frame a roll lands. A global key keeps its
+              // state, and with it the landing pop, across that move.
+              key: _gameDieKey,
               face: dieFace,
               seatColor: dieSeatColor,
               enabled: rollEnabled,
@@ -5403,6 +5481,8 @@ class _GameScreenState extends State<GameScreen> {
               // changing at all.
               badgeHeadroom: metrics.boardGap,
               idleOpacity: fadeIdleDie ? 0.45 : 1,
+              rollAgain: ownRollHeld != null && _ownRollAgain,
+              popSerial: _ownRollPop,
               onTap: rollEnabled ? _onDieTap : null,
               onInvalidTap: () {
                 FeedbackScope.of(context).play(FeedbackCue.invalidTap);
@@ -5632,6 +5712,13 @@ class _GameScreenState extends State<GameScreen> {
     // it, with this phone's seat kept only for the board's own rotation and
     // colours, so nothing moves. No roll, no ring, no glow, no hint.
     final bool lost = _seatLost;
+    // C-653 D1/D2: my own latest roll is still being read. The die keeps
+    // its face and no tap rolls until the hold is up. Only a live table of
+    // mine holds one; a lost seat or a finished room draws as it did.
+    final int? ownRollHeld =
+        !lost && !_roomIsFinished(room) && room.state == RoomState.playing
+        ? _ownRollHoldFace
+        : null;
     final bool rollEnabled =
         !lost &&
         !_isEndHeld &&
@@ -5641,7 +5728,8 @@ class _GameScreenState extends State<GameScreen> {
         turn != null &&
         turn.seat == seat &&
         turn.phase == TurnPhase.awaitRoll &&
-        _rollWaitK == null;
+        _rollWaitK == null &&
+        ownRollHeld == null;
 
     // C-462 D1: under the roll queue the rings are every token any alive
     // face can move. Without `legalByFace`, `turn.legal` exactly as before.
@@ -5674,6 +5762,8 @@ class _GameScreenState extends State<GameScreen> {
         : LudoColors.seats[(turn?.seat ?? 0).clamp(0, 3)];
     final int? rawDieFace = _noMoveVisible
         ? _noMoveFace
+        : ownRollHeld != null && seat != null
+        ? ownRollHeld
         : (seat != null && (turn == null || turn.seat != seat))
         ? null
         : turn?.value;
@@ -5683,7 +5773,11 @@ class _GameScreenState extends State<GameScreen> {
     // C-571 D1: a finished room fades it for every viewer, the winner too.
     final bool fadeIdleDie =
         _roomIsFinished(room) ||
-        (seat != null && turn != null && turn.seat != seat && !_noMoveVisible);
+        (seat != null &&
+            turn != null &&
+            turn.seat != seat &&
+            !_noMoveVisible &&
+            ownRollHeld == null);
 
     final (
       List<int>? trayFaces,
@@ -5880,6 +5974,7 @@ class _GameScreenState extends State<GameScreen> {
                   trayColor,
                   boardRecord,
                   trayOwnMove,
+                  ownRollHeld,
                 ),
                 SizedBox(height: metrics.dieGap),
                 RepaintBoundary(
@@ -6677,9 +6772,23 @@ class _GameScreenState extends State<GameScreen> {
   /// The node follows the face the die is showing: my turn's value, or
   /// the held face during the no-move hold. While another seat holds the
   /// turn and that hold is not up, the node is absent.
-  Widget _boardDieSlot(AppLocalizations loc, TurnState? turn, Widget die) {
+  Widget _boardDieSlot(
+    AppLocalizations loc,
+    TurnState? turn,
+    int? ownRollHeld,
+    Widget die,
+  ) {
     final int? mySeat = widget.controller.seat;
     if (mySeat != null) {
+      // C-653 D1: the face held on my die is announced like any face it
+      // shows, though `turn.value` is already gone under it.
+      if (!_noMoveVisible && ownRollHeld != null) {
+        return Semantics(
+          key: const Key('game-screen-dice-value'),
+          label: loc.gameDieValue(ownRollHeld),
+          child: die,
+        );
+      }
       if (_noMoveVisible) {
         final int? held = _noMoveFace;
         if (held == null) {
