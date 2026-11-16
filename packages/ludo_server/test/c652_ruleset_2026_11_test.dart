@@ -602,6 +602,44 @@ void _expectError(
   fx.eq(_code(fx, frames.single, what), code, '$what: error code');
 }
 
+/// Closes the sockets of every seat in [seats] and waits, on the room's own
+/// seat table, until the server has noticed each one. For the cases where
+/// nobody is left connected to read a presence frame.
+Future<void> _dropMany(_Table t, List<int> seats) async {
+  for (final int seat in seats) {
+    t.seats[seat]!.up = false;
+    await t.seats[seat]!.client.close();
+  }
+  final DateTime deadline = DateTime.now().add(const Duration(seconds: 10));
+  while (true) {
+    final bool allDown = seats.every((int seat) =>
+        !t.room.seats.singleWhere((Seat s) => s.seat == seat).connected);
+    if (allDown) {
+      return;
+    }
+    if (DateTime.now().isAfter(deadline)) {
+      t.fx.fail('the server noticed the closed sockets of seats $seats',
+          expected: 'connected=false for every one', actual: 'still up');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+}
+
+/// Start of the table row that holds [reveal], -1 when it is in no open row
+/// (the record is embedded in the page too, outside any row).
+int _openRowStart(String body, String reveal) {
+  for (int from = 0;;) {
+    final int hit = body.indexOf(reveal, from);
+    if (hit < 0) {
+      return -1;
+    }
+    if (body.lastIndexOf('<tr', hit) > body.lastIndexOf('</tr>', hit)) {
+      return body.lastIndexOf('<tr', hit);
+    }
+    from = hit + 1;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Positions.
 // ---------------------------------------------------------------------------
@@ -889,7 +927,7 @@ void main() {
         await _startGame(t);
         _forceFinishingMove(t, 0);
         await t.step(0, 'move', <String, Object?>{'token': 3});
-        fx.eq(t.room.state, RoomState.finished, 'the game ended');
+        fx.eq(t.room.state.name, RoomState.finished.name, 'the game ended');
         t.fx.send(t.c(0), 'rematch', <String, Object?>{});
         await t.syncAll(first: 0);
         fx.send(t.c(2), 'rematch', <String, Object?>{});
@@ -897,7 +935,7 @@ void main() {
           await drainUntil(t.c(s), 'turn',
               maxFrames: 14, perFrame: const Duration(seconds: 3));
         }
-        fx.eq(t.room.state, RoomState.playing, 'the rematch started');
+        fx.eq(t.room.state.name, RoomState.playing.name, 'the rematch started');
         final engine.RulesConfig rules = t.room.game!.config.rules;
         fx.eq(<bool>[rules.yardRelease, rules.playOut, rules.rollQueue],
             <bool>[true, true, true], 'engine toggles of the second game');
@@ -1424,6 +1462,191 @@ void main() {
         }
       });
     });
+
+    test(
+        'R9: two releases in one game: releases ascending, the page shows '
+        'one line each, next to its own roll and not the roll between',
+        () async {
+      final _Steer steer = _Steer.faces(<int>[3, 4, 5]);
+      await _withFixture('R9 two releases', (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 2, seeds: true);
+        await _startGame(t);
+        _force(t, drought: <int>[9, 0, 0, 0]);
+        // Roll 1, seat 0: a release, spent, then the queued 3 is played.
+        final Map<int, List<Frame>> r1 =
+            await t.step(0, 'roll', <String, Object?>{});
+        fx.eq(_d(r1[0]!.single)['release'], true, 'roll 1 grants a release');
+        await t.step(0, 'move', <String, Object?>{'token': 0});
+        final Map<int, List<Frame>> f1 =
+            await t.step(0, 'move', <String, Object?>{'token': 0});
+        fx.eq(_types(f1[2]!), <String>['moved', 'turn'], 'the face is played');
+        fx.eq(_d(f1[2]!.last)['seat'], 2, 'the turn goes to seat 2');
+        // Roll 2, seat 2: a plain non-6 with every token in the yard.
+        final Map<int, List<Frame>> r2 =
+            await t.step(2, 'roll', <String, Object?>{});
+        fx.eq(_types(r2[0]!), <String>['rolled', 'turn_passed', 'turn'],
+            'roll 2 is no release (the drought is 0)');
+        fx.absent(_d(r2[0]!.first), 'release', 'roll 2');
+        // Roll 3, seat 0 again, every token back in the yard, drought 9.
+        _force(t, drought: <int>[
+          9,
+          0,
+          1,
+          0
+        ], tokens: <int, List<int>>{
+          0: <int>[-1, -1, -1, -1],
+        });
+        final Map<int, List<Frame>> r3 =
+            await t.step(0, 'roll', <String, Object?>{});
+        fx.eq(_d(r3[0]!.single)['release'], true, 'roll 3 grants a release');
+        fx.eq(_d(r3[0]!.single)['k'], 3, 'it is roll 3');
+        await t.step(0, 'move', <String, Object?>{'token': 1});
+        await t.step(0, 'move', <String, Object?>{'token': 1});
+        _forceFinishingMove(t, 2);
+        final Map<int, List<Frame>> end =
+            await t.step(2, 'move', <String, Object?>{'token': 3});
+        fx.eq(_types(end[0]!), <String>['moved', 'game_over'], 'the game ends');
+        final Map<String, Object?> rec = await _record(t);
+        fx.eq(rec['releases'], <int>[1, 3],
+            'releases: the roll numbers that granted one, ascending');
+        fx.eq(rec['placings'], <int>[2, 0], 'record.placings');
+        final List<Object?> rolls = rec['rolls']! as List<Object?>;
+        fx.eq(rolls.length, 3, 'three rolls were drawn');
+        for (final Map<String, String> page in <Map<String, String>>[
+          <String, String>{'q': '?lang=en', 'line': _lineEn},
+          <String, String>{'q': '?lang=ar', 'line': _lineAr},
+        ]) {
+          final Map<String, Object?> res =
+              await _get(fx, '/v/${t.gameId}${page['q']}');
+          final String body = res['body']! as String;
+          final String line = page['line']!;
+          final List<int> starts = <int>[
+            for (final Object? r in rolls)
+              _openRowStart(
+                  body, (r! as Map<String, Object?>)['reveal']! as String),
+          ];
+          fx.ok(
+              starts.every((int s) => s > 0) &&
+                  starts[0] < starts[1] &&
+                  starts[1] < starts[2],
+              'the ${page['q']} page lists the three rolls in rows, in order',
+              starts);
+          final List<int> owners = <int>[];
+          for (int from = 0;;) {
+            final int hit = body.indexOf(line, from);
+            if (hit < 0) {
+              break;
+            }
+            owners.add(starts.lastIndexWhere((int s) => s <= hit) + 1);
+            from = hit + 1;
+          }
+          fx.eq(
+              owners,
+              <int>[1, 3],
+              'the ${page['q']} page: one release line per release roll, '
+              'each after the row of its own roll and before the next one '
+              '(roll number each line belongs to)');
+        }
+      }, steer: steer);
+    });
+
+    test(
+        'R10: a release owed is the seat\'s alone; once spent a face is '
+        'allowed again', () async {
+      final _Steer steer = _Steer.faces(<int>[3]);
+      await _withFixture('R10 release is the seat\'s alone',
+          (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 2, seeds: true);
+        await _startGame(t);
+        _force(t, drought: <int>[9, 0, 0, 0]);
+        await t.step(0, 'roll', <String, Object?>{});
+        final Map<int, List<Frame>> roll2 =
+            await t.step(2, 'roll', <String, Object?>{});
+        _expectError(fx, roll2[2]!, 'NOT_YOUR_TURN',
+            'roll by the other seat while a release is owed');
+        final Map<int, List<Frame>> move2 =
+            await t.step(2, 'move', <String, Object?>{'token': 0});
+        _expectError(fx, move2[2]!, 'NOT_YOUR_TURN',
+            'move by the other seat while a release is owed');
+        fx.eq(roll2[0]! + move2[0]!, <Frame>[],
+            'the seat that owes the release is told nothing of it');
+        await t.step(0, 'move', <String, Object?>{'token': 1});
+        final Map<int, List<Frame>> played =
+            await t.step(0, 'move', <String, Object?>{'token': 1, 'face': 3});
+        fx.eq(_types(played[2]!), <String>['moved', 'turn'],
+            'with the release spent the queued face is played as ever');
+        final Map<String, Object?> m = _d(played[2]!.first);
+        fx.eq(<Object?>[m['token'], m['from'], m['to'], m['face']],
+            <int>[1, 0, 3, 3], 'moved by the face');
+        fx.absent(m, 'release', 'the moved frame of an ordinary move');
+        fx.eq(_d(played[2]!.last)['seat'], 2, 'the turn goes on');
+      }, steer: steer);
+    });
+
+    test(
+        'R11: a face sent with a release owed: ILLEGAL_MOVE for any integer, '
+        'BAD_FIELD when it is not one (ruling of 2026-11-16)', () async {
+      final _Steer steer = _Steer.faces(<int>[3]);
+      await _withFixture('R11 face with a release owed', (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 2, seeds: true);
+        await _startGame(t);
+        _force(t, drought: <int>[9, 0, 0, 0]);
+        await t.step(0, 'roll', <String, Object?>{});
+        for (final int face in <int>[0, 9, -1, 1, 3, 6, 7]) {
+          final Map<int, List<Frame>> r = await t
+              .step(0, 'move', <String, Object?>{'token': 0, 'face': face});
+          _expectError(fx, r[0]!, 'ILLEGAL_MOVE',
+              'move with the integer face $face while a release is owed');
+          fx.eq(r[2]!, <Frame>[], 'a rejected move tells nobody else');
+        }
+        for (final Object bad in <Object>['3', 1.5, true]) {
+          final Map<int, List<Frame>> r = await t
+              .step(0, 'move', <String, Object?>{'token': 0, 'face': bad});
+          _expectError(
+              fx,
+              r[0]!,
+              'BAD_FIELD',
+              'move with the non-integer face ${_j(bad)} while a release is '
+                  'owed');
+        }
+        final Map<int, List<Frame>> ok =
+            await t.step(0, 'move', <String, Object?>{'token': 0});
+        fx.eq(_d(_ofType(ok[0]!, 'moved').single)['release'], true,
+            'the release was still owed after every rejection');
+      }, steer: steer);
+    });
+
+    test(
+        'N1: a roll with a token on the board carries no release and keeps '
+        'legal_by_face', () async {
+      final _Steer steer = _Steer.faces(<int>[3]);
+      await _withFixture('N1 ordinary roll under 2026-11', (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 2, seeds: true);
+        await _startGame(t);
+        _force(t, tokens: <int, List<int>>{
+          0: <int>[5, -1, -1, -1],
+        });
+        final Map<int, List<Frame>> r =
+            await t.step(0, 'roll', <String, Object?>{});
+        fx.eq(_types(r[2]!), <String>['rolled'], 'a move is pending');
+        final Map<String, Object?> rolled = _d(r[2]!.single);
+        fx.absent(rolled, 'release', 'an ordinary rolled');
+        fx.eq(rolled['legal'], <int>[0], 'legal');
+        fx.eq(rolled['queue'], <int>[3], 'queue');
+        fx.eq(
+            rolled['legal_by_face'],
+            <Object?>[
+              <String, Object?>{
+                'face': 3,
+                'tokens': <int>[0],
+              },
+            ],
+            'legal_by_face is still sent when no release is owed');
+        final Map<String, Object?> snap = await _resume(t, 2);
+        final Map<String, Object?> turn = snap['turn']! as Map<String, Object?>;
+        fx.absent(turn, 'release', 'a snapshot turn with no release owed');
+      }, steer: steer);
+    });
   });
 
   // =========================================================================
@@ -1596,6 +1819,65 @@ void main() {
         fx.eq(snap['placings'], <int>[0], 'its place stands');
       });
     });
+
+    test(
+        'P6: a finished seat is skipped in the turn order: after the seat '
+        'before it, the turn goes to the next playing seat', () async {
+      await _withFixture('P6 finished seat skipped', (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 3);
+        await _startGame(t);
+        _forceFinishingMove(t, 0);
+        await t.step(0, 'move', <String, Object?>{'token': 3});
+        _force(t,
+            currentSeat: 2,
+            phase: 'awaitMove',
+            queue: <int>[1],
+            tokens: <int, List<int>>{
+              2: <int>[57, 57, 57, 54],
+            },
+            releaseOwed: false,
+            sixes: 0);
+        await t.syncAll();
+        final Map<int, List<Frame>> r =
+            await t.step(2, 'move', <String, Object?>{'token': 3});
+        for (final int seat in <int>[0, 1, 2]) {
+          fx.eq(_types(r[seat]!), <String>['moved', 'turn'],
+              'seat $seat: no extra roll, so the turn moves on');
+          fx.eq(_d(r[seat]!.last)['seat'], 1,
+              'seat $seat: the turn skips the finished seat 0');
+          fx.eq(_d(r[seat]!.last)['phase'], 'await_roll', 'turn.phase');
+          fx.eq(_d(r[seat]!.last)['deadline_ms'], 45000, 'turn.deadline_ms');
+        }
+      });
+    });
+
+    test(
+        'P7: a finished seat that is dropped and resumes sees its place in '
+        'the snapshot and still cannot act', () async {
+      await _withFixture('P7 finished seat resumes', (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 3);
+        await _startGame(t);
+        _forceFinishingMove(t, 0);
+        await t.step(0, 'move', <String, Object?>{'token': 3});
+        await _drop(t, 0);
+        await t.syncAll();
+        final Map<String, Object?> snap = await _resume(t, 0);
+        fx.eq(snap['placings'], <int>[0], 'its place after the resume');
+        fx.eq(snap['retired'], <int>[], 'it is not retired');
+        fx.ok((snap['turn']! as Map<String, Object?>)['seat'] != 0,
+            'a finished seat is never turn.seat', snap['turn']);
+        for (final String type in <String>['roll', 'move']) {
+          fx.send(
+              t.c(0),
+              type,
+              type == 'move'
+                  ? <String, Object?>{'token': 0}
+                  : <String, Object?>{});
+          final List<Frame> got = await _flush(fx, t.c(0));
+          _expectError(fx, got, 'NOT_YOUR_TURN', '$type from a finished seat');
+        }
+      });
+    });
   });
 
   // =========================================================================
@@ -1739,6 +2021,79 @@ void main() {
         final Map<String, Object?> rec = await _record(t);
         fx.eq(rec['placings'], <int>[0], 'record.placings');
         fx.eq(rec['retired'], <int>[2], 'record.retired');
+      });
+    });
+
+    test(
+        'L4: the host retires: host_seat is the lowest seat still playing, '
+        'not the lowest connected one', () async {
+      await _withFixture('L4 host leaves, seat 1 finished',
+          (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 4);
+        await _startGame(t);
+        _forceFinishingMove(t, 1);
+        await t.step(1, 'move', <String, Object?>{'token': 3});
+        final String id = fx.send(t.c(0), 'leave_room', <String, Object?>{});
+        final Frame own = await t.c(0).next();
+        fx.eq(own['t'], 'seat_retired', 'the host is answered by seat_retired');
+        fx.eq(own['re'], id, 're');
+        fx.eq(
+            _d(own)['host_seat'],
+            2,
+            'seat 1 is connected but finished; seat 2 is the lowest seat '
+            'still playing');
+        t.seats[0]!.up = false;
+        for (final int seat in <int>[1, 2, 3]) {
+          final List<Frame> got = await _flush(fx, t.c(seat));
+          fx.eq(_types(got), <String>['seat_retired'],
+              'seat $seat: seat 2 is on turn, nothing more');
+          fx.eq(_d(got.single)['host_seat'], 2, 'seat $seat host_seat');
+        }
+        final Map<String, Object?> snap = await _resume(t, 3);
+        fx.eq(snap['host_seat'], 2, 'snapshot host_seat');
+        fx.eq(snap['placings'], <int>[1], 'placings');
+        fx.eq(snap['retired'], <int>[0], 'retired');
+      });
+    });
+
+    test(
+        'L5: a seat that leaves in the middle of its move: seat_retired, '
+        'then await_roll for the next playing seat on a full segment',
+        () async {
+      await _withFixture('L5 leave while a move is pending',
+          (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 3);
+        await _startGame(t);
+        _force(t,
+            currentSeat: 1,
+            phase: 'awaitMove',
+            queue: <int>[3],
+            tokens: <int, List<int>>{
+              1: <int>[10, -1, -1, -1],
+            },
+            releaseOwed: false,
+            sixes: 0);
+        fx.clock.advance(const Duration(seconds: 30));
+        fx.send(t.c(1), 'leave_room', <String, Object?>{});
+        final Frame own = await t.c(1).next();
+        fx.eq(own['t'], 'seat_retired', 'the leaver is answered');
+        t.seats[1]!.up = false;
+        for (final int seat in <int>[0, 2]) {
+          final List<Frame> got = await _flush(fx, t.c(seat));
+          fx.eq(_types(got), <String>['seat_retired', 'turn'],
+              'seat $seat: the retired seat was to act');
+          fx.eq(_d(got.last)['seat'], 2, 'turn.seat');
+          fx.eq(_d(got.last)['phase'], 'await_roll', 'turn.phase');
+          fx.eq(_d(got.last)['deadline_ms'], 45000,
+              'a new turn starts a full segment, not what was left');
+          fx.eq(_d(got.last)['queue'], <int>[], 'the leaver\'s faces are gone');
+        }
+        final Map<String, Object?> snap = await _resume(t, 0);
+        final Map<String, Object?> seat1 = (snap['seats']! as List<Object?>)
+            .cast<Map<String, Object?>>()
+            .singleWhere((Map<String, Object?> s) => s['seat'] == 1);
+        fx.eq(seat1['tokens'], <int>[-1, -1, -1, -1],
+            'the token on the board went back to the yard');
       });
     });
   });
@@ -1901,6 +2256,197 @@ void main() {
         fx.eq(_types(r), <String>['presence'],
             'under 2026-10 leave_room in PLAYING is answered by presence');
       }, ruleset: _v25);
+    });
+
+    test(
+        'A6: two seats gone for the same 120 s: both retired in one sweep, '
+        'one game_over, one player_left each, in retirement order', () async {
+      await _withFixture('A6 two absent seats', (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 3);
+        await _startGame(t);
+        await _drop(t, 1);
+        await _drop(t, 2);
+        await t.syncAll();
+        fx.clock.advance(const Duration(seconds: 120));
+        _freshSegment(t);
+        fx.server.runTurnExpiryOnce();
+        final List<Frame> got = (await t.syncAll())[0]!;
+        fx.eq(
+            _types(got),
+            <String>[
+              'seat_retired',
+              'seat_retired',
+              'game_over',
+              'player_left',
+              'player_left',
+            ],
+            'both seats retired, the game ends once, both seats freed');
+        final List<int> order = <int>[
+          _d(got[0])['seat']! as int,
+          _d(got[1])['seat']! as int,
+        ];
+        fx.eq(<int>[...order]..sort(), <int>[1, 2], 'the two seats');
+        fx.eq(<Object?>[_d(got[0])['reason'], _d(got[1])['reason']],
+            <String>['absent', 'absent'], 'reasons');
+        fx.eq(_d(got[2])['retired'], order,
+            'game_over.retired is in retirement order');
+        fx.eq(_d(got[2])['placings'], <int>[0], 'placings');
+        fx.eq(_d(got[2])['winner'], 0, 'winner');
+        fx.eq(<Object?>[_d(got[3])['seat'], _d(got[4])['seat']], order,
+            'player_left follows the retirement order');
+        final int seq = _d(got[0])['seq']! as int;
+        fx.eq(<Object?>[for (final Frame f in got) _d(f)['seq']],
+            <int>[seq, seq + 1, seq + 2, seq + 3, seq + 4], 'seq, one each');
+        final int after = t.room.seq;
+        fx.clock.advance(const Duration(seconds: 130));
+        fx.server.runTurnExpiryOnce();
+        fx.eq(<Frame>[for (final f in (await t.syncAll()).values) ...f],
+            <Frame>[], 'a later sweep adds nothing to a finished game');
+        fx.eq(t.room.seq, after, 'no frame was numbered');
+      });
+    });
+
+    test(
+        'A7: both seats of a two-seat game gone for 120 s: one is retired, '
+        'the other takes the place and is never retired', () async {
+      await _withFixture('A7 both seats absent', (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 2);
+        await _startGame(t);
+        await _dropMany(t, <int>[0, 2]);
+        fx.clock.advance(const Duration(seconds: 120));
+        _freshSegment(t);
+        fx.server.runTurnExpiryOnce();
+        fx.eq(t.room.state.name, RoomState.finished.name,
+            'the first retirement ends the game');
+        final List<int> placings = t.room.game!.placings;
+        final List<int> retired = t.room.game!.retired;
+        fx.eq(placings.length, 1, 'one placing');
+        fx.eq(retired.length, 1, 'one retired seat, not two');
+        fx.eq(<int>[...placings, ...retired]..sort(), <int>[0, 2],
+            'every seat is either placed or retired');
+        final int after = t.room.seq;
+        fx.clock.advance(const Duration(seconds: 130));
+        fx.server.runTurnExpiryOnce();
+        fx.eq(t.room.seq, after, 'a later sweep retires nobody else');
+        fx.eq(t.room.game!.retired, retired, 'the retired list is unchanged');
+      });
+    });
+
+    test(
+        'A8: a retired absent seat that comes back and drops again is not '
+        'retired a second time', () async {
+      await _withFixture('A8 retired seat drops again', (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 3);
+        await _startGame(t);
+        await _drop(t, 2);
+        await t.syncAll();
+        fx.clock.advance(const Duration(seconds: 120));
+        _freshSegment(t);
+        fx.server.runTurnExpiryOnce();
+        await t.syncAll();
+        final Map<String, Object?> back = await _resume(t, 2);
+        fx.eq(back['retired'], <int>[2], 'it comes back to watch');
+        await t.syncAll();
+        await _drop(t, 2);
+        await t.syncAll();
+        fx.clock.advance(const Duration(seconds: 300));
+        _freshSegment(t);
+        fx.server.runTurnExpiryOnce();
+        fx.eq(<Frame>[for (final f in (await t.syncAll()).values) ...f],
+            <Frame>[], 'nothing happens: the seat is already retired');
+        fx.eq(t.room.game!.retired, <int>[2], 'retired is unchanged');
+      });
+    });
+
+    test(
+        'A9: two seats gone past 120 s, the first on turn, in one sweep: '
+        'seat_retired, the turn the engine gives, seat_retired, the next '
+        'playing seat\'s turn, each with the next seq', () async {
+      await _withFixture('A9 two absent seats, four seats',
+          (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 4);
+        await _startGame(t);
+        await _drop(t, 0);
+        fx.clock.advance(const Duration(seconds: 1));
+        await _drop(t, 1);
+        await t.syncAll();
+        fx.clock.advance(const Duration(seconds: 120));
+        _freshSegment(t);
+        fx.server.runTurnExpiryOnce();
+        final Map<int, List<Frame>> due = await t.syncAll();
+        for (final int seat in <int>[2, 3]) {
+          final List<Frame> got = due[seat]!;
+          fx.eq(
+              <String>[for (final Frame f in got) '${f['t']}:${_d(f)['seat']}'],
+              <String>['seat_retired:0', 'turn:1', 'seat_retired:1', 'turn:2'],
+              'seat $seat: retire 0 (it was to act, so the turn goes to the '
+              'next playing seat after 0 in config.seats order, 1, which is '
+              'still playing, ENGINE_API 12.4 step 2), retire 1, then the '
+              'turn goes to seat 2');
+          fx.eq(_d(got[0])['seat'], 0, 'first seat_retired.seat');
+          fx.eq(_d(got[0])['reason'], 'absent', 'first reason');
+          fx.eq(_d(got[0])['host_seat'], 1,
+              'the host was retired: the lowest seat still playing');
+          fx.eq(_d(got[1])['seat'], 1, 'the turn after retiring seat 0');
+          fx.eq(_d(got[1])['phase'], 'await_roll', 'its phase');
+          fx.eq(_d(got[2])['seat'], 1, 'second seat_retired.seat');
+          fx.eq(_d(got[2])['reason'], 'absent', 'second reason');
+          fx.eq(_d(got[2])['host_seat'], 2, 'the host again: seat 2');
+          fx.eq(_d(got[3])['seat'], 2, 'the last turn');
+          fx.eq(_d(got[3])['phase'], 'await_roll', 'its phase');
+          fx.eq(_d(got[3])['deadline_ms'], 45000, 'a connected seat, 45 s');
+          final int seq = _d(got[0])['seq']! as int;
+          fx.eq(<Object?>[for (final Frame f in got) _d(f)['seq']],
+              <int>[seq, seq + 1, seq + 2, seq + 3], 'seq strictly +1 each');
+        }
+        fx.eq(t.room.game!.retired, <int>[0, 1], 'retirement order');
+      });
+    });
+
+    test(
+        'A10: two of three seats gone past 120 s in one sweep: game_over '
+        'closes it, no turn frame in phase finished is ever sent', () async {
+      await _withFixture('A10 two absent seats, three seats',
+          (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 3);
+        await _startGame(t);
+        await _drop(t, 0);
+        fx.clock.advance(const Duration(seconds: 1));
+        await _drop(t, 1);
+        await t.syncAll();
+        fx.clock.advance(const Duration(seconds: 120));
+        _freshSegment(t);
+        fx.server.runTurnExpiryOnce();
+        final List<Frame> got = (await t.syncAll())[2]!;
+        fx.eq(<Object?>[
+          for (final Frame f in _ofType(got, 'turn'))
+            if (_d(f)['phase'] == 'finished') _d(f),
+        ], <Object?>[],
+            'a game that has ended never gets a turn in phase finished');
+        fx.eq(
+            _types(got),
+            <String>[
+              'seat_retired',
+              'turn',
+              'seat_retired',
+              'game_over',
+              'player_left',
+              'player_left',
+            ],
+            'retire 0, the turn for seat 1, retire 1 (one playing seat '
+            'left), game_over, both retired seats freed');
+        fx.eq(_d(got[1])['seat'], 1, 'the turn after retiring seat 0');
+        fx.eq(_d(got[3])['placings'], <int>[2], 'placings');
+        fx.eq(_d(got[3])['retired'], <int>[0, 1], 'retired');
+        fx.eq(_d(got[3])['winner'], 2, 'winner');
+        fx.eq(<Object?>[_d(got[4])['seat'], _d(got[5])['seat']], <int>[0, 1],
+            'player_left in retirement order');
+        final int seq = _d(got[0])['seq']! as int;
+        fx.eq(
+            <Object?>[for (final Frame f in got) _d(f)['seq']],
+            <int>[seq, seq + 1, seq + 2, seq + 3, seq + 4, seq + 5],
+            'seq strictly +1 each');
+      });
     });
   });
 
@@ -2147,6 +2693,31 @@ void main() {
           fx.absent(rec, key, 'a 2026-10 verify record');
         }
       }, ruleset: _v25, steer: steer);
+    });
+
+    test(
+        'C2: under 2026-10 a PLAYING snapshot has no drought, placings, '
+        'retired or ruleset, and kick is an unknown message', () async {
+      await _withFixture('C2 2026-10 snapshot and kick', (_Fixture fx) async {
+        final _Table t = await _openTable(fx, players: 2);
+        await _startGame(t);
+        final Map<String, Object?> snap = await _resume(t, 2);
+        for (final String key in <String>['placings', 'retired']) {
+          fx.absent(snap, key, 'a 2026-10 PLAYING snapshot');
+        }
+        fx.absent(snap['rules']! as Map<String, Object?>, 'ruleset',
+            'a 2026-10 PLAYING snapshot rules');
+        for (final Object? s in snap['seats']! as List<Object?>) {
+          fx.absent(s! as Map<String, Object?>, 'drought',
+              'a 2026-10 PLAYING seat object');
+        }
+        final Map<String, Object?> turn = snap['turn']! as Map<String, Object?>;
+        fx.absent(turn, 'release', 'a 2026-10 snapshot turn');
+        await t.syncAll();
+        fx.send(t.c(0), 'kick', <String, Object?>{'seat': 2});
+        _expectError(fx, await _flush(fx, t.c(0)), 'BAD_TYPE',
+            'kick on a 2026-10 server: section 3, an unknown type is BAD_TYPE');
+      }, ruleset: _v25);
     });
   });
 }
