@@ -256,6 +256,14 @@ class _Game {
     return rolls - before;
   }
 
+  /// A tap on one of my tokens; returns the `move` envelopes it sent.
+  Future<int> tapToken(int token) async {
+    final int before = movesSince(drive.transport, 0).length;
+    await tester.tap(find.byKey(tokenHitKey(0, token)), warnIfMissed: false);
+    await tester.pump();
+    return movesSince(drive.transport, 0).length - before;
+  }
+
   /// D2: a tap during the hold sends nothing and gets the invalid-tap
   /// feedback a disabled die already gives, and no roll-start cue.
   Future<void> expectTapRefused(String step) async {
@@ -304,13 +312,14 @@ Future<void> _run(
   Locale locale = _en,
   bool reduced = false,
   List<int> mine = _openTokens,
+  List<int> other = const <int>[-1, -1, -1, -1],
   Map<String, Object?>? turn,
   required _Body body,
 }) async {
   final RollTrayDrive drive = await connectPlaying(
     tester,
     turn: turn ?? _myRollTurn(),
-    seats: twoSeats(mine: mine),
+    seats: twoSeats(mine: mine, other: other),
   );
   await tester.pumpWidget(
     rollTrayHarness(
@@ -1102,4 +1111,162 @@ void main() {
       },
     );
   });
+
+  // ===========================================================================
+  // 18 and 19. My own moved ends my hold at once (D1 as amended in return 2).
+  // ===========================================================================
+  for (final bool reduced in <bool>[false, true]) {
+    final String mode = reduced ? 'reduced motion' : 'full motion';
+
+    testWidgets('C-653t 18: my 4, token tap at 200 ms, then a home arrival '
+        '(moved extra_roll true) and a same-seat await_roll turn, $mode: no '
+        'held face and no mark after the moved, one roll for a tap at 250 ms', (
+      tester,
+    ) async {
+      await _run(
+        tester,
+        item: '18',
+        reduced: reduced,
+        // Token 0 is four squares from home: the 4 takes it there.
+        mine: const <int>[53, 20, -1, -1],
+        body: (_Game g) async {
+          await g.pushRolled(
+            _rolledData(
+              0,
+              4,
+              queue: const <int>[4],
+              legal: const <int>[0, 1],
+              legalByFace: <Map<String, Object?>>[
+                faceLegal(4, const <int>[0, 1]),
+              ],
+              k: 1,
+            ),
+          );
+          await g.advanceTo(100);
+          g.expectFace('my 4 held, before the token tap', 4, mark: false);
+          await g.advanceTo(200);
+          final int moves = await g.tapToken(0);
+          expect(
+            moves,
+            1,
+            reason: g.why(
+              'token tap at 200 ms',
+              'exactly one move, sent $moves',
+            ),
+          );
+          await g.push('moved', <String, Object?>{
+            'seat': 0,
+            'token': 0,
+            'from': 53,
+            'to': 57,
+            'captured': <Object?>[],
+            'extra_roll': true,
+            'face': 4,
+          });
+          await g.push('turn', _awaitRollTurn(0, const <int>[]));
+          expect(
+            g.faces,
+            isEmpty,
+            reason: g.why(
+              'the frame after my home moved',
+              'no held face 4: the face is spent, the hold ends with my moved',
+            ),
+          );
+          expect(
+            g.marks,
+            0,
+            reason: g.why(
+              'the frame after my home moved',
+              'no own-die-roll-again',
+            ),
+          );
+          await g.advanceTo(250);
+          g.expectIdle('50 ms after the moved, inside the old 900 ms hold');
+          await g.expectTapRolls('die tap at 250 ms, bonus roll owed');
+          await g.advanceTo(_holdMs + 50);
+          expect(
+            g.marks,
+            0,
+            reason: g.why('old hold would be over', 'no mark at any time'),
+          );
+        },
+      );
+    });
+
+    testWidgets('C-653t 19: my 4, token tap at 200 ms, then a capture '
+        '(moved extra_roll true, captured seat 1) and a same-seat await_roll '
+        'turn, $mode: no held face and no mark after the moved, one roll for '
+        'a tap at 250 ms', (tester) async {
+      await _run(
+        tester,
+        item: '19',
+        reduced: reduced,
+        mine: const <int>[10, 20, -1, -1],
+        other: const <int>[14, -1, -1, -1],
+        body: (_Game g) async {
+          await g.pushRolled(
+            _rolledData(
+              0,
+              4,
+              queue: const <int>[4],
+              legal: const <int>[0, 1],
+              legalByFace: <Map<String, Object?>>[
+                faceLegal(4, const <int>[0, 1]),
+              ],
+              k: 1,
+            ),
+          );
+          await g.advanceTo(100);
+          g.expectFace('my 4 held, before the token tap', 4, mark: false);
+          await g.advanceTo(200);
+          final int moves = await g.tapToken(0);
+          expect(
+            moves,
+            1,
+            reason: g.why(
+              'token tap at 200 ms',
+              'exactly one move, sent $moves',
+            ),
+          );
+          await g.push('moved', <String, Object?>{
+            'seat': 0,
+            'token': 0,
+            'from': 10,
+            'to': 14,
+            'captured': <Map<String, int>>[
+              <String, int>{'seat': 1, 'token': 0},
+            ],
+            'extra_roll': true,
+            'face': 4,
+          });
+          await g.push('turn', _awaitRollTurn(0, const <int>[]));
+          expect(
+            g.faces,
+            isEmpty,
+            reason: g.why(
+              'the frame after my capture moved',
+              'no held face 4: the face is spent, the hold ends with my moved',
+            ),
+          );
+          expect(
+            g.marks,
+            0,
+            reason: g.why(
+              'the frame after my capture moved',
+              'no own-die-roll-again',
+            ),
+          );
+          await g.advanceTo(250);
+          g.expectIdle('50 ms after the moved, inside the old 900 ms hold');
+          await g.expectTapRolls('die tap at 250 ms, bonus roll owed');
+          await g.advanceTo(_holdMs + 50);
+          expect(
+            g.marks,
+            0,
+            reason: g.why('old hold would be over', 'no mark at any time'),
+          );
+        },
+      );
+    });
+  }
 }
