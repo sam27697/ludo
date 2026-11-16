@@ -27,11 +27,17 @@ class RulesConfig {
     this.blocks = true,
     this.captureBonus = true,
     this.turnSeconds = 45,
+    this.ruleset,
   });
 
   final bool blocks;
   final bool captureBonus;
   final int turnSeconds;
+
+  /// docs/PROTOCOL.md section 28 rule 1: the ruleset the room was created
+  /// under, `"2026-11"` today. Null when the key is absent, which is every
+  /// `2026-10` room. Never sent by the client: [toJson] leaves it out.
+  final String? ruleset;
 
   /// Defaults each key individually when it is absent from [json], matching
   /// docs/PROTOCOL.md section 13.4. An absent `rules` object entirely is the
@@ -68,10 +74,13 @@ class RulesConfig {
       throw const SnapshotFormatException('turn_seconds');
     }
 
+    final String? ruleset = _optString(json, 'ruleset');
+
     return RulesConfig(
       blocks: blocks,
       captureBonus: captureBonus,
       turnSeconds: turnSeconds,
+      ruleset: ruleset,
     );
   }
 
@@ -95,6 +104,7 @@ class SeatState {
     required this.clientSeed,
     required this.seedOrigin,
     this.timerSteps,
+    this.drought,
   });
 
   final int seat;
@@ -113,6 +123,11 @@ class SeatState {
   /// older server), which is not the same as 0.
   final int? timerSteps;
 
+  /// docs/PROTOCOL.md section 28 rule 2: the rolls in a row without a 6
+  /// while every token of this seat is in the yard (0..9), under `2026-11`
+  /// only. Null when the key is absent.
+  final int? drought;
+
   factory SeatState.fromJson(Map<String, Object?> json) {
     final int seat = _reqInt(json, 'seat');
     if (seat < 0 || seat > 3) {
@@ -127,6 +142,7 @@ class SeatState {
     if (timerSteps != null && timerSteps < 0) {
       throw const SnapshotFormatException('timer_steps');
     }
+    final int? drought = _optInt(json, 'drought');
 
     return SeatState(
       seat: seat,
@@ -136,6 +152,7 @@ class SeatState {
       clientSeed: clientSeed,
       seedOrigin: seedOrigin,
       timerSteps: timerSteps,
+      drought: drought,
     );
   }
 
@@ -151,6 +168,7 @@ class SeatState {
     String? clientSeed,
     SeedOrigin? seedOrigin,
     int? timerSteps,
+    int? drought,
   }) {
     return SeatState(
       seat: seat ?? this.seat,
@@ -160,6 +178,7 @@ class SeatState {
       clientSeed: clientSeed ?? this.clientSeed,
       seedOrigin: seedOrigin ?? this.seedOrigin,
       timerSteps: timerSteps ?? this.timerSteps,
+      drought: drought ?? this.drought,
     );
   }
 }
@@ -187,6 +206,8 @@ class TurnState {
     this.legalByFace,
     this.segmentMs,
     this.settling = false,
+    this.release = false,
+    this.graceMs,
   });
 
   final int seat;
@@ -218,6 +239,17 @@ class TurnState {
   /// server sends right behind it. Says "not known yet". Never on the wire.
   final bool settling;
 
+  /// docs/PROTOCOL.md section 28 rule 2: true while a yard release is owed
+  /// (phase `await_move`, `legal` the releasable tokens, no `value`), or on
+  /// the turn a lapsed release leaves until the `turn_passed` behind it.
+  /// False when the wire sends none.
+  final bool release;
+
+  /// docs/PROTOCOL.md section 29 rule 3: the milliseconds the next seat's
+  /// clock still waits before it starts counting [deadlineMs]. Null when the
+  /// wire sends none (no grace, or a `2026-10` room).
+  final int? graceMs;
+
   factory TurnState.fromJson(Map<String, Object?> json) {
     final int seat = _reqInt(json, 'seat');
     if (seat < 0 || seat > 3) {
@@ -235,6 +267,8 @@ class TurnState {
       'legal_by_face',
     );
     final int? segmentMs = _optInt(json, 'segment_ms');
+    final bool release = _optBool(json, 'release') ?? false;
+    final int? graceMs = _optInt(json, 'grace_ms');
 
     return TurnState(
       seat: seat,
@@ -247,6 +281,8 @@ class TurnState {
       queue: queue,
       legalByFace: legalByFace,
       segmentMs: segmentMs,
+      release: release,
+      graceMs: graceMs,
     );
   }
 }
@@ -295,6 +331,8 @@ class RoomSnapshot {
     this.recentRollSeats = const <int>[],
     this.rematch,
     this.lastSpentFace,
+    this.placings = const <int>[],
+    this.retired = const <int>[],
     required this.seq,
   });
 
@@ -344,6 +382,15 @@ class RoomSnapshot {
   /// this null, the same rule [recentRolls] follows.
   final int? lastSpentFace;
 
+  /// docs/PROTOCOL.md section 28 rule 3: the seats that have finished, in
+  /// place order (and, in a finished game, the last seat standing too). Empty
+  /// when the wire sends none, which is every `2026-10` room.
+  final List<int> placings;
+
+  /// docs/PROTOCOL.md section 28 rule 4: the seats retired from the game, in
+  /// retirement order. Empty when the wire sends none.
+  final List<int> retired;
+
   final int seq;
 
   /// No cross-field consistency is checked here. docs/PROTOCOL.md section 10
@@ -357,8 +404,9 @@ class RoomSnapshot {
     final String code = _reqString(json, 'code');
     final RoomState state = _reqRoomState(json, 'state');
 
+    // -1 is a room with nobody left to host it (section 28 rule 4).
     final int hostSeat = _reqInt(json, 'host_seat');
-    if (hostSeat < 0 || hostSeat > 3) {
+    if (hostSeat < -1 || hostSeat > 3) {
       throw const SnapshotFormatException('host_seat');
     }
 
@@ -412,6 +460,9 @@ class RoomSnapshot {
       rematch = RematchState.fromJson(rematchValue);
     }
 
+    final List<int> placings = _optSeatList(json, 'placings');
+    final List<int> retired = _optSeatList(json, 'retired');
+
     final int seq = _reqInt(json, 'seq');
 
     return RoomSnapshot(
@@ -429,6 +480,8 @@ class RoomSnapshot {
       winner: winner,
       verifyUrl: verifyUrl,
       rematch: rematch,
+      placings: placings,
+      retired: retired,
       seq: seq,
     );
   }
@@ -464,6 +517,8 @@ class RoomSnapshot {
     List<int>? recentRollSeats,
     Object? rematch = _unset,
     Object? lastSpentFace = _unset,
+    List<int>? placings,
+    List<int>? retired,
     int? seq,
   }) {
     return RoomSnapshot(
@@ -488,6 +543,8 @@ class RoomSnapshot {
       lastSpentFace: identical(lastSpentFace, _unset)
           ? this.lastSpentFace
           : lastSpentFace as int?,
+      placings: placings ?? this.placings,
+      retired: retired ?? this.retired,
       seq: seq ?? this.seq,
     );
   }
@@ -527,6 +584,17 @@ int? _optInt(Map<String, Object?> json, String key) {
     return null;
   }
   if (value is! int) {
+    throw SnapshotFormatException(key);
+  }
+  return value;
+}
+
+bool? _optBool(Map<String, Object?> json, String key) {
+  final Object? value = json[key];
+  if (value == null) {
+    return null;
+  }
+  if (value is! bool) {
     throw SnapshotFormatException(key);
   }
   return value;
@@ -595,6 +663,21 @@ List<int>? _optIntList(Map<String, Object?> json, String key) {
     return null;
   }
   return _reqIntList(json, key);
+}
+
+/// A list of seats, each 0..3. Missing or explicit null decodes to `[]`;
+/// the wrong shape or a seat out of range throws.
+List<int> _optSeatList(Map<String, Object?> json, String key) {
+  final List<int>? seats = _optIntList(json, key);
+  if (seats == null) {
+    return const <int>[];
+  }
+  for (final int seat in seats) {
+    if (seat < 0 || seat > 3) {
+      throw SnapshotFormatException(key);
+    }
+  }
+  return seats;
 }
 
 /// docs/PROTOCOL.md section 21.1, `legal_by_face`: `[{"face": int, "tokens":
