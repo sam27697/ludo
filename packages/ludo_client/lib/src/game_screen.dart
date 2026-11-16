@@ -518,6 +518,12 @@ class _GameScreenState extends State<GameScreen> {
   // A `turn` frame naming another seat is the turn passing.
   int? _lastTurnSeat;
 
+  // The turn (seat and `k`) whose gate has opened. A snapshot of that same
+  // turn that still carries the remaining grace (a resume, a reconnect) does
+  // not shut the gate again: the turn has begun and its die is live.
+  int? _gateOpenedSeat;
+  int? _gateOpenedK;
+
   // C-657: capture flights the board plays after the mover's last step. The
   // board reports the landing of the step, not of the flight, so the flight
   // is counted here from the landing for its own duration. `_captureLegs`
@@ -737,10 +743,12 @@ class _GameScreenState extends State<GameScreen> {
     final TurnState? shownTurn = mountRoom?.turn;
     _lastTurnSeat = shownTurn?.seat;
     // C-657 G6: a mount inside a grace opens the gate `grace_ms` after the
-    // snapshot, and the turn counts as shown at that opening, not before.
-    final bool mountGated = _shutMountGate(mountRoom);
-    if (!mountGated &&
-        shownTurn != null &&
+    // snapshot. The turn still counts as shown at mount whatever the gate
+    // does (C-442 D4'): a later snapshot of the same `k` plays nothing, and
+    // the mount's own `your_turn` is held for the opening by
+    // `_checkMountTurnCue`.
+    _shutMountGate(mountRoom);
+    if (shownTurn != null &&
         shownTurn.seat == widget.controller.seat &&
         shownTurn.phase == TurnPhase.awaitRoll) {
       _yourTurnPlayedK = shownTurn.k;
@@ -833,6 +841,7 @@ class _GameScreenState extends State<GameScreen> {
     _countdownTimer?.cancel();
     _countdownRemaining.dispose();
     _cancelGateTimers();
+    _cancelFlights();
     _autoMoveTimer?.cancel();
     _autoMoveCeilingTimer?.cancel();
     _rollNoAnswerTimer?.cancel();
@@ -1710,7 +1719,11 @@ class _GameScreenState extends State<GameScreen> {
   List<FeedbackCue> _gateTurnFrame(Frame frame, List<FeedbackCue> cues) {
     final int? seat = _intAt(frame.data, 'seat');
     final int? previous = _lastTurnSeat;
-    _lastTurnSeat = seat;
+    // Only a frame the reducer accepted names the seat the next pass is
+    // measured from; a seatless one leaves what was known.
+    if (seat != null) {
+      _lastTurnSeat = seat;
+    }
     _closeGate();
     final RoomSnapshot? room = widget.controller.room;
     if (seat == null ||
@@ -1747,6 +1760,11 @@ class _GameScreenState extends State<GameScreen> {
         grace == null ||
         grace <= 0) {
       _closeGate();
+      return false;
+    }
+    if (_gateSeat == null &&
+        turn.seat == _gateOpenedSeat &&
+        turn.k == _gateOpenedK) {
       return false;
     }
     _shutGate(
@@ -1842,6 +1860,10 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
     final TurnState? turn = widget.controller.room?.turn;
+    if (turn != null && turn.seat == seat) {
+      _gateOpenedSeat = seat;
+      _gateOpenedK = turn.k;
+    }
     if (turn != null &&
         turn.seat == seat &&
         seat == widget.controller.seat &&
@@ -1853,6 +1875,9 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
+  /// The gate's own timers only. A capture flight in the air is the board's
+  /// and outlives any gate (G3a): it is cancelled in dispose, on a travel
+  /// reset and on a game or link reset, nowhere else.
   void _cancelGateTimers() {
     _gateGraceTimer?.cancel();
     _gateGraceTimer = null;
@@ -1860,7 +1885,6 @@ class _GameScreenState extends State<GameScreen> {
     _gateSettleTimer = null;
     _gateCeilingTimer?.cancel();
     _gateCeilingTimer = null;
-    _cancelFlights();
   }
 
   void _cancelFlights() {
@@ -2893,7 +2917,10 @@ class _GameScreenState extends State<GameScreen> {
   void _resetForNewGame() {
     _closeGate();
     _captureLegs.clear();
+    _cancelFlights();
     _lastTurnSeat = null;
+    _gateOpenedSeat = null;
+    _gateOpenedK = null;
     _rulesetNoticeTimer?.cancel();
     _rulesetNoticeTimer = null;
     _rulesetNotice = null;
@@ -4101,6 +4128,7 @@ class _GameScreenState extends State<GameScreen> {
     // answers the reconnect decides what happens next (G6).
     _closeGate();
     _captureLegs.clear();
+    _cancelFlights();
     _dropPendingLandingCues();
     // C-468 D5: a resync or a dropped link does not carry a gloat across.
     _removeGloat();
