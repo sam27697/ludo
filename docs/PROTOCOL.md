@@ -1816,3 +1816,16 @@ the server's turn timer, decided here once, never a client that lags behind the 
    500 ms, then it fires once and a tap sends one `roll`; the gate never opens later than
    `grace_ms`; reduced motion; a resume with `grace_ms` in the snapshot; the opponent's die pulse
    follows the same gate; en and ar.
+
+7. **Rulings of 2026-11-16 (run 152), from the tests' questions.**
+   - "The seat that acted last" in rule 1 means the seat whose turn just ended, whether it acted or
+     was retired: a retire of the seat on turn gives the next seat a grace (rule 2: 500).
+   - A retire of a seat not on turn sends no `turn`, and a grace already running is untouched.
+   - Every `game_started` counts, a rematch's included: its first `turn` has no grace.
+   - `seat_finished` between `moved` and `turn` changes neither `travel` nor `hold`.
+   - `turn_passed` `three_sixes` with no `moved` in the step: `grace_ms` = 1500.
+   - The grace has run out at exactly `grace_ms` after the frame (the key is then absent, never 0);
+     the segment expires at exactly `grace_ms + budget`, as section 26 counts 10 000 and not 9 999.
+   - Section 26 rule 5 inside a grace (an away seat on turn resumes while its grace runs): the
+     pushed `turn` carries `grace_ms` = the grace left, and the restarted full segment counts from
+     the grace's end. Outside a grace, rule 5 is unchanged.
