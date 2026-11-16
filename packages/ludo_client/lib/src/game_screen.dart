@@ -494,6 +494,38 @@ class _GameScreenState extends State<GameScreen> {
   // is announced once however many times the room is replaced under it.
   int? _yourTurnPlayedK;
 
+  // C-657 (PROTOCOL 29 rule 5): the turn gate. A `turn` frame that passes the
+  // turn in a 2026-11 room starts the next seat's turn only once the last
+  // move has landed. While `_gateSeat` is set the seat's die is not pulsing
+  // (and for my seat not tappable), `your_turn` has not fired and the
+  // countdown is drawn full with no timer behind it. It opens at the earlier
+  // of (a) the board's moves landed, every capture flight over and the
+  // no-move holds over, plus half a second (`_gateSettleTimer`), and (b)
+  // `grace_ms` after the frame (`_gateGraceTimer`); a `rolled` of that seat
+  // opens it at once. A snapshot gate (`_gateGraceOnly`) has (b) alone:
+  // nothing is animating after a resume.
+  int? _gateSeat;
+  bool _gateGraceOnly = false;
+  // True when `your_turn` is owed at the opening: decided when the gate
+  // shuts, from what the same frame would have played without a gate.
+  bool _gateCuePending = false;
+  Timer? _gateGraceTimer;
+  Timer? _gateSettleTimer;
+  Timer? _gateCeilingTimer;
+
+  // C-657: the seat of the last `turn` this screen saw (a `turn` frame, a
+  // snapshot, or the room it mounted onto), null before a game's first turn.
+  // A `turn` frame naming another seat is the turn passing.
+  int? _lastTurnSeat;
+
+  // C-657: capture flights the board plays after the mover's last step. The
+  // board reports the landing of the step, not of the flight, so the flight
+  // is counted here from the landing for its own duration. `_captureLegs`
+  // holds, per `'$seat-$token'`, the `moved` frames that captured and have
+  // not landed yet.
+  final Map<String, int> _captureLegs = <String, int>{};
+  final Set<Timer> _flightTimers = <Timer>{};
+
   // C-590 D4: the turn seat this screen last weighed for the "you're next"
   // line. A new seat is a turn change; the same seat again is an extra roll
   // or a replay of a turn already weighed.
@@ -703,7 +735,12 @@ class _GameScreenState extends State<GameScreen> {
     // C-442 D4': the turn the screen mounts onto counts as shown, so a
     // later snapshot of the same `k` plays nothing.
     final TurnState? shownTurn = mountRoom?.turn;
-    if (shownTurn != null &&
+    _lastTurnSeat = shownTurn?.seat;
+    // C-657 G6: a mount inside a grace opens the gate `grace_ms` after the
+    // snapshot, and the turn counts as shown at that opening, not before.
+    final bool mountGated = _shutMountGate(mountRoom);
+    if (!mountGated &&
+        shownTurn != null &&
         shownTurn.seat == widget.controller.seat &&
         shownTurn.phase == TurnPhase.awaitRoll) {
       _yourTurnPlayedK = shownTurn.k;
@@ -795,6 +832,7 @@ class _GameScreenState extends State<GameScreen> {
     _spokenLine.dispose();
     _countdownTimer?.cancel();
     _countdownRemaining.dispose();
+    _cancelGateTimers();
     _autoMoveTimer?.cancel();
     _autoMoveCeilingTimer?.cancel();
     _rollNoAnswerTimer?.cancel();
@@ -848,6 +886,12 @@ class _GameScreenState extends State<GameScreen> {
     // the new board) must not arrive under a scrim, so this runs ahead of
     // every cue and announcement the frame owes.
     if (frame.type == 'game_over' || frame.type == 'game_started') {
+      // C-657: a game that ends or begins owes no gate. The first turn after
+      // `game_started` has no seat before it to pass from (G1).
+      _closeGate();
+      if (frame.type == 'game_started') {
+        _lastTurnSeat = null;
+      }
       _closeOwnSheets();
       _closeSheetRoute(_kickSheetRoute);
       _kickSheetRoute = null;
@@ -911,6 +955,19 @@ class _GameScreenState extends State<GameScreen> {
       frame,
       mySeat: widget.controller.seat,
     );
+    // C-657 G1, G2: a `turn` that passes the turn shuts the gate and holds
+    // its `your_turn` back until the gate opens (G4).
+    if (frame.type == 'turn') {
+      cues = _gateTurnFrame(frame, cues);
+    }
+    // C-657 G7: a `rolled` of the seat the gate is held for opens it at
+    // once, ahead of the cues this `rolled` plays, and is shown as today.
+    if (frame.type == 'rolled' &&
+        _gateSeat != null &&
+        _intAt(frame.data, 'seat') == _gateSeat &&
+        !widget.controller.hasDesynced) {
+      _openGate();
+    }
     // C-568 D3: read ahead of `_trackRollQueue`, which is what moves the
     // queue this screen last knew for the seat.
     final bool thirdSix = _isThirdSix(frame);
@@ -965,6 +1022,10 @@ class _GameScreenState extends State<GameScreen> {
     if (isTravellingMove) {
       _travelCount++;
       _markLegTravelling(moverSeat, moverToken);
+      if (victimSeat != null) {
+        final String key = _travelKey(moverSeat, moverToken);
+        _captureLegs[key] = (_captureLegs[key] ?? 0) + 1;
+      }
     }
 
     final bool zeroTravel =
@@ -1617,8 +1678,279 @@ class _GameScreenState extends State<GameScreen> {
         turn.phase != TurnPhase.awaitRoll) {
       return;
     }
+    // C-657 G4: a mount inside a grace plays it when the gate opens.
+    if (_gateSeat == turn.seat) {
+      _gateCuePending = true;
+      return;
+    }
     _yourTurnPlayedK = turn.k;
     _playCue(FeedbackScope.of(context), FeedbackCue.yourTurn);
+  }
+
+  // == C-657 (PROTOCOL 29 rule 5): the turn gate ==
+
+  static const String _gateRuleset = '2026-11';
+
+  /// Sam's half second (PROTOCOL 29 rule 2): the beat after the last move has
+  /// landed. Reduced motion shortens the board's steps, never this.
+  static const Duration _gateHalfSecond = Duration(milliseconds: 500);
+
+  /// True while the gate is held for [turn]'s seat: that seat's turn has been
+  /// told and has not begun.
+  bool _gateShutFor(TurnState? turn) {
+    final int? gate = _gateSeat;
+    return gate != null && turn != null && turn.seat == gate;
+  }
+
+  /// G1: a `turn` frame names another seat than the last turn did, in a
+  /// 2026-11 room. Anything else (a same-seat turn, the first turn after
+  /// `game_started`, any 2026-10 frame) leaves today's behaviour as it was.
+  /// Returns [cues] without `your_turn` when the gate shut: G4 plays it at
+  /// the opening.
+  List<FeedbackCue> _gateTurnFrame(Frame frame, List<FeedbackCue> cues) {
+    final int? seat = _intAt(frame.data, 'seat');
+    final int? previous = _lastTurnSeat;
+    _lastTurnSeat = seat;
+    _closeGate();
+    final RoomSnapshot? room = widget.controller.room;
+    if (seat == null ||
+        previous == null ||
+        seat == previous ||
+        room == null ||
+        room.state != RoomState.playing ||
+        room.rules.ruleset != _gateRuleset ||
+        widget.controller.hasDesynced) {
+      return cues;
+    }
+    _shutGate(
+      seat: seat,
+      graceMs: _intAt(frame.data, 'grace_ms'),
+      graceOnly: false,
+      cue: cues.contains(FeedbackCue.yourTurn),
+    );
+    return cues
+        .where((FeedbackCue cue) => cue != FeedbackCue.yourTurn)
+        .toList();
+  }
+
+  /// G6: a snapshot whose turn carries `grace_ms` shuts the gate for exactly
+  /// that long. Returns true when it did, so [_rebaseFromSnapshot] leaves the
+  /// `your_turn` to the opening. A snapshot with no grace ends any gate: it
+  /// replaces what the gate was waiting for.
+  bool _gateSnapshot(RoomSnapshot room) {
+    final TurnState? turn = room.turn;
+    _lastTurnSeat = turn?.seat;
+    final int? grace = turn?.graceMs;
+    if (turn == null ||
+        room.state != RoomState.playing ||
+        room.rules.ruleset != _gateRuleset ||
+        grace == null ||
+        grace <= 0) {
+      _closeGate();
+      return false;
+    }
+    _shutGate(
+      seat: turn.seat,
+      graceMs: grace,
+      graceOnly: true,
+      cue:
+          turn.seat == widget.controller.seat &&
+          turn.phase == TurnPhase.awaitRoll &&
+          _yourTurnPlayedK != turn.k,
+    );
+    return true;
+  }
+
+  /// G6 at mount: the room this screen opens onto is inside a grace.
+  bool _shutMountGate(RoomSnapshot? room) {
+    final TurnState? turn = room?.turn;
+    final int? grace = turn?.graceMs;
+    if (room == null ||
+        turn == null ||
+        room.state != RoomState.playing ||
+        room.rules.ruleset != _gateRuleset ||
+        grace == null ||
+        grace <= 0) {
+      return false;
+    }
+    _shutGate(
+      seat: turn.seat,
+      graceMs: grace,
+      graceOnly: true,
+      cue: false,
+      initial: true,
+    );
+    return true;
+  }
+
+  void _shutGate({
+    required int seat,
+    required int? graceMs,
+    required bool graceOnly,
+    required bool cue,
+    bool initial = false,
+  }) {
+    _cancelGateTimers();
+    _gateSeat = seat;
+    _gateGraceOnly = graceOnly;
+    _gateCuePending = cue;
+    // (b): never later than `grace_ms` after the frame.
+    if (graceMs != null && graceMs > 0) {
+      _gateGraceTimer = Timer(Duration(milliseconds: graceMs), _openGate);
+    } else if (!graceOnly) {
+      _armGateCeiling();
+    }
+    if (initial) {
+      return;
+    }
+    // The ring is drawn full and still: the segment counts from the opening.
+    _countdownSeat = null;
+    _syncCountdown();
+    if (mounted) {
+      setState(() {});
+    }
+    _gateCheck();
+  }
+
+  /// The gate opens: G4's three things happen now and once. The die pulse
+  /// and the opponent's die follow the gate on the next build, `your_turn`
+  /// plays here, the countdown starts here from the segment's full budget.
+  void _openGate() => _releaseGate(play: true);
+
+  /// The gate ends without a turn beginning (a snapshot or a new game
+  /// replaced the turn, the link dropped): nothing is played for it.
+  void _closeGate() => _releaseGate(play: false);
+
+  void _releaseGate({required bool play}) {
+    final int? seat = _gateSeat;
+    if (seat == null) {
+      return;
+    }
+    final bool cue = play && _gateCuePending;
+    _cancelGateTimers();
+    _gateSeat = null;
+    _gateGraceOnly = false;
+    _gateCuePending = false;
+    if (!mounted || _screenDisposed) {
+      return;
+    }
+    setState(() {
+      _countdownSeat = null;
+      _syncCountdown();
+    });
+    if (!play) {
+      return;
+    }
+    final TurnState? turn = widget.controller.room?.turn;
+    if (turn != null &&
+        turn.seat == seat &&
+        seat == widget.controller.seat &&
+        turn.phase == TurnPhase.awaitRoll) {
+      _yourTurnPlayedK = turn.k;
+    }
+    if (cue && seat == widget.controller.seat) {
+      _playCue(FeedbackScope.of(context), FeedbackCue.yourTurn);
+    }
+  }
+
+  void _cancelGateTimers() {
+    _gateGraceTimer?.cancel();
+    _gateGraceTimer = null;
+    _gateSettleTimer?.cancel();
+    _gateSettleTimer = null;
+    _gateCeilingTimer?.cancel();
+    _gateCeilingTimer = null;
+    _cancelFlights();
+  }
+
+  void _cancelFlights() {
+    for (final Timer timer in _flightTimers) {
+      timer.cancel();
+    }
+    _flightTimers.clear();
+  }
+
+  /// (a): nothing the previous move or dead end put on the board is still
+  /// playing. The no-move holds are the ones this screen arms for any seat's
+  /// dead end; the throw of a watched dead end counts through its pending
+  /// hold.
+  bool get _gateSettled =>
+      _travelCount == 0 &&
+      _flightTimers.isEmpty &&
+      !(_noMoveTimer?.isActive ?? false) &&
+      !(_trayDeadTimer?.isActive ?? false) &&
+      !(_watchDeadTimer?.isActive ?? false) &&
+      _pendingWatchSeat == null;
+
+  /// Called wherever one of the things [_gateSettled] reads may have ended.
+  /// Starts the half second once everything has; the timer looks again when
+  /// it fires, so a hold armed in the meantime keeps the gate shut.
+  void _gateCheck() {
+    if (_gateSeat == null ||
+        _gateGraceOnly ||
+        _screenDisposed ||
+        (_gateSettleTimer?.isActive ?? false) ||
+        !_gateSettled) {
+      return;
+    }
+    _gateSettleTimer = Timer(_gateHalfSecond, _onGateSettled);
+  }
+
+  void _onGateSettled() {
+    _gateSettleTimer = null;
+    if (_gateSeat == null || !_gateSettled) {
+      return;
+    }
+    _openGate();
+  }
+
+  /// With no `grace_ms` on the frame (a) is the only way in, so a landing
+  /// the board never reports (the case C-408 D8 bounds for the auto-move
+  /// hold) must not keep a seat out of its turn for good. The bound is that
+  /// one's worst case per leg, plus the no-move hold, the landing-cue
+  /// fallback and the half second.
+  void _armGateCeiling() {
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    final Duration step = reduced
+        ? kTokenStepDurationReduced
+        : kTokenStepDuration;
+    final Duration flight = reduced
+        ? kCaptureFlightDurationReduced
+        : kCaptureFlightDuration;
+    final Duration perLeg = step * 6 + flight;
+    _gateCeilingTimer = Timer(
+      perLeg * _travelCount +
+          _noMoveHold +
+          kLandingCueFallback +
+          _gateHalfSecond,
+      _openGate,
+    );
+  }
+
+  /// The board reports the last step of a move landing, then plays the
+  /// captured token's flight home. That flight is waited for here, for its
+  /// own duration, from the landing.
+  void _noteCaptureLanded(int seat, int token) {
+    final String key = _travelKey(seat, token);
+    final int legs = _captureLegs[key] ?? 0;
+    if (legs <= 0) {
+      return;
+    }
+    if (legs == 1) {
+      _captureLegs.remove(key);
+    } else {
+      _captureLegs[key] = legs - 1;
+    }
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    late final Timer timer;
+    timer = Timer(
+      reduced ? kCaptureFlightDurationReduced : kCaptureFlightDuration,
+      () {
+        _flightTimers.remove(timer);
+        _gateCheck();
+      },
+    );
+    _flightTimers.add(timer);
   }
 
   static bool _hasRolledFrame(List<Frame> transcript) {
@@ -1672,6 +2004,7 @@ class _GameScreenState extends State<GameScreen> {
     if (_travelCount > 0) {
       _travelCount--;
     }
+    _noteCaptureLanded(seat, token);
     final int index = _pendingLandingCues.indexWhere(
       (entry) => entry.seat == seat && entry.token == token,
     );
@@ -1691,11 +2024,17 @@ class _GameScreenState extends State<GameScreen> {
       _endHoldDwellTimer = Timer(kEndCardDwell, _releaseEndHold);
     }
     _onSafeCueLanded(seat, token);
+    _gateCheck();
   }
 
   void _onBoardTravelReset() {
     _travelCount = 0;
     _safeCueLandingsToIgnore = 0;
+    // C-657: a snap draws every token at truth at once, so no flight is
+    // left to wait for.
+    _captureLegs.clear();
+    _cancelFlights();
+    _gateCheck();
     // C-468 D5: a snap is one of the three releases. The board calls this
     // from its own update, so the face is applied on the next frame.
     _flushPendingGloats();
@@ -2552,6 +2891,9 @@ class _GameScreenState extends State<GameScreen> {
   /// rematch LOBBY in between), which a new game always passes through
   /// first.
   void _resetForNewGame() {
+    _closeGate();
+    _captureLegs.clear();
+    _lastTurnSeat = null;
     _rulesetNoticeTimer?.cancel();
     _rulesetNoticeTimer = null;
     _rulesetNotice = null;
@@ -2758,6 +3100,7 @@ class _GameScreenState extends State<GameScreen> {
   void _dropNoMoveHold() {
     _noMoveTimer?.cancel();
     _noMoveTimer = null;
+    _gateCheck();
     if (!mounted || !_noMoveVisible) {
       return;
     }
@@ -2886,7 +3229,8 @@ class _GameScreenState extends State<GameScreen> {
       case _TimerStepsAction.none:
         break;
     }
-    _rebaseFromSnapshot(room);
+    // C-657 G6: ahead of the re-base, which would play `your_turn` now.
+    _rebaseFromSnapshot(room, holdYourTurn: _gateSnapshot(room));
   }
 
   /// C-442: remembers the game this screen is showing as PLAYING, so a
@@ -2917,7 +3261,7 @@ class _GameScreenState extends State<GameScreen> {
   /// screen was showing as PLAYING, whose `game_over` never reached it,
   /// plays the cue that `game_over` would have. No other cue comes from a
   /// snapshot of a PLAYING room (PROTOCOL section 8 rule 4, C-293 rule 3).
-  void _rebaseFromSnapshot(RoomSnapshot room) {
+  void _rebaseFromSnapshot(RoomSnapshot room, {bool holdYourTurn = false}) {
     _dropDeadCandidate();
     final TurnState? turn = room.turn;
     if (turn != null) {
@@ -2935,6 +3279,7 @@ class _GameScreenState extends State<GameScreen> {
       if (turn != null &&
           turn.seat == mySeat &&
           turn.phase == TurnPhase.awaitRoll &&
+          !holdYourTurn &&
           _yourTurnPlayedK != turn.k) {
         _yourTurnPlayedK = turn.k;
         _playCue(FeedbackScope.of(context), FeedbackCue.yourTurn);
@@ -3410,6 +3755,7 @@ class _GameScreenState extends State<GameScreen> {
     _pendingWatchReason = null;
     _pendingWatchSingle = false;
     _pendingWatchFace = null;
+    _gateCheck();
   }
 
   String _watchDeadLine(AppLocalizations loc, String reason, String name) {
@@ -3421,6 +3767,7 @@ class _GameScreenState extends State<GameScreen> {
   void _dropWatchDead() {
     _watchDeadTimer?.cancel();
     _watchDeadTimer = null;
+    _gateCheck();
     if (!mounted || _watchDeadSeat == null) {
       return;
     }
@@ -3435,6 +3782,7 @@ class _GameScreenState extends State<GameScreen> {
   void _dropTrayDead() {
     _trayDeadTimer?.cancel();
     _trayDeadTimer = null;
+    _gateCheck();
     if (!mounted || _trayDeadFaces == null) {
       return;
     }
@@ -3749,6 +4097,10 @@ class _GameScreenState extends State<GameScreen> {
   /// always did. The held `game_over` cues are not dropped: the screen did
   /// receive that frame.
   void _dropWhatTheLinkArmed() {
+    // C-657: the table the gate was waiting on is stale; the snapshot that
+    // answers the reconnect decides what happens next (G6).
+    _closeGate();
+    _captureLegs.clear();
     _dropPendingLandingCues();
     // C-468 D5: a resync or a dropped link does not carry a gloat across.
     _removeGloat();
@@ -4021,8 +4373,12 @@ class _GameScreenState extends State<GameScreen> {
         continue;
       }
       // C-571 D2: a finished room leaves no seat die live.
+      // C-657 G2, G4: the opponent's die takes the turn's look at the gate.
       final bool holdsTurn =
-          !_roomIsFinished(room) && turn != null && turn.seat == seat;
+          !_roomIsFinished(room) &&
+          turn != null &&
+          turn.seat == seat &&
+          !_gateShutFor(turn);
       final int? face;
       if (_watchDeadSingle &&
           _watchDeadSeat == seat &&
@@ -4701,7 +5057,9 @@ class _GameScreenState extends State<GameScreen> {
     _countdownRemaining.value = turn.deadlineMs <= 0
         ? 0
         : (turn.deadlineMs + 999) ~/ 1000;
-    _countdownTimer = _countdownRemaining.value > 0
+    // C-657 G2, G4: a seat whose turn is told but not begun has its ring
+    // full and still; the timer is armed when the gate opens.
+    _countdownTimer = _countdownRemaining.value > 0 && !_gateShutFor(turn)
         ? _armCountdownTimer()
         : null;
   }
@@ -6020,10 +6378,14 @@ class _GameScreenState extends State<GameScreen> {
         !lost && !_roomIsFinished(room) && room.state == RoomState.playing
         ? _ownRollHoldFace
         : null;
+    // C-657 G2: while the gate is shut my die is not pulsing and not
+    // tappable; a tap on it is the invalid tap a disabled die gives.
+    final bool gateShut = _gateShutFor(turn);
     final bool rollEnabled =
         !lost &&
         !_isEndHeld &&
         !timeUp &&
+        !gateShut &&
         !_roomIsFinished(room) &&
         room.state == RoomState.playing &&
         turn != null &&
@@ -6076,7 +6438,7 @@ class _GameScreenState extends State<GameScreen> {
         _roomIsFinished(room) ||
         (seat != null &&
             turn != null &&
-            turn.seat != seat &&
+            (turn.seat != seat || gateShut) &&
             !_noMoveVisible &&
             ownRollHeld == null);
 
