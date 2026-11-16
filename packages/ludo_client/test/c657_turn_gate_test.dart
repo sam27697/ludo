@@ -1311,4 +1311,272 @@ void main() {
     turn: _awaitRoll(_opp),
     mine: _mineOpen,
   );
+
+  // ============================================================================
+  // 14. Return 2, defect 1: a turn that arrives while the struck piece is still
+  // flying home waits for the flight, not for the frame.
+  // ============================================================================
+  _case(
+    '14 a turn arriving 200 ms into the struck piece\'s flight home, grace_ms '
+    '3000: the gate stays shut until the flight ends plus 500 ms, then opens',
+    (_G g) async {
+      final int walk = _walkMs(6);
+      final int flightEnd = _walkMs(6, capture: true);
+      final int opensAt = flightEnd + _halfSecondMs;
+      g.mark();
+      await g.push('moved', _oppWalk(10, 16, capture: true));
+      await g.advanceTo(walk + 200);
+      await g.push('turn', _turnFrame(_me, grace: 3000));
+      await g.advanceShutTo(
+        opensAt - 60,
+        'the struck piece is still in the air or inside the half second',
+      );
+      await g.expectShut(
+        'flight ends at +$flightEnd ms, the gate may open at +$opensAt ms; '
+        'the turn arrived at +${walk + 200} ms',
+      );
+      final int? at = await g.advanceUntilOpen(
+        opensAt + 2 * _frameMs,
+        'to the flight end plus 500',
+      );
+      expect(
+        at,
+        isNotNull,
+        reason: g.why(
+          'by +${opensAt + 2 * _frameMs} ms',
+          'the gate open 500 ms after the struck piece landed (flight ends at '
+              '+$flightEnd ms), long before grace_ms 3000',
+        ),
+      );
+      await g.expectOpenMine('at the opening');
+      await g.expectOnce('after the opening');
+    },
+    turn: _awaitMove(_opp, 6, const <int>[0]),
+  );
+
+  // ============================================================================
+  // 15. Return 2, defect 2: a turn frame with no seat is rejected, and it does
+  // not make the screen forget which seat was on turn.
+  // ============================================================================
+  _case(
+    '15 a turn frame with no seat between two real passes: the second pass '
+    'is still gated',
+    (_G g) async {
+      g.mark();
+      await g.push('moved', _oppWalk(10, 14));
+      await g.push('turn', _turnFrame(_me, grace: 1060));
+      await g.advanceTo(1060 + 2 * _frameMs);
+      expect(
+        g.yours,
+        1,
+        reason: g.why(
+          'first pass open',
+          'the first pass (opponent to me) open by grace_ms with your_turn once',
+        ),
+      );
+      // The reducer ignores this frame ahead of its sequence check, so the
+      // server's next frame carries the number this one would have taken.
+      await g.push('turn', <String, Object?>{
+        'phase': 'await_roll',
+        'deadline_ms': _budgetMs,
+        'queue': <int>[],
+        'grace_ms': 1060,
+      });
+      g.drive.lastSeq -= 1;
+      await g.advanceTo(g.rel + 100);
+      g.baseYours = cueCount(g.drive.feedback, FeedbackCue.yourTurn);
+      final int landed = _walkMs(4);
+      final int second = g.rel;
+      g.mark();
+      await g.push('moved', movedFrame(_me, 0, 10, 14));
+      await g.push('turn', _turnFrame(_opp, grace: 1060));
+      await g.advanceShutTo(landed ~/ 2, 'during my walk, second pass');
+      await g.expectShut(
+        'second pass (the seatless frame came at +$second ms of the first), '
+        'half way through my walk',
+      );
+      final int? at = await g.advanceUntilOpen(1060 + _frameMs, 'to 1060 ms');
+      expect(
+        at,
+        isNotNull,
+        reason: g.why(
+          '1060 ms plus one frame',
+          'the second pass gated and open by grace_ms (1060): the seatless '
+              'turn frame between the passes must not erase the previous seat',
+        ),
+      );
+      g.expectOpenTheirs('at the second opening');
+    },
+    turn: _awaitMove(_opp, 4, const <int>[0]),
+    mine: _mineOpen,
+    oppTurn: true,
+  );
+
+  // ============================================================================
+  // 16. Return 2, defect 3: a mount inside a grace has shown its turn k, so a
+  // snapshot of the same k says nothing (C-442 D4').
+  // ============================================================================
+  _case(
+    '16 mount inside a grace with no turn frame in the transcript, then a '
+    'same-k snapshot with grace_ms: your_turn never fires',
+    (_G g) async {
+      final Map<String, Object?> turn = <String, Object?>{
+        'seat': _me,
+        'phase': 'await_roll',
+        'deadline_ms': _budgetMs,
+        'k': 3,
+        'grace_ms': 660,
+      };
+      await g.advanceTo(200);
+      await g.push(
+        'room',
+        _roomJson(
+          ruleset: _ruleset,
+          turn: turn,
+          mine: _mineOpen,
+          theirs: _theirsAtTen,
+        ),
+      );
+      await g.advanceTo(
+        200 + 660 + 3000,
+        each: () => expect(
+          g.yours,
+          0,
+          reason: g.why(
+            'every step after the mount',
+            'no your_turn at any point: the relaunch mount is silent and the '
+                'snapshot of the same turn k=3 is the turn already shown',
+          ),
+        ),
+      );
+      expect(
+        await g.tapDie(),
+        1,
+        reason: g.why(
+          'after the grace',
+          'the die open after the grace (a tap sends one roll), the silence '
+              'is not a gate that never opened',
+        ),
+      );
+    },
+    turn: <String, Object?>{
+      'seat': _me,
+      'phase': 'await_roll',
+      'deadline_ms': _budgetMs,
+      'k': 3,
+      'grace_ms': 660,
+    },
+    mine: _mineOpen,
+    settle: false,
+  );
+
+  // ============================================================================
+  // 17. Return 2, defect 6: under reduced motion a gate that (a) has opened is
+  // not shut again by a snapshot of the same seat and k with grace left.
+  // ============================================================================
+  /// Reduced motion, opponent walks four squares (landed at +160 ms, gate
+  /// open at +660 ms, before grace_ms 1060), then at +900 ms a snapshot of the
+  /// same seat and turn k carries the 160 ms of grace still to run.
+  Future<void> reducedOpenThenSnapshot(_G g) async {
+    final int landed = _walkMs(4, reduced: true);
+    g.mark();
+    await g.push('moved', _oppWalk(10, 14));
+    await g.push('turn', _turnFrame(_me, grace: 1060));
+    final int limit = landed + _halfSecondMs + 200;
+    final int? at = await g.advanceUntilOpen(limit, 'to the (a) opening');
+    expect(
+      at,
+      isNotNull,
+      reason: g.why(
+        'by +$limit ms',
+        'the gate opened by (a), before grace_ms 1060, so the snapshot below '
+            'meets an open gate',
+      ),
+    );
+    expect(
+      g.yours,
+      1,
+      reason: g.why('after the (a) opening', 'your_turn fired once'),
+    );
+    await g.advanceTo(900);
+    await g.push(
+      'room',
+      _roomJson(
+        ruleset: _ruleset,
+        turn: <String, Object?>{
+          'seat': _me,
+          'phase': 'await_roll',
+          'deadline_ms': _budgetMs,
+          'k': 1,
+          'grace_ms': 160,
+        },
+        mine: _mineOpen,
+        theirs: const <int>[14, -1, -1, -1],
+      ),
+    );
+  }
+
+  _case(
+    '17a reduced motion, gate already open, a same-seat same-k snapshot '
+    'carrying the remaining grace: the ring is not reset and your_turn does '
+    'not fire again',
+    (_G g) async {
+      await reducedOpenThenSnapshot(g);
+      await g.advanceTo(1700);
+      expect(
+        g.ring,
+        closeTo(44 / 45, 0.0005),
+        reason: g.why(
+          '1700 ms (gate opened at about +660 ms)',
+          'the ring at 44 of 45 s, still counting from the first opening; a '
+              'ring back at full means the snapshot shut the gate again',
+        ),
+      );
+      expect(
+        g.yours,
+        1,
+        reason: g.why(
+          '1700 ms',
+          'your_turn exactly once, not again when the snapshot grace ends',
+        ),
+      );
+    },
+    turn: _awaitMove(_opp, 4, const <int>[0]),
+    mine: _mineOpen,
+    reduced: true,
+  );
+
+  _case(
+    '17b reduced motion, gate already open, a same-seat same-k snapshot '
+    'carrying the remaining grace: the die stays enabled',
+    (_G g) async {
+      await reducedOpenThenSnapshot(g);
+      await g.advanceTo(g.rel + 20);
+      final int cuesBefore = g.drive.feedback.recorded.length;
+      final int sent = await g.tapDie();
+      final List<String> added = <String>[
+        for (final FeedbackCue c in g.drive.feedback.recorded.skip(cuesBefore))
+          c.id,
+      ];
+      expect(
+        sent,
+        1,
+        reason: g.why(
+          'a tap 20 ms after the snapshot, inside its grace',
+          'one roll sent: the die opened earlier stays enabled',
+        ),
+      );
+      expect(
+        added,
+        isNot(contains(FeedbackCue.invalidTap.id)),
+        reason: g.why(
+          'a tap 20 ms after the snapshot, inside its grace',
+          'no invalid-tap cue from an enabled die, got $added',
+        ),
+      );
+    },
+    turn: _awaitMove(_opp, 4, const <int>[0]),
+    mine: _mineOpen,
+    reduced: true,
+  );
 }
