@@ -4843,6 +4843,26 @@ class _GameScreenState extends State<GameScreen> {
     _leave();
   }
 
+  /// C-658 L1-L3: what leaving does, said as the room's ruleset has it. Under
+  /// `2026-11` a playing seat that leaves is retired and its tokens leave the
+  /// board; a seat that already finished or is retired loses nothing by
+  /// leaving. Any other ruleset keeps the original line.
+  String _leaveConfirmBody(AppLocalizations loc) {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    final int? seat = controller.seat;
+    if (room == null ||
+        seat == null ||
+        room.state != RoomState.playing ||
+        room.rules.ruleset != '2026-11') {
+      return loc.gameLeaveConfirmBody;
+    }
+    if (room.placings.contains(seat) || room.retired.contains(seat)) {
+      return loc.gameLeaveConfirmBodyWatching;
+    }
+    return loc.gameLeaveConfirmBodyOut;
+  }
+
   /// C-272 rule 4: modal bottom sheet confirming leave when in playing state.
   void _showLeaveConfirm(BuildContext context, AppLocalizations loc) {
     if (!mounted || _isLeaveConfirmOpen) {
@@ -4868,7 +4888,7 @@ class _GameScreenState extends State<GameScreen> {
                 style: Theme.of(sheetContext).textTheme.titleMedium,
               ),
               const SizedBox(height: kSpace2),
-              Text(loc.gameLeaveConfirmBody),
+              Text(_leaveConfirmBody(loc)),
               const SizedBox(height: kSpace4),
               FilledButton(
                 key: const Key('game-leave-confirm-stay'),

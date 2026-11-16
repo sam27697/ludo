@@ -136,6 +136,8 @@
   "gameLeaveButton": "مغادرة",
   "gameLeaveConfirmTitle": "مغادرة اللعبة؟",
   "gameLeaveConfirmBody": "تبقى قطعك على اللوحة ويلعب المؤقت أدوارك.",
+  "gameLeaveConfirmBodyOut": "رح تطلع من هاللعبة نهائياً، وقطعك اللي ما وصلت بتنشال عن اللوحة.",
+  "gameLeaveConfirmBodyWatching": "اللعبة بتكمل بلاك.",
   "gameLeaveConfirmStay": "تابع اللعب",
   "gameNewRoomButton": "طاولة جديدة",
   "gameVerifyButton": "التحقق من الرميات",

@@ -530,6 +530,14 @@
   "@gameLeaveConfirmBody": {
     "description": "Body of the confirmation bottom sheet shown when leaving an active game."
   },
+  "gameLeaveConfirmBodyOut": "You will be out of this game for good, and your pieces still in play leave the board.",
+  "@gameLeaveConfirmBodyOut": {
+    "description": "Body of the leave confirmation sheet in a 2026-11 game while my seat is still playing: leaving retires the seat for good and every token not home leaves the board."
+  },
+  "gameLeaveConfirmBodyWatching": "The game goes on without you.",
+  "@gameLeaveConfirmBodyWatching": {
+    "description": "Body of the leave confirmation sheet when my seat has already finished or is retired and the game is still playing: leaving changes nothing in the game."
+  },
   "gameLeaveConfirmStay": "Keep playing",
   "@gameLeaveConfirmStay": {
     "description": "Primary action on the leave confirmation sheet to keep playing."
