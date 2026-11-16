@@ -2432,13 +2432,22 @@ class _GameScreenState extends State<GameScreen> {
   /// underneath, so it holds nothing. The mark is for a six that owes
   /// another roll: [owesRoll] is what [_trackRollQueue] read off the turn
   /// this frame left (my seat, await_roll, a non-empty queue), which is the
-  /// same-seat await_roll `turn` of a roll queue and nothing else.
+  /// same-seat await_roll `turn` of a roll queue and nothing else. A live
+  /// `rolled` of another seat drops the hold instead.
   void _armOwnRollHold(Frame frame, {required bool owesRoll}) {
     if (frame.type != 'rolled' || widget.controller.hasDesynced) {
       return;
     }
     final int? mySeat = widget.controller.seat;
     final int? value = _intAt(frame.data, 'value');
+    // Rule 4a: a `rolled` of another seat ends my hold at once, like it ends
+    // the no-move hold; that roll is thrown on its own seat's die.
+    if (mySeat != null &&
+        value != null &&
+        _intAt(frame.data, 'seat') != mySeat) {
+      _dropOwnRollHold();
+      return;
+    }
     if (mySeat == null ||
         _intAt(frame.data, 'seat') != mySeat ||
         value == null ||
