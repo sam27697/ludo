@@ -1675,7 +1675,9 @@ how they reach the wire. Nothing in it applies to a room created under the old r
    - While a release is owed, the snapshot's `turn` (phase `await_move`) carries `"release": true`,
      `legal` = the releasable tokens, `queue`, no `value`, no `legal_by_face`. Every seat object in
      the snapshot carries `drought`, an integer 0..9 (rule 9r), under `2026-11` only.
-   - `move` while a release is owed: `face` must be absent; present (any value) is `ILLEGAL_MOVE`.
+   - `move` while a release is owed: `face` must be absent; present with any integer value (0, 9
+     and -1 included) is `ILLEGAL_MOVE`; present and not an integer is `BAD_FIELD`, as for any
+     move (ruling of 2026-11-16, run 152: the release check comes before the face range check).
      A token that is not releasable is `ILLEGAL_MOVE`. A valid one spends the release.
    - The `moved` frame of a release: `from: -1`, `to: 0`, `captured: []`, `extra_roll: false`,
      `"release": true`, no `face`. Then a `turn` for the same seat in `await_move` when the queued
