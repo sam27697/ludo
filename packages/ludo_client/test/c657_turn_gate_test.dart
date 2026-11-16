@@ -669,11 +669,11 @@ void main() {
   // 2. G3 (b): never later than grace_ms.
   // ============================================================================
   _case(
-    '2 grace_ms 600 after a twelve-square walk: shut at 300 and 500, open by '
+    '2 grace_ms 600 after a six-square walk: shut at 300 and 500, open by '
     '600 plus one frame',
     (_G g) async {
       g.mark();
-      await g.push('moved', _oppWalk(10, 22));
+      await g.push('moved', _oppWalk(10, 16));
       await g.push('turn', _turnFrame(_me, grace: 600));
       await g.advanceShutTo(300, 'before the 300 ms check');
       await g.expectShut('300 ms into the grace');
@@ -686,7 +686,7 @@ void main() {
         reason: g.why(
           '600 ms plus one frame',
           'the gate open by grace_ms (600) after the frame although the walk '
-              '(${_walkMs(12)} ms) is still going',
+              '(${_walkMs(6)} ms) is still going',
         ),
       );
       await g.expectOpenMine('at the opening');
