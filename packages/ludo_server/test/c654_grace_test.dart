@@ -825,6 +825,92 @@ void main() {
           grace: 640,
           why: 'from -1 counts 1 step: 140, plus hold 500');
     });
+
+    _scenario(
+        'E11 a third six with no moved frame in the step (three_sixes): '
+        '0 + 1500 = 1500', (_Fx fx, _Table t) async {
+      for (final int roll in <int>[1, 2]) {
+        final Map<int, List<Frame>> owed =
+            await t.step(0, 'roll', <String, Object?>{});
+        fx.eq(_d(owed[0]!.first)['value'], 6, 'roll $roll is the steered 6');
+        _expectShape(fx, owed, <int>[0, 2], <String>['rolled', 'turn'],
+            'six number $roll is owed, the turn stays');
+        _expectTurn(fx, owed, <int>[0, 2],
+            next: 0,
+            grace: null,
+            why: 'a six owed is a same-seat turn',
+            phase: 'await_roll');
+      }
+      final Map<int, List<Frame>> frames =
+          await t.step(0, 'roll', <String, Object?>{});
+      fx.eq(_d(frames[0]!.first)['value'], 6, 'roll 3 is the steered 6');
+      _expectShape(
+          fx,
+          frames,
+          <int>[0, 2],
+          <String>['rolled', 'turn_passed', 'turn'],
+          'the third six passes the turn');
+      fx.eq(_d(_lastOfType(frames[0]!, 'turn_passed')!)['reason'],
+          'three_sixes', 'the pass is the third six');
+      _expectTurn(fx, frames, <int>[0, 2],
+          next: 2,
+          grace: 1500,
+          why: 'rule 7: three_sixes with no moved in the step, travel 0, '
+              'hold 1500');
+    }, faces: <int>[6, 6, 6]);
+
+    _scenario(
+        'E11b a third six after an earlier capture in the same turn: the '
+        'capture is another step, 0 + 1500 = 1500, not 920 + 1500',
+        (_Fx fx, _Table t) async {
+      // Seat 0 captures on 14 with a 4 (bonus on: it rolls again), then
+      // rolls 6, 6, 6. A server that remembers the last moved frame of the
+      // turn would add 4*140 + 360 to the hold.
+      _force(t, tokens: <int, List<int>>{
+        0: <int>[10, -1, -1, -1],
+        2: <int>[_progressOn(2, 14), -1, -1, -1],
+      });
+      final Map<int, List<Frame>> rolled =
+          await t.step(0, 'roll', <String, Object?>{});
+      fx.eq(_d(rolled[0]!.first)['value'], 4, 'roll 1 is the steered 4');
+      final Map<int, List<Frame>> capture =
+          await t.step(0, 'move', <String, Object?>{'token': 0});
+      _expectShape(fx, capture, <int>[0, 2], <String>['moved', 'turn'],
+          'the capture that owes a roll');
+      fx.eq(
+          _moved(fx, capture[0]!, 'the capture')['captured'],
+          <Object?>[
+            <String, Object?>{'seat': 2, 'token': 0}
+          ],
+          'the 4 captures seat 2 token 0');
+      _expectTurn(fx, capture, <int>[0, 2],
+          next: 0,
+          grace: null,
+          why: 'a capture with the bonus is a same-seat turn',
+          phase: 'await_roll');
+      for (final int roll in <int>[2, 3]) {
+        final Map<int, List<Frame>> owed =
+            await t.step(0, 'roll', <String, Object?>{});
+        fx.eq(_d(owed[0]!.first)['value'], 6, 'roll $roll is the steered 6');
+        _expectShape(fx, owed, <int>[0, 2], <String>['rolled', 'turn'],
+            'six number ${roll - 1} is owed');
+      }
+      final Map<int, List<Frame>> frames =
+          await t.step(0, 'roll', <String, Object?>{});
+      fx.eq(_d(frames[0]!.first)['value'], 6, 'roll 4 is the steered 6');
+      _expectShape(
+          fx,
+          frames,
+          <int>[0, 2],
+          <String>['rolled', 'turn_passed', 'turn'],
+          'the third six after the capture passes the turn');
+      fx.eq(_d(_lastOfType(frames[0]!, 'turn_passed')!)['reason'],
+          'three_sixes', 'the pass is the third six');
+      _expectTurn(fx, frames, <int>[0, 2],
+          next: 2,
+          grace: 1500,
+          why: 'rule 2 reads the moved frame of the step; this step has none');
+    }, faces: <int>[4, 6, 6, 6]);
   });
 
   // =========================================================================
@@ -965,6 +1051,34 @@ void main() {
           next: 2,
           grace: 1060,
           why: '4 steps * 140 = 560, plus hold 500, the retired seat skipped');
+    }, players: 3);
+
+    _scenario(
+        'N8b a retire of a seat that is not on turn, 300 ms into the next '
+        'seat\'s grace: no turn, the grace runs on', (_Fx fx, _Table t) async {
+      _board(t, tokens: <int>[10, -1, -1, -1], queue: <int>[4]);
+      final Map<int, List<Frame>> moved =
+          await t.step(0, 'move', <String, Object?>{'token': 0});
+      _expectTurn(fx, moved, <int>[0, 1, 2],
+          next: 1, grace: 1060, why: '4 steps * 140 = 560, plus hold 500');
+      final DateTime mark = fx.mark();
+      fx.advanceTo(mark, 300);
+      final Map<int, List<Frame>> frames =
+          await t.step(2, 'leave_room', <String, Object?>{});
+      _expectShape(fx, frames, <int>[0, 1], <String>['seat_retired'],
+          'seat 2 leaves while seat 1 is on turn');
+      _expectGraceOnlyOnTurn(fx, frames);
+      fx.advanceTo(mark, 400);
+      Map<String, Object?> turn = await _snapTurn(t, 0);
+      fx.eq(turn['seat'], 1, 'seat 1 is still on turn');
+      fx.eq(turn['grace_ms'], 660,
+          'rule 7: the running grace is untouched: 1060 - 400');
+      fx.eq(turn['deadline_ms'], _budget, 'and the full budget');
+      fx.advanceTo(mark, 1060 + 1000);
+      turn = await _snapTurn(t, 0);
+      fx.ok(!turn.containsKey('grace_ms'), 'the grace ran out at 1060', turn);
+      fx.eq(turn['deadline_ms'], _budget - 1000,
+          'the countdown started at the grace\'s end, not at the retire');
     }, players: 3);
 
     _scenario('N9 a second game after a rematch opens with no grace_ms',
@@ -1136,6 +1250,84 @@ void main() {
           'the other seat reads presence only: no turn is pushed on a resume '
           'of a seat whose segment is a full one');
     });
+
+    // Rule 7, last bullet: section 26 rule 5 inside a grace. Seat 2 is away
+    // (10 s segment) and its 1060 ms grace starts at the mark. Resuming at
+    // 400 and 1059 is inside the grace; at 1060 (exactly) and 2000 it is not.
+    // The restarted full segment counts from max(resume, grace end).
+    for (final List<int?> c in <List<int?>>[
+      <int?>[400, 660],
+      <int?>[1059, 1],
+      <int?>[1060, null],
+      <int?>[2000, null],
+    ]) {
+      final int at = c[0]!;
+      final int? left = c[1];
+      final int expiry = max(at, 1060) + _budget;
+      _scenario(
+          'T6 an away seat resumes on turn $at ms into a 1060 ms grace: '
+          'pushed turn ${left == null ? 'has no grace_ms' : 'grace_ms $left'}'
+          ', the full segment expires at $expiry', (_Fx fx, _Table t) async {
+        final DateTime mark = await _toAwayTurn(fx, t);
+        fx.advanceTo(mark, at);
+        final Map<String, Object?> room = await _resume(t, 2);
+        final Map<int, List<Frame>> frames = await t.syncAll();
+        fx.eq(_types(frames[0]!), <String>['presence', 'turn'],
+            'the other seat reads presence then turn on the resume');
+        fx.eq(_types(frames[2]!), <String>[],
+            'the resuming socket reads neither: its room answer carries them');
+        final Map<String, Object?> presence = _d(frames[0]!.first);
+        fx.eq(<Object?>[presence['seat'], presence['connected']],
+            <Object?>[2, true], 'the presence is the resume of seat 2');
+        _expectTurn(fx, <int, List<Frame>>{0: frames[0]!}, <int>[0],
+            next: 2,
+            grace: left,
+            why: 'rule 7: the pushed turn carries the grace left '
+                '(1060 - $at), absent once the grace has run out',
+            phase: 'await_roll');
+        final Map<String, Object?> turn = _d(frames[0]!.last);
+        fx.eq(turn['seq'], (presence['seq']! as int) + 1,
+            'the pushed turn takes the next seq after the presence');
+        final Map<String, Object?> snap = room['turn']! as Map<String, Object?>;
+        fx.eq(snap['seat'], 2, 'the resumer\'s snapshot is on seat 2');
+        fx.eq(snap['deadline_ms'], _budget,
+            'the resumer\'s deadline_ms is the restarted full segment');
+        fx.eq(snap['segment_ms'], _budget, 'and its segment_ms');
+        if (left == null) {
+          fx.ok(!snap.containsKey('grace_ms'),
+              'no grace_ms in the resumer\'s snapshot after the grace', snap);
+        } else {
+          fx.eq(snap['grace_ms'], left, 'the resumer\'s snapshot grace left');
+        }
+        fx.eq(room['seq'], turn['seq'],
+            'the resumer\'s room carries the seq of the pushed turn');
+        // The old 10 s segment would end 10 000 ms after the grace's end.
+        fx.advanceTo(mark, 1060 + _awayBudget);
+        _expectSilent(fx, await t.sweep(), 'the old away segment\'s end');
+        fx.advanceTo(mark, expiry - 1);
+        _expectSilent(fx, await t.sweep(),
+            'the restarted segment at its expiry - 1 ms ($expiry - 1)');
+        fx.advanceTo(mark, expiry);
+        _expectTimerStep(fx, await t.sweep(), 2, 'rolled',
+            'the restarted segment at exactly $expiry ms after the frame');
+      }, faces: <int>[3]);
+    }
+
+    _scenario(
+        'T6b the snapshot after an away resume in the grace counts from the '
+        'grace\'s end: 45000 - 1000 at 2060', (_Fx fx, _Table t) async {
+      final DateTime mark = await _toAwayTurn(fx, t);
+      fx.advanceTo(mark, 400);
+      await _resume(t, 2);
+      await t.syncAll();
+      fx.advanceTo(mark, 1060 + 1000);
+      final Map<String, Object?> turn = await _snapTurn(t, 0);
+      fx.ok(!turn.containsKey('grace_ms'),
+          'the grace has run out, the key is absent', turn);
+      fx.eq(turn['segment_ms'], _budget, 'the segment is the full one');
+      fx.eq(turn['deadline_ms'], _budget - 1000,
+          'rule 7: the restarted segment counts from the grace\'s end');
+    }, faces: <int>[3]);
   });
 
   // =========================================================================
