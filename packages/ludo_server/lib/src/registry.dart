@@ -526,6 +526,7 @@ class RetireOk extends RetireResult {
     required this.seat,
     required this.reason,
     required this.events,
+    required this.after,
     required this.retiredSeq,
     required this.hostSeat,
     this.turnSeq,
@@ -545,6 +546,11 @@ class RetireOk extends RetireResult {
 
   /// `Applied.events` of the engine's `RetireIntention`, unmodified.
   final List<engine.GameEvent> events;
+
+  /// The engine state this retirement left. Its frames are built from it and
+  /// never from `room.game`, which a later retirement of the same sweep has
+  /// already moved on.
+  final engine.GameState after;
   final int retiredSeq;
 
   /// `host_seat` after the retirement, changed or not.
@@ -1760,61 +1766,77 @@ class RoomRegistry {
   /// The absent half of the turn timer's 1 s sweep, `docs/PROTOCOL.md`
   /// section 28 rule 4 "absent": retires every playing seat of a 2026-11
   /// game whose socket has been down for [_absentRetireAfter] without a
-  /// break, measured on the injected clock from `Seat.absentSince`, and
-  /// returns what it did, in the order it was done. A seat whose socket went
-  /// down longest ago goes first (ties by seat index); the game is looked at
-  /// again after each retirement, since the last one before a win ends it.
+  /// break, measured on the injected clock from `Seat.absentSince`. Each
+  /// retirement is handed to [publish] the moment it is made, in the order it
+  /// was done, so its frames are built and sent before the next one changes
+  /// the game. A seat whose socket went down longest ago goes first (ties by
+  /// seat index); the game is looked at again after each retirement, since the
+  /// last one before a win ends it.
+  ///
+  /// A room is isolated from the others: a throw while retiring in one room,
+  /// or from [publish], goes to [onError] with the room code and the seat
+  /// being retired (null when no seat was chosen yet), and the sweep goes on
+  /// with the next room. What that room had already retired was published.
   ///
   /// A disconnected playing seat with no stamp (its flag was cleared by
   /// something other than [setConnected], [leaveRoom] or [resume]) is
   /// stamped now, so the count never starts late and never starts at all
   /// only by accident; a connected one has any stamp cleared.
-  List<RetireOk> retireAbsentSeats() {
-    final List<RetireOk> done = <RetireOk>[];
+  void retireAbsentSeats({
+    required void Function(RetireOk retired) publish,
+    required void Function(String code, int? seat, Object error, StackTrace st)
+        onError,
+  }) {
     final DateTime now = _clock.now;
     for (final Room room in _rooms.values.toList(growable: false)) {
       if (!room.isRuleset202611 || room.state != RoomState.playing) {
         continue;
       }
-      while (true) {
-        final engine.GameState? game = room.game;
-        if (game == null || game.phase == engine.GamePhase.finished) {
-          break;
-        }
-        Seat? due;
-        for (final Seat seat in room.seats) {
-          if (!_isPlayingSeat(game, seat.seat)) {
-            continue;
+      int? dueSeat;
+      try {
+        while (true) {
+          dueSeat = null;
+          final engine.GameState? game = room.game;
+          if (game == null || game.phase == engine.GamePhase.finished) {
+            break;
           }
-          if (seat.connected) {
-            seat.absentSince = null;
-            continue;
+          Seat? due;
+          for (final Seat seat in room.seats) {
+            if (!_isPlayingSeat(game, seat.seat)) {
+              continue;
+            }
+            if (seat.connected) {
+              seat.absentSince = null;
+              continue;
+            }
+            final DateTime since = seat.absentSince ??= now;
+            if (now.difference(since) < _absentRetireAfter) {
+              continue;
+            }
+            if (due == null || since.isBefore(due.absentSince!)) {
+              due = seat;
+            }
           }
-          final DateTime since = seat.absentSince ??= now;
-          if (now.difference(since) < _absentRetireAfter) {
-            continue;
+          if (due == null) {
+            break;
           }
-          if (due == null || since.isBefore(due.absentSince!)) {
-            due = seat;
+          dueSeat = due.seat;
+          final RetireResult result = _retire(room, due, 'absent');
+          if (result is RetireOk) {
+            publish(result);
+          } else {
+            // _retire refuses only a state it cannot apply. Say so, and stop
+            // working on this room for this sweep rather than retry forever.
+            // ignore: avoid_print
+            print('retire skipped room=${room.code} seat=${due.seat} '
+                'reason=absent error=${(result as RetireFailure).error.name}');
+            break;
           }
         }
-        if (due == null) {
-          break;
-        }
-        final RetireResult result = _retire(room, due, 'absent');
-        if (result is RetireOk) {
-          done.add(result);
-        } else {
-          // _retire refuses only a state it cannot apply. Say so, and stop
-          // working on this room for this sweep rather than retry forever.
-          // ignore: avoid_print
-          print('retire skipped room=${room.code} seat=${due.seat} '
-              'reason=absent error=${(result as RetireFailure).error.name}');
-          break;
-        }
+      } catch (error, stack) {
+        onError(room.code, dueSeat, error, stack);
       }
     }
-    return done;
   }
 
   /// A seat is playing (`docs/ENGINE_API.md` section 12.1) when it is in the
@@ -1893,6 +1915,7 @@ class RoomRegistry {
       seat: seat,
       reason: reason,
       events: appliedOk.events,
+      after: appliedOk.state,
       retiredSeq: retiredSeq,
       hostSeat: hostSeat,
       turnSeq: turnSeq,

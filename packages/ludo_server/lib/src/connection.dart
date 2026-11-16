@@ -1487,7 +1487,11 @@ class Connection {
     int? face;
     if (envelope.data.containsKey('face')) {
       final Object? rawFace = envelope.data['face'];
-      if (rawFace is! int || rawFace < 1 || rawFace > 6) {
+      // Section 28 rule 2: with a release owed the release check comes
+      // before the range check, so any integer is passed on and the engine
+      // answers it ILLEGAL_MOVE; only a non-integer is a malformed field.
+      final bool releaseOwed = liveRoom!.game!.releaseOwed;
+      if (rawFace is! int || (!releaseOwed && (rawFace < 1 || rawFace > 6))) {
         _reject(envelope, ProtocolError.badField);
         return;
       }
