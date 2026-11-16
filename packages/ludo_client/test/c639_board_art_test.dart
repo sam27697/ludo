@@ -569,8 +569,120 @@ void main() {
       await centreCase(tester, 'B5 centre home, 4 seats, $view', _allSeats);
     });
 
+    // X190 (C-659t return 1) replaces the faded absent triangles of D6 here:
+    // two opposite seats split the centre in halves, no seat is painted faded.
+    Future<void> centreCaseHalves(
+      WidgetTester tester,
+      String name,
+      List<int> inPlaySeats,
+    ) async {
+      final _Probe probe = await _render(
+        tester,
+        testName: name,
+        seatsInPlay: inPlaySeats,
+        mySeat: mySeat,
+      );
+      const Offset boardCentre = Offset(7.5 * _cell, 7.5 * _cell);
+      final Map<int, Offset> sideMids = <int, Offset>{};
+      for (final int seat in _allSeats) {
+        final BoardCell outside = toView(cellFor(seat: seat, progress: 56), q);
+        if (outside.col == 5 && outside.row >= 6 && outside.row <= 8) {
+          sideMids[seat] = const Offset(6 * _cell, 7.5 * _cell);
+        } else if (outside.col == 9 && outside.row >= 6 && outside.row <= 8) {
+          sideMids[seat] = const Offset(9 * _cell, 7.5 * _cell);
+        } else if (outside.row == 5 && outside.col >= 6 && outside.col <= 8) {
+          sideMids[seat] = const Offset(7.5 * _cell, 6 * _cell);
+        } else if (outside.row == 9 && outside.col >= 6 && outside.col <= 8) {
+          sideMids[seat] = const Offset(7.5 * _cell, 9 * _cell);
+        } else {
+          fail(
+            'C-639t $name: seat $seat progress 56 maps to view cell '
+            '$outside, which does not touch a side of the centre 3 x 3 block '
+            '(scenario: ${probe.scenario})',
+          );
+        }
+      }
+      // Unit vector from the board centre towards each seat's side midpoint.
+      Offset dirOf(int seat) {
+        final Offset d = sideMids[seat]! - boardCentre;
+        return d / d.distance;
+      }
+
+      // The in-play seat whose half holds [p]: the one whose direction the
+      // point leans towards most. Callers never pass a point on a boundary.
+      int ownerOf(Offset p) {
+        int best = inPlaySeats.first;
+        double bestDot = double.negativeInfinity;
+        for (final int seat in inPlaySeats) {
+          final Offset d = dirOf(seat);
+          final double dot =
+              (p - boardCentre).dx * d.dx + (p - boardCentre).dy * d.dy;
+          if (dot > bestDot) {
+            bestDot = dot;
+            best = seat;
+          }
+        }
+        return best;
+      }
+
+      void expectOwner(String what, Offset p) {
+        final int owner = ownerOf(p);
+        probe.expectColor(
+          'X190 $what (half of seat $owner)',
+          p,
+          _over(_dieFace, LudoColors.seats[owner], 1.0),
+          'seat $owner colour alpha 1.0 over dieFace, no faded seat',
+        );
+      }
+
+      for (final int seat in inPlaySeats) {
+        final Offset unit = dirOf(seat) * -1;
+        final Offset sideMid = sideMids[seat]!;
+        expectOwner(
+          'seat $seat side midpoint moved 0.15 s inward',
+          sideMid + unit * (0.15 * _cell),
+        );
+        expectOwner(
+          'seat $seat side midpoint moved 0.5 s inward',
+          sideMid + unit * (0.5 * _cell),
+        );
+      }
+      // The block's own corners, 0.3 s in on both axes.
+      for (final Offset corner in const <Offset>[
+        Offset(6.3 * _cell, 6.3 * _cell),
+        Offset(8.7 * _cell, 6.3 * _cell),
+        Offset(6.3 * _cell, 8.7 * _cell),
+        Offset(8.7 * _cell, 8.7 * _cell),
+      ]) {
+        expectOwner('block corner', corner);
+      }
+      // Where an absent seat's triangle used to be: 0.5 s in from its side
+      // midpoint, 0.6 s to either side of the axis (clear of the boundary).
+      for (final int seat in _allSeats) {
+        if (inPlaySeats.contains(seat)) {
+          continue;
+        }
+        final Offset inward = dirOf(seat) * -1;
+        final Offset along = Offset(-inward.dy, inward.dx);
+        final Offset base = sideMids[seat]! + inward * (0.5 * _cell);
+        expectOwner(
+          'absent seat $seat former triangle, 0.6 s to one side',
+          base + along * (0.6 * _cell),
+        );
+        expectOwner(
+          'absent seat $seat former triangle, 0.6 s to the other side',
+          base - along * (0.6 * _cell),
+        );
+      }
+      probe.done();
+    }
+
     testWidgets('B5 centre home, 2 seats, $view', (tester) async {
-      await centreCase(tester, 'B5 centre home, 2 seats, $view', _pairSeats);
+      await centreCaseHalves(
+        tester,
+        'B5 centre home, 2 seats, $view',
+        _pairSeats,
+      );
     });
 
     // D4 and D5: the main-track grid stays, on an opaque paperElevated cell.
