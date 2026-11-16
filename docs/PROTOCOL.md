@@ -1752,3 +1752,65 @@ how they reach the wire. Nothing in it applies to a room created under the old r
    in the stated order; host retired hands `host_seat` on; retired seats freed after `game_over`
    with one `player_left` each; a `2026-10` room on a `2026-11` server is impossible (the ruleset
    is taken at create) and a `2026-10` server is byte-identical to today on the existing suites.
+
+## 29. The next seat waits for the last move to land, 2026-11-16
+
+Sam's note of 2026-11-15 (X192): the turn passes only after the mover's piece has landed (a
+captured piece's flight home included), plus about half a second. Server truth stays instant: every
+frame goes out when it does today. What changes is when the next seat's clock starts, and when the
+next seat's die can be tapped. `bin/game-doctrine.md` 2.4 is the rule this applies: a fixed grace in
+the server's turn timer, decided here once, never a client that lags behind the truth. **Under
+`2026-11` only** (section 28 rule 1); a `2026-10` room is byte-identical to today.
+
+1. **When a grace applies.** Exactly on a `turn` frame for a seat other than the seat that acted
+   last (the turn passed), in a `2026-11` room. Never on a same-seat `turn` (an extra roll, a six
+   owed, a queued face), never on the first `turn` after `game_started`.
+
+2. **How long.** `grace_ms` is computed by the server from the frames it sends in the same step,
+   before that `turn`:
+   - `travel` = for the last `moved` frame of the step, `140 * steps`, plus `360` when its
+     `captured` is not empty; `steps` is `to - from` when `from >= 0` and `1` when `from == -1`.
+     With no `moved` frame in the step, `travel` = 0.
+   - `hold` = `1500` when the step sent `turn_passed` (either reason), otherwise `500`.
+   - `grace_ms = travel + hold`. Examples: a 4-square move that passes the turn, 1060; a 6-square
+     move that captures, 1700; a roll with no legal move, 1500; a 2-square move that leaves only
+     dead faces (`moved`, `turn_passed`, `turn`), 1780; a retire (`seat_retired` then `turn`),
+     500; a timer-played move, as any move.
+   The constants are the client's `kTokenStepDuration` (140), `kCaptureFlightDuration` (360), the
+   no-move hold (1500) and Sam's half second (500). They live in one server file, named once.
+
+3. **On the wire.** That `turn` frame gains `"grace_ms": int` (> 0). Its `deadline_ms` is the full
+   segment budget (section 26: 45 000, or 10 000 for an away seat), and the countdown it describes
+   starts **after** the grace: the segment expires at `grace_ms + budget` from the frame. While the
+   grace runs, the snapshot's `turn` carries `grace_ms` = the grace left (> 0) and `deadline_ms` =
+   the full budget; once it has run out, `grace_ms` is absent and `deadline_ms` counts down as
+   section 6 says, from the grace's end. A `turn` frame without a grace omits the key. Old clients
+   ignore it (they are never seated in a `2026-11` room anyway, section 28 rule 1).
+
+4. **A roll during the grace** is accepted as at any other time: the grace protects the next seat's
+   clock, it does not refuse the seat. Its `rolled` starts the next segment as today and ends the
+   grace. The client gate (rule 5) is what keeps an honest player from rolling into a moving piece.
+   The turn timer sweep never acts on a segment whose grace has not run out.
+
+5. **The client.** On a `turn` frame that passes the turn, the new seat's die stays as it is (not
+   pulsing, not tappable for the seat on turn, the countdown ring full and still) until the gate
+   opens, then everything that marks the start of a turn happens at that moment: the die pulse,
+   `your_turn` (haptic and sound) for my seat, the countdown starting. The gate opens at the
+   earlier of (a) the board's move queue empty and every capture flight landed and the no-move hold
+   over, plus 500 ms, and (b) `grace_ms` after the frame arrived. Reduced motion shortens (a)
+   through its own shorter steps and never removes the 500 ms. A tap on my die before the gate
+   opens sends nothing and gives the invalid-tap feedback a disabled die already gives. A resume
+   inside a grace opens the gate after the snapshot's `grace_ms`.
+
+6. **Tests this section requires before it is implemented.** Server, real sockets, fake clock:
+   each example of rule 2 gives that `grace_ms` on the `turn` frame; no `grace_ms` on a same-seat
+   `turn`, on the first `turn`, or in a `2026-10` room (and a `2026-10` room's frames unchanged);
+   the timer does not expire a segment at `budget` after the frame and does at `grace_ms + budget`
+   (and an away seat's 10 s segment the same way); a snapshot taken 400 ms into a 1060 ms grace
+   shows `grace_ms` 660 and the full `deadline_ms`, one taken after the grace shows no `grace_ms`
+   and a counting `deadline_ms`; a roll at 200 ms into the grace is accepted and its `rolled`
+   restarts the segment. Client, fake transport: after a 6-square capture that passes the turn to
+   my seat, my die is not tappable and `your_turn` has not fired until the flight lands plus
+   500 ms, then it fires once and a tap sends one `roll`; the gate never opens later than
+   `grace_ms`; reduced motion; a resume with `grace_ms` in the snapshot; the opponent's die pulse
+   follows the same gate; en and ar.
