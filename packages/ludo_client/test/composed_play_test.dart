@@ -541,6 +541,9 @@ void main() {
         // two rounds is enough to call this an honest game rather than a
         // single lucky roll.
         final int sentBeforeRoll2 = transport.sentRaw.length;
+        // C-653 D2: my own roll is held 900 ms (kOwnRollHold) from the
+        // rolled frame, so the second tap waits it out.
+        await tester.pump(const Duration(milliseconds: 900));
         await tester.tap(find.byKey(const Key('game-die')));
         await tester.pump();
         final List<String> rollMessages2 = transport.sentRaw

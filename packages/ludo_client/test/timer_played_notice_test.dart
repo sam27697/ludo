@@ -1821,7 +1821,9 @@ void main() {
       );
 
       // Clear it with a real tap (die, since the turn above landed me back
-      // in await_roll).
+      // in await_roll). C-653 D2: my own roll is held 900 ms (kOwnRollHold)
+      // from the rolled frame, so the tap waits it out.
+      await tester.pump(const Duration(milliseconds: 900));
       await tester.tap(find.byKey(_dieKey));
       await tester.pump();
       final String rollId = _idOf(
