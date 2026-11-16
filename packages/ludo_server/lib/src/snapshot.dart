@@ -628,6 +628,7 @@ List<OutFrame> buildMoveFrames(MoveOk ok, {String? by}) {
   if (won.isNotEmpty) {
     frames.addAll(
       _gameOverFrames(
+        game: ok.room.game!,
         room: ok.room,
         winner: won.single.seat,
         verifyUrl: ok.verifyUrl!,
@@ -706,6 +707,7 @@ List<OutFrame> buildRetireFrames(RetireOk ok) {
     final engine.GameWon won = ok.events.whereType<engine.GameWon>().single;
     frames.addAll(
       _gameOverFrames(
+        game: ok.after,
         room: ok.room,
         winner: won.seat,
         verifyUrl: ok.verifyUrl!,
@@ -716,7 +718,7 @@ List<OutFrame> buildRetireFrames(RetireOk ok) {
     return frames;
   }
   if (ok.turnSeq != null) {
-    final engine.GameState after = ok.room.game!;
+    final engine.GameState after = ok.after;
     final TurnQueueFields fields = turnQueueFields(after);
     frames.add(
       OutFrame(
@@ -742,13 +744,13 @@ List<OutFrame> buildRetireFrames(RetireOk ok) {
 /// retired seat the end freed, in retirement order, each at its own `seq`.
 /// `placings` and `retired` go on `game_over` under 2026-11 only.
 List<OutFrame> _gameOverFrames({
+  required engine.GameState game,
   required Room room,
   required int winner,
   required String verifyUrl,
   required int gameOverSeq,
   required List<FreedSeat> freed,
 }) {
-  final engine.GameState game = room.game!;
   final bool ruleset202611 = room.isRuleset202611;
   return <OutFrame>[
     OutFrame(

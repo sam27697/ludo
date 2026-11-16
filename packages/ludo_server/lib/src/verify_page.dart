@@ -251,13 +251,17 @@ String buildVerifyPageHtml(
       : 'No 6 for 10 rolls with every piece at home: one piece comes out '
           '(rule 11r)';
 
+  // The die cell is dir="ltr" on an ar page, so the Arabic line carries its
+  // own direction instead of inheriting the cell's.
+  final String rtlAttr = isAr ? ' dir="rtl"' : '';
+
   final StringBuffer rollRows = StringBuffer();
   for (final Object? entry in rolls) {
     final Map<String, Object?> roll = entry as Map<String, Object?>;
     final Object? k = roll['k'];
     final String kEsc = _esc(k);
     final String releaseMarkup = k is int && releaseKs.contains(k)
-        ? '<br><span class="release-note" data-release="$kEsc">'
+        ? '<br><span class="release-note"$rtlAttr data-release="$kEsc">'
             '${_esc(releaseLine)}</span>'
         : '';
     rollRows
