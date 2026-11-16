@@ -573,6 +573,10 @@ class LudoBoard extends StatefulWidget {
     this.hintNamesFace = false,
     this.chatPop,
     this.awaySeats = const <int, String>{},
+    this.retiredSeats = const <int>{},
+    this.seatPlaces = const <int, int>{},
+    this.onAwayTap,
+    this.awayTapSeats = const <int>{},
   }) : assert(
          seatsInPlay.length >= 2 && seatsInPlay.length <= 4,
          'seatsInPlay must have 2, 3 or 4 entries',
@@ -728,6 +732,25 @@ class LudoBoard extends StatefulWidget {
   /// of the bare name. Empty, the default, draws exactly what the board drew
   /// before. C-597 D1, D2.
   final Map<int, String> awaySeats;
+
+  /// Seats the server took out of the game (PROTOCOL 28 rule 4). Their
+  /// tokens draw at the yard-fade opacity and their name chip carries an X
+  /// mark (`board-seat-out-<seat>`). Empty, the default, draws nothing new.
+  final Set<int> retiredSeats;
+
+  /// Seat -> finishing place (1 based) for the seats that have brought their
+  /// fourth token home while the game goes on. Each gets a gold place disc
+  /// on its name chip (`board-seat-place-<seat>`). Empty draws none.
+  final Map<int, int> seatPlaces;
+
+  /// Host only: a tap on an away seat's mark. When set, that mark is a
+  /// 48 dp tap target (`board-seat-away-<seat>`) and the chip takes taps on
+  /// it; null leaves the mark a plain icon.
+  final void Function(int seat)? onAwayTap;
+
+  /// Which of the [awaySeats] [onAwayTap] applies to. A seat outside it keeps
+  /// its plain mark.
+  final Set<int> awayTapSeats;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -1554,13 +1577,20 @@ class _LudoBoardState extends State<LudoBoard> {
     // C-597 D2: an away mark takes a disc-sized icon and the same gap, out of
     // the width the font fit is given.
     final String? awayLine = widget.awaySeats[seat];
+    final int? place = widget.seatPlaces[seat];
+    final bool retired = widget.retiredSeats.contains(seat);
+    final bool awayTappable =
+        awayLine != null &&
+        widget.onAwayTap != null &&
+        widget.awayTapSeats.contains(seat);
     final double textAvailableWidth = math.max(
       0.0,
       contentMaxWidth -
           nameDiscSize -
           cellSize * 0.15 -
           (you != null ? cellSize * 0.15 : 0.0) -
-          (awayLine != null ? nameDiscSize + cellSize * 0.15 : 0.0),
+          (awayLine != null ? nameDiscSize + cellSize * 0.15 : 0.0) -
+          (place != null || retired ? nameDiscSize + cellSize * 0.15 : 0.0),
     );
     final ({double name, double? you}) fittedFontSizes = _fittedChipFontSizes(
       name: name,
@@ -1670,18 +1700,39 @@ class _LudoBoardState extends State<LudoBoard> {
                             ),
                           ),
                         ],
+                        if (place != null) ...<Widget>[
+                          SizedBox(width: cellSize * 0.15),
+                          _placeBadge(seat, place, nameDiscSize),
+                        ] else if (retired) ...<Widget>[
+                          SizedBox(width: cellSize * 0.15),
+                          _outMark(seat, nameDiscSize, ink),
+                        ],
                         if (awayLine != null) ...<Widget>[
                           SizedBox(width: cellSize * 0.15),
-                          SizedBox(
-                            key: Key('board-seat-away-$seat'),
-                            width: nameDiscSize,
-                            height: nameDiscSize,
-                            child: Icon(
-                              Icons.wifi_off_rounded,
-                              size: nameDiscSize,
-                              color: ink,
+                          if (awayTappable)
+                            CompositedTransformTarget(
+                              link: _awayLinkFor(seat),
+                              child: SizedBox(
+                                width: nameDiscSize,
+                                height: nameDiscSize,
+                                child: Icon(
+                                  Icons.wifi_off_rounded,
+                                  size: nameDiscSize,
+                                  color: ink,
+                                ),
+                              ),
+                            )
+                          else
+                            SizedBox(
+                              key: Key('board-seat-away-$seat'),
+                              width: nameDiscSize,
+                              height: nameDiscSize,
+                              child: Icon(
+                                Icons.wifi_off_rounded,
+                                size: nameDiscSize,
+                                color: ink,
+                              ),
                             ),
-                          ),
                         ],
                       ],
                     ),
@@ -1691,6 +1742,87 @@ class _LudoBoardState extends State<LudoBoard> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  final Map<int, LayerLink> _awayLinks = <int, LayerLink>{};
+
+  LayerLink _awayLinkFor(int seat) =>
+      _awayLinks.putIfAbsent(seat, LayerLink.new);
+
+  /// The host's tap target for an away mark: a [_kAwayTapTarget] square
+  /// centred on the mark the chip draws, which is far smaller. It follows the
+  /// mark through a [LayerLink], so it stays on it wherever the chip sits.
+  Widget _awayTapTarget(int seat) {
+    return CompositedTransformFollower(
+      key: ValueKey<String>('board-seat-away-follower-$seat'),
+      link: _awayLinkFor(seat),
+      showWhenUnlinked: false,
+      targetAnchor: Alignment.center,
+      followerAnchor: Alignment.center,
+      child: Semantics(
+        button: true,
+        label: widget.awaySeats[seat],
+        child: GestureDetector(
+          key: Key('board-seat-away-$seat'),
+          behavior: HitTestBehavior.opaque,
+          onTap: () => widget.onAwayTap?.call(seat),
+          child: const SizedBox(
+            width: _kAwayTapTarget,
+            height: _kAwayTapTarget,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// A finished seat's place on its name chip: the number in a gold disc, so
+  /// the place never rests on colour alone. Spoken as the ordinal word.
+  Widget _placeBadge(int seat, int place, double size) {
+    final String ordinal = placeWord(AppLocalizations.of(context), place);
+    return Semantics(
+      key: Key('board-seat-place-$seat'),
+      container: true,
+      excludeSemantics: true,
+      label: ordinal,
+      child: Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: const BoxDecoration(
+          color: LudoColors.gold,
+          shape: BoxShape.circle,
+        ),
+        child: Text(
+          place.toString(),
+          maxLines: 1,
+          softWrap: false,
+          textScaler: TextScaler.noScaling,
+          style: TextStyle(
+            color: LudoColors.ink,
+            fontFamily: kLudoFontFamily,
+            fontFamilyFallback: kLudoFontFallbacks,
+            fontSize: size * 0.62,
+            fontWeight: FontWeight.w800,
+            height: 1,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// A retired seat's mark beside its name: an X, readable without colour.
+  Widget _outMark(int seat, double size, Color ink) {
+    return Semantics(
+      key: Key('board-seat-out-$seat'),
+      container: true,
+      excludeSemantics: true,
+      label: AppLocalizations.of(context).endPlaceOut,
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Icon(Icons.close_rounded, size: size, color: ink),
       ),
     );
   }
@@ -1744,6 +1876,12 @@ class _LudoBoardState extends State<LudoBoard> {
                   ..._safeSquareMarks(cellSize, widget.mySeat),
                   for (final seat in widget.seatsInPlay)
                     ..._seatIdentityLayer(seat: seat, cellSize: cellSize),
+                  if (widget.onAwayTap != null)
+                    for (final int seat in widget.seatsInPlay)
+                      if (widget.awayTapSeats.contains(seat) &&
+                          widget.awaySeats.containsKey(seat) &&
+                          widget.seatNames?[seat] != null)
+                        _awayTapTarget(seat),
                   // C-465 D2, D4: above the yard glow, below the tokens,
                   // the thrown die, the safe cue and the face picker.
                   // One slot for the whole layer, so a die or a record
@@ -2202,7 +2340,7 @@ class _LudoBoardState extends State<LudoBoard> {
     final double drawnLeft = drawn.center.dx - drawnSize / 2;
     final double drawnTop = drawn.center.dy - drawnSize / 2;
 
-    final Widget token = Semantics(
+    final Widget drawnToken = Semantics(
       key: Key('token-$seat-$tokenIndex'),
       identifier: 'cell-${cell.col}-${cell.row}',
       sortKey: tokenSortKey,
@@ -2227,6 +2365,12 @@ class _LudoBoardState extends State<LudoBoard> {
         ),
       ),
     );
+
+    // A retired seat's pieces stay where the engine left them, drawn at the
+    // same fade the yard of an absent seat gets.
+    final Widget token = widget.retiredSeats.contains(seat)
+        ? Opacity(opacity: _kAbsentSeatFade, child: drawnToken)
+        : drawnToken;
 
     final _FlyingCapture? flying = _flying;
     if (flying != null && flying.seat == seat && flying.token == tokenIndex) {
@@ -3582,6 +3726,25 @@ class _StarPainter extends CustomPainter {
 
 /// How much of its colour a seat that is not in play keeps: yard, home
 /// column and entry square all use it. C-248 rule 4, C-600 D1.
+/// The word for a finishing place, 1 based: first to fourth. Anything past
+/// four reads as fourth, the last seat a table has.
+String placeWord(AppLocalizations loc, int place) {
+  switch (place) {
+    case 1:
+      return loc.placeFirst;
+    case 2:
+      return loc.placeSecond;
+    case 3:
+      return loc.placeThird;
+    default:
+      return loc.placeFourth;
+  }
+}
+
+/// The host's away mark is a tap target at least this wide and tall (doctrine
+/// P9), whatever size the chip draws the icon at.
+const double _kAwayTapTarget = 48;
+
 const double _kAbsentSeatFade = 0.35;
 
 /// Paints the static board: the four yards, the shared track, the four home
