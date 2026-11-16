@@ -52,6 +52,8 @@ const Set<String> _stateChangingTypes = <String>{
   'turn_passed',
   'turn',
   'game_over',
+  'seat_finished',
+  'seat_retired',
 };
 
 /// The production automatic-reconnect schedule: five attempts, the delay
@@ -128,6 +130,18 @@ const Set<String> _setPlayersRejectedCodes = <String>{
   'ROOM_STARTED',
 };
 
+/// The five codes [RoomController.kick] can be refused with that the host
+/// can read off the room and act on: not the host, not in play, a bad seat,
+/// a seat that is not a playing one, a seat whose socket is up. Each leaves
+/// the connection as it was. docs/PROTOCOL.md section 28 rule 4.
+const Set<String> _kickRejectedCodes = <String>{
+  'NOT_HOST',
+  'WRONG_PHASE',
+  'BAD_FIELD',
+  'ILLEGAL_MOVE',
+  'NOT_ABSENT',
+};
+
 /// Holds the one [RoomConnection] a lobby screen is driving at any moment,
 /// re-creates it across a drop, and exposes the whole thing as a
 /// [ChangeNotifier] with no method that ever throws.
@@ -153,6 +167,7 @@ class RoomController extends ChangeNotifier {
   RoomPhase _phase = RoomPhase.idle;
   RoomSnapshot? _room;
   RoomSnapshot? _lastFinished;
+  ({int seat, String reason})? _lastRetirement;
 
   /// The last non-null seat and seat token this controller has ever seen,
   /// from any connection. Rule 5: never cleared except by [dispose], because
@@ -229,6 +244,12 @@ class RoomController extends ChangeNotifier {
   /// C-310 rule 1: the snapshot as it stood in FINISHED for the current room,
   /// preserved across a rematch LOBBY until the new game starts.
   RoomSnapshot? get lastFinished => _lastFinished;
+
+  /// The most recent `seat_retired` this controller reduced in the current
+  /// game: who, and why (`left`, `absent` or `kicked`). The screen words the
+  /// notice from it. Null until one arrives, and cleared by the next
+  /// `game_started` and by opening another room.
+  ({int seat, String reason})? get lastRetirement => _lastRetirement;
   int? get seat => _cachedSeat;
 
   /// C-592 D1: the seat this player held before the server moved it to a
@@ -419,6 +440,7 @@ class RoomController extends ChangeNotifier {
       }
       _room = snapshot;
       _clearLastFinished();
+      _lastRetirement = null;
       _phase = RoomPhase.connected;
       _blocked = false;
       _seatTakenOver = false;
@@ -716,6 +738,32 @@ class RoomController extends ChangeNotifier {
       notifyListeners();
     } catch (error) {
       _failFromSetPlayers(error);
+    }
+  }
+
+  /// Host-only, in a game. docs/PROTOCOL.md section 28 rule 4: asks the
+  /// server to retire a seat whose socket is down. Null when the server
+  /// answered with `seat_retired`, which [_reduceSeatRetired] applies like
+  /// any other push (this method changes nothing itself). The error code
+  /// when the server refused with one of [_kickRejectedCodes]; the
+  /// connection stays up and the host's screen words the refusal. Any other
+  /// failure goes to [_failFromInRoomRequest] as every other request's does.
+  /// A silent no-op returning null when not connected, as [setPlayers].
+  Future<String?> kick(int seat) async {
+    final RoomConnection? connection = _connection;
+    if (_disposed || _phase != RoomPhase.connected || connection == null) {
+      return null;
+    }
+    try {
+      await connection.kick(seat);
+      return null;
+    } catch (error) {
+      if (error is ProtocolErrorException &&
+          _kickRejectedCodes.contains(error.code)) {
+        return error.code;
+      }
+      _failFromInRoomRequest(error);
+      return null;
     }
   }
 
@@ -1184,6 +1232,10 @@ class RoomController extends ChangeNotifier {
         _reduceTurn(frame, room);
       case 'game_over':
         _reduceGameOver(frame, room);
+      case 'seat_finished':
+        _reduceSeatFinished(frame, room);
+      case 'seat_retired':
+        _reduceSeatRetired(frame, room);
     }
   }
 
@@ -1468,8 +1520,11 @@ class RoomController extends ChangeNotifier {
       seq: seqValue,
       recentRolls: const <(int k, int face)>[],
       recentRollSeats: const <int>[],
+      placings: const <int>[],
+      retired: const <int>[],
     );
     _clearLastFinished();
+    _lastRetirement = null;
     notifyListeners();
   }
 
@@ -1548,6 +1603,8 @@ class RoomController extends ChangeNotifier {
       queue: queue,
       legalByFace: legalByFace,
       segmentMs: _asInt(frame.data, 'segment_ms') ?? deadlineMs,
+      release: frame.data['release'] == true,
+      graceMs: _asInt(frame.data, 'grace_ms'),
     );
     _room = room.copyWith(turn: turn, seq: seqValue);
     notifyListeners();
@@ -1598,9 +1655,19 @@ class RoomController extends ChangeNotifier {
       frame.data,
       'legal_by_face',
     );
-    final TurnPhase phase = queueRaw == null
+    // Section 28 rule 2: a roll that grants a yard release has no
+    // `legal_by_face` and a non-empty `legal`, and the server is in
+    // await_move with nothing to spend a face on. A lapse is the same frame
+    // with `legal: []` and reads as any roll-queue roll with no legal move.
+    final bool release = frame.data['release'] == true;
+    final bool releaseOwed = release && legal.isNotEmpty;
+    final TurnPhase phase = releaseOwed
         ? TurnPhase.awaitMove
-        : (legalByFace != null ? TurnPhase.awaitMove : TurnPhase.awaitRoll);
+        : (queueRaw == null
+              ? TurnPhase.awaitMove
+              : (legalByFace != null
+                    ? TurnPhase.awaitMove
+                    : TurnPhase.awaitRoll));
     final List<int> queue = queueRaw ?? const <int>[];
 
     final bool movePending =
@@ -1616,12 +1683,13 @@ class RoomController extends ChangeNotifier {
       phase: phase,
       deadlineMs: deadlineMs,
       k: k,
-      value: value,
+      value: releaseOwed ? null : value,
       legal: legal,
       sixes: null,
       queue: queue,
-      legalByFace: legalByFace,
+      legalByFace: releaseOwed ? null : legalByFace,
       segmentMs: segmentMs,
+      release: release,
     );
     _room = room.copyWith(
       turn: turn,
@@ -1808,6 +1876,11 @@ class RoomController extends ChangeNotifier {
       return;
     }
 
+    // Section 28 rule 3: `placings` and `retired` are given together under
+    // `2026-11` and absent under `2026-10`; absent reads as empty.
+    final List<int> placings = _asIntList(frame.data, 'placings') ?? <int>[];
+    final List<int> retired = _asIntList(frame.data, 'retired') ?? <int>[];
+
     final TurnState? currentTurn = room.turn;
     final TurnState? turn = currentTurn == null
         ? null
@@ -1827,6 +1900,8 @@ class RoomController extends ChangeNotifier {
             state: RoomState.finished,
             winner: winnerValue,
             verifyUrl: verifyUrl,
+            placings: placings,
+            retired: retired,
             seq: seqValue,
           )
         : room.copyWith(
@@ -1834,9 +1909,80 @@ class RoomController extends ChangeNotifier {
             winner: winnerValue,
             verifyUrl: verifyUrl,
             turn: turn,
+            placings: placings,
+            retired: retired,
             seq: seqValue,
           );
     _recordLastFinished(_room!);
+    notifyListeners();
+  }
+
+  /// `{seat, place}`, docs/PROTOCOL.md section 28 rule 3: a seat brought its
+  /// fourth token home and the game goes on. The seat joins [placings]. It
+  /// stays in `seats`, and the `turn` frame that follows names the next
+  /// playing seat. A `place` other than the number of finished seats plus
+  /// one means this client missed or invented a finish, so it resynchronises
+  /// like a gap does. Absent seat: ignored entirely, ahead of the gap check.
+  void _reduceSeatFinished(Frame frame, RoomSnapshot room) {
+    final int? seatValue = _asInt(frame.data, 'seat');
+    final int? place = _asInt(frame.data, 'place');
+    final int? seqValue = frame.seq;
+    if (seatValue == null || place == null || seqValue == null) {
+      return;
+    }
+
+    if (!room.seats.any((SeatState s) => s.seat == seatValue)) {
+      return;
+    }
+
+    if (seqValue != room.seq + 1 || place != room.placings.length + 1) {
+      _beginResync(room);
+      return;
+    }
+
+    _room = room.copyWith(
+      placings: <int>[...room.placings, seatValue],
+      seq: seqValue,
+    );
+    notifyListeners();
+  }
+
+  /// `{seat, reason, host_seat}`, docs/PROTOCOL.md section 28 rule 4: a
+  /// playing seat left, was absent too long or was kicked. The seat joins
+  /// [retired] and stays in `seats`; `host_seat` is the value after the
+  /// change, -1 when nobody is left to host. Nothing else changes here: the
+  /// `turn` or `game_over` that follows, when there is one, does the rest.
+  /// `reason` is kept as the server sent it for [lastRetirement]. Absent
+  /// seat: ignored entirely, ahead of the gap check.
+  void _reduceSeatRetired(Frame frame, RoomSnapshot room) {
+    final int? seatValue = _asInt(frame.data, 'seat');
+    final String? reason = _asString(frame.data, 'reason');
+    final int? hostSeat = _asInt(frame.data, 'host_seat');
+    final int? seqValue = frame.seq;
+    if (seatValue == null ||
+        reason == null ||
+        hostSeat == null ||
+        seqValue == null ||
+        hostSeat < -1 ||
+        hostSeat > 3) {
+      return;
+    }
+
+    if (!room.seats.any((SeatState s) => s.seat == seatValue)) {
+      return;
+    }
+
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+
+    _room = room.copyWith(
+      retired: <int>[...room.retired, seatValue],
+      hostSeat: hostSeat,
+      seq: seqValue,
+    );
+    _lastRetirement = (seat: seatValue, reason: reason);
     notifyListeners();
   }
 
