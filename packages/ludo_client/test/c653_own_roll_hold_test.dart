@@ -1027,4 +1027,79 @@ void main() {
       },
     );
   });
+
+  // ===========================================================================
+  // 17. Another seat's rolled ends my hold at once (rule 4a over D1).
+  // ===========================================================================
+  testWidgets('C-653t 17: another seat\'s rolled 300 ms into my hold clears my '
+      'held face and my mark in the same frame, and neither comes back', (
+    tester,
+  ) async {
+    await _run(
+      tester,
+      item: '17',
+      body: (_Game g) async {
+        await _mySixOwesRoll(g);
+        await g.advanceTo(300);
+        g.expectFace('my six, just before the other seat rolls', 6, mark: true);
+        await g.push(
+          'rolled',
+          _rolledData(
+            1,
+            5,
+            queue: const <int>[5],
+            legal: const <int>[0],
+            legalByFace: <Map<String, Object?>>[
+              faceLegal(5, const <int>[0]),
+            ],
+            k: 1,
+          ),
+        );
+        expect(
+          g.faces,
+          isEmpty,
+          reason: g.why(
+            'seat 1 rolled 5 at +300 ms, same frame',
+            'my die to drop the held face 6 at once and never show seat 1\'s '
+                'face 5',
+          ),
+        );
+        expect(
+          g.marks,
+          0,
+          reason: g.why(
+            'seat 1 rolled 5 at +300 ms, same frame',
+            'own-die-roll-again gone at once with the held face',
+          ),
+        );
+        for (final int ms in <int>[350, 500, 850, 950, 1500]) {
+          await g.advanceTo(ms);
+          expect(
+            g.faces,
+            isEmpty,
+            reason: g.why(
+              'after seat 1\'s rolled',
+              'no face on my die (not the stale 6, not seat 1\'s 5)',
+            ),
+          );
+          expect(
+            g.marks,
+            0,
+            reason: g.why(
+              'after seat 1\'s rolled',
+              'the mark does not come back while the old hold would have run',
+            ),
+          );
+        }
+        expect(
+          g.idleArt,
+          isTrue,
+          reason: g.why(
+            'long after seat 1\'s rolled',
+            'my die on the idle cube',
+          ),
+        );
+      },
+    );
+  });
 }
