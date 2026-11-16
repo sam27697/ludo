@@ -133,6 +133,12 @@ Map<String, Object?>? _turnSnapshot(Room room, DateTime now) {
     }
   }
   turn['deadline_ms'] = _deadlineMs(room, now);
+  // docs/PROTOCOL.md section 29 rule 3: while the grace runs, the grace left;
+  // once it has run out the key is absent, never 0.
+  final int graceLeftMs = room.graceLeftMs(now);
+  if (graceLeftMs > 0) {
+    turn['grace_ms'] = graceLeftMs;
+  }
   // docs/PROTOCOL.md section 26 rule 4: present exactly when `deadline_ms`
   // is, and the budget that countdown runs against.
   turn['segment_ms'] = room.turnSegmentMs;
@@ -212,16 +218,7 @@ List<Map<String, Object?>> _wireLegalByFace(engine.GameState game) {
 /// the `deadline_ms` on a `rolled` or `turn` push, which the registry fixed
 /// once, at the instant that specific frame was decided, and which this
 /// file never recomputes.
-int _deadlineMs(Room room, DateTime now) {
-  final DateTime? startedAt = room.turnSegmentStartedAt;
-  if (startedAt == null) {
-    return 0;
-  }
-  final int budgetMs = room.turnSegmentMs;
-  final int elapsedMs = now.difference(startedAt).inMilliseconds;
-  final int remaining = budgetMs - elapsedMs;
-  return remaining > 0 ? remaining : 0;
-}
+int _deadlineMs(Room room, DateTime now) => room.segmentRemainingMs(now);
 
 String _wireState(RoomState state) {
   switch (state) {
@@ -377,6 +374,7 @@ Map<String, Object?> buildTurnPassed({
 /// spend. `phase` and `queue` are given on every call since every room
 /// plays the queue (section 21.3 rule 5); `value`, `legal` and
 /// `legalByFace` are given, and only given, when `phase` is `await_move`.
+/// [graceMs] is section 29's `grace_ms`.
 Map<String, Object?> buildTurn({
   required int seat,
   required int deadlineMs,
@@ -387,10 +385,14 @@ Map<String, Object?> buildTurn({
   List<int>? legal,
   List<Map<String, Object?>>? legalByFace,
   bool release = false,
+  int? graceMs,
 }) {
   return <String, Object?>{
     'seat': seat,
     'deadline_ms': deadlineMs,
+    // docs/PROTOCOL.md section 29 rule 3: given, and only given, on the
+    // `turn` of a pass in a 2026-11 room; the key is never 0.
+    if (graceMs != null && graceMs > 0) 'grace_ms': graceMs,
     'seq': seq,
     if (phase != null) 'phase': phase,
     if (queue != null) 'queue': queue,
@@ -586,6 +588,7 @@ List<OutFrame> buildRollFrames(RollOk ok, {String? by}) {
           legal: afterRollFields.legal,
           legalByFace: afterRollFields.legalByFace,
           release: afterRollFields.release,
+          graceMs: ok.nextGraceMs,
         ),
       ),
     );
@@ -681,6 +684,7 @@ List<OutFrame> buildMoveFrames(MoveOk ok, {String? by}) {
         legal: afterMoveFields.legal,
         legalByFace: afterMoveFields.legalByFace,
         release: afterMoveFields.release,
+        graceMs: ok.nextGraceMs,
       ),
     ),
   );
@@ -733,6 +737,7 @@ List<OutFrame> buildRetireFrames(RetireOk ok) {
           legal: fields.legal,
           legalByFace: fields.legalByFace,
           release: fields.release,
+          graceMs: ok.nextGraceMs,
         ),
       ),
     );

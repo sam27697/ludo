@@ -13,6 +13,7 @@ import 'package:fair_dice/fair_dice.dart' show DiceChain, drawDie, hexEncode;
 import 'package:ludo_engine/ludo_engine.dart' as engine;
 
 import 'clock.dart';
+import 'grace.dart';
 import 'room.dart';
 import 'room_code.dart';
 import 'ruleset.dart';
@@ -87,6 +88,7 @@ class ResumeOk extends ResumeResult {
     this.presenceSeq,
     this.turnSeq,
     this.turnDeadlineMs,
+    this.turnGraceMs,
   });
   final Room room;
   final Seat seat;
@@ -113,6 +115,10 @@ class ResumeOk extends ResumeResult {
 
   /// The restarted segment's `deadline_ms` for that `turn` frame.
   final int? turnDeadlineMs;
+
+  /// Section 29 rule 7: the grace that was still running when the seat came
+  /// back, for that `turn` frame's `grace_ms`. Null when none was.
+  final int? turnGraceMs;
 }
 
 class ResumeFailure extends ResumeResult {
@@ -261,6 +267,7 @@ class RollOk extends RollResult {
     this.turnPassedSeq,
     this.turnSeq,
     this.nextDeadlineMs,
+    this.nextGraceMs,
   });
 
   final Room room;
@@ -300,6 +307,10 @@ class RollOk extends RollResult {
   /// The freshly restarted segment's `deadline_ms` for the `turn` frame,
   /// set together with [turnSeq].
   final int? nextDeadlineMs;
+
+  /// Section 29: the `grace_ms` of that `turn` frame, set only when the turn
+  /// passed in a 2026-11 room.
+  final int? nextGraceMs;
 }
 
 class RollFailure extends RollResult {
@@ -327,6 +338,7 @@ class MoveOk extends MoveResult {
     this.turnPassedSeq,
     this.turnSeq,
     this.nextDeadlineMs,
+    this.nextGraceMs,
   });
 
   final Room room;
@@ -377,6 +389,10 @@ class MoveOk extends MoveResult {
   /// the three it is.
   final int? turnSeq;
   final int? nextDeadlineMs;
+
+  /// Section 29: the `grace_ms` of that `turn` frame, set only when the turn
+  /// passed in a 2026-11 room.
+  final int? nextGraceMs;
 }
 
 class MoveFailure extends MoveResult {
@@ -531,6 +547,7 @@ class RetireOk extends RetireResult {
     required this.hostSeat,
     this.turnSeq,
     this.nextDeadlineMs,
+    this.nextGraceMs,
     this.gameOverSeq,
     this.verifyUrl,
     this.freed = const <FreedSeat>[],
@@ -560,6 +577,10 @@ class RetireOk extends RetireResult {
   /// turn went to the next playing seat.
   final int? turnSeq;
   final int? nextDeadlineMs;
+
+  /// Section 29 rule 7: the `grace_ms` of that `turn` frame (a retire of the
+  /// seat on turn gives the next seat a grace), set only in a 2026-11 room.
+  final int? nextGraceMs;
 
   /// Set, with [verifyUrl], when the retirement left one playing seat and
   /// the game ended.
@@ -781,6 +802,7 @@ class RoomRegistry {
     int? presenceSeq;
     int? turnSeq;
     int? turnDeadlineMs;
+    int? turnGraceMs;
     if (reconnected) {
       room.seq++;
       presenceSeq = room.seq;
@@ -793,7 +815,14 @@ class RoomRegistry {
           game != null &&
           game.currentSeat == seat.seat &&
           room.turnSegmentMs == _awaySegmentMs) {
-        turnDeadlineMs = _restartSegment(room);
+        // Section 29 rule 7: inside a grace the restarted segment keeps the
+        // grace's end, and the pushed `turn` carries what is left of it.
+        final int graceLeftMs = room.graceLeftMs(_clock.now);
+        turnDeadlineMs = _restartSegment(
+          room,
+          graceMs: graceLeftMs > 0 ? graceLeftMs : null,
+        );
+        turnGraceMs = graceLeftMs > 0 ? graceLeftMs : null;
         room.seq++;
         turnSeq = room.seq;
       }
@@ -805,6 +834,7 @@ class RoomRegistry {
       presenceSeq: presenceSeq,
       turnSeq: turnSeq,
       turnDeadlineMs: turnDeadlineMs,
+      turnGraceMs: turnGraceMs,
     );
   }
 
@@ -1145,6 +1175,7 @@ class RoomRegistry {
     room.rollSeats.clear();
     room.releases.clear();
     room.turnSegmentStartedAt = null;
+    room.turnGraceEndsAt = null;
     for (final Seat s in room.seats) {
       s.clientSeed = null;
       s.seedOrigin = null;
@@ -1259,6 +1290,7 @@ class RoomRegistry {
     int? turnPassedSeq;
     int? turnSeq;
     int? nextDeadlineMs;
+    int? nextGraceMs;
 
     if (!turnEnded && !extraRollGranted) {
       // The roll leaves a legal move pending: the segment restarts now.
@@ -1278,7 +1310,8 @@ class RoomRegistry {
       room.seq++;
       turnSeq = room.seq;
       _noteTurnOwner(room, seat.seat);
-      nextDeadlineMs = _restartSegment(room);
+      nextGraceMs = _graceFor(room, appliedOk.events, seat.seat);
+      nextDeadlineMs = _restartSegment(room, graceMs: nextGraceMs);
     }
 
     return RollOk(
@@ -1291,6 +1324,7 @@ class RoomRegistry {
       turnPassedSeq: turnPassedSeq,
       turnSeq: turnSeq,
       nextDeadlineMs: nextDeadlineMs,
+      nextGraceMs: nextGraceMs,
     );
   }
 
@@ -1379,6 +1413,7 @@ class RoomRegistry {
     int? turnPassedSeq;
     int? turnSeq;
     int? nextDeadlineMs;
+    int? nextGraceMs;
 
     if (won) {
       final int winnerSeat =
@@ -1412,7 +1447,8 @@ class RoomRegistry {
       room.seq++;
       turnSeq = room.seq;
       _noteTurnOwner(room, seat.seat);
-      nextDeadlineMs = _restartSegment(room);
+      nextGraceMs = _graceFor(room, appliedOk.events, seat.seat);
+      nextDeadlineMs = _restartSegment(room, graceMs: nextGraceMs);
     }
 
     return MoveOk(
@@ -1428,6 +1464,7 @@ class RoomRegistry {
       turnPassedSeq: turnPassedSeq,
       turnSeq: turnSeq,
       nextDeadlineMs: nextDeadlineMs,
+      nextGraceMs: nextGraceMs,
     );
   }
 
@@ -1892,6 +1929,7 @@ class RoomRegistry {
 
     int? turnSeq;
     int? nextDeadlineMs;
+    int? nextGraceMs;
     int? gameOverSeq;
     String? verifyUrl;
     List<FreedSeat> freed = const <FreedSeat>[];
@@ -1907,7 +1945,8 @@ class RoomRegistry {
       room.seq++;
       turnSeq = room.seq;
       _noteTurnOwner(room, previousTurnOwner);
-      nextDeadlineMs = _restartSegment(room);
+      nextGraceMs = _graceFor(room, appliedOk.events, previousTurnOwner);
+      nextDeadlineMs = _restartSegment(room, graceMs: nextGraceMs);
     }
 
     return RetireOk(
@@ -1920,6 +1959,7 @@ class RoomRegistry {
       hostSeat: hostSeat,
       turnSeq: turnSeq,
       nextDeadlineMs: nextDeadlineMs,
+      nextGraceMs: nextGraceMs,
       gameOverSeq: gameOverSeq,
       verifyUrl: verifyUrl,
       freed: freed,
@@ -2218,32 +2258,36 @@ class RoomRegistry {
   /// current turn segment on the registry's own injected clock, with the
   /// budget of the seat it is for, and returns the freshly restored
   /// `deadline_ms` (that budget, since the elapsed time from a segment that
-  /// starts this instant is zero).
-  int _restartSegment(Room room) {
+  /// starts this instant is zero, and a grace delays the count, never the
+  /// value). [graceMs], section 29, is the grace the segment starts with:
+  /// its budget counts from `now + graceMs`. Null starts a segment with no
+  /// grace.
+  int _restartSegment(Room room, {int? graceMs}) {
     final engine.GameState? game = room.game;
     final Seat? onTurn = game == null ? null : _seatAt(room, game.currentSeat);
     room.turnSegmentMs = onTurn != null && onTurn.away
         ? _awaySegmentMs
         : room.rules.turnSeconds * 1000;
-    room.turnSegmentStartedAt = _clock.now;
+    final DateTime now = _clock.now;
+    room.turnSegmentStartedAt = now;
+    room.turnGraceEndsAt =
+        graceMs == null ? null : now.add(Duration(milliseconds: graceMs));
     return room.turnSegmentMs;
   }
 
+  /// Section 29 rules 1 and 2: the grace of the `turn` frame the step that
+  /// produced [events] ends with, for the seat [actor] whose turn it ended.
+  /// Null under 2026-10, and whenever that `turn` is not a pass.
+  int? _graceFor(Room room, List<engine.GameEvent> events, int actor) =>
+      room.isRuleset202611 ? graceForStep(events, actor) : null;
+
   /// `docs/PROTOCOL.md` section 6: `max(0, budget - elapsed)` for the
   /// segment already running, without restarting it, where the budget is the
-  /// one that segment started with (`Room.turnSegmentMs`). Zero if no
-  /// segment has ever started, which should not happen once a game exists
-  /// but is not something this method should throw over.
-  int _remainingSegmentMs(Room room) {
-    final DateTime? startedAt = room.turnSegmentStartedAt;
-    if (startedAt == null) {
-      return 0;
-    }
-    final int budgetMs = room.turnSegmentMs;
-    final int elapsedMs = _clock.now.difference(startedAt).inMilliseconds;
-    final int remaining = budgetMs - elapsedMs;
-    return remaining > 0 ? remaining : 0;
-  }
+  /// one that segment started with (`Room.turnSegmentMs`) and elapsed counts
+  /// from the end of its grace (section 29 rule 3). Zero if no segment has
+  /// ever started, which should not happen once a game exists but is not
+  /// something this method should throw over.
+  int _remainingSegmentMs(Room room) => room.segmentRemainingMs(_clock.now);
 
   Seat? _findSeat(Room room, String seatToken) {
     for (final Seat seat in room.seats) {
