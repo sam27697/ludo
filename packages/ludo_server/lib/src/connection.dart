@@ -57,6 +57,7 @@ import 'envelope.dart';
 import 'rate_limit.dart';
 import 'registry.dart';
 import 'room.dart';
+import 'ruleset.dart';
 import 'snapshot.dart';
 
 /// `docs/PROTOCOL.md` section 7.1: the four close codes, and the only four
@@ -147,6 +148,23 @@ abstract class RoomHub {
       {required String code, required String seatToken});
 }
 
+/// `docs/PROTOCOL.md` section 28 rule 4 "At the end": once the `player_left`
+/// of every retired seat a finished game freed has been broadcast, none of
+/// those seats' sockets is owed anything more from the room. Detaches
+/// whichever socket still holds each [freed] seat and clears its identity,
+/// the same as section 16.9 rule 1 does for a seat removed by a forced
+/// rematch start. A seat whose socket is already gone is skipped.
+void detachFreedSeats(RoomHub hub, String code, List<FreedSeat> freed) {
+  for (final FreedSeat gone in freed) {
+    final Connection? conn = hub.detachSeatToken(
+      code: code,
+      seatToken: gone.seat.seatToken,
+    );
+    conn?.roomCode = null;
+    conn?.seatToken = null;
+  }
+}
+
 /// One WebSocket connection and the seat it may or may not currently hold.
 /// A seat survives its socket (`docs/PROTOCOL.md` section 8): closing this
 /// connection never calls `leaveRoom`, only `setConnected(..., false)`.
@@ -223,7 +241,13 @@ class Connection {
             error: ProtocolError.badField,
             closeConnection: false,
           )
-        : parseEnvelope(text);
+        : parseEnvelope(
+            text,
+            // Section 28 rule 4: `kick` is a message type only of a server
+            // that plays the 2026-11 ruleset; on any other it is BAD_TYPE
+            // exactly as before the section existed.
+            kickKnown: registry.ruleset == ruleset202611,
+          );
     if (parsed is EnvelopeError) {
       _log(
         type: '-',
@@ -320,6 +344,8 @@ class Connection {
         _handleGameLog(envelope);
       case 'emote':
         _handleEmote(envelope);
+      case 'kick':
+        _handleKick(envelope);
       default:
         // Unreachable: parseEnvelope already rejected anything outside
         // knownMessageTypes as BAD_TYPE.
@@ -535,6 +561,8 @@ class Connection {
           value: fields.value,
           legal: fields.legal,
           legalByFace: fields.legalByFace,
+          release: fields.release,
+          graceMs: ok.turnGraceMs,
         ),
         exceptConn: this,
       );
@@ -959,6 +987,11 @@ class Connection {
       return;
     }
     final LeaveOk ok = result as LeaveOk;
+    final RetireOk? retire = ok.retire;
+    if (retire != null) {
+      _publishLeaveRetire(envelope, retire);
+      return;
+    }
     final bool stillSeated =
         ok.room.seats.any((Seat s) => s.seatToken == seatToken);
     final String code = ok.room.code;
@@ -989,6 +1022,71 @@ class Connection {
     // start the rematch. This socket is detached above, so the start never
     // reaches it.
     _startRematchIfReady(envelope, code);
+  }
+
+  /// `leave_room` that retired a playing seat, `docs/PROTOCOL.md` section 28
+  /// rule 4 "left". The leaver's socket is detached first, so it is sent the
+  /// one `seat_retired` (with `re`) and nothing that follows it; the rest of
+  /// the room is sent every frame the retirement decided on.
+  void _publishLeaveRetire(ParsedEnvelope envelope, RetireOk retire) {
+    final String code = retire.room.code;
+    hub.detach(this);
+    roomCode = null;
+    seatToken = null;
+
+    final List<OutFrame> frames = buildRetireFrames(retire);
+    _send(type: frames.first.type, data: frames.first.data, re: envelope.id);
+    for (final OutFrame frame in frames) {
+      hub.broadcast(code: code, type: frame.type, data: frame.data);
+    }
+    detachFreedSeats(hub, code, retire.freed);
+    _logRetire(envelope.type, envelope.id, retire);
+  }
+
+  /// `kick`, `docs/PROTOCOL.md` section 28 rule 4 "kicked". Identity first,
+  /// like the other socket-identified messages; the registry runs the rest of
+  /// the ladder in the section's own order (`NOT_HOST`, `WRONG_PHASE`,
+  /// `BAD_FIELD`, `ILLEGAL_MOVE`, `NOT_ABSENT`). Answered on the host's socket
+  /// by the `seat_retired` broadcast with `re`; the frames that follow it
+  /// (a `turn`, or `game_over` and its `player_left`s) carry `re` on this
+  /// socket's copy too, as every burst a request causes does.
+  void _handleKick(ParsedEnvelope envelope) {
+    if (!_hasIdentity) {
+      _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    final RetireResult result = registry.kick(
+      code: roomCode!,
+      seatToken: seatToken!,
+      data: envelope.data,
+    );
+    if (result is RetireFailure) {
+      _reject(envelope, result.error, room: roomCode);
+      return;
+    }
+    final RetireOk ok = result as RetireOk;
+    for (final OutFrame frame in buildRetireFrames(ok)) {
+      _sendAndBroadcast(
+        room: ok.room.code,
+        type: frame.type,
+        data: frame.data,
+        re: envelope.id,
+      );
+    }
+    detachFreedSeats(hub, ok.room.code, ok.freed);
+    _logRetire(envelope.type, envelope.id, ok);
+  }
+
+  /// One structured line for a retirement the request [type] caused.
+  void _logRetire(String type, String id, RetireOk ok) {
+    _log(
+      type: type,
+      id: id,
+      outcome: 'ok seat_retired reason=${ok.reason}',
+      room: ok.room.code,
+      seat: ok.seat.seat,
+      seq: ok.gameOverSeq ?? ok.turnSeq ?? ok.retiredSeq,
+    );
   }
 
   /// `rematch`, `docs/PROTOCOL.md` section 16.1. Identity-first, like the
@@ -1390,7 +1488,11 @@ class Connection {
     int? face;
     if (envelope.data.containsKey('face')) {
       final Object? rawFace = envelope.data['face'];
-      if (rawFace is! int || rawFace < 1 || rawFace > 6) {
+      // Section 28 rule 2: with a release owed the release check comes
+      // before the range check, so any integer is passed on and the engine
+      // answers it ILLEGAL_MOVE; only a non-integer is a malformed field.
+      final bool releaseOwed = liveRoom!.game!.releaseOwed;
+      if (rawFace is! int || (!releaseOwed && (rawFace < 1 || rawFace > 6))) {
         _reject(envelope, ProtocolError.badField);
         return;
       }
@@ -1466,176 +1568,49 @@ class Connection {
   void _publishRoll(ParsedEnvelope envelope, RollOk ok) {
     final engine.Rolled rolledEvent =
         ok.events.whereType<engine.Rolled>().single;
-    final engine.GameState afterRoll = ok.room.game!;
-    final TurnQueueFields afterRollFields = turnQueueFields(afterRoll);
-    final Map<String, Object?> rolledData = buildRolled(
-      seat: rolledEvent.seat,
-      value: rolledEvent.value,
-      legal: rolledEvent.legal,
-      deadlineMs: ok.rolledDeadlineMs,
-      k: ok.k,
-      reveal: ok.reveal,
-      seq: ok.rolledSeq,
-      queue: afterRollFields.queue,
-      legalByFace: afterRollFields.legalByFace,
-    );
-    _sendAndBroadcast(
-      room: ok.room.code,
-      type: 'rolled',
-      data: rolledData,
-      re: envelope.id,
-    );
-
-    if (ok.turnPassedSeq != null) {
-      final engine.TurnEnded turnEnded =
-          ok.events.whereType<engine.TurnEnded>().single;
-      final Map<String, Object?> passedData = buildTurnPassed(
-        seat: turnEnded.seat,
-        reason: _wireTurnEndReason(turnEnded.reason),
-        seq: ok.turnPassedSeq!,
-      );
+    for (final OutFrame frame in buildRollFrames(ok)) {
       _sendAndBroadcast(
         room: ok.room.code,
-        type: 'turn_passed',
-        data: passedData,
+        type: frame.type,
+        data: frame.data,
         re: envelope.id,
       );
     }
-
-    if (ok.turnSeq == null) {
-      _log(
-        type: envelope.type,
-        id: envelope.id,
-        outcome: 'ok',
-        room: ok.room.code,
-        seat: rolledEvent.seat,
-        seq: ok.rolledSeq,
-      );
-      return;
-    }
-
-    final Map<String, Object?> turnData = buildTurn(
-      seat: afterRoll.currentSeat,
-      deadlineMs: ok.nextDeadlineMs!,
-      seq: ok.turnSeq!,
-      phase: afterRollFields.phase,
-      queue: afterRollFields.queue,
-      value: afterRollFields.value,
-      legal: afterRollFields.legal,
-      legalByFace: afterRollFields.legalByFace,
-    );
-    _sendAndBroadcast(
-      room: ok.room.code,
-      type: 'turn',
-      data: turnData,
-      re: envelope.id,
-    );
     _log(
       type: envelope.type,
       id: envelope.id,
       outcome: 'ok',
       room: ok.room.code,
       seat: rolledEvent.seat,
-      seq: ok.turnSeq,
+      seq: ok.turnSeq ?? ok.rolledSeq,
     );
   }
 
   /// Builds and sends every frame `RoomRegistry.move` decided on: `moved`
-  /// always, carrying the face it spent, then exactly one of `game_over`,
-  /// or `turn_passed` followed by `turn`, or a bare `turn` -- section 12.2
-  /// and section 21.3 rule 4, which replaces it for every room since every
-  /// room plays the queue.
+  /// always, carrying the face it spent (or `release: true`, section 28 rule
+  /// 2), then exactly one of `game_over` (and the `player_left` of every
+  /// retired seat it freed, section 28 rule 4), `seat_finished` and `turn`,
+  /// `turn_passed` and `turn`, or a bare `turn` -- section 12.2 and section
+  /// 21.3 rule 4, which replaces it for every room since every room plays
+  /// the queue.
   void _publishMove(ParsedEnvelope envelope, MoveOk ok) {
     final engine.Moved movedEvent = ok.events.whereType<engine.Moved>().single;
-    final List<Map<String, Object?>> captured = <Map<String, Object?>>[
-      for (final engine.Captured c in ok.events.whereType<engine.Captured>())
-        <String, Object?>{'seat': c.seat, 'token': c.token},
-    ];
-    final bool extraRoll = ok.events.whereType<engine.ExtraRoll>().isNotEmpty;
-    final Map<String, Object?> movedData = buildMoved(
-      seat: movedEvent.seat,
-      token: movedEvent.token,
-      from: movedEvent.from,
-      to: movedEvent.to,
-      captured: captured,
-      extraRoll: extraRoll,
-      seq: ok.movedSeq,
-      face: ok.face,
-    );
-    _sendAndBroadcast(
-      room: ok.room.code,
-      type: 'moved',
-      data: movedData,
-      re: envelope.id,
-    );
-
-    final List<engine.GameWon> wonEvents =
-        ok.events.whereType<engine.GameWon>().toList();
-    if (wonEvents.isNotEmpty) {
-      final engine.GameWon won = wonEvents.single;
-      final Map<String, Object?> overData = buildGameOver(
-        winner: won.seat,
-        verifyUrl: ok.verifyUrl!,
-        seq: ok.gameOverSeq!,
-      );
+    for (final OutFrame frame in buildMoveFrames(ok)) {
       _sendAndBroadcast(
         room: ok.room.code,
-        type: 'game_over',
-        data: overData,
-        re: envelope.id,
-      );
-      _log(
-        type: envelope.type,
-        id: envelope.id,
-        outcome: 'ok',
-        room: ok.room.code,
-        seat: movedEvent.seat,
-        seq: ok.gameOverSeq,
-      );
-      return;
-    }
-
-    if (ok.turnPassedSeq != null) {
-      final engine.TurnEnded turnEnded =
-          ok.events.whereType<engine.TurnEnded>().single;
-      final Map<String, Object?> passedData = buildTurnPassed(
-        seat: turnEnded.seat,
-        reason: _wireTurnEndReason(turnEnded.reason),
-        seq: ok.turnPassedSeq!,
-      );
-      _sendAndBroadcast(
-        room: ok.room.code,
-        type: 'turn_passed',
-        data: passedData,
+        type: frame.type,
+        data: frame.data,
         re: envelope.id,
       );
     }
-
-    final engine.GameState afterMove = ok.room.game!;
-    final TurnQueueFields afterMoveFields = turnQueueFields(afterMove);
-    final Map<String, Object?> turnData = buildTurn(
-      seat: afterMove.currentSeat,
-      deadlineMs: ok.nextDeadlineMs!,
-      seq: ok.turnSeq!,
-      phase: afterMoveFields.phase,
-      queue: afterMoveFields.queue,
-      value: afterMoveFields.value,
-      legal: afterMoveFields.legal,
-      legalByFace: afterMoveFields.legalByFace,
-    );
-    _sendAndBroadcast(
-      room: ok.room.code,
-      type: 'turn',
-      data: turnData,
-      re: envelope.id,
-    );
+    detachFreedSeats(hub, ok.room.code, ok.freed);
     _log(
       type: envelope.type,
       id: envelope.id,
       outcome: 'ok',
       room: ok.room.code,
       seat: movedEvent.seat,
-      seq: ok.turnSeq,
+      seq: ok.gameOverSeq ?? ok.turnSeq,
     );
   }
 
@@ -1651,11 +1626,6 @@ class Connection {
     _send(type: type, data: data, re: re);
     hub.broadcast(code: room, type: type, data: data, exceptConn: this);
   }
-
-  /// The wire string for `engine.TurnEndReason`, `docs/PROTOCOL.md` section
-  /// 5's `turn_passed.reason`.
-  String _wireTurnEndReason(engine.TurnEndReason reason) =>
-      wireTurnEndReason(reason);
 
   /// `rules`, the wire-level object of `docs/PROTOCOL.md` section 4. Called
   /// unconditionally by `_handleCreateRoom`, key present or not: a missing

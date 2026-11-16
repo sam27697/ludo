@@ -326,6 +326,7 @@ class WireServer {
   /// cannot stop the publish for every other room this same sweep decided
   /// on.
   void _runTurnExpiry() {
+    _runAbsentRetirement();
     final List<ExpiredTurn> expired;
     try {
       expired = registry.expireTurns();
@@ -343,6 +344,10 @@ class WireServer {
             type: frame.type,
             data: frame.data,
           );
+        }
+        final MoveOk? timerMove = one.move;
+        if (timerMove != null) {
+          detachFreedSeats(_hub, one.code, timerMove.freed);
         }
         final String phase = one.roll != null
             ? 'await_roll'
@@ -363,6 +368,47 @@ class WireServer {
             'seat=${one.seat} error=$error\n$stack');
       }
     }
+  }
+
+  /// `docs/PROTOCOL.md` section 28 rule 4 "absent", the other half of the
+  /// 1 s sweep: retires every playing seat of a 2026-11 game whose socket has
+  /// been down for 120 s, and publishes what the engine's events say follows,
+  /// to every socket in the room with no `re` (no request is answered). Run
+  /// first, so a seat that has just become due is retired rather than played
+  /// for by the timer one more time. The registry hands over each retirement
+  /// as it is made, so every one is published from the state it left. Guarded
+  /// per room: a throw retiring in one room, or publishing one retirement, is
+  /// logged with the room and the seat and the other rooms go on.
+  void _runAbsentRetirement() {
+    try {
+      registry.retireAbsentSeats(
+        publish: _publishAbsentRetirement,
+        onError: (String code, int? seat, Object error, StackTrace stack) {
+          // ignore: avoid_print
+          print('absent-retire failed room=$code seat=${seat ?? '-'} '
+              'error=$error\n$stack');
+        },
+      );
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('absent-retire sweep failed error=$error\n$stack');
+    }
+  }
+
+  void _publishAbsentRetirement(RetireOk one) {
+    final List<OutFrame> frames = buildRetireFrames(one);
+    for (final OutFrame frame in frames) {
+      _hub.broadcast(
+        code: one.room.code,
+        type: frame.type,
+        data: frame.data,
+      );
+    }
+    detachFreedSeats(_hub, one.room.code, one.freed);
+    // ignore: avoid_print
+    print('room=${one.room.code} type=- id=- seat=${one.seat.seat} '
+        'outcome=seat_retired reason=${one.reason} '
+        'seq=${one.gameOverSeq ?? one.turnSeq ?? one.retiredSeq}');
   }
 
   void _runHousekeeping() {

@@ -12,6 +12,7 @@
 // roll the players actually saw.
 
 import 'package:fair_dice/fair_dice.dart' show drawDie;
+import 'package:ludo_engine/ludo_engine.dart' show GameState;
 
 import 'room.dart';
 
@@ -54,6 +55,12 @@ Map<String, Object?> buildVerifyRecord(
       _rollEntry(room, gameId, clientSeeds, k),
   ];
 
+  // docs/PROTOCOL.md section 28 rules 2 and 3: the keys of the 2026-11
+  // ruleset, absent under 2026-10 so a 2026-10 record is byte for byte what
+  // it always was.
+  final bool ruleset202611 = room.isRuleset202611;
+  final GameState? game = room.game;
+
   return <String, Object?>{
     'format': verifyRecordFormat,
     'game_id': gameId,
@@ -64,6 +71,10 @@ Map<String, Object?> buildVerifyRecord(
     'seeds': seeds,
     'rolls': rolls,
     'winner': winner,
+    if (ruleset202611) 'ruleset': room.ruleset,
+    if (ruleset202611) 'releases': List<int>.of(room.releases),
+    if (ruleset202611) 'placings': List<int>.of(game?.placings ?? <int>[]),
+    if (ruleset202611) 'retired': List<int>.of(game?.retired ?? <int>[]),
     'finished_at': _formatFinishedAt(finishedAt),
   };
 }

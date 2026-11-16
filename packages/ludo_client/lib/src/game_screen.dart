@@ -85,6 +85,12 @@ enum GameScreenResult {
   roomClosedGuest,
 }
 
+/// C-653 D1: how long the face of a roll of mine stays on my die from the
+/// `rolled` frame's arrival, whatever frames follow and whether or not
+/// motion is reduced. Presentation only: the controller already holds the
+/// truth, and nothing here delays a frame or a cue.
+const Duration kOwnRollHold = Duration(milliseconds: 900);
+
 /// C-432 D4: what a snapshot's own-seat `timer_steps` asks of the C-426 D3
 /// notice. `none` is an older server's absent field, a seat that is not in
 /// the snapshot, or a LOBBY snapshot.
@@ -437,6 +443,15 @@ class _GameScreenState extends State<GameScreen> {
   Timer? _noMoveTimer;
   bool _noMoveVisible = false;
   int? _noMoveFace;
+  // C-653 D1-D4: the face of my own latest roll, held on my die for
+  // `kOwnRollHold` from the `rolled` frame. `_ownRollAgain` is D3's mark (a
+  // six that owes another roll); `_ownRollPop` is raised once per hold so the
+  // die plays D4's landing pop. A newer `rolled` of mine restarts the hold.
+  Timer? _ownRollHoldTimer;
+  final GlobalKey _gameDieKey = GlobalKey(debugLabel: 'game-die-widget');
+  int? _ownRollHoldFace;
+  bool _ownRollAgain = false;
+  int _ownRollPop = 0;
   // C-474 D1: why the armed notice has no move. Fixed when the notice arms
   // and untouched while it is up, even when a snapshot lands under it.
   NoMoveReason _noMoveReason = NoMoveReason.plain;
@@ -483,6 +498,18 @@ class _GameScreenState extends State<GameScreen> {
   // line. A new seat is a turn change; the same seat again is an extra roll
   // or a replay of a turn already weighed.
   int? _nextSeenSeat;
+
+  // C-656 (PROTOCOL 28): one notice at a time in the below-die slot for the
+  // events the 2026-11 ruleset adds (a yard release, a place, a seat out, a
+  // refused removal). The newest replaces the one up, each holds 2500 ms.
+  _RulesetNotice? _rulesetNotice;
+  Timer? _rulesetNoticeTimer;
+  static const Duration _rulesetNoticeHold = Duration(milliseconds: 2500);
+
+  // C-656 S6: the host's remove sheet, with the seat it is about, so a frame
+  // that reconnects that seat can close it.
+  Route<void>? _kickSheetRoute;
+  int? _kickSheetSeat;
 
   // C-518 D1: the route of the quick-message sheet this screen opened, so
   // my turn can close it and nothing else. Never the leave confirm, the face
@@ -772,7 +799,9 @@ class _GameScreenState extends State<GameScreen> {
     _autoMoveCeilingTimer?.cancel();
     _rollNoAnswerTimer?.cancel();
     _noMoveTimer?.cancel();
+    _ownRollHoldTimer?.cancel();
     _timerPlayedOtherTimer?.cancel();
+    _rulesetNoticeTimer?.cancel();
     _trayDeadTimer?.cancel();
     _watchDeadTimer?.cancel();
     _seatMovedTimer?.cancel();
@@ -820,6 +849,9 @@ class _GameScreenState extends State<GameScreen> {
     // every cue and announcement the frame owes.
     if (frame.type == 'game_over' || frame.type == 'game_started') {
       _closeOwnSheets();
+      _closeSheetRoute(_kickSheetRoute);
+      _kickSheetRoute = null;
+      _dropRulesetNotice();
     }
     // C-246 rule 5: a `game_started` naming a game this screen has not
     // already recorded is the next game after a rematch (or the very
@@ -894,6 +926,7 @@ class _GameScreenState extends State<GameScreen> {
           .toList();
     }
     _trackExtraRoll(frame, owesRoll: owesRoll);
+    _armOwnRollHold(frame, owesRoll: owesRoll);
     // C-474 D3.3: the announcement below plays before the notice arms, so
     // the reason is taken first and both read the same one.
     if (frame.type == 'rolled' && cues.contains(FeedbackCue.noMove)) {
@@ -1041,12 +1074,15 @@ class _GameScreenState extends State<GameScreen> {
       final int? seatValue = _intAt(frame.data, 'seat');
       if (seatValue != null &&
           seatValue == widget.controller.seat &&
-          !_removedLeaveHandled) {
+          !_removedLeaveHandled &&
+          !_staysOnEndCard(seatValue)) {
         _removedLeaveHandled = true;
         _clearSafeCue();
         _leaveGameRoute(GameScreenResult.removed);
       }
     }
+
+    _onRulesetFrame(frame);
 
     if (frame.type == 'game_over') {
       _clearSafeCue();
@@ -1315,6 +1351,248 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
     _announce(AppLocalizations.of(context).gameYouAreNextAnnounce);
+  }
+
+  /// C-656 S1, S2, S5: what the ruleset's own frames owe the screen, after
+  /// the controller has reduced them. A notice for each, and for my first
+  /// place the `win` cue; nothing else plays here (the release `rolled`
+  /// already derives `canMove`, the last token's `moved` already played
+  /// `home`). A frame the controller did not apply (a resync dropped it)
+  /// changed nothing underneath, so it shows nothing.
+  void _onRulesetFrame(Frame frame) {
+    if (!mounted) {
+      return;
+    }
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    final int? seat = _intAt(frame.data, 'seat');
+    if (room == null || seat == null || controller.hasDesynced) {
+      return;
+    }
+    final int? mySeat = controller.seat;
+    final String name = _seatNameFor(seat) ?? '';
+    switch (frame.type) {
+      case 'rolled':
+        final Object? legal = frame.data['legal'];
+        final TurnState? turn = room.turn;
+        if (frame.data['release'] != true ||
+            legal is! List ||
+            legal.isEmpty ||
+            turn == null ||
+            turn.seat != seat ||
+            !turn.release) {
+          return;
+        }
+        _showRulesetNotice(
+          seat == mySeat
+              ? const _RulesetNotice(_RulesetNoticeKind.releaseMine)
+              : _RulesetNotice(_RulesetNoticeKind.releaseOther, name: name),
+        );
+      case 'seat_finished':
+        final int? place = _intAt(frame.data, 'place');
+        if (place == null || !room.placings.contains(seat)) {
+          return;
+        }
+        final bool mine = seat == mySeat;
+        // My first place is the one place that is felt: the win cue speaks
+        // for itself, so the notice is not read out a second time.
+        _showRulesetNotice(
+          mine
+              ? _RulesetNotice(_RulesetNoticeKind.finishedMine, place: place)
+              : _RulesetNotice(
+                  _RulesetNoticeKind.finishedOther,
+                  name: name,
+                  place: place,
+                ),
+          announce: !(mine && place == 1),
+        );
+        if (mine && place == 1) {
+          _playCue(FeedbackScope.of(context), FeedbackCue.win);
+        }
+      case 'seat_retired':
+        if (!room.retired.contains(seat)) {
+          return;
+        }
+        final _RulesetNoticeKind kind;
+        switch (_stringAt(frame.data, 'reason')) {
+          case 'absent':
+            kind = _RulesetNoticeKind.retiredAbsent;
+          case 'kicked':
+            kind = _RulesetNoticeKind.retiredKicked;
+          default:
+            kind = _RulesetNoticeKind.retiredLeft;
+        }
+        _showRulesetNotice(_RulesetNotice(kind, name: name));
+    }
+  }
+
+  void _showRulesetNotice(_RulesetNotice notice, {bool announce = true}) {
+    if (!mounted) {
+      return;
+    }
+    _rulesetNoticeTimer?.cancel();
+    _rulesetNoticeTimer = Timer(_rulesetNoticeHold, _dropRulesetNotice);
+    setState(() => _rulesetNotice = notice);
+    if (announce) {
+      _announce(_rulesetNoticeLine(AppLocalizations.of(context), notice));
+    }
+  }
+
+  void _dropRulesetNotice() {
+    _rulesetNoticeTimer?.cancel();
+    _rulesetNoticeTimer = null;
+    if (!mounted || _rulesetNotice == null) {
+      _rulesetNotice = null;
+      return;
+    }
+    setState(() => _rulesetNotice = null);
+  }
+
+  /// The words of [notice] in the ambient locale. The place word comes from
+  /// `placeWord`, the same one the board badge and the end card speak.
+  String _rulesetNoticeLine(AppLocalizations loc, _RulesetNotice notice) {
+    final int place = notice.place ?? 0;
+    switch (notice.kind) {
+      case _RulesetNoticeKind.releaseMine:
+        return loc.gameReleaseNoticeMine;
+      case _RulesetNoticeKind.releaseOther:
+        return loc.gameReleaseNoticeOther(notice.name);
+      case _RulesetNoticeKind.finishedMine:
+        return loc.gameSeatFinishedMine(placeWord(loc, place));
+      case _RulesetNoticeKind.finishedOther:
+        return loc.gameSeatFinishedOther(notice.name, placeWord(loc, place));
+      case _RulesetNoticeKind.retiredLeft:
+        return loc.gameSeatRetiredLeft(notice.name);
+      case _RulesetNoticeKind.retiredAbsent:
+        return loc.gameSeatRetiredAbsent(notice.name);
+      case _RulesetNoticeKind.retiredKicked:
+        return loc.gameSeatRetiredKicked(notice.name);
+      case _RulesetNoticeKind.kickBack:
+        return loc.gameKickRefusedBack(notice.name);
+      case _RulesetNoticeKind.kickFailed:
+        return loc.gameKickFailed(notice.name);
+    }
+  }
+
+  /// C-656 S5: my own `player_left` after `game_over` does not take me off
+  /// the end card while my seat is among the retired ones: the server frees
+  /// the seat, the card stays until I choose New table or leave. Read off
+  /// the finished game the card is drawn from, and off the live room.
+  bool _staysOnEndCard(int mySeat) {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    if (room == null || room.state != RoomState.finished) {
+      return false;
+    }
+    return room.retired.contains(mySeat) ||
+        (controller.lastFinished?.retired.contains(mySeat) ?? false);
+  }
+
+  /// C-656 S6: the host may remove a seat that is in play, whose phone is
+  /// away, in a 2026-11 game that is under way.
+  bool _kickEligible(RoomSnapshot room, int seat) {
+    final RoomController controller = widget.controller;
+    if (!controller.isHost ||
+        _seatLost ||
+        _isEndHeld ||
+        room.state != RoomState.playing ||
+        room.rules.ruleset != '2026-11' ||
+        seat == controller.seat) {
+      return false;
+    }
+    if (!_seatsInPlayOf(room).contains(seat)) {
+      return false;
+    }
+    for (final SeatState s in room.seats) {
+      if (s.seat == seat) {
+        return !s.connected;
+      }
+    }
+    return false;
+  }
+
+  /// The away marks the host may tap right now.
+  Set<int> _kickSeatsOf(RoomSnapshot room) {
+    return <int>{
+      for (final SeatState s in room.seats)
+        if (_kickEligible(room, s.seat)) s.seat,
+    };
+  }
+
+  /// C-656 S6: the host tapped an away mark. A small sheet in the board's own
+  /// colours asks once; Remove sends `kick`, Wait only closes it.
+  void _onAwayTap(int seat) {
+    final RoomSnapshot? room = widget.controller.room;
+    if (!mounted || room == null || _kickSheetRoute != null) {
+      return;
+    }
+    if (!_kickEligible(room, seat)) {
+      return;
+    }
+    final String name = _seatNameFor(seat) ?? '';
+    final AppLocalizations loc = AppLocalizations.of(context);
+    FeedbackScope.of(context).play(FeedbackCue.tap);
+    _kickSheetSeat = seat;
+    showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: LudoColors.paperElevated,
+      barrierColor: LudoColors.ink.withValues(alpha: 0.45),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (BuildContext sheetContext) {
+        final ModalRoute<bool>? sheetRoute = ModalRoute.of<bool>(sheetContext);
+        if (sheetRoute != null) {
+          _kickSheetRoute = sheetRoute;
+        }
+        return _KickSheet(
+          seat: seat,
+          title: loc.kickSheetTitle(name),
+          removeLabel: loc.kickSheetRemove,
+          waitLabel: loc.kickSheetWait,
+          // Remove commits at once: the route goes without an exit
+          // animation, so the board change that follows is the only motion.
+          onRemove: () =>
+              Navigator.of(sheetContext).removeRoute(sheetRoute!, true),
+          onWait: () => Navigator.of(sheetContext).pop(false),
+        );
+      },
+    ).then((bool? remove) {
+      _kickSheetRoute = null;
+      _kickSheetSeat = null;
+      if (remove == true && mounted) {
+        unawaited(_removeSeat(seat, name));
+      }
+    });
+  }
+
+  Future<void> _removeSeat(int seat, String name) async {
+    final String? code = await widget.controller.kick(seat);
+    if (!mounted || code == null) {
+      return;
+    }
+    FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+    _showRulesetNotice(
+      _RulesetNotice(
+        code == 'NOT_ABSENT'
+            ? _RulesetNoticeKind.kickBack
+            : _RulesetNoticeKind.kickFailed,
+        name: name,
+      ),
+    );
+  }
+
+  /// A frame that reconnects the seat the remove sheet is about, or takes it
+  /// out of the game another way, closes the sheet under the host's finger.
+  void _syncKickSheet() {
+    final int? seat = _kickSheetSeat;
+    if (seat == null) {
+      return;
+    }
+    final RoomSnapshot? room = widget.controller.room;
+    if (room == null || !_kickEligible(room, seat)) {
+      _closeSheetRoute(_kickSheetRoute);
+    }
   }
 
   /// C-293 rule 3: plays `your_turn` once at mount if the last `turn` frame
@@ -2274,6 +2552,9 @@ class _GameScreenState extends State<GameScreen> {
   /// rematch LOBBY in between), which a new game always passes through
   /// first.
   void _resetForNewGame() {
+    _rulesetNoticeTimer?.cancel();
+    _rulesetNoticeTimer = null;
+    _rulesetNotice = null;
     _rematchJoinTimer?.cancel();
     _rematchJoinTimer = null;
     _rematchJoin = null;
@@ -2282,6 +2563,10 @@ class _GameScreenState extends State<GameScreen> {
     _noMoveVisible = false;
     _noMoveFace = null;
     _noMoveReason = NoMoveReason.plain;
+    _ownRollHoldTimer?.cancel();
+    _ownRollHoldTimer = null;
+    _ownRollHoldFace = null;
+    _ownRollAgain = false;
     _timerPlayedOtherTimer?.cancel();
     _timerPlayedOtherTimer = null;
     _timerPlayedMineVisible = false;
@@ -2403,6 +2688,70 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {
       _noMoveVisible = true;
       _noMoveFace = face;
+    });
+  }
+
+  /// C-653 D1/D3: a live `rolled` for my seat puts its `value` on my die for
+  /// [kOwnRollHold] from now. A frame a resync ignored changed nothing
+  /// underneath, so it holds nothing. The mark is for a six that owes
+  /// another roll: [owesRoll] is what [_trackRollQueue] read off the turn
+  /// this frame left (my seat, await_roll, a non-empty queue), which is the
+  /// same-seat await_roll `turn` of a roll queue and nothing else. A live
+  /// `rolled` of another seat, and my own `moved`, drop the hold instead.
+  void _armOwnRollHold(Frame frame, {required bool owesRoll}) {
+    if (widget.controller.hasDesynced) {
+      return;
+    }
+    final int? mySeat = widget.controller.seat;
+    // C-653 return 2: my own `moved` spends the face I was holding, so the
+    // hold ends in the frame that reduces it. A home or capture bonus roll
+    // (`extra_roll`) is then tappable at once; a six that owes a roll has no
+    // `moved` between its `rolled` and the await_roll `turn`, so it is
+    // untouched.
+    if (frame.type == 'moved') {
+      if (mySeat != null && _intAt(frame.data, 'seat') == mySeat) {
+        _dropOwnRollHold();
+      }
+      return;
+    }
+    if (frame.type != 'rolled') {
+      return;
+    }
+    final int? value = _intAt(frame.data, 'value');
+    // Rule 4a: a `rolled` of another seat ends my hold at once, like it ends
+    // the no-move hold; that roll is thrown on its own seat's die.
+    if (mySeat != null &&
+        value != null &&
+        _intAt(frame.data, 'seat') != mySeat) {
+      _dropOwnRollHold();
+      return;
+    }
+    if (mySeat == null ||
+        _intAt(frame.data, 'seat') != mySeat ||
+        value == null ||
+        value < 1 ||
+        value > 6 ||
+        !mounted) {
+      return;
+    }
+    _ownRollHoldTimer?.cancel();
+    _ownRollHoldTimer = Timer(kOwnRollHold, _dropOwnRollHold);
+    setState(() {
+      _ownRollHoldFace = value;
+      _ownRollAgain = value == 6 && owesRoll;
+      _ownRollPop++;
+    });
+  }
+
+  void _dropOwnRollHold() {
+    _ownRollHoldTimer?.cancel();
+    _ownRollHoldTimer = null;
+    if (!mounted || _ownRollHoldFace == null) {
+      return;
+    }
+    setState(() {
+      _ownRollHoldFace = null;
+      _ownRollAgain = false;
     });
   }
 
@@ -2766,8 +3115,10 @@ class _GameScreenState extends State<GameScreen> {
           _dropDeadCandidate();
           return false;
         }
-        if (liveTurn.queue.isNotEmpty) {
-          // K10: a 6 (or a bonus roll) that still owes another roll.
+        if (liveTurn.queue.isNotEmpty && !liveTurn.release) {
+          // K10: a 6 (or a bonus roll) that still owes another roll. The
+          // lapse of a yard release (PROTOCOL 28 rule 2) carries the drawn
+          // face in `queue` too, but the turn passes: it is a dead roll.
           _dropDeadCandidate();
           _rememberQueue(seat, liveTurn.queue);
           return true;
@@ -3296,6 +3647,7 @@ class _GameScreenState extends State<GameScreen> {
     _syncSeatFaceMemory();
     _syncEntrance();
     _syncEndCardAnnouncements();
+    _syncKickSheet();
     setState(() {
       _syncCountdown();
       _releaseMoveGuard();
@@ -4491,6 +4843,26 @@ class _GameScreenState extends State<GameScreen> {
     _leave();
   }
 
+  /// C-658 L1-L3: what leaving does, said as the room's ruleset has it. Under
+  /// `2026-11` a playing seat that leaves is retired and its tokens leave the
+  /// board; a seat that already finished or is retired loses nothing by
+  /// leaving. Any other ruleset keeps the original line.
+  String _leaveConfirmBody(AppLocalizations loc) {
+    final RoomController controller = widget.controller;
+    final RoomSnapshot? room = controller.room;
+    final int? seat = controller.seat;
+    if (room == null ||
+        seat == null ||
+        room.state != RoomState.playing ||
+        room.rules.ruleset != '2026-11') {
+      return loc.gameLeaveConfirmBody;
+    }
+    if (room.placings.contains(seat) || room.retired.contains(seat)) {
+      return loc.gameLeaveConfirmBodyWatching;
+    }
+    return loc.gameLeaveConfirmBodyOut;
+  }
+
   /// C-272 rule 4: modal bottom sheet confirming leave when in playing state.
   void _showLeaveConfirm(BuildContext context, AppLocalizations loc) {
     if (!mounted || _isLeaveConfirmOpen) {
@@ -4516,7 +4888,7 @@ class _GameScreenState extends State<GameScreen> {
                 style: Theme.of(sheetContext).textTheme.titleMedium,
               ),
               const SizedBox(height: kSpace2),
-              Text(loc.gameLeaveConfirmBody),
+              Text(_leaveConfirmBody(loc)),
               const SizedBox(height: kSpace4),
               FilledButton(
                 key: const Key('game-leave-confirm-stay'),
@@ -5363,6 +5735,7 @@ class _GameScreenState extends State<GameScreen> {
     Color trayColor,
     SeatRollRecord? boardRecord,
     bool trayOwnMove,
+    int? ownRollHeld,
   ) {
     final HintControlState? hintState = _hintControlState(room, seat);
     final bool hinted = hintState != null && seat != null;
@@ -5383,10 +5756,16 @@ class _GameScreenState extends State<GameScreen> {
           child: _boardDieSlot(
             loc,
             turn,
+            ownRollHeld,
             // C-468 D7: the die fades its own art (idleOpacity); the key on
             // the die is unchanged. C-520 A2: the fade lives inside GameDie
             // so the refusal mark stays outside it.
             GameDie(
+              // C-653 D4: the slot above wraps the die in a Semantics node
+              // only while a face is announced, which moves the die in the
+              // tree at the very frame a roll lands. A global key keeps its
+              // state, and with it the landing pop, across that move.
+              key: _gameDieKey,
               face: dieFace,
               seatColor: dieSeatColor,
               enabled: rollEnabled,
@@ -5403,6 +5782,8 @@ class _GameScreenState extends State<GameScreen> {
               // changing at all.
               badgeHeadroom: metrics.boardGap,
               idleOpacity: fadeIdleDie ? 0.45 : 1,
+              rollAgain: ownRollHeld != null && _ownRollAgain,
+              popSerial: _ownRollPop,
               onTap: rollEnabled ? _onDieTap : null,
               onInvalidTap: () {
                 FeedbackScope.of(context).play(FeedbackCue.invalidTap);
@@ -5632,6 +6013,13 @@ class _GameScreenState extends State<GameScreen> {
     // it, with this phone's seat kept only for the board's own rotation and
     // colours, so nothing moves. No roll, no ring, no glow, no hint.
     final bool lost = _seatLost;
+    // C-653 D1/D2: my own latest roll is still being read. The die keeps
+    // its face and no tap rolls until the hold is up. Only a live table of
+    // mine holds one; a lost seat or a finished room draws as it did.
+    final int? ownRollHeld =
+        !lost && !_roomIsFinished(room) && room.state == RoomState.playing
+        ? _ownRollHoldFace
+        : null;
     final bool rollEnabled =
         !lost &&
         !_isEndHeld &&
@@ -5641,7 +6029,8 @@ class _GameScreenState extends State<GameScreen> {
         turn != null &&
         turn.seat == seat &&
         turn.phase == TurnPhase.awaitRoll &&
-        _rollWaitK == null;
+        _rollWaitK == null &&
+        ownRollHeld == null;
 
     // C-462 D1: under the roll queue the rings are every token any alive
     // face can move. Without `legalByFace`, `turn.legal` exactly as before.
@@ -5674,6 +6063,8 @@ class _GameScreenState extends State<GameScreen> {
         : LudoColors.seats[(turn?.seat ?? 0).clamp(0, 3)];
     final int? rawDieFace = _noMoveVisible
         ? _noMoveFace
+        : ownRollHeld != null && seat != null
+        ? ownRollHeld
         : (seat != null && (turn == null || turn.seat != seat))
         ? null
         : turn?.value;
@@ -5683,7 +6074,11 @@ class _GameScreenState extends State<GameScreen> {
     // C-571 D1: a finished room fades it for every viewer, the winner too.
     final bool fadeIdleDie =
         _roomIsFinished(room) ||
-        (seat != null && turn != null && turn.seat != seat && !_noMoveVisible);
+        (seat != null &&
+            turn != null &&
+            turn.seat != seat &&
+            !_noMoveVisible &&
+            ownRollHeld == null);
 
     final (
       List<int>? trayFaces,
@@ -5752,13 +6147,19 @@ class _GameScreenState extends State<GameScreen> {
                     child: LudoBoard(
                       key: const Key('game-screen-board'),
                       tokens: _tokensOf(room),
-                      seatsInPlay: _seatsInPlayOf(room),
+                      seatsInPlay: _seatedSeatsOf(room),
                       seatNames: names,
                       awaySeats: <int, String>{
                         for (final SeatState s in room.seats)
-                          if (!s.connected && s.seat != seat)
+                          if (!s.connected &&
+                              s.seat != seat &&
+                              !room.retired.contains(s.seat))
                             s.seat: loc.gameSeatOffline(names[s.seat]!),
                       },
+                      retiredSeats: room.retired.toSet(),
+                      seatPlaces: _placesOf(room),
+                      onAwayTap: _onAwayTap,
+                      awayTapSeats: _kickSeatsOf(room),
                       youLabel: loc.seatYou,
                       turnSeat: lost ? null : turn?.seat,
                       mySeat: seat,
@@ -5880,6 +6281,7 @@ class _GameScreenState extends State<GameScreen> {
                   trayColor,
                   boardRecord,
                   trayOwnMove,
+                  ownRollHeld,
                 ),
                 SizedBox(height: metrics.dieGap),
                 RepaintBoundary(
@@ -5991,6 +6393,91 @@ class _GameScreenState extends State<GameScreen> {
   int? _liveHostSeat(RoomController controller) {
     final int? host = controller.room?.hostSeat;
     return host != null && host >= 0 && host <= 3 ? host : null;
+  }
+
+  /// C-656: the line of a ruleset notice in the below-die slot. A place is
+  /// a gold disc carrying its number, then the words; a release for me leads
+  /// with the green ring the legal pieces wear; the rest are the words alone.
+  /// Each fades in rather than appearing.
+  Widget _rulesetNoticeRow(
+    AppLocalizations loc,
+    _RulesetNotice notice,
+    TextScaler scaler,
+  ) {
+    final Widget? lead;
+    switch (notice.kind) {
+      case _RulesetNoticeKind.finishedMine:
+      case _RulesetNoticeKind.finishedOther:
+        lead = Container(
+          width: _seatMovedDisc,
+          height: _seatMovedDisc,
+          alignment: Alignment.center,
+          decoration: const BoxDecoration(
+            color: LudoColors.gold,
+            shape: BoxShape.circle,
+          ),
+          child: Text(
+            notice.place.toString(),
+            textScaler: TextScaler.noScaling,
+            style: const TextStyle(
+              color: LudoColors.ink,
+              fontSize: _seatMovedDisc * 0.7,
+              fontWeight: FontWeight.w800,
+              height: 1,
+            ),
+          ),
+        );
+      case _RulesetNoticeKind.releaseMine:
+        lead = Container(
+          width: _seatMovedDisc,
+          height: _seatMovedDisc,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: LudoColors.success, width: 3),
+          ),
+        );
+      default:
+        lead = null;
+    }
+    final bool gold =
+        notice.kind == _RulesetNoticeKind.finishedMine ||
+        notice.kind == _RulesetNoticeKind.finishedOther;
+    final Widget row = Row(
+      key: notice.key,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        if (lead != null) ...<Widget>[lead, const SizedBox(width: kSpace1)],
+        Flexible(
+          child: Text(
+            _rulesetNoticeLine(loc, notice),
+            textAlign: TextAlign.center,
+            textScaler: scaler,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: gold
+                ? TextStyle(
+                    color: LudoColors.goldInk,
+                    fontWeight: FontWeight.w700,
+                  )
+                : null,
+          ),
+        ),
+      ],
+    );
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return row;
+    }
+    return TweenAnimationBuilder<double>(
+      key: ValueKey<_RulesetNotice>(notice),
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      // A small pop, never a fade: the notice is legible from its first
+      // frame, the motion only says it has just happened.
+      builder: (BuildContext context, double t, Widget? child) =>
+          Transform.scale(scale: 0.9 + 0.1 * t, child: child),
+      child: row,
+    );
   }
 
   /// C-592 D2: the disc of the seat-moved row, like the ready chips of C-585.
@@ -6597,6 +7084,12 @@ class _GameScreenState extends State<GameScreen> {
               textScaler: scaler,
             ),
           )
+        else if (_rulesetNotice != null)
+          Positioned.fill(
+            child: Center(
+              child: _rulesetNoticeRow(loc, _rulesetNotice!, scaler),
+            ),
+          )
         else if (seatMovedSeat != null)
           Positioned.fill(
             child: Center(
@@ -6677,9 +7170,23 @@ class _GameScreenState extends State<GameScreen> {
   /// The node follows the face the die is showing: my turn's value, or
   /// the held face during the no-move hold. While another seat holds the
   /// turn and that hold is not up, the node is absent.
-  Widget _boardDieSlot(AppLocalizations loc, TurnState? turn, Widget die) {
+  Widget _boardDieSlot(
+    AppLocalizations loc,
+    TurnState? turn,
+    int? ownRollHeld,
+    Widget die,
+  ) {
     final int? mySeat = widget.controller.seat;
     if (mySeat != null) {
+      // C-653 D1: the face held on my die is announced like any face it
+      // shows, though `turn.value` is already gone under it.
+      if (!_noMoveVisible && ownRollHeld != null) {
+        return Semantics(
+          key: const Key('game-screen-dice-value'),
+          label: loc.gameDieValue(ownRollHeld),
+          child: die,
+        );
+      }
       if (_noMoveVisible) {
         final int? held = _noMoveFace;
         if (held == null) {
@@ -6828,6 +7335,17 @@ class _GameScreenState extends State<GameScreen> {
 
     final bool hasBoard = finished.seats.length >= 2;
 
+    // C-656 S4: the places the game was played out to, and where I stand in
+    // them. Read off the finished game, which keeps `placings` and `retired`
+    // after the retired seats are freed from the room.
+    final int? finishedMySeat = controller.seat;
+    final int myPlaceIndex = finishedMySeat == null
+        ? -1
+        : finished.placings.indexOf(finishedMySeat);
+    final int? myPlace = myPlaceIndex == -1 ? null : myPlaceIndex + 1;
+    final bool iAmOut =
+        finishedMySeat != null && finished.retired.contains(finishedMySeat);
+
     // Rule 4: a winner naming a seat absent from room.seats reads the same
     // as no winner at all (H7.21's own fallback, carried forward).
     // C-310 rule 2: the winner's name comes from finished.seats, so a winner
@@ -6927,7 +7445,10 @@ class _GameScreenState extends State<GameScreen> {
         onNewTable: _requestNewTable,
         rematch: rematch,
         rematchByName: rematchByName,
-        occupiedSeats: _seatsInPlayOf(room),
+        occupiedSeats: <int>[
+          for (final int seatOf in _seatedSeatsOf(room))
+            if (!room.retired.contains(seatOf)) seatOf,
+        ],
         seatNames: rematchSeatNames,
         isHost: controller.isHost,
         hostSeat: _liveHostSeat(controller),
@@ -6949,6 +7470,9 @@ class _GameScreenState extends State<GameScreen> {
         quickReplyCooling: _chatCooling,
         onFairHintRoute: (Route<void> route) => _fairHintRoute = route,
         friendJoined: _rematchJoin,
+        places: _endCardPlaces(finished, rematchSeatNames),
+        myPlace: myPlace,
+        iAmOut: iAmOut,
       ),
       trailing: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -6960,7 +7484,9 @@ class _GameScreenState extends State<GameScreen> {
               child: LudoBoard(
                 key: const Key('game-screen-board'),
                 tokens: _tokensOf(finished),
-                seatsInPlay: _seatsInPlayOf(finished),
+                seatsInPlay: _seatedSeatsOf(finished),
+                retiredSeats: finished.retired.toSet(),
+                seatPlaces: _placesOf(finished),
                 seatNames: finishedNames,
                 youLabel: loc.seatYou,
                 turnSeat: null,
@@ -6980,6 +7506,33 @@ class _GameScreenState extends State<GameScreen> {
         ],
       ),
     );
+  }
+
+  /// C-656 S4: one row per seat in `placings` order, then in `retired` order.
+  /// Empty for a game that was not played out to places.
+  List<EndCardPlace> _endCardPlaces(
+    RoomSnapshot finished,
+    Map<int, String> names,
+  ) {
+    if (finished.placings.isEmpty) {
+      return const <EndCardPlace>[];
+    }
+    return <EndCardPlace>[
+      for (int i = 0; i < finished.placings.length; i++)
+        EndCardPlace(
+          seat: finished.placings[i],
+          name: names[finished.placings[i]] ?? '',
+          place: i + 1,
+          out: false,
+        ),
+      for (final int seatOf in finished.retired)
+        EndCardPlace(
+          seat: seatOf,
+          name: names[seatOf] ?? '',
+          place: null,
+          out: true,
+        ),
+    ];
   }
 
   /// C-529 D6: a snapshot carries no recent rolls, so an end card reached by
@@ -7570,9 +8123,32 @@ Map<int, List<int>> _tokensOf(RoomSnapshot room) {
 /// C-568: why a seat is to roll again. One meaning per banner line.
 enum _ExtraRoll { six, capture, home }
 
-/// H1: the `seat` of every entry in `room.seats`, in the order they appear.
+/// H1, C-656 S3: the seats still playing: in `room.seats` and in neither
+/// `room.placings` nor `room.retired`, in the order they appear. The one
+/// answer to "who is still in this game": "you're next", the seat dice, the
+/// pip strip, the banner's three-seat gate and the legal-kick check all
+/// read it. With both lists empty (a 2026-10 room) it is every seated seat.
 List<int> _seatsInPlayOf(RoomSnapshot room) {
+  return <int>[
+    for (final SeatState seatState in room.seats)
+      if (!room.placings.contains(seatState.seat) &&
+          !room.retired.contains(seatState.seat))
+        seatState.seat,
+  ];
+}
+
+/// Every seat at the table, finished and retired ones included, in the order
+/// they appear in `room.seats`. What the board draws its four corners for and
+/// what a rematch is offered to, as opposed to [_seatsInPlayOf].
+List<int> _seatedSeatsOf(RoomSnapshot room) {
   return <int>[for (final SeatState seatState in room.seats) seatState.seat];
+}
+
+/// C-656 S2: seat -> place for the seats that finished, first place first.
+Map<int, int> _placesOf(RoomSnapshot room) {
+  return <int, int>{
+    for (int i = 0; i < room.placings.length; i++) room.placings[i]: i + 1,
+  };
 }
 
 /// H2, decided in the order given there, first match wins.
@@ -7607,6 +8183,17 @@ String _turnBannerText(
   if (room.state == RoomState.finished ||
       room.turn?.phase == TurnPhase.finished) {
     return loc.gameOverEnded;
+  }
+  // C-656 S2, S5: a seat that finished or was taken out is a watcher for the
+  // rest of the game, and the banner says so instead of naming a turn.
+  if (seat != null) {
+    final int placeIndex = room.placings.indexOf(seat);
+    if (placeIndex != -1) {
+      return loc.gameBannerFinishedWatching(placeWord(loc, placeIndex + 1));
+    }
+    if (room.retired.contains(seat)) {
+      return loc.gameBannerOutWatching;
+    }
   }
   final TurnState? turn = room.turn;
   if (turn == null) {
@@ -8234,4 +8821,144 @@ class _RestRingPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _RestRingPainter oldDelegate) =>
       oldDelegate.share != share;
+}
+
+/// C-656: the events the 2026-11 ruleset adds to the below-die slot.
+enum _RulesetNoticeKind {
+  releaseMine,
+  releaseOther,
+  finishedMine,
+  finishedOther,
+  retiredLeft,
+  retiredAbsent,
+  retiredKicked,
+  kickBack,
+  kickFailed,
+}
+
+/// One such notice: what happened, to whom (the name as the room showed it
+/// when it happened) and, for a place, which.
+class _RulesetNotice {
+  const _RulesetNotice(this.kind, {this.name = '', this.place});
+
+  final _RulesetNoticeKind kind;
+  final String name;
+  final int? place;
+
+  Key get key {
+    switch (kind) {
+      case _RulesetNoticeKind.releaseMine:
+      case _RulesetNoticeKind.releaseOther:
+        return const Key('game-release-notice');
+      case _RulesetNoticeKind.finishedMine:
+      case _RulesetNoticeKind.finishedOther:
+        return const Key('game-seat-finished-notice');
+      case _RulesetNoticeKind.retiredLeft:
+      case _RulesetNoticeKind.retiredAbsent:
+      case _RulesetNoticeKind.retiredKicked:
+        return const Key('game-seat-retired-notice');
+      case _RulesetNoticeKind.kickBack:
+      case _RulesetNoticeKind.kickFailed:
+        return const Key('game-kick-refused-notice');
+    }
+  }
+}
+
+/// C-656 S6: the host's remove sheet. The absent seat's mark on a disc of its
+/// colour, one question, two big buttons. Remove is the filled one; Wait is
+/// the way back and is as easy to reach.
+class _KickSheet extends StatelessWidget {
+  const _KickSheet({
+    required this.seat,
+    required this.title,
+    required this.removeLabel,
+    required this.waitLabel,
+    required this.onRemove,
+    required this.onWait,
+  });
+
+  final int seat;
+  final String title;
+  final String removeLabel;
+  final String waitLabel;
+  final VoidCallback onRemove;
+  final VoidCallback onWait;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color seatColor = LudoColors.seats[seat.clamp(0, 3)];
+    return SafeArea(
+      child: Padding(
+        key: Key('kick-sheet-$seat'),
+        padding: const EdgeInsets.fromLTRB(kSpace5, kSpace4, kSpace5, kSpace4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Center(
+              child: Container(
+                width: 56,
+                height: 56,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: seatColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: LudoColors.dieFace, width: 3),
+                  boxShadow: <BoxShadow>[
+                    BoxShadow(
+                      color: LudoColors.ink.withValues(alpha: 0.2),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: SeatMark(seat: seat, size: 28),
+              ),
+            ),
+            const SizedBox(height: kSpace3),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: LudoColors.ink,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: kSpace4),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: OutlinedButton(
+                    key: const Key('kick-sheet-wait'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(56),
+                      foregroundColor: LudoColors.ink,
+                      side: const BorderSide(color: LudoColors.ink, width: 2),
+                      shape: const StadiumBorder(),
+                    ),
+                    onPressed: onWait,
+                    child: Text(waitLabel),
+                  ),
+                ),
+                const SizedBox(width: kSpace3),
+                Expanded(
+                  child: FilledButton(
+                    key: const Key('kick-sheet-remove'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(56),
+                      backgroundColor: LudoColors.action,
+                      foregroundColor: LudoColors.actionOn,
+                      shape: const StadiumBorder(),
+                    ),
+                    onPressed: onRemove,
+                    child: Text(removeLabel),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

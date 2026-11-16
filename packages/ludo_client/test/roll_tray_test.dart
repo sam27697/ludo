@@ -708,6 +708,9 @@ void main() {
         findsNothing,
         reason: 'K3: awaitRoll marks no tray die dead',
       );
+      // C-653 D2: my own roll is held 900 ms (kOwnRollHold) and the die
+      // takes no roll meanwhile; the owed roll is asked of the die after.
+      await tester.pump(const Duration(milliseconds: 900));
       final SemanticsNode die = tester.getSemantics(find.byKey(bigDieKey));
       expect(
         die.flagsCollection.isEnabled,

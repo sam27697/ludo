@@ -1649,3 +1649,183 @@ update, so it ships before the closed test's clock starts.
      English and Arabic from every screen named in rule 6, its primary
      action asks to open the `market:` page then the `https` page when the
      first fails, and no reconnect follows.
+
+## 28. The ruleset of 2026-11-15: the yard release, places played out, an absent seat removed
+
+Sam's notes of 2026-11-15 (X191, X189, X204 in `work/ludo/EXPERIENCE.md` of the ops workspace):
+`docs/RULES.md` rules 9r-15r and 33p-39p, `docs/ENGINE_API.md` sections 11 and 12. This section is
+how they reach the wire. Nothing in it applies to a room created under the old ruleset.
+
+1. **The switch.** The server environment carries `RULESET`, `2026-10` (absent or empty means
+   this) or `2026-11`; any other value stops the server at start with a line on stderr naming the
+   variable, as section 27 rule 3. A room takes the server's ruleset when `create_room` is
+   answered and keeps it for its life, rematches included. Under `2026-11` the engine config of
+   every game in the room has `yardRelease` and `playOut` on (with `rollQueue` and `homeBonus`, as
+   today). The snapshot's `rules` gains `"ruleset": "2026-11"`; under `2026-10` the key is absent.
+   **Operations:** `RULESET=2026-11` is set in the same `.env` change that raises
+   `MIN_CLIENT_BUILD` (section 27) to the first app build that implements this section. A client
+   that does not read this section is never seated in a `2026-11` room.
+
+2. **The yard release on the wire.** Under `2026-11`:
+   - The `rolled` frame of the roll that grants a release (rule 11r) carries `"release": true`,
+     `legal` = the releasable tokens, `queue` as section 21.1 (it holds the drawn face), and no
+     `legal_by_face`. On a lapse (rule 14r) it carries `"release": true` and `legal: []`, followed
+     by `turn_passed` `no_legal_move` and `turn` for the next seat, as any pass. Every other
+     `rolled` frame omits `release`.
+   - While a release is owed, the snapshot's `turn` (phase `await_move`) carries `"release": true`,
+     `legal` = the releasable tokens, `queue`, no `value`, no `legal_by_face`. Every seat object in
+     the snapshot carries `drought`, an integer 0..9 (rule 9r), under `2026-11` only.
+   - `move` while a release is owed: `face` must be absent; present with any integer value (0, 9
+     and -1 included) is `ILLEGAL_MOVE`; present and not an integer is `BAD_FIELD`, as for any
+     move (ruling of 2026-11-16, run 152: the release check comes before the face range check).
+     A token that is not releasable is `ILLEGAL_MOVE`. A valid one spends the release.
+   - The `moved` frame of a release: `from: -1`, `to: 0`, `captured: []`, `extra_roll: false`,
+     `"release": true`, no `face`. Then a `turn` for the same seat in `await_move` when the queued
+     face has a legal move, otherwise `turn_passed` `no_legal_move` and `turn` for the next seat.
+   - The timer (rule 15r): on expiry with a release owed, the server spends it on the lowest
+     releasable token; the `moved` frame carries `by` as section 22.
+   - The segment restarts on the releasing `rolled` exactly as on a `rolled` that leaves a move
+     pending (section 21.2), and on the release `moved` when it leaves faces.
+   - **The verify record** (docs/VERIFY.md section 1.1) gains `"ruleset": "2026-11"` and
+     `"releases": [k, ...]`, the roll numbers `k` whose roll granted a release (lapses included),
+     ascending; both keys absent under `2026-10`. The fair draw of roll `k` is unchanged and still
+     verifies on its own. The page shows, next to each such roll, one line: en "No 6 for 10 rolls
+     with every piece at home: one piece comes out (rule 11r)", ar «ما طلع 6 بعشر رميات وكل
+     القطع بالبيت: بتطلع قطعة وحدة (القاعدة 11r)».
+
+3. **Places on the wire.** Under `2026-11`:
+   - `seat_finished` `{ "seat": int, "place": int }` (with `seq`) is broadcast after the `moved`
+     that brings a seat's fourth token home **when the game goes on**; it is followed by `turn` for
+     the next playing seat. When that move ends the game, no `seat_finished` is sent: `game_over`
+     carries the outcome.
+   - `game_over` gains `placings` (seats in place order, the last seat standing included) and
+     `retired` (seats in retirement order). `winner` is `placings[0]`. Under `2026-10` both keys are
+     absent.
+   - The snapshot gains `placings` and `retired` (lists of seats, possibly empty) under `2026-11`.
+   - A finished seat stays seated, keeps its socket, receives every frame and is never `turn.seat`.
+     Its `roll` and `move` are `NOT_YOUR_TURN`. Its `leave_room` in PLAYING is answered as today
+     (section 4: `presence`), and nothing in the game changes.
+   - The verify record gains `placings` and `retired` under `2026-11`.
+
+4. **Retiring a seat.** Under `2026-11`, the server applies the engine's `RetireIntention` for a
+   playing seat (in `seats`, not in `placings`, not in `retired`) in three cases, each broadcast as
+   `seat_retired` `{ "seat": int, "reason": "left"|"absent"|"kicked", "host_seat": int }` (with
+   `seq`), followed by what the engine's events say: nothing more, or `turn` for the next playing
+   seat (the retired seat was to act), or `game_over` (one playing seat left; it takes the next
+   place).
+   - **left:** `leave_room` from a playing seat in PLAYING. The leaver's socket gets the same
+     `seat_retired` with `re`. This replaces section 4's "the seat remains and is played by the
+     timer" for `2026-11` rooms.
+   - **absent:** a playing seat whose socket has been down for **120 000 ms** without a break (from
+     the moment its `presence` `connected: false` was broadcast; a `resume` that reconnects it ends
+     the count; a later drop starts a new one). The check runs with the turn timer sweep (1 s), so
+     the retire lands within 121 s. Section 26's 10 s away budget still applies until then.
+   - **kicked:** the new client message `kick` `{ "seat": int }`, host only, PLAYING only. The
+     target must be a playing seat whose socket is down at that moment. Errors, in this order:
+     `NOT_HOST`; state not PLAYING: `WRONG_PHASE` (a lobby kick is a later section, X202); `seat`
+     not an int 0..3: `BAD_FIELD`; not a playing seat: `ILLEGAL_MOVE`; its socket is up:
+     `NOT_ABSENT` (a new error code). Answered on the host's socket by the broadcast `seat_retired`
+     with `re`.
+   - A retired seat stays in `seats` (its name is still shown) with its tokens as the engine left
+     them (in the yard, or home), `connected` as it is. It may `resume` and watch; it never acts. A
+     finished seat is never retired.
+   - **The host.** When the retired seat was the host, `host_seat` becomes the lowest seat that is
+     still playing, else the lowest seat still connected, else -1; `seat_retired` carries the value
+     after the change (changed or not), as `player_left` does (section 18).
+   - **At the end.** When `game_over` is sent, every retired seat is freed: one `player_left` per
+     retired seat, in retirement order, each with its own `seq`, after `game_over`. A rematch then
+     follows section 16 with the seats that are left.
+   - Neither `absent` nor `kicked` is ever a strike against anyone (X203, later).
+
+5. **Rate and size.** `kick` counts against the same per-socket message limit as every message.
+
+6. **Tests this section requires before it is implemented** (server, real sockets, fake clock):
+   the switch (absent, `2026-10`, `2026-11`, a bad value stops the server); a `2026-11` room's
+   snapshot `rules.ruleset`, seats' `drought`, `placings`, `retired`; ten non-6 rolls with every
+   token in the yard give `rolled` `release: true` with the releasable `legal`, a `move` with a
+   `face` is `ILLEGAL_MOVE`, without one it gives `moved` `release: true` then the right `turn`;
+   the lapse; the timer spends a release; the verify record's `releases`; a three-seat game where
+   one seat finishes (`seat_finished` then `turn` for the next playing seat), play goes on, the
+   finished seat's `roll` is `NOT_YOUR_TURN`, the game ends with `game_over` `placings` of three
+   and no second `seat_finished`; a two-seat game ends exactly as under `2026-10` plus `placings`;
+   `leave_room` from a playing seat retires it (`reason: left`, `re` to the leaver), with three
+   seats play goes on, with two the other wins; an absent seat retired at 120 s and not at
+   119.999 s, a resume at 119 s resets the count; `kick` accepted on a dropped seat and each error
+   in the stated order; host retired hands `host_seat` on; retired seats freed after `game_over`
+   with one `player_left` each; a `2026-10` room on a `2026-11` server is impossible (the ruleset
+   is taken at create) and a `2026-10` server is byte-identical to today on the existing suites.
+
+## 29. The next seat waits for the last move to land, 2026-11-16
+
+Sam's note of 2026-11-15 (X192): the turn passes only after the mover's piece has landed (a
+captured piece's flight home included), plus about half a second. Server truth stays instant: every
+frame goes out when it does today. What changes is when the next seat's clock starts, and when the
+next seat's die can be tapped. `bin/game-doctrine.md` 2.4 is the rule this applies: a fixed grace in
+the server's turn timer, decided here once, never a client that lags behind the truth. **Under
+`2026-11` only** (section 28 rule 1); a `2026-10` room is byte-identical to today.
+
+1. **When a grace applies.** Exactly on a `turn` frame for a seat other than the seat that acted
+   last (the turn passed), in a `2026-11` room. Never on a same-seat `turn` (an extra roll, a six
+   owed, a queued face), never on the first `turn` after `game_started`.
+
+2. **How long.** `grace_ms` is computed by the server from the frames it sends in the same step,
+   before that `turn`:
+   - `travel` = for the last `moved` frame of the step, `140 * steps`, plus `360` when its
+     `captured` is not empty; `steps` is `to - from` when `from >= 0` and `1` when `from == -1`.
+     With no `moved` frame in the step, `travel` = 0.
+   - `hold` = `1500` when the step sent `turn_passed` (either reason), otherwise `500`.
+   - `grace_ms = travel + hold`. Examples: a 4-square move that passes the turn, 1060; a 6-square
+     move that captures, 1700; a roll with no legal move, 1500; a 2-square move that leaves only
+     dead faces (`moved`, `turn_passed`, `turn`), 1780; a retire (`seat_retired` then `turn`),
+     500; a timer-played move, as any move.
+   The constants are the client's `kTokenStepDuration` (140), `kCaptureFlightDuration` (360), the
+   no-move hold (1500) and Sam's half second (500). They live in one server file, named once.
+
+3. **On the wire.** That `turn` frame gains `"grace_ms": int` (> 0). Its `deadline_ms` is the full
+   segment budget (section 26: 45 000, or 10 000 for an away seat), and the countdown it describes
+   starts **after** the grace: the segment expires at `grace_ms + budget` from the frame. While the
+   grace runs, the snapshot's `turn` carries `grace_ms` = the grace left (> 0) and `deadline_ms` =
+   the full budget; once it has run out, `grace_ms` is absent and `deadline_ms` counts down as
+   section 6 says, from the grace's end. A `turn` frame without a grace omits the key. Old clients
+   ignore it (they are never seated in a `2026-11` room anyway, section 28 rule 1).
+
+4. **A roll during the grace** is accepted as at any other time: the grace protects the next seat's
+   clock, it does not refuse the seat. Its `rolled` starts the next segment as today and ends the
+   grace. The client gate (rule 5) is what keeps an honest player from rolling into a moving piece.
+   The turn timer sweep never acts on a segment whose grace has not run out.
+
+5. **The client.** On a `turn` frame that passes the turn, the new seat's die stays as it is (not
+   pulsing, not tappable for the seat on turn, the countdown ring full and still) until the gate
+   opens, then everything that marks the start of a turn happens at that moment: the die pulse,
+   `your_turn` (haptic and sound) for my seat, the countdown starting. The gate opens at the
+   earlier of (a) the board's move queue empty and every capture flight landed and the no-move hold
+   over, plus 500 ms, and (b) `grace_ms` after the frame arrived. Reduced motion shortens (a)
+   through its own shorter steps and never removes the 500 ms. A tap on my die before the gate
+   opens sends nothing and gives the invalid-tap feedback a disabled die already gives. A resume
+   inside a grace opens the gate after the snapshot's `grace_ms`.
+
+6. **Tests this section requires before it is implemented.** Server, real sockets, fake clock:
+   each example of rule 2 gives that `grace_ms` on the `turn` frame; no `grace_ms` on a same-seat
+   `turn`, on the first `turn`, or in a `2026-10` room (and a `2026-10` room's frames unchanged);
+   the timer does not expire a segment at `budget` after the frame and does at `grace_ms + budget`
+   (and an away seat's 10 s segment the same way); a snapshot taken 400 ms into a 1060 ms grace
+   shows `grace_ms` 660 and the full `deadline_ms`, one taken after the grace shows no `grace_ms`
+   and a counting `deadline_ms`; a roll at 200 ms into the grace is accepted and its `rolled`
+   restarts the segment. Client, fake transport: after a 6-square capture that passes the turn to
+   my seat, my die is not tappable and `your_turn` has not fired until the flight lands plus
+   500 ms, then it fires once and a tap sends one `roll`; the gate never opens later than
+   `grace_ms`; reduced motion; a resume with `grace_ms` in the snapshot; the opponent's die pulse
+   follows the same gate; en and ar.
+
+7. **Rulings of 2026-11-16 (run 152), from the tests' questions.**
+   - "The seat that acted last" in rule 1 means the seat whose turn just ended, whether it acted or
+     was retired: a retire of the seat on turn gives the next seat a grace (rule 2: 500).
+   - A retire of a seat not on turn sends no `turn`, and a grace already running is untouched.
+   - Every `game_started` counts, a rematch's included: its first `turn` has no grace.
+   - `seat_finished` between `moved` and `turn` changes neither `travel` nor `hold`.
+   - `turn_passed` `three_sixes` with no `moved` in the step: `grace_ms` = 1500.
+   - The grace has run out at exactly `grace_ms` after the frame (the key is then absent, never 0);
+     the segment expires at exactly `grace_ms + budget`, as section 26 counts 10 000 and not 9 999.
+   - Section 26 rule 5 inside a grace (an away seat on turn resumes while its grace runs): the
+     pushed `turn` carries `grace_ms` = the grace left, and the restarted full segment counts from
+     the grace's end. Outside a grace, rule 5 is unchanged.
