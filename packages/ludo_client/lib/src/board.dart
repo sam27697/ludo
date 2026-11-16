@@ -231,69 +231,251 @@ bool _isSharedTrack(List<_TokenOccupant> occupants) {
   return seats.length >= 2;
 }
 
-/// Base ends `a` and `b` and the apex of [seat]'s triangle in the centre
-/// block, in view coordinates. The base lies on the side of the block `[6c,
-/// 9c]` that cell 56 of the seat's home column touches, `a` the end with the
-/// smaller coordinate along it; the apex is the middle of the block. The
-/// board painter and the finished-token layout both read this, so a token
-/// can only rest on the triangle that is drawn.
-(Offset, Offset, Offset) _centreTriangle(
-  int seat,
-  int quarters,
-  double cellSize,
-) {
-  final double near = 6 * cellSize;
-  final double far = 9 * cellSize;
+/// The fill of a seat's finished-count badge: the seat's colour halfway to
+/// the ink, so the near-white numeral on it holds at least 3:1 on all four
+/// seat colours (the yellow is the tightest, 4.4:1).
+Color _finishedCountFill(int seat) =>
+    Color.lerp(LudoColors.seats[seat], LudoColors.ink, 0.5)!;
+
+/// The side of the centre block [seat]'s home column enters from, as a unit
+/// step in view coordinates: cell 56 of the column, seen after [toView], lies
+/// beyond the block on the left (-1, 0), right (1, 0), top (0, -1) or bottom
+/// (0, 1). The regions, the finished stack and its count all read this one
+/// answer, so a token can only rest where the colour is painted.
+(int, int) _centreEntry(int seat, int quarters) {
   final BoardCell last = toView(cellFor(seat: seat, progress: 56), quarters);
   final int dx = last.col - 7;
   final int dy = last.row - 7;
-  final Offset a;
-  final Offset b;
   if (dx.abs() > dy.abs()) {
-    final double x = dx < 0 ? near : far;
-    a = Offset(x, near);
-    b = Offset(x, far);
-  } else {
-    final double y = dy < 0 ? near : far;
-    a = Offset(near, y);
-    b = Offset(far, y);
+    return (dx < 0 ? -1 : 1, 0);
   }
-  return (a, b, Offset(7.5 * cellSize, 7.5 * cellSize));
+  return (0, dy < 0 ? -1 : 1);
 }
 
-/// The four fixed spots of a finished token inside its seat's triangle, as
-/// (u, v) in cells: u along the base from `a` towards `b`, v from the base
-/// towards the apex. Index 0 to 2 in a row against the base, 3 above the
-/// middle one. Each disc (diameter `cellSize * 0.55`) clears both slanted
-/// sides and its neighbours.
-const List<(double, double)> _finishedSpots = <(double, double)>[
-  (0.86, 0.31),
-  (1.50, 0.31),
-  (2.14, 0.31),
-  (1.50, 0.95),
-];
+/// Snaps a coordinate that float noise left within a hair of the block's near
+/// edge, middle or far edge back onto it, so a ray that ends exactly on a
+/// corner or a side middle yields the exact point.
+double _snapCentre(double value, double cellSize) {
+  final double tolerance = cellSize * 1e-9;
+  for (final double exact in <double>[
+    6 * cellSize,
+    7.5 * cellSize,
+    9 * cellSize,
+  ]) {
+    if ((value - exact).abs() < tolerance) {
+      return exact;
+    }
+  }
+  return value;
+}
 
-/// Centre and diameter of finished token [tokenIndex] of [seat]: one of the
-/// four [_finishedSpots] of the seat's own triangle, whoever else is home.
-_TokenLayout _finishedLayout({
-  required int seat,
-  required int tokenIndex,
-  required double cellSize,
+/// Where the ray from the block's middle at [angle] (radians, screen axes,
+/// y down) leaves the 3 by 3 block.
+Offset _centreRayEnd(double angle, double cellSize) {
+  final double dx = math.cos(angle);
+  final double dy = math.sin(angle);
+  final double reach = 1.5 * cellSize / math.max(dx.abs(), dy.abs());
+  return Offset(
+    _snapCentre(7.5 * cellSize + dx * reach, cellSize),
+    _snapCentre(7.5 * cellSize + dy * reach, cellSize),
+  );
+}
+
+double _turnAngle(double angle) {
+  final double full = 2 * math.pi;
+  final double wrapped = angle % full;
+  return wrapped < 0 ? wrapped + full : wrapped;
+}
+
+/// The centre block's region for each seat in [seatsInPlay], in view
+/// coordinates: a convex polygon, vertices in clockwise screen order, the
+/// block's centre among them when more than one seat is in play.
+///
+/// The block is cells 6..9 on both axes. Each seat enters from the middle of
+/// the side its home column touches (see [_centreEntry]). Sorted by the angle
+/// of that direction, two consecutive seats are parted by the ray from the
+/// block's middle at the angle halfway between their directions, so a seat's
+/// region is the wedge from the ray before it to the ray after it. Four seats
+/// give the four triangles, three give a quarter triangle opposite the empty
+/// side and two wider regions beside it, two give halves, and a lone seat has
+/// the whole block. A seat outside [seatsInPlay] has no region.
+///
+/// The board painter fills these and the finished-piece layout stands its
+/// stack inside them, so a piece can only rest on a colour that is drawn.
+Map<int, List<Offset>> centreRegions({
+  required List<int> seatsInPlay,
   required int quarters,
+  required double cellSize,
 }) {
-  final (Offset a, Offset b, Offset apex) = _centreTriangle(
+  final double near = 6 * cellSize;
+  final double far = 9 * cellSize;
+  final List<Offset> corners = <Offset>[
+    Offset(near, near),
+    Offset(far, near),
+    Offset(far, far),
+    Offset(near, far),
+  ];
+  if (seatsInPlay.length == 1) {
+    return <int, List<Offset>>{seatsInPlay.first: corners};
+  }
+  const List<double> cornerAngles = <double>[
+    -3 * math.pi / 4,
+    -math.pi / 4,
+    math.pi / 4,
+    3 * math.pi / 4,
+  ];
+  final List<(int, double)> entries = <(int, double)>[
+    for (final int seat in seatsInPlay)
+      () {
+        final (int dx, int dy) = _centreEntry(seat, quarters);
+        return (seat, math.atan2(dy.toDouble(), dx.toDouble()));
+      }(),
+  ]..sort(((int, double) a, (int, double) b) => a.$2.compareTo(b.$2));
+  final int count = entries.length;
+  final Offset centre = Offset(7.5 * cellSize, 7.5 * cellSize);
+  const double eps = 1e-9;
+  final Map<int, List<Offset>> regions = <int, List<Offset>>{};
+  for (var i = 0; i < count; i++) {
+    final double angle = entries[i].$2;
+    final double before = _turnAngle(
+      angle - entries[(i + count - 1) % count].$2,
+    );
+    final double after = _turnAngle(entries[(i + 1) % count].$2 - angle);
+    final double start = angle - before / 2;
+    final double width = (before + after) / 2;
+    final List<(double, Offset)> between = <(double, Offset)>[
+      for (var c = 0; c < 4; c++)
+        if (_turnAngle(cornerAngles[c] - start) > eps &&
+            _turnAngle(cornerAngles[c] - start) < width - eps)
+          (_turnAngle(cornerAngles[c] - start), corners[c]),
+    ]..sort(((double, Offset) a, (double, Offset) b) => a.$1.compareTo(b.$1));
+    regions[entries[i].$1] = <Offset>[
+      centre,
+      _centreRayEnd(start, cellSize),
+      for (final (double, Offset) corner in between) corner.$2,
+      _centreRayEnd(start + width, cellSize),
+    ];
+  }
+  return regions;
+}
+
+/// The frame a seat's finished stack is laid out in: the base-side end `a`
+/// (the end with the smaller coordinate), the unit step `along` the base from
+/// it, and the unit step `inward` from the base towards the block's middle.
+(Offset, Offset, Offset) _centreFrame(int seat, int quarters, double cellSize) {
+  final double near = 6 * cellSize;
+  final double far = 9 * cellSize;
+  final (int dx, int dy) = _centreEntry(seat, quarters);
+  if (dx != 0) {
+    return (
+      Offset(dx < 0 ? near : far, near),
+      const Offset(0, 1),
+      Offset(-dx.toDouble(), 0),
+    );
+  }
+  return (
+    Offset(near, dy < 0 ? near : far),
+    const Offset(1, 0),
+    Offset(0, -dy.toDouble()),
+  );
+}
+
+/// Where the first finished disc of a seat rests, in cells: [_kStackBaseU]
+/// along the base from its end, [_kStackBaseV] in from the base. Each next
+/// disc is [_kStackStep] cells further in, towards the block's middle, so
+/// the discs overlap and the rim of every one stays visible. A disc is
+/// `cellSize * 0.55` across. Placed inside the quarter triangle every seat's
+/// region contains (a region is never narrower than 90 degrees), with the
+/// disc's full radius clear of its edges for four discs; the count badge
+/// [_kCountU], [_kCountV] stands beside the stack in the same triangle.
+const double _kStackBaseU = 1.2;
+const double _kStackBaseV = 0.32;
+const double _kStackStep = 0.14;
+const double _kCountU = 1.855;
+const double _kCountV = 0.36;
+const double _kCountSize = 0.64;
+
+Offset _centreSpot({
+  required int seat,
+  required int quarters,
+  required double cellSize,
+  required double u,
+  required double v,
+}) {
+  final (Offset a, Offset along, Offset inward) = _centreFrame(
     seat,
     quarters,
     cellSize,
   );
-  final Offset along = (b - a) / (b - a).distance;
-  final Offset baseMiddle = (a + b) / 2;
-  final Offset inward = (apex - baseMiddle) / (apex - baseMiddle).distance;
-  final (double u, double v) = _finishedSpots[tokenIndex];
-  return _TokenLayout(
-    center: a + along * (u * cellSize) + inward * (v * cellSize),
-    size: cellSize * 0.55,
+  return a + along * (u * cellSize) + inward * (v * cellSize);
+}
+
+/// How many finished discs of [seat] sit before [tokenIndex] in its stack:
+/// those with a lower token index at progress 57, by [progressOf] when given
+/// (the drawn progress) and by [tokens] otherwise.
+int _finishedRank({
+  required int seat,
+  required int tokenIndex,
+  required Map<int, List<int>> tokens,
+  int Function(int seat, int tokenIndex)? progressOf,
+}) {
+  var rank = 0;
+  for (var i = 0; i < tokenIndex; i++) {
+    final int? progress = progressOf != null
+        ? progressOf(seat, i)
+        : tokens[seat]?[i];
+    if (progress == 57) {
+      rank++;
+    }
+  }
+  return rank;
+}
+
+bool _insideConvex(List<Offset> polygon, Offset point) {
+  var positive = false;
+  var negative = false;
+  for (var i = 0; i < polygon.length; i++) {
+    final Offset a = polygon[i];
+    final Offset b = polygon[(i + 1) % polygon.length];
+    final double cross =
+        (b.dx - a.dx) * (point.dy - a.dy) - (b.dy - a.dy) * (point.dx - a.dx);
+    if (cross > 1e-6) {
+      positive = true;
+    } else if (cross < -1e-6) {
+      negative = true;
+    }
+  }
+  return !(positive && negative);
+}
+
+/// Centre and diameter of finished token [tokenIndex] of [seat]: slot
+/// [rank] of the seat's stack (see [_kStackBaseU]), whoever else is home.
+_TokenLayout _finishedLayout({
+  required int seat,
+  required int rank,
+  required double cellSize,
+  required int quarters,
+  required List<int> seatsInPlay,
+}) {
+  final Offset center = _centreSpot(
+    seat: seat,
+    quarters: quarters,
+    cellSize: cellSize,
+    u: _kStackBaseU,
+    v: _kStackBaseV + rank * _kStackStep,
   );
+  assert(() {
+    if (!seatsInPlay.contains(seat) || seatsInPlay.length < 2) {
+      return true;
+    }
+    final List<Offset>? region = centreRegions(
+      seatsInPlay: seatsInPlay,
+      quarters: quarters,
+      cellSize: cellSize,
+    )[seat];
+    return region == null || _insideConvex(region, center);
+  }(), 'a finished disc must rest inside its seat\'s centre region');
+  return _TokenLayout(center: center, size: cellSize * 0.55);
 }
 
 /// Centre and diameter of token [tokenIndex] of [seat] drawn at [progress].
@@ -302,7 +484,7 @@ _TokenLayout _finishedLayout({
 /// cell, diameter `cellSize * 0.7`, with no fan: the slot is a marked well
 /// and the token fills it.
 ///
-/// A finished token ([progress] 57) rests in its own seat's centre triangle
+/// A finished token ([progress] 57) rests in its seat's stack in the centre
 /// whatever else is on the board: see [_finishedLayout].
 ///
 /// One seat on any other cell keeps the old fan: diameter `cellSize * 0.7`,
@@ -342,9 +524,15 @@ _TokenLayout _tokenLayout({
   if (progress == 57) {
     return _finishedLayout(
       seat: seat,
-      tokenIndex: tokenIndex,
+      rank: _finishedRank(
+        seat: seat,
+        tokenIndex: tokenIndex,
+        tokens: tokens,
+        progressOf: progressOf,
+      ),
       cellSize: cellSize,
       quarters: viewQuarters(mySeat),
+      seatsInPlay: seatsInPlay,
     );
   }
   final BoardCell cell = cellFor(
@@ -1164,17 +1352,22 @@ class _LudoBoardState extends State<LudoBoard> {
     for (final MapEntry<BoardCell, List<int>> entry in byCell.entries) {
       final BoardCell viewed = toView(entry.key, quarters);
       final List<int> indices = entry.value..sort();
-      // A finished token is drawn on its spot in the seat's triangle, not on
-      // its cell, and a cell never holds two finished tokens of one seat.
+      // A finished token is drawn in its seat's stack, not on its cell, and a
+      // cell never holds two finished tokens of one seat.
       final bool finished = progresses[indices.first] == 57;
       groups.add(
         _CellGroup(
           center: finished
               ? _finishedLayout(
                   seat: mySeat,
-                  tokenIndex: indices.first,
+                  rank: _finishedRank(
+                    seat: mySeat,
+                    tokenIndex: indices.first,
+                    tokens: widget.tokens,
+                  ),
                   cellSize: cellSize,
                   quarters: quarters,
+                  seatsInPlay: widget.seatsInPlay,
                 ).center
               : Offset(
                   viewed.col * cellSize + cellSize / 2,
@@ -1897,6 +2090,10 @@ class _LudoBoardState extends State<LudoBoard> {
                         tokenIndex: tokenIndex,
                         cellSize: cellSize,
                       ),
+                  // X190: each seat's finished count, above the stacked discs.
+                  // One slot that is always there, so a badge coming or going
+                  // never shifts the layers after it.
+                  _finishedCounts(cellSize),
                   // C-577: the landing marks, above every disc, in one slot
                   // that is always there so the layers after it never shift.
                   _landingMarks(cellSize),
@@ -2485,6 +2682,95 @@ class _LudoBoardState extends State<LudoBoard> {
     setState(() {
       _bursts.remove(_key(seat, token));
     });
+  }
+
+  /// The number of discs [seat] shows finished right now: the drawn ones, so
+  /// the count changes on the frame a disc lands, not before.
+  int _drawnFinishedCount(int seat) {
+    var count = 0;
+    for (var token = 0; token < 4; token++) {
+      if (_drawnProgress(seat, token) == 57) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /// X190: a round badge with the number of finished discs beside each
+  /// seat's stack, inside the seat's region, for every seat in play with at
+  /// least one. Drawn above the discs, under IgnorePointer so a tap lands on
+  /// the board, and out of semantics: the board has no words of its own.
+  Widget _finishedCounts(double cellSize) {
+    final int quarters = viewQuarters(widget.mySeat);
+    final bool reduced = MediaQuery.disableAnimationsOf(context);
+    final double size = cellSize * _kCountSize;
+    final List<Widget> badges = <Widget>[];
+    for (final int seat in widget.seatsInPlay) {
+      final int count = _drawnFinishedCount(seat);
+      if (count == 0) {
+        continue;
+      }
+      final Offset centre = _centreSpot(
+        seat: seat,
+        quarters: quarters,
+        cellSize: cellSize,
+        u: _kCountU,
+        v: _kCountV,
+      );
+      badges.add(
+        Positioned(
+          key: ValueKey<String>('board-finished-count-slot-$seat'),
+          left: centre.dx - size / 2,
+          top: centre.dy - size / 2,
+          width: size,
+          height: size,
+          child: ExcludeSemantics(
+            child: TweenAnimationBuilder<double>(
+              key: ValueKey<int>(count),
+              tween: Tween<double>(begin: 0.6, end: 1),
+              duration: reduced
+                  ? const Duration(milliseconds: 60)
+                  : const Duration(milliseconds: 240),
+              curve: Curves.easeOutBack,
+              builder: (BuildContext context, double scale, Widget? child) {
+                return Transform.scale(scale: scale, child: child);
+              },
+              child: Container(
+                key: Key('board-finished-count-$seat'),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _finishedCountFill(seat),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: LudoColors.dieFace,
+                    width: size * 0.07,
+                  ),
+                ),
+                child: Text(
+                  count.toString(),
+                  maxLines: 1,
+                  softWrap: false,
+                  textScaler: TextScaler.noScaling,
+                  style: TextStyle(
+                    color: LudoColors.actionOn,
+                    fontFamily: kLudoFontFamily,
+                    fontFamilyFallback: kLudoFontFallbacks,
+                    fontSize: size * 0.62,
+                    fontWeight: FontWeight.w800,
+                    height: 1,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Stack(clipBehavior: Clip.none, children: badges),
+      ),
+    );
   }
 
   /// Contract C-577: every landing mark still showing, in one always-present
@@ -3900,35 +4186,27 @@ class _BoardPainter extends CustomPainter {
     }
   }
 
-  /// The centre 3 by 3 block as four triangles meeting at its middle. Seat
-  /// k's triangle has its base on the side of the block that cell 56 of its
-  /// home column touches, so each arm runs into its own colour. C-639 D6.
+  /// The centre 3 by 3 block split among the seats in play only: halves for
+  /// two, thirds for three, quarters for four. Each region is in the colour of
+  /// the seat whose pieces enter it, on the side its home column runs into,
+  /// and a seat that is not playing paints nothing here. The regions come from
+  /// [centreRegions], the same ones the finished stacks stand in.
   void _paintCentreHome(Canvas canvas, double cellSize, int quarters) {
-    final double near = 6 * cellSize;
-    final double far = 9 * cellSize;
-    for (var seat = 0; seat < 4; seat++) {
-      final (Offset a, Offset b, Offset middle) = _centreTriangle(
-        seat,
-        quarters,
-        cellSize,
-      );
-      final Path triangle = Path()
-        ..moveTo(a.dx, a.dy)
-        ..lineTo(b.dx, b.dy)
-        ..lineTo(middle.dx, middle.dy)
-        ..close();
-      final double fade = seatsInPlay.contains(seat) ? 1.0 : _kAbsentSeatFade;
-      canvas.drawPath(triangle, Paint()..color = LudoColors.dieFace);
-      canvas.drawPath(
-        triangle,
-        Paint()..color = LudoColors.seats[seat].withValues(alpha: fade),
-      );
-    }
+    final Map<int, List<Offset>> regions = centreRegions(
+      seatsInPlay: seatsInPlay,
+      quarters: quarters,
+      cellSize: cellSize,
+    );
     final Paint divider = Paint()
       ..color = LudoColors.dieFace
+      ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
-    canvas.drawLine(Offset(near, near), Offset(far, far), divider);
-    canvas.drawLine(Offset(far, near), Offset(near, far), divider);
+    for (final MapEntry<int, List<Offset>> region in regions.entries) {
+      final Path path = Path()..addPolygon(region.value, true);
+      canvas.drawPath(path, Paint()..color = LudoColors.dieFace);
+      canvas.drawPath(path, Paint()..color = LudoColors.seats[region.key]);
+      canvas.drawPath(path, divider);
+    }
   }
 
   /// A 1 px outline round each of the 52 track cells and the 20 home-column

@@ -40,6 +40,15 @@
 //      each edge.
 //   3. T4 "closer" is strictly closer: a tie with another seat colour fails.
 //   4. T1 and T2 use the contract's 0.5 px slack on the radius arithmetic.
+//
+// C-659t return 1. X190 (work/ludo/orders/659-centre-by-seats.md, R1 to R3)
+// replaces the four fixed spots of D3: a seat's finished pieces now form one
+// stack that overlaps by design. T2, T3, T4 and T6 are rewritten for X190, each
+// marked at its case. With four seats the region of a seat is still its
+// triangle (R1), so the triangle frame below stays the reference; with two
+// opposite seats it is the half block on the seat's side. Which finished token
+// is first in a stack is not specified, so a stack is ordered by distance from
+// the seat's base side, never by token index.
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -283,8 +292,10 @@ class _Scene {
     required this.mySeat,
     required this.discs,
     required this.frame,
+    this.badges = const <Rect>[],
   });
 
+  final List<Rect> badges;
   final String name;
   final String scenario;
   final int? mySeat;
@@ -348,8 +359,16 @@ Future<_Scene> _mount(
       );
     }
   }
+  final List<Rect> badges = <Rect>[
+    for (final int seat in _allSeats)
+      if (find.byKey(Key('board-finished-count-$seat')).evaluate().isNotEmpty)
+        tester
+            .getRect(find.byKey(Key('board-finished-count-$seat')).first)
+            .shift(-origin),
+  ];
   final _Frame frame = await _capture(tester);
   return _Scene(
+    badges: badges,
     name: name,
     scenario:
         'LudoBoard 450x450 dpr 1.0, seatsInPlay $seatsInPlay, '
@@ -432,12 +451,106 @@ List<String> _noOverlap(_Scene scene) {
   return misses;
 }
 
-/// T3: diameter 0.55 c and the D3 spot.
-List<String> _sizeAndSpot(_Scene scene) {
+/// X190 (T2): inside one stack each disc's edge stays visible (consecutive
+/// centres at least 0.18 x diameter apart); discs of different seats never
+/// overlap.
+List<String> _edgesVisibleSeatsApart(_Scene scene) {
+  final List<String> misses = <String>[];
+  for (final MapEntry<int, List<_Disc>> e in _stacks(scene).entries) {
+    final List<_Disc> stack = e.value;
+    for (int k = 1; k < stack.length; k++) {
+      final double step = (stack[k].centre - stack[k - 1].centre).distance;
+      final double need = 0.18 * stack[k].rect.width;
+      if (step < need - 0.01) {
+        misses.add(
+          'seat ${e.key}: expected consecutive discs of the stack at least '
+          '0.18 x diameter = ${_px(need)} px apart so every edge shows, read '
+          '${_px(step)} px between ${stack[k - 1].label} ${stack[k - 1].at} '
+          'and ${stack[k].label} ${stack[k].at}',
+        );
+      }
+    }
+  }
+  for (int i = 0; i < scene.discs.length; i++) {
+    for (int j = i + 1; j < scene.discs.length; j++) {
+      final _Disc p = scene.discs[i];
+      final _Disc q = scene.discs[j];
+      if (p.seat == q.seat) {
+        continue;
+      }
+      final double dist = (p.centre - q.centre).distance;
+      final double need = p.radius + q.radius - 0.5;
+      if (dist < need) {
+        misses.add(
+          '${p.label} and ${q.label}: discs of different seats must not '
+          'overlap, expected centres at least ${_px(need)} px apart (radii '
+          '${_px(p.radius)} + ${_px(q.radius)} minus 0.5), read '
+          '${_px(dist)} px; ${p.label} ${p.at}; ${q.label} ${q.at}',
+        );
+      }
+    }
+  }
+  return misses;
+}
+
+/// X190 (T6): two opposite seats, each region is the half block on its side:
+/// 3 cells along the base, 1.5 cells deep. The disc's full radius is inside.
+List<String> _insideOwnHalf(_Scene scene) {
+  final List<String> misses = <String>[];
+  for (final _Disc d in scene.discs) {
+    final _Triangle t = d.triangle;
+    final Offset c = d.centre;
+    final double depth = t.baseDistance(c);
+    final double along = t._u(c);
+    const double halfDepth = 1.5 * _cell;
+    final List<String> bad = <String>[
+      if (depth < d.radius - 0.01)
+        'depth ${_px(depth)} px from the ${t.side} side < radius '
+            '${_px(d.radius)}',
+      if (halfDepth - depth < d.radius - 0.01)
+        'only ${_px(halfDepth - depth)} px from the half\'s inner edge '
+            '(the boundary through the centre) < radius ${_px(d.radius)}',
+      if (along < d.radius - 0.01 ||
+          _Triangle.baseLength - along < d.radius - 0.01)
+        'position ${_px(along)} px along the side, expected the radius '
+            '${_px(d.radius)} clear of both ends of the ${_px(_Triangle.baseLength)} px side',
+    ];
+    if (bad.isNotEmpty) {
+      misses.add(
+        '${d.label}: expected the disc wholly inside seat ${d.seat}\'s half '
+        'of the block (${t.side} side, 3 x 1.5 cells); ${d.at}; '
+        '${bad.join('; ')}',
+      );
+    }
+  }
+  return misses;
+}
+
+/// A seat's discs ordered from its base side inwards, never by token index.
+List<_Disc> _stackOrder(List<_Disc> discs) => List<_Disc>.of(discs)
+  ..sort(
+    (_Disc a, _Disc b) => a.triangle
+        .baseDistance(a.centre)
+        .compareTo(b.triangle.baseDistance(b.centre)),
+  );
+
+Map<int, List<_Disc>> _stacks(_Scene scene) => <int, List<_Disc>>{
+  for (final int seat in _allSeats)
+    if (scene.discs.any((_Disc d) => d.seat == seat))
+      seat: _stackOrder(<_Disc>[
+        for (final _Disc d in scene.discs)
+          if (d.seat == seat) d,
+      ]),
+};
+
+/// X190 R3 (T3): diameter 0.55 c, the disc's full radius inside the seat's
+/// triangle (the four-seat region), and one stack: every step the same
+/// vector, pointing from the base side towards the centre.
+List<String> _sizeAndStack(_Scene scene) {
   final List<String> misses = <String>[];
   const double wantD = _diameterCells * _cell;
   for (final _Disc d in scene.discs) {
-    final Offset want = d.triangle.at(_spots[d.index].u, _spots[d.index].v);
+    final _Triangle t = d.triangle;
     final List<String> bad = <String>[
       if ((d.rect.width - wantD).abs() > 0.5)
         'width ${_px(d.rect.width)} px, expected ${_px(wantD)} px '
@@ -445,14 +558,45 @@ List<String> _sizeAndSpot(_Scene scene) {
       if ((d.rect.height - wantD).abs() > 0.5)
         'height ${_px(d.rect.height)} px, expected ${_px(wantD)} px '
             '(0.55 c) within 0.5',
-      if ((d.centre - want).distance > 0.75)
-        'centre off the spot by ${_px((d.centre - want).distance)} px '
-            '(tolerance 0.75), expected (${_px(want.dx)}, ${_px(want.dy)}) px '
-            '= u ${_spots[d.index].u}, v ${_spots[d.index].v} cells in the '
-            '${d.triangle.side}-side frame',
+      if (t.inside(d.centre) < d.radius - 0.01)
+        'expected the full radius ${_px(d.radius)} px clear of every edge of '
+            'the ${t.side}-side triangle (a ${t.a}, apex ${t.apex}), the '
+            'nearest edge is ${_px(t.inside(d.centre))} px away',
     ];
     if (bad.isNotEmpty) {
       misses.add('${d.label}: ${d.at}; ${bad.join('; ')}');
+    }
+  }
+  for (final MapEntry<int, List<_Disc>> e in _stacks(scene).entries) {
+    final List<_Disc> stack = e.value;
+    if (stack.length < 2) {
+      continue;
+    }
+    final _Triangle t = stack.first.triangle;
+    final Offset first = stack.first.centre;
+    final Offset v0 = stack[1].centre - first;
+    final String centres = stack
+        .map((_Disc d) => '(${_px(d.centre.dx)}, ${_px(d.centre.dy)})')
+        .join(' ');
+    for (int k = 1; k < stack.length; k++) {
+      final Offset v = stack[k].centre - stack[k - 1].centre;
+      if ((v - v0).distance > 0.01) {
+        misses.add(
+          'seat ${e.key}: expected every step of the stack to be the same '
+          'vector, step 1 is (${_px(v0.dx)}, ${_px(v0.dy)}), step $k is '
+          '(${_px(v.dx)}, ${_px(v.dy)}); centres $centres',
+        );
+      }
+      final double inward = v.dx * t.ev.dx + v.dy * t.ev.dy;
+      final Offset toApex = t.apex - first;
+      if (inward <= 0 || v.dx * toApex.dx + v.dy * toApex.dy <= 0) {
+        misses.add(
+          'seat ${e.key}: expected step $k to run from the ${t.side} base '
+          'side towards the centre ${t.apex}, step is (${_px(v.dx)}, '
+          '${_px(v.dy)}), component away from the base ${_px(inward)} px; '
+          'centres $centres',
+        );
+      }
     }
   }
   return misses;
@@ -473,47 +617,57 @@ String _hex(({double r, double g, double b, int x, int y}) px) {
   return '#${two(px.r)}${two(px.g)}${two(px.b)}';
 }
 
-/// T4: the colour just outside each disc is the own seat's.
-List<String> _colourAround(_Scene scene) {
+/// X190 (T4): points of each seat's region that no disc and no count badge
+/// covers read the own seat's colour. The points are a 0.5 c grid in the
+/// triangle's frame, kept when 2 px inside the triangle, more than radius + 2
+/// px from every disc of every seat, and outside every badge grown by 2 px.
+List<String> _colourInRegion(_Scene scene) {
   final List<String> misses = <String>[];
-  for (final _Disc d in scene.discs) {
-    final _Triangle t = d.triangle;
-    final double reach = d.radius + 2;
-    final Offset toApex = (t.apex - d.centre) / (t.apex - d.centre).distance;
-    final Map<String, Offset> dirs = <String, Offset>{
-      'towards the apex': toApex,
-      'along the base, towards b': t.eu,
-      'along the base, towards a': -t.eu,
-      'away from the apex': -toApex,
-    };
+  for (final int seat in _allSeats) {
+    if (!scene.discs.any((_Disc d) => d.seat == seat)) {
+      continue;
+    }
+    final _Triangle t = scene.discs
+        .firstWhere((_Disc d) => d.seat == seat)
+        .triangle;
     int kept = 0;
-    for (final MapEntry<String, Offset> e in dirs.entries) {
-      final Offset p = d.centre + e.value * reach;
-      if (t.inside(p) < 2) {
-        continue;
-      }
-      kept++;
-      final px = scene.frame.at(p);
-      final int own = _colourDistance(px, LudoColors.seats[d.seat]);
-      for (final int other in _allSeats) {
-        if (other == d.seat) {
+    for (double u = 0.25; u < 3; u += 0.5) {
+      for (double v = 0.25; v < 1.5; v += 0.5) {
+        final Offset p = t.at(u, v);
+        if (t.inside(p) < 2) {
           continue;
         }
-        final int dist = _colourDistance(px, LudoColors.seats[other]);
-        if (dist <= own) {
-          misses.add(
-            '${d.label}: probe ${e.key} at (${_px(p.dx)}, ${_px(p.dy)}) px = '
-            'pixel (${px.x}, ${px.y}) reads ${_hex(px)}, expected closer to '
-            'seat ${d.seat} colour (distance $own) than to seat $other '
-            'colour (distance $dist); ${d.at}',
-          );
+        if (scene.discs.any(
+          (_Disc d) => (d.centre - p).distance <= d.radius + 2,
+        )) {
+          continue;
+        }
+        if (scene.badges.any((Rect b) => b.inflate(2).contains(p))) {
+          continue;
+        }
+        kept++;
+        final px = scene.frame.at(p);
+        final int own = _colourDistance(px, LudoColors.seats[seat]);
+        for (final int other in _allSeats) {
+          if (other == seat) {
+            continue;
+          }
+          final int dist = _colourDistance(px, LudoColors.seats[other]);
+          if (dist <= own) {
+            misses.add(
+              'seat $seat: probe at u $u, v $v cells = (${_px(p.dx)}, '
+              '${_px(p.dy)}) px = pixel (${px.x}, ${px.y}) reads ${_hex(px)}, '
+              'expected closer to seat $seat colour (distance $own) than to '
+              'seat $other colour (distance $dist)',
+            );
+          }
         }
       }
     }
-    if (kept < 2) {
+    if (kept < 3) {
       misses.add(
-        '${d.label}: expected at least 2 probe points inside seat '
-        '${d.seat}\'s ${t.side}-side triangle by 2 px, kept $kept; ${d.at}',
+        'seat $seat: expected at least 3 probe points of the ${t.side}-side '
+        'triangle covered by no disc and no badge, kept $kept',
       );
     }
   }
@@ -660,41 +814,47 @@ void main() {
       scene.failWith('T1', _insideOwnTriangle(scene));
     });
 
-    testWidgets('T2 no overlap, 4 seats all finished, $view', (tester) async {
-      final _Scene scene = await _mount(
-        tester,
-        name: 'T2 no overlap, 4 seats all finished',
-        tokens: _allFinished(_allSeats),
-        seatsInPlay: _allSeats,
-        mySeat: mySeat,
-      );
-      scene.failWith('T2', _noOverlap(scene));
-    });
+    // X190 replaces D3 here: one seat's discs overlap by design.
+    testWidgets(
+      'T2 stack edges visible and seats apart, 4 seats all finished, $view',
+      (tester) async {
+        final _Scene scene = await _mount(
+          tester,
+          name: 'T2 stack edges visible and seats apart, 4 seats all finished',
+          tokens: _allFinished(_allSeats),
+          seatsInPlay: _allSeats,
+          mySeat: mySeat,
+        );
+        scene.failWith('T2', _edgesVisibleSeatsApart(scene));
+      },
+    );
 
-    testWidgets('T3 size and spot, 4 seats all finished, $view', (
+    // X190 replaces D3 here: a stack stepping inward, not four fixed spots.
+    testWidgets('T3 size and stack, 4 seats all finished, $view', (
       tester,
     ) async {
       final _Scene scene = await _mount(
         tester,
-        name: 'T3 size and spot, 4 seats all finished',
+        name: 'T3 size and stack, 4 seats all finished',
         tokens: _allFinished(_allSeats),
         seatsInPlay: _allSeats,
         mySeat: mySeat,
       );
-      scene.failWith('T3', _sizeAndSpot(scene));
+      scene.failWith('T3', _sizeAndStack(scene));
     });
 
-    testWidgets('T4 the colour around it, 4 seats all finished, $view', (
+    // X190 replaces D3 here: probe the region's free points, not around a spot.
+    testWidgets('T4 the colour of the region, 4 seats all finished, $view', (
       tester,
     ) async {
       final _Scene scene = await _mount(
         tester,
-        name: 'T4 the colour around it, 4 seats all finished',
+        name: 'T4 the colour of the region, 4 seats all finished',
         tokens: _allFinished(_allSeats),
         seatsInPlay: _allSeats,
         mySeat: mySeat,
       );
-      scene.failWith('T4', _colourAround(scene));
+      scene.failWith('T4', _colourInRegion(scene));
     });
 
     testWidgets('T5 partial centre, only token 3 finished, $view', (
@@ -722,6 +882,7 @@ void main() {
     });
   }
 
+  // X190 replaces X187 here: the half block is each seat's region, stacks overlap.
   testWidgets('T6 two seats in play, all finished, mySeat 0', (tester) async {
     final _Scene scene = await _mount(
       tester,
@@ -738,8 +899,8 @@ void main() {
           'found ${scene.discs.length}. Scenario: ${scene.scenario}',
     );
     scene.failWith('T6', <String>[
-      ..._insideOwnTriangle(scene).map((String m) => 'T1: $m'),
-      ..._noOverlap(scene).map((String m) => 'T2: $m'),
+      ..._insideOwnHalf(scene).map((String m) => 'T1: $m'),
+      ..._edgesVisibleSeatsApart(scene).map((String m) => 'T2: $m'),
     ]);
   });
 }
