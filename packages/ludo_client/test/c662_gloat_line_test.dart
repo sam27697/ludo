@@ -1009,7 +1009,7 @@ void main() {
 
       testWidgets(
         'T2: ${locale.languageCode}, seat $mover\'s pill is rounded, filled '
-        'with the seat colour, the text light and bold',
+        'with the seat colour, the text its contrasting ink and bold',
         (tester) async {
           final _Fix f = await _fixture(
             tester,
@@ -1070,9 +1070,14 @@ void main() {
               reason: _why(f.s, 'the text has its own colour, style $style'),
             );
             expect(
-              style!.color!.computeLuminance(),
-              greaterThanOrEqualTo(0.7),
-              reason: _why(f.s, 'the text is light, colour ${style.color}'),
+              style!.color,
+              equals(contrastingInk(LudoColors.seats[mover])),
+              reason: _why(
+                f.s,
+                'the text colour ${style.color} is contrastingInk of seat '
+                '$mover\'s colour ${LudoColors.seats[mover]}, '
+                '${contrastingInk(LudoColors.seats[mover])}',
+              ),
             );
           } finally {
             await releaseGame(tester, f.s.drive);
