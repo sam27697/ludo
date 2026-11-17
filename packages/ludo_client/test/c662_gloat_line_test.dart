@@ -12,7 +12,8 @@
 // whether the line sits under `capture-gloat-<seat>` or beside it on the
 // board, and a pool string appears nowhere else on the game screen. Its
 // geometry is read through the full transform to the screen, so a FittedBox
-// that shrinks a long line to fit still measures what is painted. The pill
+// that shrinks a long line to fit still measures what is painted (the size
+// rule, T2' of the run 154 respec, is exactly about whether it does). The pill
 // is the nearest DecoratedBox above the text; the contract's "rounded pill
 // in the capturer's seat colour" is read as a BoxDecoration with a
 // borderRadius of at least half the pill's height and the seat colour as
@@ -39,6 +40,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
+import 'package:ludo_client/src/capture_gloat.dart' show debugForceGloatOrder;
 import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/theme.dart';
 
@@ -561,6 +563,83 @@ void _expectTogether(_Fix f, List<_Look> looks, {String? what}) {
   }
 }
 
+/// One pool line as drawn in the hold of its gloat, for the size rule.
+class _Drawn {
+  _Drawn(this.index, this.look, this.paragraph, this.fontSize);
+
+  final int index;
+  final _Look look;
+  final RenderParagraph paragraph;
+  final double? fontSize;
+
+  /// Height the paragraph laid out at, before any transform above it.
+  double get laidOutHeight => paragraph.size.height;
+
+  /// True when something above the text paints it smaller than it laid out.
+  bool get scaledDown =>
+      (look.textRect.height - laidOutHeight).abs() > 0.5 ||
+      look.lineScale < 0.995;
+
+  @override
+  String toString() =>
+      'line ${index + 1} "${look.text}": ${look.lines} line(s), laid out '
+      '${paragraph.size.width.toStringAsFixed(1)}x'
+      '${laidOutHeight.toStringAsFixed(1)} px, on screen '
+      '${look.textRect.width.toStringAsFixed(1)}x'
+      '${look.textRect.height.toStringAsFixed(1)} px (scale '
+      '${look.lineScale.toStringAsFixed(3)}), font $fontSize x scaler '
+      '${paragraph.textScaler.scale(14) / 14}, pill ${look.pillRect}';
+}
+
+/// T2': every line of the locale's pool in turn, each from its own gloat
+/// (`debugForceGloatOrder`), read 500 ms into the life, in the hold, where
+/// the face has finished its pop and has not started its exit.
+Future<List<_Drawn>> _everyPoolLine(_Fix f) async {
+  final List<_Drawn> drawn = <_Drawn>[];
+  for (int i = 0; i < f.pool.length; i++) {
+    if (i > 0) {
+      await f.s.pump(
+        const Duration(milliseconds: 1400),
+        step: const Duration(milliseconds: 100),
+      );
+      expect(
+        _lineNow(f),
+        isNull,
+        reason: _why(f.s, 'fixture: the gloat before line ${i + 1} is gone'),
+      );
+      await _resetBoard(f);
+    }
+    f.s.steps.add('force pool line ${i + 1}');
+    debugForceGloatOrder(<int>[i]);
+    await _pushCapture(f);
+    final int t0 = await _awaitFace(f, step: kC468Frame);
+    await f.s.pump(
+      const Duration(milliseconds: 500),
+      step: const Duration(milliseconds: 100),
+    );
+    final _Look look = _look(f, t0);
+    expect(
+      look.text,
+      f.pool[i],
+      reason: _why(
+        f.s,
+        'fixture: debugForceGloatOrder([$i]) shows pool line ${i + 1} '
+        '"${f.pool[i]}", the screen shows "${look.text}"',
+      ),
+    );
+    final Finder line = _lineFinder();
+    drawn.add(
+      _Drawn(
+        i,
+        look,
+        f.tester.renderObject<RenderParagraph>(line),
+        f.tester.widget<RichText>(line).text.style?.fontSize,
+      ),
+    );
+  }
+  return drawn;
+}
+
 /// The turn frame that follows a capture's bonus roll, then that roll.
 Future<void> _rollFor(_Fix f, int seat) async {
   await f.s.push('turn', turnFrame(seat));
@@ -914,8 +993,8 @@ void main() {
     for (final int mover in const <int>[0, 1, 2, 3]) {
       testWidgets(
         'T2: ${locale.languageCode}, seat $mover\'s line sits directly above '
-        'the face, centred on it, clear of it, one line, at most 2.6 cells '
-        'wide, inside the board',
+        'the face, centred on it, clear of it, at most 6 cells wide on at '
+        'most 2 lines, inside the board',
         (tester) async {
           final _Fix f = await _fixture(
             tester,
@@ -974,18 +1053,22 @@ void main() {
             );
             expect(
               box.width,
-              lessThanOrEqualTo(2.6 * cell + 0.5),
+              lessThanOrEqualTo(6 * cell + 0.5),
               reason: _why(
                 f.s,
                 'the pill is ${box.width.toStringAsFixed(1)} px wide, at '
-                'most 2.6 cells = ${(2.6 * cell).toStringAsFixed(1)} px at '
-                'text scale 1.0',
+                'most 6 cells = ${(6 * cell).toStringAsFixed(1)} px (one '
+                'yard side)',
               ),
             );
             expect(
               look.lines,
-              1,
-              reason: _why(f.s, '"${look.text}" is drawn on one line'),
+              lessThanOrEqualTo(2),
+              reason: _why(
+                f.s,
+                '"${look.text}" is drawn on at most 2 lines, it laid out on '
+                '${look.lines}',
+              ),
             );
             expect(
               _inside(box, look.textRect),
@@ -1063,6 +1146,27 @@ void main() {
               style?.fontWeight?.value ?? 0,
               greaterThanOrEqualTo(700),
               reason: _why(f.s, 'the text is bold, style $style'),
+            );
+            expect(
+              style?.fontSize,
+              14,
+              reason: _why(
+                f.s,
+                'T2\' the text is 14 logical px before the text scaler, '
+                'style $style',
+              ),
+            );
+            final RenderParagraph drawn = tester.renderObject<RenderParagraph>(
+              line,
+            );
+            expect(
+              drawn.textScaler.scale(14),
+              closeTo(14, 0.001),
+              reason: _why(
+                f.s,
+                'T2\' at text scale 1.0 the paragraph draws 14 px, its '
+                'scaler gives ${drawn.textScaler.scale(14)}',
+              ),
             );
             expect(
               style?.color,
@@ -1145,7 +1249,7 @@ void main() {
                       'board $board',
                     );
                   }
-                  final int most = scale > 1.0 ? 2 : 1;
+                  const int most = 2;
                   if (l.lines > most) {
                     bad.add(
                       '${l.age}ms: "${l.text}" wraps to ${l.lines} lines, '
@@ -1171,6 +1275,134 @@ void main() {
                   'no exception and the line inside the board on every '
                   'frame; ${bad.length} violations, first: ${bad.take(6)}',
                 ),
+              );
+            } finally {
+              await releaseGame(tester, f.s.drive);
+            }
+          },
+        );
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // T2' (run 154 respec): the size rule. Bold 14 px text through the
+  // screen's own TextScaler, pill at most 6 cells wide with 0.3 cell of
+  // horizontal padding, at most 2 lines. At text scale 1.0 the line is
+  // never scaled down, on any board from 320 to 1848 px wide; at 2.0 it
+  // may scale down, but to fit 2 lines, never to fit 1.
+  // -------------------------------------------------------------------
+  for (final Locale locale in const <Locale>[_en, _ar]) {
+    for (final (Size surface, double scale, List<int> movers)
+        in const <(Size, double, List<int>)>[
+          (Size(320, 568), 1.0, <int>[0, 1, 2, 3]),
+          (Size(360, 800), 1.0, <int>[0, 1, 2, 3]),
+          (Size(768, 1024), 1.0, <int>[0, 2]),
+          (Size(1864, 4000), 1.0, <int>[0, 2]),
+          (Size(320, 568), 2.0, <int>[0, 1, 2, 3]),
+          (Size(360, 800), 2.0, <int>[0, 1, 2, 3]),
+          (Size(768, 1024), 2.0, <int>[0, 2]),
+        ]) {
+      for (final int mover in movers) {
+        testWidgets(
+          'T2\': ${locale.languageCode}, surface ${surface.width.toInt()}x'
+          '${surface.height.toInt()}, text scale $scale, seat $mover: every '
+          'pool line ${scale == 1.0 ? 'at full size on at most 2 lines' : 'on '
+                    'at most 2 lines, scaled down only to fit 2'}, in a pill of '
+          'at most 6 cells, inside the board',
+          (tester) async {
+            final _Fix f = await _fixture(
+              tester,
+              name:
+                  'T2prime size ${locale.languageCode} '
+                  '${surface.width.toInt()}x${surface.height.toInt()} '
+                  'scale=$scale me=0 mover=$mover players=4 (each pool line '
+                  'forced in turn)',
+              mover: mover,
+              players: 4,
+              locale: locale,
+              textScale: scale,
+              surface: surface,
+            );
+            try {
+              final List<_Drawn> drawn = await _everyPoolLine(f);
+              final Rect board = boardSquare(tester);
+              final double cell = cellSize(tester);
+              final List<String> bad = <String>[];
+              for (final _Drawn d in drawn) {
+                final Rect? pill = d.look.pillRect;
+                if (pill == null) {
+                  bad.add('$d: no pill (DecoratedBox) above the text');
+                  continue;
+                }
+                if (d.fontSize != 14) {
+                  bad.add(
+                    '$d: style font size is ${d.fontSize}, expected 14 '
+                    '(passed through the screen\'s TextScaler)',
+                  );
+                }
+                final double drawnFont = d.paragraph.textScaler.scale(14);
+                if ((drawnFont - 14 * scale).abs() > 0.01) {
+                  bad.add(
+                    '$d: the paragraph draws a ${drawnFont.toStringAsFixed(2)} '
+                    'px font, expected ${14 * scale} (14 x the screen\'s text '
+                    'scale $scale)',
+                  );
+                }
+                if (pill.width > 6 * cell + 0.5) {
+                  bad.add(
+                    '$d: pill ${pill.width.toStringAsFixed(1)} px wide, at '
+                    'most 6 cells = ${(6 * cell).toStringAsFixed(1)} px '
+                    '(cell ${cell.toStringAsFixed(2)} px)',
+                  );
+                }
+                if (d.look.lines > 2) {
+                  bad.add('$d: ${d.look.lines} lines, at most 2');
+                }
+                if (!_inside(board, pill) || !_inside(board, d.look.textRect)) {
+                  bad.add('$d: outside the board $board');
+                }
+                if (scale == 1.0) {
+                  if (d.scaledDown) {
+                    bad.add(
+                      '$d: scaled down at text scale 1.0 (the text paints at '
+                      '${d.look.textRect.height.toStringAsFixed(1)} px high, '
+                      'laid out at ${d.laidOutHeight.toStringAsFixed(1)}), '
+                      'the line is never scaled down at 1.0',
+                    );
+                  }
+                  final double left = d.look.textRect.left - pill.left;
+                  final double right = pill.right - d.look.textRect.right;
+                  if (left < 0.3 * cell - 0.5 || right < 0.3 * cell - 0.5) {
+                    bad.add(
+                      '$d: horizontal padding ${left.toStringAsFixed(1)} px '
+                      'left and ${right.toStringAsFixed(1)} px right, '
+                      'expected at least 0.3 cell = '
+                      '${(0.3 * cell).toStringAsFixed(1)} px each side',
+                    );
+                  }
+                } else if (d.scaledDown && d.look.lines < 2) {
+                  bad.add(
+                    '$d: scaled down while laid out on ${d.look.lines} '
+                    'line, a scale-down may only fit 2 lines, never 1',
+                  );
+                }
+              }
+              expect(
+                bad,
+                isEmpty,
+                reason: _why(
+                  f.s,
+                  'size rule T2\' for all ${f.pool.length} lines; board '
+                  '$board, cell ${cell.toStringAsFixed(2)} px; '
+                  '${bad.length} violations: ${bad.join(' || ')}',
+                ),
+              );
+              final Object? thrown = tester.takeException();
+              expect(
+                thrown,
+                isNull,
+                reason: _why(f.s, 'no layout exception, got $thrown'),
               );
             } finally {
               await releaseGame(tester, f.s.drive);
