@@ -77,22 +77,6 @@
   "@homeDefaultPlayerName": {
     "description": "Name sent to the server when the player leaves the name field empty."
   },
-  "homePlayersTwo": "2 players",
-  "@homePlayersTwo": {
-    "description": "Spoken label (screen reader only) for a two-seat room in the player count control and the last-table chip."
-  },
-  "homePlayersThree": "3 players",
-  "@homePlayersThree": {
-    "description": "Spoken label (screen reader only) for a three-seat room in the player count control and the last-table chip."
-  },
-  "homePlayersFour": "4 players",
-  "@homePlayersFour": {
-    "description": "Spoken label (screen reader only) for a four-seat room in the player count control and the last-table chip."
-  },
-  "homePlayersQuestion": "How many players?",
-  "@homePlayersQuestion": {
-    "description": "Label at the start of the single row on the home screen that asks how many players the new room is for; the count control sits at the row's end."
-  },
   "lobbyConnecting": "Connecting to the room...",
   "@lobbyConnecting": {
     "description": "Shown on the lobby screen while the socket to the server is opening and the create or join request is in flight."
@@ -149,21 +133,13 @@
   "@lobbyLinkCopied": {
     "description": "Snackbar shown after either the copy-link or the copy-code button on the lobby screen is pressed."
   },
-  "lobbyWaitingForPlayers": "Waiting for players ({seated} of {total})",
-  "@lobbyWaitingForPlayers": {
-    "description": "Shown on the lobby screen with the number of seats currently filled and the number of seats the room needs.",
-    "placeholders": {
-      "seated": {
-        "type": "int"
-      },
-      "total": {
-        "type": "int"
-      }
-    }
+  "lobbyWaitingForFriends": "Waiting for friends to join",
+  "@lobbyWaitingForFriends": {
+    "description": "Docked line on the host's lobby screen while the host is the only one seated; the host can start as soon as one friend has joined."
   },
   "lobbyWaitingForHost": "Waiting for the host to start the game",
   "@lobbyWaitingForHost": {
-    "description": "Shown on the lobby screen to a guest once every seat is filled, in place of the seat count, while the host has not yet started the game."
+    "description": "Shown on the lobby screen to a guest, whatever the number of seated players, while the host has not yet started the game."
   },
   "lobbyDesynced": "The lobby view may be out of date. Resync to be sure.",
   "@lobbyDesynced": {
