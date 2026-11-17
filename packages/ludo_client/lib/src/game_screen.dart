@@ -6197,10 +6197,18 @@ class _GameScreenState extends State<GameScreen> {
     Color trayColor,
     SeatRollRecord? boardRecord,
     bool trayOwnMove,
-    int? ownRollHeld,
-  ) {
+    int? ownRollHeld, {
+    bool wrapTray = false,
+  }) {
     final HintControlState? hintState = _hintControlState(room, seat);
     final bool hinted = hintState != null && seat != null;
+    Widget trayWidget() => RollTray(
+      key: const Key('game-roll-tray'),
+      faces: trayFaces!,
+      states: trayStates!,
+      seatColor: trayColor,
+      ownMove: trayOwnMove,
+    );
     // C-511 D1: the control's own 48 dp box and the gap after it.
     final double reserved = hinted ? kHintHitWidth + kSpace2 : 0;
     // C-511 D1: the no-move mark hangs off the die's physical right
@@ -6209,6 +6217,10 @@ class _GameScreenState extends State<GameScreen> {
     final double overhang = hinted && rtl && _noMoveVisible
         ? deadBadgeRect(const Size.square(_dieRowHeight)).right - _dieRowHeight
         : 0;
+    final bool withTray = trayFaces != null && boardRecord == null;
+    // C-667 D1: in the narrow side space the tray is not a sibling of the
+    // die; it is placed under the band, centred, by the code at the end.
+    final bool trayInRow = withTray && !wrapTray;
     Widget rowFor(double cap) => Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -6253,30 +6265,24 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
         ),
-        if (trayFaces != null && boardRecord == null) ...<Widget>[
+        if (trayInRow) ...<Widget>[
           const SizedBox(width: kSpace2),
-          Flexible(
-            child: RollTray(
-              key: const Key('game-roll-tray'),
-              faces: trayFaces,
-              states: trayStates!,
-              seatColor: trayColor,
-              ownMove: trayOwnMove,
-            ),
-          ),
+          Flexible(child: trayWidget()),
         ],
       ],
     );
     // C-511 D1/D2: a Row hands its die slot an unbounded width, so the slot
     // (die plus the no-answer line) is capped at what the band leaves it.
-    final bool withTray = trayFaces != null && boardRecord == null;
     final Widget band = RepaintBoundary(
       child: LayoutBuilder(
         builder: (BuildContext _, BoxConstraints box) {
           final double cap = box.hasBoundedWidth
               ? math.max(
                   0.0,
-                  box.maxWidth - reserved - overhang - (withTray ? kSpace2 : 0),
+                  box.maxWidth -
+                      reserved -
+                      overhang -
+                      (trayInRow ? kSpace2 : 0),
                 )
               : double.infinity;
           return _DieBand(
@@ -6288,31 +6294,43 @@ class _GameScreenState extends State<GameScreen> {
         },
       ),
     );
-    if (!hinted) {
-      return band;
+    final Widget dieHalf = !hinted
+        ? band
+        // The band is the full row width, the same as the Centre that held
+        // it. The bulb is a positioned child, not a new child of the row
+        // (C-471 D3).
+        : Stack(
+            clipBehavior: Clip.none,
+            children: <Widget>[
+              band,
+              // C-637 D5c: the bulb's room stays so the die does not shift, the
+              // bulb itself goes with the seat.
+              if (!_seatLost)
+                PositionedDirectional(
+                  start: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(
+                    child: HintButton(
+                      state: hintState,
+                      seatColor: LudoColors.seats[seat.clamp(0, 3)],
+                      onTap: _onHintTap,
+                    ),
+                  ),
+                ),
+            ],
+          );
+    if (!wrapTray || !withTray) {
+      return dieHalf;
     }
-    // The band is the full row width, the same as the Centre that held
-    // it. The bulb is a positioned child, not a new child of the row
-    // (C-471 D3).
-    return Stack(
-      clipBehavior: Clip.none,
+    // C-667 D1: the tray under the die, inside the side space.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        band,
-        // C-637 D5c: the bulb's room stays so the die does not shift, the
-        // bulb itself goes with the seat.
-        if (!_seatLost)
-          PositionedDirectional(
-            start: 0,
-            top: 0,
-            bottom: 0,
-            child: Center(
-              child: HintButton(
-                state: hintState,
-                seatColor: LudoColors.seats[seat.clamp(0, 3)],
-                onTap: _onHintTap,
-              ),
-            ),
-          ),
+        dieHalf,
+        const SizedBox(height: kSpace2),
+        Center(child: trayWidget()),
       ],
     );
   }
@@ -6598,173 +6616,283 @@ class _GameScreenState extends State<GameScreen> {
               constraints.maxWidth,
               constraints.maxHeight,
             );
+            final Widget header = RepaintBoundary(
+              child: _playHeaderRow(
+                loc,
+                room,
+                seat,
+                turn,
+                offlineTurnSeat,
+                clampScale: metrics.textScaleClamp,
+                stale: stale,
+                seatLost: lost,
+                gateShut: gateShut,
+              ),
+            );
+            final Widget board = RepaintBoundary(
+              child: LudoBoard(
+                key: const Key('game-screen-board'),
+                tokens: _tokensOf(room),
+                seatsInPlay: _seatedSeatsOf(room),
+                seatNames: names,
+                awaySeats: <int, String>{
+                  for (final SeatState s in room.seats)
+                    if (!s.connected &&
+                        s.seat != seat &&
+                        !room.retired.contains(s.seat))
+                      s.seat: loc.gameSeatOffline(names[s.seat]!),
+                },
+                retiredSeats: room.retired.toSet(),
+                seatPlaces: _placesOf(room),
+                onAwayTap: _onAwayTap,
+                awayTapSeats: _kickSeatsOf(room),
+                youLabel: loc.seatYou,
+                turnSeat: lost || gateShut ? null : turn?.seat,
+                mySeat: seat,
+                legal: legalTokens,
+                autoMoveToken: _isEndHeld || lost
+                    ? null
+                    : _pendingAutoMoveToken,
+                sentToken: _moveSentToken,
+                onTokenStep: (int stepSeat, int token) =>
+                    _onBoardTokenStep(controller, stepSeat),
+                onMoveLanded: _onBoardMoveLanded,
+                onTravelReset: _onBoardTravelReset,
+                safeCue: _safeCue,
+                facePick: lost ? null : _tokenFacePick(seat),
+                onTokenTap: (int index) {
+                  if (_isEndHeld) {
+                    return;
+                  }
+                  if (_myTimeUp) {
+                    FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+                    return;
+                  }
+                  _cancelPendingHoldForManualMove();
+                  final TurnState? liveTurn = turn;
+                  final int? k = liveTurn?.k;
+                  if (liveTurn == null || k == null) {
+                    return;
+                  }
+                  final List<FaceLegal>? legalByFace = liveTurn.legalByFace;
+                  // K6: a server without the roll queue (`legalByFace`
+                  // null) sends the byte-identical frame it always did.
+                  if (legalByFace == null) {
+                    _sendTokenMove(index, k, face: null);
+                    return;
+                  }
+                  // C-462 D2. F is this token's faces, in legalByFace
+                  // order. The cue plays only when something is sent
+                  // or a picker opens, never when a picker closes.
+                  final List<int> faces = _facesForToken(legalByFace, index);
+                  final bool openHere =
+                      _facePick != null && _facePick!.token == index;
+                  if (faces.length >= 2 && openHere) {
+                    setState(() {
+                      _facePick = null;
+                    });
+                    return;
+                  }
+                  if (faces.length >= 2) {
+                    setState(() {
+                      _facePick = _OpenFacePick(
+                        token: index,
+                        k: liveTurn.k,
+                        queue: List<int>.from(liveTurn.queue),
+                        faces: faces,
+                      );
+                    });
+                    FeedbackScope.of(context).play(FeedbackCue.tap);
+                    // C-518 D3: the picker's own label, once per open.
+                    _announce(
+                      AppLocalizations.of(context).facePickerLabel(index + 1),
+                    );
+                    return;
+                  }
+                  if (faces.length == 1) {
+                    _sendTokenMove(index, k, face: faces.single);
+                  }
+                },
+                onIllegalTokenTap: (int index) {
+                  // Today's illegal tap, and an open picker closes with
+                  // it (C-462 D2). The cue is the one this tap already
+                  // played; closing adds none.
+                  FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+                  if (_facePick != null) {
+                    setState(() {
+                      _facePick = null;
+                    });
+                  }
+                },
+                overlay: _thrownDieOverlay(seat),
+                seatDice: _seatDiceOf(room),
+                seatRecord: boardRecord,
+                gloat: _gloat,
+                chatPop: _chat == null
+                    ? null
+                    : BoardChatPop(seat: _chat!.seat, serial: _chat!.serial),
+                hint: lost ? null : _shownHint?.move,
+                hintNamesFace: lost ? false : (_shownHint?.namesFace ?? false),
+              ),
+            );
+            // K1: the tray sits on the die's own row, after it in reading
+            // order -- a plain Row under the ambient Directionality already
+            // mirrors that for Arabic, nothing here flips it by hand.
+            Widget dieRow({bool wrapTray = false}) => _dieRow(
+              room,
+              seat,
+              loc,
+              turn,
+              fadeIdleDie,
+              dieFace,
+              dieSeatColor,
+              rollEnabled,
+              metrics,
+              trayFaces,
+              trayStates,
+              trayColor,
+              boardRecord,
+              trayOwnMove,
+              ownRollHeld,
+              wrapTray: wrapTray,
+            );
+            final Widget notice = RepaintBoundary(
+              child: _belowDieNoticeSlot(
+                loc,
+                offlineTurnSeat,
+                names,
+                clampScale: metrics.textScaleClamp,
+              ),
+            );
+
+            Widget column(double lift) => Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                header,
+                SizedBox(height: metrics.headerGap),
+                Expanded(child: board),
+                SizedBox(height: metrics.boardGap),
+                dieRow(),
+                SizedBox(height: metrics.dieGap),
+                notice,
+                SizedBox(height: metrics.noticeGap),
+                // C-667 D2: the height the lift gives back sits under the
+                // notice, so the die band rides up by exactly that much.
+                if (lift > 0) SizedBox(height: lift),
+              ],
+            );
+
+            // C-667 D3: a phone keeps the column it always had.
+            final Size screen = MediaQuery.sizeOf(this.context);
+            if (screen.shortestSide < _largeScreenShortestSide) {
+              return column(0);
+            }
+            // The body is the last thing in the screen's SafeArea, so the
+            // column's bottom edge is the screen's bottom less the system
+            // chrome that SafeArea and the keyboard take, and the padding
+            // this column sits in.
+            final double columnBottom =
+                screen.height -
+                MediaQuery.paddingOf(this.context).bottom -
+                MediaQuery.viewInsetsOf(this.context).bottom -
+                kSpace2;
+            if (screen.height >= screen.width) {
+              // C-667 D2: the die's bottom edge is at most 0.9 of the screen
+              // height. Where today's column already honours that nothing
+              // moves; otherwise the lift comes out of the board's own
+              // rectangle (the painted board is the largest square in it,
+              // so a rectangle taller than its square gives the lift away
+              // without the board shrinking).
+              final double dieBottom =
+                  columnBottom -
+                  metrics.noticeGap -
+                  metrics.noticeHeight -
+                  metrics.dieGap;
+              final double over =
+                  dieBottom - screen.height * _largeDieBottomFraction;
+              final double boardHeight =
+                  constraints.maxHeight -
+                  metrics.headerHeight -
+                  metrics.headerGap -
+                  metrics.boardGap -
+                  _dieRowHeight -
+                  metrics.dieGap -
+                  metrics.noticeHeight -
+                  metrics.noticeGap;
+              final double lift = over <= 0
+                  ? 0
+                  : math.min(
+                      over + _liftRoundingMargin,
+                      math.max(0.0, boardHeight - _boardFloor),
+                    );
+              return column(lift);
+            }
+            // C-667 D1: the band leaves the column for the free space beside
+            // the board. The board region takes the height the band and its
+            // gap used to take; when the end side cannot hold the band the
+            // region is today's column of board, gap and band.
+            final HintControlState? hintState = _hintControlState(room, seat);
+            final bool hinted = hintState != null && seat != null;
+            final bool rtl =
+                Directionality.of(this.context) == TextDirection.rtl;
+            final double lead =
+                (hinted ? kHintHitWidth + kSpace2 : 0) +
+                (hinted && rtl
+                    ? deadBadgeRect(const Size.square(_dieRowHeight)).right -
+                          _dieRowHeight
+                    : 0);
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                RepaintBoundary(
-                  child: _playHeaderRow(
-                    loc,
-                    room,
-                    seat,
-                    turn,
-                    offlineTurnSeat,
-                    clampScale: metrics.textScaleClamp,
-                    stale: stale,
-                    seatLost: lost,
-                    gateShut: gateShut,
-                  ),
-                ),
+                header,
                 SizedBox(height: metrics.headerGap),
                 Expanded(
-                  child: RepaintBoundary(
-                    child: LudoBoard(
-                      key: const Key('game-screen-board'),
-                      tokens: _tokensOf(room),
-                      seatsInPlay: _seatedSeatsOf(room),
-                      seatNames: names,
-                      awaySeats: <int, String>{
-                        for (final SeatState s in room.seats)
-                          if (!s.connected &&
-                              s.seat != seat &&
-                              !room.retired.contains(s.seat))
-                            s.seat: loc.gameSeatOffline(names[s.seat]!),
-                      },
-                      retiredSeats: room.retired.toSet(),
-                      seatPlaces: _placesOf(room),
-                      onAwayTap: _onAwayTap,
-                      awayTapSeats: _kickSeatsOf(room),
-                      youLabel: loc.seatYou,
-                      turnSeat: lost || gateShut ? null : turn?.seat,
-                      mySeat: seat,
-                      legal: legalTokens,
-                      autoMoveToken: _isEndHeld || lost
-                          ? null
-                          : _pendingAutoMoveToken,
-                      sentToken: _moveSentToken,
-                      onTokenStep: (int stepSeat, int token) =>
-                          _onBoardTokenStep(controller, stepSeat),
-                      onMoveLanded: _onBoardMoveLanded,
-                      onTravelReset: _onBoardTravelReset,
-                      safeCue: _safeCue,
-                      facePick: lost ? null : _tokenFacePick(seat),
-                      onTokenTap: (int index) {
-                        if (_isEndHeld) {
-                          return;
-                        }
-                        if (_myTimeUp) {
-                          FeedbackScope.of(context)
-                              .play(FeedbackCue.invalidTap);
-                          return;
-                        }
-                        _cancelPendingHoldForManualMove();
-                        final TurnState? liveTurn = turn;
-                        final int? k = liveTurn?.k;
-                        if (liveTurn == null || k == null) {
-                          return;
-                        }
-                        final List<FaceLegal>? legalByFace =
-                            liveTurn.legalByFace;
-                        // K6: a server without the roll queue (`legalByFace`
-                        // null) sends the byte-identical frame it always did.
-                        if (legalByFace == null) {
-                          _sendTokenMove(index, k, face: null);
-                          return;
-                        }
-                        // C-462 D2. F is this token's faces, in legalByFace
-                        // order. The cue plays only when something is sent
-                        // or a picker opens, never when a picker closes.
-                        final List<int> faces = _facesForToken(
-                          legalByFace,
-                          index,
+                  child: LayoutBuilder(
+                    builder: (BuildContext _, BoxConstraints region) {
+                      final _SideBandPlan? plan = _planSideBand(
+                        regionWidth: region.maxWidth,
+                        regionHeight: region.maxHeight,
+                        regionTop:
+                            columnBottom -
+                            metrics.noticeGap -
+                            metrics.noticeHeight -
+                            metrics.dieGap -
+                            region.maxHeight,
+                        screenHeight: screen.height,
+                        lead: lead,
+                      );
+                      if (plan == null) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(child: board),
+                            SizedBox(height: metrics.boardGap),
+                            dieRow(),
+                          ],
                         );
-                        final bool openHere =
-                            _facePick != null && _facePick!.token == index;
-                        if (faces.length >= 2 && openHere) {
-                          setState(() {
-                            _facePick = null;
-                          });
-                          return;
-                        }
-                        if (faces.length >= 2) {
-                          setState(() {
-                            _facePick = _OpenFacePick(
-                              token: index,
-                              k: liveTurn.k,
-                              queue: List<int>.from(liveTurn.queue),
-                              faces: faces,
-                            );
-                          });
-                          FeedbackScope.of(context).play(FeedbackCue.tap);
-                          // C-518 D3: the picker's own label, once per open.
-                          _announce(
-                            AppLocalizations.of(context)
-                                .facePickerLabel(index + 1),
-                          );
-                          return;
-                        }
-                        if (faces.length == 1) {
-                          _sendTokenMove(index, k, face: faces.single);
-                        }
-                      },
-                      onIllegalTokenTap: (int index) {
-                        // Today's illegal tap, and an open picker closes with
-                        // it (C-462 D2). The cue is the one this tap already
-                        // played; closing adds none.
-                        FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-                        if (_facePick != null) {
-                          setState(() {
-                            _facePick = null;
-                          });
-                        }
-                      },
-                      overlay: _thrownDieOverlay(seat),
-                      seatDice: _seatDiceOf(room),
-                      seatRecord: boardRecord,
-                      gloat: _gloat,
-                      chatPop: _chat == null
-                          ? null
-                          : BoardChatPop(
-                              seat: _chat!.seat,
-                              serial: _chat!.serial,
+                      }
+                      return Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Center(
+                            child: SizedBox.square(
+                              dimension: plan.boardSide,
+                              child: board,
                             ),
-                      hint: lost ? null : _shownHint?.move,
-                      hintNamesFace: lost
-                          ? false
-                          : (_shownHint?.namesFace ?? false),
-                    ),
+                          ),
+                          PositionedDirectional(
+                            end: 0,
+                            top: plan.dieTop,
+                            width: plan.sideWidth,
+                            child: dieRow(wrapTray: plan.wrapTray),
+                          ),
+                        ],
+                      );
+                    },
                   ),
-                ),
-                SizedBox(height: metrics.boardGap),
-                // K1: the tray sits on the die's own row, after it in reading
-                // order -- a plain Row under the ambient Directionality
-                // already mirrors that for Arabic, nothing here flips it by
-                // hand.
-                _dieRow(
-                  room,
-                  seat,
-                  loc,
-                  turn,
-                  fadeIdleDie,
-                  dieFace,
-                  dieSeatColor,
-                  rollEnabled,
-                  metrics,
-                  trayFaces,
-                  trayStates,
-                  trayColor,
-                  boardRecord,
-                  trayOwnMove,
-                  ownRollHeld,
                 ),
                 SizedBox(height: metrics.dieGap),
-                RepaintBoundary(
-                  child: _belowDieNoticeSlot(
-                    loc,
-                    offlineTurnSeat,
-                    names,
-                    clampScale: metrics.textScaleClamp,
-                  ),
-                ),
+                notice,
                 SizedBox(height: metrics.noticeGap),
               ],
             );
@@ -6830,6 +6958,30 @@ class _GameScreenState extends State<GameScreen> {
 
   /// C-391's own floor, carried forward by C-402 decision 1.
   static const double _boardFloor = 324;
+
+  /// C-667: the shortest side, in logical px, from which the screen counts as
+  /// large. A phone is under it and keeps the column it always had (D3).
+  static const double _largeScreenShortestSide = 600;
+
+  /// C-667 D2: the die's bottom edge on a large portrait screen is at most
+  /// this fraction of the screen height.
+  static const double _largeDieBottomFraction = 0.9;
+
+  /// C-667 D2: half a logical pixel on top of the lift, so a die that
+  /// lands on the line by rounding still lands inside it.
+  static const double _liftRoundingMargin = 0.5;
+
+  /// C-667 D1: where the die's centre sits on a large landscape screen, as a
+  /// fraction of the screen height, and the band it may move in when the
+  /// board region leaves it no room at the preferred height.
+  static const double _sideDieCentre = 0.65;
+  static const double _sideDieCentreMin = 0.55;
+  static const double _sideDieCentreMax = 0.75;
+
+  /// C-667 D1: the widest tray the band is planned for, three tiles at their
+  /// natural width. The side space is judged against this, not against the
+  /// live queue, so the die does not move when the queue grows or empties.
+  static const double _sideTrayWidth = 3 * kRollTraySlot + 2 * kSpace2;
 
   /// The one clamp every reader of the system scale on the header row and
   /// the notice goes through, at whatever `clampScale`
@@ -7159,12 +7311,69 @@ class _GameScreenState extends State<GameScreen> {
       return nominal - give * ((nominal - gapFloorEach) / room);
     }
 
+    final TextScaler settled = systemScaler.clamp(maxScaleFactor: clamp);
     return _PlayColumnMetrics(
       textScaleClamp: clamp,
       headerGap: gapFor(headerGap),
       boardGap: gapFor(boardGap),
       dieGap: gapFor(dieGap),
       noticeGap: gapFor(noticeGap),
+      headerHeight: _headerRowHeightFor(context, settled),
+      noticeHeight: _noticeHeightFor(context, settled, maxWidth, loc),
+    );
+  }
+
+  /// C-667 D1. Where the die band goes on a large landscape screen: in the
+  /// space the board leaves on the end side, the board centred in its region
+  /// as the painted board always was. [lead] is what the band keeps clear at
+  /// its start (the hint control, and in RTL the no-move mark). The tray
+  /// stays beside the die when the side space holds die, tray and lead, and
+  /// wraps under the die when it only holds die and lead; narrower than that
+  /// is null, today's column. [regionTop] is the region's top edge in screen
+  /// coordinates, which is what the die's height on the screen is measured
+  /// from. The band keeps [kSpace2] clear of the board on its start side.
+  static _SideBandPlan? _planSideBand({
+    required double regionWidth,
+    required double regionHeight,
+    required double regionTop,
+    required double screenHeight,
+    required double lead,
+  }) {
+    if (!regionWidth.isFinite || !regionHeight.isFinite) {
+      return null;
+    }
+    final double boardSide = math.min(regionWidth, regionHeight);
+    final double sideWidth = (regionWidth - boardSide) / 2 - kSpace2;
+    final bool beside =
+        sideWidth >= lead + _dieRowHeight + kSpace2 + _sideTrayWidth;
+    final bool wrapTray = !beside;
+    if (wrapTray && sideWidth < lead + _dieRowHeight) {
+      return null;
+    }
+    final double bandHeight = beside
+        ? _dieRowHeight
+        : _dieRowHeight + kSpace2 + kRollTraySlot;
+    final double half = _dieRowHeight / 2;
+    final double lowest = math.max(
+      screenHeight * _sideDieCentreMin + _liftRoundingMargin,
+      regionTop + half,
+    );
+    final double highest = math.min(
+      screenHeight * _sideDieCentreMax - _liftRoundingMargin,
+      regionTop + regionHeight - bandHeight + half,
+    );
+    if (lowest > highest) {
+      return null;
+    }
+    final double centre = (screenHeight * _sideDieCentre).clamp(
+      lowest,
+      highest,
+    );
+    return _SideBandPlan(
+      boardSide: boardSide,
+      sideWidth: sideWidth,
+      dieTop: centre - half - regionTop,
+      wrapTray: wrapTray,
     );
   }
 
@@ -8833,6 +9042,8 @@ class _PlayColumnMetrics {
     required this.boardGap,
     required this.dieGap,
     required this.noticeGap,
+    this.headerHeight = 0,
+    this.noticeHeight = 0,
   });
 
   final double textScaleClamp;
@@ -8840,6 +9051,28 @@ class _PlayColumnMetrics {
   final double boardGap;
   final double dieGap;
   final double noticeGap;
+
+  /// C-667: the header row and the notice slot at the clamp this build
+  /// settled on, so a large-screen layout can place the die band from them.
+  /// Zero where the column has no bounded size to measure against.
+  final double headerHeight;
+  final double noticeHeight;
+}
+
+/// C-667 D1: where the die band sits on a large landscape screen. [dieTop] is
+/// measured from the top of the board region.
+class _SideBandPlan {
+  const _SideBandPlan({
+    required this.boardSide,
+    required this.sideWidth,
+    required this.dieTop,
+    required this.wrapTray,
+  });
+
+  final double boardSide;
+  final double sideWidth;
+  final double dieTop;
+  final bool wrapTray;
 }
 
 /// One opponent roll waiting to be thrown, or the one currently in flight.
