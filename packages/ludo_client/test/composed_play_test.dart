@@ -218,26 +218,6 @@ Future<void> _pumpPastEndCardHold(WidgetTester tester) async {
   }
 }
 
-/// Picks [count] seats through the players menu (C-523 D2): a tap on
-/// home-players-button opens it, a tap on home-players-option-$count picks
-/// and closes it. Bounded pumps only: nothing here mounts a LobbyScreen yet.
-Future<void> _pickPlayers(WidgetTester tester, int count) async {
-  final Finder control = find.byKey(const Key('home-players-button'));
-  expect(
-    control,
-    findsOneWidget,
-    reason:
-        'home-players-button must be on screen so the player can '
-        'open the seat-count menu',
-  );
-  await tester.tap(control);
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
-  await tester.tap(find.byKey(Key('home-players-option-$count')));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
-}
-
 void main() {
   // ==========================================================================
   // C1: create, share, start, play, win.
@@ -254,10 +234,13 @@ void main() {
         await tester.pumpWidget(_homeScreenApp(factory.call));
         await tester.pumpAndSettle();
 
-        // A non-default player count (3, not the menu's default of 4):
-        // standing lesson 6 says a forwarding claim proved only at the
-        // default value proves nothing.
-        await _pickPlayers(tester, 3);
+        // C-666 D1: there is no player count to pick; the room is created
+        // for four and the host starts with the three who came.
+        expect(
+          find.byKey(const Key('home-players-button'), skipOffstage: false),
+          findsNothing,
+          reason: 'C-666 D1: home has no players control',
+        );
 
         await tester.enterText(
           find.byKey(const Key('home-name-field')),
@@ -293,16 +276,16 @@ void main() {
           _dataOf(createMessages.single),
           <String, Object?>{
             'name': 'Priya',
-            'players': 3,
+            'players': 4,
             // Order 202: Home's rule toggles, untouched, reach the wire as
             // defaults.
             'rules': <String, Object?>{'capture_bonus': true},
           },
           reason:
-              'the name typed on the home screen and the non-default '
-              'player count selected there must both reach the wire '
-              'unchanged, crossing HomeScreen -> RoomRoute -> LobbyScreen '
-              '-> RoomController -> RoomConnection',
+              'the name typed on the home screen and the fixed player count '
+              'of four must both reach the wire unchanged, crossing '
+              'HomeScreen -> RoomRoute -> LobbyScreen -> RoomController -> '
+              'RoomConnection',
         );
         final String createId = _idOf(createMessages.single);
 
@@ -319,7 +302,7 @@ void main() {
             re: createId,
             data: _roomJson(
               code: roomCode,
-              players: 3,
+              players: 4,
               hostSeat: 0,
               seats: <Map<String, Object?>>[_seatJson(0, name: 'Priya')],
               seq: 1,
@@ -383,8 +366,7 @@ void main() {
               'link this test retyped as a literal; got $clipboardCalls',
         );
 
-        // Two more players join, filling the 3-seat room the home screen
-        // asked for.
+        // Two more players join: three of the four seats are taken.
         transport.pushText(
           _frame(
             type: 'player_joined',
@@ -403,12 +385,19 @@ void main() {
         expect(
           controller.room!.seats.length,
           3,
-          reason:
-              'fixture is broken: the room must be full before Start '
-              'is tappable',
+          reason: 'fixture is broken: three of the four seats are taken',
         );
 
-        final Finder startButton = find.byKey(const Key('lobby-start-button'));
+        expect(
+          find.byKey(const Key('lobby-start-button')),
+          findsNothing,
+          reason:
+              'C-666 D2: with 3 of 4 seated the room is not full, so there '
+              'is no full-room Start button',
+        );
+        final Finder startButton = find.byKey(
+          const Key('lobby-start-with-present-button'),
+        );
         expect(startButton, findsOneWidget);
         final ElevatedButton startWidget = tester.widget<ElevatedButton>(
           startButton,
@@ -417,12 +406,45 @@ void main() {
           startWidget.onPressed,
           isNotNull,
           reason:
-              'the host, seat 0, with a full 3-seat room must see an '
-              'enabled Start button',
+              'the host, seat 0, with 3 seated must see an enabled '
+              'start-with-present button',
         );
 
         final int sentBeforeStart = transport.sentRaw.length;
         await tester.tap(startButton);
+        await tester.pump();
+        final List<String> setPlayersMessages = transport.sentRaw
+            .skip(sentBeforeStart)
+            .toList();
+        expect(
+          setPlayersMessages.map(_typeOf).toList(),
+          <String>['set_players'],
+          reason:
+              'tapping lobby-start-with-present-button must send '
+              'set_players first and nothing else until it is answered; '
+              'sent ${setPlayersMessages.map(_typeOf).toList()}',
+        );
+        expect(_dataOf(setPlayersMessages.single), <String, Object?>{
+          'players': 3,
+        }, reason: 'set_players must carry the three seated');
+        transport.pushText(
+          _frame(
+            type: 'room',
+            re: _idOf(setPlayersMessages.single),
+            data: _roomJson(
+              code: roomCode,
+              players: 3,
+              hostSeat: 0,
+              seats: <Map<String, Object?>>[
+                _seatJson(0, name: 'Priya'),
+                _seatJson(1, name: 'Bob'),
+                _seatJson(2, name: 'Cara'),
+              ],
+              seq: 4,
+            ),
+          ),
+        );
+        await tester.pump();
         await tester.pump();
         final List<String> startMessages = transport.sentRaw
             .skip(sentBeforeStart)
@@ -432,8 +454,8 @@ void main() {
           startMessages,
           hasLength(1),
           reason:
-              'tapping lobby-start-button must send exactly one '
-              'start_game request',
+              'once set_players is answered with a full room, exactly one '
+              'start_game request must follow',
         );
         final String startId = _idOf(startMessages.single);
 
@@ -445,7 +467,7 @@ void main() {
               'turn': 0,
               'game_id': 'a' * 16,
               'client_seeds': '0:seed',
-              'seq': 4,
+              'seq': 5,
             },
           ),
         );
@@ -501,7 +523,7 @@ void main() {
               'deadline_ms': 1000,
               'k': 1,
               'reveal': 'b' * 64,
-              'seq': 5,
+              'seq': 6,
             },
           ),
         );
@@ -530,7 +552,7 @@ void main() {
               'to': 4,
               'captured': <Object?>[],
               'extra_roll': false,
-              'seq': 6,
+              'seq': 7,
             },
           ),
         );
@@ -564,7 +586,7 @@ void main() {
               'deadline_ms': 1000,
               'k': 2,
               'reveal': 'c' * 64,
-              'seq': 7,
+              'seq': 8,
             },
           ),
         );
@@ -592,7 +614,7 @@ void main() {
               'to': 9,
               'captured': <Object?>[],
               'extra_roll': false,
-              'seq': 8,
+              'seq': 9,
             },
           ),
         );
@@ -606,7 +628,7 @@ void main() {
             data: <String, Object?>{
               'winner': 0,
               'verify_url': 'https://composed-play-test.invalid/verify/1',
-              'seq': 9,
+              'seq': 10,
             },
           ),
         );

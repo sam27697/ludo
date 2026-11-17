@@ -82,14 +82,14 @@ const String _kCode = 'K7M2QP';
 const int _kSeat = 2;
 const String _kToken = 'tok-home-notice-001';
 
-// Create Room's top edge with no notice, no stored seat, locale en, the
-// default 800 x 600 test surface. It was 330.0 on integrate/run107-relaunch at
-// 9daed5b; C-523 replaced the players disclosure, the rule card and the house
-// rules line with one question row and changed the tagline (D1, D2, D5), and
-// the first run on integrate/run123 30fa383 printed "create-room-button top
-// is 382.0". The cases still compare against this one measured value, and
-// N8b still compares the dismissed-notice layout against it.
-const double _kCreateTopOnBase = 382.0;
+// Create Room's top edge was a pinned number here (330.0 at 9daed5b, 382.0 at
+// 30fa383 after C-523). C-666 D1 removed the players row, so every pinned top
+// moved by an amount the contract does not state: "the gap it leaves closes"
+// names no token, and the page is centred, so the removed height shifts the
+// top by half of it. N8 now reads the gap that is left between the name field
+// and Create (the two gaps that flanked the row merge into one, kSpace3 or
+// kSpace4: 12 dp on this compact surface), and N8b compares the dismissed-notice layout against a fresh home with no notice,
+// both measured in the case, instead of against a number.
 
 enum _Notice { removed, gone }
 
@@ -1166,8 +1166,8 @@ void main() {
   }
 
   // ----------------------------------------------------------------- D4
-  testWidgets('N8 (D4): with no notice there is no card, and Create Room is '
-      'where it was on the base commit', (tester) async {
+  testWidgets('N8 (D4): with no notice there is no card, and no slot is '
+      'reserved between the name field and Create Room', (tester) async {
     _seed(withSeat: false);
     final _Factory factory = _Factory();
     const String scenario = 'N8 no notice, no seat, locale en, 800x600';
@@ -1178,21 +1178,27 @@ void main() {
         findsNothing,
         reason: '$scenario: home-notice must be absent when nothing is shown',
       );
-      final double top = tester.getRect(find.byKey(_createKey)).top;
+      final double gap =
+          tester.getRect(find.byKey(_createKey)).top -
+          tester.getRect(find.byKey(const Key('home-name-field'))).bottom;
       expect(
-        top,
-        _kCreateTopOnBase,
+        <double>[12.0, 16.0].contains(gap),
+        isTrue,
         reason:
-            '$scenario: create-room-button top is $top; on the base commit '
-            '(re-measured at 30fa383 for C-523) it is $_kCreateTopOnBase',
+            '$scenario: the gap between the name field and Create Room is '
+            '$gap; with the players row gone (C-666 D1) the gap it left closes '
+            'into one kSpace3 or kSpace4 (12 or 16)',
       );
     });
   });
 
   testWidgets('N8b (D4): after a refused resume is dismissed, Create Room is '
-      'back where it is with no notice and no stored seat', (tester) async {
+      'back where a fresh home with no notice and no stored seat has it', (
+    tester,
+  ) async {
     _seed(withSeat: true);
     final _Factory factory = _Factory();
+    final _Factory fresh = _Factory();
     const String scenario = 'N8b game-gone then dismiss, locale en, 800x600';
     await _mount(tester, _app(factory));
     await _guarded(tester, factory, () async {
@@ -1217,13 +1223,21 @@ void main() {
         reason: '$scenario: the refused resume cleared the seat record',
       );
       final double top = tester.getRect(find.byKey(_createKey)).top;
+
+      // The reference: the same home, fresh, with no notice and no seat.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      _seed(withSeat: false);
+      await _mount(tester, _app(fresh));
+      final double reference = tester.getRect(find.byKey(_createKey)).top;
+      fresh.disposeAll();
       expect(
         top,
-        _kCreateTopOnBase,
+        reference,
         reason:
-            '$scenario: create-room-button top is $top; with no notice and '
-            'no seat it is $_kCreateTopOnBase (the N8 value). A gap left by '
-            'the dismissed card moves it',
+            '$scenario: create-room-button top is $top after the dismiss; a '
+            'fresh home with no notice and no seat has it at $reference. A '
+            'gap left by the dismissed card moves it',
       );
     });
   });

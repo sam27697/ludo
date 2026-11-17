@@ -14,7 +14,6 @@ import 'lobby_screen.dart' show LobbyAction;
 import 'net/connection.dart' show RoomToggles;
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
-import 'player_count_icon.dart';
 import 'room_code.dart';
 import 'room_route.dart';
 import 'server_config.dart';
@@ -98,7 +97,6 @@ class _HomeScreenState extends State<HomeScreen>
   // moment the session-memory load completed).
   SessionMemory? _autoResumeWaiting;
   Timer? _autoResumeTimer;
-  int _players = 4;
   String? _nameLocaleDefault;
   StreamSubscription<Uri>? _linkSubscription;
   late final AnimationController _enter;
@@ -108,7 +106,6 @@ class _HomeScreenState extends State<HomeScreen>
   // reads this. The last-table chip still reads [_hasLastTable].
   bool _hasStoredName = false;
   String? _lastTableName;
-  int? _lastTableSeats;
   List<String> _recentCodes = const <String>[];
   RoomController? _ownedController;
   // H3: the seat rejoin button shows exactly when this is non-null. Only
@@ -542,12 +539,9 @@ class _HomeScreenState extends State<HomeScreen>
           }
           if (hasTable) {
             final String name = loaded.lastName!;
-            final int seats = loaded.lastSeats!;
             _hasLastTable = true;
             _lastTableName = name;
-            _lastTableSeats = seats;
             _nameController.text = name;
-            _players = seats;
           }
           if (seatRecord != null) {
             _seatRecord = seatRecord;
@@ -979,7 +973,8 @@ class _HomeScreenState extends State<HomeScreen>
     }
     final AppLocalizations loc = AppLocalizations.of(context);
     final String name = _resolvedName(loc);
-    final int players = _players;
+    // C-666 D1: every table seats four; the host starts once a friend sits.
+    const int players = 4;
     // C-523 D1: every room is created with the fixed rules.
     const RoomToggles toggles = RoomToggles();
     final RoomController controller = widget.controllerFactory();
@@ -1004,7 +999,6 @@ class _HomeScreenState extends State<HomeScreen>
           _hasStoredName = true;
           _hasLastTable = true;
           _lastTableName = name;
-          _lastTableSeats = players;
         });
       }
     }
@@ -1626,24 +1620,10 @@ class _HomeScreenState extends State<HomeScreen>
                                           },
                                         ),
                                   ),
-                                  SizedBox(height: afterName),
-                                  // C-523 D2: one question, one control, always
-                                  // visible.
-                                  _PlayersQuestionRow(
-                                    value: _players,
-                                    onChanged: (int value) =>
-                                        setState(() => _players = value),
-                                  ),
                                   if (_hasLastTable &&
-                                      _lastTableName != null &&
-                                      _lastTableSeats != null) ...[
-                                    SizedBox(
-                                      height: compact ? kSpace3 : kSpace4,
-                                    ),
-                                    _LastTableChip(
-                                      name: _lastTableName!,
-                                      seats: _lastTableSeats!,
-                                    ),
+                                      _lastTableName != null) ...[
+                                    SizedBox(height: afterName),
+                                    _LastTableChip(name: _lastTableName!),
                                   ],
                                   SizedBox(height: beforeCreate),
                                   _weightedButton(
@@ -2144,26 +2124,18 @@ class _HomeNoticeState extends State<_HomeNotice> {
 }
 
 /// Last successful table, shown when [SessionMemory.hasLastTable] is true.
-/// C-523 D2: the name and the seat count as person figures; the spoken label
-/// still carries the count in words.
+/// C-666 D1: the name only; the table size is no longer a choice, so the chip
+/// no longer states it.
 /// Visual weight stays below Create (muted paper, not action fill) so
 /// Create still outweighs Join with the chip on screen.
 class _LastTableChip extends StatelessWidget {
-  const _LastTableChip({required this.name, required this.seats});
+  const _LastTableChip({required this.name});
 
   final String name;
-  final int seats;
 
   @override
   Widget build(BuildContext context) {
-    final AppLocalizations loc = AppLocalizations.of(context);
     final TextTheme textTheme = Theme.of(context).textTheme;
-    final String seatsLabel = switch (seats) {
-      2 => loc.homePlayersTwo,
-      3 => loc.homePlayersThree,
-      _ => loc.homePlayersFour,
-    };
-    final String label = '$name · $seatsLabel';
     // C-351: at a system text scale of 1.5 and above the name may wrap to a
     // second line; below that nothing changes (one line, ellipsis). The
     // scale is read off the ambient TextScaler at this chip's own font
@@ -2175,7 +2147,7 @@ class _LastTableChip extends StatelessWidget {
     return Center(
       child: Semantics(
         container: true,
-        label: label,
+        label: name,
         excludeSemantics: true,
         child: DecoratedBox(
           key: const Key('home-last-table-chip'),
@@ -2191,24 +2163,15 @@ class _LastTableChip extends StatelessWidget {
               horizontal: kSpace3,
               vertical: kSpace2,
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Flexible(
-                  child: Text(
-                    name,
-                    maxLines: maxLines,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: textTheme.labelLarge?.copyWith(
-                      color: LudoColors.ink,
-                      fontSize: kTypeLabel,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: kSpace2),
-                PlayerCountIcon(count: seats),
-              ],
+            child: Text(
+              name,
+              maxLines: maxLines,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: textTheme.labelLarge?.copyWith(
+                color: LudoColors.ink,
+                fontSize: kTypeLabel,
+              ),
             ),
           ),
         ),
@@ -2338,187 +2301,6 @@ class _RecentCodeChip extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// C-523 D2: the one question home asks about the table. The label takes the
-/// row's slack and wraps (never clips) at large text scales or in a longer
-/// language; the control sits at the end edge and mirrors with the locale.
-class _PlayersQuestionRow extends StatelessWidget {
-  const _PlayersQuestionRow({required this.value, required this.onChanged});
-
-  final int value;
-  final ValueChanged<int> onChanged;
-
-  static String _spoken(AppLocalizations loc, int count) => switch (count) {
-    2 => loc.homePlayersTwo,
-    3 => loc.homePlayersThree,
-    _ => loc.homePlayersFour,
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final AppLocalizations loc = AppLocalizations.of(context);
-    final TextTheme textTheme = Theme.of(context).textTheme;
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            loc.homePlayersQuestion,
-            style: textTheme.titleMedium?.copyWith(
-              color: LudoColors.ink,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        const SizedBox(width: kSpace3),
-        PopupMenuButton<int>(
-          tooltip: loc.homePlayersQuestion,
-          onSelected: onChanged,
-          position: PopupMenuPosition.under,
-          clipBehavior: Clip.antiAlias,
-          color: LudoColors.paperElevated,
-          surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(kRadiusControl),
-            side: const BorderSide(color: LudoColors.feltMid),
-          ),
-          padding: EdgeInsets.zero,
-          borderRadius: BorderRadius.circular(999),
-          itemBuilder: (BuildContext context) => <PopupMenuEntry<int>>[
-            for (final int count in const <int>[2, 3, 4])
-              PopupMenuItem<int>(
-                key: Key('home-players-option-$count'),
-                value: count,
-                padding: EdgeInsets.zero,
-                child: Semantics(
-                  label: _spoken(loc, count),
-                  selected: count == value,
-                  child: ExcludeSemantics(
-                    child: _PlayersOption(
-                      count: count,
-                      selected: count == value,
-                    ),
-                  ),
-                ),
-              ),
-          ],
-          child: Semantics(
-            button: true,
-            label: '${loc.homePlayersQuestion} ${_spoken(loc, value)}',
-            child: ExcludeSemantics(child: _PlayersControlFace(value: value)),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// The closed control: the count as a numeral, its person figures and a small
-/// expand glyph, in the register of the locale toggle (paper, felt edge, ink).
-class _PlayersControlFace extends StatelessWidget {
-  const _PlayersControlFace({required this.value});
-
-  final int value;
-
-  @override
-  Widget build(BuildContext context) {
-    final TextTheme textTheme = Theme.of(context).textTheme;
-    return DecoratedBox(
-      key: const Key('home-players-button'),
-      decoration: ShapeDecoration(
-        color: LudoColors.paperElevated,
-        shape: StadiumBorder(
-          side: BorderSide(
-            color: LudoColors.inkMuted.withValues(alpha: 0.3),
-            width: 1,
-          ),
-        ),
-      ),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-        child: Padding(
-          padding: const EdgeInsetsDirectional.only(
-            start: kSpace4,
-            end: kSpace2,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                MaterialLocalizations.of(context).formatDecimal(value),
-                style: textTheme.titleMedium?.copyWith(
-                  color: LudoColors.ink,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(width: kSpace2),
-              PlayerCountIcon(count: value),
-              const SizedBox(width: kSpace1),
-              const Icon(
-                Icons.expand_more_rounded,
-                size: 20,
-                color: LudoColors.inkMuted,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// One entry of the open menu. The current count has a filled background and
-/// a check glyph, so colour is never the only mark (doctrine P9); the check
-/// slot is always reserved so the figures do not shift between entries. The
-/// fill is the only selection paint: the menu is opened without an
-/// initialValue, so Flutter lays no highlight band under it, and the row
-/// stretches to the item's full width so the fill reaches both menu edges
-/// (the menu's clip rounds the first and last corners).
-class _PlayersOption extends StatelessWidget {
-  const _PlayersOption({required this.count, required this.selected});
-
-  final int count;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    final TextTheme textTheme = Theme.of(context).textTheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: selected ? LudoColors.paperWashTop : Colors.transparent,
-      ),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minWidth: 112, minHeight: 48),
-        child: Padding(
-          padding: const EdgeInsetsDirectional.symmetric(horizontal: kSpace3),
-          child: Row(
-            children: [
-              SizedBox(
-                width: kSpace5,
-                child: selected
-                    ? const Icon(
-                        Icons.check_rounded,
-                        size: 20,
-                        color: LudoColors.action,
-                      )
-                    : null,
-              ),
-              const SizedBox(width: kSpace2),
-              Text(
-                MaterialLocalizations.of(context).formatDecimal(count),
-                style: textTheme.titleMedium?.copyWith(
-                  color: LudoColors.ink,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(width: kSpace2),
-              PlayerCountIcon(count: count),
-            ],
           ),
         ),
       ),

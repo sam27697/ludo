@@ -331,8 +331,8 @@ void main() {
   });
 
   testWidgets(
-    'host short of full: lobby-waiting includes seated and total counts or '
-    'waiting copy, and lobby-start-button is absent',
+    'host short of full (3 of 4, C-666 D2): no lobby-start-button and no '
+    'lobby-waiting; the start-with-present button names the seated count',
     (WidgetTester tester) async {
       await _pumpConnectedHostLobby(tester, seated: 3, players: 4);
 
@@ -342,32 +342,31 @@ void main() {
         reason:
             'C-274: with 3 of 4 seats filled there is no lobby-start-button',
       );
-
-      final Finder waitingFinder = find.byKey(_waitingKey);
       expect(
-        waitingFinder,
-        findsOneWidget,
-        reason: 'C-274: a host short of full shows lobby-waiting',
+        find.byKey(_waitingKey),
+        findsNothing,
+        reason: 'C-666 D2: a host with 3 of 4 seated shows no lobby-waiting',
       );
-      final Text waitingWidget = tester.widget<Text>(waitingFinder);
-      final String label =
-          waitingWidget.data ?? waitingWidget.textSpan?.toPlainText() ?? '';
 
+      final Finder startWith = find.byKey(
+        const Key('lobby-start-with-present-button'),
+      );
+      expect(
+        startWith,
+        findsOneWidget,
+        reason: 'C-666 D2: a host with 3 of 4 seated shows the start button',
+      );
       final BuildContext context = tester.element(find.byType(LobbyScreen));
       final AppLocalizations loc = AppLocalizations.of(context);
-      const int seated = 3;
-      const int total = 4;
-      final String waiting = loc.lobbyWaitingForPlayers(seated, total);
-      final bool hasCounts =
-          label.contains('$seated') && label.contains('$total');
-      final bool hasWaiting = label.contains(waiting);
-
       expect(
-        hasCounts || hasWaiting,
-        isTrue,
+        find.descendant(
+          of: startWith,
+          matching: find.text(loc.lobbyStartWithPresent(3)),
+        ),
+        findsOneWidget,
         reason:
-            'lobby-waiting must include seated ($seated) and total ($total) '
-            'or loc.lobbyWaitingForPlayers values ("$waiting"); got "$label"',
+            'the start-with-present button must read '
+            'loc.lobbyStartWithPresent(3) ("${loc.lobbyStartWithPresent(3)}")',
       );
     },
   );

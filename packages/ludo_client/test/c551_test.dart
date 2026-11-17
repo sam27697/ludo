@@ -14,17 +14,21 @@
 // per case. Nothing here uses pumpAndSettle: the mark is static by
 // contract, and a mark that animated would hang the lobby suites.
 //
-// The four lines:
+// The four lines (reworked by C-666 D2/D3: a guest always reads
+// lobbyWaitingForHost, and the host's waiting line is the
+// waiting-for-friends line shown only while the host sits alone):
 //   guest-short  a guest in a room short of full, lobby-waiting
 //   guest-full   a guest in a full room, lobby-waiting
-//   host-short   the host short of full, lobby-waiting
+//   host-short   the host alone, lobby-waiting
 //   rematch      lobby-rematch-waiting (a rematch lobby, I have accepted)
 //
 // Ambiguities, reported rather than invented around:
 //
 //   1. D2 says "the same string" for lobby-rematch-waiting but names no
 //      string. The cases pin the three lobby-waiting strings to
-//      lobbyWaitingForPlayers / lobbyWaitingForHost and, for the rematch
+//      lobbyWaitingForHost / the waiting-for-friends text the C-666
+//      contract gives literally (the generated getter does not exist on the
+//      base) and, for the rematch
 //      line, only that the Text is non-empty and that its semantics label
 //      is that same string once.
 //
@@ -271,7 +275,7 @@ class _Line {
 
 const _Line _guestShort = _Line('guest, room short of full', _waitingKey);
 const _Line _guestFull = _Line('guest, full room', _waitingKey);
-const _Line _hostShort = _Line('host, room short of full', _waitingKey);
+const _Line _hostShort = _Line('host, alone in the room', _waitingKey);
 const _Line _rematch = _Line('rematch waiting', _rematchWaitingKey);
 
 /// Mounts LobbyScreen as [mySeat] and lands the room snapshot, the way
@@ -357,7 +361,7 @@ Future<String> _mountLine(
         tester,
         mySeat: 0,
         players: 4,
-        seats: _seats(2),
+        seats: _seats(1),
         locale: locale,
       );
     case _rematch:
@@ -391,10 +395,12 @@ Future<String> _mountLine(
         '${line.key}; it is not on screen',
   );
   final Text text = tester.widget<Text>(find.byKey(line.key));
-  if (line == _guestShort || line == _hostShort) {
-    return loc.lobbyWaitingForPlayers(2, 4);
+  if (line == _hostShort) {
+    return locale.languageCode == 'ar'
+        ? 'عم نستنى أصحابك يفوتوا'
+        : 'Waiting for friends to join';
   }
-  if (line == _guestFull) {
+  if (line == _guestShort || line == _guestFull) {
     return loc.lobbyWaitingForHost;
   }
   return text.data ?? '';

@@ -228,12 +228,12 @@ Color _lobbySurface(WidgetTester tester) {
 
 void main() {
   testWidgets(
-    'host short of full: lobby-waiting contrast is at least 4.5:1 against '
+    'host alone (C-666 D2): lobby-waiting contrast is at least 4.5:1 against '
     'surface, and lobby-start-button is absent',
     (WidgetTester tester) async {
       await _pumpConnectedHostLobby(
         tester,
-        seated: 3,
+        seated: 1,
         players: 4,
         expectStartButton: false,
       );
@@ -242,22 +242,20 @@ void main() {
         find.byKey(_startKey),
         findsNothing,
         reason:
-            'C-274: with 3 of 4 seats filled there is no lobby-start-button',
+            'C-274: with 1 of 4 seats filled there is no lobby-start-button',
       );
       final Finder waiting = find.byKey(_waitingKey);
       expect(
         waiting,
         findsOneWidget,
-        reason: 'C-274: a host short of full shows lobby-waiting',
+        reason: 'C-666 D2: a host alone shows the waiting-for-friends line',
       );
-      final BuildContext context = tester.element(find.byType(LobbyScreen));
-      final AppLocalizations loc = AppLocalizations.of(context);
       final Text waitingText = tester.widget<Text>(waiting);
       expect(
         waitingText.data,
-        loc.lobbyWaitingForPlayers(3, 4),
+        'Waiting for friends to join',
         reason:
-            'lobby-waiting must read loc.lobbyWaitingForPlayers(3, 4); got '
+            'lobby-waiting must read the waiting-for-friends line; got '
             '"${waitingText.data}"',
       );
 

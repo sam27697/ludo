@@ -37,7 +37,6 @@ import 'package:ludo_client/src/server_config.dart';
 
 import 'net/fake_transport.dart';
 
-const Key _playersButtonKey = Key('home-players-button');
 const Key _createButtonKey = Key('create-room-button');
 const Key _retryButtonKey = Key('lobby-retry-button');
 
@@ -112,24 +111,6 @@ LobbyScreen _pushedLobbyScreen(WidgetTester tester) {
         '${finder.evaluate().length}',
   );
   return tester.widget<LobbyScreen>(finder);
-}
-
-/// Picks [count] seats through the players menu (C-523 D2): a tap on
-/// home-players-button opens it, a tap on home-players-option-$count picks
-/// and closes it. Bounded pumps only: nothing here mounts a LobbyScreen yet.
-Future<void> _pickPlayers(WidgetTester tester, int count) async {
-  final Finder control = find.byKey(_playersButtonKey);
-  expect(
-    control,
-    findsOneWidget,
-    reason: 'home-players-button must be on screen to open the seat-count menu',
-  );
-  await tester.tap(control);
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
-  await tester.tap(find.byKey(Key('home-players-option-$count')));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
 }
 
 /// Every frame a [FakeTransport] has captured so far, decoded. Assumes every
@@ -225,31 +206,25 @@ void main() {
   // content twice under a name that no longer describes two switches.
 
   testWidgets(
-    'T7: the chosen player count reaches the wire: 2 players, then Create '
-    'sends players 2 and the default rules',
+    'T7: with no player count to choose (C-666 D1), Create sends players 4 '
+    'and the default rules',
     (tester) async {
       final _LiveControllerFactory factory = _LiveControllerFactory();
       await tester.pumpWidget(_homeScreenApp(controllerFactory: factory.call));
       await tester.pumpAndSettle();
 
-      await _pickPlayers(tester, 2);
       expect(
-        find.descendant(
-          of: find.byKey(_playersButtonKey),
-          matching: find.text('2'),
-        ),
-        findsOneWidget,
-        reason:
-            'fixture is broken: picking 2 must show 2 on home-players-button '
-            'before Create Room is even tapped',
+        find.byKey(const Key('home-players-button'), skipOffstage: false),
+        findsNothing,
+        reason: 'C-666 D1: there is no players control to pick a count on',
       );
 
       await _tapAndAwaitPushedRoute(tester, _createButtonKey);
 
       expect(
         _pushedLobbyScreen(tester).players,
-        2,
-        reason: 'the chosen player count must still reach LobbyScreen',
+        4,
+        reason: 'Create must always hand LobbyScreen players 4',
       );
 
       final List<Map<String, Object?>> sent = _decodeSent(
@@ -260,8 +235,8 @@ void main() {
           sent.single['d']! as Map<String, Object?>;
       expect(
         data['players'],
-        2,
-        reason: 'the wire create_room must carry players 2 as well',
+        4,
+        reason: 'the wire create_room must carry players 4 as well',
       );
       final Map<String, Object?> rules = data['rules']! as Map<String, Object?>;
       expect(
@@ -274,7 +249,7 @@ void main() {
         isTrue,
         reason:
             'C-523 D1: every room is created with capture bonus on, so the '
-            'wire must read true after changing the player count',
+            'wire must read true with the fixed player count',
       );
 
       await _drainPendingRequestTimeout(tester);

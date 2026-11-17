@@ -55,12 +55,11 @@
 //                             scale 2.0
 //   99-home-plain-en.png      home, English, default state, top of the list
 //   100-home-plain-ar.png     home, Arabic, default state, top of the list
-//   101-home-players-menu-en.png  home, English, the players menu open
-//   102-home-players-menu-ar.png  home, Arabic, the players menu open
+//   (101 and 102, the players menu open, went with the menu in C-666 D1)
 //   103-home-join-shown-en.png    home, English, six characters typed, Join
 //                                 shown
 //   104-home-large-text-ar.png    home, Arabic, system text scale 2.0,
-//                                 scrolled to the players row
+//                                 scrolled to Create
 //   105-game-muted-ar.png     game header, Arabic, after one tap on the
 //                             sound toggle (crossed speaker)
 //   106-refusal-die-my-turn-en.png  game, English, the die refused on my own
@@ -190,6 +189,8 @@ Map<String, Object?> _decode(String text) =>
 
 String _idOf(String sentText) => _decode(sentText)['id']! as String;
 String _typeOf(String sentText) => _decode(sentText)['t']! as String;
+Map<String, Object?> _dataOf(String sentText) =>
+    _decode(sentText)['d']! as Map<String, Object?>;
 
 /// A server push or reply, encoded exactly as Frame.decode expects.
 String _frame({
@@ -931,8 +932,15 @@ void main() {
           '${transport.sentRaw.map(_typeOf).toList()}',
     );
     final String createId = _idOf(createMessages.single);
+    expect(
+      _dataOf(createMessages.single)['players'],
+      4,
+      reason:
+          'C-666 D1: home has no player count, so Create asks for a '
+          'four-seat room',
+    );
 
-    // Players = 3: host plus two joiners, so "the joined players" the
+    // Three of the four seats: host plus two joiners, so "the joined players" the
     // order asks the lobby capture to show is plural without a long chain
     // of joins.
     transport.pushText(
@@ -947,7 +955,7 @@ void main() {
         re: createId,
         data: _roomJson(
           code: roomCode,
-          players: 3,
+          players: 4,
           hostSeat: 0,
           seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
           seq: 1,
@@ -1013,15 +1021,30 @@ void main() {
     final AppLocalizations settledLobbyLoc = AppLocalizations.of(
       tester.element(find.byType(LobbyScreen)),
     );
+    expect(
+      find.byKey(const Key('lobby-start-button')),
+      findsNothing,
+      reason:
+          'capture 03: 3 of 4 seats joined is not a full room, so expected '
+          'no full-room lobby-start-button (C-666 D2)',
+    );
+    expect(
+      find.byKey(const Key('lobby-waiting')),
+      findsNothing,
+      reason:
+          'capture 03: with 3 seated the host has no waiting line above '
+          'the start button (C-666 D2)',
+    );
     final Finder settledStartButton = find.byKey(
-      const Key('lobby-start-button'),
+      const Key('lobby-start-with-present-button'),
     );
     expect(
       settledStartButton,
       findsOneWidget,
       reason:
           'capture 03: after the post-join settle, expected the host\'s '
-          'Start button still on screen immediately before the capture',
+          'start-with-present button still on screen immediately before the '
+          'capture',
     );
     final ElevatedButton settledStartWidget = tester.widget<ElevatedButton>(
       settledStartButton,
@@ -1029,22 +1052,24 @@ void main() {
     final Text settledStartLabel = settledStartWidget.child! as Text;
     expect(
       settledStartLabel.data,
-      settledLobbyLoc.lobbyStartButton,
+      settledLobbyLoc.lobbyStartWithPresent(3),
       reason:
-          'capture 03: after the post-join settle, the room is full (3 of '
-          '3 seats joined) so expected lobby-start-button\'s label to '
-          'still read loc.lobbyStartButton '
-          '("${settledLobbyLoc.lobbyStartButton}"), got '
+          'capture 03: after the post-join settle, 3 of 4 seats joined so '
+          'expected the start button\'s label to read '
+          'loc.lobbyStartWithPresent(3) '
+          '("${settledLobbyLoc.lobbyStartWithPresent(3)}"), got '
           '"${settledStartLabel.data}"',
     );
 
     await _capture(binding, tester, '03-lobby-en', frames: 0);
 
-    final Finder startButton = find.byKey(const Key('lobby-start-button'));
+    final Finder startButton = find.byKey(
+      const Key('lobby-start-with-present-button'),
+    );
     expect(
       startButton,
       findsOneWidget,
-      reason: 'the host, seat 0, must see a Start button once seated',
+      reason: 'the host, seat 0, must see a start button once friends sit',
     );
     final ElevatedButton startWidget = tester.widget<ElevatedButton>(
       startButton,
@@ -1052,12 +1077,38 @@ void main() {
     expect(
       startWidget.onPressed,
       isNotNull,
-      reason:
-          'the room is full (3 of 3 seats joined) so Start must be '
-          'enabled for the host',
+      reason: 'three are seated, so start-with-present must be enabled',
     );
 
     await tester.tap(startButton);
+    await tester.pump();
+    final List<String> setPlayersMessages = transport.sentRaw
+        .where((s) => _typeOf(s) == 'set_players')
+        .toList();
+    expect(
+      setPlayersMessages,
+      hasLength(1),
+      reason: 'tapping the start button must send exactly one set_players',
+    );
+    expect(_dataOf(setPlayersMessages.single), <String, Object?>{'players': 3});
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: _idOf(setPlayersMessages.single),
+        data: _roomJson(
+          code: roomCode,
+          players: 3,
+          hostSeat: 0,
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: hostName),
+            _seatJson(1, name: 'Karim'),
+            _seatJson(2, name: 'Lina'),
+          ],
+          seq: 4,
+        ),
+      ),
+    );
+    await tester.pump();
     await tester.pump();
     final List<String> startMessages = transport.sentRaw
         .where((s) => _typeOf(s) == 'start_game')
@@ -1065,7 +1116,9 @@ void main() {
     expect(
       startMessages,
       hasLength(1),
-      reason: 'tapping lobby-start-button must send exactly one start_game',
+      reason:
+          'once set_players is answered with a full room, exactly one '
+          'start_game must follow',
     );
     final String startId = _idOf(startMessages.single);
 
@@ -1077,7 +1130,7 @@ void main() {
           'turn': 0,
           'game_id': 'e' * 16,
           'client_seeds': '0:seed',
-          'seq': 4,
+          'seq': 5,
         },
       ),
     );
@@ -1101,7 +1154,7 @@ void main() {
     // opening position. Each of these is a bare push (`re` null), exactly
     // as the server sends a move made by any seat, not only this client's
     // own.
-    int seq = 4;
+    int seq = 5;
     void pushMoved({
       required int seat,
       required int token,
@@ -6464,10 +6517,10 @@ void main() {
 
   // ==========================================================================
   // 99-105: order 526 (C-523). The plain home and the one sound switch. 99
-  // and 100 are home in its default state, top of the list; 101 and 102 have
-  // the players menu open over home-players-button; 103 has six characters
-  // typed so Join is in the tree; 104 is Arabic at system text scale 2.0,
-  // scrolled so the players row is on screen; 105 is the game header after
+  // and 100 are home in its default state, top of the list; 101 and 102 were
+  // the players menu open and are gone with the menu (C-666 D1); 103 has six
+  // characters typed so Join is in the tree; 104 is Arabic at system text
+  // scale 2.0, scrolled so Create is on screen; 105 is the game header after
   // one tap on game-sound-toggle. Bodies live at the bottom of the file.
   // ==========================================================================
   testWidgets('capture 99-home-plain-en', (tester) async {
@@ -6484,24 +6537,6 @@ void main() {
       tester,
       binding,
       shotName: '100-home-plain-ar',
-      locale: const Locale('ar'),
-    );
-  });
-
-  testWidgets('capture 101-home-players-menu-en', (tester) async {
-    await _shootHomePlayersMenu(
-      tester,
-      binding,
-      shotName: '101-home-players-menu-en',
-      locale: const Locale('en'),
-    );
-  });
-
-  testWidgets('capture 102-home-players-menu-ar', (tester) async {
-    await _shootHomePlayersMenu(
-      tester,
-      binding,
-      shotName: '102-home-players-menu-ar',
       locale: const Locale('ar'),
     );
   });
@@ -6930,8 +6965,8 @@ void _expectRectInsideView(
 
 /// Order 207, capture 14, amended for C-274 and, in this group, for C-356
 /// (run 90, order 357, the 10-15 rule ruling): asserts the host's not-full
-/// lobby view. [controller].isHost true, lobby-waiting present and reading
-/// the app_ar.arb lobbyWaitingForPlayers "=2 of 4" literal, lobby-start-button
+/// lobby view. [controller].isHost true, lobby-waiting absent (C-666 D2: no
+/// waiting line above the start-with-present button), lobby-start-button
 /// absent, lobby-start-with-present-button present, enabled, and reading the
 /// app_ar.arb lobbyStartWithPresent "=2" literal, lobby-rule-blocks and
 /// lobby-rule-blocks-chip both absent outright (C-356: gone, not merely
@@ -6958,24 +6993,13 @@ void _expectLobbyHostStartWith(
         'host_seat 0 -- got false',
   );
 
-  const String expectedWaitingText = 'بانتظار اللاعبين (2 من 4)';
-  final Finder waitingFinder = find.byKey(const Key('lobby-waiting'));
   expect(
-    waitingFinder,
-    findsOneWidget,
+    find.byKey(const Key('lobby-waiting')),
+    findsNothing,
     reason:
-        'capture 14 ($momentDescription): expected lobby-waiting on '
-        'screen for the host in a room that is not full (2 of 4 seats '
-        'joined)',
-  );
-  final Text waitingText = tester.widget<Text>(waitingFinder);
-  expect(
-    waitingText.data,
-    expectedWaitingText,
-    reason:
-        'capture 14 ($momentDescription): expected lobby-waiting\'s Text '
-        'to read the app_ar.arb lobbyWaitingForPlayers "=2 of 4" literal '
-        '"$expectedWaitingText", got "${waitingText.data}"',
+        'capture 14 ($momentDescription): expected no lobby-waiting for the '
+        'host with 2 of 4 seats joined (C-666 D2), the start-with-present '
+        'button stands alone',
   );
   expect(
     find.byKey(const Key('lobby-start-button')),
@@ -17227,6 +17251,7 @@ const String _playersQuestionAr = 'كم لاعب؟';
 /// Keys C-523 removes from home (D1, D2, D7). None may be in the tree in any
 /// plain-home capture, offstage included.
 const List<String> _removedHomeKeys = <String>[
+  'home-players-button',
   'home-players-disclosure',
   'home-players-selector',
   'home-rule-capture-bonus',
@@ -17235,19 +17260,6 @@ const List<String> _removedHomeKeys = <String>[
   'feedback-settings-sheet',
   'feedback-settings-haptics',
   'feedback-settings-sound',
-];
-
-/// The icons D2 lets stand for "a check glyph" on the selected option; the
-/// contract names the role, not the IconData.
-const List<IconData> _menuCheckIcons = <IconData>[
-  Icons.check,
-  Icons.check_rounded,
-  Icons.check_circle,
-  Icons.check_circle_rounded,
-  Icons.check_circle_outline,
-  Icons.check_circle_outline_rounded,
-  Icons.done,
-  Icons.done_rounded,
 ];
 
 /// Records what the game asked the feedback service to play, so a capture
@@ -17337,9 +17349,6 @@ void _expectPlainHome(
   bool joinShown = false,
 }) {
   final bool en = locale.languageCode == 'en';
-  final AppLocalizations loc = AppLocalizations.of(
-    tester.element(find.byType(HomeScreen)),
-  );
 
   for (final String key in _removedHomeKeys) {
     expect(
@@ -17353,39 +17362,30 @@ void _expectPlainHome(
 
   final String question = en ? _playersQuestionEn : _playersQuestionAr;
   expect(
-    loc.homePlayersQuestion,
-    question,
-    reason:
-        'capture $shotName: C-523 D9 homePlayersQuestion for '
-        '${locale.languageCode} is "$question", the arb says '
-        '"${loc.homePlayersQuestion}"',
-  );
-  expect(
     find.text(question, skipOffstage: false),
-    findsOneWidget,
+    findsNothing,
     reason:
-        'capture $shotName: expected the row label "$question" painted '
-        'exactly once on home (C-523 D2, A1)',
+        'capture $shotName: C-666 D1, the row label "$question" is gone '
+        'from home',
   );
   if (en) {
     expect(
       find.textContaining('players', skipOffstage: false),
-      findsOneWidget,
+      findsNothing,
       reason:
-          'capture $shotName: C-523 D2/A1, the only painted "players" on '
-          'home is the row label "$question"; found '
+          'capture $shotName: C-666 D1, no "players" is painted on home; '
+          'found '
           '${find.textContaining('players', skipOffstage: false).evaluate().length}',
     );
-  } else {
-    for (final String word in const <String>['لاعبين', 'لاعبان']) {
-      expect(
-        find.textContaining(word, skipOffstage: false),
-        findsNothing,
-        reason:
-            'capture $shotName: C-523 D2, "$word" is not painted anywhere '
-            'on home',
-      );
-    }
+  }
+  for (final String word in const <String>['لاعبين', 'لاعبان']) {
+    expect(
+      find.textContaining(word, skipOffstage: false),
+      findsNothing,
+      reason:
+          'capture $shotName: C-523 D2, "$word" is not painted anywhere '
+          'on home',
+    );
   }
   expect(
     find.text(en ? _plainTaglineEn : _plainTaglineAr, skipOffstage: false),
@@ -17395,32 +17395,20 @@ void _expectPlainHome(
         '"${en ? _plainTaglineEn : _plainTaglineAr}" on home',
   );
 
-  final Finder players = find.byKey(
-    const Key('home-players-button'),
-    skipOffstage: false,
-  );
   expect(
-    players,
-    findsOneWidget,
-    reason: 'capture $shotName: expected home-players-button on home (D2)',
-  );
-  _expectAtLeast48(tester, players, 'capture $shotName: home-players-button');
-  final List<String> shown = tester
-      .widgetList<Text>(
-        find.descendant(
-          of: players,
-          matching: find.byType(Text, skipOffstage: false),
-        ),
-      )
-      .map((Text t) => (t.data ?? t.textSpan?.toPlainText() ?? '').trim())
-      .toList();
-  expect(
-    shown.any(const <String>['4', '٤'].contains),
-    isTrue,
+    find.byKey(const Key('home-players-button'), skipOffstage: false),
+    findsNothing,
     reason:
-        'capture $shotName: C-523 D2, home-players-button reads 4 by '
-        'default; the Text under it read $shown',
+        'capture $shotName: C-666 D1, expected no home-players-button on '
+        'home',
   );
+  for (final int n in const <int>[2, 3, 4]) {
+    expect(
+      find.byKey(Key('home-players-option-$n'), skipOffstage: false),
+      findsNothing,
+      reason: 'capture $shotName: C-666 D1, expected no home-players-option-$n',
+    );
+  }
 
   final Finder sound = find.byKey(
     const Key('home-sound-toggle'),
@@ -17482,7 +17470,6 @@ Future<void> _shootHomePlain(
 
   _expectPlainHome(tester, shotName: shotName, locale: locale);
   for (final (String key, String label) in const <(String, String)>[
-    ('home-players-button', 'home-players-button'),
     ('home-sound-toggle', 'home-sound-toggle'),
     ('create-room-button', 'create-room-button'),
   ]) {
@@ -17491,65 +17478,6 @@ Future<void> _shootHomePlain(
       find.byKey(Key(key)),
       label: label,
       context: 'on the plain home before capture $shotName',
-    );
-  }
-  await _capture(binding, tester, shotName, frames: 0);
-}
-
-/// 101, 102: the players menu open over home-players-button, 4 selected.
-Future<void> _shootHomePlayersMenu(
-  WidgetTester tester,
-  IntegrationTestWidgetsFlutterBinding binding, {
-  required String shotName,
-  required Locale locale,
-}) async {
-  await _mountPlainHome(tester, binding, shotName: shotName, locale: locale);
-
-  await tester.tap(find.byKey(const Key('home-players-button')));
-  await tester.pump();
-  for (final int n in const <int>[2, 3, 4]) {
-    await _pumpUntilFound(
-      tester,
-      find.byKey(Key('home-players-option-$n')),
-      'capture $shotName: home-players-option-$n after a tap on '
-      'home-players-button',
-    );
-  }
-  await _settleForScreenshot(
-    tester,
-    find.byKey(const Key('home-players-option-4')),
-    'capture $shotName: home-players-option-4 laid out in the open menu',
-  );
-
-  _expectPlainHome(tester, shotName: shotName, locale: locale);
-  for (final int n in const <int>[2, 3, 4]) {
-    final Finder option = find.byKey(Key('home-players-option-$n'));
-    expect(
-      option,
-      findsOneWidget,
-      reason:
-          'capture $shotName: expected home-players-option-$n in the open '
-          'menu (C-523 D2)',
-    );
-    _expectRectInsideView(
-      tester,
-      option,
-      label: 'home-players-option-$n',
-      context: 'in the open players menu before capture $shotName',
-    );
-    final Finder check = find.descendant(
-      of: option,
-      matching: find.byWidgetPredicate(
-        (Widget w) => w is Icon && _menuCheckIcons.contains(w.icon),
-      ),
-    );
-    expect(
-      check,
-      n == 4 ? findsOneWidget : findsNothing,
-      reason:
-          'capture $shotName: C-523 D2, the current count (4) carries a '
-          'check glyph and no other option does; home-players-option-$n '
-          '${n == 4 ? 'has none' : 'has one'}',
     );
   }
   await _capture(binding, tester, shotName, frames: 0);
@@ -17625,7 +17553,7 @@ Future<void> _shootHomeJoinShown(
   await _capture(binding, tester, shotName, frames: 0);
 }
 
-/// 104: system text scale 2.0, the players row scrolled onto the screen.
+/// 104: system text scale 2.0, Create scrolled onto the screen.
 Future<void> _shootHomeLargeText(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -17653,7 +17581,7 @@ Future<void> _shootHomeLargeText(
         '$scaledTen',
   );
 
-  await tester.ensureVisible(find.byKey(const Key('home-players-button')));
+  await tester.ensureVisible(find.byKey(const Key('create-room-button')));
   await tester.pumpAndSettle();
 
   expect(
@@ -17666,17 +17594,21 @@ Future<void> _shootHomeLargeText(
   _expectPlainHome(tester, shotName: shotName, locale: locale);
   _expectRectInsideView(
     tester,
-    find.byKey(const Key('home-players-button')),
-    label: 'home-players-button',
+    find.byKey(const Key('create-room-button')),
+    label: 'create-room-button',
     context: 'at text scale 2.0 before capture $shotName',
   );
-  final Finder label = find.text(
-    locale.languageCode == 'en' ? _playersQuestionEn : _playersQuestionAr,
+  final AppLocalizations homeLoc = AppLocalizations.of(
+    tester.element(find.byType(HomeScreen)),
+  );
+  final Finder label = find.descendant(
+    of: find.byKey(const Key('create-room-button')),
+    matching: find.text(homeLoc.homeCreateRoomButton),
   );
   _expectRectInsideView(
     tester,
     label,
-    label: 'the players question',
+    label: 'the Create label',
     context: 'at text scale 2.0 before capture $shotName',
   );
   final RenderParagraph paragraph = tester.renderObject<RenderParagraph>(label);
@@ -17684,8 +17616,8 @@ Future<void> _shootHomeLargeText(
     paragraph.didExceedMaxLines,
     isFalse,
     reason:
-        'capture $shotName: the players question is clipped at text scale '
-        '2.0 (${_viewText(tester)}); it exceeds its line limit',
+        'capture $shotName: the Create label is clipped at text scale 2.0 '
+        '(${_viewText(tester)}); it exceeds its line limit',
   );
   await _capture(binding, tester, shotName, frames: 0);
 }

@@ -1147,9 +1147,9 @@ void main() {
     });
 
     testWidgets(
-      'lobby-waiting shows loc.lobbyWaitingForPlayers(occupied, total), for '
-      'a guest (order 183: a host has no lobby-waiting line, see the "order '
-      '183: waiting line" group)',
+      'lobby-waiting shows loc.lobbyWaitingForHost for a guest in a room that '
+      'is not full (C-666 D3: no seat count; the host decides when to '
+      'start)',
       (tester) async {
         final connector = _Connector();
         final transport = FakeTransport();
@@ -1191,7 +1191,7 @@ void main() {
 
         final context = tester.element(find.byType(LobbyScreen));
         final loc = AppLocalizations.of(context);
-        final expectedText = loc.lobbyWaitingForPlayers(2, 4);
+        final expectedText = loc.lobbyWaitingForHost;
         final waitingText = tester.widget<Text>(
           find.byKey(const Key('lobby-waiting')),
         );
@@ -1199,13 +1199,12 @@ void main() {
           waitingText.data,
           expectedText,
           reason:
-              'rule 4: lobby-waiting must be a Text of '
-              'loc.lobbyWaitingForPlayers'
-              '(controller.room!.seats.length, controller.room!.players) '
-              '== loc.lobbyWaitingForPlayers(2, 4) == "$expectedText" for '
-              'a 2-of-4 room; got "${waitingText.data}". The key is on the '
-              'Text itself per the frozen declaration, so find.descendant '
-              '(which excludes its own root) can never match here.',
+              'C-666 D3: lobby-waiting must be a Text of '
+              'loc.lobbyWaitingForHost == "$expectedText" for a guest in a '
+              '2-of-4 room, whatever the count; got "${waitingText.data}". '
+              'The key is on the Text itself per the frozen declaration, so '
+              'find.descendant (which excludes its own root) can never '
+              'match here.',
         );
       },
     );
@@ -1264,9 +1263,8 @@ void main() {
     );
 
     testWidgets('isHost true with the room one seat short of full: no '
-        'lobby-start-button; lobby-waiting shows the seated/total count', (
-      tester,
-    ) async {
+        'lobby-start-button, no lobby-waiting; the one start-with-present '
+        'button reads the seated count (C-666 D2)', (tester) async {
       final connector = _Connector();
       final transport = FakeTransport();
       connector.enqueue(transport);
@@ -1304,21 +1302,30 @@ void main() {
 
       final BuildContext context = tester.element(find.byType(LobbyScreen));
       final AppLocalizations loc = AppLocalizations.of(context);
-      final Finder waiting = find.byKey(const Key('lobby-waiting'));
       expect(
-        waiting,
+        find.byKey(const Key('lobby-waiting')),
+        findsNothing,
+        reason:
+            'C-666 D2: a host with 3 of 4 seated has no waiting line above '
+            'the start-with-present button',
+      );
+      final Finder startWithPresent = find.byKey(
+        const Key('lobby-start-with-present-button'),
+      );
+      expect(
+        startWithPresent,
         findsOneWidget,
         reason:
-            'C-274: a host one seat short of full shows lobby-waiting '
-            'instead of a disabled lobby-start-button',
+            'C-666 D2: a host with 3 of 4 seated shows the one '
+            'start-with-present button',
       );
-      final Text waitingText = tester.widget<Text>(waiting);
       expect(
-        waitingText.data,
-        loc.lobbyWaitingForPlayers(3, 4),
-        reason:
-            'C-274: lobby-waiting must read '
-            'loc.lobbyWaitingForPlayers(3, 4); got "${waitingText.data}"',
+        find.descendant(
+          of: startWithPresent,
+          matching: find.text(loc.lobbyStartWithPresent(3)),
+        ),
+        findsOneWidget,
+        reason: 'C-666 D2: the button reads loc.lobbyStartWithPresent(3)',
       );
       expect(
         find.byKey(const Key('lobby-start-button')),
@@ -1785,8 +1792,8 @@ void main() {
 
     testWidgets(
       'pumped in Locale(ar), the connected body shows Arabic strings for '
-      'lobby-waiting and the desync banner, for a guest (order 183: a host '
-      'has no lobby-waiting line, see the "order 183: waiting line" group)',
+      'lobby-waiting (lobbyWaitingForHost, C-666 D3) and the desync banner, '
+      'for a guest',
       (tester) async {
         final connector = _Connector();
         final transport = FakeTransport();
@@ -1832,10 +1839,10 @@ void main() {
         );
         expect(
           waitingTextAr.data,
-          locAr.lobbyWaitingForPlayers(2, 4),
+          locAr.lobbyWaitingForHost,
           reason:
               'rule 8/4: lobby-waiting must be a Text of the Arabic '
-              'lobbyWaitingForPlayers string when the locale is ar; got '
+              'lobbyWaitingForHost string when the locale is ar; got '
               '"${waitingTextAr.data}". The key is on the Text itself per '
               'the frozen declaration, so find.descendant (which excludes '
               'its own root) can never match here.',
@@ -1898,13 +1905,18 @@ void main() {
     );
   });
 
-  // C-274: a host short of full shows lobby-waiting with the seated/total
-  // count and has no lobby-start-button. A full room still shows the
-  // enabled Start button and no lobby-waiting (W-H2). Guests are unchanged
+  // C-274, reworked by C-666 D2/D3: a host with two or three seated, short
+  // of full, shows the one start-with-present button and no lobby-waiting;
+  // with one seated the waiting-for-friends line. A full room still shows
+  // the enabled Start button and no lobby-waiting (W-H2). Guests always read
+  // lobbyWaitingForHost whatever the count
   // (W-G1, W-G2, W-AR guest).
   group('order 183: waiting line', () {
-    testWidgets('W-H1: host, room short of full: no lobby-start-button; '
-        'lobby-waiting shows the seated/total count', (tester) async {
+    testWidgets('W-H1: host, room short of full (2 of 4): no '
+        'lobby-start-button and no lobby-waiting; the one '
+        'start-with-present button reads loc.lobbyStartWithPresent(2)', (
+      tester,
+    ) async {
       final connector = _Connector();
       final transport = FakeTransport();
       connector.enqueue(transport);
@@ -1954,23 +1966,30 @@ void main() {
 
       final context = tester.element(find.byType(LobbyScreen));
       final loc = AppLocalizations.of(context);
-      final Finder waiting = find.byKey(const Key('lobby-waiting'));
       expect(
-        waiting,
+        find.byKey(const Key('lobby-waiting')),
+        findsNothing,
+        reason:
+            'C-666 D2, W-H1: a host with 2 of 4 seated has no waiting line '
+            'above the start-with-present button',
+      );
+      final Finder startWithPresent = find.byKey(
+        const Key('lobby-start-with-present-button'),
+      );
+      expect(
+        startWithPresent,
         findsOneWidget,
         reason:
-            'C-274, W-H1: a host short of full shows lobby-waiting; the '
-            'seated/total count is that line, not a disabled '
-            'lobby-start-button',
+            'C-666 D2, W-H1: a host with 2 of 4 seated shows the one '
+            'start-with-present button',
       );
-      final Text waitingText = tester.widget<Text>(waiting);
       expect(
-        waitingText.data,
-        loc.lobbyWaitingForPlayers(2, 4),
-        reason:
-            'C-274, W-H1: lobby-waiting must read '
-            'loc.lobbyWaitingForPlayers(seated, total) == '
-            'loc.lobbyWaitingForPlayers(2, 4); got "${waitingText.data}"',
+        find.descendant(
+          of: startWithPresent,
+          matching: find.text(loc.lobbyStartWithPresent(2)),
+        ),
+        findsOneWidget,
+        reason: 'C-666 D2, W-H1: the button reads loc.lobbyStartWithPresent(2)',
       );
       expect(
         find.byKey(const Key('lobby-start-button')),
@@ -2071,8 +2090,8 @@ void main() {
     );
 
     testWidgets(
-      'W-G1: guest, room short of full: lobby-waiting findsOneWidget with '
-      'the seated/total count; no lobby-start-button',
+      'W-G1: guest, room short of full: lobby-waiting findsOneWidget reading '
+      'loc.lobbyWaitingForHost (C-666 D3); no lobby-start-button',
       (tester) async {
         final connector = _Connector();
         final transport = FakeTransport();
@@ -2135,11 +2154,10 @@ void main() {
         final waitingText = tester.widget<Text>(waitingFinder);
         expect(
           waitingText.data,
-          loc.lobbyWaitingForPlayers(2, 4),
+          loc.lobbyWaitingForHost,
           reason:
-              'order 183, W-G1: lobby-waiting must read '
-              'loc.lobbyWaitingForPlayers(seated, total) == '
-              'loc.lobbyWaitingForPlayers(2, 4); got '
+              'C-666 D3, W-G1: lobby-waiting must read '
+              'loc.lobbyWaitingForHost whatever the seat count; got '
               '"${waitingText.data}"',
         );
         expect(
@@ -2230,7 +2248,8 @@ void main() {
 
     testWidgets(
       'W-AR host: pumped in Locale(ar), a host with a room short of full '
-      'shows lobby-waiting with the count and no lobby-start-button',
+      'shows the start-with-present button, no lobby-waiting and no '
+      'lobby-start-button',
       (tester) async {
         final connector = _Connector();
         final transport = FakeTransport();
@@ -2277,22 +2296,32 @@ void main() {
 
         final context = tester.element(find.byType(LobbyScreen));
         final loc = AppLocalizations.of(context);
-        final Finder waiting = find.byKey(const Key('lobby-waiting'));
         expect(
-          waiting,
+          find.byKey(const Key('lobby-waiting')),
+          findsNothing,
+          reason:
+              'C-666 D2, W-AR host: a host with 2 of 4 seated has no '
+              'waiting line in Locale(ar) either',
+        );
+        final Finder startWithPresent = find.byKey(
+          const Key('lobby-start-with-present-button'),
+        );
+        expect(
+          startWithPresent,
           findsOneWidget,
           reason:
-              'C-274, W-AR host: a host short of full shows lobby-waiting '
-              'in Locale(ar) too',
+              'C-666 D2, W-AR host: a host with 2 of 4 seated shows the '
+              'start-with-present button in Locale(ar) too',
         );
-        final Text waitingText = tester.widget<Text>(waiting);
         expect(
-          waitingText.data,
-          loc.lobbyWaitingForPlayers(2, 4),
+          find.descendant(
+            of: startWithPresent,
+            matching: find.text(loc.lobbyStartWithPresent(2)),
+          ),
+          findsOneWidget,
           reason:
-              'C-274, W-AR host: lobby-waiting must read that tree\'s own '
-              'AppLocalizations.lobbyWaitingForPlayers(2, 4); got '
-              '"${waitingText.data}"',
+              'C-666 D2, W-AR host: the button reads that tree\'s own '
+              'AppLocalizations.lobbyStartWithPresent(2)',
         );
         expect(
           find.byKey(const Key('lobby-start-button')),
@@ -2306,7 +2335,7 @@ void main() {
 
     testWidgets(
       'W-AR guest: pumped in Locale(ar), a guest with a room short of full '
-      'still shows lobby-waiting with the count',
+      'still shows lobby-waiting reading lobbyWaitingForHost',
       (tester) async {
         final connector = _Connector();
         final transport = FakeTransport();
@@ -2366,10 +2395,10 @@ void main() {
         final waitingText = tester.widget<Text>(waitingFinder);
         expect(
           waitingText.data,
-          loc.lobbyWaitingForPlayers(2, 4),
+          loc.lobbyWaitingForHost,
           reason:
-              'order 183, W-AR guest: lobby-waiting must read that '
-              'tree\'s own AppLocalizations.lobbyWaitingForPlayers(2, 4); '
+              'C-666 D3, W-AR guest: lobby-waiting must read that '
+              'tree\'s own AppLocalizations.lobbyWaitingForHost; '
               'got "${waitingText.data}"',
         );
         expect(
