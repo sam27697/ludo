@@ -5330,43 +5330,46 @@ class _GameScreenState extends State<GameScreen> {
         if (sheetRoute != null) {
           _leaveConfirmRoute = sheetRoute;
         }
-        return Padding(
-          key: const Key('game-leave-confirm'),
-          padding: const EdgeInsets.all(kSpace5),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                loc.gameLeaveConfirmTitle,
-                style: Theme.of(sheetContext).textTheme.titleMedium,
-              ),
-              const SizedBox(height: kSpace2),
-              Text(_leaveConfirmBody(loc)),
-              const SizedBox(height: kSpace4),
-              FilledButton(
-                key: const Key('game-leave-confirm-stay'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
+        // C-661 S3: the sheet scrolls only when the text does not fit.
+        return SingleChildScrollView(
+          child: Padding(
+            key: const Key('game-leave-confirm'),
+            padding: const EdgeInsets.all(kSpace5),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  loc.gameLeaveConfirmTitle,
+                  style: Theme.of(sheetContext).textTheme.titleMedium,
                 ),
-                onPressed: () => Navigator.of(sheetContext).pop(),
-                child: Text(loc.gameLeaveConfirmStay),
-              ),
-              const SizedBox(height: kSpace2),
-              TextButton(
-                key: const Key('game-leave-confirm-leave'),
-                style: TextButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
+                const SizedBox(height: kSpace2),
+                Text(_leaveConfirmBody(loc)),
+                const SizedBox(height: kSpace4),
+                FilledButton(
+                  key: const Key('game-leave-confirm-stay'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  onPressed: () => Navigator.of(sheetContext).pop(),
+                  child: Text(loc.gameLeaveConfirmStay),
                 ),
-                onPressed: () {
-                  Navigator.of(sheetContext).pop();
-                  if (mounted) {
-                    _leave();
-                  }
-                },
-                child: Text(loc.gameLeaveButton),
-              ),
-            ],
+                const SizedBox(height: kSpace2),
+                TextButton(
+                  key: const Key('game-leave-confirm-leave'),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    if (mounted) {
+                      _leave();
+                    }
+                  },
+                  child: Text(loc.gameLeaveButton),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -9386,75 +9389,83 @@ class _KickSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final Color seatColor = LudoColors.seats[seat.clamp(0, 3)];
     return SafeArea(
-      child: Padding(
-        key: Key('kick-sheet-$seat'),
-        padding: const EdgeInsets.fromLTRB(kSpace5, kSpace4, kSpace5, kSpace4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Center(
-              child: Container(
-                width: 56,
-                height: 56,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: seatColor,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: LudoColors.dieFace, width: 3),
-                  boxShadow: <BoxShadow>[
-                    BoxShadow(
-                      color: LudoColors.ink.withValues(alpha: 0.2),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: SeatMark(seat: seat, size: 28),
-              ),
-            ),
-            const SizedBox(height: kSpace3),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: LudoColors.ink,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: kSpace4),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('kick-sheet-wait'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(56),
-                      foregroundColor: LudoColors.ink,
-                      side: const BorderSide(color: LudoColors.ink, width: 2),
-                      shape: const StadiumBorder(),
-                    ),
-                    onPressed: onWait,
-                    child: Text(waitLabel),
+      // C-661 S3: scrolls only when the content is taller than the sheet.
+      child: SingleChildScrollView(
+        child: Padding(
+          key: Key('kick-sheet-$seat'),
+          padding: const EdgeInsets.fromLTRB(
+            kSpace5,
+            kSpace4,
+            kSpace5,
+            kSpace4,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Center(
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: seatColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: LudoColors.dieFace, width: 3),
+                    boxShadow: <BoxShadow>[
+                      BoxShadow(
+                        color: LudoColors.ink.withValues(alpha: 0.2),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
                   ),
+                  child: SeatMark(seat: seat, size: 28),
                 ),
-                const SizedBox(width: kSpace3),
-                Expanded(
-                  child: FilledButton(
-                    key: const Key('kick-sheet-remove'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size.fromHeight(56),
-                      backgroundColor: LudoColors.action,
-                      foregroundColor: LudoColors.actionOn,
-                      shape: const StadiumBorder(),
+              ),
+              const SizedBox(height: kSpace3),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: LudoColors.ink,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: kSpace4),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: OutlinedButton(
+                      key: const Key('kick-sheet-wait'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(56),
+                        foregroundColor: LudoColors.ink,
+                        side: const BorderSide(color: LudoColors.ink, width: 2),
+                        shape: const StadiumBorder(),
+                      ),
+                      onPressed: onWait,
+                      child: Text(waitLabel),
                     ),
-                    onPressed: onRemove,
-                    child: Text(removeLabel),
                   ),
-                ),
-              ],
-            ),
-          ],
+                  const SizedBox(width: kSpace3),
+                  Expanded(
+                    child: FilledButton(
+                      key: const Key('kick-sheet-remove'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(56),
+                        backgroundColor: LudoColors.action,
+                        foregroundColor: LudoColors.actionOn,
+                        shape: const StadiumBorder(),
+                      ),
+                      onPressed: onRemove,
+                      child: Text(removeLabel),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
