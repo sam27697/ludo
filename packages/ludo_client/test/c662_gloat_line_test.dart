@@ -1335,7 +1335,13 @@ void main() {
                   bad.add('$d: no pill (DecoratedBox) above the text');
                   continue;
                 }
-                if (d.fontSize != 14) {
+                // Run 154 master ruling on T2': under a large system text
+                // scale a line that cannot hold 2 lines at 6 cells may get
+                // smaller by a smaller style size as well as by a transform.
+                // At 1.0 the size is always 14; it is never above 14.
+                final double styleSize = d.fontSize ?? 14;
+                final bool smallerStyle = styleSize < 14 - 0.01;
+                if (styleSize > 14 + 0.01 || (scale == 1.0 && smallerStyle)) {
                   bad.add(
                     '$d: style font size is ${d.fontSize}, expected 14 '
                     '(passed through the screen\'s TextScaler)',
@@ -1381,11 +1387,19 @@ void main() {
                       '${(0.3 * cell).toStringAsFixed(1)} px each side',
                     );
                   }
-                } else if (d.scaledDown && d.look.lines < 2) {
-                  bad.add(
-                    '$d: scaled down while laid out on ${d.look.lines} '
-                    'line, a scale-down may only fit 2 lines, never 1',
-                  );
+                } else if (d.scaledDown || smallerStyle) {
+                  // Run 154 master ruling: a line made smaller under large
+                  // system text never paints below 14 logical px, the size
+                  // it has at 1.0 (replaces "only to fit 2 lines").
+                  final double onScreen =
+                      d.paragraph.textScaler.scale(styleSize) *
+                      d.look.lineScale;
+                  if (onScreen < 14 - 0.05) {
+                    bad.add(
+                      '$d: made smaller to ${onScreen.toStringAsFixed(2)} px '
+                      'on screen under text scale $scale, never below 14',
+                    );
+                  }
                 }
               }
               expect(
