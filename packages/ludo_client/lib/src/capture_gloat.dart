@@ -1,11 +1,12 @@
-// The laughing face a capture draws on the capturer's yard. GameScreen
-// decides when one exists and for how long; this file only paints it.
-// Contract C-468 D5.
+// The laughing face a capture draws on the capturer's yard, and the short
+// line over it. GameScreen decides when one exists and for how long; this
+// file only paints it. Contract C-468 D5, C-662 T1-T6.
 
 import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import '../l10n/gen/app_localizations.dart';
 import 'theme.dart';
 
 /// How long the face stays up, reduced motion included. C-468 D5.
@@ -36,8 +37,109 @@ class BoardGloat {
   final bool yielding;
 }
 
+/// The eight lines, in the order of `gloatLine1` to `gloatLine8`. C-662 T1.
+const int kGloatLineCount = 8;
+
+/// Widest the line's pill gets at text scale 1.0, in cells. A longer line
+/// is shrunk to fit, never wrapped there. C-662 T2.
+const double kGloatLineMaxCells = 2.6;
+
+/// Clear space between the pill and the face, in cells. C-662 T2.
+const double _lineGapCells = 0.15;
+
+/// Which of the eight lines shows next: a shuffled bag that refills when
+/// empty, and a refill never opens with the line that just showed. C-662 T3.
+class _GloatBag {
+  _GloatBag() : _random = math.Random();
+
+  math.Random _random;
+  final List<int> _left = <int>[];
+  int? _last;
+
+  int next() {
+    if (_left.isEmpty) {
+      _refill();
+    }
+    final int index = _left.removeLast();
+    _last = index;
+    return index;
+  }
+
+  void _refill() {
+    _left
+      ..addAll(List<int>.generate(kGloatLineCount, (int i) => i))
+      ..shuffle(_random);
+    // The bag is drawn from its end.
+    if (_last != null && _left.last == _last) {
+      final int swap = _random.nextInt(_left.length - 1);
+      final int held = _left.last;
+      _left[_left.length - 1] = _left[swap];
+      _left[swap] = held;
+    }
+  }
+
+  void reset(math.Random random) {
+    _random = random;
+    _left.clear();
+    _last = null;
+  }
+
+  void force(List<int> order) {
+    _left
+      ..clear()
+      ..addAll(order.reversed);
+    _last = null;
+  }
+}
+
+final _GloatBag _gloatBag = _GloatBag();
+
+/// Test seam for C-662 T3: replaces the bag's random source with [random]
+/// (a seeded one, so a run is repeatable) and empties the bag, so the next
+/// gloat starts a fresh shuffle.
+@visibleForTesting
+void debugSeedGloatBag(math.Random random) => _gloatBag.reset(random);
+
+/// Test seam for C-662 T3: the next gloats show exactly [order] (indices 0
+/// to 7, zero based, `gloatLine1` is 0) one per serial, after which the bag
+/// refills by its rule. Each index may appear once.
+@visibleForTesting
+void debugForceGloatOrder(List<int> order) {
+  assert(
+    order.toSet().length == order.length &&
+        order.every((int i) => i >= 0 && i < kGloatLineCount),
+    'indices 0..7, no repeats',
+  );
+  _gloatBag.force(order);
+}
+
+String _lineText(AppLocalizations l, int index) {
+  switch (index) {
+    case 0:
+      return l.gloatLine1;
+    case 1:
+      return l.gloatLine2;
+    case 2:
+      return l.gloatLine3;
+    case 3:
+      return l.gloatLine4;
+    case 4:
+      return l.gloatLine5;
+    case 5:
+      return l.gloatLine6;
+    case 6:
+      return l.gloatLine7;
+    default:
+      return l.gloatLine8;
+  }
+}
+
 /// Laughing face centred by the board on seat M's viewed yard. The root
 /// key is `capture-gloat-<seat>`. C-468 D5.
+///
+/// The line over it is a sibling of that keyed subtree, so the key's rect
+/// stays the face's two cells. It paints outside this widget's own box.
+/// C-662 T2.
 class CaptureGloat extends StatefulWidget {
   const CaptureGloat({
     super.key,
@@ -46,10 +148,16 @@ class CaptureGloat extends StatefulWidget {
     required this.diameter,
     required this.cellSize,
     this.yielding = false,
+    this.bounds,
   });
 
   final int seat;
   final int serial;
+
+  /// The board's rect in this widget's own coordinates (origin at the
+  /// face's top left). The line is held inside it. Null leaves the line
+  /// unbounded. C-662 T2.
+  final Rect? bounds;
 
   /// The exit starts now if it has not started. C-579 D2.
   final bool yielding;
@@ -68,9 +176,13 @@ class _CaptureGloatState extends State<CaptureGloat>
     with SingleTickerProviderStateMixin {
   late final AnimationController _clock;
 
+  /// Zero based index into the pool, one per serial. C-662 T3.
+  late int _line;
+
   @override
   void initState() {
     super.initState();
+    _line = _gloatBag.next();
     _clock = AnimationController(vsync: this, duration: kCaptureGloatLife)
       ..forward();
   }
@@ -81,6 +193,7 @@ class _CaptureGloatState extends State<CaptureGloat>
     // Same seat keeps this state (the key does not carry the serial).
     // A replacement has to start its pop over. C-468 D5.
     if (oldWidget.serial != widget.serial) {
+      _line = _gloatBag.next();
       _clock.forward(from: 0);
     } else if (widget.yielding && !oldWidget.yielding) {
       // Straight into the face's own exit, which then plays out in
@@ -105,39 +218,173 @@ class _CaptureGloatState extends State<CaptureGloat>
   Widget build(BuildContext context) {
     final bool reduced = MediaQuery.disableAnimationsOf(context);
     final int seat = widget.seat.clamp(0, 3);
-    return IgnorePointer(
-      key: Key('capture-gloat-${widget.seat}'),
-      child: ExcludeSemantics(
-        child: AnimatedBuilder(
-          animation: _clock,
-          builder: (BuildContext context, Widget? child) {
-            final _GloatPose pose = _poseFor(
-              kCaptureGloatLife * _clock.value,
-              reduced: reduced,
-              cellSize: widget.cellSize,
-            );
-            return Opacity(
-              opacity: pose.opacity,
-              child: Transform.translate(
-                offset: Offset(0, pose.rise),
-                child: Transform.rotate(
-                  angle: pose.radians,
-                  child: Transform.scale(scale: pose.scale, child: child),
+    return ExcludeSemantics(
+      child: IgnorePointer(
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            IgnorePointer(
+              key: Key('capture-gloat-${widget.seat}'),
+              child: ExcludeSemantics(
+                child: AnimatedBuilder(
+                  animation: _clock,
+                  builder: (BuildContext context, Widget? child) {
+                    final _GloatPose pose = _poseFor(
+                      kCaptureGloatLife * _clock.value,
+                      reduced: reduced,
+                      cellSize: widget.cellSize,
+                    );
+                    return Opacity(
+                      opacity: pose.opacity,
+                      child: Transform.translate(
+                        offset: Offset(0, pose.rise),
+                        child: Transform.rotate(
+                          angle: pose.radians,
+                          child: Transform.scale(
+                            scale: pose.scale,
+                            child: child,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                  child: SizedBox(
+                    width: widget.diameter,
+                    height: widget.diameter,
+                    child: CustomPaint(
+                      painter: _LaughingFacePainter(
+                        color: LudoColors.seats[seat],
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            );
-          },
-          child: SizedBox(
-            width: widget.diameter,
-            height: widget.diameter,
-            child: CustomPaint(
-              painter: _LaughingFacePainter(color: LudoColors.seats[seat]),
+            ),
+            Positioned.fill(
+              child: AnimatedBuilder(
+                animation: _clock,
+                builder: (BuildContext context, Widget? child) {
+                  // Opacity and rise follow the face; no pop, no wobble.
+                  final _GloatPose pose = _poseFor(
+                    kCaptureGloatLife * _clock.value,
+                    reduced: reduced,
+                    cellSize: widget.cellSize,
+                  );
+                  return Opacity(
+                    opacity: pose.opacity,
+                    child: Transform.translate(
+                      offset: Offset(0, pose.rise),
+                      child: child,
+                    ),
+                  );
+                },
+                child: CustomSingleChildLayout(
+                  delegate: _LineLayout(
+                    cellSize: widget.cellSize,
+                    bounds: widget.bounds,
+                  ),
+                  child: _LinePill(
+                    seat: seat,
+                    cellSize: widget.cellSize,
+                    text: _lineText(AppLocalizations.of(context), _line),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Rounded pill in the seat colour, bold text in the ink that reads on it.
+/// One line; a line wider than the pill may be, or a larger text scale,
+/// shrinks to fit rather than wrap or clip. C-662 T2.
+class _LinePill extends StatelessWidget {
+  const _LinePill({
+    required this.seat,
+    required this.cellSize,
+    required this.text,
+  });
+
+  final int seat;
+  final double cellSize;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color fill = LudoColors.seats[seat];
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: fill,
+        borderRadius: BorderRadius.circular(cellSize * 2),
+      ),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: cellSize * 0.25,
+          vertical: cellSize * 0.12,
+        ),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            text,
+            maxLines: 1,
+            softWrap: false,
+            style: TextStyle(
+              color: contrastingInk(fill),
+              fontSize: cellSize * 0.55,
+              fontWeight: FontWeight.w700,
+              decoration: TextDecoration.none,
             ),
           ),
         ),
       ),
     );
   }
+}
+
+/// Puts the pill centred over the face with a small gap, then shifts it
+/// inward until it lies inside the board. The height it may take stops
+/// short of the board's top by the exit's rise, so the rise cannot carry
+/// it out. C-662 T2.
+class _LineLayout extends SingleChildLayoutDelegate {
+  const _LineLayout({required this.cellSize, required this.bounds});
+
+  final double cellSize;
+  final Rect? bounds;
+
+  double get _gap => cellSize * _lineGapCells;
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
+    double maxWidth = cellSize * kGloatLineMaxCells;
+    double maxHeight = cellSize * 2;
+    final Rect? board = bounds;
+    if (board != null) {
+      maxWidth = math.min(maxWidth, board.width);
+      maxHeight = math.max(0, -board.top - _gap - cellSize * 0.5);
+    }
+    return BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight);
+  }
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) {
+    double x = (size.width - childSize.width) / 2;
+    final double y = -_gap - childSize.height;
+    final Rect? board = bounds;
+    if (board != null) {
+      x = x.clamp(
+        board.left,
+        math.max(board.left, board.right - childSize.width),
+      );
+    }
+    return Offset(x, y);
+  }
+
+  @override
+  bool shouldRelayout(covariant _LineLayout oldDelegate) =>
+      oldDelegate.cellSize != cellSize || oldDelegate.bounds != bounds;
 }
 
 class _GloatPose {
