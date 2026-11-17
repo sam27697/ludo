@@ -1,11 +1,12 @@
-// The laughing face a capture draws on the capturer's yard. GameScreen
-// decides when one exists and for how long; this file only paints it.
-// Contract C-468 D5.
+// The laughing face a capture draws on the capturer's yard, and the short
+// line over it. GameScreen decides when one exists and for how long; this
+// file only paints it. Contract C-468 D5, C-662 T1-T6.
 
 import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import '../l10n/gen/app_localizations.dart';
 import 'theme.dart';
 
 /// How long the face stays up, reduced motion included. C-468 D5.
@@ -36,8 +37,127 @@ class BoardGloat {
   final bool yielding;
 }
 
+/// The eight lines, in the order of `gloatLine1` to `gloatLine8`. C-662 T1.
+const int kGloatLineCount = 8;
+
+/// Widest the line's pill gets, in cells: one yard side. A longer line
+/// wraps, to two lines at most. C-662 T2'.
+const double kGloatLineMaxCells = 6;
+
+/// Side padding of the pill, in cells. C-662 T2'.
+const double _linePadXCells = 0.3;
+
+/// Top and bottom padding of the pill, in cells. C-662 T2'.
+const double _linePadYCells = 0.04;
+
+/// The line's type size before the screen's text scaler. C-662 T2'.
+const double kGloatLineFontSize = 14;
+
+/// Line height as a multiple of the type size. Two lines, the pill's
+/// padding, the gap and the exit's rise have to fit the two cells that lie
+/// above a corner yard's face on a 360 px board. C-662 T2'.
+const double _lineHeight = 1.1;
+
+/// Clear space between the pill and the face, in cells. C-662 T2.
+const double _lineGapCells = 0.05;
+
+/// How far the face, and the line with it, rises in the exit, in cells.
+/// C-468 D5.
+const double _exitRiseCells = 0.5;
+
+/// Which of the eight lines shows next: a shuffled bag that refills when
+/// empty, and a refill never opens with the line that just showed. C-662 T3.
+class _GloatBag {
+  _GloatBag() : _random = math.Random();
+
+  math.Random _random;
+  final List<int> _left = <int>[];
+  int? _last;
+
+  int next() {
+    if (_left.isEmpty) {
+      _refill();
+    }
+    final int index = _left.removeLast();
+    _last = index;
+    return index;
+  }
+
+  void _refill() {
+    _left
+      ..addAll(List<int>.generate(kGloatLineCount, (int i) => i))
+      ..shuffle(_random);
+    // The bag is drawn from its end.
+    if (_last != null && _left.last == _last) {
+      final int swap = _random.nextInt(_left.length - 1);
+      final int held = _left.last;
+      _left[_left.length - 1] = _left[swap];
+      _left[swap] = held;
+    }
+  }
+
+  void reset(math.Random random) {
+    _random = random;
+    _left.clear();
+    _last = null;
+  }
+
+  void force(List<int> order) {
+    _left
+      ..clear()
+      ..addAll(order.reversed);
+    _last = null;
+  }
+}
+
+final _GloatBag _gloatBag = _GloatBag();
+
+/// Test seam for C-662 T3: replaces the bag's random source with [random]
+/// (a seeded one, so a run is repeatable) and empties the bag, so the next
+/// gloat starts a fresh shuffle.
+@visibleForTesting
+void debugSeedGloatBag(math.Random random) => _gloatBag.reset(random);
+
+/// Test seam for C-662 T3: the next gloats show exactly [order] (indices 0
+/// to 7, zero based, `gloatLine1` is 0) one per serial, after which the bag
+/// refills by its rule. Each index may appear once.
+@visibleForTesting
+void debugForceGloatOrder(List<int> order) {
+  assert(
+    order.toSet().length == order.length &&
+        order.every((int i) => i >= 0 && i < kGloatLineCount),
+    'indices 0..7, no repeats',
+  );
+  _gloatBag.force(order);
+}
+
+String _lineText(AppLocalizations l, int index) {
+  switch (index) {
+    case 0:
+      return l.gloatLine1;
+    case 1:
+      return l.gloatLine2;
+    case 2:
+      return l.gloatLine3;
+    case 3:
+      return l.gloatLine4;
+    case 4:
+      return l.gloatLine5;
+    case 5:
+      return l.gloatLine6;
+    case 6:
+      return l.gloatLine7;
+    default:
+      return l.gloatLine8;
+  }
+}
+
 /// Laughing face centred by the board on seat M's viewed yard. The root
 /// key is `capture-gloat-<seat>`. C-468 D5.
+///
+/// The line over it is a sibling of that keyed subtree, so the key's rect
+/// stays the face's two cells. It paints outside this widget's own box.
+/// C-662 T2.
 class CaptureGloat extends StatefulWidget {
   const CaptureGloat({
     super.key,
@@ -46,10 +166,16 @@ class CaptureGloat extends StatefulWidget {
     required this.diameter,
     required this.cellSize,
     this.yielding = false,
+    this.bounds,
   });
 
   final int seat;
   final int serial;
+
+  /// The board's rect in this widget's own coordinates (origin at the
+  /// face's top left). The line is held inside it. Null leaves the line
+  /// unbounded. C-662 T2.
+  final Rect? bounds;
 
   /// The exit starts now if it has not started. C-579 D2.
   final bool yielding;
@@ -68,9 +194,13 @@ class _CaptureGloatState extends State<CaptureGloat>
     with SingleTickerProviderStateMixin {
   late final AnimationController _clock;
 
+  /// Zero based index into the pool, one per serial. C-662 T3.
+  late int _line;
+
   @override
   void initState() {
     super.initState();
+    _line = _gloatBag.next();
     _clock = AnimationController(vsync: this, duration: kCaptureGloatLife)
       ..forward();
   }
@@ -81,6 +211,7 @@ class _CaptureGloatState extends State<CaptureGloat>
     // Same seat keeps this state (the key does not carry the serial).
     // A replacement has to start its pop over. C-468 D5.
     if (oldWidget.serial != widget.serial) {
+      _line = _gloatBag.next();
       _clock.forward(from: 0);
     } else if (widget.yielding && !oldWidget.yielding) {
       // Straight into the face's own exit, which then plays out in
@@ -105,39 +236,366 @@ class _CaptureGloatState extends State<CaptureGloat>
   Widget build(BuildContext context) {
     final bool reduced = MediaQuery.disableAnimationsOf(context);
     final int seat = widget.seat.clamp(0, 3);
-    return IgnorePointer(
-      key: Key('capture-gloat-${widget.seat}'),
-      child: ExcludeSemantics(
-        child: AnimatedBuilder(
-          animation: _clock,
-          builder: (BuildContext context, Widget? child) {
-            final _GloatPose pose = _poseFor(
-              kCaptureGloatLife * _clock.value,
-              reduced: reduced,
-              cellSize: widget.cellSize,
-            );
-            return Opacity(
-              opacity: pose.opacity,
-              child: Transform.translate(
-                offset: Offset(0, pose.rise),
-                child: Transform.rotate(
-                  angle: pose.radians,
-                  child: Transform.scale(scale: pose.scale, child: child),
+    final String text = _lineText(AppLocalizations.of(context), _line);
+    final _LineFit fit = _fitLine(
+      context,
+      seat: seat,
+      text: text,
+      cellSize: widget.cellSize,
+      diameter: widget.diameter,
+      bounds: widget.bounds,
+    );
+    return ExcludeSemantics(
+      child: IgnorePointer(
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            IgnorePointer(
+              key: Key('capture-gloat-${widget.seat}'),
+              child: ExcludeSemantics(
+                child: AnimatedBuilder(
+                  animation: _clock,
+                  builder: (BuildContext context, Widget? child) {
+                    final _GloatPose pose = _poseFor(
+                      kCaptureGloatLife * _clock.value,
+                      reduced: reduced,
+                      cellSize: widget.cellSize,
+                    );
+                    return Opacity(
+                      opacity: pose.opacity,
+                      child: Transform.translate(
+                        offset: Offset(0, pose.rise),
+                        child: Transform.rotate(
+                          angle: pose.radians,
+                          child: Transform.scale(
+                            scale: pose.scale,
+                            child: child,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                  child: SizedBox(
+                    width: widget.diameter,
+                    height: widget.diameter,
+                    child: CustomPaint(
+                      painter: _LaughingFacePainter(
+                        color: LudoColors.seats[seat],
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            );
-          },
-          child: SizedBox(
-            width: widget.diameter,
-            height: widget.diameter,
-            child: CustomPaint(
-              painter: _LaughingFacePainter(color: LudoColors.seats[seat]),
             ),
-          ),
+            Positioned.fill(
+              child: AnimatedBuilder(
+                animation: _clock,
+                builder: (BuildContext context, Widget? pill) {
+                  // Opacity and rise follow the face; no pop, no wobble.
+                  final _GloatPose pose = _poseFor(
+                    kCaptureGloatLife * _clock.value,
+                    reduced: reduced,
+                    cellSize: widget.cellSize,
+                  );
+                  return Opacity(
+                    opacity: pose.opacity,
+                    child: CustomSingleChildLayout(
+                      delegate: _LineLayout(
+                        cellSize: widget.cellSize,
+                        diameter: widget.diameter,
+                        bounds: widget.bounds,
+                        rise: pose.rise,
+                        below: fit.below,
+                        maxWidth: fit.maxWidth,
+                        maxHeight: fit.maxHeight,
+                      ),
+                      child: pill,
+                    ),
+                  );
+                },
+                // Passed as the builder's child, and the fit is measured in
+                // this build, so neither runs on every tick of the clock.
+                child: _LinePill(
+                  seat: seat,
+                  cellSize: widget.cellSize,
+                  text: text,
+                  factor: fit.factor,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
+}
+
+/// Where the line sits and how large it sets, decided once from what the
+/// screen's text size and the board allow. C-662 T2'.
+class _LineFit {
+  const _LineFit({
+    required this.below,
+    required this.factor,
+    required this.maxWidth,
+    required this.maxHeight,
+  });
+
+  /// True when the room above the face cannot hold the line at 14 px on
+  /// screen, so it sits directly under the face instead.
+  final bool below;
+
+  /// Share of [kGloatLineFontSize] the style carries.
+  final double factor;
+
+  /// What the pill may take, padding included.
+  final double maxWidth;
+  final double maxHeight;
+}
+
+TextStyle _lineStyle(BuildContext context, Color ink, double factor) {
+  return DefaultTextStyle.of(context).style.merge(
+    TextStyle(
+      color: ink,
+      fontFamily: kLudoFontFamily,
+      fontFamilyFallback: kLudoFontFallbacks,
+      fontSize: kGloatLineFontSize * factor,
+      fontWeight: FontWeight.w700,
+      height: _lineHeight,
+      decoration: TextDecoration.none,
+    ),
+  );
+}
+
+/// Whether [text] set in [factor] of the full size lies in two lines or
+/// fewer, no word broken, inside [width] by [height].
+bool _lineFits(
+  BuildContext context,
+  String text,
+  Color ink,
+  double factor,
+  double width,
+  double height,
+) {
+  final TextPainter painter = TextPainter(
+    text: TextSpan(text: text, style: _lineStyle(context, ink, factor)),
+    textDirection: Directionality.of(context),
+    textAlign: TextAlign.center,
+    textScaler: MediaQuery.textScalerOf(context),
+    textWidthBasis: TextWidthBasis.longestLine,
+    locale: Localizations.maybeLocaleOf(context),
+    maxLines: 2,
+  )..layout(maxWidth: width);
+  final bool fits =
+      !painter.didExceedMaxLines &&
+      painter.minIntrinsicWidth <= width + 0.01 &&
+      painter.height <= height + 0.01;
+  painter.dispose();
+  return fits;
+}
+
+/// Largest factor at which two lines hold [text] inside [width] by [height].
+/// Fifteen halvings settle it far below a pixel.
+double _largestFactor(
+  BuildContext context,
+  String text,
+  Color ink,
+  double width,
+  double height,
+) {
+  double low = 0;
+  double high = 1;
+  for (int i = 0; i < 15; i++) {
+    final double mid = (low + high) / 2;
+    if (_lineFits(context, text, ink, mid, width, height)) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
+}
+
+/// C-662 T2'. At text scale 1.0 the line fits above the face at full size
+/// and nothing here changes it. Under a larger system text size the line may
+/// get smaller, but it never paints below 14 logical px on screen: where the
+/// room above the face cannot hold it at that size it goes directly below
+/// the face instead, where the board has the room.
+_LineFit _fitLine(
+  BuildContext context, {
+  required int seat,
+  required String text,
+  required double cellSize,
+  required double diameter,
+  required Rect? bounds,
+}) {
+  final Color ink = contrastingInk(LudoColors.seats[seat]);
+  final double padX = cellSize * _linePadXCells;
+  final double padY = cellSize * _linePadYCells;
+  final double gap = cellSize * _lineGapCells;
+  double maxWidth = cellSize * kGloatLineMaxCells;
+  double above = cellSize * 4;
+  double below = cellSize * 4;
+  if (bounds != null) {
+    maxWidth = math.min(maxWidth, bounds.width);
+    above = math.max(0, -bounds.top - gap);
+    below = math.max(0, bounds.bottom - diameter - gap);
+  }
+  final double width = maxWidth - 2 * padX;
+  if (width <= 0 || above - 2 * padY <= 0) {
+    return _LineFit(
+      below: false,
+      factor: 1,
+      maxWidth: maxWidth,
+      maxHeight: above,
+    );
+  }
+  final TextScaler scaler = MediaQuery.textScalerOf(context);
+  // The size the line paints at before the factor, and the least it may
+  // paint at: 14 px, or what the screen's own scale makes of 14 below 1.0.
+  final double full = scaler.scale(kGloatLineFontSize);
+  final double floor = math.min(kGloatLineFontSize, full);
+
+  final double heightAbove = above - 2 * padY;
+  if (_lineFits(context, text, ink, 1, width, heightAbove)) {
+    return _LineFit(
+      below: false,
+      factor: 1,
+      maxWidth: maxWidth,
+      maxHeight: above,
+    );
+  }
+  // Largest factor at which two lines hold it with the rise to spare.
+  final double spare = math.max(heightAbove - cellSize * _exitRiseCells, padY);
+  final double factorAbove = _largestFactor(context, text, ink, width, spare);
+  if (full * factorAbove >= floor) {
+    return _LineFit(
+      below: false,
+      factor: factorAbove,
+      maxWidth: maxWidth,
+      maxHeight: above,
+    );
+  }
+  // Below the face the rise carries the line away from the board's edge,
+  // so the whole room is its own.
+  final double heightBelow = math.max(below - 2 * padY, padY);
+  double factorBelow = 1;
+  if (!_lineFits(context, text, ink, 1, width, heightBelow)) {
+    factorBelow = math.max(
+      _largestFactor(context, text, ink, width, heightBelow),
+      floor / full,
+    );
+  }
+  return _LineFit(
+    below: true,
+    factor: factorBelow,
+    maxWidth: maxWidth,
+    maxHeight: below,
+  );
+}
+
+/// Rounded pill in the seat colour, bold text in the ink that reads on it.
+/// The text is [kGloatLineFontSize] through the screen's text scaler, in at
+/// most two lines inside a pill of at most six cells, smaller by [factor]
+/// only when a large system text size leaves the room too short. C-662 T2'.
+class _LinePill extends StatelessWidget {
+  const _LinePill({
+    required this.seat,
+    required this.cellSize,
+    required this.text,
+    required this.factor,
+  });
+
+  final int seat;
+  final double cellSize;
+  final String text;
+  final double factor;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color fill = LudoColors.seats[seat];
+    final Color ink = contrastingInk(fill);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: fill,
+        borderRadius: BorderRadius.circular(cellSize * 2),
+      ),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: cellSize * _linePadXCells,
+          vertical: cellSize * _linePadYCells,
+        ),
+        child: Text(
+          text,
+          maxLines: 2,
+          textAlign: TextAlign.center,
+          textWidthBasis: TextWidthBasis.longestLine,
+          style: _lineStyle(context, ink, factor),
+        ),
+      ),
+    );
+  }
+}
+
+/// Puts the pill centred over the face with a small gap, or under it when
+/// [below] is set, then shifts it inward until it lies inside the board.
+/// Above, the height it may take is what lies above the face and the exit's
+/// [rise] lifts it as far as the board's top allows; below, the room is what
+/// lies under the face and the rise carries it up with the face. It never
+/// leaves the board. C-662 T2'.
+class _LineLayout extends SingleChildLayoutDelegate {
+  const _LineLayout({
+    required this.cellSize,
+    required this.diameter,
+    required this.bounds,
+    required this.rise,
+    required this.below,
+    required this.maxWidth,
+    required this.maxHeight,
+  });
+
+  final double cellSize;
+  final double diameter;
+  final Rect? bounds;
+
+  /// The face's rise now, zero or negative. C-662 T2.
+  final double rise;
+  final bool below;
+  final double maxWidth;
+  final double maxHeight;
+
+  double get _gap => cellSize * _lineGapCells;
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
+    return BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight);
+  }
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) {
+    double x = (size.width - childSize.width) / 2;
+    double y = below ? diameter + _gap + rise : -_gap - childSize.height + rise;
+    final Rect? board = bounds;
+    if (board != null) {
+      x = x.clamp(
+        board.left,
+        math.max(board.left, board.right - childSize.width),
+      );
+      y = below
+          ? math.min(y, math.max(board.top, board.bottom - childSize.height))
+          : math.max(y, board.top);
+    }
+    return Offset(x, y);
+  }
+
+  @override
+  bool shouldRelayout(covariant _LineLayout oldDelegate) =>
+      oldDelegate.cellSize != cellSize ||
+      oldDelegate.diameter != diameter ||
+      oldDelegate.bounds != bounds ||
+      oldDelegate.rise != rise ||
+      oldDelegate.below != below ||
+      oldDelegate.maxWidth != maxWidth ||
+      oldDelegate.maxHeight != maxHeight;
 }
 
 class _GloatPose {
@@ -208,7 +666,7 @@ double _riseAt(double t, double cellSize) {
     return 0;
   }
   final double u = ((t - _exitStartMs) / _exitMs).clamp(0.0, 1.0);
-  return -0.5 * cellSize * u;
+  return -_exitRiseCells * cellSize * u;
 }
 
 double _opacityAt(double t) {

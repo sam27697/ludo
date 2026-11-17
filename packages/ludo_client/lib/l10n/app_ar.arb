@@ -263,5 +263,13 @@
   "gameKickFailed": "ما قدرنا نشيل {name}",
   "endPlaceTitle": "طلعت {ordinal}",
   "endPlaceOut": "طلع",
-  "endOutLine": "طلعت من هالجولة."
+  "endOutLine": "طلعت من هالجولة.",
+  "gloatLine1": "رجعتك عالبيت!",
+  "gloatLine2": "يلا، من الأول!",
+  "gloatLine3": "مش هالمرة!",
+  "gloatLine4": "وين رايح؟",
+  "gloatLine5": "سلّملي عالبيت!",
+  "gloatLine6": "هالطريق إلي!",
+  "gloatLine7": "بطيء كتير!",
+  "gloatLine8": "منشوفك بالبداية!"
 }
