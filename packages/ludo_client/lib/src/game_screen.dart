@@ -506,6 +506,10 @@ class _GameScreenState extends State<GameScreen> {
   // nothing is animating after a resume.
   int? _gateSeat;
   bool _gateGraceOnly = false;
+  // C-660 M3: the seat whose turn just ended, for the banner of the seat the
+  // gate is held for. Null when the gate came from a snapshot or a mount:
+  // no turn ended on this screen.
+  int? _gatePreviousSeat;
   // True when `your_turn` is owed at the opening: decided when the gate
   // shuts, from what the same frame would have played without a gate.
   bool _gateCuePending = false;
@@ -1410,6 +1414,10 @@ class _GameScreenState extends State<GameScreen> {
         mySeat == null) {
       return;
     }
+    // C-660 M5: a turn still behind the gate is weighed at the opening.
+    if (_gateShutFor(turn)) {
+      return;
+    }
     final bool newSeat = _nextSeenSeat != turn.seat;
     _nextSeenSeat = turn.seat;
     if (!newSeat) {
@@ -1711,6 +1719,36 @@ class _GameScreenState extends State<GameScreen> {
     return gate != null && turn != null && turn.seat == gate;
   }
 
+  /// C-660 M4: true while the new seat's turn has not begun for this screen:
+  /// the gate is shut for it, or the controller already shows a turn that
+  /// passed to another seat whose `turn` frame (or snapshot) this screen has
+  /// not weighed yet. The controller notifies before the frame reaches
+  /// [_onFrame], so a listener that acts on the turn (the auto-move hold)
+  /// would otherwise start for a turn the gate is about to hold.
+  bool _turnNotBegun(RoomSnapshot? room) {
+    final TurnState? turn = room?.turn;
+    if (room == null || turn == null) {
+      return false;
+    }
+    if (_gateShutFor(turn)) {
+      return true;
+    }
+    final int? last = _lastTurnSeat;
+    return last != null &&
+        last != turn.seat &&
+        room.state == RoomState.playing &&
+        room.rules.ruleset == _gateRuleset &&
+        !widget.controller.hasDesynced;
+  }
+
+  /// Weighs the auto-move hold again after this screen has decided whether
+  /// the frame it just read shut the gate.
+  void _resyncAutoMove() {
+    if (mounted && !_screenDisposed) {
+      setState(_syncAutoMove);
+    }
+  }
+
   /// G1: a `turn` frame names another seat than the last turn did, in a
   /// 2026-11 room. Anything else (a same-seat turn, the first turn after
   /// `game_started`, any 2026-10 frame) leaves today's behaviour as it was.
@@ -1733,6 +1771,7 @@ class _GameScreenState extends State<GameScreen> {
         room.state != RoomState.playing ||
         room.rules.ruleset != _gateRuleset ||
         widget.controller.hasDesynced) {
+      _resyncAutoMove();
       return cues;
     }
     _shutGate(
@@ -1740,6 +1779,7 @@ class _GameScreenState extends State<GameScreen> {
       graceMs: _intAt(frame.data, 'grace_ms'),
       graceOnly: false,
       cue: cues.contains(FeedbackCue.yourTurn),
+      previousSeat: previous,
     );
     return cues
         .where((FeedbackCue cue) => cue != FeedbackCue.yourTurn)
@@ -1807,9 +1847,11 @@ class _GameScreenState extends State<GameScreen> {
     required bool graceOnly,
     required bool cue,
     bool initial = false,
+    int? previousSeat,
   }) {
     _cancelGateTimers();
     _gateSeat = seat;
+    _gatePreviousSeat = previousSeat;
     _gateGraceOnly = graceOnly;
     _gateCuePending = cue;
     // (b): never later than `grace_ms` after the frame.
@@ -1825,7 +1867,9 @@ class _GameScreenState extends State<GameScreen> {
     _countdownSeat = null;
     _syncCountdown();
     if (mounted) {
-      setState(() {});
+      // C-660 M4: a hold the controller's notification armed ahead of this
+      // frame goes with the shut gate.
+      setState(_syncAutoMove);
     }
     _gateCheck();
   }
@@ -1847,6 +1891,7 @@ class _GameScreenState extends State<GameScreen> {
     final bool cue = play && _gateCuePending;
     _cancelGateTimers();
     _gateSeat = null;
+    _gatePreviousSeat = null;
     _gateGraceOnly = false;
     _gateCuePending = false;
     if (!mounted || _screenDisposed) {
@@ -1855,6 +1900,10 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {
       _countdownSeat = null;
       _syncCountdown();
+      // C-660 M4, M5: the new seat's hold starts at the opening.
+      if (play) {
+        _syncAutoMove();
+      }
     });
     if (!play) {
       return;
@@ -1872,6 +1921,12 @@ class _GameScreenState extends State<GameScreen> {
     }
     if (cue && seat == widget.controller.seat) {
       _playCue(FeedbackScope.of(context), FeedbackCue.yourTurn);
+    }
+    // C-660 M5: "You're next" is spoken when the turn begins, not when it
+    // was told.
+    final RoomSnapshot? room = widget.controller.room;
+    if (room != null) {
+      _announceYouAreNext(room);
     }
   }
 
@@ -3258,6 +3313,9 @@ class _GameScreenState extends State<GameScreen> {
     }
     // C-657 G6: ahead of the re-base, which would play `your_turn` now.
     _rebaseFromSnapshot(room, holdYourTurn: _gateSnapshot(room));
+    // C-660 M4: the controller applied this snapshot before the gate weighed
+    // it, so the hold is weighed again now.
+    _resyncAutoMove();
   }
 
   /// C-442: remembers the game this screen is showing as PLAYING, so a
@@ -4747,6 +4805,14 @@ class _GameScreenState extends State<GameScreen> {
       _clearPendingHold();
       return;
     }
+    // C-660 M4: no hold starts for a turn that has not begun. The latch goes
+    // too, so the decision is taken afresh at the opening.
+    if (_turnNotBegun(widget.controller.room)) {
+      _autoMoveHandledK = null;
+      _autoMoveHandledQueue = null;
+      _clearPendingHold();
+      return;
+    }
     final TurnState? turnNow = widget.controller.room?.turn;
     final bool stillArmed = _sameMoveDecision(
       turnNow,
@@ -4970,8 +5036,10 @@ class _GameScreenState extends State<GameScreen> {
   bool _sendMove(int token, int k, {int? face}) {
     final TurnState? turn = widget.controller.room?.turn;
     // C-560 D3: a move sent at my time up is late by construction.
+    // C-660 M4: a move for a turn that has not begun is not sent.
     if (_myTimeUp ||
         turn == null ||
+        _gateShutFor(turn) ||
         turn.seat != widget.controller.seat ||
         turn.phase != TurnPhase.awaitMove ||
         turn.k != k) {
@@ -5262,43 +5330,46 @@ class _GameScreenState extends State<GameScreen> {
         if (sheetRoute != null) {
           _leaveConfirmRoute = sheetRoute;
         }
-        return Padding(
-          key: const Key('game-leave-confirm'),
-          padding: const EdgeInsets.all(kSpace5),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                loc.gameLeaveConfirmTitle,
-                style: Theme.of(sheetContext).textTheme.titleMedium,
-              ),
-              const SizedBox(height: kSpace2),
-              Text(_leaveConfirmBody(loc)),
-              const SizedBox(height: kSpace4),
-              FilledButton(
-                key: const Key('game-leave-confirm-stay'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
+        // C-661 S3: the sheet scrolls only when the text does not fit.
+        return SingleChildScrollView(
+          child: Padding(
+            key: const Key('game-leave-confirm'),
+            padding: const EdgeInsets.all(kSpace5),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  loc.gameLeaveConfirmTitle,
+                  style: Theme.of(sheetContext).textTheme.titleMedium,
                 ),
-                onPressed: () => Navigator.of(sheetContext).pop(),
-                child: Text(loc.gameLeaveConfirmStay),
-              ),
-              const SizedBox(height: kSpace2),
-              TextButton(
-                key: const Key('game-leave-confirm-leave'),
-                style: TextButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
+                const SizedBox(height: kSpace2),
+                Text(_leaveConfirmBody(loc)),
+                const SizedBox(height: kSpace4),
+                FilledButton(
+                  key: const Key('game-leave-confirm-stay'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  onPressed: () => Navigator.of(sheetContext).pop(),
+                  child: Text(loc.gameLeaveConfirmStay),
                 ),
-                onPressed: () {
-                  Navigator.of(sheetContext).pop();
-                  if (mounted) {
-                    _leave();
-                  }
-                },
-                child: Text(loc.gameLeaveButton),
-              ),
-            ],
+                const SizedBox(height: kSpace2),
+                TextButton(
+                  key: const Key('game-leave-confirm-leave'),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    if (mounted) {
+                      _leave();
+                    }
+                  },
+                  child: Text(loc.gameLeaveButton),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -5601,15 +5672,20 @@ class _GameScreenState extends State<GameScreen> {
                               // C-590 D2: 12 dp so every pip's seat mark draws.
                               pipSize: 12,
                               seats: room == null ? null : _seatsInPlayOf(room),
+                              // C-660 M2: no seat holds the turn behind the
+                              // gate, so the strip marks neither it nor the
+                              // seat after it.
                               turnSeat:
                                   (room != null &&
-                                      room.state == RoomState.playing)
+                                      room.state == RoomState.playing &&
+                                      !_gateShutFor(room.turn))
                                   ? room.turn?.seat
                                   : null,
                               nextSeat:
                                   (room != null &&
                                       room.state == RoomState.playing &&
-                                      room.turn != null)
+                                      room.turn != null &&
+                                      !_gateShutFor(room.turn))
                                   ? nextSeatInPlay(
                                       _seatsInPlayOf(room),
                                       room.turn!.seat,
@@ -6266,7 +6342,9 @@ class _GameScreenState extends State<GameScreen> {
   /// different choices (C-471 D1). [recommendMove] is that test.
   bool _hintOfferable(RoomSnapshot room, int seat) {
     final TurnState? turn = room.turn;
+    // C-660 M2: a turn behind the gate offers no hint yet.
     if (turn == null ||
+        _gateShutFor(turn) ||
         turn.seat != seat ||
         turn.phase != TurnPhase.awaitMove) {
       return false;
@@ -6322,6 +6400,7 @@ class _GameScreenState extends State<GameScreen> {
     }
     final TurnState? turn = room.turn;
     if (turn == null ||
+        _gateShutFor(turn) ||
         turn.seat != seat ||
         turn.phase != TurnPhase.awaitMove) {
       FeedbackScope.of(context).play(FeedbackCue.invalidTap);
@@ -6389,7 +6468,12 @@ class _GameScreenState extends State<GameScreen> {
   }) {
     final TurnState? turn = room.turn;
     final int? seat = controller.seat;
-    final SeatState? offlineTurnSeat = _offlineTurnSeat(room);
+    // C-657 G2: while the gate is shut my die is not pulsing and not
+    // tappable; a tap on it is the invalid tap a disabled die gives.
+    // C-660 M2: the same flag takes every other marker of the new seat's turn
+    // down (board glow, rings, header, the offline line under the die).
+    final bool gateShut = _gateShutFor(turn);
+    final SeatState? offlineTurnSeat = gateShut ? null : _offlineTurnSeat(room);
     final Map<int, String> names = seatLabelsFor(context, room.seats);
 
     // C-560 D2: my time up disables the die like any other turn that is not
@@ -6406,9 +6490,6 @@ class _GameScreenState extends State<GameScreen> {
         !lost && !_roomIsFinished(room) && room.state == RoomState.playing
         ? _ownRollHoldFace
         : null;
-    // C-657 G2: while the gate is shut my die is not pulsing and not
-    // tappable; a tap on it is the invalid tap a disabled die gives.
-    final bool gateShut = _gateShutFor(turn);
     final bool rollEnabled =
         !lost &&
         !_isEndHeld &&
@@ -6427,6 +6508,7 @@ class _GameScreenState extends State<GameScreen> {
     final bool myAwaitMove =
         !lost &&
         !_isEndHeld &&
+        !gateShut &&
         turn != null &&
         turn.seat == seat &&
         turn.phase == TurnPhase.awaitMove;
@@ -6529,6 +6611,7 @@ class _GameScreenState extends State<GameScreen> {
                     clampScale: metrics.textScaleClamp,
                     stale: stale,
                     seatLost: lost,
+                    gateShut: gateShut,
                   ),
                 ),
                 SizedBox(height: metrics.headerGap),
@@ -6551,7 +6634,7 @@ class _GameScreenState extends State<GameScreen> {
                       onAwayTap: _onAwayTap,
                       awayTapSeats: _kickSeatsOf(room),
                       youLabel: loc.seatYou,
-                      turnSeat: lost ? null : turn?.seat,
+                      turnSeat: lost || gateShut ? null : turn?.seat,
                       mySeat: seat,
                       legal: legalTokens,
                       autoMoveToken: _isEndHeld || lost
@@ -7094,6 +7177,7 @@ class _GameScreenState extends State<GameScreen> {
     required double clampScale,
     bool stale = false,
     bool seatLost = false,
+    bool gateShut = false,
   }) {
     // C-637 D5a: a lost seat has no turn to announce and no clock. The row
     // keeps its height so the board does not move.
@@ -7122,15 +7206,26 @@ class _GameScreenState extends State<GameScreen> {
       autoMoveVisible: autoMoveVisible,
       extraRoll: turn == null ? null : _extraRoll[turn.seat],
       held: _heldBannerText,
+      gateShut: gateShut,
+      previousSeat: _gatePreviousSeat,
     );
     // C-579 D5: the line a settling turn is allowed to hold is the one the
-    // last build whose turn was not settling showed.
-    if (!settling) {
+    // last build whose turn was not settling showed. C-660 M3: the line a
+    // shut gate shows is not one a later turn may hold.
+    if (!settling && !gateShut) {
       _heldBannerText = bannerText;
     }
     final int turnSeat = turn?.seat ?? seat ?? 0;
-    final Color seatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
-    final bool myTurn = turn != null && turn.seat == seat;
+    // C-660 M3: on the new seat's own phone the row is drawn in the colour of
+    // the seat whose turn just ended, with no my-turn styling, until the gate
+    // opens. The countdown ring keeps the new seat's colour (C-657 G2).
+    final int? previousSeat = _gatePreviousSeat;
+    final bool shutForMe = gateShut && turn != null && turn.seat == seat;
+    final Color ringSeatColor = LudoColors.seats[turnSeat.clamp(0, 3)];
+    final Color seatColor = shutForMe && previousSeat != null
+        ? LudoColors.seats[previousSeat.clamp(0, 3)]
+        : ringSeatColor;
+    final bool myTurn = !gateShut && turn != null && turn.seat == seat;
     final bool offline = offlineTurnSeat != null;
     final TextScaler scaler = _clampedScaler(context, clampScale);
     final double headerRowHeight = _headerRowHeightFor(context, scaler);
@@ -7208,7 +7303,7 @@ class _GameScreenState extends State<GameScreen> {
                       loc,
                       room,
                       turn,
-                      seatColor,
+                      ringSeatColor,
                       remaining,
                     ),
                   ),
@@ -8559,6 +8654,9 @@ Map<int, int> _placesOf(RoomSnapshot room) {
 /// C-579 D5: [held] is the text of the last settled build. It stands in for
 /// the plain roll line, and only there, while the turn is the controller's
 /// settling placeholder.
+/// C-660 M3: while the X192 gate is shut ([gateShut]) the new seat's own
+/// phone reads "You're next, after" and the name of [previousSeat], the seat
+/// whose turn just ended, or the waiting line when that seat has no name.
 String _turnBannerText(
   AppLocalizations loc,
   RoomSnapshot room,
@@ -8569,6 +8667,8 @@ String _turnBannerText(
   bool autoMoveVisible = false,
   _ExtraRoll? extraRoll,
   String? held,
+  bool gateShut = false,
+  int? previousSeat,
 }) {
   if (room.state == RoomState.finished ||
       room.turn?.phase == TurnPhase.finished) {
@@ -8588,6 +8688,17 @@ String _turnBannerText(
   final TurnState? turn = room.turn;
   if (turn == null) {
     return loc.gameWaitingForTurn;
+  }
+  // C-660 M3: the turn is told and has not begun. On the new seat's own phone
+  // the banner says who it follows and names no action; every other phone
+  // keeps the line it shows today.
+  if (gateShut && turn.seat == seat) {
+    final String? previousName = previousSeat == null
+        ? null
+        : names[previousSeat];
+    return previousName == null
+        ? loc.gameWaitingForTurn
+        : loc.gameYouAreNextAfter(previousName);
   }
   if (turn.seat == seat) {
     if (turn.phase == TurnPhase.awaitRoll) {
@@ -9278,75 +9389,83 @@ class _KickSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final Color seatColor = LudoColors.seats[seat.clamp(0, 3)];
     return SafeArea(
-      child: Padding(
-        key: Key('kick-sheet-$seat'),
-        padding: const EdgeInsets.fromLTRB(kSpace5, kSpace4, kSpace5, kSpace4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Center(
-              child: Container(
-                width: 56,
-                height: 56,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: seatColor,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: LudoColors.dieFace, width: 3),
-                  boxShadow: <BoxShadow>[
-                    BoxShadow(
-                      color: LudoColors.ink.withValues(alpha: 0.2),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: SeatMark(seat: seat, size: 28),
-              ),
-            ),
-            const SizedBox(height: kSpace3),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: LudoColors.ink,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: kSpace4),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('kick-sheet-wait'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(56),
-                      foregroundColor: LudoColors.ink,
-                      side: const BorderSide(color: LudoColors.ink, width: 2),
-                      shape: const StadiumBorder(),
-                    ),
-                    onPressed: onWait,
-                    child: Text(waitLabel),
+      // C-661 S3: scrolls only when the content is taller than the sheet.
+      child: SingleChildScrollView(
+        child: Padding(
+          key: Key('kick-sheet-$seat'),
+          padding: const EdgeInsets.fromLTRB(
+            kSpace5,
+            kSpace4,
+            kSpace5,
+            kSpace4,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Center(
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: seatColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: LudoColors.dieFace, width: 3),
+                    boxShadow: <BoxShadow>[
+                      BoxShadow(
+                        color: LudoColors.ink.withValues(alpha: 0.2),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
                   ),
+                  child: SeatMark(seat: seat, size: 28),
                 ),
-                const SizedBox(width: kSpace3),
-                Expanded(
-                  child: FilledButton(
-                    key: const Key('kick-sheet-remove'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size.fromHeight(56),
-                      backgroundColor: LudoColors.action,
-                      foregroundColor: LudoColors.actionOn,
-                      shape: const StadiumBorder(),
+              ),
+              const SizedBox(height: kSpace3),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: LudoColors.ink,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: kSpace4),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: OutlinedButton(
+                      key: const Key('kick-sheet-wait'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(56),
+                        foregroundColor: LudoColors.ink,
+                        side: const BorderSide(color: LudoColors.ink, width: 2),
+                        shape: const StadiumBorder(),
+                      ),
+                      onPressed: onWait,
+                      child: Text(waitLabel),
                     ),
-                    onPressed: onRemove,
-                    child: Text(removeLabel),
                   ),
-                ),
-              ],
-            ),
-          ],
+                  const SizedBox(width: kSpace3),
+                  Expanded(
+                    child: FilledButton(
+                      key: const Key('kick-sheet-remove'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(56),
+                        backgroundColor: LudoColors.action,
+                        foregroundColor: LudoColors.actionOn,
+                        shape: const StadiumBorder(),
+                      ),
+                      onPressed: onRemove,
+                      child: Text(removeLabel),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

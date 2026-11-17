@@ -1178,5 +1178,37 @@
   "endOutLine": "You were out of this game.",
   "@endOutLine": {
     "description": "End-card line for a player whose seat was retired from the game before it ended."
+  },
+  "gloatLine1": "Back to the yard!",
+  "@gloatLine1": {
+    "description": "Short playful line shown over the laughing face after a capture."
+  },
+  "gloatLine2": "From the top!",
+  "@gloatLine2": {
+    "description": "Short playful line shown over the laughing face after a capture."
+  },
+  "gloatLine3": "Not this time!",
+  "@gloatLine3": {
+    "description": "Short playful line shown over the laughing face after a capture."
+  },
+  "gloatLine4": "Where are you off to?",
+  "@gloatLine4": {
+    "description": "Short playful line shown over the laughing face after a capture."
+  },
+  "gloatLine5": "Say hi to the yard!",
+  "@gloatLine5": {
+    "description": "Short playful line shown over the laughing face after a capture."
+  },
+  "gloatLine6": "This road is mine!",
+  "@gloatLine6": {
+    "description": "Short playful line shown over the laughing face after a capture."
+  },
+  "gloatLine7": "Too slow!",
+  "@gloatLine7": {
+    "description": "Short playful line shown over the laughing face after a capture."
+  },
+  "gloatLine8": "See you at the start!",
+  "@gloatLine8": {
+    "description": "Short playful line shown over the laughing face after a capture."
   }
 }

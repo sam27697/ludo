@@ -41,10 +41,33 @@ const Set<String> recordKeys = <String>{
   'finished_at',
 };
 
+/// The four keys docs/VERIFY.md section 1.1 adds under the 2026-11 ruleset
+/// (docs/PROTOCOL.md section 28 rules 2 and 3), present together or not at
+/// all: a record without `ruleset` is a 2026-10 record and has none of them.
+const Set<String> recordKeys202611 = <String>{
+  'ruleset',
+  'releases',
+  'placings',
+  'retired',
+};
+
+/// The `ruleset` value of a 2026-11 record and of a room frame's
+/// `rules.ruleset` under it (docs/PROTOCOL.md section 28 rule 1).
+const String _ruleset202611 = '2026-11';
+
+/// What a room under the 2026-10 ruleset shows on the wire and in its
+/// record: the key is absent, and this is the name for that.
+const String _ruleset202610 = '2026-10';
+
 /// Fetches and checks the record for one finished game. Throws
 /// [ScenarioFailure] naming exactly what broke on the first thing that does
 /// not hold; returns normally only once every check in docs/VERIFY.md
 /// sections 1.1 and 4 that the work order asks for has passed.
+///
+/// [wireRuleset] is the ruleset the scenario saw in the `room` frame's
+/// `rules.ruleset` (docs/PROTOCOL.md section 28 rule 1), `'2026-10'` when
+/// the key was absent; the record's own ruleset must be the same. Null
+/// means the caller did not capture it and the comparison is skipped.
 Future<void> fetchAndVerifyRecord({
   required String verifyUrl,
   required String gameId,
@@ -52,6 +75,7 @@ Future<void> fetchAndVerifyRecord({
   required String clientSeeds,
   required int winner,
   required List<SeenRoll> rolls,
+  String? wireRuleset,
 }) async {
   final HttpClient client = HttpClient();
   client.connectionTimeout = _fetchTimeout;
@@ -64,6 +88,7 @@ Future<void> fetchAndVerifyRecord({
       clientSeeds: clientSeeds,
       winner: winner,
       rolls: rolls,
+      wireRuleset: wireRuleset,
     );
     await _checkHtmlPage(client: client, verifyUrl: verifyUrl);
   } finally {
@@ -79,6 +104,7 @@ Future<void> _checkJsonRecord({
   required String clientSeeds,
   required int winner,
   required List<SeenRoll> rolls,
+  required String? wireRuleset,
 }) async {
   final Uri jsonUri = Uri.parse('$verifyUrl.json');
   final HttpClientResponse response = await _get(client, jsonUri);
@@ -114,18 +140,46 @@ Future<void> _checkJsonRecord({
   }
   final Map<String, Object?> record = decoded;
 
+  // R2: a `ruleset` key makes this a 2026-11 record, and its value must
+  // say exactly that; any other value is named, not guessed at.
+  final bool has202611Key = record.containsKey('ruleset');
+  if (has202611Key && record['ruleset'] != _ruleset202611) {
+    throw ScenarioFailure(
+      'the record at $jsonUri has ruleset=${jsonEncode(record['ruleset'])}, '
+      'expected "$_ruleset202611" (docs/VERIFY.md section 1.1: the key is '
+      'absent under $_ruleset202610)',
+    );
+  }
+  final String recordRuleset = has202611Key ? _ruleset202611 : _ruleset202610;
+  final Set<String> wantedKeys =
+      has202611Key ? <String>{...recordKeys, ...recordKeys202611} : recordKeys;
+
   final Set<String> actualKeys = record.keys.toSet();
-  if (!actualKeys.containsAll(recordKeys) ||
-      !recordKeys.containsAll(actualKeys)) {
-    final List<String> missing = recordKeys.difference(actualKeys).toList()
+  if (!actualKeys.containsAll(wantedKeys) ||
+      !wantedKeys.containsAll(actualKeys)) {
+    final List<String> missing = wantedKeys.difference(actualKeys).toList()
       ..sort();
-    final List<String> extra = actualKeys.difference(recordKeys).toList()
+    final List<String> extra = actualKeys.difference(wantedKeys).toList()
       ..sort();
+    final String which = has202611Key
+        ? 'the fourteen keys of docs/VERIFY.md section 1.1 under ruleset '
+            '$_ruleset202611'
+        : 'the ten keys of docs/VERIFY.md section 1.1';
     throw ScenarioFailure(
       'the record at $jsonUri has key set ${(actualKeys.toList()..sort())}, '
-      'expected exactly the ten keys of docs/VERIFY.md section 1.1 '
-      '${(recordKeys.toList()..sort())}; missing $missing, unexpected '
+      'expected exactly $which '
+      '${(wantedKeys.toList()..sort())}; missing $missing, unexpected '
       '$extra',
+    );
+  }
+
+  // R4: the room frame the scenario saw named a ruleset; the record is
+  // for that room and must say the same.
+  if (wireRuleset != null && wireRuleset != recordRuleset) {
+    throw ScenarioFailure(
+      'the record at $jsonUri has ruleset=$recordRuleset'
+      '${has202611Key ? '' : ' (key absent)'}, the room frame on the wire '
+      'had rules.ruleset=$wireRuleset',
     );
   }
 
@@ -216,6 +270,131 @@ Future<void> _checkJsonRecord({
       );
     }
   }
+
+  if (has202611Key) {
+    _check202611Fields(record, jsonUri, winner, recordRollsRaw.length);
+  }
+}
+
+/// R3: the 2026-11 fields of a record whose key set has already been
+/// checked. [winner] is the seat the wire's `game_over` named and
+/// [rollCount] the number of rolls in the record.
+void _check202611Fields(
+  Map<String, Object?> record,
+  Uri jsonUri,
+  int winner,
+  int rollCount,
+) {
+  final Set<int> gameSeats = _seatsOfGame(record, jsonUri);
+
+  final Object? placings = record['placings'];
+  final List<int> placingSeats = _seatList(
+    key: 'placings',
+    value: placings,
+    gameSeats: gameSeats,
+    jsonUri: jsonUri,
+  );
+  if (placingSeats.isEmpty) {
+    throw ScenarioFailure(
+      'the record at $jsonUri has placings=${jsonEncode(placings)}, '
+      'expected a non-empty list of seats (docs/VERIFY.md section 1.1: the '
+      'last seat standing is included)',
+    );
+  }
+  if (placingSeats.first != winner) {
+    throw ScenarioFailure(
+      'the record at $jsonUri has placings=${jsonEncode(placings)}, '
+      'expected placings[0] to be the winner, seat $winner (from this '
+      'game\'s game_over on the wire)',
+    );
+  }
+
+  _seatList(
+    key: 'retired',
+    value: record['retired'],
+    gameSeats: gameSeats,
+    jsonUri: jsonUri,
+  );
+
+  final Object? releases = record['releases'];
+  if (releases is! List<Object?>) {
+    throw ScenarioFailure(
+      'the record at $jsonUri has releases=${jsonEncode(releases)}, '
+      'expected a list of roll numbers',
+    );
+  }
+  int previous = 0;
+  for (final Object? k in releases) {
+    if (k is! int || k < 1 || k > rollCount || k <= previous) {
+      throw ScenarioFailure(
+        'the record at $jsonUri has releases=${jsonEncode(releases)}, '
+        'expected a strictly ascending list of ints each in 1..$rollCount '
+        '(the record has $rollCount rolls); the entry '
+        '${jsonEncode(k)} breaks that',
+      );
+    }
+    previous = k;
+  }
+}
+
+/// The seats of the game, from the `seeds` list of the record: one object
+/// per seat in the game (docs/VERIFY.md section 1.1).
+Set<int> _seatsOfGame(Map<String, Object?> record, Uri jsonUri) {
+  final Object? seeds = record['seeds'];
+  final Set<int> seats = <int>{};
+  if (seeds is List<Object?>) {
+    for (final Object? entry in seeds) {
+      final Object? seat = entry is Map<String, Object?> ? entry['seat'] : null;
+      if (seat is int) {
+        seats.add(seat);
+        continue;
+      }
+      seats.clear();
+      break;
+    }
+  }
+  if (seats.isEmpty) {
+    throw ScenarioFailure(
+      'the record at $jsonUri has seeds=${jsonEncode(seeds)}, expected one '
+      'object with an int "seat" per seat of the game, which the 2026-11 '
+      'checks measure placings and retired against',
+    );
+  }
+  return seats;
+}
+
+/// [value] as a list of distinct seats that all belong to [gameSeats], or a
+/// [ScenarioFailure] naming [key] and the value.
+List<int> _seatList({
+  required String key,
+  required Object? value,
+  required Set<int> gameSeats,
+  required Uri jsonUri,
+}) {
+  if (value is! List<Object?>) {
+    throw ScenarioFailure(
+      'the record at $jsonUri has $key=${jsonEncode(value)}, expected a '
+      'list of seats',
+    );
+  }
+  final List<int> seen = <int>[];
+  for (final Object? seat in value) {
+    if (seat is! int || !gameSeats.contains(seat)) {
+      throw ScenarioFailure(
+        'the record at $jsonUri has $key=${jsonEncode(value)}, expected '
+        'seats of this game ${(gameSeats.toList()..sort())}; the entry '
+        '${jsonEncode(seat)} is not one',
+      );
+    }
+    if (seen.contains(seat)) {
+      throw ScenarioFailure(
+        'the record at $jsonUri has $key=${jsonEncode(value)}, expected '
+        'distinct seats; seat $seat appears more than once',
+      );
+    }
+    seen.add(seat);
+  }
+  return seen;
 }
 
 Future<void> _checkHtmlPage({
