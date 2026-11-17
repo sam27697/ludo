@@ -236,6 +236,15 @@ class _CaptureGloatState extends State<CaptureGloat>
   Widget build(BuildContext context) {
     final bool reduced = MediaQuery.disableAnimationsOf(context);
     final int seat = widget.seat.clamp(0, 3);
+    final String text = _lineText(AppLocalizations.of(context), _line);
+    final _LineFit fit = _fitLine(
+      context,
+      seat: seat,
+      text: text,
+      cellSize: widget.cellSize,
+      diameter: widget.diameter,
+      bounds: widget.bounds,
+    );
     return ExcludeSemantics(
       child: IgnorePointer(
         child: Stack(
@@ -293,19 +302,24 @@ class _CaptureGloatState extends State<CaptureGloat>
                     child: CustomSingleChildLayout(
                       delegate: _LineLayout(
                         cellSize: widget.cellSize,
+                        diameter: widget.diameter,
                         bounds: widget.bounds,
                         rise: pose.rise,
+                        below: fit.below,
+                        maxWidth: fit.maxWidth,
+                        maxHeight: fit.maxHeight,
                       ),
                       child: pill,
                     ),
                   );
                 },
-                // Passed as the builder's child, so the fit is measured when
-                // its inputs change and not on every tick of the clock.
+                // Passed as the builder's child, and the fit is measured in
+                // this build, so neither runs on every tick of the clock.
                 child: _LinePill(
                   seat: seat,
                   cellSize: widget.cellSize,
-                  text: _lineText(AppLocalizations.of(context), _line),
+                  text: text,
+                  factor: fit.factor,
                 ),
               ),
             ),
@@ -316,160 +330,259 @@ class _CaptureGloatState extends State<CaptureGloat>
   }
 }
 
+/// Where the line sits and how large it sets, decided once from what the
+/// screen's text size and the board allow. C-662 T2'.
+class _LineFit {
+  const _LineFit({
+    required this.below,
+    required this.factor,
+    required this.maxWidth,
+    required this.maxHeight,
+  });
+
+  /// True when the room above the face cannot hold the line at 14 px on
+  /// screen, so it sits directly under the face instead.
+  final bool below;
+
+  /// Share of [kGloatLineFontSize] the style carries.
+  final double factor;
+
+  /// What the pill may take, padding included.
+  final double maxWidth;
+  final double maxHeight;
+}
+
+TextStyle _lineStyle(BuildContext context, Color ink, double factor) {
+  return DefaultTextStyle.of(context).style.merge(
+    TextStyle(
+      color: ink,
+      fontFamily: kLudoFontFamily,
+      fontFamilyFallback: kLudoFontFallbacks,
+      fontSize: kGloatLineFontSize * factor,
+      fontWeight: FontWeight.w700,
+      height: _lineHeight,
+      decoration: TextDecoration.none,
+    ),
+  );
+}
+
+/// Whether [text] set in [factor] of the full size lies in two lines or
+/// fewer, no word broken, inside [width] by [height].
+bool _lineFits(
+  BuildContext context,
+  String text,
+  Color ink,
+  double factor,
+  double width,
+  double height,
+) {
+  final TextPainter painter = TextPainter(
+    text: TextSpan(text: text, style: _lineStyle(context, ink, factor)),
+    textDirection: Directionality.of(context),
+    textAlign: TextAlign.center,
+    textScaler: MediaQuery.textScalerOf(context),
+    textWidthBasis: TextWidthBasis.longestLine,
+    locale: Localizations.maybeLocaleOf(context),
+    maxLines: 2,
+  )..layout(maxWidth: width);
+  final bool fits =
+      !painter.didExceedMaxLines &&
+      painter.minIntrinsicWidth <= width + 0.01 &&
+      painter.height <= height + 0.01;
+  painter.dispose();
+  return fits;
+}
+
+/// Largest factor at which two lines hold [text] inside [width] by [height].
+/// Fifteen halvings settle it far below a pixel.
+double _largestFactor(
+  BuildContext context,
+  String text,
+  Color ink,
+  double width,
+  double height,
+) {
+  double low = 0;
+  double high = 1;
+  for (int i = 0; i < 15; i++) {
+    final double mid = (low + high) / 2;
+    if (_lineFits(context, text, ink, mid, width, height)) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
+}
+
+/// C-662 T2'. At text scale 1.0 the line fits above the face at full size
+/// and nothing here changes it. Under a larger system text size the line may
+/// get smaller, but it never paints below 14 logical px on screen: where the
+/// room above the face cannot hold it at that size it goes directly below
+/// the face instead, where the board has the room.
+_LineFit _fitLine(
+  BuildContext context, {
+  required int seat,
+  required String text,
+  required double cellSize,
+  required double diameter,
+  required Rect? bounds,
+}) {
+  final Color ink = contrastingInk(LudoColors.seats[seat]);
+  final double padX = cellSize * _linePadXCells;
+  final double padY = cellSize * _linePadYCells;
+  final double gap = cellSize * _lineGapCells;
+  double maxWidth = cellSize * kGloatLineMaxCells;
+  double above = cellSize * 4;
+  double below = cellSize * 4;
+  if (bounds != null) {
+    maxWidth = math.min(maxWidth, bounds.width);
+    above = math.max(0, -bounds.top - gap);
+    below = math.max(0, bounds.bottom - diameter - gap);
+  }
+  final double width = maxWidth - 2 * padX;
+  if (width <= 0 || above - 2 * padY <= 0) {
+    return _LineFit(
+      below: false,
+      factor: 1,
+      maxWidth: maxWidth,
+      maxHeight: above,
+    );
+  }
+  final TextScaler scaler = MediaQuery.textScalerOf(context);
+  // The size the line paints at before the factor, and the least it may
+  // paint at: 14 px, or what the screen's own scale makes of 14 below 1.0.
+  final double full = scaler.scale(kGloatLineFontSize);
+  final double floor = math.min(kGloatLineFontSize, full);
+
+  final double heightAbove = above - 2 * padY;
+  if (_lineFits(context, text, ink, 1, width, heightAbove)) {
+    return _LineFit(
+      below: false,
+      factor: 1,
+      maxWidth: maxWidth,
+      maxHeight: above,
+    );
+  }
+  // Largest factor at which two lines hold it with the rise to spare.
+  final double spare = math.max(heightAbove - cellSize * _exitRiseCells, padY);
+  final double factorAbove = _largestFactor(context, text, ink, width, spare);
+  if (full * factorAbove >= floor) {
+    return _LineFit(
+      below: false,
+      factor: factorAbove,
+      maxWidth: maxWidth,
+      maxHeight: above,
+    );
+  }
+  // Below the face the rise carries the line away from the board's edge,
+  // so the whole room is its own.
+  final double heightBelow = math.max(below - 2 * padY, padY);
+  double factorBelow = 1;
+  if (!_lineFits(context, text, ink, 1, width, heightBelow)) {
+    factorBelow = math.max(
+      _largestFactor(context, text, ink, width, heightBelow),
+      floor / full,
+    );
+  }
+  return _LineFit(
+    below: true,
+    factor: factorBelow,
+    maxWidth: maxWidth,
+    maxHeight: below,
+  );
+}
+
 /// Rounded pill in the seat colour, bold text in the ink that reads on it.
 /// The text is [kGloatLineFontSize] through the screen's text scaler, in at
-/// most two lines inside a pill of at most six cells. It is only made
-/// smaller when two lines at that width cannot hold it in the room above
-/// the face, which takes a large system text size. A line that fits at rest
-/// but not with the exit's rise on top keeps its size; the layout then
-/// stops its rise at the board's top. C-662 T2'.
+/// most two lines inside a pill of at most six cells, smaller by [factor]
+/// only when a large system text size leaves the room too short. C-662 T2'.
 class _LinePill extends StatelessWidget {
   const _LinePill({
     required this.seat,
     required this.cellSize,
     required this.text,
+    required this.factor,
   });
 
   final int seat;
   final double cellSize;
   final String text;
-
-  TextStyle _style(BuildContext context, Color ink, double factor) {
-    return DefaultTextStyle.of(context).style.merge(
-      TextStyle(
-        color: ink,
-        fontFamily: kLudoFontFamily,
-        fontFamilyFallback: kLudoFontFallbacks,
-        fontSize: kGloatLineFontSize * factor,
-        fontWeight: FontWeight.w700,
-        height: _lineHeight,
-        decoration: TextDecoration.none,
-      ),
-    );
-  }
-
-  /// Whether [text] set in [factor] of the full size lies in two lines or
-  /// fewer, no word broken, inside [width] by [height].
-  bool _fits(
-    BuildContext context,
-    Color ink,
-    double factor,
-    double width,
-    double height,
-  ) {
-    final TextPainter painter = TextPainter(
-      text: TextSpan(text: text, style: _style(context, ink, factor)),
-      textDirection: Directionality.of(context),
-      textAlign: TextAlign.center,
-      textScaler: MediaQuery.textScalerOf(context),
-      textWidthBasis: TextWidthBasis.longestLine,
-      locale: Localizations.maybeLocaleOf(context),
-      maxLines: 2,
-    )..layout(maxWidth: width);
-    final bool fits =
-        !painter.didExceedMaxLines &&
-        painter.minIntrinsicWidth <= width + 0.01 &&
-        painter.height <= height + 0.01;
-    painter.dispose();
-    return fits;
-  }
+  final double factor;
 
   @override
   Widget build(BuildContext context) {
     final Color fill = LudoColors.seats[seat];
     final Color ink = contrastingInk(fill);
-    final double padX = cellSize * _linePadXCells;
-    final double padY = cellSize * _linePadYCells;
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        final double width = constraints.maxWidth - 2 * padX;
-        final double height = constraints.maxHeight - 2 * padY;
-        if (width <= 0 || height <= 0) {
-          return const SizedBox.shrink();
-        }
-        double factor = 1;
-        if (!_fits(context, ink, 1, width, height)) {
-          // Largest factor at which two lines hold it with the rise to
-          // spare. Fifteen halvings settle it far below a pixel.
-          final double spare = math.max(
-            height - cellSize * _exitRiseCells,
-            padY,
-          );
-          double low = 0;
-          double high = 1;
-          for (int i = 0; i < 15; i++) {
-            final double mid = (low + high) / 2;
-            if (_fits(context, ink, mid, width, spare)) {
-              low = mid;
-            } else {
-              high = mid;
-            }
-          }
-          factor = low;
-        }
-        return DecoratedBox(
-          decoration: BoxDecoration(
-            color: fill,
-            borderRadius: BorderRadius.circular(cellSize * 2),
-          ),
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: padX, vertical: padY),
-            child: Text(
-              text,
-              maxLines: 2,
-              textAlign: TextAlign.center,
-              textWidthBasis: TextWidthBasis.longestLine,
-              style: _style(context, ink, factor),
-            ),
-          ),
-        );
-      },
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: fill,
+        borderRadius: BorderRadius.circular(cellSize * 2),
+      ),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: cellSize * _linePadXCells,
+          vertical: cellSize * _linePadYCells,
+        ),
+        child: Text(
+          text,
+          maxLines: 2,
+          textAlign: TextAlign.center,
+          textWidthBasis: TextWidthBasis.longestLine,
+          style: _lineStyle(context, ink, factor),
+        ),
+      ),
     );
   }
 }
 
-/// Puts the pill centred over the face with a small gap, then shifts it
-/// inward until it lies inside the board. The height it may take is what
-/// lies above the face; the exit's [rise] lifts it as far as the board's
-/// top allows and no further, so it never leaves the board. C-662 T2'.
+/// Puts the pill centred over the face with a small gap, or under it when
+/// [below] is set, then shifts it inward until it lies inside the board.
+/// Above, the height it may take is what lies above the face and the exit's
+/// [rise] lifts it as far as the board's top allows; below, the room is what
+/// lies under the face and the rise carries it up with the face. It never
+/// leaves the board. C-662 T2'.
 class _LineLayout extends SingleChildLayoutDelegate {
   const _LineLayout({
     required this.cellSize,
+    required this.diameter,
     required this.bounds,
     required this.rise,
+    required this.below,
+    required this.maxWidth,
+    required this.maxHeight,
   });
 
   final double cellSize;
+  final double diameter;
   final Rect? bounds;
 
   /// The face's rise now, zero or negative. C-662 T2.
   final double rise;
+  final bool below;
+  final double maxWidth;
+  final double maxHeight;
 
   double get _gap => cellSize * _lineGapCells;
 
   @override
   BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
-    double maxWidth = cellSize * kGloatLineMaxCells;
-    double maxHeight = cellSize * 4;
-    final Rect? board = bounds;
-    if (board != null) {
-      maxWidth = math.min(maxWidth, board.width);
-      maxHeight = math.max(0, -board.top - _gap);
-    }
     return BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight);
   }
 
   @override
   Offset getPositionForChild(Size size, Size childSize) {
     double x = (size.width - childSize.width) / 2;
-    double y = -_gap - childSize.height + rise;
+    double y = below ? diameter + _gap + rise : -_gap - childSize.height + rise;
     final Rect? board = bounds;
     if (board != null) {
       x = x.clamp(
         board.left,
         math.max(board.left, board.right - childSize.width),
       );
-      y = math.max(y, board.top);
+      y = below
+          ? math.min(y, math.max(board.top, board.bottom - childSize.height))
+          : math.max(y, board.top);
     }
     return Offset(x, y);
   }
@@ -477,8 +590,12 @@ class _LineLayout extends SingleChildLayoutDelegate {
   @override
   bool shouldRelayout(covariant _LineLayout oldDelegate) =>
       oldDelegate.cellSize != cellSize ||
+      oldDelegate.diameter != diameter ||
       oldDelegate.bounds != bounds ||
-      oldDelegate.rise != rise;
+      oldDelegate.rise != rise ||
+      oldDelegate.below != below ||
+      oldDelegate.maxWidth != maxWidth ||
+      oldDelegate.maxHeight != maxHeight;
 }
 
 class _GloatPose {
