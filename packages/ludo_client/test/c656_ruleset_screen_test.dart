@@ -1863,6 +1863,7 @@ void main() {
     required List<int> placings,
     required int from,
     required int to,
+    List<String>? beforeOpening,
   }) async {
     final _Said said = _Said()..install(tester);
     final _G g = await _open(
@@ -1877,6 +1878,17 @@ void main() {
     try {
       said.recorded.clear();
       await g.push('turn', _turnJson(to, 'await_roll'));
+      if (beforeOpening != null) {
+        // C-660 M5: a bare 2026-11 `turn` that passes the turn shuts the X192
+        // gate with no `grace_ms` (C-657 G3a), so it opens 500 ms after the
+        // board settles, which it already is. Read 400 ms in, still shut,
+        // then 200 ms on, past the opening at +500 ms.
+        await g.pump(400);
+        beforeOpening.addAll(
+          said.recorded.where((String m) => m == "You're next"),
+        );
+        await g.pump(200);
+      }
       return said.recorded.where((String m) => m == "You're next").toList();
     } finally {
       await _close(g);
@@ -1885,6 +1897,7 @@ void main() {
 
   testWidgets('C-656t S3 control: with nobody finished the seat after the '
       'mover hears You are next', (tester) async {
+    final List<String> early = <String>[];
     final List<String> heard = await youAreNextAnnouncements(
       tester,
       scenario: 'S3 announce control',
@@ -1893,6 +1906,14 @@ void main() {
       placings: const <int>[],
       from: 0,
       to: 1,
+      beforeOpening: early,
+    );
+    expect(
+      early,
+      isEmpty,
+      reason:
+          'C-656t S3 announce control: turn 0 to 1, I am seat 2: expected no '
+          "\"You're next\" 400 ms in, while the gate is shut, heard $early",
     );
     expect(
       heard,
@@ -1906,6 +1927,7 @@ void main() {
   testWidgets('C-656t S3 the announcement skips a finished seat', (
     tester,
   ) async {
+    final List<String> early = <String>[];
     final List<String> heard = await youAreNextAnnouncements(
       tester,
       scenario: 'S3 announce skips finished',
@@ -1914,6 +1936,15 @@ void main() {
       placings: const <int>[2],
       from: 0,
       to: 1,
+      beforeOpening: early,
+    );
+    expect(
+      early,
+      isEmpty,
+      reason:
+          'C-656t S3 announce skips finished: turn 0 to 1, I am seat 3: '
+          "expected no \"You're next\" 400 ms in, while the gate is shut, "
+          'heard $early',
     );
     expect(
       heard,

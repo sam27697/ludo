@@ -2177,6 +2177,14 @@ class _LudoBoardState extends State<LudoBoard> {
           yielding: gloat.yielding,
           diameter: diameter,
           cellSize: cellSize,
+          // C-662 T2: the board square in the face's own coordinates, so
+          // the line shifts inward near an edge.
+          bounds: Rect.fromLTWH(
+            -(center.dx - diameter / 2),
+            -(center.dy - diameter / 2),
+            cellSize * 15,
+            cellSize * 15,
+          ),
         ),
       ),
     );
