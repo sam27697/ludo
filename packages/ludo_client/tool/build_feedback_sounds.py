@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Builds the feedback service's twelve cue clips from three pinned packs.
+"""Builds the feedback service's twelve cue clips from four pinned packs.
 
 C-468 D1-D3: every clip is cut from the Kenney Casino Audio, Impact Sounds
-and Music Jingles archives (CC0), downloaded once into a cache outside the
-repository and checked against a pinned sha256. Each source is decoded to
+and Music Jingles archives and, since C-665, the OpenGameArt Ogazuhl sound
+effects (all CC0), downloaded once into a cache outside the repository and
+checked against a pinned size and sha256. Each source is decoded to
 mono 16-bit 44.1 kHz with ffmpeg, stripped of leading silence, cut, faded,
 mixed, loudness-normalised (D3 step 4, as amended in run 112) and written
 to android/app/src/main/res/raw/fb_<id>.wav.
@@ -36,7 +37,13 @@ OUT_DIR = os.path.join(
     os.path.dirname(_HERE), "android", "app", "src", "main", "res", "raw"
 )
 
-# C-468 D1: pack key -> (zip file name, url, bytes, sha256).
+# C-468 D1: pack key -> (zip file name, url, bytes, sha256, page). C-665 L2:
+# both hosts answer a bare request with a redirect to an HTML page, so every
+# fetch sends a browser User-Agent and the pack's own page as the Referer.
+FETCH_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+)
 PACKS = {
     "casino": (
         "kenney_casino-audio.zip",
@@ -44,6 +51,7 @@ PACKS = {
         "2472606a04-1721639069/kenney_casino-audio.zip",
         876839,
         "f36250766ac5bc378c13708ddf12a23a8e54a3251f8d482c7536e51b5dbafa18",
+        "https://kenney.nl/assets/casino-audio",
     ),
     "impact": (
         "kenney_impact-sounds.zip",
@@ -51,6 +59,7 @@ PACKS = {
         "87b4ddecda-1677589768/kenney_impact-sounds.zip",
         800850,
         "029d734af1582474edf3a694d1b0cebc97c1c152f2f39fa34d4c2bafc5de77f8",
+        "https://kenney.nl/assets/impact-sounds",
     ),
     "jingles": (
         "kenney_music-jingles.zip",
@@ -58,6 +67,15 @@ PACKS = {
         "f37e530b9e-1677590399/kenney_music-jingles.zip",
         1239525,
         "b729ba57959bd58793d2c5cafa348aaf2655d354f3da35ec4729e03ec77197b8",
+        "https://kenney.nl/assets/music-jingles",
+    ),
+    # C-665 L1: the gloat laugh.
+    "ogazuhl": (
+        "ogazuhl_sndfx_0.zip",
+        "https://opengameart.org/sites/default/files/ogazuhl_sndfx_0.zip",
+        1136773,
+        "fffc38a60edee2541962a9ead3b2bcb90a3c167c71724b22264d6996d155b3f8",
+        "https://opengameart.org/content/ogazuhl-sound-effects",
     ),
 }
 
@@ -158,7 +176,7 @@ CLIPS = [
     Clip("die_land", Source("casino", "Audio/die-throw-1.ogg"), -6.0, 0.80),
     Clip(
         "gloat",
-        Source("jingles", "Audio/Sax jingles/jingles_SAX11.ogg"),
+        Source("ogazuhl", "ogazuhl_sndfx/goblin_giggle.wav"),
         -3.0,
         1.00,
     ),
@@ -209,17 +227,20 @@ def cache_dir() -> str:
 def fetch_pack(key: str) -> str:
     """Path of the pinned zip in the cache, downloading it when absent or
     when the cached file does not carry the pinned hash (D3 step 1)."""
-    name, url, size, want = PACKS[key]
+    name, url, size, want, page = PACKS[key]
     directory = cache_dir()
     os.makedirs(directory, exist_ok=True)
     dest = os.path.join(directory, name)
     if os.path.isfile(dest) and _sha256(dest) == want:
         return dest
     print(f"downloading {name}")
+    request = urllib.request.Request(
+        url, headers={"User-Agent": FETCH_USER_AGENT, "Referer": page}
+    )
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=name + ".part-")
     try:
         with os.fdopen(fd, "wb") as out, urllib.request.urlopen(
-            url, timeout=120
+            request, timeout=120
         ) as resp:
             while True:
                 block = resp.read(1 << 20)

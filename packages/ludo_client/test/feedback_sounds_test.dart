@@ -88,7 +88,8 @@ const Map<String, List<String>> _sourceFiles = <String, List<String>>{
   'win': <String>['jingles_PIZZI02.ogg'],
   'game_over': <String>['jingles_PIZZI13.ogg'],
   'die_land': <String>['die-throw-1.ogg'],
-  'gloat': <String>['jingles_SAX11.ogg'],
+  // C-665 L1: the laugh from the Ogazuhl pack replaced the sax jingle.
+  'gloat': <String>['goblin_giggle.wav'],
   'friend_joined': <String>['jingles_PIZZI00.ogg'],
 };
 
@@ -656,6 +657,32 @@ void main() {
         reason:
             '${build.path} must pin the sha256 of the ${entry.key} archive '
             '(${entry.value}); a download with no pinned hash is unchecked',
+      );
+    }
+  });
+
+  test('the build script pins the Ogazuhl archive and SOURCES.md records '
+      'it with its page (C-665 L1, L4)', () {
+    const String sha =
+        'fffc38a60edee2541962a9ead3b2bcb90a3c167c71724b22264d6996d155b3f8';
+    const String page = 'https://opengameart.org/content/ogazuhl-sound-effects';
+    final build = File(
+      p.join(packageRoot.path, 'tool', 'build_feedback_sounds.py'),
+    );
+    final sources = File(
+      p.join(packageRoot.path, 'tool', 'sounds', 'SOURCES.md'),
+    );
+    expect(
+      _readText(build).contains(sha),
+      isTrue,
+      reason: '${build.path} must pin the Ogazuhl archive sha256 $sha',
+    );
+    final text = _readText(sources);
+    for (final String needle in <String>[sha, page, 'ogazuhl_sndfx_0.zip']) {
+      expect(
+        text.contains(needle),
+        isTrue,
+        reason: '${sources.path} must name $needle for the gloat laugh',
       );
     }
   });
