@@ -1,8 +1,8 @@
 # Feedback sound sources
 
 Every clip in `android/app/src/main/res/raw/fb_*.wav` is cut from three
-Kenney packs by `tool/build_feedback_sounds.py` (C-468 D1-D3). The packs
-are downloaded into `$LUDO_SOUND_CACHE` (default `~/.cache/ludo-sounds`),
+Kenney packs and one OpenGameArt pack by `tool/build_feedback_sounds.py`
+(C-468 D1-D3, C-665). The packs are downloaded into `$LUDO_SOUND_CACHE` (default `~/.cache/ludo-sounds`),
 never committed, and checked against a pinned sha256:
 
 | Pack | Archive | sha256 |
@@ -10,10 +10,21 @@ never committed, and checked against a pinned sha256:
 | Casino Audio 1.1 | `kenney_casino-audio.zip` | `f36250766ac5bc378c13708ddf12a23a8e54a3251f8d482c7536e51b5dbafa18` |
 | Impact Sounds | `kenney_impact-sounds.zip` | `029d734af1582474edf3a694d1b0cebc97c1c152f2f39fa34d4c2bafc5de77f8` |
 | Music Jingles | `kenney_music-jingles.zip` | `b729ba57959bd58793d2c5cafa348aaf2655d354f3da35ec4729e03ec77197b8` |
+| Ogazuhl sound effects (OpenGameArt, by "yd") | `ogazuhl_sndfx_0.zip`, 1136773 bytes | `fffc38a60edee2541962a9ead3b2bcb90a3c167c71724b22264d6996d155b3f8` |
+
+Pack pages, sent as the `Referer` of each download together with a browser
+`User-Agent` (both hosts answer a bare request with a redirect to an HTML
+page, C-665 L2): `https://kenney.nl/assets/casino-audio`,
+`https://kenney.nl/assets/impact-sounds`,
+`https://kenney.nl/assets/music-jingles`,
+`https://opengameart.org/content/ogazuhl-sound-effects`.
 
 Licence of every pack: CC0 1.0,
-`https://creativecommons.org/publicdomain/zero/1.0/`. The packs' own
-`License.txt` files are in `LICENSE-kenney.txt`.
+`https://creativecommons.org/publicdomain/zero/1.0/`. The Kenney packs' own
+`License.txt` files are in `LICENSE-kenney.txt`. The Ogazuhl archive has no
+licence file; its licence is the page's statement, read on 2026-11-17: the
+page lists `License(s): CC0` and the uploader line reads "All CC0 -
+Uploader: yd".
 
 ## Operations common to every clip
 
@@ -48,7 +59,7 @@ Licence of every pack: CC0 1.0,
 | `win` | Music Jingles | `Audio/Pizzicato jingles/jingles_PIZZI02.ogg` | none beyond the common steps | 0 dB | CC0 1.0 |
 | `game_over` | Music Jingles | `Audio/Pizzicato jingles/jingles_PIZZI13.ogg` | none beyond the common steps | -3 dB | CC0 1.0 |
 | `die_land` | Casino Audio | `Audio/die-throw-1.ogg` | none beyond the common steps | -6 dB | CC0 1.0 |
-| `gloat` | Music Jingles | `Audio/Sax jingles/jingles_SAX11.ogg` | none beyond the common steps | -3 dB | CC0 1.0 |
+| `gloat` | Ogazuhl sound effects | `ogazuhl_sndfx/goblin_giggle.wav` | none beyond the common steps (a WAV member, decoded the same way; 0.561 s) | -3 dB | CC0 (page statement) |
 | `friend_joined` | Music Jingles | `Audio/Pizzicato jingles/jingles_PIZZI00.ogg` | none beyond the common steps | -3 dB | CC0 1.0 |
 
 `invalid_tap` and `tap` have no clip. The 8-bit (`NES`) jingles are not
