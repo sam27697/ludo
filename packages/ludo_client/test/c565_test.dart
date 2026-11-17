@@ -831,13 +831,18 @@ void main() {
   // ===========================================================================
   // _dockedWaiting is reached from the lobby action area by: a guest in a room
   // that is not full, a guest in a full room (waiting for the host's start),
-  // and the host of a room short of players. A full room for the host shows the
-  // start button instead.
+  // and the host sitting alone (C-666 D2). A host with two or more seated
+  // shows the start button instead, full or not.
   group('C-565 4: the docked waiting line', () {
     final List<(String, bool, int, int)> states = <(String, bool, int, int)>[
       // name, host, seated, players
-      ('host short of players, 1 of 4 seated', true, 1, 4),
-      ('host short of players, 2 of 3 seated', true, 2, 3),
+      ('host alone, 1 of 4 seated', true, 1, 4),
+      (
+        'guest in an old-client room short of players, 2 of 3 seated',
+        false,
+        2,
+        3,
+      ),
       ('guest in a room short of players, 2 of 4 seated', false, 2, 4),
       (
         'guest in a full room waiting for the start, 4 of 4 seated',

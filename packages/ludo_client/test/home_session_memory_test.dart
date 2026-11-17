@@ -1,7 +1,9 @@
 // Widget tests for HomeScreen session memory: after a successful create,
-// a fresh HomeScreen (a relaunch) restores the typed name and seat count
-// without retyping, shows home-last-table-chip, and still paints Create
-// as the elevated action while Join stays outlined.
+// a fresh HomeScreen (a relaunch) restores the typed name without
+// retyping, shows home-last-table-chip, and still paints Create as the
+// elevated action while Join stays outlined. Since C-666 D1 there is no seat
+// count to restore: a create records seats 4, and an older stored count of
+// 2 or 3 is read and ignored, Create sending 4 either way.
 //
 // Create Room builds a RoomController from widget.controllerFactory().
 // These tests inject a factory wired to FakeTransport so the create can
@@ -26,7 +28,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'net/fake_transport.dart';
 
 const Key _nameKey = Key('home-name-field');
-const Key _playersButtonKey = Key('home-players-button');
 const Key _createKey = Key('create-room-button');
 const Key _joinKey = Key('join-room-button');
 const Key _codeKey = Key('room-code-field');
@@ -159,31 +160,6 @@ Widget _keyedButton(WidgetTester tester, Key key) {
   return tester.widget(find.byKey(key));
 }
 
-/// Opens the players menu (C-523 D2), picks [count] and checks the closed
-/// control shows it before Create Room.
-Future<void> _selectPlayers(WidgetTester tester, int count) async {
-  expect(
-    find.byKey(_playersButtonKey),
-    findsOneWidget,
-    reason:
-        'home-players-button must be on screen so the player can '
-        'open the seat-count menu',
-  );
-  await tester.ensureVisible(find.byKey(_playersButtonKey));
-  await tester.tap(find.byKey(_playersButtonKey));
-  await tester.pumpAndSettle();
-  await tester.tap(find.byKey(Key('home-players-option-$count')));
-  await tester.pumpAndSettle();
-  expect(
-    find.descendant(
-      of: find.byKey(_playersButtonKey),
-      matching: find.text('$count'),
-    ),
-    findsOneWidget,
-    reason: 'selecting $count must show it on the control before Create Room',
-  );
-}
-
 Future<void> _completeSuccessfulCreate(
   WidgetTester tester,
   FakeTransport transport, {
@@ -243,13 +219,13 @@ Future<void> _completeSuccessfulCreate(
   );
 }
 
-/// Hosts a two-seat table as [name], waits until the lobby shows the
+/// Hosts a four-seat table as [name], waits until the lobby shows the
 /// server code, then pumps a brand-new HomeScreen (a process relaunch).
 Future<void> _hostThenRelaunchHome(
   WidgetTester tester, {
   required String name,
-  required int seats,
 }) async {
+  const int seats = 4;
   final _RecordingControllerFactory factory = _RecordingControllerFactory();
   addTearDown(() {
     for (final RoomController controller in factory.controllers) {
@@ -264,7 +240,6 @@ Future<void> _hostThenRelaunchHome(
 
   await tester.enterText(find.byKey(_nameKey), name);
   await tester.pump();
-  await _selectPlayers(tester, seats);
   await _tapAndAwaitPushedRoute(tester, _createKey);
 
   expect(
@@ -309,12 +284,20 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  testWidgets('relaunch after successful create restores last name and seats '
-      'without retyping', (tester) async {
+  testWidgets('relaunch after successful create restores last name and the '
+      'recorded seats are 4, without retyping', (tester) async {
     const String hostedName = 'Priya';
-    const int hostedSeats = 2;
+    const int hostedSeats = 4;
 
-    await _hostThenRelaunchHome(tester, name: hostedName, seats: hostedSeats);
+    await _hostThenRelaunchHome(tester, name: hostedName);
+
+    expect(
+      (await SharedPreferences.getInstance()).getInt('session.lastSeats'),
+      hostedSeats,
+      reason:
+          'a create records seats 4 in session.lastSeats (C-666 D1: the '
+          'storage format is unchanged, the value is always 4)',
+    );
 
     expect(
       find.byKey(_nameKey),
@@ -343,8 +326,8 @@ void main() {
       pushed.players,
       hostedSeats,
       reason:
-          'Create after relaunch, with no seat re-pick, must still send '
-          'players $hostedSeats; got ${pushed.players}',
+          'Create after relaunch must send players $hostedSeats; got '
+          '${pushed.players}',
     );
 
     // The relaunch's own Create (above) is never answered on the wire, so
@@ -357,7 +340,7 @@ void main() {
 
   testWidgets('relaunch after successful create shows home-last-table-chip and '
       'Create still outweighs Join', (tester) async {
-    await _hostThenRelaunchHome(tester, name: 'Priya', seats: 2);
+    await _hostThenRelaunchHome(tester, name: 'Priya');
 
     expect(
       find.byKey(_chipKey),
@@ -396,4 +379,56 @@ void main() {
           'join-room-button must be absent (C-523 D3)',
     );
   });
+
+  for (final int legacy in <int>[2, 3]) {
+    testWidgets('a table stored by an older build with $legacy seats is read '
+        'and ignored: the chip and name show, Create sends 4', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'session.lastName': 'Priya',
+        'session.lastSeats': legacy,
+      });
+      final _RecordingControllerFactory factory = _RecordingControllerFactory();
+      addTearDown(() {
+        for (final RoomController controller in factory.controllers) {
+          controller.dispose();
+        }
+      });
+      await tester.pumpWidget(_homeScreenApp(factory.call));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'a stored seat count of $legacy must never be an error',
+      );
+      expect(
+        find.byKey(_chipKey),
+        findsOneWidget,
+        reason: 'the older stored table still shows home-last-table-chip',
+      );
+      expect(
+        _nameFieldText(tester),
+        'Priya',
+        reason: 'the older stored table still restores the name',
+      );
+      expect(
+        find.byKey(const Key('home-players-button'), skipOffstage: false),
+        findsNothing,
+        reason: 'a stored count of $legacy must not bring the control back',
+      );
+
+      await _tapAndAwaitPushedRoute(tester, _createKey);
+      expect(
+        _pushedLobbyScreen(tester).players,
+        4,
+        reason:
+            'Create must send players 4 whatever count an older build '
+            'stored ($legacy)',
+      );
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pump();
+    });
+  }
 }

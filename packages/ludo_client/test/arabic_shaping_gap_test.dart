@@ -26,11 +26,12 @@
 // silently measuring the unchanged baseline twice), never that a number
 // clears 84.00dp.
 //
-// Retargeted for C-523: the segmented selector and its "4 لاعبين" label are
-// gone from home. The Arabic text this file measures is now the players row's
-// question (AppLocalizations.homePlayersQuestion), and the selected versus
-// unselected comparison reads the numerals of home-players-option-4 and
-// home-players-option-2 in the open menu. The font axes below are unchanged.
+// Retargeted for C-523, then again for C-666 D1: the segmented selector, its
+// "4 لاعبين" label, the players row's question and the option numerals are all
+// gone from home. The Arabic text this file measures is now the Create
+// button's label (AppLocalizations.homeCreateRoomButton, ar), read off the
+// live mount. The selected versus unselected comparison of the option
+// numerals has no counterpart and is gone. The font axes below are unchanged.
 //
 // Font manager mechanics cited in comments below (TestFontManager's
 // "unmatched family name falls back to the first test font family",
@@ -46,7 +47,6 @@
 // BUILD.gn with no sources), so this file cannot read that boundary directly
 // and instead measures around it (the "primary family axis" group below).
 
-import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
@@ -222,73 +222,34 @@ Widget _harness(Locale locale) {
   );
 }
 
-/// Mounts HomeScreen at [locale] and opens the player-count menu behind
-/// `home-players-button` (C-523 D2; the disclosure and the segmented selector
-/// this file used to open are gone). Bounded pumps only, no pumpAndSettle,
-/// the same way the file did before.
+/// Mounts HomeScreen at [locale]. Bounded pumps only, no pumpAndSettle, the
+/// same way the file did before.
 Future<void> _mount(WidgetTester tester, Locale locale) async {
   await tester.pumpWidget(_harness(locale));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 1000));
 
-  final Finder button = find.byKey(const Key('home-players-button'));
   expect(
-    button,
+    find.byKey(const Key('create-room-button')),
     findsOneWidget,
     reason:
-        'fixture is broken: home-players-button must be on screen so '
-        'this file can open the player-count menu it measures',
-  );
-  await tester.tap(button);
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
-  expect(
-    _optionFinder(4),
-    findsOneWidget,
-    reason: 'tapping home-players-button must open home-players-option-4',
+        'fixture is broken: create-room-button must be on screen so this '
+        'file can measure its label',
   );
 }
 
-Finder _optionFinder(int count) =>
-    find.byKey(Key('home-players-option-$count'));
-
-/// The numeral Text inside one menu option, and the live paragraph behind it.
-RenderParagraph _paragraphOfOptionNumeral(WidgetTester tester, int count) {
-  final Finder numeral = find.descendant(
-    of: _optionFinder(count),
-    matching: find.text('$count'),
+/// The live paragraph behind the Create button's Arabic label.
+RenderParagraph _paragraphOfCreateLabel(WidgetTester tester, String text) {
+  final Finder labelFinder = find.descendant(
+    of: find.byKey(const Key('create-room-button')),
+    matching: find.text(text),
   );
-  expect(
-    numeral,
-    findsOneWidget,
-    reason:
-        'fixture is broken: no numeral "$count" inside '
-        'home-players-option-$count',
-  );
-  final Finder textFinder = find.descendant(
-    of: numeral,
-    matching: find.byType(RichText),
-  );
-  expect(
-    textFinder,
-    findsOneWidget,
-    reason:
-        'fixture is broken: expected exactly one RichText under the '
-        '"$count" numeral of its option',
-  );
-  return tester.renderObject<RenderParagraph>(textFinder);
-}
-
-/// The live paragraph behind the row's Arabic question, the one painted
-/// Arabic word group in the players row.
-RenderParagraph _paragraphOfQuestion(WidgetTester tester, String question) {
-  final Finder labelFinder = find.text(question);
   expect(
     labelFinder,
     findsOneWidget,
     reason:
-        'fixture is broken: the question "$question" must be painted '
-        'exactly once on home',
+        'fixture is broken: the Create label "$text" must be painted '
+        'exactly once in create-room-button',
   );
   final Finder textFinder = find.descendant(
     of: labelFinder,
@@ -299,7 +260,7 @@ RenderParagraph _paragraphOfQuestion(WidgetTester tester, String question) {
     findsOneWidget,
     reason:
         'fixture is broken: expected exactly one RichText under the '
-        '"$question" label',
+        '"$text" label',
   );
   return tester.renderObject<RenderParagraph>(textFinder);
 }
@@ -361,60 +322,34 @@ void main() {
   late TextDirection labelDirection;
   late TextScaler mountedTextScaler;
 
-  group('baseline: the real resolved TextStyle of the Arabic players row, '
+  group('baseline: the real resolved TextStyle of the Arabic Create label, '
       'captured off the live mount rather than assumed (order 152)', () {
     testWidgets('captures fontFamily/fontFamilyFallback/fontWeight/fontSize/'
         'letterSpacing/height/textDirection/textScaler off the '
-        'Arabic question label\'s RenderParagraph, and the option numerals in '
-        'both selection states', (tester) async {
+        'Arabic Create label\'s RenderParagraph', (tester) async {
       final double logicalWidth = _pinPhoneView(tester);
       await _mount(tester, const Locale('ar'));
       final BuildContext context = tester.element(find.byType(Scaffold));
       final AppLocalizations loc = AppLocalizations.of(context);
-      label = loc.homePlayersQuestion;
+      label = loc.homeCreateRoomButton;
 
-      // The menu is open with 4 selected (the default), so option 4 is the
-      // selected entry and option 2 an unselected one.
-      final RenderParagraph questionParagraph = _paragraphOfQuestion(
+      final RenderParagraph labelParagraph = _paragraphOfCreateLabel(
         tester,
         label,
       );
-      final TextStyle? selectedStyle = _paragraphOfOptionNumeral(
-        tester,
-        4,
-      ).text.style;
+      final TextStyle? labelStyle = labelParagraph.text.style;
       expect(
-        selectedStyle,
+        labelStyle,
         isNotNull,
         reason:
-            'fixture is broken: the selected option numeral\'s '
-            'RenderParagraph carries a null style',
-      );
-      final TextStyle? unselectedStyle = _paragraphOfOptionNumeral(
-        tester,
-        2,
-      ).text.style;
-      expect(
-        unselectedStyle,
-        isNotNull,
-        reason:
-            'fixture is broken: the unselected option numeral\'s '
-            'RenderParagraph carries a null style',
-      );
-      final TextStyle? questionStyle = questionParagraph.text.style;
-      expect(
-        questionStyle,
-        isNotNull,
-        reason:
-            'fixture is broken: the question label\'s RenderParagraph '
+            'fixture is broken: the Create label\'s RenderParagraph '
             'carries a null style',
       );
 
-      labelDirection = questionParagraph.textDirection;
-      mountedTextScaler = questionParagraph.textScaler;
+      labelDirection = labelParagraph.textDirection;
+      mountedTextScaler = labelParagraph.textScaler;
 
-      final _CapturedStyle capturedSelected = _capture(selectedStyle!);
-      final _CapturedStyle capturedUnselected = _capture(unselectedStyle!);
+      final _CapturedStyle captured = _capture(labelStyle!);
 
       // ignore: avoid_print
       print(
@@ -422,144 +357,35 @@ void main() {
         'pinnedLogicalWidth=${logicalWidth.toStringAsFixed(2)}dp '
         'textDirection=$labelDirection '
         'mountedTextScaler=$mountedTextScaler\n'
-        '  selected style:   fontFamily=${capturedSelected.fontFamily} '
-        'fontFamilyFallback=${capturedSelected.fontFamilyFallback} '
-        'fontWeight=${capturedSelected.fontWeight} '
-        'fontSize=${capturedSelected.fontSize} '
-        'letterSpacing=${capturedSelected.letterSpacing} '
-        'height=${capturedSelected.height} '
-        'color=${selectedStyle.color}\n'
-        '  unselected style: fontFamily=${capturedUnselected.fontFamily} '
-        'fontFamilyFallback=${capturedUnselected.fontFamilyFallback} '
-        'fontWeight=${capturedUnselected.fontWeight} '
-        'fontSize=${capturedUnselected.fontSize} '
-        'letterSpacing=${capturedUnselected.letterSpacing} '
-        'height=${capturedUnselected.height} '
-        'color=${unselectedStyle.color}',
+        '  label style: fontFamily=${captured.fontFamily} '
+        'fontFamilyFallback=${captured.fontFamilyFallback} '
+        'fontWeight=${captured.fontWeight} '
+        'fontSize=${captured.fontSize} '
+        'letterSpacing=${captured.letterSpacing} '
+        'height=${captured.height} '
+        'color=${labelStyle.color}',
       );
 
-      // The order's "strongest clue on the table": the rig measures the
-      // selected and unselected Arabic segment at an identical 51.70dp,
-      // read as possible evidence the rig ignores the selected
-      // segment's own TextStyle. What this file finds instead: the
-      // theme (segmentedButtonTheme, lib/src/theme.dart) never sets a
-      // labelStyle that varies by WidgetState.selected in the first
-      // place -- only foregroundColor/backgroundColor do. So the two
-      // resolved styles are expected to be identical in every field
-      // that could move an advance width, checked directly here rather
-      // than inferred from the width match alone. fontFamilyFallback is
-      // compared with listEquals, not record `==`: Dart record equality
-      // compares each field with `==`, and List's own `==` is identity,
-      // not content, so a naive record comparison could read two
-      // content-identical but distinct List instances as "different"
-      // (or silently pass only because the theme happens to reuse one
-      // constant list instance, which is not a fact this file wants
-      // hidden behind Dart's default equality).
-      expect(
-        capturedSelected.fontFamily,
-        capturedUnselected.fontFamily,
-        reason:
-            'expected the option numeral\'s resolved fontFamily to '
-            'be identical whether the option is selected or not',
+      final double naturalWidthLabel = _naturalWidthOf(
+        label,
+        labelStyle,
+        labelDirection,
+        textScaler: mountedTextScaler,
       );
+      _record(
+        'baseline (Create label style)',
+        'theme default',
+        naturalWidthLabel,
+      );
+
+      baselineStyle = captured;
+
       expect(
-        listEquals(
-          capturedSelected.fontFamilyFallback,
-          capturedUnselected.fontFamilyFallback,
-        ),
+        naturalWidthLabel.isFinite && naturalWidthLabel > 0,
         isTrue,
         reason:
-            'expected the option numeral\'s resolved '
-            'fontFamilyFallback to be identical whether the option is '
-            'selected (${capturedSelected.fontFamilyFallback}) or not '
-            '(${capturedUnselected.fontFamilyFallback})',
-      );
-      expect(
-        capturedSelected.fontWeight,
-        capturedUnselected.fontWeight,
-        reason:
-            'expected the option numeral\'s resolved fontWeight to '
-            'be identical whether the option is selected or not',
-      );
-      expect(
-        capturedSelected.fontSize,
-        capturedUnselected.fontSize,
-        reason:
-            'expected the option numeral\'s resolved fontSize to be '
-            'identical whether the option is selected or not',
-      );
-      expect(
-        capturedSelected.letterSpacing,
-        capturedUnselected.letterSpacing,
-        reason:
-            'expected the option numeral\'s resolved letterSpacing '
-            'to be identical whether the option is selected or not',
-      );
-      expect(
-        capturedSelected.height,
-        capturedUnselected.height,
-        reason:
-            'expected the option numeral\'s resolved height to be '
-            'identical whether the option is selected or not',
-      );
-      // lib/src/theme.dart's segmentedButtonTheme only varies
-      // foregroundColor/backgroundColor by WidgetState.selected, never
-      // labelStyle -- if every field above matches (it does, this
-      // point is only reached when all five pass) then a difference in
-      // color and nowhere else is expected, not a fixture defect. This
-      // is documented, not asserted: a fix that also started colouring
-      // the label some other way would not be a shaping regression.
-      // ignore: avoid_print
-      print(
-        'arabic_shaping_gap baseline: selected vs unselected color '
-        'differs=${selectedStyle.color != unselectedStyle.color} '
-        '(selected=${selectedStyle.color}, '
-        'unselected=${unselectedStyle.color})',
-      );
-
-      final double naturalWidthSelected = _naturalWidthOf(
-        label,
-        selectedStyle,
-        labelDirection,
-        textScaler: mountedTextScaler,
-      );
-      final double naturalWidthUnselected = _naturalWidthOf(
-        label,
-        unselectedStyle,
-        labelDirection,
-        textScaler: mountedTextScaler,
-      );
-      final double naturalWidthQuestion = _naturalWidthOf(
-        label,
-        questionStyle!,
-        labelDirection,
-        textScaler: mountedTextScaler,
-      );
-      _record(
-        'baseline (selected option style)',
-        'theme default',
-        naturalWidthSelected,
-      );
-      _record(
-        'baseline (unselected option style)',
-        'theme default',
-        naturalWidthUnselected,
-      );
-      _record(
-        'baseline (question label style)',
-        'theme default',
-        naturalWidthQuestion,
-      );
-
-      baselineStyle = _capture(questionStyle);
-
-      expect(
-        naturalWidthSelected.isFinite && naturalWidthSelected > 0,
-        isTrue,
-        reason:
-            'the selected-state natural width measured '
-            '$naturalWidthSelected, which is not a usable positive '
-            'finite measurement',
+            'the Create label natural width measured $naturalWidthLabel, '
+            'which is not a usable positive finite measurement',
       );
 
       tester.view.reset();

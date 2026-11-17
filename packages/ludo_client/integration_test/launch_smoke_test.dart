@@ -160,10 +160,10 @@ Future<void> _expectHomeScreenOn(
         '($localeName)',
   );
   expect(
-    find.byKey(const Key('home-players-button')),
-    findsOneWidget,
+    find.byKey(const Key('home-players-button'), skipOffstage: false),
+    findsNothing,
     reason:
-        'HomeScreen is on screen but its player-count control is not '
+        'HomeScreen shows a player-count control, which C-666 D1 removed '
         '($localeName)',
   );
   expect(

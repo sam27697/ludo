@@ -282,25 +282,6 @@ Future<void> _flushAnyOutstandingRequestTimeout(WidgetTester tester) async {
   await tester.pump();
 }
 
-/// Opens the seat-count selector. It stays hidden until the player taps
-/// home-players-disclosure; tests that need the selector must open it first.
-/// Picks [count] seats through the players menu (C-523 D2).
-Future<void> _pickPlayers(WidgetTester tester, int count) async {
-  final Finder control = find.byKey(const Key('home-players-button'));
-  expect(
-    control,
-    findsOneWidget,
-    reason:
-        'home-players-button must be on screen so the player can '
-        'open the seat-count menu',
-  );
-  await tester.ensureVisible(control);
-  await tester.tap(control);
-  await tester.pumpAndSettle();
-  await tester.tap(find.byKey(Key('home-players-option-$count')));
-  await tester.pumpAndSettle();
-}
-
 void main() {
   testWidgets('home screen renders and shows both actions', (tester) async {
     await tester.pumpWidget(const LudoApp());
@@ -338,7 +319,7 @@ void main() {
       expect(
         pushed.players,
         4,
-        reason: 'the players selector defaults to 4, order 080 rule 12',
+        reason: 'Create Room always asks for 4 seats (C-666 D1)',
       );
       expect(
         pushed.code,
@@ -523,53 +504,42 @@ void main() {
     );
   });
 
-  group('the players control, order 080 rule 12 (C-523 D2)', () {
-    testWidgets('is present, keyed home-players-button, defaulting to 4', (
+  group('no players control, order 080 rule 12 reworked by C-666 D1', () {
+    testWidgets('home has no players control and no menu option', (
       tester,
     ) async {
       await tester.pumpWidget(_homeScreenApp());
       await tester.pumpAndSettle();
 
-      final Finder control = find.byKey(const Key('home-players-button'));
-      expect(control, findsOneWidget);
-
       expect(
-        find.descendant(of: control, matching: find.text('4')),
-        findsOneWidget,
-        reason: 'the players control must default to 4',
+        find.byKey(const Key('home-players-button'), skipOffstage: false),
+        findsNothing,
+        reason: 'C-666 D1: there is no players control on home',
       );
+      for (final int count in const <int>[2, 3, 4]) {
+        expect(
+          find.byKey(Key('home-players-option-$count'), skipOffstage: false),
+          findsNothing,
+          reason: 'C-666 D1: home-players-option-$count must not exist',
+        );
+      }
     });
 
-    testWidgets(
-      'selecting 2 and then Create Room pushes LobbyScreen.players == 2',
-      (tester) async {
-        await tester.pumpWidget(_homeScreenApp());
-        await tester.pumpAndSettle();
-        await _pickPlayers(tester, 2);
+    testWidgets('Create Room pushes LobbyScreen.players == 4', (tester) async {
+      await tester.pumpWidget(_homeScreenApp());
+      await tester.pumpAndSettle();
 
-        expect(
-          find.descendant(
-            of: find.byKey(const Key('home-players-button')),
-            matching: find.text('2'),
-          ),
-          findsOneWidget,
-          reason:
-              'fixture is broken: selecting 2 must show it on the control '
-              'before Create Room is even tapped',
-        );
+      await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
 
-        await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
-
-        final LobbyScreen pushed = _pushedLobbyScreen(tester);
-        expect(
-          pushed.players,
-          2,
-          reason:
-              'the chosen player count must be the one Create Room '
-              'passes to LobbyScreen, not the default',
-        );
-      },
-    );
+      final LobbyScreen pushed = _pushedLobbyScreen(tester);
+      expect(
+        pushed.players,
+        4,
+        reason:
+            'with no count to choose, Create Room passes 4 to LobbyScreen '
+            '(C-666 D1)',
+      );
+    });
   });
 
   group(

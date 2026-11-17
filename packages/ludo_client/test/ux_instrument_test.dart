@@ -206,7 +206,8 @@ void main() {
     _printSize(tester, const Key('locale-toggle-button'), 'locale-toggle');
     _printSize(tester, const Key('home-name-field'), 'name-field');
     _printSize(tester, const Key('room-code-field'), 'code-field');
-    _printSize(tester, const Key('home-players-button'), 'players-button');
+    // C-666 D1: the players control is gone, so there is no size to print.
+    expect(find.byKey(const Key('home-players-button')), findsNothing);
 
     await _printGuideline(
       tester,

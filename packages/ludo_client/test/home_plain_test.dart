@@ -1,10 +1,13 @@
 // Proof for contract C-523 (work/ludo/orders/C-523-home-plain-and-one-sound-
 // switch.md), rules D1, D2, D3, D4, D5 and D9: a home screen that says only
 // what a player needs. Written from the contract text, against no
-// implementation of it. On origin/main 7501227 PlayerCountIcon does not
-// exist, so this file does not compile until the implementation lands; that
-// is expected, and every case below is red on that base for the reason named
-// in its own header comment.
+// implementation of it. Updated for C-666 (work/ludo/orders/666-no-player-
+// count.md) D1: the players question, its control and its menu are gone, so
+// the cases that drove them now assert the replacement for the same
+// situation: no control and no question on home, Create always sends four
+// seats, the last-table chip paints the name and no count icon. The cases
+// that only exercised the menu (its options, its fill, its dismissal) and
+// the PlayerCountIcon widget cases are gone with the things they exercised.
 //
 // HomeScreen is mounted directly inside a MaterialApp built the way
 // app.dart builds one (same delegates, the app's own theme), with a
@@ -21,29 +24,11 @@
 // home scroll view has been moved to its end, with Offstage subtrees
 // included, so a label that moved or hid cannot dodge it.
 //
-// Ambiguities, reported rather than invented around:
-//
-//   1. D2 says the word "players" is not painted anywhere on home, and also
-//      that the row's label reads "How many players?". Both cannot hold for
-//      the English label. These cases read the first as: no painted string
-//      contains "players" except the one row label, which must be painted
-//      exactly once. Arabic has no such overlap (the label has "لاعب", the
-//      banned words are "لاعبين" and "لاعبان").
-//   2. D2 names "a check glyph" and "a small expand glyph" without naming
-//      the IconData. The check is accepted as any of the Material check
-//      icons listed in _checkIcons; the expand glyph is not asserted.
-//   3. D2 says the control's semantics label is homePlayersQuestion "plus"
-//      the count string, with no joiner. The case accepts any run of
-//      whitespace and punctuation between and around them, question first.
-//   4. D2 says the control shows the count "as a numeral". In Arabic that
-//      may be a Western or an Arabic-Indic digit; both are accepted.
-//   5. D2 gives the last-table chip "the table's name and the
-//      PlayerCountIcon" and "no seat text". A separator dot between them is
-//      tolerated; any other text is not.
+// The chip's spoken label is the table name alone (C-666 D1, as confirmed
+// for the committed implementation).
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -57,11 +42,9 @@ import 'package:ludo_client/src/app.dart'
 import 'package:ludo_client/src/deep_link.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
-import 'package:ludo_client/src/player_count_icon.dart';
 import 'package:ludo_client/src/room_code.dart';
 import 'package:ludo_client/src/server_config.dart';
 import 'package:ludo_client/src/session_memory.dart';
-import 'package:ludo_client/src/theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
@@ -71,7 +54,7 @@ const Key _createKey = Key('create-room-button');
 const Key _joinKey = Key('join-room-button');
 const Key _codeKey = Key('room-code-field');
 const Key _lastTableKey = Key('home-last-table-chip');
-Key _optionKey(int n) => Key('home-players-option-$n');
+const Key _nameFieldKey = Key('home-name-field');
 
 const Size _phone = Size(390, 844);
 
@@ -85,6 +68,7 @@ const String _questionAr = 'كم لاعب؟';
 /// Keys the contract removes from home (and from the other two screens that
 /// shared the settings sheet), D1, D2 and D7.
 const List<String> _removedKeys = <String>[
+  'home-players-button',
   'home-players-disclosure',
   'home-players-selector',
   'home-rule-capture-bonus',
@@ -126,17 +110,6 @@ const Map<String, List<String>> _oldExact = <String, List<String>>{
   'en': <String>['Vibration', 'Sound'],
   'ar': <String>['الاهتزاز', 'الصوت'],
 };
-
-const List<IconData> _checkIcons = <IconData>[
-  Icons.check,
-  Icons.check_rounded,
-  Icons.check_circle,
-  Icons.check_circle_rounded,
-  Icons.check_circle_outline,
-  Icons.check_circle_outline_rounded,
-  Icons.done,
-  Icons.done_rounded,
-];
 
 const List<Locale> _locales = <Locale>[Locale('en'), Locale('ar')];
 
@@ -353,128 +326,6 @@ void _expectNoOldStrings(List<String> painted, Locale locale, String repro) {
   );
 }
 
-// --- the players control ----------------------------------------------------
-
-Set<String> _numeralForms(int n) {
-  const List<String> arabicIndic = <String>[
-    '٠',
-    '١',
-    '٢',
-    '٣',
-    '٤',
-    '٥',
-    '٦',
-    '٧',
-    '٨',
-    '٩',
-  ];
-  return <String>{
-    '$n',
-    n.toString().split('').map((c) => arabicIndic[int.parse(c)]).join(),
-  };
-}
-
-String _stripSpace(String s) => s.replaceAll(RegExp('[\\s ‎‏]'), '');
-
-/// The count the control currently shows, read off its PlayerCountIcon, and
-/// checked against the numeral it paints.
-int _shownCount(WidgetTester tester, String repro) {
-  final Finder button = find.byKey(_playersButtonKey);
-  expect(
-    button,
-    findsOneWidget,
-    reason: 'expected one home-players-button on home; found none. $repro',
-  );
-  final Finder icon = find.descendant(
-    of: button,
-    matching: find.byType(PlayerCountIcon),
-  );
-  expect(
-    icon,
-    findsOneWidget,
-    reason:
-        'expected exactly one PlayerCountIcon inside home-players-button; '
-        'found ${icon.evaluate().length}. $repro',
-  );
-  final int count = tester.widget<PlayerCountIcon>(icon).count;
-  final List<String> painted = _paintedStringsUnder(tester.element(button))
-      .map(_stripSpace)
-      .where((String s) => s.isNotEmpty)
-      .toList();
-  expect(
-    painted.any(_numeralForms(count).contains),
-    isTrue,
-    reason:
-        'expected home-players-button to paint the numeral for its icon '
-        'count $count (one of ${_numeralForms(count)}); it paints $painted. '
-        '$repro',
-  );
-  return count;
-}
-
-Future<void> _openMenu(WidgetTester tester, String repro) async {
-  await tester.ensureVisible(find.byKey(_playersButtonKey));
-  await tester.tap(find.byKey(_playersButtonKey));
-  await tester.pumpAndSettle();
-  for (final int n in <int>[2, 3, 4]) {
-    expect(
-      find.byKey(_optionKey(n), skipOffstage: false),
-      findsOneWidget,
-      reason:
-          'expected home-players-option-$n after tapping home-players-button; '
-          'the menu did not show it. $repro',
-    );
-  }
-}
-
-Future<void> _pick(WidgetTester tester, int n, String repro) async {
-  await tester.tap(find.byKey(_optionKey(n)));
-  await tester.pumpAndSettle();
-  for (final int m in <int>[2, 3, 4]) {
-    expect(
-      find.byKey(_optionKey(m), skipOffstage: false),
-      findsNothing,
-      reason:
-          'expected the menu to close after picking option $n; '
-          'home-players-option-$m is still in the tree. $repro',
-    );
-  }
-}
-
-bool _isCheckIcon(Widget w) =>
-    w is Icon && w.icon != null && _checkIcons.contains(w.icon);
-
-Finder _checksIn(Finder option) =>
-    find.descendant(of: option, matching: find.byWidgetPredicate(_isCheckIcon));
-
-// --- pixels -----------------------------------------------------------------
-
-Future<ByteData> _rgba(WidgetTester tester) async {
-  RenderObject root = tester.renderObject(find.byType(Scaffold).first);
-  while (root.parent != null) {
-    root = root.parent!;
-  }
-  final OffsetLayer layer = root.debugLayer! as OffsetLayer;
-  final Size size = tester.view.physicalSize;
-  final ui.Image image = (await tester.runAsync(
-    () => layer.toImage(Offset.zero & size, pixelRatio: 1.0),
-  ))!;
-  final ByteData? data = await tester.runAsync<ByteData?>(
-    () => image.toByteData(format: ui.ImageByteFormat.rawRgba),
-  );
-  return data!;
-}
-
-Color _pixel(ByteData data, int width, Offset p) {
-  final int i = (p.dy.round() * width + p.dx.round()) * 4;
-  return Color.fromARGB(
-    data.getUint8(i + 3),
-    data.getUint8(i),
-    data.getUint8(i + 1),
-    data.getUint8(i + 2),
-  );
-}
-
 // --- create frame -----------------------------------------------------------
 
 Future<void> _tapCreate(WidgetTester tester) async {
@@ -538,23 +389,27 @@ void main() {
     final String lc = locale.languageCode;
 
     group('home, $lc', () {
-      // Red on 7501227: home_screen.dart:1520 mounts home-players-disclosure,
-      // :1567 home-players-selector, :1576 home-rule-capture-bonus, :1590
-      // home-house-rules, :1243 home-settings-button; :1690 sets the
-      // helperText; the selector paints "2 players / 3 players / 4 players".
+      // Red on the base: home_screen.dart mounts home-players-button and
+      // paints "How many players?" and the count words.
       testWidgets('nothing the contract removes is on screen: no removed key, '
-          'no rule control, no "players" but the one question, no deleted '
-          'string', (tester) async {
+          'no rule control, no players control, no "players" word, no '
+          'deleted string', (tester) async {
         const String name = 'removed things absent';
         final String repro = _repro(name, locale);
         await _mount(tester, locale: locale);
-        final AppLocalizations loc = _loc(tester);
 
         for (final String key in _removedKeys) {
           expect(
             find.byKey(Key(key), skipOffstage: false),
             findsNothing,
             reason: 'expected no widget keyed $key on home; found one. $repro',
+          );
+        }
+        for (final int n in <int>[2, 3, 4]) {
+          expect(
+            find.byKey(Key('home-players-option-$n'), skipOffstage: false),
+            findsNothing,
+            reason: 'expected no home-players-option-$n on home. $repro',
           );
         }
         expect(
@@ -581,411 +436,88 @@ void main() {
 
         await _scrollToEnd(tester);
         final List<String> painted = _paintedStrings();
-        final String question = loc.homePlayersQuestion;
+        final String question = lc == 'ar' ? _questionAr : _questionEn;
         expect(
-          question,
-          lc == 'ar' ? _questionAr : _questionEn,
-          reason: 'D9: homePlayersQuestion has the wrong wording. $repro',
-        );
-        expect(
-          painted.where((String s) => s.trim() == question).length,
-          1,
+          painted.where((String s) => s.contains(question)),
+          isEmpty,
           reason:
-              'expected the label "$question" painted exactly once; painted '
-              'strings were $painted. $repro',
+              'expected the question "$question" painted nowhere (C-666 D1); '
+              'painted strings were $painted. $repro',
         );
-        final List<String> hits = _playersHits(
-          painted,
-          locale,
-        ).where((String s) => s.trim() != question).toList();
+        final List<String> hits = _playersHits(painted, locale);
         expect(
           hits,
           isEmpty,
           reason:
-              'expected no painted text with the word for "players" other '
-              'than the row label; found $hits. $repro',
+              'expected no painted text with the word for "players" on a '
+              'home with no count to choose; found $hits. $repro',
         );
         _expectNoOldStrings(painted, locale, repro);
       });
 
-      // Red on 7501227: the selector sits behind home-players-disclosure
-      // (home_screen.dart:1520), which paints homePlayersDisclosureClosed
-      // ("4 players, standard rules"); there is no home-players-button.
-      _semTest('one always-visible row: label at the start, a 48 dp '
-          'control at the end showing 4 with its icon, semantics label '
-          'question plus count', (tester) async {
-        const String name = 'row and default control';
-        final String repro = _repro(name, locale);
-        await _mount(tester, locale: locale);
-        final AppLocalizations loc = _loc(tester);
-
-        final Finder button = find.byKey(_playersButtonKey);
-        expect(
-          button,
-          findsOneWidget,
-          reason:
-              'expected home-players-button on home with no disclosure to '
-              'open first; found none. $repro',
-        );
-        final Size size = tester.getSize(button);
-        expect(
-          size.width >= 48 && size.height >= 48,
-          isTrue,
-          reason:
-              'expected home-players-button at least 48 x 48 dp; got '
-              '${size.width} x ${size.height}. $repro',
-        );
-        expect(
-          _shownCount(tester, repro),
-          4,
-          reason: 'expected the control to read 4 by default. $repro',
-        );
-
-        final Finder label = find.text(loc.homePlayersQuestion);
-        expect(
-          label,
-          findsOneWidget,
-          reason:
-              'expected the label "${loc.homePlayersQuestion}" on the row. '
-              '$repro',
-        );
-        final Rect labelRect = tester.getRect(label);
-        final Rect buttonRect = tester.getRect(button);
-        expect(
-          labelRect.top < buttonRect.bottom &&
-              buttonRect.top < labelRect.bottom,
-          isTrue,
-          reason:
-              'expected label and control on one row (vertical overlap); '
-              'label $labelRect, control $buttonRect. $repro',
-        );
-        final bool labelFirst = lc == 'ar'
-            ? labelRect.center.dx > buttonRect.center.dx
-            : labelRect.center.dx < buttonRect.center.dx;
-        expect(
-          labelFirst,
-          isTrue,
-          reason:
-              'expected the label at the row start and the control at the '
-              'row end (${lc == 'ar' ? 'right to left' : 'left to right'}); '
-              'label $labelRect, control $buttonRect. $repro',
-        );
-
-        final String semantics = tester.getSemantics(button).label;
-        final String remainder = semantics
-            .replaceFirst(loc.homePlayersQuestion, '')
-            .replaceFirst(loc.homePlayersFour, '');
-        expect(
-          semantics.contains(loc.homePlayersQuestion) &&
-              semantics.contains(loc.homePlayersFour) &&
-              semantics.indexOf(loc.homePlayersQuestion) <
-                  semantics.indexOf(loc.homePlayersFour) &&
-              RegExp(r'^[\s,.:;،؛\-0-9٠-٩]*$').hasMatch(remainder),
-          isTrue,
-          reason:
-              'expected the control semantics label to be '
-              '"${loc.homePlayersQuestion}" then "${loc.homePlayersFour}" '
-              'and nothing else; got "$semantics". $repro',
-        );
-      });
-
-      // Red on 7501227: no home-players-option-N exists; the choice is three
-      // SegmentedButton segments (home_screen.dart:1567) painting "N players".
-      _semTest('menu: three keyed options, numeral plus icon each, '
-          'semantics label is its own count string, only the current one '
-          'carries a check glyph', (tester) async {
-        const String name = 'menu options';
-        final String repro = _repro(name, locale);
-        await _mount(tester, locale: locale);
-        final AppLocalizations loc = _loc(tester);
-        await _openMenu(tester, repro);
-
-        final Map<int, String> labels = <int, String>{
-          2: loc.homePlayersTwo,
-          3: loc.homePlayersThree,
-          4: loc.homePlayersFour,
-        };
-        for (final int n in <int>[2, 3, 4]) {
-          final Finder option = find.byKey(_optionKey(n));
-          final Finder icon = find.descendant(
-            of: option,
-            matching: find.byType(PlayerCountIcon),
-          );
-          expect(
-            icon,
-            findsOneWidget,
-            reason:
-                'expected one PlayerCountIcon inside home-players-option-$n; '
-                'found ${icon.evaluate().length}. $repro',
-          );
-          expect(
-            tester.widget<PlayerCountIcon>(icon).count,
-            n,
-            reason: 'expected the icon in option $n to show $n figures. $repro',
-          );
-          final List<String> painted = _paintedStringsUnder(
-            tester.element(option),
-          ).map(_stripSpace).where((String s) => s.isNotEmpty).toList();
-          expect(
-            painted.any(_numeralForms(n).contains),
-            isTrue,
-            reason:
-                'expected option $n to paint its numeral (one of '
-                '${_numeralForms(n)}); it paints $painted. $repro',
-          );
-          expect(
-            painted.every((String s) => _numeralForms(n).contains(s)),
-            isTrue,
-            reason:
-                'expected option $n to paint only its numeral, no words; it '
-                'paints $painted. $repro',
-          );
-          final Size size = tester.getSize(option);
-          expect(
-            size.height >= 48,
-            isTrue,
-            reason:
-                'expected option $n at least 48 dp tall; got ${size.height}. '
-                '$repro',
-          );
-          expect(
-            tester.getSemantics(option).label.split('\n').map((l) => l.trim()),
-            contains(labels[n]),
-            reason:
-                'expected the semantics label of option $n to carry its '
-                'homePlayers string "${labels[n]}" as a line of its own; got '
-                '"${tester.getSemantics(option).label}". $repro',
-          );
-          expect(
-            _checksIn(option),
-            n == 4 ? findsOneWidget : findsNothing,
-            reason:
-                'expected a check glyph in option $n only if it is the '
-                'current count (4); ${n == 4 ? 'none' : 'one'} was found. '
-                '$repro',
-          );
-        }
-
-        final List<String> painted = _paintedStrings();
-        final List<String> hits = _playersHits(
-          painted,
-          locale,
-        ).where((String s) => s.trim() != loc.homePlayersQuestion).toList();
-        expect(
-          hits,
-          isEmpty,
-          reason:
-              'expected no painted "players" word with the menu open; found '
-              '$hits. $repro',
-        );
-      });
-
-      // Red on 7501227: the selection mark is SegmentedButton's own
-      // (home_screen.dart:2189, _PlayersSelector); there is no menu and no
-      // filled option.
-      testWidgets('menu: the current option has a filled background the '
-          'others lack, and it follows the pick', (tester) async {
-        const String name = 'menu selected fill';
+      // Red on the base: the always-visible row of C-523 D2 is still
+      // there, so the 48 dp control sits between the name and Create.
+      testWidgets('home has no players row: nothing keyed home-players-* '
+          'and no row-sized gap between the name field and Create', (
+        tester,
+      ) async {
+        const String name = 'no players row';
         final String repro = _repro(name, locale);
         await _mount(tester, locale: locale);
 
-        Future<Map<int, Color>> sample() async {
-          final ByteData data = await _rgba(tester);
-          final int width = tester.view.physicalSize.width.toInt();
-          final Map<int, Color> out = <int, Color>{};
-          for (final int n in <int>[2, 3, 4]) {
-            final Rect r = tester.getRect(find.byKey(_optionKey(n)));
-            // Three dp in from the start edge, mid height: inside the item's
-            // padding, clear of the numeral and the icon.
-            final double x = lc == 'ar' ? r.right - 3 : r.left + 3;
-            out[n] = _pixel(data, width, Offset(x, r.center.dy));
-          }
-          return out;
-        }
-
-        void expectOnlyFilled(Map<int, Color> colors, int current) {
-          for (final int n in <int>[2, 3, 4]) {
-            if (n == current) {
-              continue;
-            }
-            expect(
-              colors[current],
-              isNot(colors[n]),
-              reason:
-                  'expected option $current (the current count) to have a '
-                  'filled background unlike option $n; both sampled '
-                  '${colors[current]}. $repro',
-            );
-          }
-        }
-
-        await _openMenu(tester, repro);
-        expectOnlyFilled(await sample(), 4);
-        await _pick(tester, 2, repro);
-        await _openMenu(tester, repro);
-        expectOnlyFilled(await sample(), 2);
         expect(
-          _checksIn(find.byKey(_optionKey(2))),
-          findsOneWidget,
-          reason:
-              'expected the check glyph to move to option 2 after picking '
-              '2. $repro',
-        );
-        expect(
-          _checksIn(find.byKey(_optionKey(4))),
+          find.byKey(_playersButtonKey, skipOffstage: false),
           findsNothing,
+          reason: 'expected no home-players-button on home. $repro',
+        );
+        final Rect field = tester.getRect(find.byKey(_nameFieldKey));
+        final Rect create = tester.getRect(find.byKey(_createKey));
+        final double gap = create.top - field.bottom;
+        expect(
+          gap > 0 && gap < 48,
+          isTrue,
           reason:
-              'expected option 4 to lose its check glyph after picking 2. '
-              '$repro',
+              'expected the space between the name field and Create to be '
+              'smaller than the 48 dp the players row took (no empty '
+              'slot); it is $gap dp (field $field, create $create). $repro',
         );
       });
 
-      for (final int n in <int>[2, 3, 4]) {
-        // Red on 7501227: home_screen.dart:1567 offers the choice only
-        // through the disclosure and the selector; no home-players-button
-        // to tap.
-        testWidgets('pick $n: the control shows $n, Create sends players $n '
-            'and rules {capture_bonus: true}', (tester) async {
-          final String name = 'pick $n then create';
-          final String repro = _repro(name, locale);
-          final _LiveControllerFactory factory = _LiveControllerFactory();
-          await _mount(tester, locale: locale, controllerFactory: factory.call);
-          final AppLocalizations loc = _loc(tester);
-
-          await _openMenu(tester, repro);
-          await _pick(tester, n, repro);
-          expect(
-            _shownCount(tester, repro),
-            n,
-            reason: 'expected the control to show $n after picking $n. $repro',
-          );
-          final String semantics = tester
-              .getSemantics(find.byKey(_playersButtonKey))
-              .label;
-          final String expected = switch (n) {
-            2 => loc.homePlayersTwo,
-            3 => loc.homePlayersThree,
-            _ => loc.homePlayersFour,
-          };
-          expect(
-            semantics.contains(expected),
-            isTrue,
-            reason:
-                'expected the control semantics label to carry "$expected" '
-                'after picking $n; got "$semantics". $repro',
-          );
-
-          await _tapCreate(tester);
-          final Map<String, Object?> data = _createData(factory, repro);
-          expect(
-            data['players'],
-            n,
-            reason:
-                'expected create_room players $n; the frame carried '
-                '${data['players']}. $repro',
-          );
-          expect(
-            data['rules'],
-            <String, Object?>{'capture_bonus': true},
-            reason:
-                'expected create_room rules exactly {capture_bonus: true} '
-                '(D1: fixed rules); the frame carried ${data['rules']}. '
-                '$repro',
-          );
-          await _drainRequestTimeout(tester);
-        });
-      }
-
-      // Red on 7501227: no menu exists to dismiss; home_screen.dart:1567.
-      testWidgets('open and dismiss changes nothing; pick, then open and '
-          'dismiss, keeps the pick', (tester) async {
-        const String name = 'dismiss keeps value';
+      // Red on the base: Create sends the count the control shows; with
+      // the control gone the count is fixed at four.
+      testWidgets('Create sends players 4 and rules {capture_bonus: true}', (
+        tester,
+      ) async {
+        const String name = 'create sends four';
         final String repro = _repro(name, locale);
         final _LiveControllerFactory factory = _LiveControllerFactory();
         await _mount(tester, locale: locale, controllerFactory: factory.call);
 
-        Future<void> dismissByTappingOutside() async {
-          // The tagline is plain text on the hero; fixture-check that the
-          // menu does not cover it, then tap it.
-          final Finder tagline = find.text(
-            lc == 'ar' ? _taglineAr : _taglineEn,
-          );
-          expect(
-            tagline,
-            findsOneWidget,
-            reason: 'fixture: the tagline must be on screen to tap. $repro',
-          );
-          final Offset outside = tester.getCenter(tagline);
-          Rect? menu;
-          for (final int n in <int>[2, 3, 4]) {
-            final Rect r = tester.getRect(find.byKey(_optionKey(n)));
-            menu = menu == null ? r : menu.expandToInclude(r);
-          }
-          expect(
-            menu!.inflate(8).contains(outside),
-            isFalse,
-            reason:
-                'fixture: the tagline centre $outside lies inside the menu '
-                '$menu, so tapping it would not be an outside tap. $repro',
-          );
-          await tester.tapAt(outside);
-          await tester.pumpAndSettle();
-          for (final int n in <int>[2, 3, 4]) {
-            expect(
-              find.byKey(_optionKey(n), skipOffstage: false),
-              findsNothing,
-              reason:
-                  'expected an outside tap to close the menu; '
-                  'home-players-option-$n is still in the tree. $repro',
-            );
-          }
-        }
-
-        await _openMenu(tester, repro);
-        await dismissByTappingOutside();
-        expect(
-          _shownCount(tester, repro),
-          4,
-          reason: 'expected 4 after opening and dismissing. $repro',
-        );
-
-        await _openMenu(tester, repro);
-        await _pick(tester, 3, repro);
-        await _openMenu(tester, repro);
-        await dismissByTappingOutside();
-        expect(
-          _shownCount(tester, repro),
-          3,
-          reason:
-              'expected 3 to survive an open and dismiss after picking 3. '
-              '$repro',
-        );
-
-        await _openMenu(tester, repro);
-        await _pick(tester, 3, repro);
-        expect(
-          _shownCount(tester, repro),
-          3,
-          reason: 'expected re-picking the current option to keep 3. $repro',
-        );
-
         await _tapCreate(tester);
+        final Map<String, Object?> data = _createData(factory, repro);
         expect(
-          _createData(factory, repro)['players'],
-          3,
+          data['players'],
+          4,
           reason:
-              'expected Create to send players 3 after the sequence. $repro',
+              'expected create_room players 4; the frame carried '
+              '${data['players']}. $repro',
+        );
+        expect(
+          data['rules'],
+          <String, Object?>{'capture_bonus': true},
+          reason:
+              'expected create_room rules exactly {capture_bonus: true} '
+              '(D1: fixed rules); the frame carried ${data['rules']}. '
+              '$repro',
         );
         await _drainRequestTimeout(tester);
       });
 
-      // Red on 7501227: _LastTableChip paints "$name · $seatsLabel"
-      // (home_screen.dart:2007-2021), so the chip has seat text and no
-      // PlayerCountIcon; there is no control to show the loaded count.
+      // Red on the base: _LastTableChip paints a PlayerCountIcon and the
+      // loaded count drives the Create count.
       for (final int seats in <int>[2, 3]) {
-        _semTest('last table of $seats seats: chip paints the name and a '
-            '$seats-figure icon, semantics label unchanged, the control '
-            'shows $seats', (tester) async {
+        _semTest('last table of $seats seats: chip paints the name and no '
+            'count icon, Create sends 4', (tester) async {
           final String name = 'last table $seats seats';
           final String repro = _repro(name, locale);
           await SessionMemory.recordSuccessfulCreate(
@@ -994,7 +526,6 @@ void main() {
           );
           final _LiveControllerFactory factory = _LiveControllerFactory();
           await _mount(tester, locale: locale, controllerFactory: factory.call);
-          final AppLocalizations loc = _loc(tester);
 
           final Finder chip = find.byKey(_lastTableKey);
           expect(
@@ -1004,59 +535,57 @@ void main() {
                 'expected home-last-table-chip with a remembered table. '
                 '$repro',
           );
-          final Finder icon = find.descendant(
-            of: chip,
-            matching: find.byType(PlayerCountIcon),
-          );
           expect(
-            icon,
-            findsOneWidget,
+            find.descendant(
+              of: chip,
+              matching: find.byWidgetPredicate(
+                (Widget w) => w.runtimeType.toString() == 'PlayerCountIcon',
+              ),
+            ),
+            findsNothing,
             reason:
-                'expected one PlayerCountIcon in the last-table chip; found '
-                '${icon.evaluate().length}. $repro',
+                'expected no PlayerCountIcon in the last-table chip. $repro',
           );
           expect(
-            tester.widget<PlayerCountIcon>(icon).count,
-            seats,
-            reason: 'expected the chip icon to show $seats figures. $repro',
+            find.descendant(
+              of: chip,
+              matching: find.byIcon(Icons.person_rounded),
+            ),
+            findsNothing,
+            reason: 'expected no person figure in the last-table chip. $repro',
           );
-          final String painted = _stripSpace(
-            _paintedStringsUnder(tester.element(chip))
-                .join()
-                .replaceAll('·', ''),
-          );
+          final String painted = _paintedStringsUnder(tester.element(chip))
+              .join()
+              .replaceAll(RegExp('[\\s·]'), '');
           expect(
             painted,
-            _stripSpace('Zed Quartz'),
+            'ZedQuartz',
             reason:
                 'expected the chip to paint the table name and nothing else '
                 '(no seat text); it paints "$painted". $repro',
           );
-          final String seatsLabel = seats == 2
-              ? loc.homePlayersTwo
-              : loc.homePlayersThree;
           expect(
             tester.getSemantics(chip).label.split('\n').first,
-            'Zed Quartz · $seatsLabel',
+            'Zed Quartz',
             reason:
-                'expected the chip semantics label unchanged '
-                '("name · homePlayersN"). $repro',
+                'expected the chip spoken label to be the table name '
+                'alone; got "${tester.getSemantics(chip).label}". $repro',
           );
           expect(
-            _shownCount(tester, repro),
-            seats,
+            find.byKey(_playersButtonKey, skipOffstage: false),
+            findsNothing,
             reason:
-                'expected loading the last table to set the control to '
-                '$seats. $repro',
+                'expected loading a $seats-seat table not to bring the '
+                'players control back. $repro',
           );
 
           await _tapCreate(tester);
           expect(
             _createData(factory, repro)['players'],
-            seats,
+            4,
             reason:
-                'expected Create to send the loaded count $seats without '
-                'touching the menu. $repro',
+                'expected Create to send players 4 even though the stored '
+                'table held $seats. $repro',
           );
           await _drainRequestTimeout(tester);
         });
@@ -1453,160 +982,4 @@ void main() {
       });
     });
   }
-
-  // D4: the icon on its own. Locale-free.
-  group('PlayerCountIcon', () {
-    Future<void> pumpIcon(
-      WidgetTester tester,
-      Widget icon, {
-      TextDirection direction = TextDirection.ltr,
-    }) async {
-      await tester.pumpWidget(
-        Directionality(
-          textDirection: direction,
-          child: Center(child: icon),
-        ),
-      );
-    }
-
-    Color? effectiveColor(WidgetTester tester, Finder finder) {
-      final Icon icon = tester.widget<Icon>(finder);
-      return icon.color ?? IconTheme.of(tester.element(finder)).color;
-    }
-
-    for (final int n in <int>[1, 2, 3, 4]) {
-      // Red on 7501227: lib/src/player_count_icon.dart does not exist.
-      testWidgets('count $n draws $n person figures side by side, 18 dp, '
-          'LudoColors.ink by default', (tester) async {
-        final String repro =
-            'Reproduce: scenario "icon count $n", flutter test '
-            'test/home_plain_test.dart --plain-name "count $n draws". No '
-            'random input is involved.';
-        await pumpIcon(tester, PlayerCountIcon(count: n));
-        final Finder figures = find.descendant(
-          of: find.byType(PlayerCountIcon),
-          matching: find.byIcon(Icons.person_rounded),
-        );
-        expect(
-          figures,
-          findsNWidgets(n),
-          reason:
-              'expected $n Icons.person_rounded in PlayerCountIcon(count: '
-              '$n); found ${figures.evaluate().length}. $repro',
-        );
-        final List<Rect> rects = <Rect>[
-          for (int i = 0; i < n; i++) tester.getRect(figures.at(i)),
-        ];
-        for (final Rect r in rects) {
-          expect(
-            r.size,
-            const Size(18, 18),
-            reason:
-                'expected each figure 18 x 18 by default; got ${r.size}. '
-                '$repro',
-          );
-          expect(
-            r.top,
-            rects.first.top,
-            reason: 'expected the figures on one row; got $rects. $repro',
-          );
-        }
-        for (int i = 1; i < n; i++) {
-          expect(
-            rects[i].left >= rects[i - 1].right - 0.01,
-            isTrue,
-            reason:
-                'expected figure $i to the right of figure ${i - 1} without '
-                'overlap in ltr; got $rects. $repro',
-          );
-        }
-        expect(
-          effectiveColor(tester, figures.first),
-          LudoColors.ink,
-          reason: 'expected the default colour LudoColors.ink. $repro',
-        );
-      });
-    }
-
-    testWidgets('size and colour come from the caller', (tester) async {
-      const String repro =
-          'Reproduce: scenario "icon size and colour", flutter test '
-          'test/home_plain_test.dart --plain-name "size and colour come". No '
-          'random input is involved.';
-      await pumpIcon(
-        tester,
-        const PlayerCountIcon(count: 3, size: 30, color: Color(0xFF123456)),
-      );
-      final Finder figures = find.descendant(
-        of: find.byType(PlayerCountIcon),
-        matching: find.byIcon(Icons.person_rounded),
-      );
-      expect(figures, findsNWidgets(3), reason: repro);
-      for (int i = 0; i < 3; i++) {
-        expect(
-          tester.getSize(figures.at(i)),
-          const Size(30, 30),
-          reason: 'expected figure $i at size 30. $repro',
-        );
-        expect(
-          effectiveColor(tester, figures.at(i)),
-          const Color(0xFF123456),
-          reason: 'expected figure $i in the caller colour. $repro',
-        );
-      }
-    });
-
-    testWidgets('rtl mirrors the layout: the first figure sits at the '
-        'right-hand end', (tester) async {
-      const String repro =
-          'Reproduce: scenario "icon rtl", flutter test '
-          'test/home_plain_test.dart --plain-name "rtl mirrors". No random '
-          'input is involved.';
-      await pumpIcon(
-        tester,
-        const PlayerCountIcon(count: 3),
-        direction: TextDirection.rtl,
-      );
-      final Finder figures = find.descendant(
-        of: find.byType(PlayerCountIcon),
-        matching: find.byIcon(Icons.person_rounded),
-      );
-      final Rect first = tester.getRect(figures.at(0));
-      final Rect last = tester.getRect(figures.at(2));
-      expect(
-        first.left > last.left,
-        isTrue,
-        reason:
-            'expected the first figure right of the last under rtl; first '
-            '$first, last $last. $repro',
-      );
-    });
-
-    testWidgets('the figures are excluded from semantics', (tester) async {
-      const String repro =
-          'Reproduce: scenario "icon semantics", flutter test '
-          'test/home_plain_test.dart --plain-name "excluded from semantics". '
-          'No random input is involved.';
-      await pumpIcon(tester, const PlayerCountIcon(count: 2));
-      final Finder excluding = find.descendant(
-        of: find.byType(PlayerCountIcon),
-        matching: find.byWidgetPredicate(
-          (Widget w) => w is ExcludeSemantics && w.excluding,
-        ),
-      );
-      final Finder around = find.ancestor(
-        of: find.byType(PlayerCountIcon),
-        matching: find.byWidgetPredicate(
-          (Widget w) => w is ExcludeSemantics && w.excluding,
-        ),
-      );
-      expect(
-        excluding.evaluate().isNotEmpty || around.evaluate().isNotEmpty,
-        isTrue,
-        reason:
-            'expected an ExcludeSemantics around the figures; found none '
-            'inside or above PlayerCountIcon. $repro',
-      );
-    });
-  });
 }

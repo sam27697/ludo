@@ -2031,14 +2031,9 @@ Future<void> _runHostSeat0(
 ) async {
   const String hostName = 'Priya';
   await tester.enterText(find.byKey(const Key('home-name-field')), hostName);
-  await tester.tap(find.byKey(const Key('home-players-button')));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
-  final Finder twoPlayers = find.byKey(const Key('home-players-option-2'));
-  expect(twoPlayers, findsOneWidget);
-  await tester.tap(twoPlayers);
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
+  // C-666 D1: home has no players control; the room is created for four and
+  // the host starts with the one friend who sits.
+  expect(find.byKey(const Key('home-players-button')), findsNothing);
 
   await _tapAndAwaitPushedRoute(tester, const Key('create-room-button'));
   expect(factory.controllers, hasLength(1));
@@ -2052,7 +2047,7 @@ Future<void> _runHostSeat0(
   expect(createMessages, hasLength(1));
   final Map<String, Object?> createData = _dataOf(createMessages.single);
   expect(createData['name'], hostName);
-  expect(createData['players'], 2);
+  expect(createData['players'], 4);
   expect(createData['rules'], <String, Object?>{'capture_bonus': true});
   expect(isValidRoomCode(_roomCode), isTrue);
 
@@ -2068,7 +2063,7 @@ Future<void> _runHostSeat0(
       re: _idOf(createMessages.single),
       data: _roomJson(
         code: _roomCode,
-        players: 2,
+        players: 4,
         hostSeat: 0,
         seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
         seq: 1,
@@ -2086,7 +2081,7 @@ Future<void> _runHostSeat0(
   transport.pushText(
     _frame(
       type: 'player_joined',
-      data: <String, Object?>{'seat': 2, 'name': 'Karim', 'seq': 2},
+      data: <String, Object?>{'seat': 1, 'name': 'Karim', 'seq': 2},
     ),
   );
   await tester.pump();
@@ -2096,14 +2091,43 @@ Future<void> _runHostSeat0(
     _roomCode,
   );
   expect(find.byKey(const Key('lobby-seat-0')), findsOneWidget);
-  expect(find.byKey(const Key('lobby-seat-2')), findsOneWidget);
-  expect(find.byKey(const Key('lobby-seat-1')), findsNothing);
-  expect(controller.room!.seats.map((seat) => seat.seat).toList(), <int>[0, 2]);
+  expect(find.byKey(const Key('lobby-seat-1')), findsOneWidget);
+  expect(find.byKey(const Key('lobby-seat-2')), findsNothing);
+  expect(controller.room!.seats.map((seat) => seat.seat).toList(), <int>[0, 1]);
 
-  final Finder startButton = find.byKey(const Key('lobby-start-button'));
+  // C-666 D2: two of four seated, so the one start-with-present button.
+  expect(find.byKey(const Key('lobby-start-button')), findsNothing);
+  final Finder startButton = find.byKey(
+    const Key('lobby-start-with-present-button'),
+  );
   expect(startButton, findsOneWidget);
   await tester.tap(startButton);
   await tester.pump();
+  final List<String> setPlayersMessages = transport.sentRaw
+      .where((String s) => _typeOf(s) == 'set_players')
+      .toList();
+  expect(setPlayersMessages, hasLength(1));
+  expect(_dataOf(setPlayersMessages.single), <String, Object?>{'players': 2});
+  // PROTOCOL section 15: two seats re-seat onto the opposite corners.
+  transport.pushText(
+    _frame(
+      type: 'room',
+      re: _idOf(setPlayersMessages.single),
+      data: _roomJson(
+        code: _roomCode,
+        players: 2,
+        hostSeat: 0,
+        seats: <Map<String, Object?>>[
+          _seatJson(0, name: hostName),
+          _seatJson(2, name: 'Karim'),
+        ],
+        seq: 3,
+      ),
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  expect(controller.room!.seats.map((seat) => seat.seat).toList(), <int>[0, 2]);
   final List<String> startMessages = transport.sentRaw
       .where((String s) => _typeOf(s) == 'start_game')
       .toList();
@@ -2121,7 +2145,7 @@ Future<void> _runHostSeat0(
         'seat': 0,
         'client_seed': 'srvseedseat0',
         'origin': 'server',
-        'seq': 3,
+        'seq': 4,
       },
     ),
   );
@@ -2132,7 +2156,7 @@ Future<void> _runHostSeat0(
         'seat': 2,
         'client_seed': 'srvseedseat2',
         'origin': 'server',
-        'seq': 4,
+        'seq': 5,
       },
     ),
   );
@@ -2144,11 +2168,11 @@ Future<void> _runHostSeat0(
         'turn': 0,
         'game_id': _gameId,
         'client_seeds': _clientSeeds,
-        'seq': 5,
+        'seq': 6,
       },
     ),
   );
-  transport.pushText(_frame(type: 'turn', re: startId, data: _openingTurn(6)));
+  transport.pushText(_frame(type: 'turn', re: startId, data: _openingTurn(7)));
   await tester.pump();
   await tester.pump();
   await _pumpUntilFound(
@@ -2184,7 +2208,7 @@ Future<void> _runHostSeat0(
     transport: transport,
     controller: controller,
     deviceSeat: 0,
-    startSeq: 6,
+    startSeq: 7,
   );
   await playback.playAll(_script);
   expect(controller.room!.state, RoomState.finished);

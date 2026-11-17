@@ -972,7 +972,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
       loc,
       controller,
       room,
-      compact: compact,
       roomFull: roomFull,
       inRematchLobby: inRematchLobby,
       amReadyForRematch: amReadyForRematch,
@@ -1176,13 +1175,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
     );
   }
 
-  /// C-398: the host's start, the short-room start, and the waiting line
+  /// C-398: the host's start, the start with whoever is present, and the waiting line
   /// (and the rematch accept that replaces them) sit outside the scroll.
   List<Widget> _lobbyAction(
     AppLocalizations loc,
     RoomController controller,
     RoomSnapshot room, {
-    required bool compact,
     required bool roomFull,
     required bool inRematchLobby,
     required bool amReadyForRematch,
@@ -1207,18 +1205,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
         ),
       ];
     }
+    // C-666 D3: the host decides when to start, whatever the count.
     if (!controller.isHost) {
       return <Widget>[
-        _dockedWaiting(
-          roomFull
-              ? loc.lobbyWaitingForHost
-              : loc.lobbyWaitingForPlayers(room.seats.length, room.players),
-          const Key('lobby-waiting'),
-        ),
+        _dockedWaiting(loc.lobbyWaitingForHost, const Key('lobby-waiting')),
       ];
     }
-    // C-274 rules 1-2: a full room enables the start button; a room short
-    // of full shows the waiting line, with no disabled start button.
+    // C-666 D2: a full room starts as before; two or three seated start with
+    // whoever is present; the host alone waits for a friend.
     if (roomFull) {
       return <Widget>[
         ElevatedButton(
@@ -1231,13 +1225,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
         ),
       ];
     }
-    return <Widget>[
-      _dockedWaiting(
-        loc.lobbyWaitingForPlayers(room.seats.length, room.players),
-        const Key('lobby-waiting'),
-      ),
-      if (room.state == RoomState.lobby && room.seats.length >= 2) ...[
-        SizedBox(height: compact ? kSpace1 : kSpace2),
+    if (room.state == RoomState.lobby && room.seats.length >= 2) {
+      return <Widget>[
         ElevatedButton(
           key: const Key('lobby-start-with-present-button'),
           style: ElevatedButton.styleFrom(
@@ -1251,7 +1240,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
             textAlign: TextAlign.center,
           ),
         ),
-      ],
+      ];
+    }
+    return <Widget>[
+      _dockedWaiting(loc.lobbyWaitingForFriends, const Key('lobby-waiting')),
     ];
   }
 

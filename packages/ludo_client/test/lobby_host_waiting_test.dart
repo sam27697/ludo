@@ -1,7 +1,11 @@
 // C-274: a host whose room is not full has no disabled lobby-start-button.
-// The seated/total count is the host's lobby-waiting line, the same Text a
-// guest already gets. A full room still shows the enabled Start button and
-// no lobby-waiting. Guests are unchanged.
+// C-666 D2/D3 reworked what stands in its place: with one seated the host
+// reads the waiting-for-friends line on lobby-waiting (the English text the
+// contract gives, "Waiting for friends to join"; the generated getter does
+// not exist on the base); with two or three seated the one
+// start-with-present button and no lobby-waiting; a full room still shows
+// the enabled Start button and no lobby-waiting. A guest always reads
+// lobbyWaitingForHost on lobby-waiting, whatever the count.
 //
 // LobbyScreen is mounted the way test/lobby_screen_test.dart mounts it: a
 // real RoomController over a FakeTransport, one mount per case. The
@@ -190,109 +194,94 @@ Future<void> _resolveConnected(
 }
 
 void main() {
-  testWidgets(
-    'host, 2 of 4, en: no lobby-start-button; lobby-waiting reads the '
-    'count; lobby-start-with-present-button is enabled; the count is said '
-    'once',
-    (WidgetTester tester) async {
-      final _Connector connector = _Connector();
-      final FakeTransport transport = FakeTransport();
-      connector.enqueue(transport);
-      final RoomController controller = _newController(connector);
-      try {
-        final String id = await _mountAndCaptureRequest(
-          tester,
-          LobbyScreen(
-            controller: controller,
-            action: LobbyAction.create,
-            playerName: 'Sam',
-            players: 4,
-          ),
-          transport,
-        );
-        await _resolveConnected(
-          tester,
-          transport,
-          id,
-          seatForThisClient: 0,
-          hostSeat: 0,
-          players: 4,
-          seats: _seats(2),
-        );
-
-        expect(controller.isHost, isTrue);
-        expect(controller.room!.seats.length, 2);
-        expect(controller.room!.players, 4);
-
-        final Finder waiting = find.byKey(_waitingKey);
-        expect(
-          waiting,
-          findsOneWidget,
-          reason:
-              'C-274: a host short of full shows lobby-waiting, the same '
-              'Text a guest gets',
-        );
-        const String count = 'Waiting for players (2 of 4)';
-        final BuildContext context = tester.element(find.byType(LobbyScreen));
-        final AppLocalizations loc = AppLocalizations.of(context);
-        expect(
-          loc.lobbyWaitingForPlayers(2, 4),
-          count,
-          reason:
-              'fixture: en lobbyWaitingForPlayers(2, 4) is the count '
-              'sentence this case reads off the line',
-        );
-        final Text waitingText = tester.widget<Text>(waiting);
-        expect(
-          waitingText.data,
-          count,
-          reason:
-              'C-274: lobby-waiting must read "$count"; got '
-              '"${waitingText.data}"',
-        );
-        expect(
-          find.byKey(_startKey),
-          findsNothing,
-          reason:
-              'C-274: a host short of full has no lobby-start-button, '
-              'disabled or otherwise',
-        );
-
-        final Finder startWith = find.byKey(_startWithKey);
-        expect(
-          startWith,
-          findsOneWidget,
-          reason:
-              'C-274: lobby-start-with-present-button stays for a host in '
-              'LOBBY with 2 or more seated and the room not full',
-        );
-        final ElevatedButton startWithButton = tester.widget<ElevatedButton>(
-          startWith,
-        );
-        expect(
-          startWithButton.onPressed,
-          isNotNull,
-          reason:
-              'C-274: lobby-start-with-present-button is enabled before '
-              'anyone taps it',
-        );
-        expect(
-          find.text(count),
-          findsOneWidget,
-          reason:
-              'C-274: "$count" is said once. A second Text with that '
-              'sentence means the count is on the line and somewhere else',
-        );
-      } finally {
-        controller.dispose();
-      }
-    },
-  );
-
-  testWidgets('host, 1 of 4: no lobby-start-button, no '
-      'lobby-start-with-present-button, lobby-waiting reads the count', (
+  testWidgets('host, 2 of 4, en: no lobby-start-button, no lobby-waiting; '
+      'lobby-start-with-present-button is enabled; its count is said once', (
     WidgetTester tester,
   ) async {
+    final _Connector connector = _Connector();
+    final FakeTransport transport = FakeTransport();
+    connector.enqueue(transport);
+    final RoomController controller = _newController(connector);
+    try {
+      final String id = await _mountAndCaptureRequest(
+        tester,
+        LobbyScreen(
+          controller: controller,
+          action: LobbyAction.create,
+          playerName: 'Sam',
+          players: 4,
+        ),
+        transport,
+      );
+      await _resolveConnected(
+        tester,
+        transport,
+        id,
+        seatForThisClient: 0,
+        hostSeat: 0,
+        players: 4,
+        seats: _seats(2),
+      );
+
+      expect(controller.isHost, isTrue);
+      expect(controller.room!.seats.length, 2);
+      expect(controller.room!.players, 4);
+
+      expect(
+        find.byKey(_waitingKey),
+        findsNothing,
+        reason:
+            'C-666 D2: a host with 2 of 4 seated shows no lobby-waiting '
+            'line above the start-with-present button',
+      );
+      final BuildContext context = tester.element(find.byType(LobbyScreen));
+      final AppLocalizations loc = AppLocalizations.of(context);
+      expect(
+        find.textContaining('Waiting for players'),
+        findsNothing,
+        reason: 'C-666 D2: the old "Waiting for players (n of m)" is gone',
+      );
+      expect(
+        find.byKey(_startKey),
+        findsNothing,
+        reason:
+            'C-274: a host short of full has no lobby-start-button, '
+            'disabled or otherwise',
+      );
+
+      final Finder startWith = find.byKey(_startWithKey);
+      expect(
+        startWith,
+        findsOneWidget,
+        reason:
+            'C-274: lobby-start-with-present-button stays for a host in '
+            'LOBBY with 2 or more seated and the room not full',
+      );
+      final ElevatedButton startWithButton = tester.widget<ElevatedButton>(
+        startWith,
+      );
+      expect(
+        startWithButton.onPressed,
+        isNotNull,
+        reason:
+            'C-274: lobby-start-with-present-button is enabled before '
+            'anyone taps it',
+      );
+      expect(
+        find.text(loc.lobbyStartWithPresent(2)),
+        findsOneWidget,
+        reason:
+            'C-666 D2: "${loc.lobbyStartWithPresent(2)}" is said once, on '
+            'the button',
+      );
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  testWidgets('host, 1 of 4: no lobby-start-button, no '
+      'lobby-start-with-present-button, lobby-waiting reads the '
+      'waiting-for-friends line', (WidgetTester tester) async {
     final _Connector connector = _Connector();
     final FakeTransport transport = FakeTransport();
     connector.enqueue(transport);
@@ -338,15 +327,15 @@ void main() {
       expect(
         waiting,
         findsOneWidget,
-        reason: 'C-274: a host with 1 of 4 seated shows lobby-waiting',
+        reason: 'C-666 D2: a host with 1 of 4 seated shows lobby-waiting',
       );
-      const String count = 'Waiting for players (1 of 4)';
+      const String count = 'Waiting for friends to join';
       final Text waitingText = tester.widget<Text>(waiting);
       expect(
         waitingText.data,
         count,
         reason:
-            'C-274: lobby-waiting must read "$count"; got '
+            'C-666 D2: lobby-waiting must read "$count"; got '
             '"${waitingText.data}"',
       );
     } finally {
@@ -426,8 +415,8 @@ void main() {
     },
   );
 
-  testWidgets('guest, 2 of 4: lobby-waiting reads the count, and neither start '
-      'button is shown', (WidgetTester tester) async {
+  testWidgets('guest, 2 of 4: lobby-waiting reads the host-starts-it line, and '
+      'neither start button is shown', (WidgetTester tester) async {
     final _Connector connector = _Connector();
     final FakeTransport transport = FakeTransport();
     connector.enqueue(transport);
@@ -462,10 +451,10 @@ void main() {
       final Text waitingText = tester.widget<Text>(waiting);
       expect(
         waitingText.data,
-        'Waiting for players (2 of 4)',
+        'Waiting for the host to start the game',
         reason:
-            'a guest short of full still reads the count on '
-            'lobby-waiting; got "${waitingText.data}"',
+            'C-666 D3: a guest short of full reads lobbyWaitingForHost on '
+            'lobby-waiting, no count; got "${waitingText.data}"',
       );
       expect(
         find.byKey(_startKey),
@@ -482,72 +471,75 @@ void main() {
     }
   });
 
-  testWidgets('ar host, 2 of 4: lobby-waiting reads '
-      'AppLocalizations.lobbyWaitingForPlayers, and lobby-start-button is '
-      'absent', (WidgetTester tester) async {
-    final _Connector connector = _Connector();
-    final FakeTransport transport = FakeTransport();
-    connector.enqueue(transport);
-    final RoomController controller = _newController(connector);
-    try {
-      final String id = await _mountAndCaptureRequest(
-        tester,
-        LobbyScreen(
-          controller: controller,
-          action: LobbyAction.create,
-          playerName: 'سام',
+  testWidgets(
+    'ar host, 2 of 4: no lobby-waiting, the start-with-present button '
+    'reads AppLocalizations.lobbyStartWithPresent(2), and lobby-start-button '
+    'is absent',
+    (WidgetTester tester) async {
+      final _Connector connector = _Connector();
+      final FakeTransport transport = FakeTransport();
+      connector.enqueue(transport);
+      final RoomController controller = _newController(connector);
+      try {
+        final String id = await _mountAndCaptureRequest(
+          tester,
+          LobbyScreen(
+            controller: controller,
+            action: LobbyAction.create,
+            playerName: 'سام',
+            players: 4,
+          ),
+          transport,
+          locale: const Locale('ar'),
+        );
+        await _resolveConnected(
+          tester,
+          transport,
+          id,
+          seatForThisClient: 0,
+          hostSeat: 0,
           players: 4,
-        ),
-        transport,
-        locale: const Locale('ar'),
-      );
-      await _resolveConnected(
-        tester,
-        transport,
-        id,
-        seatForThisClient: 0,
-        hostSeat: 0,
-        players: 4,
-        seats: <Map<String, Object?>>[
-          _seatJson(0, name: 'سام'),
-          _seatJson(1, name: 'أمير'),
-        ],
-      );
+          seats: <Map<String, Object?>>[
+            _seatJson(0, name: 'سام'),
+            _seatJson(1, name: 'أمير'),
+          ],
+        );
 
-      expect(controller.isHost, isTrue);
-      expect(controller.room!.seats.length, 2);
-      expect(controller.room!.players, 4);
+        expect(controller.isHost, isTrue);
+        expect(controller.room!.seats.length, 2);
+        expect(controller.room!.players, 4);
 
-      final Finder waiting = find.byKey(_waitingKey);
-      expect(
-        waiting,
-        findsOneWidget,
-        reason:
-            'C-274: a host short of full shows lobby-waiting in '
-            'Locale(ar) too',
-      );
-      final BuildContext context = tester.element(find.byType(LobbyScreen));
-      final AppLocalizations loc = AppLocalizations.of(context);
-      final Text waitingText = tester.widget<Text>(waiting);
-      expect(
-        waitingText.data,
-        loc.lobbyWaitingForPlayers(2, 4),
-        reason:
-            'C-274: lobby-waiting must read this tree\'s own '
-            'AppLocalizations.lobbyWaitingForPlayers(2, 4); got '
-            '"${waitingText.data}"',
-      );
-      expect(
-        find.byKey(_startKey),
-        findsNothing,
-        reason:
-            'C-274: a host short of full has no lobby-start-button in '
-            'Locale(ar) either',
-      );
-    } finally {
-      controller.dispose();
-    }
-  });
+        expect(
+          find.byKey(_waitingKey),
+          findsNothing,
+          reason:
+              'C-666 D2: a host with 2 of 4 seated shows no lobby-waiting in '
+              'Locale(ar) either',
+        );
+        final BuildContext context = tester.element(find.byType(LobbyScreen));
+        final AppLocalizations loc = AppLocalizations.of(context);
+        expect(
+          find.descendant(
+            of: find.byKey(_startWithKey),
+            matching: find.text(loc.lobbyStartWithPresent(2)),
+          ),
+          findsOneWidget,
+          reason:
+              'C-666 D2: the start-with-present button must read this tree\'s '
+              'own AppLocalizations.lobbyStartWithPresent(2)',
+        );
+        expect(
+          find.byKey(_startKey),
+          findsNothing,
+          reason:
+              'C-274: a host short of full has no lobby-start-button in '
+              'Locale(ar) either',
+        );
+      } finally {
+        controller.dispose();
+      }
+    },
+  );
 
   testWidgets('host, 2 of 4: tapping lobby-start-with-present-button sends '
       'set_players then start_game, exactly one of each', (
