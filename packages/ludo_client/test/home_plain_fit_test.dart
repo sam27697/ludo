@@ -1,11 +1,11 @@
 // Proof for contract C-523 (work/ludo/orders/C-523-home-plain-and-one-sound-
 // switch.md), rules D2 and D3, last bullet of its Proof section: at 360 dp
 // wide and a text scale of 2.0, in English and in Arabic, home lays out
-// without an overflow exception, the players row and the sound toggle can
-// be scrolled to and used, and the players question is not clipped.
-// Written from the contract text, against no implementation of it; it does
-// not compile on origin/main 7501227 (home-players-button,
-// home-sound-toggle, homePlayersQuestion and soundToggleLabel do not exist).
+// without an overflow exception and the sound toggle can be scrolled to and
+// used. Moved by C-666 D1 onto the home without a players row: the players
+// row and its menu are gone, so the reach case now reads Create and the
+// absence of the control, and the not-clipped case reads the tagline in the
+// place of the players question.
 //
 // Real fonts, for the reason home_screen_players_fit_test.dart gives:
 // flutter_test's Ahem substitute makes every glyph a full em square, which
@@ -39,7 +39,6 @@ const double _textScale = 2.0;
 
 const Key _playersButtonKey = Key('home-players-button');
 const Key _soundToggleKey = Key('home-sound-toggle');
-Key _optionKey(int n) => Key('home-players-option-$n');
 
 const List<Locale> _locales = <Locale>[Locale('en'), Locale('ar')];
 
@@ -158,11 +157,11 @@ void main() {
   for (final Locale locale in _locales) {
     final String lc = locale.languageCode;
 
-    // Red on 7501227: there is no home-players-button, no home-sound-toggle
-    // and no homePlayersQuestion; home_screen.dart:1520 has the old
-    // disclosure and :1243 the old settings button.
-    testWidgets('360 dp at text scale 2.0, $lc: no exception, the players '
-        'row and the sound toggle are reachable and work', (tester) async {
+    // Red on the base: home-players-button is still on home.
+    testWidgets('360 dp at text scale 2.0, $lc: no exception, no players '
+        'row, Create and the sound toggle are reachable and work', (
+      tester,
+    ) async {
       const String name = 'fit reach';
       final String repro = _repro(name, locale);
       final FeedbackSettings settings = FeedbackSettings.forTest();
@@ -173,51 +172,28 @@ void main() {
         reason: 'expected no exception while laying home out. $repro',
       );
 
-      final Finder button = find.byKey(_playersButtonKey);
       expect(
-        button,
-        findsOneWidget,
-        reason: 'expected home-players-button on home. $repro',
-      );
-      await tester.ensureVisible(button);
-      await tester.pumpAndSettle();
-      final Rect buttonRect = _reach(
-        tester,
-        button,
-        'home-players-button',
-        repro,
-      );
-      expect(
-        buttonRect.width >= 48 && buttonRect.height >= 48,
-        isTrue,
+        find.byKey(_playersButtonKey, skipOffstage: false),
+        findsNothing,
         reason:
-            'expected home-players-button at least 48 x 48 dp at scale '
-            '2.0; got ${buttonRect.size}. $repro',
-      );
-      await tester.tap(button);
-      await tester.pumpAndSettle();
-      expect(
-        tester.takeException(),
-        isNull,
-        reason: 'expected no exception opening the menu at scale 2.0. $repro',
+            'expected no home-players-button on home at scale 2.0 (C-666 '
+            'D1). $repro',
       );
       for (final int n in <int>[2, 3, 4]) {
-        final Finder option = find.byKey(_optionKey(n));
         expect(
-          option,
-          findsOneWidget,
-          reason:
-              'expected home-players-option-$n after tapping the control at '
-              'scale 2.0. $repro',
+          find.byKey(Key('home-players-option-$n'), skipOffstage: false),
+          findsNothing,
+          reason: 'expected no home-players-option-$n on home. $repro',
         );
-        _reach(tester, option, 'home-players-option-$n', repro);
       }
-      await tester.tap(find.byKey(_optionKey(2)));
+      final Finder create = find.byKey(const Key('create-room-button'));
+      await tester.ensureVisible(create);
       await tester.pumpAndSettle();
+      _reach(tester, create, 'create-room-button', repro);
       expect(
         tester.takeException(),
         isNull,
-        reason: 'expected no exception after picking 2 at scale 2.0. $repro',
+        reason: 'expected no exception reaching Create at scale 2.0. $repro',
       );
 
       final Finder toggle = find.byKey(_soundToggleKey);
@@ -257,21 +233,21 @@ void main() {
       );
     });
 
-    // Red on 7501227: no homePlayersQuestion label exists to measure.
-    testWidgets('360 dp at text scale 2.0, $lc: the players question is '
-        'not clipped, clear of the control, inside the screen', (tester) async {
+    // C-666 D1: the players question this case measured is gone; the same
+    // not-clipped check now reads the tagline, the longest line on home.
+    testWidgets('360 dp at text scale 2.0, $lc: the tagline is not clipped, '
+        'clear of the sound toggle, inside the screen', (tester) async {
       const String name = 'fit label';
       final String repro = _repro(name, locale);
       await _mount(tester, locale, FeedbackSettings.forTest());
       final AppLocalizations loc = AppLocalizations.of(
         tester.element(find.byType(Scaffold).first),
       );
-      final Finder text = find.text(loc.homePlayersQuestion);
+      final Finder text = find.text(loc.homeTagline);
       expect(
         text,
         findsOneWidget,
-        reason:
-            'expected the label "${loc.homePlayersQuestion}" on home. $repro',
+        reason: 'expected the tagline "${loc.homeTagline}" on home. $repro',
       );
       await tester.ensureVisible(text);
       await tester.pumpAndSettle();
@@ -328,13 +304,13 @@ void main() {
             'expected the label inside the 360 dp width; it spans '
             '${labelRect.left} to ${labelRect.right}. $repro',
       );
-      final Rect buttonRect = tester.getRect(find.byKey(_playersButtonKey));
+      final Rect toggleRect = tester.getRect(find.byKey(_soundToggleKey));
       expect(
-        labelRect.overlaps(buttonRect),
+        labelRect.overlaps(toggleRect),
         isFalse,
         reason:
-            'expected the label clear of home-players-button; label '
-            '$labelRect overlaps control $buttonRect. $repro',
+            'expected the label clear of home-sound-toggle; label '
+            '$labelRect overlaps control $toggleRect. $repro',
       );
       expect(
         tester.takeException(),

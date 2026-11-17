@@ -41,7 +41,6 @@ const Key _chipKey = Key('home-last-table-chip');
 const Key _aboveHomeKey = Key('above-home-probe');
 const Key _createKey = Key('create-room-button');
 const Key _joinKey = Key('join-room-button');
-const Key _playersButtonKey = Key('home-players-button');
 const Key _lobbyRoomCodeKey = Key('lobby-room-code');
 
 const String _testUrl = 'wss://link-join-returning-guest-test.invalid/ws';
@@ -407,23 +406,8 @@ Future<void> _letStoreWriteSettle(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 50));
 }
 
-/// Opens the players menu (C-523 D2) and picks [count].
-Future<void> _selectPlayers(WidgetTester tester, int count) async {
-  await tester.ensureVisible(find.byKey(_playersButtonKey));
-  await tester.tap(find.byKey(_playersButtonKey));
-  await tester.pumpAndSettle();
-  expect(
-    find.byKey(Key('home-players-option-$count')),
-    findsOneWidget,
-    reason:
-        'fixture is broken: tapping home-players-button must open '
-        'home-players-option-$count',
-  );
-  await tester.tap(find.byKey(Key('home-players-option-$count')));
-  await tester.pumpAndSettle();
-}
-
-/// Types [name] and [seats], taps Create, and answers the wire so the create
+/// Types [name], taps Create (which asks for [seats], always 4 since C-666
+/// D1), and answers the wire so the create
 /// lands on a connected lobby. Returns the sent create_room frame's name, for
 /// callers that want to assert the store against what was actually sent
 /// rather than a hardcoded literal. The transport is read from [factory]
@@ -437,7 +421,6 @@ Future<String> _completeSuccessfulCreate(
 }) async {
   await tester.enterText(find.byKey(_nameKey), name);
   await tester.pump();
-  await _selectPlayers(tester, seats);
   await _tapAndAwaitPushedRoute(tester, _createKey);
 
   final FakeTransport transport = factory.transports.last;

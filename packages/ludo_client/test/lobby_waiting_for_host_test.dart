@@ -1,26 +1,20 @@
-// Order 188: a guest in a full room is not told the players count anymore,
-// because nobody else is coming -- what a guest in a full room is actually
-// waiting for is the host pressing Start. lobby_screen.dart's guest branch
-// on this base still always reads loc.lobbyWaitingForPlayers(seated, total)
-// (see W-G2 in test/lobby_screen_test.dart, which pinned that as today's
-// text and said so in its own reason). Order 189, a different worker
-// writing to a disjoint file list in the same round, is expected to change
-// that branch to read a new string, ARB key lobbyWaitingForHost, when the
-// room is full. That getter does not exist on this base, so this file pins
-// the contract with the literal strings order 189 must produce rather than
-// with loc.lobbyWaitingForHost: a file that does not compile is not a
-// measurement. Every case below except WH-PART is therefore expected to
-// fail on this base, on the waiting text, not on a fixture assertion.
+// Order 188 introduced the guest's host-starts-it line for a full room;
+// C-666 D3 widened it: a guest in an ordinary lobby always reads
+// lobbyWaitingForHost on lobby-waiting, whatever the seat count, and the
+// "Waiting for players (n of m)" line is no longer shown. The cases that
+// pinned the count for a room short of full (WH-PART, the first half of
+// WH-FILL) now pin the host line for the same situation.
+//
+// This file pins the contract with the literal strings rather than with the
+// generated getters, so it compiles whether or not lobbyWaitingForPlayers is
+// still generated. The old count line is matched by its literal text.
 //
 // Driven the same way test/lobby_screen_test.dart drives LobbyScreen: a
 // real RoomController built over a FakeTransport (test/net/fake_transport.
 // dart, read-only, not edited here), never a mock of RoomController. The
 // connector double, the frame builder and the JSON fixtures below are
 // copied from lobby_screen_test.dart's own idiom rather than imported --
-// every one of them is file-private there (leading underscore), so an
-// import of that file would not expose them; that file itself explains
-// (its own header, ambiguity 4) why its connector double was copied from
-// room_controller_test.dart rather than imported, for the same reason.
+// every one of them is file-private there (leading underscore).
 //
 // WH-FILL's "server pushes the frame that seats a fourth player" is the
 // presence-gap-then-resume path lobby_screen_test.dart already exercises
@@ -47,10 +41,11 @@ import 'net/fake_transport.dart';
 
 const String _testUrl = 'wss://example.test/ws';
 
-// Order 188's own two pinned literals. Not loc.lobbyWaitingForHost: that
-// getter does not exist on this base.
+// The host-starts-it literals, the en and ar texts of lobbyWaitingForHost.
 const String _kWaitingForHostEn = 'Waiting for the host to start the game';
 const String _kWaitingForHostAr = 'بانتظار المضيف لبدء اللعبة';
+const String _kOldCountEn = 'Waiting for players';
+const String _kOldCountAr = 'بانتظار اللاعبين';
 
 // --- server-side id generation for pushed frames ---------------------------
 
@@ -234,8 +229,8 @@ Future<void> _resolveConnected(
 }
 
 void main() {
-  group('order 188: guest sees lobbyWaitingForHost only when the room is '
-      'full', () {
+  group('order 188, widened by C-666 D3: a guest always sees '
+      'lobbyWaitingForHost', () {
     testWidgets(
       'WH-EN: guest, room full (4 of 4), Locale(en): lobby-waiting reads '
       'the host-starts-it literal, not the players count',
@@ -283,8 +278,6 @@ void main() {
           reason: 'WH-EN fixture: needs a full room, 4 of 4',
         );
 
-        final context = tester.element(find.byType(LobbyScreen));
-        final loc = AppLocalizations.of(context);
         final waitingFinder = find.byKey(const Key('lobby-waiting'));
         expect(
           waitingFinder,
@@ -303,13 +296,12 @@ void main() {
               'is now waiting on); got "${waitingText.data}"',
         );
         expect(
-          waitingText.data,
-          isNot(loc.lobbyWaitingForPlayers(4, 4)),
+          find.textContaining(_kOldCountEn),
+          findsNothing,
           reason:
-              'WH-EN: lobby-waiting must no longer read '
-              'loc.lobbyWaitingForPlayers(4, 4) once the room is full; '
-              'nobody else is coming, so a players count is not what a '
-              'guest is waiting for',
+              'WH-EN: the "$_kOldCountEn (n of m)" line must not be shown '
+              'in a full room; nobody else is coming, so a players count is '
+              'not what a guest is waiting for',
         );
       },
     );
@@ -362,8 +354,6 @@ void main() {
           reason: 'WH-AR fixture: needs a full room, 4 of 4',
         );
 
-        final context = tester.element(find.byType(LobbyScreen));
-        final loc = AppLocalizations.of(context);
         final waitingFinder = find.byKey(const Key('lobby-waiting'));
         expect(
           waitingFinder,
@@ -382,12 +372,11 @@ void main() {
               'is now waiting on); got "${waitingText.data}"',
         );
         expect(
-          waitingText.data,
-          isNot(loc.lobbyWaitingForPlayers(4, 4)),
+          find.textContaining(_kOldCountAr),
+          findsNothing,
           reason:
-              'WH-AR: lobby-waiting must no longer read that tree\'s own '
-              'AppLocalizations.lobbyWaitingForPlayers(4, 4) once the room '
-              'is full',
+              'WH-AR: the "$_kOldCountAr (n of m)" line must not be shown '
+              'in a full room',
         );
       },
     );
@@ -466,10 +455,8 @@ void main() {
       },
     );
 
-    testWidgets('WH-PART: guest, 3 of 4: lobby-waiting still reads the players '
-        'count, catching an implementation that always shows the host line', (
-      tester,
-    ) async {
+    testWidgets('WH-PART: guest, 3 of 4: lobby-waiting reads the host line, '
+        'not the players count (C-666 D3)', (tester) async {
       final connector = _Connector();
       final transport = FakeTransport();
       connector.enqueue(transport);
@@ -518,8 +505,6 @@ void main() {
         reason: 'WH-PART fixture: needs a room short of full, 3 of 4',
       );
 
-      final context = tester.element(find.byType(LobbyScreen));
-      final loc = AppLocalizations.of(context);
       final waitingFinder = find.byKey(const Key('lobby-waiting'));
       expect(
         waitingFinder,
@@ -529,19 +514,23 @@ void main() {
       final waitingText = tester.widget<Text>(waitingFinder);
       expect(
         waitingText.data,
-        loc.lobbyWaitingForPlayers(3, 4),
+        _kWaitingForHostEn,
         reason:
-            'WH-PART: with the room short of full, lobby-waiting must '
-            'still read loc.lobbyWaitingForPlayers(3, 4), unchanged; '
-            'a guest is not shown the host line while a seat is still '
-            'open; got "${waitingText.data}"',
+            'WH-PART: with the room short of full, lobby-waiting must read '
+            '"$_kWaitingForHostEn" all the same (C-666 D3: the host decides '
+            'when to start); got "${waitingText.data}"',
+      );
+      expect(
+        find.textContaining(_kOldCountEn),
+        findsNothing,
+        reason: 'WH-PART: the "$_kOldCountEn (n of m)" line is gone',
       );
     });
 
     testWidgets(
-      'WH-FILL: guest mounted at 3 of 4 reading the players line; once '
-      'the server pushes the frame that seats the fourth player, the '
-      'same lobby-waiting reads the host-starts-it literal',
+      'WH-FILL: guest mounted at 3 of 4 reading the host line; once the '
+      'server pushes the frame that seats the fourth player, the same '
+      'lobby-waiting still reads the host-starts-it literal',
       (tester) async {
         final connector = _Connector();
         final transport = FakeTransport();
@@ -591,16 +580,14 @@ void main() {
           reason: 'WH-FILL fixture: must mount short of full, 3 of 4',
         );
 
-        final context = tester.element(find.byType(LobbyScreen));
-        final loc = AppLocalizations.of(context);
         final waitingFinder = find.byKey(const Key('lobby-waiting'));
         final beforeText = tester.widget<Text>(waitingFinder);
         expect(
           beforeText.data,
-          loc.lobbyWaitingForPlayers(3, 4),
+          _kWaitingForHostEn,
           reason:
-              'WH-FILL fixture: before the fourth seat arrives, '
-              'lobby-waiting must read loc.lobbyWaitingForPlayers(3, 4); '
+              'WH-FILL: before the fourth seat arrives, lobby-waiting must '
+              'already read "$_kWaitingForHostEn" (C-666 D3); '
               'got "${beforeText.data}"',
         );
 

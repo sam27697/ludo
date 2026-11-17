@@ -1,5 +1,7 @@
 // C-398. Lobby and home: the next step stays inside the safe area on the
-// probe's phone shapes. A keyed widget is visible when its global rect is
+// probe's phone shapes. Reworked by C-666 D2/D3: a host with three seated
+// shows the start-with-present button alone (no waiting line above it), and
+// a new case, the host alone, reads the waiting-for-friends line. A keyed widget is visible when its global rect is
 // wholly inside [padding.top, height - padding.bottom] and [0, width],
 // wholly inside its Scrollable ancestor's render box when it has one, and
 // a hit test at the rect's centre reaches that widget, read with the
@@ -130,29 +132,33 @@ const List<_Shape> _shapes = <_Shape>[
   ),
 ];
 
-enum _LobbyCase { host4, host3, guest3 }
+enum _LobbyCase { host4, host3, host1, guest3 }
 
 String _lobbyState(_LobbyCase lobbyCase) => switch (lobbyCase) {
   _LobbyCase.host4 => 'lobby-host4',
   _LobbyCase.host3 => 'lobby-host3',
+  _LobbyCase.host1 => 'lobby-host1',
   _LobbyCase.guest3 => 'lobby-guest3',
 };
 
 List<Key> _shownKeys(_LobbyCase lobbyCase) => switch (lobbyCase) {
   _LobbyCase.host4 => const <Key>[_startKey],
-  _LobbyCase.host3 => const <Key>[_presentKey, _waitingKey],
+  _LobbyCase.host3 => const <Key>[_presentKey],
+  _LobbyCase.host1 => const <Key>[_waitingKey],
   _LobbyCase.guest3 => const <Key>[_waitingKey],
 };
 
 List<Key> _hiddenKeys(_LobbyCase lobbyCase) => switch (lobbyCase) {
   _LobbyCase.host4 => const <Key>[_presentKey, _waitingKey],
-  _LobbyCase.host3 => const <Key>[_startKey],
+  _LobbyCase.host3 => const <Key>[_startKey, _waitingKey],
+  _LobbyCase.host1 => const <Key>[_startKey, _presentKey],
   _LobbyCase.guest3 => const <Key>[_startKey, _presentKey],
 };
 
 List<Key> _hitKeys(_LobbyCase lobbyCase) => switch (lobbyCase) {
   _LobbyCase.host4 => const <Key>[_startKey],
   _LobbyCase.host3 => const <Key>[_presentKey],
+  _LobbyCase.host1 => const <Key>[],
   _LobbyCase.guest3 => const <Key>[],
 };
 
@@ -579,7 +585,11 @@ Future<void> _mountLobby(
   required String where,
 }) async {
   final bool guest = lobbyCase == _LobbyCase.guest3;
-  final int occupied = lobbyCase == _LobbyCase.host4 ? 4 : 3;
+  final int occupied = switch (lobbyCase) {
+    _LobbyCase.host4 => 4,
+    _LobbyCase.host1 => 1,
+    _ => 3,
+  };
   final int mySeat = guest ? 1 : 0;
   final _Connector connector = _Connector();
   final FakeTransport transport = FakeTransport();

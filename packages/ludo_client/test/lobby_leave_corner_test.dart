@@ -18,10 +18,12 @@
 // own copy, per this order's instruction to never import across test files.
 //
 // Fixture for every case: a host lobby, 4 players, 2 of 4 seated, so
-// lobby-waiting shows the count and lobby-start-with-present-button shows
-// enabled reading "Start with 2". C-274 rule 6 measures lobby-waiting where
-// C-262 rule 5 measured the disabled lobby-start-button. The rect bounds
-// are the same.
+// lobby-start-with-present-button shows enabled reading "Start with 2".
+// C-274 rule 6 measured lobby-waiting where C-262 rule 5 measured the
+// disabled lobby-start-button; since C-666 D2 that line is shown only while
+// the host sits alone, so rule 5 measures the start-with-present button on
+// the 2-of-4 fixture and lobby-waiting on a host-alone fixture. The rect
+// bounds are the same.
 
 import 'dart:convert';
 
@@ -229,6 +231,7 @@ Future<RoomController> _mountHostNotFullAtSize(
   WidgetTester tester, {
   required Size size,
   required Locale locale,
+  bool alone = false,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -259,7 +262,7 @@ Future<RoomController> _mountHostNotFullAtSize(
     seatForThisClient: 0,
     hostSeat: 0,
     players: 4,
-    seats: _twoOfFourSeats(),
+    seats: alone ? _twoOfFourSeats().sublist(0, 1) : _twoOfFourSeats(),
   );
 
   expect(
@@ -270,27 +273,38 @@ Future<RoomController> _mountHostNotFullAtSize(
         'rule 5 or rule 3 case can be asserted; got ${controller.phase}',
   );
   expect(
-    find.byKey(_startWithKey),
+    find.byKey(alone ? _waitingKey : _startWithKey),
     findsOneWidget,
     reason:
-        'fixture check: this scenario (host, 4 players, 2 of 4 seated) '
-        'must show lobby-start-with-present-button; a failure here means '
-        'the rig never reached the intended state, which is a broken '
-        'scenario, not the contract under test',
+        'fixture check: this scenario (host, 4 players, '
+        '${alone ? '1' : '2'} of 4 seated) must show '
+        '${alone ? 'lobby-waiting' : 'lobby-start-with-present-button'}; a '
+        'failure here means the rig never reached the intended state, which '
+        'is a broken scenario, not the contract under test',
   );
 
   return controller;
 }
 
-/// C-274 rule 6, keeping C-262 rule 5's bounds: lobby-leave-button,
-/// lobby-waiting and lobby-start-with-present-button each found once, each
-/// rect entirely inside [size], with no scrolling performed by this helper.
+/// C-274 rule 6, keeping C-262 rule 5's bounds, reworked by C-666 D2:
+/// lobby-leave-button and the one control the fixture shows (the
+/// start-with-present button, or lobby-waiting for the host alone) each
+/// found once, each rect entirely inside [size], with no scrolling performed
+/// by this helper.
 void _expectLeaveWaitingAndStartWithFit(
   WidgetTester tester, {
   required Size size,
   required String caseLabel,
+  bool alone = false,
 }) {
-  for (final Key key in <Key>[_leaveKey, _waitingKey, _startWithKey]) {
+  expect(
+    find.byKey(alone ? _startWithKey : _waitingKey),
+    findsNothing,
+    reason:
+        '$caseLabel: C-666 D2, the ${alone ? 'start-with-present button' : 'waiting line'} '
+        'is not shown with ${alone ? 'one' : 'two'} seated',
+  );
+  for (final Key key in <Key>[_leaveKey, alone ? _waitingKey : _startWithKey]) {
     final Finder finder = find.byKey(key);
     expect(
       finder,
@@ -320,7 +334,7 @@ void _expectLeaveWaitingAndStartWithFit(
 
 void main() {
   // --- rule 5: fits at both sizes, both locales, no scrolling. -------------
-  testWidgets('rule 5: 360x616 en -- lobby-leave-button, lobby-waiting and '
+  testWidgets('rule 5: 360x616 en -- lobby-leave-button and '
       'lobby-start-with-present-button each fit inside the view', (
     WidgetTester tester,
   ) async {
@@ -337,7 +351,7 @@ void main() {
     );
   });
 
-  testWidgets('rule 5: 360x616 ar -- lobby-leave-button, lobby-waiting and '
+  testWidgets('rule 5: 360x616 ar -- lobby-leave-button and '
       'lobby-start-with-present-button each fit inside the view', (
     WidgetTester tester,
   ) async {
@@ -354,7 +368,7 @@ void main() {
     );
   });
 
-  testWidgets('rule 5: 800x600 en -- lobby-leave-button, lobby-waiting and '
+  testWidgets('rule 5: 800x600 en -- lobby-leave-button and '
       'lobby-start-with-present-button each fit inside the view', (
     WidgetTester tester,
   ) async {
@@ -371,7 +385,7 @@ void main() {
     );
   });
 
-  testWidgets('rule 5: 800x600 ar -- lobby-leave-button, lobby-waiting and '
+  testWidgets('rule 5: 800x600 ar -- lobby-leave-button and '
       'lobby-start-with-present-button each fit inside the view', (
     WidgetTester tester,
   ) async {
@@ -387,6 +401,31 @@ void main() {
       caseLabel: 'rule 5 (800x600 ar)',
     );
   });
+
+  for (final (Size size, Locale locale) in <(Size, Locale)>[
+    (const Size(360, 616), const Locale('en')),
+    (const Size(360, 616), const Locale('ar')),
+    (const Size(800, 600), const Locale('en')),
+    (const Size(800, 600), const Locale('ar')),
+  ]) {
+    final String where =
+        '${size.width.toInt()}x${size.height.toInt()} ${locale.languageCode}';
+    testWidgets('rule 5, host alone: $where -- lobby-leave-button and '
+        'lobby-waiting each fit inside the view', (WidgetTester tester) async {
+      await _mountHostNotFullAtSize(
+        tester,
+        size: size,
+        locale: locale,
+        alone: true,
+      );
+      _expectLeaveWaitingAndStartWithFit(
+        tester,
+        size: size,
+        caseLabel: 'rule 5, host alone ($where)',
+        alone: true,
+      );
+    });
+  }
 
   // --- rule 3: exactly one lobby-leave-button, no stray OutlinedButton. ----
   testWidgets(

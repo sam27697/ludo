@@ -55,6 +55,11 @@
 // lobby-waiting with the count, and the leave button's vertical bound is
 // against lobby-waiting. The 48, half-width and top-quarter bounds are
 // unchanged. L-H2 (full room) still requires the enabled start button.
+//
+// Amendment, C-666 D2: a host with two seated no longer sees lobby-waiting
+// at all; the one start-with-present button stands in the waiting line's
+// place. L-H1 and the host L-POS now assert that button, and measure the
+// leave button against it.
 
 import 'dart:convert';
 
@@ -321,8 +326,8 @@ void main() {
   testWidgets(
     'L-H1: host, room not full: lobby-leave-button is present exactly '
     'once, is an IconButton with a non-null onPressed, tooltip '
-    'loc.gameLeaveButton, lobby-waiting shows the count, and '
-    'lobby-start-button is absent',
+    'loc.gameLeaveButton, lobby-waiting is absent, the start-with-present '
+    'button reads the seated count, and lobby-start-button is absent',
     (WidgetTester tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transport = FakeTransport();
@@ -396,21 +401,20 @@ void main() {
             'loc.gameLeaveButton, which reads "${loc.gameLeaveButton}" '
             '(contract C-262 rule 1)',
       );
-      final Finder waiting = find.byKey(_waitingKey);
       expect(
-        waiting,
+        find.byKey(_waitingKey),
+        findsNothing,
+        reason: 'L-H1: a host with 2 of 4 seated shows no lobby-waiting',
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('lobby-start-with-present-button')),
+          matching: find.text(loc.lobbyStartWithPresent(2)),
+        ),
         findsOneWidget,
         reason:
-            'L-H1: a host short of full shows lobby-waiting with the '
-            'seated/total count',
-      );
-      final Text waitingText = tester.widget<Text>(waiting);
-      expect(
-        waitingText.data,
-        loc.lobbyWaitingForPlayers(2, 4),
-        reason:
-            'L-H1: lobby-waiting must read '
-            'loc.lobbyWaitingForPlayers(2, 4); got "${waitingText.data}"',
+            'L-H1: a host with 2 of 4 seated shows the start-with-present '
+            'button reading loc.lobbyStartWithPresent(2)',
       );
       expect(
         find.byKey(_startKey),
@@ -614,8 +618,8 @@ void main() {
   // top start corner, at least 48 x 48.
   testWidgets(
     'L-POS (host tree, the L-H1 fixture): lobby-leave-button sits above '
-    'lobby-waiting, in the top start corner, and is the first control '
-    'in the body',
+    'lobby-start-with-present-button, in the top start corner, and is the '
+    'first control in the body',
     (WidgetTester tester) async {
       final _Connector connector = _Connector();
       final FakeTransport transport = FakeTransport();
@@ -698,35 +702,37 @@ void main() {
         findsNothing,
         reason:
             'L-POS: a host short of full has no lobby-start-button; the '
-            'vertical bound below is against lobby-waiting',
+            'vertical bound below is against the start-with-present button',
       );
-      final Finder waitingFinder = find.byKey(_waitingKey);
+      const Key presentKey = Key('lobby-start-with-present-button');
+      final Finder presentFinder = find.byKey(presentKey);
       expect(
-        waitingFinder,
+        presentFinder,
         findsOneWidget,
         reason:
-            'L-POS: lobby-waiting must be present before its position can '
-            'be measured',
+            'L-POS: lobby-start-with-present-button must be present before '
+            'its position can be measured (C-666 D2)',
       );
-      final Rect waitingRect = tester.getRect(waitingFinder);
+      final Rect presentRect = tester.getRect(presentFinder);
       expect(
         leaveRect.bottom,
-        lessThanOrEqualTo(waitingRect.top),
+        lessThanOrEqualTo(presentRect.top),
         reason:
             'L-POS: in L-H1\'s tree, lobby-leave-button\'s bottom edge '
-            '(${leaveRect.bottom}) must sit above lobby-waiting\'s '
-            'top edge (${waitingRect.top}) (contract C-262 rule 1)',
+            '(${leaveRect.bottom}) must sit above '
+            'lobby-start-with-present-button\'s top edge '
+            '(${presentRect.top}) (contract C-262 rule 1)',
       );
 
       // Nothing else the host tree shows sits higher than lobby-leave-button
-      // either, so lobby-waiting sitting below it (just proven) is not
+      // either, so the start button sitting below it (just proven) is not
       // a coincidence of one comparison.
       for (final Key otherKey in <Key>[
         _copyLinkKey,
         _copyCodeKey,
         const Key('lobby-seat-0'),
         const Key('lobby-seat-1'),
-        _waitingKey,
+        presentKey,
       ]) {
         final Rect otherRect = tester.getRect(find.byKey(otherKey));
         expect(

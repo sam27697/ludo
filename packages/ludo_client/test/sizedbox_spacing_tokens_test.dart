@@ -517,21 +517,31 @@ void main() {
     }, 'tall HomeScreen title-to-tagline gap');
   });
 
+  // C-666 D1: the players control this gap was measured from is gone. The
+  // same compact gap is now the one between the name field and Create. The
+  // contract says the gap the control left "closes" without naming a token;
+  // the two gaps that flanked it merge into one, kSpace3 or kSpace4, as the
+  // old players-control-to-create gap did. A 48 dp slot does not.
   testWidgets(
-    'home compact players-control-to-create gap is kSpace3 or kSpace4',
+    'home compact name-field-to-create gap is kSpace3 or kSpace4 (C-666 D1)',
     (WidgetTester tester) async {
       await _pumpHome(tester, size: const Size(390, 600));
 
-      final Rect players = tester.getRect(
-        find.byKey(const Key('home-players-button')),
+      expect(
+        find.byKey(const Key('home-players-button'), skipOffstage: false),
+        findsNothing,
+        reason: 'C-666 D1: home has no players control',
+      );
+      final Rect field = tester.getRect(
+        find.byKey(const Key('home-name-field')),
       );
       final Rect create = tester.getRect(
         find.byKey(const Key('create-room-button')),
       );
-      _expectGapIn(create.top - players.bottom, <double>{
+      _expectGapIn(create.top - field.bottom, <double>{
         kSpace3,
         kSpace4,
-      }, 'compact HomeScreen players-control-to-create gap');
+      }, 'compact HomeScreen name-field-to-create gap');
     },
   );
 
