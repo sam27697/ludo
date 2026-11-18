@@ -523,6 +523,11 @@ class RoomConnection {
     return request('emote', <String, Object?>{'emote': id});
   }
 
+  /// docs/PROTOCOL.md section 30 rule 4: declines the pending shared release.
+  Future<Frame> declineRelease() {
+    return request('decline_release', const <String, Object?>{});
+  }
+
   /// docs/PROTOCOL.md section 21.1: `face` is the queued face this move
   /// spends, carried on the wire only when given. Absent, the server spends
   /// `defaultFace`.
