@@ -449,6 +449,14 @@ class _GameScreenState extends State<GameScreen> {
   // die plays D4's landing pop. A newer `rolled` of mine restarts the hold.
   Timer? _ownRollHoldTimer;
   final GlobalKey _gameDieKey = GlobalKey(debugLabel: 'game-die-widget');
+
+  /// C-667 D1 r2: the board, the roll tray and the hint control keep their
+  /// State when a large screen turns between portrait and landscape and the
+  /// play area is laid out differently (a walk in flight, the tray's tiles,
+  /// the bulb's pulse). The die has its own key above.
+  final GlobalKey _boardHostKey = GlobalKey(debugLabel: 'game-board-host');
+  final GlobalKey _rollTrayHostKey = GlobalKey(debugLabel: 'game-tray-host');
+  final GlobalKey _hintButtonHostKey = GlobalKey(debugLabel: 'game-hint-host');
   int? _ownRollHoldFace;
   bool _ownRollAgain = false;
   int _ownRollPop = 0;
@@ -6199,15 +6207,28 @@ class _GameScreenState extends State<GameScreen> {
     bool trayOwnMove,
     int? ownRollHeld, {
     bool wrapTray = false,
+    double? sideMaxWidth,
   }) {
     final HintControlState? hintState = _hintControlState(room, seat);
     final bool hinted = hintState != null && seat != null;
-    Widget trayWidget() => RollTray(
-      key: const Key('game-roll-tray'),
-      faces: trayFaces!,
-      states: trayStates!,
-      seatColor: trayColor,
-      ownMove: trayOwnMove,
+    // C-667 D1 r2: the tray and the hint control carry a global key, so a
+    // rotation that moves the band between the column and the side space
+    // takes their State with it.
+    Widget trayWidget() => KeyedSubtree(
+      key: _rollTrayHostKey,
+      child: RollTray(
+        key: const Key('game-roll-tray'),
+        faces: trayFaces!,
+        states: trayStates!,
+        seatColor: trayColor,
+        ownMove: trayOwnMove,
+      ),
+    );
+    Widget hintWidget() => HintButton(
+      key: _hintButtonHostKey,
+      state: hintState!,
+      seatColor: LudoColors.seats[seat!.clamp(0, 3)],
+      onTap: _onHintTap,
     );
     // C-511 D1: the control's own 48 dp box and the gap after it.
     final double reserved = hinted ? kHintHitWidth + kSpace2 : 0;
@@ -6221,50 +6242,109 @@ class _GameScreenState extends State<GameScreen> {
     // C-667 D1: in the narrow side space the tray is not a sibling of the
     // die; it is placed under the band, centred, by the code at the end.
     final bool trayInRow = withTray && !wrapTray;
+    Widget dieSlotFor(double cap) => ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: cap),
+      child: _boardDieSlot(
+        loc,
+        turn,
+        ownRollHeld,
+        // C-468 D7: the die fades its own art (idleOpacity); the key on
+        // the die is unchanged. C-520 A2: the fade lives inside GameDie
+        // so the refusal mark stays outside it.
+        GameDie(
+          // C-653 D4: the slot above wraps the die in a Semantics node
+          // only while a face is announced, which moves the die in the
+          // tree at the very frame a roll lands. A global key keeps its
+          // state, and with it the landing pop, across that move.
+          key: _gameDieKey,
+          face: dieFace,
+          seatColor: dieSeatColor,
+          enabled: rollEnabled,
+          tumbling: _rollWaitK != null,
+          noAnswer: _rollNoAnswer,
+          noMove: _noMoveVisible,
+          // C-404: the die's top sits exactly at the row's own
+          // top (it is the tallest thing in the row), which
+          // sits `metrics.boardGap` below the board -- the
+          // same number board_floor_nav_inset_test.dart
+          // measures as die.top - board.bottom. Handing that
+          // straight to the die is what lets its badge clamp
+          // itself without this column's gaps, clamp or floor
+          // changing at all.
+          badgeHeadroom: metrics.boardGap,
+          idleOpacity: fadeIdleDie ? 0.45 : 1,
+          rollAgain: ownRollHeld != null && _ownRollAgain,
+          popSerial: _ownRollPop,
+          onTap: rollEnabled ? _onDieTap : null,
+          onInvalidTap: () {
+            FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+          },
+        ),
+      ),
+    );
+    if (sideMaxWidth != null) {
+      // C-667 D1 r2: in the side space the band is one compact group, the
+      // hint control beside the die at [kSpace2], the tray beside the die
+      // or, when the side space is narrow, under it. The group is exactly
+      // as large as what it shows, the no-move mark included, and the
+      // caller centres it in the side space. The mark hangs [reach] past
+      // the die's top and physical right; it is given room only where the
+      // hint control or the tray beside the die does not already cover it
+      // (the control's own 48 dp box is wider than its 40 dp disc, so the
+      // mark never reaches the disc).
+      final double reach = _noMoveMarkReach;
+      final bool markCovered = rtl ? hinted : trayInRow;
+      final double markRight = markCovered ? 0 : reach;
+      final double cap = math.max(
+        0.0,
+        sideMaxWidth - reserved - markRight - (trayInRow ? kSpace2 : 0),
+      );
+      final Widget dieLine = Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: <Widget>[
+          if (hinted) ...<Widget>[
+            // C-637 D5c: the bulb's room stays so the die does not shift,
+            // the bulb itself goes with the seat.
+            SizedBox(
+              width: kHintHitWidth,
+              child: _seatLost ? null : Center(child: hintWidget()),
+            ),
+            const SizedBox(width: kSpace2),
+          ],
+          Padding(
+            padding: EdgeInsets.only(right: markRight),
+            child: dieSlotFor(cap),
+          ),
+          if (trayInRow) ...<Widget>[
+            const SizedBox(width: kSpace2),
+            Flexible(child: trayWidget()),
+          ],
+        ],
+      );
+      return RepaintBoundary(
+        key: const ValueKey<String>('c667-side-band'),
+        child: Padding(
+          padding: EdgeInsets.only(top: reach),
+          child: wrapTray && withTray
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: <Widget>[
+                    dieLine,
+                    const SizedBox(height: kSpace2),
+                    trayWidget(),
+                  ],
+                )
+              : dieLine,
+        ),
+      );
+    }
     Widget rowFor(double cap) => Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: <Widget>[
-        ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: cap),
-          child: _boardDieSlot(
-            loc,
-            turn,
-            ownRollHeld,
-            // C-468 D7: the die fades its own art (idleOpacity); the key on
-            // the die is unchanged. C-520 A2: the fade lives inside GameDie
-            // so the refusal mark stays outside it.
-            GameDie(
-              // C-653 D4: the slot above wraps the die in a Semantics node
-              // only while a face is announced, which moves the die in the
-              // tree at the very frame a roll lands. A global key keeps its
-              // state, and with it the landing pop, across that move.
-              key: _gameDieKey,
-              face: dieFace,
-              seatColor: dieSeatColor,
-              enabled: rollEnabled,
-              tumbling: _rollWaitK != null,
-              noAnswer: _rollNoAnswer,
-              noMove: _noMoveVisible,
-              // C-404: the die's top sits exactly at the row's own
-              // top (it is the tallest thing in the row), which
-              // sits `metrics.boardGap` below the board -- the
-              // same number board_floor_nav_inset_test.dart
-              // measures as die.top - board.bottom. Handing that
-              // straight to the die is what lets its badge clamp
-              // itself without this column's gaps, clamp or floor
-              // changing at all.
-              badgeHeadroom: metrics.boardGap,
-              idleOpacity: fadeIdleDie ? 0.45 : 1,
-              rollAgain: ownRollHeld != null && _ownRollAgain,
-              popSerial: _ownRollPop,
-              onTap: rollEnabled ? _onDieTap : null,
-              onInvalidTap: () {
-                FeedbackScope.of(context).play(FeedbackCue.invalidTap);
-              },
-            ),
-          ),
-        ),
+        dieSlotFor(cap),
         if (trayInRow) ...<Widget>[
           const SizedBox(width: kSpace2),
           Flexible(child: trayWidget()),
@@ -6310,29 +6390,11 @@ class _GameScreenState extends State<GameScreen> {
                   start: 0,
                   top: 0,
                   bottom: 0,
-                  child: Center(
-                    child: HintButton(
-                      state: hintState,
-                      seatColor: LudoColors.seats[seat.clamp(0, 3)],
-                      onTap: _onHintTap,
-                    ),
-                  ),
+                  child: Center(child: hintWidget()),
                 ),
             ],
           );
-    if (!wrapTray || !withTray) {
-      return dieHalf;
-    }
-    // C-667 D1: the tray under the die, inside the side space.
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        dieHalf,
-        const SizedBox(height: kSpace2),
-        Center(child: trayWidget()),
-      ],
-    );
+    return dieHalf;
   }
 
   /// C-471 D3. Null when the control is not on screen.
@@ -6630,6 +6692,7 @@ class _GameScreenState extends State<GameScreen> {
               ),
             );
             final Widget board = RepaintBoundary(
+              key: _boardHostKey,
               child: LudoBoard(
                 key: const Key('game-screen-board'),
                 tokens: _tokensOf(room),
@@ -6738,24 +6801,26 @@ class _GameScreenState extends State<GameScreen> {
             // K1: the tray sits on the die's own row, after it in reading
             // order -- a plain Row under the ambient Directionality already
             // mirrors that for Arabic, nothing here flips it by hand.
-            Widget dieRow({bool wrapTray = false}) => _dieRow(
-              room,
-              seat,
-              loc,
-              turn,
-              fadeIdleDie,
-              dieFace,
-              dieSeatColor,
-              rollEnabled,
-              metrics,
-              trayFaces,
-              trayStates,
-              trayColor,
-              boardRecord,
-              trayOwnMove,
-              ownRollHeld,
-              wrapTray: wrapTray,
-            );
+            Widget dieRow({bool wrapTray = false, double? sideMaxWidth}) =>
+                _dieRow(
+                  room,
+                  seat,
+                  loc,
+                  turn,
+                  fadeIdleDie,
+                  dieFace,
+                  dieSeatColor,
+                  rollEnabled,
+                  metrics,
+                  trayFaces,
+                  trayStates,
+                  trayColor,
+                  boardRecord,
+                  trayOwnMove,
+                  ownRollHeld,
+                  wrapTray: wrapTray,
+                  sideMaxWidth: sideMaxWidth,
+                );
             final Widget notice = RepaintBoundary(
               child: _belowDieNoticeSlot(
                 loc,
@@ -6765,7 +6830,7 @@ class _GameScreenState extends State<GameScreen> {
               ),
             );
 
-            Widget column(double lift) => Column(
+            Widget column() => Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 header,
@@ -6776,17 +6841,43 @@ class _GameScreenState extends State<GameScreen> {
                 SizedBox(height: metrics.dieGap),
                 notice,
                 SizedBox(height: metrics.noticeGap),
-                // C-667 D2: the height the lift gives back sits under the
-                // notice, so the die band rides up by exactly that much.
-                if (lift > 0) SizedBox(height: lift),
               ],
             );
 
             // C-667 D3: a phone keeps the column it always had.
             final Size screen = MediaQuery.sizeOf(this.context);
             if (screen.shortestSide < _largeScreenShortestSide) {
-              return column(0);
+              return column();
             }
+            // C-667 D1/D2 r2: both large layouts are one column of header,
+            // play area, notice and the height a lift gives back, so the
+            // header and the notice keep their place in the tree (and their
+            // State) when the device turns. Only the play area differs, and
+            // what it holds that carries State (the board, the die, the
+            // tray, the hint control) is global-keyed.
+            Widget largeColumn(Widget playArea, double lift) => Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                header,
+                SizedBox(height: metrics.headerGap),
+                Expanded(child: playArea),
+                SizedBox(height: metrics.dieGap),
+                notice,
+                SizedBox(height: metrics.noticeGap),
+                // C-667 D2: the height the lift gives back sits under the
+                // notice, so the die band rides up by exactly that much.
+                if (lift > 0) SizedBox(height: lift),
+              ],
+            );
+            // Today's play area: the board over the die band.
+            Widget stackedPlayArea() => Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: board),
+                SizedBox(height: metrics.boardGap),
+                dieRow(),
+              ],
+            );
             // The body is the last thing in the screen's SafeArea, so the
             // column's bottom edge is the screen's bottom less the system
             // chrome that SafeArea and the keyboard take, and the padding
@@ -6825,7 +6916,7 @@ class _GameScreenState extends State<GameScreen> {
                       over + _liftRoundingMargin,
                       math.max(0.0, boardHeight - _boardFloor),
                     );
-              return column(lift);
+              return largeColumn(stackedPlayArea(), lift);
             }
             // C-667 D1: the band leaves the column for the free space beside
             // the board. The board region takes the height the band and its
@@ -6833,68 +6924,57 @@ class _GameScreenState extends State<GameScreen> {
             // region is today's column of board, gap and band.
             final HintControlState? hintState = _hintControlState(room, seat);
             final bool hinted = hintState != null && seat != null;
-            final bool rtl =
-                Directionality.of(this.context) == TextDirection.rtl;
-            final double lead =
-                (hinted ? kHintHitWidth + kSpace2 : 0) +
-                (hinted && rtl
-                    ? deadBadgeRect(const Size.square(_dieRowHeight)).right -
-                          _dieRowHeight
-                    : 0);
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                header,
-                SizedBox(height: metrics.headerGap),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (BuildContext _, BoxConstraints region) {
-                      final _SideBandPlan? plan = _planSideBand(
-                        regionWidth: region.maxWidth,
-                        regionHeight: region.maxHeight,
-                        regionTop:
-                            columnBottom -
-                            metrics.noticeGap -
-                            metrics.noticeHeight -
-                            metrics.dieGap -
-                            region.maxHeight,
-                        screenHeight: screen.height,
-                        lead: lead,
-                      );
-                      if (plan == null) {
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Expanded(child: board),
-                            SizedBox(height: metrics.boardGap),
-                            dieRow(),
-                          ],
-                        );
-                      }
-                      return Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Center(
-                            child: SizedBox.square(
-                              dimension: plan.boardSide,
-                              child: board,
-                            ),
+            final double lead = hinted ? kHintHitWidth + kSpace2 : 0;
+            return largeColumn(
+              LayoutBuilder(
+                builder: (BuildContext _, BoxConstraints region) {
+                  final _SideBandPlan? plan = _planSideBand(
+                    regionWidth: region.maxWidth,
+                    regionHeight: region.maxHeight,
+                    regionTop:
+                        columnBottom -
+                        metrics.noticeGap -
+                        metrics.noticeHeight -
+                        metrics.dieGap -
+                        region.maxHeight,
+                    screenHeight: screen.height,
+                    lead: lead,
+                  );
+                  if (plan == null) {
+                    return stackedPlayArea();
+                  }
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Center(
+                        child: SizedBox.square(
+                          dimension: plan.boardSide,
+                          child: board,
+                        ),
+                      ),
+                      // The group is centred in the whole free space beside
+                      // the board, from the board's end edge to the screen's
+                      // (the column's padding included), and is as wide as
+                      // what it shows.
+                      PositionedDirectional(
+                        end: -kSpace2,
+                        // The group starts where the mark's headroom does,
+                        // so the die itself stays at its planned height.
+                        top: plan.dieTop - _noMoveMarkReach,
+                        width: plan.sideSpace,
+                        child: Center(
+                          heightFactor: 1,
+                          child: dieRow(
+                            wrapTray: plan.wrapTray,
+                            sideMaxWidth: plan.sideWidth,
                           ),
-                          PositionedDirectional(
-                            end: 0,
-                            top: plan.dieTop,
-                            width: plan.sideWidth,
-                            child: dieRow(wrapTray: plan.wrapTray),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-                SizedBox(height: metrics.dieGap),
-                notice,
-                SizedBox(height: metrics.noticeGap),
-              ],
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              0,
             );
           },
         ),
@@ -6970,6 +7050,12 @@ class _GameScreenState extends State<GameScreen> {
   /// C-667 D2: half a logical pixel on top of the lift, so a die that
   /// lands on the line by rounding still lands inside it.
   static const double _liftRoundingMargin = 0.5;
+
+  /// C-667 D1 r2: how far the no-move mark hangs past the die's top and its
+  /// physical right while it shows, zero otherwise.
+  double get _noMoveMarkReach => _noMoveVisible
+      ? deadBadgeRect(const Size.square(_dieRowHeight)).right - _dieRowHeight
+      : 0;
 
   /// C-667 D1: where the die's centre sits on a large landscape screen, as a
   /// fraction of the screen height, and the band it may move in when the
@@ -7326,8 +7412,7 @@ class _GameScreenState extends State<GameScreen> {
   /// C-667 D1. Where the die band goes on a large landscape screen: in the
   /// space the board leaves on the end side, the board centred in its region
   /// as the painted board always was. [lead] is what the band keeps clear at
-  /// its start (the hint control, and in RTL the no-move mark). The tray
-  /// stays beside the die when the side space holds die, tray and lead, and
+  /// its start (the hint control). The tray stays beside the die when the side space holds die, tray and lead, and
   /// wraps under the die when it only holds die and lead; narrower than that
   /// is null, today's column. [regionTop] is the region's top edge in screen
   /// coordinates, which is what the die's height on the screen is measured
@@ -7371,6 +7456,7 @@ class _GameScreenState extends State<GameScreen> {
     );
     return _SideBandPlan(
       boardSide: boardSide,
+      sideSpace: sideWidth + 2 * kSpace2,
       sideWidth: sideWidth,
       dieTop: centre - half - regionTop,
       wrapTray: wrapTray,
@@ -9064,12 +9150,18 @@ class _PlayColumnMetrics {
 class _SideBandPlan {
   const _SideBandPlan({
     required this.boardSide,
+    required this.sideSpace,
     required this.sideWidth,
     required this.dieTop,
     required this.wrapTray,
   });
 
   final double boardSide;
+
+  /// The free width beside the board, from its end edge to the end of the
+  /// column's padding; the group is centred in it. [sideWidth] is what the
+  /// group may fill, [kSpace2] clear of the board and of the edge.
+  final double sideSpace;
   final double sideWidth;
   final double dieTop;
   final bool wrapTray;
