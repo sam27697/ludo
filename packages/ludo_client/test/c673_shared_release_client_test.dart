@@ -68,14 +68,14 @@ String _declinedText(Locale l, String n) =>
 
 String _tookText(Locale l, String n) => l == _ar
     ? '$n طلّع قطعة. وكل واحد تاني بياخد 6.'
-    : '$n took the release. Everyone else gets a 6.';
+    : '$n brought a piece out. Everyone else gets a 6.';
 
 String _tookGrantedText(Locale l, String n) => l == _ar
     ? '$n طلّع قطعة. إنت بتاخد 6.'
-    : '$n took the release. You get a 6.';
+    : '$n brought a piece out. You get a 6.';
 
 String _bankedText(Locale l) =>
-    l == _ar ? 'معك 6 زيادة من الإفراج.' : 'Bonus 6 from the release.';
+    l == _ar ? 'معك 6 زيادة.' : 'You have a bonus 6.';
 
 String _old11Mine(Locale l) => l == _ar
     ? 'ما طلع معك 6 بعشر رميات. طلّع قطعة وحدة.'
@@ -953,7 +953,7 @@ void main() {
   );
 
   _cases(
-    'O3 a take, me granted: "{name} took the release. You get a 6." '
+    'O3 a take, me granted: "{name} brought a piece out. You get a 6." '
     'for 2500 ms',
     (_G g) async {
       await g.push('rolled', _offerRolled(1, 4, const <int>[0, 2]));
@@ -977,7 +977,7 @@ void main() {
   );
 
   _cases(
-    'O4 a take, me not granted: "{name} took the release. Everyone else '
+    'O4 a take, me not granted: "{name} brought a piece out. Everyone else '
     'gets a 6." for 2500 ms',
     (_G g) async {
       await g.push('rolled', _offerRolled(1, 4, const <int>[0, 2]));
@@ -1039,7 +1039,7 @@ void main() {
   // ===========================================================================
 
   _cases(
-    'B1 turn.banked 1: notice "Bonus 6 from the release." for 2500 ms '
+    'B1 turn.banked 1: notice "You have a bonus 6." for 2500 ms '
     'and the six in the roll tray',
     (_G g) async {
       await g.push('turn', <String, Object?>{

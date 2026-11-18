@@ -60,14 +60,14 @@ String _declinedText(Locale l, String n) =>
 
 String _tookText(Locale l, String n) => l == _ar
     ? '$n طلّع قطعة. وكل واحد تاني بياخد 6.'
-    : '$n took the release. Everyone else gets a 6.';
+    : '$n brought a piece out. Everyone else gets a 6.';
 
 String _tookGrantedText(Locale l, String n) => l == _ar
     ? '$n طلّع قطعة. إنت بتاخد 6.'
-    : '$n took the release. You get a 6.';
+    : '$n brought a piece out. You get a 6.';
 
 String _bankedText(Locale l) =>
-    l == _ar ? 'معك 6 زيادة من الإفراج.' : 'Bonus 6 from the release.';
+    l == _ar ? 'معك 6 زيادة.' : 'You have a bonus 6.';
 
 const Map<int, String> _names = <int, String>{
   0: 'Ann',

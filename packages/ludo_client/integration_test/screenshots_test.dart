@@ -24868,9 +24868,9 @@ String _releaseText(Locale l, String key, [String name = '']) {
     case 'takenGranted':
       return ar
           ? '$name طلّع قطعة. إنت بتاخد 6.'
-          : '$name took the release. You get a 6.';
+          : '$name brought a piece out. You get a 6.';
     case 'banked':
-      return ar ? 'معك 6 زيادة من الإفراج.' : 'Bonus 6 from the release.';
+      return ar ? 'معك 6 زيادة.' : 'You have a bonus 6.';
     case 'decline':
       return ar ? 'خليهم بالبيت' : 'Keep them home';
   }
