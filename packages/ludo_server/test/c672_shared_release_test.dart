@@ -477,12 +477,13 @@ void main() {
         // Snapshots: the grant is held on seat 2, the taker holds none, and
         // the token is out on the entry square.
         final Map<String, Object?> snap = await resume(t, 0);
-        fx.eq(seatObject(snap, 2)['banked'], 1, 'seat 2 banked');
+        fx.eq(seatObject(snap, 2)['banked'], 0,
+            'seat 2 banked: its turn has begun, the six is in the queue');
         fx.eq(seatObject(snap, 0)['banked'], 0, 'seat 0 banked');
         final Map<String, Object?> st = snap['turn']! as Map<String, Object?>;
         fx.eq(st['seat'], 2, 'snapshot turn.seat');
         fx.eq(st['phase'], 'await_roll', 'snapshot turn.phase');
-        fx.eq(st['banked'], 1, 'snapshot turn.banked');
+        fx.absent(st, 'banked', 'the snapshot turn object');
         fx.eq(st['queue'], <int>[6], 'snapshot turn.queue');
         fx.eq(t.room.game!.tokens[0], <int>[-1, -1, 0, -1],
             'the chosen token alone is out, on the entry square');
@@ -517,9 +518,9 @@ void main() {
     });
 
     test(
-        'T3: the banked six sits in the next turn queue and is spent with '
-        'move face 6 on a release: no rolled frame, no k, no extra roll',
-        () async {
+        'T3: the seat rolls first (move in await_roll is WRONG_PHASE), then '
+        'spends the banked six with move face 6 on a release: no rolled '
+        'frame for the six, no k, no extra roll', () async {
       final Steer steer = Steer.faces(<int>[3, 4]);
       await withFixture('T3 banked six spent', (Fixture fx) async {
         final Table t = await openTable(fx, players: 2, seeds: true);
@@ -528,6 +529,26 @@ void main() {
         await t.step(0, 'move', <String, Object?>{'token': 0});
         fx.clock.advance(const Duration(seconds: 2));
 
+        // Rule 11q: the roll comes first. A move before it is refused and
+        // changes nothing.
+        final Map<int, List<Frame>> early =
+            await t.step(2, 'move', <String, Object?>{'token': 0, 'face': 6});
+        expectError(fx, early[2]!, 'WRONG_PHASE',
+            'move with the banked six before the seat has rolled');
+        fx.eq(early[0]!, <Frame>[], 'a rejected move tells nobody else');
+
+        // The seat's own first roll is roll k=2: the banked six consumed no
+        // fair draw. The banked six leads the queue, the rolled 4 follows.
+        final Map<int, List<Frame>> roll =
+            await t.step(2, 'roll', <String, Object?>{});
+        final Map<String, Object?> rolled = dataOf(only(fx, roll[2]!, 'rolled',
+            'the seat\'s own roll with a banked six queued'));
+        fx.eq(rolled['k'], 2, 'rolled.k: the first roll after the take is k=2');
+        fx.eq(rolled['value'], 4, 'rolled.value: the second steered face');
+        fx.eq(rolled['queue'], <int>[6, 4], 'queue: banked six, then the 4');
+        fx.eq(typesOf(roll[2]!), <String>['rolled'],
+            'a roll that leaves a move pending is one rolled frame');
+
         final String id =
             fx.send(t.c(2), 'move', <String, Object?>{'token': 0, 'face': 6});
         final Map<int, List<Frame>> r = await t.syncAll(first: 2);
@@ -535,8 +556,8 @@ void main() {
           fx.eq(
               typesOf(r[seat]!),
               <String>['moved', 'turn'],
-              'a spent banked six is a moved and the seat still has its own '
-              'roll to make (seat $seat)');
+              'the banked six spent on a release, then the 4 is still to '
+              'spend by the same seat (seat $seat)');
         }
         final Map<String, Object?> m = dataOf(r[2]![0]);
         fx.eq(m['seat'], 2, 'moved.seat');
@@ -548,17 +569,9 @@ void main() {
         fx.absent(m, 'k', 'a banked six is not a roll');
         expectReEchoed(fx, r, 2, id, 'moved');
         final Map<String, Object?> turn = dataOf(r[2]![1]);
-        fx.eq(turn['seat'], 2, 'turn.seat: same seat, its roll is still owed');
-        fx.eq(turn['phase'], 'await_roll', 'turn.phase');
-
-        // The seat's own first roll is roll k=2: the banked six consumed no
-        // fair draw, and nothing in the record was added for it.
-        final Map<int, List<Frame>> roll =
-            await t.step(2, 'roll', <String, Object?>{});
-        final Map<String, Object?> rolled = dataOf(only(fx, roll[2]!, 'rolled',
-            'the seat\'s own roll after the banked six'));
-        fx.eq(rolled['k'], 2, 'rolled.k: the first roll after the take is k=2');
-        fx.eq(rolled['value'], 4, 'rolled.value: the second steered face');
+        fx.eq(turn['seat'], 2, 'turn.seat: same seat, a face is left');
+        fx.eq(turn['phase'], 'await_move', 'turn.phase');
+        fx.eq(turn['queue'], <int>[4], 'turn.queue: the rolled 4 remains');
       }, ruleset: v12, steer: steer);
     });
 
@@ -581,11 +594,12 @@ void main() {
         fx.eq(dataOf(seen[1])['seats'], <int>[2],
             'the disconnected seat is granted too');
         final Map<String, Object?> snap = await resume(t, 2);
-        fx.eq(seatObject(snap, 2)['banked'], 1, 'banked on resume');
+        fx.eq(seatObject(snap, 2)['banked'], 0,
+            'banked on resume: its turn has begun, the six is in the queue');
         final Map<String, Object?> st = snap['turn']! as Map<String, Object?>;
         fx.eq(st['seat'], 2, 'snapshot turn.seat');
         fx.eq(st['queue'], <int>[6], 'snapshot turn.queue');
-        fx.eq(st['banked'], 1, 'snapshot turn.banked');
+        fx.absent(st, 'banked', 'the snapshot turn object');
       }, ruleset: v12, steer: steer);
     });
   });
@@ -938,7 +952,8 @@ void main() {
         final Map<String, Object?> snap = await resume(t, 0);
         final Map<String, Object?> st = snap['turn']! as Map<String, Object?>;
         fx.eq(st['seat'], 2, 'snapshot turn.seat after the take');
-        fx.eq(seatObject(snap, 2)['banked'], 1, 'seat 2 banked');
+        fx.eq(seatObject(snap, 2)['banked'], 0,
+            'seat 2 banked: its turn has begun, the six is in the queue');
         fx.absent(st, 'offer', 'the snapshot after the take');
       }, ruleset: v12, steer: steer);
     });
@@ -992,13 +1007,17 @@ void main() {
           fx.eq(dataOf(r[seat]!.last)['queue'], <int>[6], 'turn.queue');
         }
         final Map<String, Object?> snap = await resume(t, 2);
-        fx.eq(<Object?>[
-          for (final int s in <int>[0, 1, 2]) seatObject(snap, s)['banked']
-        ], <int>[
-          0,
-          1,
-          1
-        ], 'banked per seat');
+        fx.eq(
+            <Object?>[
+              for (final int s in <int>[0, 1, 2]) seatObject(snap, s)['banked']
+            ],
+            <int>[
+              0,
+              0,
+              1
+            ],
+            'banked per seat: seat 1 holds the turn (its six is queued), '
+            'seat 2 has not begun its turn');
       }, ruleset: v12, steer: steer);
     });
 
@@ -1025,7 +1044,8 @@ void main() {
         fx.eq(turn['banked'], 2, 'seat 2 holds two banked sixes');
         fx.eq(turn['queue'], <int>[6, 6], 'both are queued');
         final Map<String, Object?> snap = await resume(t, 0);
-        fx.eq(seatObject(snap, 2)['banked'], 2, 'snapshot banked of seat 2');
+        fx.eq(seatObject(snap, 2)['banked'], 0,
+            'snapshot banked of seat 2: its turn has begun, both sixes queued');
         fx.eq(seatObject(snap, 0)['banked'], 1, 'snapshot banked of seat 0');
         fx.eq(seatObject(snap, 1)['banked'], 0, 'snapshot banked of seat 1');
       }, ruleset: v12, steer: steer);
@@ -1064,7 +1084,8 @@ void main() {
         }
         final Map<String, Object?> snap = await resume(t, 0);
         fx.eq(seatObject(snap, 1)['banked'], 0, 'finished seat banked');
-        fx.eq(seatObject(snap, 0)['banked'], 1, 'seat 0 banked');
+        fx.eq(seatObject(snap, 0)['banked'], 0,
+            'seat 0 banked: its turn has begun, the six is in the queue');
       }, ruleset: v12, steer: steer);
     });
 
@@ -1105,7 +1126,8 @@ void main() {
         fx.eq(dataOf(ofType(r[0]!, 'sixes_granted').single)['seats'],
             <int>[1, 2], 'both disconnected seats are granted');
         final Map<String, Object?> snap = await resume(t, 1);
-        fx.eq(seatObject(snap, 1)['banked'], 1, 'seat 1 banked on resume');
+        fx.eq(seatObject(snap, 1)['banked'], 0,
+            'seat 1 banked on resume: its turn has begun');
         fx.eq(seatObject(snap, 2)['banked'], 1, 'seat 2 banked');
       }, ruleset: v12, steer: steer);
     });
