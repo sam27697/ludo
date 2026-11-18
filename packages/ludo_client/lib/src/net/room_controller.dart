@@ -953,9 +953,17 @@ class RoomController extends ChangeNotifier {
   /// never surfaced as an error: this controller is on its way out either
   /// way), closes the connection, and sets [phase] to [RoomPhase.closed].
   /// Never throws even if the socket had already died.
-  Future<void> leave() async {
+  ///
+  /// C-669 R4: completes with whether the server heard the leave, that is,
+  /// whether the `leave_room` request was answered, by its reply or by an
+  /// `error` reply (either way the server processed the frame). False when
+  /// there was no live connection to send it on, the request timed out, or
+  /// the connection ended first: the server then still holds the seat as a
+  /// dropped one, and the caller must not throw away the key to it. Also
+  /// false on a controller that was already disposed.
+  Future<bool> leave() async {
     if (_disposed) {
-      return;
+      return false;
     }
     _leftCalled = true;
     _sendRematchOnResume = false;
@@ -965,12 +973,16 @@ class RoomController extends ChangeNotifier {
     _connection = null;
     unawaited(_frameSub?.cancel());
     _frameSub = null;
+    bool delivered = false;
     if (connection != null) {
       try {
         await connection.leaveRoom();
+        delivered = true;
+      } on ProtocolErrorException {
+        delivered = true;
       } catch (_) {
         // Best-effort. The socket may already be gone; that is not this
-        // method's problem to report.
+        // method's problem to report, only the caller's to know.
       }
       // _connection was already nulled above, so dispose() -- if it ran
       // while leaveRoom() was in flight -- found nothing to close. This
@@ -980,10 +992,11 @@ class RoomController extends ChangeNotifier {
       unawaited(connection.close());
     }
     if (_disposed) {
-      return;
+      return delivered;
     }
     _phase = RoomPhase.closed;
     notifyListeners();
+    return delivered;
   }
 
   @override

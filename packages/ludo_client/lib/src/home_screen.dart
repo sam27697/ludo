@@ -108,8 +108,9 @@ class _HomeScreenState extends State<HomeScreen>
   String? _lastTableName;
   List<String> _recentCodes = const <String>[];
   RoomController? _ownedController;
-  // H3: the seat rejoin button shows exactly when this is non-null. Only
-  // ever set from _restoreSessionMemory's one-time load and cleared by H2.
+  // H3: the seat rejoin button shows exactly when this is non-null. C-669 R1:
+  // always the last record this screen wrote to or cleared from storage, set
+  // by the one-time load, by every write of H1 and cleared by H2.
   SeatRecord? _seatRecord;
   // C-322 rule 3: home-last-game shows exactly when this is non-null and
   // not yet past rule 4's window. Set from _restoreSessionMemory's one-time
@@ -134,6 +135,10 @@ class _HomeScreenState extends State<HomeScreen>
   // H2's per-controller dedupe for the finished/seat-gone clear, reset the
   // same way.
   bool _seatClearedForOwned = false;
+  // C-669 R3: the clear above was because the room finished, so a rematch
+  // lobby or game of the same controller writes the seat again at once and
+  // re-arms the clear. A seat that is gone for good never re-arms.
+  bool _seatClearedByFinish = false;
   // Order 296: session memory must finish loading before deciding whether a
   // link joins or leaves the code filled for a first-time player.
   bool _sessionMemoryLoaded = false;
@@ -651,6 +656,7 @@ class _HomeScreenState extends State<HomeScreen>
     _lastRecordedSeatWritten = null;
     _lastSeatWriteAt = null;
     _seatClearedForOwned = false;
+    _seatClearedByFinish = false;
     controller.addListener(_onOwnedControllerChanged);
   }
 
@@ -694,28 +700,34 @@ class _HomeScreenState extends State<HomeScreen>
         );
         final DateTime now = (widget.clock ?? DateTime.now)();
         final DateTime? lastWriteAt = _lastSeatWriteAt;
-        if (record != _lastRecordedSeatWritten ||
+        // C-669 R3: the first sight of a live, non-finished room after a
+        // finish clear is written at once, not after kSeatRecordRefresh: a
+        // phone killed in that minute must still find the seat.
+        final bool afterFinishClear = _seatClearedByFinish;
+        if (afterFinishClear ||
+            record != _lastRecordedSeatWritten ||
             lastWriteAt == null ||
             now.difference(lastWriteAt) >= kSeatRecordRefresh) {
           _lastRecordedSeatWritten = record;
           _lastSeatWriteAt = now;
+          if (afterFinishClear) {
+            _seatClearedForOwned = false;
+            _seatClearedByFinish = false;
+          }
           unawaited(SessionMemory.recordSeat(record, clock: widget.clock));
+          // C-669 R1: the Rejoin control and the by-code paths read this.
+          if (mounted && _seatRecord != record) {
+            setState(() {
+              _seatRecord = record;
+            });
+          }
         }
       }
     }
     final bool finished = room != null && room.state == RoomState.finished;
-    // C-547 D4: a seat another phone took over is gone for this phone too;
-    // keeping the record would let a relaunch resume and take it back.
-    // Section 27 rule 6: a refused build says nothing about the seat. The
-    // record stays, so the same seat resumes after the update.
-    final bool seatGone =
-        !controller.updateRequired &&
-        (controller.seatTakenOver ||
-            (controller.phase == RoomPhase.failed &&
-                (controller.errorCode == 'BAD_SEAT_TOKEN' ||
-                    controller.errorCode == 'NO_SUCH_ROOM')));
-    if ((finished || seatGone) && !_seatClearedForOwned) {
+    if ((finished || _seatIsGone(controller)) && !_seatClearedForOwned) {
       _seatClearedForOwned = true;
+      _seatClearedByFinish = finished;
       unawaited(SessionMemory.clearSeat());
       if (mounted) {
         setState(() {
@@ -723,6 +735,18 @@ class _HomeScreenState extends State<HomeScreen>
         });
       }
     }
+  }
+
+  /// C-547 D4: a seat another phone took over is gone for this phone too;
+  /// keeping the record would let a relaunch resume and take it back.
+  /// Section 27 rule 6: a refused build says nothing about the seat. The
+  /// record stays, so the same seat resumes after the update.
+  bool _seatIsGone(RoomController controller) {
+    return !controller.updateRequired &&
+        (controller.seatTakenOver ||
+            (controller.phase == RoomPhase.failed &&
+                (controller.errorCode == 'BAD_SEAT_TOKEN' ||
+                    controller.errorCode == 'NO_SUCH_ROOM')));
   }
 
   /// C-322 rule 2: the finished snapshot F is [controller]'s own room when
@@ -847,21 +871,37 @@ class _HomeScreenState extends State<HomeScreen>
   /// this instance while the pushed route was still up.
   ///
   /// H2(b): once [leave] completes, the seat record is cleared and the H3
-  /// button hidden unconditionally -- the player walked off the route, and
-  /// leaving is leaving, whether or not a record was ever written for this
-  /// controller.
-  Future<void> _retireOwnedController(RoomController controller) async {
+  /// button hidden, whether or not a record was ever written for this
+  /// controller. C-669 R4: only when the server heard the leave, or the room
+  /// is finished, or the seat is gone for good ([_seatIsGone], or [result]
+  /// says the route left because the seat was removed or the room reaped).
+  /// A leave that never reached the server (no live connection, timed out)
+  /// leaves the seat held there as a dropped one, so the record, and the
+  /// Rejoin control with it, stay; the trust age expires them.
+  Future<void> _retireOwnedController(
+    RoomController controller, {
+    Object? result,
+  }) async {
     if (!identical(_ownedController, controller)) {
       return;
     }
     controller.removeListener(_onOwnedControllerChanged);
     _ownedController = null;
-    await controller.leave();
+    // Read before leave(), which moves the phase on to closed.
+    final bool seatEnded =
+        controller.room?.state == RoomState.finished ||
+        _seatIsGone(controller) ||
+        result == GameScreenResult.removed ||
+        result == GameScreenResult.gameGone;
+    final bool delivered = await controller.leave();
     // Section 27 rule 6: a build the server refused walks home with its seat
     // record intact, so the same seat resumes once the app is updated.
     final bool refusedBuild = controller.updateRequired;
     controller.dispose();
     if (refusedBuild) {
+      return;
+    }
+    if (!delivered && !seatEnded) {
       return;
     }
     unawaited(SessionMemory.clearSeat());
@@ -1037,7 +1077,7 @@ class _HomeScreenState extends State<HomeScreen>
     // request timeout before leave()'s own catch swallows it; that wait is
     // bounded and deliberate and is not visible to the player, since the
     // route has already popped by the time we get here.
-    await _retireOwnedController(controller);
+    await _retireOwnedController(controller, result: result);
     if (!mounted) {
       return;
     }
@@ -1065,6 +1105,14 @@ class _HomeScreenState extends State<HomeScreen>
       _gameGoneNotice = false;
       _roomClosedNotice = null;
     });
+    // C-669 R2: a code this phone holds a seat for is a seat to take back, not
+    // a room to join: join_room would be refused ROOM_STARTED while the game
+    // runs. A stale record is safe, a refused resume clears it and says so.
+    final SeatRecord? held = _seatRecordFor(normalized);
+    if (held != null) {
+      await _rejoinRoom(held);
+      return;
+    }
     final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
     _watchOwnedController(controller);
@@ -1119,13 +1167,21 @@ class _HomeScreenState extends State<HomeScreen>
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
     // deliberate, not a bug.
-    await _retireOwnedController(controller);
+    await _retireOwnedController(controller, result: result);
     if (!mounted) {
       return;
     }
     if (result == GameScreenResult.newTable) {
       await _createRoom();
     }
+  }
+
+  /// C-669 R2: the seat this screen holds for [code], or null. Memory equals
+  /// storage once the session-memory load has completed (R1); a tap that lands
+  /// before it has no record to read yet and joins as it always did.
+  SeatRecord? _seatRecordFor(String code) {
+    final SeatRecord? record = _seatRecord;
+    return record != null && record.code == code ? record : null;
   }
 
   /// H4: the H3 button's tap. Builds a controller the same way create and
@@ -1177,7 +1233,7 @@ class _HomeScreenState extends State<HomeScreen>
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
     // deliberate, not a bug.
-    await _retireOwnedController(controller);
+    await _retireOwnedController(controller, result: result);
     if (!mounted) {
       return;
     }
