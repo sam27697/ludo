@@ -187,6 +187,11 @@ protocol pins an order) the scenario or `k` needed to see it again:
 - `server refused the client build (UPDATE_REQUIRED, min_build <n>): pass
   --client-build N ...` -- the server runs with `MIN_CLIENT_BUILD` and the
   first socket sent no build or one below `<n>`; see `--client-build` above.
+  The same sentence ends `(UPDATE_REQUIRED, close code 4005): pass
+  --client-build N` when the socket closed with code 4005 and no refusal frame
+  was read. The first socket of a run waits up to one second for the server's
+  first words before it writes: a write that crosses a refusal on the wire
+  can end the connection with close code 1002 and the frame undelivered.
 - `k=<n>: ...` -- a fairness check failed at roll number `n`; see above for
   the three things that check.
 - `game_over.verify_url="<url>" does not end with "/v/<game_id>" ...` --
