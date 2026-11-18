@@ -105,6 +105,7 @@ class SeatState {
     required this.seedOrigin,
     this.timerSteps,
     this.drought,
+    this.banked = 0,
   });
 
   final int seat;
@@ -128,6 +129,12 @@ class SeatState {
   /// only. Null when the key is absent.
   final int? drought;
 
+  /// docs/PROTOCOL.md section 30 rule 5, under `2026-12` only: the sixes
+  /// granted to this seat and not yet queued (0..3). 0 when the key is
+  /// absent. The queue of a seat whose turn has begun holds them
+  /// instead.
+  final int banked;
+
   factory SeatState.fromJson(Map<String, Object?> json) {
     final int seat = _reqInt(json, 'seat');
     if (seat < 0 || seat > 3) {
@@ -143,6 +150,7 @@ class SeatState {
       throw const SnapshotFormatException('timer_steps');
     }
     final int? drought = _optInt(json, 'drought');
+    final int banked = _optInt(json, 'banked') ?? 0;
 
     return SeatState(
       seat: seat,
@@ -153,6 +161,7 @@ class SeatState {
       seedOrigin: seedOrigin,
       timerSteps: timerSteps,
       drought: drought,
+      banked: banked,
     );
   }
 
@@ -169,6 +178,7 @@ class SeatState {
     SeedOrigin? seedOrigin,
     int? timerSteps,
     int? drought,
+    int? banked,
   }) {
     return SeatState(
       seat: seat ?? this.seat,
@@ -179,6 +189,7 @@ class SeatState {
       seedOrigin: seedOrigin ?? this.seedOrigin,
       timerSteps: timerSteps ?? this.timerSteps,
       drought: drought ?? this.drought,
+      banked: banked ?? this.banked,
     );
   }
 }
@@ -207,6 +218,8 @@ class TurnState {
     this.segmentMs,
     this.settling = false,
     this.release = false,
+    this.offer = false,
+    this.banked,
     this.graceMs,
   });
 
@@ -245,6 +258,15 @@ class TurnState {
   /// False when the wire sends none.
   final bool release;
 
+  /// docs/PROTOCOL.md section 30 rule 2: true only while the shared release
+  /// is offered and the seat's take-or-decline answer is pending. False when
+  /// the wire sends none and on a lapse.
+  final bool offer;
+
+  /// docs/PROTOCOL.md section 30 rule 5: on a `turn` frame, the sixes the
+  /// seat was granted that now sit in [queue]. Null when the wire sends none.
+  final int? banked;
+
   /// docs/PROTOCOL.md section 29 rule 3: the milliseconds the next seat's
   /// clock still waits before it starts counting [deadlineMs]. Null when the
   /// wire sends none (no grace, or a `2026-10` room).
@@ -268,6 +290,8 @@ class TurnState {
     );
     final int? segmentMs = _optInt(json, 'segment_ms');
     final bool release = _optBool(json, 'release') ?? false;
+    final bool offer = _optBool(json, 'offer') ?? false;
+    final int? banked = _optInt(json, 'banked');
     final int? graceMs = _optInt(json, 'grace_ms');
 
     return TurnState(
@@ -282,6 +306,8 @@ class TurnState {
       legalByFace: legalByFace,
       segmentMs: segmentMs,
       release: release,
+      offer: offer,
+      banked: banked,
       graceMs: graceMs,
     );
   }

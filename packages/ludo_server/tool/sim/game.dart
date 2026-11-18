@@ -42,6 +42,7 @@ class GameSetup {
   GameSetup({
     required this.code,
     required this.chainCommit,
+    required this.rulesetOnWire,
     required this.hostSeat,
     required this.seats,
     required this.gameId,
@@ -52,6 +53,11 @@ class GameSetup {
 
   final String code;
   final String chainCommit;
+
+  /// The `rules.ruleset` of the host's `room` frame, `'2026-10'` when the
+  /// key is absent (docs/PROTOCOL.md section 28 rule 1, section 30 rule 1).
+  /// The stored record must name the same ruleset.
+  final String rulesetOnWire;
   final int hostSeat;
   final Map<int, Seat> seats;
   final String gameId;
@@ -63,6 +69,23 @@ class GameSetup {
   /// one `finally` block can close everything regardless of which seat
   /// currently owns which socket.
   final List<SimSocket> allSockets;
+}
+
+/// `rules.ruleset` of a `room` frame's data; `'2026-10'` when the key is
+/// absent, which is how that ruleset shows on the wire.
+String _rulesetOfRoomFrame(Map<String, Object?> roomData) {
+  final Object? rules = roomData['rules'];
+  if (rules is! Map<String, Object?> || !rules.containsKey('ruleset')) {
+    return '2026-10';
+  }
+  final Object? ruleset = rules['ruleset'];
+  if (ruleset is! String) {
+    throw ScenarioFailure(
+      'room.rules.ruleset is ${ruleset.runtimeType} ($ruleset), expected a '
+      'string',
+    );
+  }
+  return ruleset;
 }
 
 /// Creates a room for [players] seats on [target], joins the remaining
@@ -92,6 +115,7 @@ Future<GameSetup> setUpGame(Uri target, int players) async {
   final String code = requireString(hostRoomData, 'code', frame: 'room');
   final String chainCommit =
       requireString(hostRoomData, 'chain_commit', frame: 'room');
+  final String rulesetOnWire = _rulesetOfRoomFrame(hostRoomData);
   final int hostSeatIdx =
       requireInt(hostSeatData, 'seat', frame: 'seat_assigned');
   final String hostToken =
@@ -234,6 +258,7 @@ Future<GameSetup> setUpGame(Uri target, int players) async {
   return GameSetup(
     code: code,
     chainCommit: chainCommit,
+    rulesetOnWire: rulesetOnWire,
     hostSeat: hostSeatIdx,
     seats: seats,
     gameId: gameId,

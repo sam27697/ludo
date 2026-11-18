@@ -1031,6 +1031,58 @@
   "@gameReleaseNoticeMine": {
     "description": "Below-die notice for 2500 ms on my own phone when my roll earned a yard release: tap a ringed piece in the yard."
   },
+  "gameReleaseOfferNotice": "No 6 in 10 rolls. Bring one piece out? Everyone else gets a 6.",
+  "@gameReleaseOfferNotice": {
+    "description": "Below-die notice on my own phone while I hold the shared release offer (PROTOCOL 30): tapping a ringed piece in the yard takes it, the pill beside the notice declines it."
+  },
+  "gameReleaseDecline": "Keep them home",
+  "@gameReleaseDecline": {
+    "description": "Label of the pill that declines the shared release offer and keeps every piece in the yard."
+  },
+  "gameReleaseOfferOther": "{name}: no 6 in 10 rolls. Choosing...",
+  "@gameReleaseOfferOther": {
+    "description": "Below-die notice on every other phone while a seat holds the shared release offer.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "gameReleaseDeclinedOther": "{name} kept their pieces home.",
+  "@gameReleaseDeclinedOther": {
+    "description": "Below-die notice for 2500 ms after a seat declined the shared release.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "gameReleaseTakenOthers": "{name} brought a piece out. Everyone else gets a 6.",
+  "@gameReleaseTakenOthers": {
+    "description": "Below-die notice for 2500 ms after a seat took the shared release, on the phone of the seat that took it or of a seat that is granted nothing.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "gameReleaseTakenGranted": "{name} brought a piece out. You get a 6.",
+  "@gameReleaseTakenGranted": {
+    "description": "Below-die notice for 2500 ms on the phone of a seat that was granted a banked six by another seat's release.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "gameReleaseBanked": "You have a bonus 6.",
+  "@gameReleaseBanked": {
+    "description": "Below-die notice for 2500 ms when my turn begins with a six banked by another seat's release."
+  },
   "gameSeatFinishedOther": "{name} finished {ordinal}",
   "@gameSeatFinishedOther": {
     "description": "Below-die notice for 2500 ms when another seat brings its fourth piece home and the game goes on. The ordinal is the place word.",

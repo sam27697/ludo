@@ -51,9 +51,23 @@ const Set<String> recordKeys202611 = <String>{
   'retired',
 };
 
+/// The three keys docs/VERIFY.md section 1.1 adds under the 2026-12 ruleset
+/// (docs/PROTOCOL.md section 30 rule 7), on top of the fourteen of 2026-11:
+/// a 2026-12 room plays everything a 2026-11 room does (section 30 rule 1),
+/// so `ruleset`, `releases`, `placings` and `retired` stay.
+const Set<String> recordKeys202612 = <String>{
+  'declined',
+  'lapsed',
+  'grants',
+};
+
 /// The `ruleset` value of a 2026-11 record and of a room frame's
 /// `rules.ruleset` under it (docs/PROTOCOL.md section 28 rule 1).
 const String _ruleset202611 = '2026-11';
+
+/// The `ruleset` value of a 2026-12 record and of a room frame's
+/// `rules.ruleset` under it (docs/PROTOCOL.md section 30 rule 1).
+const String _ruleset202612 = '2026-12';
 
 /// What a room under the 2026-10 ruleset shows on the wire and in its
 /// record: the key is absent, and this is the name for that.
@@ -140,19 +154,28 @@ Future<void> _checkJsonRecord({
   }
   final Map<String, Object?> record = decoded;
 
-  // R2: a `ruleset` key makes this a 2026-11 record, and its value must
-  // say exactly that; any other value is named, not guessed at.
-  final bool has202611Key = record.containsKey('ruleset');
-  if (has202611Key && record['ruleset'] != _ruleset202611) {
+  // R2: a `ruleset` key makes this a 2026-11 or 2026-12 record; any other
+  // value is named, not guessed at.
+  final bool hasRulesetKey = record.containsKey('ruleset');
+  final Object? rulesetValue = record['ruleset'];
+  if (hasRulesetKey &&
+      rulesetValue != _ruleset202611 &&
+      rulesetValue != _ruleset202612) {
     throw ScenarioFailure(
-      'the record at $jsonUri has ruleset=${jsonEncode(record['ruleset'])}, '
-      'expected "$_ruleset202611" (docs/VERIFY.md section 1.1: the key is '
-      'absent under $_ruleset202610)',
+      'the record at $jsonUri has ruleset=${jsonEncode(rulesetValue)}, '
+      'expected "$_ruleset202611" or "$_ruleset202612" (docs/VERIFY.md '
+      'section 1.1: the key is absent under $_ruleset202610)',
     );
   }
-  final String recordRuleset = has202611Key ? _ruleset202611 : _ruleset202610;
-  final Set<String> wantedKeys =
-      has202611Key ? <String>{...recordKeys, ...recordKeys202611} : recordKeys;
+  final bool has202611Key = hasRulesetKey;
+  final bool is202612 = rulesetValue == _ruleset202612;
+  final String recordRuleset =
+      hasRulesetKey ? rulesetValue! as String : _ruleset202610;
+  final Set<String> wantedKeys = <String>{
+    ...recordKeys,
+    if (hasRulesetKey) ...recordKeys202611,
+    if (is202612) ...recordKeys202612,
+  };
 
   final Set<String> actualKeys = record.keys.toSet();
   if (!actualKeys.containsAll(wantedKeys) ||
@@ -161,10 +184,13 @@ Future<void> _checkJsonRecord({
       ..sort();
     final List<String> extra = actualKeys.difference(wantedKeys).toList()
       ..sort();
-    final String which = has202611Key
-        ? 'the fourteen keys of docs/VERIFY.md section 1.1 under ruleset '
-            '$_ruleset202611'
-        : 'the ten keys of docs/VERIFY.md section 1.1';
+    final String which = is202612
+        ? 'the seventeen keys of docs/VERIFY.md section 1.1 under ruleset '
+            '$_ruleset202612'
+        : has202611Key
+            ? 'the fourteen keys of docs/VERIFY.md section 1.1 under ruleset '
+                '$_ruleset202611'
+            : 'the ten keys of docs/VERIFY.md section 1.1';
     throw ScenarioFailure(
       'the record at $jsonUri has key set ${(actualKeys.toList()..sort())}, '
       'expected exactly $which '
@@ -273,6 +299,157 @@ Future<void> _checkJsonRecord({
 
   if (has202611Key) {
     _check202611Fields(record, jsonUri, winner, recordRollsRaw.length);
+  }
+  if (is202612) {
+    _check202612Fields(record, recordRollsRaw, jsonUri);
+  }
+}
+
+/// A strictly ascending list of ints, each in 1..[rollCount], or a
+/// [ScenarioFailure] naming [key] and the value.
+List<int> _rollNumberList(
+  String key,
+  Object? value,
+  Uri jsonUri,
+  int rollCount,
+) {
+  if (value is! List<Object?>) {
+    throw ScenarioFailure(
+      'the record at $jsonUri has $key=${jsonEncode(value)}, expected a '
+      'list of roll numbers',
+    );
+  }
+  final List<int> out = <int>[];
+  int previous = 0;
+  for (final Object? k in value) {
+    if (k is! int || k < 1 || k > rollCount || k <= previous) {
+      throw ScenarioFailure(
+        'the record at $jsonUri has $key=${jsonEncode(value)}, expected a '
+        'strictly ascending list of ints each in 1..$rollCount (the record '
+        'has $rollCount rolls); the entry ${jsonEncode(k)} breaks that',
+      );
+    }
+    previous = k;
+    out.add(k);
+  }
+  return out;
+}
+
+/// The 2026-12 fields (docs/VERIFY.md section 1.1, docs/PROTOCOL.md section
+/// 30 rule 7) of a record whose key set has already been checked.
+/// `declined` and `lapsed` are roll numbers that are also in `releases`
+/// (a release is every roll that raised an offer or a lapse); a lapse has
+/// no offer, so no roll is both; `grants` has one object per taken release,
+/// so its `k` is in `releases` and in neither of the other two.
+void _check202612Fields(
+  Map<String, Object?> record,
+  List<Object?> rolls,
+  Uri jsonUri,
+) {
+  final int rollCount = rolls.length;
+  final Set<int> gameSeats = _seatsOfGame(record, jsonUri);
+  final Set<int> releases = _rollNumberList(
+    'releases',
+    record['releases'],
+    jsonUri,
+    rollCount,
+  ).toSet();
+  final List<int> declined = _rollNumberList(
+    'declined',
+    record['declined'],
+    jsonUri,
+    rollCount,
+  );
+  final List<int> lapsed = _rollNumberList(
+    'lapsed',
+    record['lapsed'],
+    jsonUri,
+    rollCount,
+  );
+  for (final int k in lapsed) {
+    if (!releases.contains(k)) {
+      throw ScenarioFailure(
+        'the record at $jsonUri has lapsed=${jsonEncode(lapsed)}, expected '
+        'a subset of releases=${jsonEncode(record['releases'])}; $k is not '
+        'in releases',
+      );
+    }
+  }
+  for (final int k in declined) {
+    if (!releases.contains(k)) {
+      throw ScenarioFailure(
+        'the record at $jsonUri has declined=${jsonEncode(declined)}, '
+        'expected a subset of releases=${jsonEncode(record['releases'])}; '
+        '$k is not in releases',
+      );
+    }
+    if (lapsed.contains(k)) {
+      throw ScenarioFailure(
+        'the record at $jsonUri has k=$k in both declined and lapsed, '
+        'expected a lapse (no piece to release, no offer) never to be '
+        'declined',
+      );
+    }
+  }
+
+  final Object? grants = record['grants'];
+  if (grants is! List<Object?>) {
+    throw ScenarioFailure(
+      'the record at $jsonUri has grants=${jsonEncode(grants)}, expected a '
+      'list of {"k": int, "seats": [int, ...]} objects',
+    );
+  }
+  int previous = 0;
+  for (final Object? entry in grants) {
+    final String shown = jsonEncode(entry);
+    if (entry is! Map<String, Object?> ||
+        entry.length != 2 ||
+        !entry.containsKey('k') ||
+        !entry.containsKey('seats')) {
+      throw ScenarioFailure(
+        'the record at $jsonUri has the grants entry $shown, expected '
+        'exactly {"k": int, "seats": [int, ...]}',
+      );
+    }
+    final Object? k = entry['k'];
+    if (k is! int || k < 1 || k > rollCount || k <= previous) {
+      throw ScenarioFailure(
+        'the record at $jsonUri has the grants entry $shown, expected k to '
+        'be an int in 1..$rollCount, ascending across grants',
+      );
+    }
+    previous = k;
+    if (!releases.contains(k) || declined.contains(k) || lapsed.contains(k)) {
+      throw ScenarioFailure(
+        'the record at $jsonUri has the grants entry $shown, expected k to '
+        'be a taken release: in releases=${jsonEncode(record['releases'])} '
+        'and in neither declined=${jsonEncode(declined)} nor '
+        'lapsed=${jsonEncode(lapsed)}',
+      );
+    }
+    final Object? seats = entry['seats'];
+    if (seats is! List<Object?>) {
+      throw ScenarioFailure(
+        'the record at $jsonUri has the grants entry $shown, expected '
+        '"seats" to be a list of seats',
+      );
+    }
+    final Object? roller = (rolls[k - 1]! as Map<String, Object?>)['seat'];
+    int last = -1;
+    for (final Object? seat in seats) {
+      if (seat is! int ||
+          !gameSeats.contains(seat) ||
+          seat <= last ||
+          seat == roller) {
+        throw ScenarioFailure(
+          'the record at $jsonUri has the grants entry $shown, expected '
+          'seats to be ascending distinct seats of this game '
+          '${(gameSeats.toList()..sort())} other than the rolling seat '
+          '$roller; the entry ${jsonEncode(seat)} breaks that',
+        );
+      }
+      last = seat;
+    }
   }
 }
 

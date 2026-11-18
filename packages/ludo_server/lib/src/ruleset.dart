@@ -11,12 +11,17 @@ const String ruleset202610 = '2026-10';
 /// 9r-15r) and the places played out (rules 33p-39p) on top of the above.
 const String ruleset202611 = '2026-11';
 
+/// The ruleset of section 30: everything [ruleset202611] plays, and the
+/// shared release (`docs/RULES.md` rules 16s-20s) on top.
+const String ruleset202612 = '2026-12';
+
 /// True for a value [parseRuleset] would accept as is.
 bool isKnownRuleset(String value) =>
-    value == ruleset202610 || value == ruleset202611;
+    value == ruleset202610 || value == ruleset202611 || value == ruleset202612;
 
-/// Section 28 rule 1. The `RULESET` environment value: absent or empty is
-/// [ruleset202610], `2026-10` and `2026-11` are themselves (surrounding
+/// Section 28 rule 1 and section 30 rule 1. The `RULESET` environment value:
+/// absent or empty is [ruleset202610], `2026-10`, `2026-11` and `2026-12`
+/// are themselves (surrounding
 /// spaces and tabs trimmed, as `MIN_CLIENT_BUILD` is in section 27), and
 /// anything else throws a [FormatException] naming the variable, for
 /// `bin/server.dart` to turn into a failed start.
@@ -30,7 +35,8 @@ String parseRuleset(String? raw) {
   }
   if (!isKnownRuleset(trimmed)) {
     throw FormatException(
-      'RULESET must be $ruleset202610 or $ruleset202611, got "$raw"',
+      'RULESET must be $ruleset202610, $ruleset202611 or $ruleset202612, '
+      'got "$raw"',
     );
   }
   return trimmed;

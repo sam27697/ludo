@@ -557,6 +557,7 @@ class _GameCheck {
   static String _reasonWire(engine.TurnEndReason r) => switch (r) {
         engine.TurnEndReason.noLegalMove => 'no_legal_move',
         engine.TurnEndReason.threeSixes => 'three_sixes',
+        engine.TurnEndReason.released => 'released',
       };
 
   void _replayEngine() {

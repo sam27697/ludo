@@ -94,6 +94,9 @@ Map<String, Object?> _seatSnapshot(Room room, Seat seat) {
     // docs/PROTOCOL.md section 28 rule 2: rule 9r's count, 0..9, 2026-11
     // only. 0 before there is a game.
     if (room.isRuleset202611) 'drought': room.game?.drought[seat.seat] ?? 0,
+    // docs/PROTOCOL.md section 30 rule 5: the sixes banked for this seat,
+    // 0..3, 2026-12 only. 0 before there is a game.
+    if (room.isRuleset202612) 'banked': room.game?.banked[seat.seat] ?? 0,
   };
 }
 
@@ -119,6 +122,10 @@ Map<String, Object?>? _turnSnapshot(Room room, DateTime now) {
       // carries `release: true` and the releasable tokens, and no `value`
       // and no `legal_by_face`: there is no face to spend.
       turn['release'] = true;
+      if (queueFields.offer) {
+        // Section 30 rule 2: the release is on offer, to take or decline.
+        turn['offer'] = true;
+      }
       turn['legal'] = queueFields.legal;
       turn['sixes'] = game.sixes;
     } else {
@@ -162,11 +169,16 @@ class TurnQueueFields {
     this.legal,
     this.legalByFace,
     this.release = false,
+    this.offer = false,
   });
 
   /// Section 28 rule 2: a yard release is owed. Then [legal] is the
   /// releasable tokens and [value] and [legalByFace] are null.
   final bool release;
+
+  /// Section 30 rule 2: the owed release is an offer the seat may take or
+  /// decline. Only together with [release].
+  final bool offer;
 
   final String phase;
   final List<int> queue;
@@ -187,6 +199,7 @@ TurnQueueFields turnQueueFields(engine.GameState game) {
       queue: queue,
       legal: engine.legalTokens(game),
       release: true,
+      offer: game.releaseOffered,
     );
   }
   return TurnQueueFields(
@@ -340,6 +353,7 @@ Map<String, Object?> buildRolled({
   List<Map<String, Object?>>? legalByFace,
   String? by,
   bool release = false,
+  bool offer = false,
 }) {
   return <String, Object?>{
     'seat': seat,
@@ -354,6 +368,8 @@ Map<String, Object?> buildRolled({
     // docs/PROTOCOL.md section 28 rule 2: given, and only given, as `true`
     // on the roll that grants a yard release, a lapse included.
     if (release) 'release': true,
+    // Section 30 rule 2: the release is an offer, not yet taken.
+    if (offer) 'offer': true,
     if (by != null) 'by': by,
   };
 }
@@ -385,6 +401,8 @@ Map<String, Object?> buildTurn({
   List<int>? legal,
   List<Map<String, Object?>>? legalByFace,
   bool release = false,
+  bool offer = false,
+  int? banked,
   int? graceMs,
 }) {
   return <String, Object?>{
@@ -401,7 +419,41 @@ Map<String, Object?> buildTurn({
     if (legalByFace != null) 'legal_by_face': legalByFace,
     // docs/PROTOCOL.md section 28 rule 2: a yard release is owed.
     if (release) 'release': true,
+    if (offer) 'offer': true,
+    // Section 30 rule 5: the sixes banked for the seat, queued with this turn.
+    if (banked != null && banked > 0) 'banked': banked,
   };
+}
+
+/// `release_declined`, section 30 rule 4.
+Map<String, Object?> buildReleaseDeclined({
+  required int seat,
+  required int seq,
+}) {
+  return <String, Object?>{'seat': seat, 'seq': seq};
+}
+
+/// `sixes_granted`, section 30 rule 3: [seats] ascending, the other playing
+/// seats granted a banked six by a taken release.
+Map<String, Object?> buildSixesGranted({
+  required List<int> seats,
+  required int seq,
+}) {
+  return <String, Object?>{'seats': List<int>.of(seats), 'seq': seq};
+}
+
+/// Section 30 rule 5: how many banked sixes the step that produced [events]
+/// queued for [seat] as its turn began, 0 when none. The engine empties the
+/// bank into the queue at that moment, so the count is read off its
+/// `SixesQueued` event and nowhere else.
+int queuedBankedSixes(List<engine.GameEvent> events, int seat) {
+  for (final engine.SixesQueued queued
+      in events.whereType<engine.SixesQueued>()) {
+    if (queued.seat == seat) {
+      return queued.count;
+    }
+  }
+  return 0;
 }
 
 /// `moved`, section 5, section 12.2 and section 21.1: built from the
@@ -510,6 +562,8 @@ String wireTurnEndReason(engine.TurnEndReason reason) {
       return 'no_legal_move';
     case engine.TurnEndReason.threeSixes:
       return 'three_sixes';
+    case engine.TurnEndReason.released:
+      return 'released';
   }
 }
 
@@ -556,7 +610,8 @@ List<OutFrame> buildRollFrames(RollOk ok, {String? by}) {
         queue: afterRollFields.queue,
         legalByFace: afterRollFields.legalByFace,
         by: by,
-        release: ok.events.whereType<engine.YardReleased>().isNotEmpty,
+        release: ok.release,
+        offer: afterRollFields.offer,
       ),
     ),
   );
@@ -588,12 +643,56 @@ List<OutFrame> buildRollFrames(RollOk ok, {String? by}) {
           legal: afterRollFields.legal,
           legalByFace: afterRollFields.legalByFace,
           release: afterRollFields.release,
+          offer: afterRollFields.offer,
+          banked: queuedBankedSixes(ok.events, afterRoll.currentSeat),
           graceMs: ok.nextGraceMs,
         ),
       ),
     );
   }
   return frames;
+}
+
+/// Every frame `RoomRegistry.declineRelease` decided on, section 30 rule 4:
+/// `release_declined`, `turn_passed` (`no_legal_move`), then the `turn` of
+/// the next seat, which carries `banked` when that seat holds banked sixes.
+List<OutFrame> buildDeclineFrames(DeclineOk ok) {
+  final engine.ReleaseDeclined declined =
+      ok.events.whereType<engine.ReleaseDeclined>().single;
+  final engine.TurnEnded ended = ok.events.whereType<engine.TurnEnded>().single;
+  final engine.GameState after = ok.room.game!;
+  final TurnQueueFields fields = turnQueueFields(after);
+  return <OutFrame>[
+    OutFrame(
+      'release_declined',
+      buildReleaseDeclined(seat: declined.seat, seq: ok.declinedSeq),
+    ),
+    OutFrame(
+      'turn_passed',
+      buildTurnPassed(
+        seat: ended.seat,
+        reason: wireTurnEndReason(ended.reason),
+        seq: ok.turnPassedSeq,
+      ),
+    ),
+    OutFrame(
+      'turn',
+      buildTurn(
+        seat: after.currentSeat,
+        deadlineMs: ok.nextDeadlineMs,
+        seq: ok.turnSeq,
+        phase: fields.phase,
+        queue: fields.queue,
+        value: fields.value,
+        legal: fields.legal,
+        legalByFace: fields.legalByFace,
+        release: fields.release,
+        offer: fields.offer,
+        banked: queuedBankedSixes(ok.events, after.currentSeat),
+        graceMs: ok.nextGraceMs,
+      ),
+    ),
+  ];
 }
 
 /// Every frame `RoomRegistry.move` decided on: `moved` always, carrying the
@@ -657,6 +756,19 @@ List<OutFrame> buildMoveFrames(MoveOk ok, {String? by}) {
   }
   final engine.GameState afterMove = ok.room.game!;
   final TurnQueueFields afterMoveFields = turnQueueFields(afterMove);
+  if (ok.sixesGrantedSeq != null) {
+    // Section 30 rule 3: a taken shared release grants the other playing
+    // seats a six, after `moved` and before the pass.
+    frames.add(
+      OutFrame(
+        'sixes_granted',
+        buildSixesGranted(
+          seats: ok.events.whereType<engine.SixesBanked>().single.seats,
+          seq: ok.sixesGrantedSeq!,
+        ),
+      ),
+    );
+  }
   if (ok.turnPassedSeq != null) {
     final engine.TurnEnded ended =
         ok.events.whereType<engine.TurnEnded>().single;
@@ -684,6 +796,8 @@ List<OutFrame> buildMoveFrames(MoveOk ok, {String? by}) {
         legal: afterMoveFields.legal,
         legalByFace: afterMoveFields.legalByFace,
         release: afterMoveFields.release,
+        offer: afterMoveFields.offer,
+        banked: queuedBankedSixes(ok.events, afterMove.currentSeat),
         graceMs: ok.nextGraceMs,
       ),
     ),
@@ -737,6 +851,8 @@ List<OutFrame> buildRetireFrames(RetireOk ok) {
           legal: fields.legal,
           legalByFace: fields.legalByFace,
           release: fields.release,
+          offer: fields.offer,
+          banked: queuedBankedSixes(ok.events, after.currentSeat),
           graceMs: ok.nextGraceMs,
         ),
       ),

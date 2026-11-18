@@ -34,10 +34,13 @@ A JSON object with exactly these keys:
 | `seeds` | list | one object per seat in the game, ascending seat: `{"seat": int, "seed": string, "origin": "player" or "server"}` |
 | `rolls` | list | one object per roll, ascending `k`, `k` = 1 .. `room.rollCount` with no gap: `{"k": int, "seat": int, "reveal": string, "die": int}` |
 | `winner` | int | the seat of the engine's `GameWon` event |
-| `ruleset` | string | `"2026-11"`; absent under `2026-10` (PROTOCOL.md section 28 rule 2) |
+| `ruleset` | string | `"2026-11"` or `"2026-12"`; absent under `2026-10` (PROTOCOL.md section 28 rule 2, section 30 rule 7) |
 | `releases` | list | the roll numbers `k` whose roll granted a yard release, lapses included, ascending; absent under `2026-10` |
-| `placings` | list | the seats in place order, the last seat standing included; present under `2026-11` only (section 28 rule 3) |
-| `retired` | list | the seats in retirement order; present under `2026-11` only |
+| `declined` | list | the roll numbers `k` whose offered release the player declined, ascending; the timer never declines; present under `2026-12` only |
+| `lapsed` | list | the roll numbers `k` whose release found no piece to release (a lapse), ascending, a subset of `releases`; present under `2026-12` only |
+| `grants` | list | one object per taken release, `{"k": int, "seats": [int, ...]}`: the roll number and the seats granted a six, ascending; present under `2026-12` only |
+| `placings` | list | the seats in place order, the last seat standing included; present under `2026-11` and `2026-12` (section 28 rule 3) |
+| `retired` | list | the seats in retirement order; present under `2026-11` and `2026-12` |
 | `finished_at` | string | the registry clock's `now` at the win, UTC, whole seconds, `YYYY-MM-DDTHH:MM:SSZ` |
 
 `reveal` is `room.chain.reveal(k)`; `die` is the face that roll produced;

@@ -701,3 +701,99 @@ client orders. Corpus records with `"playOut": true` may carry
 `{"type":"retire","seat":s}`; the legacy, rollQueue and yardRelease records
 stay byte-identical.
 
+## 13. The shared release (`sharedRelease`), 2026-11-19
+
+`docs/RULES.md` section 3.2c is the rule. With `rules.sharedRelease` false
+nothing in sections 1 to 12 changes, byte for byte.
+
+### 13.1 Types
+
+```dart
+class RulesConfig {
+  final bool sharedRelease;   // rules 16s-20s, default false; needs yardRelease
+}
+
+class GameState {
+  final List<int> banked;     // banked sixes owed per seat index 0..3; always
+                              // [0, 0, 0, 0] when !sharedRelease
+  final bool releaseOffered;  // true only together with releaseOwed
+}
+
+class DeclineIntention extends Intention { const DeclineIntention(int seat); }
+
+class ReleaseDeclined extends GameEvent { final int seat; }
+class SixesBanked extends GameEvent { final List<int> seats; } // grantees, ascending
+class SixesQueued extends GameEvent { final int seat; final int count; }
+enum TurnEndReason { ..., released }   // appended
+```
+
+`newGame` throws `ArgumentError` when `sharedRelease` is on and
+`yardRelease` is off. It starts with `banked = [0, 0, 0, 0]`,
+`releaseOffered = false`.
+
+### 13.2 Serialisation
+
+`sharedRelease` is written in `rules` after `yardRelease`, only when true.
+`banked` (list of 4 ints) and `releaseOffered` (bool) are written in that
+order right after `releaseOwed`, only when `sharedRelease` is true (then
+always). `fromJson()` reads them absent as `[0, 0, 0, 0]` / false and
+rejects: an explicit `sharedRelease: false`, `sharedRelease` without
+`yardRelease`, either key on a state whose rules lack `sharedRelease`,
+either key missing when it is on, a banked list not of length 4, a count
+outside 0..3, `releaseOffered: true` without `releaseOwed`.
+
+### 13.3 RollIntention with `sharedRelease`
+
+Section 11.3 runs as written until a non-6 brings the drought to 10, then:
+
+- append the drawn face, `sixes = 0`, emit `Rolled`; `drought[seat] = 9`
+  (it moves again only through 11.3's rules).
+- some token releasable: `releaseOwed = true`, `releaseOffered = true`,
+  phase `awaitMove`, `Rolled.legal` = the releasable tokens. No
+  `YardReleased` is emitted yet.
+- none releasable (rule 16s, lapse): `drought[seat] = 0`, emit
+  `TurnEnded(noLegalMove)` then the next-seat sequence of 13.6. Nothing banked.
+
+### 13.4 While a release is offered
+
+`legalTokens` is the releasable tokens ascending; `legalByFace` empty;
+`defaultFace` null (as 11.4). Two intentions are valid, nothing else:
+
+- `MoveIntention(seat, token)` with `face == null` and a releasable token:
+  **take**. Move `-1` to `0`, emit `Moved`, then `YardReleased`, then
+  `SixesBanked` listing every other playing seat (rule 17s; omitted when
+  there is none), then `TurnEnded(released)`, then the next-seat sequence of
+  13.6. `queue = []`, `releaseOwed = false`, `releaseOffered = false`,
+  `banked[other] += 1` for each grantee, `sixes = 0`, the mover's drought 0.
+  A `face` given, or a token not releasable: `illegalMove`.
+- `DeclineIntention(seat)`: emit `ReleaseDeclined`, then
+  `TurnEnded(noLegalMove)`, then 13.6. `queue = []`, flags cleared, the
+  drought stays 9 (rule 18s). Nothing banked.
+
+`DeclineIntention` in any other state, or for the wrong seat, is `wrongPhase`
+/ `notYourTurn` exactly as `MoveIntention` would be; with `sharedRelease`
+off it is `wrongPhase`.
+
+### 13.5 `YardReleased` ordering
+
+With `sharedRelease` on, `YardReleased` is emitted when the release is
+taken, after `Moved` (not after `Rolled` as in 11.3). A lapse emits no
+`YardReleased` (no release happened); the wire marks the roll by its own
+flag (protocol section 30).
+
+### 13.6 The next-seat sequence
+
+Every place that begins the next seat's turn (a pass, a three-6s void, a
+spent queue, a taken or declined release, a finished seat, a retirement)
+goes through one helper. With `sharedRelease` on, when `banked[next] > 0`:
+emit `TurnBegan`, then `SixesQueued(seat: next, count: n)`; the new state
+has `queue = [6] * n`, `banked[next] = 0`, phase `awaitRoll`, `sixes = 0`.
+A seat that is finished or retired is skipped before this runs and is never
+granted. A game that ends in the same step emits none of it.
+
+### 13.7 Golden corpus
+
+Records with `"sharedRelease": true` in `rules` carry a decline as
+`{"type":"decline","seat":s}` and a take as in 11.5. Banked sixes spent on a
+move carry `face: 6` like any queued 6. The 40 legacy records, every
+`rollQueue` record and every `yardRelease` record stay byte-identical.

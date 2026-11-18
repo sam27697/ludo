@@ -1829,3 +1829,75 @@ the server's turn timer, decided here once, never a client that lags behind the 
    - Section 26 rule 5 inside a grace (an away seat on turn resumes while its grace runs): the
      pushed `turn` carries `grace_ms` = the grace left, and the restarted full segment counts from
      the grace's end. Outside a grace, rule 5 is unchanged.
+
+## 30. The ruleset of 2026-12: the shared release, 2026-11-19
+
+Sam's ruling of 2026-11-19 (X211): `docs/RULES.md` rules 16s-20s,
+`docs/ENGINE_API.md` section 13. Nothing here applies to a room created under
+an older ruleset.
+
+1. **The switch.** `RULESET` accepts `2026-12` besides `2026-10` and `2026-11`
+   (section 28 rule 1; any other value still stops the server at start). A
+   `2026-12` room plays everything `2026-11` does (section 28, section 29) and
+   the engine config also has `sharedRelease` on. The snapshot's `rules.ruleset`
+   is `"2026-12"`. **Operations:** `RULESET=2026-12` is set in the same `.env`
+   change that raises `MIN_CLIENT_BUILD` (section 27) to the first build that
+   implements this section.
+2. **The offer.** The `rolled` frame of the roll that brings the drought to 10
+   carries `"release": true` and `"offer": true` when a token can be released:
+   `legal` = the releasable tokens, `queue` (the drawn face), no `legal_by_face`.
+   A lapse carries `"release": true` and `legal: []` with no `offer`, followed by
+   `turn_passed` `no_legal_move` and `turn` for the next seat. While an offer is
+   pending the snapshot's `turn` carries `"release": true` and `"offer": true`
+   as section 28 rule 2 describes, `await_move`.
+3. **Taking it** is `move` without `face` on a releasable token, as section 28
+   rule 2. The `moved` frame is as there. It is then followed by
+   `sixes_granted` `{ "seats": [int, ...], "seq": int }` (the other playing seats,
+   ascending; omitted when none), then `turn_passed` `{ "reason": "released" }`
+   and `turn` for the next seat. The queued drawn face is not offered again.
+4. **Declining** is the new client message `decline_release` `{}`. Errors in
+   this order: the same checks and order as `roll` (section 7: unknown room, not seated, `GAME_OVER`, `ROOM_STARTED`), then `NOT_YOUR_TURN`;
+   no offer pending (including every ruleset below `2026-12`): `WRONG_PHASE`.
+   Answered by the broadcast `release_declined` `{ "seat": int, "seq": int }`
+   (the declining socket also gets `re`), then `turn_passed` `no_legal_move` and
+   `turn` for the next seat.
+5. **Banked sixes.** The `turn` frame of a seat that has banked sixes, in
+   `await_roll`, carries `"banked": n` (n >= 1) and `queue` holding n sixes
+   (plus whatever else the queue holds); every seat object in the snapshot
+   carries `banked`, an integer 0..3, under `2026-12` only: the sixes granted and
+   **not yet queued**, so it is 0 for a seat whose turn has begun (the sixes are
+   then in `queue`) and it moves to the queue, never twice. The snapshot's `turn`
+   object carries no `banked`; after a resume a queue of sixes in `await_roll`
+   before the seat's first roll is the banked six. As in rule 11q the seat rolls
+   first, then spends: `move` in `await_roll` is `WRONG_PHASE` as ever. A banked
+   six is spent with `move` and `face: 6` like any queued 6, is never a `rolled`
+   frame, and has no `k`.
+6. **The timer.** On expiry of an offer the server takes the release on the
+   lowest releasable token (`moved` carries `by` as section 22). The segment
+   restarts on the offering `rolled` and on a `turn` that follows as ever.
+7. **The verify record** (docs/VERIFY.md section 1.1) gains, under `2026-12`
+   only: `"ruleset": "2026-12"`, `"releases": [k, ...]` (every roll that raised
+   an offer or a lapse), `"declined": [k, ...]` (the offers declined; the
+   timer never declines), `"lapsed": [k, ...]` (the releases that were a lapse) and `"grants": [{ "k": int, "seats": [int, ...] }, ...]`
+   (for a taken release, the roll number and the seats granted a six). The fair
+   draw of each roll `k` is unchanged and verifies alone. The page shows, next
+   to each such roll, one line: en "No 6 for 10 rolls with every piece at home:
+   one piece comes out and the turn ends. Everyone else gets a six." / "... the
+   player kept the piece in the yard." (declined), ar «ما طلع 6 بعشر رميات
+   وكل القطع بالبيت: بتطلع قطعة ويخلص دوره، وكل واحد تاني بياخد 6.» / «... فضّل
+   يبقي القطع بالبيت.».
+   A roll in `releases` whose offer found no piece to release (a lapse) gets, in
+   the same place, en "No 6 for 10 rolls with every piece at home, but no piece
+   could come out: the turn passes." / ar «ما طلع 6 بعشر رميات وكل القطع بالبيت،
+   بس ما قدرت تطلع ولا قطعة: الدور بيعدّي.». An offer that ends unanswered
+   because its seat left, was retired or was kicked has no line.
+8. **Tests this section requires** (server, real sockets, fake clock): the
+   switch (`2026-12` accepted, a `2026-11` room unaffected); ten non-6 rolls give
+   `rolled` `offer: true`; `move` takes it and the order of frames is `moved`,
+   `sixes_granted`, `turn_passed` `released`, `turn` with `banked: 1` for each
+   other seat; the taking seat does not roll again; `decline_release` gives
+   `release_declined` then the pass, the drought is 9 so the next non-6 offers
+   again; `decline_release` is `WRONG_PHASE` with no offer and `NOT_YOUR_TURN` out
+   of turn; the timer takes the offer; the lapse banks nothing; three seats:
+   both others are granted and a finished seat is not; the banked six sits in the
+   next turn's queue and spends on a release; the verify record's three keys.

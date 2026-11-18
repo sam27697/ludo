@@ -73,3 +73,19 @@ class RetireIntention extends Intention {
   @override
   String toString() => 'RetireIntention(seat: $seat)';
 }
+
+/// docs/ENGINE_API.md section 13.1, rule 18s: the seat offered a shared
+/// release answers that it does not take it.
+class DeclineIntention extends Intention {
+  const DeclineIntention(super.seat);
+
+  @override
+  bool operator ==(Object other) =>
+      other is DeclineIntention && other.seat == seat;
+
+  @override
+  int get hashCode => Object.hash(DeclineIntention, seat);
+
+  @override
+  String toString() => 'DeclineIntention(seat: $seat)';
+}

@@ -134,6 +134,7 @@ Future<ScenarioResult> runDoubleDrop(
         clientSeeds: setup.clientSeeds,
         winner: result.winner,
         rolls: result.rolls,
+        wireRuleset: setup.rulesetOnWire,
       );
       detail += ', record fetched and matched ${result.rolls.length} rolls';
     }
