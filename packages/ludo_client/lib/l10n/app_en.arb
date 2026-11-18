@@ -1059,7 +1059,7 @@
       }
     }
   },
-  "gameReleaseTakenOthers": "{name} took the release. Everyone else gets a 6.",
+  "gameReleaseTakenOthers": "{name} brought a piece out. Everyone else gets a 6.",
   "@gameReleaseTakenOthers": {
     "description": "Below-die notice for 2500 ms after a seat took the shared release, on the phone of the seat that took it or of a seat that is granted nothing.",
     "placeholders": {
@@ -1069,7 +1069,7 @@
       }
     }
   },
-  "gameReleaseTakenGranted": "{name} took the release. You get a 6.",
+  "gameReleaseTakenGranted": "{name} brought a piece out. You get a 6.",
   "@gameReleaseTakenGranted": {
     "description": "Below-die notice for 2500 ms on the phone of a seat that was granted a banked six by another seat's release.",
     "placeholders": {
@@ -1079,7 +1079,7 @@
       }
     }
   },
-  "gameReleaseBanked": "Bonus 6 from the release.",
+  "gameReleaseBanked": "You have a bonus 6.",
   "@gameReleaseBanked": {
     "description": "Below-die notice for 2500 ms when my turn begins with a six banked by another seat's release."
   },
