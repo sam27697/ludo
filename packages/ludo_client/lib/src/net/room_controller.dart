@@ -1660,9 +1660,8 @@ class RoomController extends ChangeNotifier {
     // so the count held on the seat goes back to 0.
     final List<SeatState> seats = room.seats
         .map(
-          (SeatState s) => s.seat == seatValue && (s.banked ?? 0) != 0
-              ? s.copyWith(banked: 0)
-              : s,
+          (SeatState s) =>
+              s.seat == seatValue && s.banked != 0 ? s.copyWith(banked: 0) : s,
         )
         .toList(growable: false);
     _room = room.copyWith(turn: turn, seats: seats, seq: seqValue);
@@ -1932,9 +1931,8 @@ class RoomController extends ChangeNotifier {
     final List<int> granted = _asIntList(frame.data, 'seats') ?? const <int>[];
     final List<SeatState> seats = room.seats
         .map(
-          (SeatState s) => granted.contains(s.seat)
-              ? s.copyWith(banked: (s.banked ?? 0) + 1)
-              : s,
+          (SeatState s) =>
+              granted.contains(s.seat) ? s.copyWith(banked: s.banked + 1) : s,
         )
         .toList(growable: false);
     _room = room.copyWith(seats: seats, seq: seqValue);

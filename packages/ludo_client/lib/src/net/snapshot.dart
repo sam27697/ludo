@@ -105,7 +105,7 @@ class SeatState {
     required this.seedOrigin,
     this.timerSteps,
     this.drought,
-    this.banked,
+    this.banked = 0,
   });
 
   final int seat;
@@ -130,9 +130,10 @@ class SeatState {
   final int? drought;
 
   /// docs/PROTOCOL.md section 30 rule 5, under `2026-12` only: the sixes
-  /// granted to this seat and not yet queued (0..3). Null when the key is
-  /// absent. The queue of a seat whose turn has begun holds them instead.
-  final int? banked;
+  /// granted to this seat and not yet queued (0..3). 0 when the key is
+  /// absent. The queue of a seat whose turn has begun holds them
+  /// instead.
+  final int banked;
 
   factory SeatState.fromJson(Map<String, Object?> json) {
     final int seat = _reqInt(json, 'seat');
@@ -149,7 +150,7 @@ class SeatState {
       throw const SnapshotFormatException('timer_steps');
     }
     final int? drought = _optInt(json, 'drought');
-    final int? banked = _optInt(json, 'banked');
+    final int banked = _optInt(json, 'banked') ?? 0;
 
     return SeatState(
       seat: seat,
