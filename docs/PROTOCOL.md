@@ -1856,7 +1856,7 @@ an older ruleset.
    ascending; omitted when none), then `turn_passed` `{ "reason": "released" }`
    and `turn` for the next seat. The queued drawn face is not offered again.
 4. **Declining** is the new client message `decline_release` `{}`. Errors in
-   this order: not seated `BAD_STATE` as every message; `NOT_YOUR_TURN`;
+   this order: the same checks and order as `roll` (section 7: unknown room, not seated, `GAME_OVER`, `ROOM_STARTED`), then `NOT_YOUR_TURN`;
    no offer pending (including every ruleset below `2026-12`): `WRONG_PHASE`.
    Answered by the broadcast `release_declined` `{ "seat": int, "seq": int }`
    (the declining socket also gets `re`), then `turn_passed` `no_legal_move` and
