@@ -3,11 +3,15 @@
 // same shape plus an optional `re` in. Deliberately does not import anything
 // from `package:ludo_server` or `test/support/wire_harness.dart`: this file
 // is the simulator's own black-box view of the wire, built only from the
-// protocol document, the same way a real client on a phone would be.
+// protocol document, the same way a real client on a phone would be. The one
+// exception is the name of the section 27 upgrade header, imported from
+// `lib/src/client_build.dart` so it is never retyped here (C-668).
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
+import 'package:ludo_server/src/client_build.dart' show clientBuildHeader;
 
 /// One decoded frame, either direction: the raw JSON object with string
 /// keys, exactly as it went over the wire.
@@ -27,6 +31,32 @@ Map<String, Object?> frameData(Frame frame) {
   }
   return d;
 }
+
+/// C-668: the `--client-build` value, or null if [raw] is not 1 to 9 ASCII
+/// decimal digits. The same pattern as the server's parser of the header
+/// (`parseClientBuildHeader`), so a value this accepts is one the server
+/// reads as a build and not as unknown.
+int? parseClientBuildFlag(String raw) {
+  if (!RegExp(r'^[0-9]{1,9}$').hasMatch(raw)) {
+    return null;
+  }
+  return int.parse(raw);
+}
+
+/// C-668: the close code docs/PROTOCOL.md section 27 rule 4 gives the
+/// `UPDATE_REQUIRED` refusal. Written out here, not imported, because this
+/// file reads the wire from the protocol document alone.
+const int closeCodeUpdateRequired = 4005;
+
+/// C-668: how long the first socket of a run waits for the server's first
+/// words before it writes anything. A gated server refuses on its own,
+/// unsolicited, about 10 ms after the upgrade; a write that crosses that
+/// refusal on its way out can make the connection die with close code 1002
+/// and the refusal frame never delivered (run 156, 3 of 6 raw-socket runs
+/// against production). The wait ends at once on a frame, a close or an
+/// error, so only a server that says nothing, which is every server that
+/// accepts the build, costs the full bound, and only on the first socket.
+const Duration _firstWordsWait = Duration(seconds: 1);
 
 /// Thrown by the small helpers below when a frame does not have the shape a
 /// caller required. Carries enough of the offending frame to reproduce the
@@ -51,6 +81,16 @@ void expectFrameType(Frame frame, String expectedType,
   }
   if (actual == 'error') {
     final Map<String, Object?> d = frameData(frame);
+    if (d['code'] == 'UPDATE_REQUIRED') {
+      // C-668: docs/PROTOCOL.md section 27 refusal, the first thing a gated
+      // server says on a socket that sent no (or too low a) build.
+      final Object? minBuild = d['min_build'];
+      throw UnexpectedFrame(
+        'server refused the client build (UPDATE_REQUIRED, min_build '
+        '$minBuild): pass --client-build N with N at least $minBuild; '
+        'expected a "$expectedType" frame ($because)',
+      );
+    }
     throw UnexpectedFrame(
       'expected a "$expectedType" frame ($because) but got error '
       '${d['code']}: ${d['message']}',
@@ -89,13 +129,39 @@ class SimSocket {
   bool _closed = false;
   int _idCounter = 0;
 
+  /// C-668: the close code the socket ended with, once [_closed].
+  int? _closeCode;
+
+  /// C-668: completes on the first frame, close or error this socket sees.
+  final Completer<void> _firstWords = Completer<void>();
+
+  /// C-668: set by the first [connect] of the process, see [_firstWordsWait].
+  static bool _firstSocketOpened = false;
+
+  /// C-668: the build every socket opened by [connect] announces in the
+  /// section 27 `ludo-client-build` upgrade header. Null, the default, sends
+  /// no header at all. Set once by a tool's `main` after it has parsed
+  /// `--client-build`, so no scenario or reconnect path can open a socket
+  /// that forgets it.
+  static int? clientBuild;
+
   /// Connects to [uri] exactly as given -- no path is appended, per the
   /// work order, because docs/PROTOCOL.md does not specify one beyond what
   /// the server's own routing already accepts at its root.
   static Future<SimSocket> connect(Uri uri, {required String label}) async {
-    final WebSocket socket = await WebSocket.connect(uri.toString());
+    final int? build = clientBuild;
+    final WebSocket socket = await WebSocket.connect(
+      uri.toString(),
+      headers: build == null
+          ? null
+          : <String, Object>{clientBuildHeader: build.toString()},
+    );
     final SimSocket sim = SimSocket._(socket, label);
     sim._listen();
+    if (!_firstSocketOpened) {
+      _firstSocketOpened = true;
+      await sim._firstWords.future.timeout(_firstWordsWait, onTimeout: () {});
+    }
     return sim;
   }
 
@@ -111,6 +177,7 @@ class SimSocket {
         }
         final Frame frame = decoded;
         log.add(frame);
+        _heardFirstWords();
         if (_waiting.isNotEmpty) {
           _waiting.removeAt(0).complete(frame);
         } else {
@@ -119,14 +186,15 @@ class SimSocket {
       },
       onDone: () {
         _closed = true;
+        _closeCode = _socket.closeCode;
+        _heardFirstWords();
         for (final Completer<Frame> completer in _waiting) {
-          completer.completeError(
-            StateError('[$label] socket closed before a frame arrived'),
-          );
+          completer.completeError(_closedWithoutFrame());
         }
         _waiting.clear();
       },
       onError: (Object error, StackTrace stackTrace) {
+        _heardFirstWords();
         for (final Completer<Frame> completer in _waiting) {
           completer.completeError(error, stackTrace);
         }
@@ -134,6 +202,37 @@ class SimSocket {
       },
       cancelOnError: false,
     );
+  }
+
+  void _heardFirstWords() {
+    if (!_firstWords.isCompleted) {
+      _firstWords.complete();
+    }
+  }
+
+  /// C-668: the failure for a [next] on a socket that ended with nothing
+  /// left to read. Close code 4005 with no `UPDATE_REQUIRED` frame in [log]
+  /// is still the section 27 refusal, so it is said in the same plain words
+  /// as the frame is; every other end keeps the original text.
+  Object _closedWithoutFrame({bool alreadyClosed = false}) {
+    final bool sawRefusalFrame = log.any((Frame f) {
+      final Object? d = f['d'];
+      return f['t'] == 'error' &&
+          d is Map<String, Object?> &&
+          d['code'] == 'UPDATE_REQUIRED';
+    });
+    if (_closeCode == closeCodeUpdateRequired && !sawRefusalFrame) {
+      return UnexpectedFrame(
+        'server refused the client build (UPDATE_REQUIRED, close code '
+        '$closeCodeUpdateRequired): pass --client-build N',
+      );
+    }
+    if (alreadyClosed) {
+      return StateError(
+        '[$label] socket already closed and no frame was pending',
+      );
+    }
+    return StateError('[$label] socket closed before a frame arrived');
   }
 
   /// The floor on the gap between two sends on the same socket:
@@ -186,9 +285,7 @@ class SimSocket {
       return Future<Frame>.value(_buffered.removeAt(0));
     }
     if (_closed) {
-      return Future<Frame>.error(
-        StateError('[$label] socket already closed and no frame was pending'),
-      );
+      return Future<Frame>.error(_closedWithoutFrame(alreadyClosed: true));
     }
     final Completer<Frame> completer = Completer<Frame>();
     _waiting.add(completer);

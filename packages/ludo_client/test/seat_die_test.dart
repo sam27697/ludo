@@ -172,6 +172,25 @@ void _phone(WidgetTester tester) {
   });
 }
 
+// C-667t r2: the default test surface (800x600) is a large landscape since
+// C-667. "D4: my own queue stays under the board" tests the tray's place on a
+// phone, so it runs on P1, 360x780 logical at density 3.0; its twin runs on
+// T2, 1480x924 logical at density 2.0 (contract D1).
+const Size _p1Surface = Size(360, 780);
+const double _p1Density = 3.0;
+const Size _t2Surface = Size(1480, 924);
+const double _t2Density = 2.0;
+const Key _sideBandKey = ValueKey<String>('c667-side-band');
+
+void _surface(WidgetTester tester, Size logical, double density) {
+  tester.view.physicalSize = Size(
+    logical.width * density,
+    logical.height * density,
+  );
+  tester.view.devicePixelRatio = density;
+  addTearDown(tester.view.reset);
+}
+
 double _cell(WidgetTester tester) => boardSquare(tester).width / 15;
 
 Rect _quadrant(WidgetTester tester, int seat, int mySeat) =>
@@ -1495,6 +1514,7 @@ void main() {
 
   testWidgets('D4: my own queue stays under the board beside my die and no '
       'board-seat-record exists', (tester) async {
+    _surface(tester, _p1Surface, _p1Density);
     final RollTrayDrive drive = await _mount(
       tester,
       turn: _awaitRoll(0),
@@ -1529,6 +1549,91 @@ void main() {
         tester.getRect(find.byKey(rollTrayKey)).top,
         greaterThanOrEqualTo(boardSquare(tester).bottom - 1),
         reason: s.why('the tray is below the board'),
+      );
+      for (int seat = 0; seat < 4; seat++) {
+        expect(
+          find.byKey(seatRecordKey(seat)),
+          findsNothing,
+          reason: s.why('no board-seat-record-$seat on my own turn'),
+        );
+      }
+    } finally {
+      await releaseGame(tester, drive);
+    }
+  });
+
+  // C-667t r2: the large-landscape twin of the case above (T2, contract D1).
+  // The tray is inside the side group beside my die, not under the board, and
+  // still no board-seat-record exists.
+  testWidgets('D4 twin T2: my own queue sits in the side group beside my die '
+      'and no board-seat-record exists', (tester) async {
+    _surface(tester, _t2Surface, _t2Density);
+    final RollTrayDrive drive = await _mount(
+      tester,
+      turn: _awaitRoll(0),
+      seats: _pair(mySeat: 0, mine: _oneOut, opponent: _yard),
+    );
+    final _Scn s = _Scn('D4 twin T2 my record', tester, drive);
+    try {
+      await s.push(
+        'rolled',
+        _rolledData(0, 6, 1, legal: const <int>[], queue: const <int>[6]),
+      );
+      await s.push('turn', _turnData(0, queue: const <int>[6]));
+      await s.push(
+        'rolled',
+        _rolledData(
+          0,
+          3,
+          2,
+          queue: const <int>[6, 3],
+          legalByFace: <Map<String, Object?>>[
+            faceLegal(6, const <int>[0]),
+            faceLegal(3, const <int>[0]),
+          ],
+        ),
+      );
+      expect(
+        find.byKey(rollTrayKey),
+        findsOneWidget,
+        reason: s.why('game-roll-tray is up beside my die'),
+      );
+      expect(
+        find.byKey(_sideBandKey),
+        findsOneWidget,
+        reason: s.why('the visible band is one group keyed c667-side-band'),
+      );
+      final Rect square = boardSquare(tester);
+      final Rect tray = tester.getRect(find.byKey(rollTrayKey));
+      final Rect die = tester.getRect(find.byKey(bigDieKey));
+      final Rect group = tester.getRect(find.byKey(_sideBandKey));
+      expect(
+        tray.left,
+        greaterThanOrEqualTo(square.right - 1),
+        reason: s.why(
+          'the tray is in the side space right of the board square $square, '
+          'not under it; tray $tray',
+        ),
+      );
+      expect(
+        tray.top,
+        lessThan(square.bottom - 1),
+        reason: s.why(
+          'the tray is no longer below the board (board bottom '
+          '${square.bottom}); tray $tray',
+        ),
+      );
+      _expectInside(group, tray, s.why('the tray is inside the side group'));
+      _expectInside(group, die, s.why('my die is inside the side group'));
+      expect(
+        tray.center.dx,
+        greaterThan(die.center.dx),
+        reason: s.why('the tray sits after my die'),
+      );
+      expect(
+        (tray.center.dy - die.center.dy).abs(),
+        lessThan(36),
+        reason: s.why('the tray stays on my die\'s row'),
       );
       for (int seat = 0; seat < 4; seat++) {
         expect(
