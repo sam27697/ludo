@@ -21,6 +21,7 @@ import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
@@ -497,20 +498,6 @@ Map<String, Object?> _resumeRoom(_G g, {int k = 10}) => _roomJson(
   turn: _offerTurn(k: k),
 );
 
-class _ThrowingTransport extends FakeTransport {
-  bool boom = false;
-  int attempts = 0;
-
-  @override
-  void send(String text) {
-    if (boom) {
-      attempts += 1;
-      throw StateError('c676 socket write failed');
-    }
-    super.send(text);
-  }
-}
-
 Future<void> _tapPill(_G g) async {
   expect(
     find.byKey(_pillKey),
@@ -551,7 +538,31 @@ void _expectNotCut(_G g, String text, String what) {
   );
 }
 
+Future<void> _loadAppFonts() async {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  final FontLoader poppins = FontLoader('Poppins');
+  for (final String asset in const <String>[
+    'fonts/Poppins-Regular.ttf',
+    'fonts/Poppins-Medium.ttf',
+    'fonts/Poppins-SemiBold.ttf',
+    'fonts/Poppins-Bold.ttf',
+  ]) {
+    poppins.addFont(rootBundle.load(asset));
+  }
+  await poppins.load();
+  final FontLoader arabic = FontLoader('Noto Sans Arabic');
+  for (final String asset in const <String>[
+    'fonts/NotoSansArabic-Regular.ttf',
+    'fonts/NotoSansArabic-Bold.ttf',
+  ]) {
+    arabic.addFont(rootBundle.load(asset));
+  }
+  await arabic.load();
+}
+
 void main() {
+  setUpAll(_loadAppFonts);
+
   // ===========================================================================
   // G1: a decline that did not arrive
   // ===========================================================================
@@ -625,28 +636,26 @@ void main() {
     turn: _turnJson(0, 'await_roll'),
   );
 
-  testWidgets('C-676t G1c a transport that throws on send: the pill stays '
-      'live after the reconnect snapshot and declines once', (tester) async {
-    final _ThrowingTransport bad = _ThrowingTransport();
-    final _G g = await _open(
-      tester,
-      scenario: 'G1c throwing transport',
-      turn: _turnJson(0, 'await_roll'),
-      transport: bad,
-    );
-    try {
+  _cases(
+    'G1c a decline that gets no answer and times out: the controller fails, '
+    'reconnects, the snapshot restores the same offer, the pill declines once',
+    (_G g) async {
       await g.push('rolled', _offerRolled(0, 4, const <int>[1, 3]));
-      bad.boom = true;
-      await g.tester.tap(find.byKey(_pillKey), warnIfMissed: false);
-      await g.tester.pump();
-      await g.tester.pump(const Duration(milliseconds: 100));
+      await _tapPill(g);
+      final FakeTransport first = g.wire;
       expect(
-        bad.attempts,
-        greaterThan(0),
-        reason: g.why('fixture: the screen did try to write the decline'),
+        _count(first, 'decline_release'),
+        1,
+        reason: g.why('fixture: the decline was written and is unanswered'),
       );
-      bad.boom = false;
+      // Past the connection's request timeout (10 s), the socket still up.
+      await g.pump(11000);
       await _resume(g, _resumeRoom(g));
+      expect(
+        g.controller.room!.turn!.offer,
+        isTrue,
+        reason: g.why('the same offer is restored (k 10)'),
+      );
       expect(
         g.pill,
         isTrue,
@@ -656,12 +665,17 @@ void main() {
       expect(
         _count(g.wire, 'decline_release'),
         1,
-        reason: g.why('exactly one decline_release on the new socket'),
+        reason: g.why('exactly one decline_release on the new transport'),
       );
-    } finally {
-      await releaseGame(g.tester, g.drive);
-    }
-  });
+      expect(
+        _count(first, 'decline_release'),
+        1,
+        reason: g.why('nothing more went to the old transport'),
+      );
+    },
+    locales: const <Locale>[_en],
+    turn: _turnJson(0, 'await_roll'),
+  );
 
   _cases(
     'G1d a rematch game whose offer arrives at the same k as an earlier '
