@@ -553,6 +553,9 @@ class _GameScreenState extends State<GameScreen> {
   // events the 2026-11 ruleset adds (a yard release, a place, a seat out, a
   // refused removal). The newest replaces the one up, each holds 2500 ms.
   _RulesetNotice? _rulesetNotice;
+
+  /// The `k` of the offer whose decline this screen already sent.
+  int? _declineSentForK;
   Timer? _rulesetNoticeTimer;
   static const Duration _rulesetNoticeHold = Duration(milliseconds: 2500);
 
@@ -1451,13 +1454,34 @@ class _GameScreenState extends State<GameScreen> {
     }
     final RoomController controller = widget.controller;
     final RoomSnapshot? room = controller.room;
-    final int? seat = _intAt(frame.data, 'seat');
-    if (room == null || seat == null || controller.hasDesynced) {
+    if (room == null || controller.hasDesynced) {
       return;
     }
     final int? mySeat = controller.seat;
+    if (frame.type == 'sixes_granted') {
+      _onSixesGranted(frame, room, mySeat);
+      return;
+    }
+    final int? seat = _intAt(frame.data, 'seat');
+    if (seat == null) {
+      return;
+    }
     final String name = _seatNameFor(seat) ?? '';
     switch (frame.type) {
+      case 'release_declined':
+        _showRulesetNotice(
+          _RulesetNotice(_RulesetNoticeKind.releaseDeclined, name: name),
+        );
+      case 'turn':
+        final TurnState? turn = room.turn;
+        // The banked six is shown when the turn begins: here when no gate is
+        // held for it, otherwise at the opening (see _releaseGate).
+        if (turn != null &&
+            seat == mySeat &&
+            turn.seat == seat &&
+            !_gateShutFor(turn)) {
+          _showBankedNotice(turn);
+        }
       case 'rolled':
         final Object? legal = frame.data['legal'];
         final TurnState? turn = room.turn;
@@ -1467,6 +1491,14 @@ class _GameScreenState extends State<GameScreen> {
             turn == null ||
             turn.seat != seat ||
             !turn.release) {
+          return;
+        }
+        if (turn.offer) {
+          // The offer line is drawn from the turn for as long as the answer
+          // is pending; it is read out once, here.
+          _announce(
+            _offerLine(AppLocalizations.of(context), turn, mySeat, name),
+          );
           return;
         }
         _showRulesetNotice(
@@ -1512,6 +1544,46 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
+  /// PROTOCOL 30 rule 3: the seat whose release was taken is the one holding
+  /// the turn when the grant arrives (the frame names only the seats granted).
+  void _onSixesGranted(Frame frame, RoomSnapshot room, int? mySeat) {
+    final TurnState? turn = room.turn;
+    final Object? seatsRaw = frame.data['seats'];
+    if (turn == null || seatsRaw is! List) {
+      return;
+    }
+    final String name = _seatNameFor(turn.seat) ?? '';
+    final bool granted = mySeat != null && seatsRaw.contains(mySeat);
+    _showRulesetNotice(
+      _RulesetNotice(
+        granted
+            ? _RulesetNoticeKind.releaseTakenGranted
+            : _RulesetNoticeKind.releaseTakenOthers,
+        name: name,
+      ),
+    );
+  }
+
+  void _showBankedNotice(TurnState turn) {
+    if ((turn.banked ?? 0) > 0 && turn.phase == TurnPhase.awaitRoll) {
+      _showRulesetNotice(
+        const _RulesetNotice(_RulesetNoticeKind.releaseBanked),
+      );
+    }
+  }
+
+  /// The words of the offer for whoever reads them: mine, or another seat's.
+  String _offerLine(
+    AppLocalizations loc,
+    TurnState turn,
+    int? mySeat,
+    String name,
+  ) {
+    return turn.seat == mySeat
+        ? loc.gameReleaseOfferNotice
+        : loc.gameReleaseOfferOther(name);
+  }
+
   void _showRulesetNotice(_RulesetNotice notice, {bool announce = true}) {
     if (!mounted) {
       return;
@@ -1543,6 +1615,14 @@ class _GameScreenState extends State<GameScreen> {
         return loc.gameReleaseNoticeMine;
       case _RulesetNoticeKind.releaseOther:
         return loc.gameReleaseNoticeOther(notice.name);
+      case _RulesetNoticeKind.releaseDeclined:
+        return loc.gameReleaseDeclinedOther(notice.name);
+      case _RulesetNoticeKind.releaseTakenOthers:
+        return loc.gameReleaseTakenOthers(notice.name);
+      case _RulesetNoticeKind.releaseTakenGranted:
+        return loc.gameReleaseTakenGranted(notice.name);
+      case _RulesetNoticeKind.releaseBanked:
+        return loc.gameReleaseBanked;
       case _RulesetNoticeKind.finishedMine:
         return loc.gameSeatFinishedMine(placeWord(loc, place));
       case _RulesetNoticeKind.finishedOther:
@@ -1582,7 +1662,7 @@ class _GameScreenState extends State<GameScreen> {
         _seatLost ||
         _isEndHeld ||
         room.state != RoomState.playing ||
-        room.rules.ruleset != '2026-11' ||
+        !_playsRuleset11(room.rules.ruleset) ||
         seat == controller.seat) {
       return false;
     }
@@ -1714,7 +1794,14 @@ class _GameScreenState extends State<GameScreen> {
 
   // == C-657 (PROTOCOL 29 rule 5): the turn gate ==
 
-  static const String _gateRuleset = '2026-11';
+  /// The rulesets that play the 2026-11 table: the turn gate, the retire on
+  /// leave, the host's remove. `2026-12` plays everything `2026-11` does
+  /// (PROTOCOL 30 rule 1).
+  static bool _playsRuleset11(String? ruleset) =>
+      ruleset == '2026-11' || ruleset == '2026-12';
+
+  /// PROTOCOL 30: the shared release is on in this room.
+  static bool _isSharedRuleset(String? ruleset) => ruleset == '2026-12';
 
   /// Sam's half second (PROTOCOL 29 rule 2): the beat after the last move has
   /// landed. Reduced motion shortens the board's steps, never this.
@@ -1745,7 +1832,7 @@ class _GameScreenState extends State<GameScreen> {
     return last != null &&
         last != turn.seat &&
         room.state == RoomState.playing &&
-        room.rules.ruleset == _gateRuleset &&
+        _playsRuleset11(room.rules.ruleset) &&
         !widget.controller.hasDesynced;
   }
 
@@ -1777,7 +1864,7 @@ class _GameScreenState extends State<GameScreen> {
         seat == previous ||
         room == null ||
         room.state != RoomState.playing ||
-        room.rules.ruleset != _gateRuleset ||
+        !_playsRuleset11(room.rules.ruleset) ||
         widget.controller.hasDesynced) {
       _resyncAutoMove();
       return cues;
@@ -1804,7 +1891,7 @@ class _GameScreenState extends State<GameScreen> {
     final int? grace = turn?.graceMs;
     if (turn == null ||
         room.state != RoomState.playing ||
-        room.rules.ruleset != _gateRuleset ||
+        !_playsRuleset11(room.rules.ruleset) ||
         grace == null ||
         grace <= 0) {
       _closeGate();
@@ -1834,7 +1921,7 @@ class _GameScreenState extends State<GameScreen> {
     if (room == null ||
         turn == null ||
         room.state != RoomState.playing ||
-        room.rules.ruleset != _gateRuleset ||
+        !_playsRuleset11(room.rules.ruleset) ||
         grace == null ||
         grace <= 0) {
       return false;
@@ -1929,6 +2016,9 @@ class _GameScreenState extends State<GameScreen> {
     }
     if (cue && seat == widget.controller.seat) {
       _playCue(FeedbackScope.of(context), FeedbackCue.yourTurn);
+    }
+    if (turn != null && turn.seat == seat && seat == widget.controller.seat) {
+      _showBankedNotice(turn);
     }
     // C-660 M5: "You're next" is spoken when the turn begins, not when it
     // was told.
@@ -4784,6 +4874,11 @@ class _GameScreenState extends State<GameScreen> {
         turn.phase != TurnPhase.awaitMove) {
       return false;
     }
+    // PROTOCOL 30 rule 2: an offer is answered by the player, taking or
+    // declining; one releasable piece is not moved on its own.
+    if (turn.offer) {
+      return false;
+    }
     final List<FaceLegal>? legalByFace = turn.legalByFace;
     if (legalByFace != null) {
       return legalByFace.length == 1 && legalByFace.single.tokens.length == 1;
@@ -5316,7 +5411,7 @@ class _GameScreenState extends State<GameScreen> {
     if (room == null ||
         seat == null ||
         room.state != RoomState.playing ||
-        room.rules.ruleset != '2026-11') {
+        !_playsRuleset11(room.rules.ruleset)) {
       return loc.gameLeaveConfirmBody;
     }
     if (room.placings.contains(seat) || room.retired.contains(seat)) {
@@ -6827,6 +6922,14 @@ class _GameScreenState extends State<GameScreen> {
                 offlineTurnSeat,
                 names,
                 clampScale: metrics.textScaleClamp,
+                offerReserve: _isSharedRuleset(room.rules.ruleset)
+                    ? _offerSlotHeight(
+                        context,
+                        _clampedScaler(context, metrics.textScaleClamp),
+                        constraints.maxWidth,
+                        loc,
+                      )
+                    : 0,
               ),
             );
 
@@ -7732,6 +7835,7 @@ class _GameScreenState extends State<GameScreen> {
     SeatState? offlineTurnSeat,
     Map<int, String> names, {
     required double clampScale,
+    double offerReserve = 0,
   }) {
     // C-391 decision 2: this slot's own texts (the live notice and the
     // placeholders reserving its space) are laid out at the same clamped
@@ -7751,9 +7855,19 @@ class _GameScreenState extends State<GameScreen> {
         watchDeadReason != null && watchDeadName != null
         ? _watchDeadLine(loc, watchDeadReason, watchDeadName)
         : null;
+    final RoomController controller = widget.controller;
+    final TurnState? liveTurn = controller.room?.turn;
+    final bool offerShown =
+        offerReserve > 0 &&
+        liveTurn != null &&
+        liveTurn.offer &&
+        !controller.hasDesynced;
+    final bool offerMine = offerShown && liveTurn.seat == controller.seat;
     return Stack(
       alignment: Alignment.topCenter,
       children: [
+        if (offerReserve > 0)
+          ExcludeSemantics(child: SizedBox(height: offerReserve, width: 1)),
         ExcludeSemantics(
           child: Opacity(
             opacity: 0,
@@ -7855,7 +7969,26 @@ class _GameScreenState extends State<GameScreen> {
         ExcludeSemantics(
           child: Opacity(opacity: 0, child: _seatMovedRow(loc, 2, scaler)),
         ),
-        if (_noMoveVisible)
+        if (offerShown)
+          Positioned.fill(
+            child: offerMine
+                ? _offerMineRow(loc, scaler)
+                : Center(
+                    child: Text(
+                      loc.gameReleaseOfferOther(
+                        names[liveTurn.seat] ??
+                            _seatNameFor(liveTurn.seat) ??
+                            '',
+                      ),
+                      key: const Key('game-release-notice'),
+                      textAlign: TextAlign.center,
+                      textScaler: scaler,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+          )
+        else if (_noMoveVisible)
           Positioned.fill(
             child: Text(
               _noMoveLine(loc, _noMoveReason),
@@ -7925,6 +8058,124 @@ class _GameScreenState extends State<GameScreen> {
           ),
       ],
     );
+  }
+
+  /// The widest the decline pill's label is laid out at, and the shortest
+  /// its tap target is (doctrine P9).
+  static const double _offerPillMinHeight = 48;
+
+  /// The pill's padding either side of its label.
+  static const double _offerPillPad = kSpace4;
+
+  TextStyle _offerPillStyle() =>
+      const TextStyle(fontWeight: FontWeight.w700, color: LudoColors.ink);
+
+  /// The height the notice slot keeps in a `2026-12` room so the offer's two
+  /// lines and the pill fit without the board moving when an offer arrives.
+  double _offerSlotHeight(
+    BuildContext context,
+    TextScaler scaler,
+    double maxWidth,
+    AppLocalizations loc,
+  ) {
+    final TextDirection direction = Directionality.of(context);
+    final TextStyle base = Theme.of(context).textTheme.bodyMedium!;
+    final TextPainter pill = TextPainter(
+      text: TextSpan(text: loc.gameReleaseDecline, style: base),
+      textDirection: direction,
+      textScaler: scaler,
+      maxLines: 1,
+    )..layout();
+    final double pillWidth = pill.width + 2 * _offerPillPad;
+    pill.dispose();
+    final TextPainter line = TextPainter(
+      text: TextSpan(text: loc.gameReleaseOfferNotice, style: base),
+      textAlign: TextAlign.center,
+      textDirection: direction,
+      textScaler: scaler,
+      maxLines: 2,
+      ellipsis: '…',
+    )..layout(maxWidth: math.max(1, maxWidth - pillWidth - kSpace2));
+    final double height = line.height;
+    line.dispose();
+    return math.max(_offerPillMinHeight, height);
+  }
+
+  /// My offer: the words, and beside them the one control that declines. The
+  /// answer that takes the release is on the board, tapping a ringed piece.
+  Widget _offerMineRow(AppLocalizations loc, TextScaler scaler) {
+    return Row(
+      key: const Key('game-release-notice'),
+      children: <Widget>[
+        Expanded(
+          child: Text(
+            loc.gameReleaseOfferNotice,
+            key: const Key('release-offer-notice'),
+            textAlign: TextAlign.center,
+            textScaler: scaler,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: kSpace2),
+        Semantics(
+          button: true,
+          label: loc.gameReleaseDecline,
+          excludeSemantics: true,
+          onTap: _declineRelease,
+          child: Material(
+            key: const Key('release-decline-button'),
+            color: LudoColors.paperElevated,
+            shape: const StadiumBorder(
+              side: BorderSide(color: LudoColors.inkMuted, width: 2),
+            ),
+            child: InkWell(
+              customBorder: const StadiumBorder(),
+              onTap: _declineRelease,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  minHeight: _offerPillMinHeight,
+                  minWidth: _offerPillMinHeight,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: _offerPillPad,
+                  ),
+                  child: Center(
+                    widthFactor: 1,
+                    child: Text(
+                      loc.gameReleaseDecline,
+                      textScaler: scaler,
+                      maxLines: 1,
+                      style: _offerPillStyle(),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// The decline pill's tap: the one intention `decline_release`, sent while
+  /// the offer is still pending. Nothing on the board changes until the
+  /// server's `release_declined` arrives.
+  void _declineRelease() {
+    final TurnState? turn = widget.controller.room?.turn;
+    if (_myTimeUp ||
+        turn == null ||
+        !turn.offer ||
+        turn.seat != widget.controller.seat) {
+      return;
+    }
+    if (_declineSentForK == turn.k) {
+      return;
+    }
+    _declineSentForK = turn.k;
+    _playCue(FeedbackScope.of(context), FeedbackCue.tap);
+    unawaited(widget.controller.declineRelease());
   }
 
   /// C-250 rule 5: `game-screen-dice-value` moves off a visible line and
@@ -9653,6 +9904,10 @@ class _RestRingPainter extends CustomPainter {
 enum _RulesetNoticeKind {
   releaseMine,
   releaseOther,
+  releaseDeclined,
+  releaseTakenOthers,
+  releaseTakenGranted,
+  releaseBanked,
   finishedMine,
   finishedOther,
   retiredLeft,
@@ -9675,6 +9930,10 @@ class _RulesetNotice {
     switch (kind) {
       case _RulesetNoticeKind.releaseMine:
       case _RulesetNoticeKind.releaseOther:
+      case _RulesetNoticeKind.releaseDeclined:
+      case _RulesetNoticeKind.releaseTakenOthers:
+      case _RulesetNoticeKind.releaseTakenGranted:
+      case _RulesetNoticeKind.releaseBanked:
         return const Key('game-release-notice');
       case _RulesetNoticeKind.finishedMine:
       case _RulesetNoticeKind.finishedOther:
