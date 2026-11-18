@@ -162,6 +162,7 @@ With the flag, after each scenario's game ends, the simulator fetches, with
   the same order, each entry's `k`, `seat`, `reveal` and `die` equal to that
   frame's `k`, `seat`, `reveal` and `value`. The first mismatch is the `FAIL`
   line, naming the `k` and both values.
+  Under ruleset 2026-11 the key set is those ten plus `ruleset`, `releases`, `placings` and `retired`; under 2026-12 it also has `declined`, `lapsed` and `grants` (`docs/VERIFY.md` section 1.1), and the record's `ruleset` must equal the `rules.ruleset` of the room frame the run saw (absent means 2026-10).
 - `GET <verify_url>` (the HTML page): status `200`, `content-type` starting
   with `text/html`.
 
