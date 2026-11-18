@@ -8108,39 +8108,39 @@ class _GameScreenState extends State<GameScreen> {
   /// wraps to a second line before it would take more.
   static const double _offerPillShare = 0.45;
 
+  /// The share a stacked pill may take, on its own line.
+  static const double _offerPillStackedShare = 0.8;
+
   /// The pill's own size for a slot [maxWidth] wide: the label laid out on at
   /// most two lines inside [_offerPillShare] of the width.
   Size _offerPillSize(
     BuildContext context,
     TextScaler scaler,
     double maxWidth,
-    AppLocalizations loc,
-  ) {
-    final TextPainter label =
-        TextPainter(
-          text: TextSpan(
-            text: loc.gameReleaseDecline,
-            style: _offerPillStyle(),
-          ),
-          textAlign: TextAlign.center,
-          textDirection: Directionality.of(context),
-          textScaler: scaler,
-          maxLines: 2,
-          ellipsis: '…',
-        )..layout(
-          maxWidth: math.max(1, maxWidth * _offerPillShare - 2 * _offerPillPad),
-        );
+    AppLocalizations loc, {
+    double share = _offerPillShare,
+  }) {
+    final TextPainter label = TextPainter(
+      text: TextSpan(text: loc.gameReleaseDecline, style: _offerPillStyle()),
+      textAlign: TextAlign.center,
+      textDirection: Directionality.of(context),
+      textScaler: scaler,
+      maxLines: 2,
+      ellipsis: '…',
+    )..layout(maxWidth: math.max(1, maxWidth * share - 2 * _offerPillPad));
     final Size size = Size(
-      math.min(maxWidth * _offerPillShare, label.width + 2 * _offerPillPad),
+      math.min(maxWidth * share, label.width + 2 * _offerPillPad),
       math.max(_offerPillMinHeight, label.height + 2 * kSpace2),
     );
     label.dispose();
     return size;
   }
 
-  /// The height the notice slot keeps in a `2026-12` room so the offer's two
-  /// lines and the pill fit without the board moving when an offer arrives.
-  double _offerSlotHeight(
+  /// True when my offer sentence does not fit whole on two lines beside the
+  /// pill at this width and scale: the row then stacks, the sentence on the
+  /// full width and the pill on its own line under it. The slot reserve and
+  /// the row both decide through this one measurement.
+  bool _offerStacked(
     BuildContext context,
     TextScaler scaler,
     double maxWidth,
@@ -8156,9 +8156,48 @@ class _GameScreenState extends State<GameScreen> {
       textDirection: Directionality.of(context),
       textScaler: scaler,
       maxLines: 2,
-      ellipsis: '…',
     )..layout(maxWidth: math.max(1, maxWidth - pill.width - kSpace2));
-    final double height = line.height;
+    final bool exceeds = line.didExceedMaxLines;
+    line.dispose();
+    return exceeds;
+  }
+
+  /// The height the notice slot keeps in a `2026-12` room so the offer and
+  /// the pill fit without the board moving when an offer arrives.
+  double _offerSlotHeight(
+    BuildContext context,
+    TextScaler scaler,
+    double maxWidth,
+    AppLocalizations loc,
+  ) {
+    final bool stacked = _offerStacked(context, scaler, maxWidth, loc);
+    final Size pill = _offerPillSize(
+      context,
+      scaler,
+      maxWidth,
+      loc,
+      share: stacked ? _offerPillStackedShare : _offerPillShare,
+    );
+    final TextPainter line =
+        TextPainter(
+          text: TextSpan(
+            text: loc.gameReleaseOfferNotice,
+            style: Theme.of(context).textTheme.bodyMedium!,
+          ),
+          textAlign: TextAlign.center,
+          textDirection: Directionality.of(context),
+          textScaler: scaler,
+          maxLines: stacked ? null : 2,
+          ellipsis: stacked ? null : '…',
+        )..layout(
+          maxWidth: math.max(
+            1,
+            stacked ? maxWidth : maxWidth - pill.width - kSpace2,
+          ),
+        );
+    final double height = stacked
+        ? line.height + kSpace1 + pill.height
+        : math.max(line.height, pill.height);
     line.dispose();
     // The shared release's own notices, each on at most two lines at the full
     // width; the longest name the room allows is measured with them.
@@ -8184,7 +8223,7 @@ class _GameScreenState extends State<GameScreen> {
       notices = math.max(notices, painter.height);
       painter.dispose();
     }
-    return math.max(math.max(pill.height, height), notices);
+    return math.max(height, notices);
   }
 
   /// My offer: the words, and beside them the one control that declines. The
@@ -8195,59 +8234,78 @@ class _GameScreenState extends State<GameScreen> {
     final bool live = !_myTimeUp;
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints box) {
-        final Size pill = _offerPillSize(context, scaler, box.maxWidth, loc);
-        return Row(
-          key: const Key('game-offer-row'),
-          children: <Widget>[
-            Expanded(
-              child: Text(
-                loc.gameReleaseOfferNotice,
-                key: const Key('release-offer-notice'),
-                textAlign: TextAlign.center,
-                textScaler: scaler,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
+        final bool stacked = _offerStacked(context, scaler, box.maxWidth, loc);
+        final Size pill = _offerPillSize(
+          context,
+          scaler,
+          box.maxWidth,
+          loc,
+          share: stacked ? _offerPillStackedShare : _offerPillShare,
+        );
+        final Widget notice = Text(
+          loc.gameReleaseOfferNotice,
+          key: const Key('release-offer-notice'),
+          textAlign: TextAlign.center,
+          textScaler: scaler,
+          maxLines: stacked ? null : 2,
+          overflow: stacked ? TextOverflow.clip : TextOverflow.ellipsis,
+        );
+        final Widget button = Semantics(
+          button: true,
+          label: loc.gameReleaseDecline,
+          excludeSemantics: true,
+          enabled: live,
+          onTap: live ? _declineRelease : null,
+          child: Material(
+            key: const Key('release-decline-button'),
+            color: live
+                ? LudoColors.paperElevated
+                : LudoColors.paperElevated.withValues(alpha: 0.5),
+            shape: const StadiumBorder(
+              side: BorderSide(color: LudoColors.inkMuted, width: 2),
             ),
-            const SizedBox(width: kSpace2),
-            Semantics(
-              button: true,
-              label: loc.gameReleaseDecline,
-              excludeSemantics: true,
-              enabled: live,
+            child: InkWell(
+              customBorder: const StadiumBorder(),
               onTap: live ? _declineRelease : null,
-              child: Material(
-                key: const Key('release-decline-button'),
-                color: live
-                    ? LudoColors.paperElevated
-                    : LudoColors.paperElevated.withValues(alpha: 0.5),
-                shape: const StadiumBorder(
-                  side: BorderSide(color: LudoColors.inkMuted, width: 2),
-                ),
-                child: InkWell(
-                  customBorder: const StadiumBorder(),
-                  onTap: live ? _declineRelease : null,
-                  child: SizedBox(
-                    width: pill.width,
-                    height: pill.height,
-                    child: Center(
-                      child: Text(
-                        loc.gameReleaseDecline,
-                        textAlign: TextAlign.center,
-                        textScaler: scaler,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: live
-                            ? _offerPillStyle()
-                            : _offerPillStyle().copyWith(
-                                color: LudoColors.inkMuted,
-                              ),
-                      ),
-                    ),
+              child: SizedBox(
+                width: pill.width,
+                height: pill.height,
+                child: Center(
+                  child: Text(
+                    loc.gameReleaseDecline,
+                    textAlign: TextAlign.center,
+                    textScaler: scaler,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: live
+                        ? _offerPillStyle()
+                        : _offerPillStyle().copyWith(
+                            color: LudoColors.inkMuted,
+                          ),
                   ),
                 ),
               ),
             ),
+          ),
+        );
+        if (stacked) {
+          return Column(
+            key: const Key('game-offer-row'),
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              notice,
+              const SizedBox(height: kSpace1),
+              Center(child: button),
+            ],
+          );
+        }
+        return Row(
+          key: const Key('game-offer-row'),
+          children: <Widget>[
+            Expanded(child: notice),
+            const SizedBox(width: kSpace2),
+            button,
           ],
         );
       },
