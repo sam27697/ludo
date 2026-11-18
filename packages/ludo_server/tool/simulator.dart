@@ -7,6 +7,7 @@
 //   dart run tool/simulator.dart --target <url>
 //       [--scenario all|full-game|reconnect|double-drop|rematch]
 //       [--timeout-seconds N] [--players N] [--fetch-record]
+//       [--client-build N]
 //
 // See docs/SIMULATOR.md for what each scenario proves and what each
 // failure line means.
@@ -67,6 +68,8 @@ Future<void> main(List<String> arguments) async {
     exitCode = 2;
     return;
   }
+  // C-668: every socket any scenario opens, reconnects included, reads this.
+  SimSocket.clientBuild = args.clientBuild;
 
   if (args.scenario == 'rematch') {
     final Stopwatch stopwatch = Stopwatch()..start();

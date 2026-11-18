@@ -1052,8 +1052,25 @@ void main() {
       Navigator.of(tester.element(find.byType(GameScreen))).pop();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      // Leave completes (or times out) and Home retires the controller; give
-      // any wrongly scheduled second resume every chance to appear.
+      // C-669 R4: a leave the server never answered keeps the record. This
+      // case is the ordinary delivered leave, so the server answers it, in
+      // PLAYING with `presence`.
+      final List<String> leaves = factory.sent('leave_room');
+      expect(
+        leaves,
+        hasLength(1),
+        reason: 'R7 fixture: the pop must send exactly one leave_room',
+      );
+      factory.transports.single.pushText(
+        _frame(
+          type: 'presence',
+          re: _idOf(leaves.single),
+          data: <String, Object?>{'seat': _kSeat, 'connected': false, 'seq': 9},
+        ),
+      );
+      await tester.pump();
+      // Home retires the controller; give any wrongly scheduled second
+      // resume every chance to appear.
       await tester.pump(const Duration(seconds: 11));
       await _pumpBounded(tester, frames: 4);
 

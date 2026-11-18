@@ -762,8 +762,8 @@ void main() {
   );
 
   testWidgets(
-    'W-7 clear on leave (H2b): once leave() completes after the player '
-    'pops the route, session.seat is gone and Home hides the button',
+    'W-7 clear on leave (H2b): once the server answers the leave after the '
+    'player pops the route, session.seat is gone and Home hides the button',
     (tester) async {
       // No addTearDown(factory.disposeAll) here (lesson 9): this case's own
       // assertion is that H2b's retire flow disposes the controller once
@@ -794,6 +794,28 @@ void main() {
       );
 
       await _popPushedRoute(tester, find.byType(LobbyScreen));
+      // C-669 R4: a leave the server never heard keeps the record (the seat
+      // is still held there; c669 case 7b). This case is the delivered leave,
+      // so the server answers it, in LOBBY with `player_left`.
+      final FakeTransport transport = factory.transports.single;
+      final List<String> leaves = transport.sentRaw
+          .where((String s) => _typeOf(s) == 'leave_room')
+          .toList();
+      expect(
+        leaves,
+        hasLength(1),
+        reason:
+            'fixture is broken: popping the lobby must send exactly one '
+            'leave_room; sent ${transport.sentRaw.map(_typeOf).toList()}',
+      );
+      transport.pushText(
+        _frame(
+          type: 'player_left',
+          re: _idOf(leaves.single),
+          data: <String, Object?>{'seat': 1, 'host_seat': 0, 'seq': 2},
+        ),
+      );
+      await tester.pump();
       await _flushAnyOutstandingRequestTimeout(tester);
       await _letStoreWriteSettle(tester);
 

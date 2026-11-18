@@ -10999,6 +10999,16 @@ Future<_OpenedTrayGame> _openHostGame(
   String hostName = 'Priya',
   String opponentName = 'Karim',
 }) async {
+  // C-667: from 600 dp up the die band leaves the bottom row and the tray
+  // wraps under the die, so the tray-beside-the-die checks these captures
+  // make belong to a phone. A real device is one already; the headless
+  // runner's 800x600 default is pinned to the phone size used elsewhere here.
+  if (!(!kIsWeb && Platform.isAndroid)) {
+    tester.view.physicalSize = const Size(360, 780);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+  }
   final _ScreenshotControllerFactory trayFactory =
       _ScreenshotControllerFactory();
   try {
