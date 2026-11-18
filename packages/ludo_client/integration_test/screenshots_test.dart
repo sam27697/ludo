@@ -232,6 +232,7 @@ Map<String, Object?> _roomJson({
   int? winner,
   String? gameId,
   String? clientSeeds,
+  String? ruleset,
   required int seq,
 }) => <String, Object?>{
   'code': code,
@@ -242,6 +243,7 @@ Map<String, Object?> _roomJson({
     'blocks': true,
     'capture_bonus': true,
     'turn_seconds': 45,
+    'ruleset': ?ruleset,
   },
   'chain_commit': 'a' * 64,
   'chain_index': 0,
@@ -605,6 +607,8 @@ Future<void> _pumpRealDurationFrames(
 ///     the walk lands and 6 own frames follow; the shot is 720 to 800 ms after
 ///     landing under flutter-tester, asserted under 1100 ms and at opacity 1.0
 ///     immediately before it; frames: 0.
+///   - 95-98 release-*: shared-release notices, 2500 ms; own 12 frames
+///     (_trayShotFrames), about 2000 ms left; frames: 0.
 ///   - 73, 74: hint glow, _kHintGlow 800 ms; own 300 ms of pumps after the
 ///     tap, about 500 ms left; frames: 0.
 ///   - 81-88, 91, 92: chat bubble and end-card line, kChatBubbleLife
@@ -6458,6 +6462,63 @@ void main() {
   });
 
   // ==========================================================================
+  // release-offer / release-taken / release-banked: order 675. The shared
+  // release of ruleset 2026-12 (PROTOCOL 30) on a 360x780 phone, en and ar.
+  // The numbers 95-98 are also held by the chat and refusal captures above,
+  // so these four carry their own names and the language suffix.
+  // ==========================================================================
+  for (final String lang in <String>['en', 'ar']) {
+    testWidgets('capture 95-release-offer-mine-$lang', (tester) async {
+      await _shootRelease(
+        tester,
+        binding,
+        kind: _ReleaseShot.offerMine,
+        shotName: '95-release-offer-mine-$lang',
+        locale: Locale(lang),
+        roomCode: 'R95${lang.toUpperCase()}',
+        gameId: '95' * 8,
+        seatToken: 'tok-shot-95-$lang',
+      );
+    });
+    testWidgets('capture 96-release-offer-other-$lang', (tester) async {
+      await _shootRelease(
+        tester,
+        binding,
+        kind: _ReleaseShot.offerOther,
+        shotName: '96-release-offer-other-$lang',
+        locale: Locale(lang),
+        roomCode: 'R96${lang.toUpperCase()}',
+        gameId: '96' * 8,
+        seatToken: 'tok-shot-96-$lang',
+      );
+    });
+    testWidgets('capture 97-release-taken-granted-$lang', (tester) async {
+      await _shootRelease(
+        tester,
+        binding,
+        kind: _ReleaseShot.takenGranted,
+        shotName: '97-release-taken-granted-$lang',
+        locale: Locale(lang),
+        roomCode: 'R97${lang.toUpperCase()}',
+        gameId: '97' * 8,
+        seatToken: 'tok-shot-97-$lang',
+      );
+    });
+    testWidgets('capture 98-release-banked-six-$lang', (tester) async {
+      await _shootRelease(
+        tester,
+        binding,
+        kind: _ReleaseShot.bankedSix,
+        shotName: '98-release-banked-six-$lang',
+        locale: Locale(lang),
+        roomCode: 'R98${lang.toUpperCase()}',
+        gameId: '98' * 8,
+        seatToken: 'tok-shot-98-$lang',
+      );
+    });
+  }
+
+  // ==========================================================================
   // 95-98: order 520 (C-520 D2, D3). 95 and 96 are the chat button resting
   // about a second after an acknowledged send, with the ring part drained
   // (en, ar). 97 and 98 are a refused tap with animations off, captured
@@ -10998,6 +11059,7 @@ Future<_OpenedTrayGame> _openHostGame(
   FeedbackService? feedbackService,
   String hostName = 'Priya',
   String opponentName = 'Karim',
+  String? ruleset,
 }) async {
   // C-667: from 600 dp up the die band leaves the bottom row and the tray
   // wraps under the die, so the tray-beside-the-die checks these captures
@@ -11077,6 +11139,7 @@ Future<_OpenedTrayGame> _openHostGame(
           hostSeat: 0,
           seats: <Map<String, Object?>>[_seatJson(0, name: hostName)],
           seq: 1,
+          ruleset: ruleset,
         ),
       ),
     );
@@ -24783,4 +24846,301 @@ Future<void> _shootEndNoRecord(
     'fair_line=${yn(fairLine.evaluate().isNotEmpty)} | $scenario',
   );
   await _capture(binding, tester, shotName, frames: 2);
+}
+
+// --- order 675: the shared release (ruleset 2026-12) --------------------------
+
+enum _ReleaseShot { offerMine, offerOther, takenGranted, bankedSix }
+
+const String _releaseRuleset = '2026-12';
+
+String _releaseText(Locale l, String key, [String name = '']) {
+  final bool ar = l.languageCode == 'ar';
+  switch (key) {
+    case 'offerMine':
+      return ar
+          ? 'ما طلع 6 بعشر رميات. بتطلع قطعة؟ وكل واحد تاني بياخد 6.'
+          : 'No 6 in 10 rolls. Bring one piece out? Everyone else gets a 6.';
+    case 'offerOther':
+      return ar
+          ? '$name: ما طلع 6 بعشر رميات. عم يقرر...'
+          : '$name: no 6 in 10 rolls. Choosing...';
+    case 'takenGranted':
+      return ar
+          ? '$name طلّع قطعة. إنت بتاخد 6.'
+          : '$name took the release. You get a 6.';
+    case 'banked':
+      return ar ? 'معك 6 زيادة من الإفراج.' : 'Bonus 6 from the release.';
+    case 'decline':
+      return ar ? 'خليهم بالبيت' : 'Keep them home';
+  }
+  throw ArgumentError('unknown release text $key');
+}
+
+Map<String, Object?> _releaseRolled(int seat) => <String, Object?>{
+  'seat': seat,
+  'value': 4,
+  'legal': <int>[0, 1, 2, 3],
+  'deadline_ms': _trayDeadlineMs,
+  'k': 10,
+  'reveal': _trayReveal,
+  'queue': <int>[4],
+  'release': true,
+  'offer': true,
+};
+
+void _expectTextShown(
+  WidgetTester tester,
+  String text, {
+  required bool present,
+  required String shotName,
+}) {
+  expect(
+    find.text(text),
+    present ? findsOneWidget : findsNothing,
+    reason:
+        'capture $shotName: expected the text "$text" to be '
+        '${present ? 'on screen once' : 'absent'}. Reproduce with '
+        '`flutter test -d flutter-tester integration_test/screenshots_test.dart '
+        '--plain-name "$shotName"`.',
+  );
+}
+
+/// Captures 95 to 98 of order 675. A 2026-12 room on a phone surface, seats
+/// [0, 2], me seat 0, the opponent Karim on seat 2.
+Future<void> _shootRelease(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required _ReleaseShot kind,
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String gameId,
+  required String seatToken,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  RoomController? controller;
+  try {
+    final _OpenedTrayGame opened = await _openHostGame(
+      tester,
+      capture: shotName,
+      roomCode: roomCode,
+      locale: locale,
+      gameId: gameId,
+      seatToken: seatToken,
+      ruleset: _releaseRuleset,
+    );
+    controller = opened.controller;
+    expect(
+      controller.room!.rules.ruleset,
+      _releaseRuleset,
+      reason:
+          'capture $shotName: the room must be a $_releaseRuleset room, '
+          'got ${controller.room!.rules.ruleset}',
+    );
+    int seq = opened.seq;
+    final FakeTransport t = opened.transport;
+    final Size view = tester.view.physicalSize / tester.view.devicePixelRatio;
+    expect(
+      view.shortestSide < 600,
+      isTrue,
+      reason: 'capture $shotName: expected a phone surface, got $view',
+    );
+
+    switch (kind) {
+      case _ReleaseShot.offerMine:
+        seq = await _pushTraySeq(
+          tester,
+          t,
+          seq,
+          type: 'rolled',
+          data: _releaseRolled(0),
+        );
+      case _ReleaseShot.offerOther:
+        seq = await _pushTraySeq(
+          tester,
+          t,
+          seq,
+          type: 'turn',
+          data: <String, Object?>{
+            'seat': 2,
+            'phase': 'await_roll',
+            'deadline_ms': _trayDeadlineMs,
+            'k': 10,
+          },
+        );
+        seq = await _pushTraySeq(
+          tester,
+          t,
+          seq,
+          type: 'rolled',
+          data: _releaseRolled(2),
+        );
+      case _ReleaseShot.takenGranted:
+        seq = await _pushTraySeq(
+          tester,
+          t,
+          seq,
+          type: 'turn',
+          data: <String, Object?>{
+            'seat': 2,
+            'phase': 'await_roll',
+            'deadline_ms': _trayDeadlineMs,
+            'k': 10,
+          },
+        );
+        seq = await _pushTraySeq(
+          tester,
+          t,
+          seq,
+          type: 'rolled',
+          data: _releaseRolled(2),
+        );
+        seq = await _pushTraySeq(
+          tester,
+          t,
+          seq,
+          type: 'moved',
+          data: <String, Object?>{
+            'seat': 2,
+            'token': 0,
+            'from': -1,
+            'to': 0,
+            'captured': <Object?>[],
+            'extra_roll': false,
+          },
+        );
+        seq = await _pushTraySeq(
+          tester,
+          t,
+          seq,
+          type: 'sixes_granted',
+          data: <String, Object?>{
+            'seats': <int>[0],
+          },
+        );
+      case _ReleaseShot.bankedSix:
+        seq = await _pushTraySeq(
+          tester,
+          t,
+          seq,
+          type: 'turn',
+          data: <String, Object?>{
+            'seat': 0,
+            'phase': 'await_roll',
+            'deadline_ms': _trayDeadlineMs,
+            'k': 1,
+            'queue': <int>[6],
+            'banked': 1,
+          },
+        );
+    }
+
+    await _pumpRealDurationFrames(tester, frameCount: _trayShotFrames);
+
+    expect(
+      controller.room!.seq,
+      seq,
+      reason:
+          'capture $shotName: a pushed frame was dropped; room seq is '
+          '${controller.room!.seq}, last push was $seq',
+    );
+    final AppLocalizations loc = AppLocalizations.of(
+      tester.element(find.byType(GameScreen)),
+    );
+    expect(
+      loc.localeName,
+      locale.languageCode,
+      reason:
+          'capture $shotName: expected locale ${locale.languageCode}, '
+          'got ${loc.localeName}',
+    );
+
+    const Key offerNotice = Key('release-offer-notice');
+    const Key declineButton = Key('release-decline-button');
+    final bool mine = kind == _ReleaseShot.offerMine;
+    _expectKey(
+      tester,
+      offerNotice,
+      present: mine,
+      reason: 'capture $shotName: release-offer-notice presence',
+    );
+    _expectKey(
+      tester,
+      declineButton,
+      present: mine,
+      reason: 'capture $shotName: release-decline-button presence',
+    );
+    for (final int token in <int>[0, 1, 2, 3]) {
+      _expectKey(
+        tester,
+        Key('board-legal-ring-0-$token'),
+        present: mine,
+        reason:
+            'capture $shotName: the ring on my yard token $token is '
+            '${mine ? 'drawn' : 'absent'}',
+      );
+    }
+
+    switch (kind) {
+      case _ReleaseShot.offerMine:
+        _expectTextShown(
+          tester,
+          _releaseText(locale, 'offerMine'),
+          present: true,
+          shotName: shotName,
+        );
+        _expectTextShown(
+          tester,
+          _releaseText(locale, 'decline'),
+          present: true,
+          shotName: shotName,
+        );
+        final Size pill = tester.getSize(find.byKey(declineButton));
+        expect(
+          pill.width >= 48 && pill.height >= 48,
+          isTrue,
+          reason:
+              'capture $shotName: the decline pill must be at least 48x48 '
+              'dp, measured $pill',
+        );
+      case _ReleaseShot.offerOther:
+        _expectTextShown(
+          tester,
+          _releaseText(locale, 'offerOther', 'Karim'),
+          present: true,
+          shotName: shotName,
+        );
+      case _ReleaseShot.takenGranted:
+        _expectTextShown(
+          tester,
+          _releaseText(locale, 'takenGranted', 'Karim'),
+          present: true,
+          shotName: shotName,
+        );
+      case _ReleaseShot.bankedSix:
+        _expectTextShown(
+          tester,
+          _releaseText(locale, 'banked'),
+          present: true,
+          shotName: shotName,
+        );
+        expect(
+          find.byKey(const Key('game-roll-tray-face-0-6')),
+          findsOneWidget,
+          reason:
+              'capture $shotName: the banked six must be drawn in the roll '
+              'tray (game-roll-tray-face-0-6)',
+        );
+    }
+
+    await _capture(binding, tester, shotName, frames: 0);
+  } finally {
+    await _releaseTrayGame(tester, controller);
+  }
 }
