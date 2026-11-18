@@ -286,6 +286,28 @@ Future<void> _joinThenReturnHome(
   );
 
   await _popPushedRoute(tester);
+  // C-669 R4: an unanswered leave keeps the seat record, and a kept record
+  // resumes on relaunch. Backing out here is the ordinary delivered leave,
+  // so the server answers it, in LOBBY with `player_left`.
+  final FakeTransport transport = factory.transports.last;
+  final List<String> leaves = transport.sentRaw
+      .where((String s) => _typeOf(s) == 'leave_room')
+      .toList();
+  expect(
+    leaves,
+    hasLength(1),
+    reason:
+        'backing out of the lobby must send exactly one leave_room; sent '
+        '${transport.sentRaw.map(_typeOf).toList()}',
+  );
+  transport.pushText(
+    _frame(
+      type: 'player_left',
+      re: _idOf(leaves.single),
+      data: <String, Object?>{'seat': 1, 'host_seat': 0, 'seq': 2},
+    ),
+  );
+  await tester.pump();
   await _flushAnyOutstandingRequestTimeout(tester);
   expect(
     find.byKey(_codeKey),
