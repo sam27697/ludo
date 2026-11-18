@@ -21,11 +21,14 @@ class GameState {
     List<int> queue = const <int>[],
     List<int> drought = const <int>[0, 0, 0, 0],
     this.releaseOwed = false,
+    List<int> banked = const <int>[0, 0, 0, 0],
+    this.releaseOffered = false,
     List<int> placings = const <int>[],
     List<int> retired = const <int>[],
   })  : tokens = _freezeTokens(tokens),
         queue = List<int>.unmodifiable(queue),
         drought = List<int>.unmodifiable(drought),
+        banked = List<int>.unmodifiable(banked),
         placings = List<int>.unmodifiable(placings),
         retired = List<int>.unmodifiable(retired);
 
@@ -59,6 +62,15 @@ class GameState {
   /// docs/ENGINE_API.md section 11.1: `currentSeat` holds an unspent release
   /// (rule 11r). Only ever true in `awaitMove`.
   final bool releaseOwed;
+
+  /// docs/ENGINE_API.md section 13.1, rule 17s: banked sixes owed per seat
+  /// index 0..3, queued when that seat's next turn begins. Always
+  /// `[0, 0, 0, 0]` when `rules.sharedRelease` is off.
+  final List<int> banked;
+
+  /// docs/ENGINE_API.md section 13.1, rule 16s: the owed release is an offer
+  /// the seat may take or decline. True only together with [releaseOwed].
+  final bool releaseOffered;
 
   /// null until a seat wins, then that seat. With `rules.playOut` on: null
   /// until the game ends, then `placings.first` (null if `placings` is empty
@@ -104,6 +116,10 @@ class GameState {
         if (config.rules.yardRelease) ...<String, Object?>{
           'drought': List<int>.of(drought),
           'releaseOwed': releaseOwed,
+          if (config.rules.sharedRelease) ...<String, Object?>{
+            'banked': List<int>.of(banked),
+            'releaseOffered': releaseOffered,
+          },
         },
         'winner': winner,
         if (config.rules.playOut) ...<String, Object?>{
@@ -127,6 +143,10 @@ class GameState {
     if (releaseOwed && phase != GamePhase.awaitMove) {
       throw FormatException('releaseOwed is true outside awaitMove: $phase');
     }
+    final releaseOffered = _releaseOfferedFromJson(json, config.rules);
+    if (releaseOffered && !releaseOwed) {
+      throw const FormatException('releaseOffered is true without releaseOwed');
+    }
     final winner = _asIntOrNull(json['winner']);
     final placings = _seatListFromJson(json, 'placings', config);
     final retired = _seatListFromJson(json, 'retired', config);
@@ -144,6 +164,8 @@ class GameState {
       queue: _queueFromJson(json, config.rules.rollQueue),
       drought: _droughtFromJson(json, config.rules.yardRelease),
       releaseOwed: releaseOwed,
+      banked: _bankedFromJson(json, config.rules.sharedRelease),
+      releaseOffered: releaseOffered,
       placings: placings,
       retired: retired,
     );
@@ -162,7 +184,8 @@ class GameState {
         winner != other.winner ||
         seq != other.seq ||
         rngState != other.rngState ||
-        releaseOwed != other.releaseOwed) {
+        releaseOwed != other.releaseOwed ||
+        releaseOffered != other.releaseOffered) {
       return false;
     }
     if (tokens.length != other.tokens.length) {
@@ -196,7 +219,8 @@ class GameState {
         return false;
       }
     }
-    return _sameList(placings, other.placings) &&
+    return _sameList(banked, other.banked) &&
+        _sameList(placings, other.placings) &&
         _sameList(retired, other.retired);
   }
 
@@ -214,6 +238,8 @@ class GameState {
         Object.hashAll(queue),
         Object.hashAll(drought),
         releaseOwed,
+        Object.hashAll(banked),
+        releaseOffered,
         Object.hashAll(placings),
         Object.hashAll(retired),
       );
@@ -223,6 +249,7 @@ class GameState {
       'GameState(config: $config, tokens: $tokens, currentSeat: $currentSeat, '
       'phase: $phase, roll: $roll, queue: $queue, sixes: $sixes, '
       'drought: $drought, releaseOwed: $releaseOwed, '
+      'banked: $banked, releaseOffered: $releaseOffered, '
       'winner: $winner, placings: $placings, retired: $retired, '
       'seq: $seq, rngState: $rngState)';
 }
@@ -235,6 +262,7 @@ Map<String, Object?> _configToJson(GameConfig config) => <String, Object?>{
         if (config.rules.rollQueue) 'rollQueue': true,
         if (config.rules.homeBonus) 'homeBonus': true,
         if (config.rules.yardRelease) 'yardRelease': true,
+        if (config.rules.sharedRelease) 'sharedRelease': true,
         if (config.rules.playOut) 'playOut': true,
       },
       'seed': config.seed,
@@ -249,10 +277,16 @@ GameConfig _configFromJson(Map<String, Object?> json) {
     homeBonus: _homeBonusFromJson(rulesJson['homeBonus']),
     yardRelease: _yardReleaseFromJson(rulesJson['yardRelease']),
     playOut: _playOutFromJson(rulesJson['playOut']),
+    sharedRelease: _sharedReleaseFromJson(rulesJson['sharedRelease']),
   );
   if (rules.yardRelease && !rules.rollQueue) {
     throw const FormatException(
       'rules.yardRelease is set but rules.rollQueue is not',
+    );
+  }
+  if (rules.sharedRelease && !rules.yardRelease) {
+    throw const FormatException(
+      'rules.sharedRelease is set but rules.yardRelease is not',
     );
   }
   final seatsJson = json['seats']! as List<Object?>;
@@ -382,6 +416,76 @@ bool _releaseOwedFromJson(Map<String, Object?> json, bool yardRelease) {
   final value = json['releaseOwed'];
   if (value is! bool) {
     throw FormatException('releaseOwed must be a bool, got $value');
+  }
+  return value;
+}
+
+/// docs/ENGINE_API.md section 13.2: same shape as [_homeBonusFromJson].
+bool _sharedReleaseFromJson(Object? value) {
+  if (value == null) {
+    return false;
+  }
+  if (value == true) {
+    return true;
+  }
+  throw FormatException(
+    'rules.sharedRelease must be absent or true, got $value',
+  );
+}
+
+/// docs/ENGINE_API.md section 13.2: `banked` is present, and only present,
+/// exactly when `sharedRelease` is on; a mismatch in either direction is
+/// malformed, as is a list not of length 4 or a count outside 0..3.
+List<int> _bankedFromJson(Map<String, Object?> json, bool sharedRelease) {
+  final hasBanked = json.containsKey('banked');
+  if (!sharedRelease) {
+    if (hasBanked) {
+      throw FormatException(
+        'banked is present but rules.sharedRelease is not set: '
+        '${json['banked']}',
+      );
+    }
+    return const <int>[0, 0, 0, 0];
+  }
+  if (!hasBanked) {
+    throw const FormatException(
+      'rules.sharedRelease is set but banked is missing',
+    );
+  }
+  final list = json['banked']! as List<Object?>;
+  if (list.length != 4) {
+    throw FormatException('banked must have length 4, got ${list.length}');
+  }
+  return <int>[
+    for (final v in list)
+      if (_asInt(v) < 0 || _asInt(v) > 3)
+        throw FormatException('banked count must be 0..3, got $v')
+      else
+        _asInt(v),
+  ];
+}
+
+/// docs/ENGINE_API.md section 13.2: `releaseOffered` is present, and only
+/// present, exactly when `sharedRelease` is on, and is a bool.
+bool _releaseOfferedFromJson(Map<String, Object?> json, RulesConfig rules) {
+  final hasKey = json.containsKey('releaseOffered');
+  if (!rules.sharedRelease) {
+    if (hasKey) {
+      throw FormatException(
+        'releaseOffered is present but rules.sharedRelease is not set: '
+        '${json['releaseOffered']}',
+      );
+    }
+    return false;
+  }
+  if (!hasKey) {
+    throw const FormatException(
+      'rules.sharedRelease is set but releaseOffered is missing',
+    );
+  }
+  final value = json['releaseOffered'];
+  if (value is! bool) {
+    throw FormatException('releaseOffered must be a bool, got $value');
   }
   return value;
 }

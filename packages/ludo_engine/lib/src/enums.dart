@@ -2,7 +2,12 @@
 
 enum GamePhase { awaitRoll, awaitMove, finished }
 
-enum TurnEndReason { noLegalMove, threeSixes }
+enum TurnEndReason {
+  noLegalMove,
+  threeSixes,
+  // Appended, docs/ENGINE_API.md section 13.1: a shared release was taken.
+  released,
+}
 
 enum EngineError {
   notYourTurn,

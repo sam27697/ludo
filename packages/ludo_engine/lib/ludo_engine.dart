@@ -20,11 +20,19 @@ export 'src/events.dart'
         GameWon,
         YardReleased,
         SeatFinished,
-        SeatRetired;
+        SeatRetired,
+        ReleaseDeclined,
+        SixesBanked,
+        SixesQueued;
 export 'src/game_config.dart' show GameConfig;
 export 'src/game_state.dart' show GameState;
 export 'src/intentions.dart'
-    show Intention, RollIntention, MoveIntention, RetireIntention;
+    show
+        Intention,
+        RollIntention,
+        MoveIntention,
+        RetireIntention,
+        DeclineIntention;
 export 'src/rules_config.dart' show RulesConfig;
 export 'src/hash.dart' show stateHash;
 export 'src/engine_core.dart'
