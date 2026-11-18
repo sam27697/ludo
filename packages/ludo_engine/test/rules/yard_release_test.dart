@@ -44,6 +44,9 @@ String _event(GameEvent e) => switch (e) {
       YardReleased() => 'YardReleased(${e.seat})',
       SeatFinished() => 'SeatFinished(${e.seat},${e.place})',
       SeatRetired() => 'SeatRetired(${e.seat})',
+      ReleaseDeclined() => 'ReleaseDeclined(${e.seat})',
+      SixesBanked() => 'SixesBanked(${e.seats})',
+      SixesQueued() => 'SixesQueued(${e.seat},${e.count})',
     };
 
 List<String> _events(List<GameEvent> events) =>
@@ -57,6 +60,7 @@ String _intention(Intention i) => switch (i) {
       MoveIntention() =>
         'move(seat ${i.seat}, token ${i.token}, face ${i.face})',
       RetireIntention() => 'retire(seat ${i.seat})',
+      DeclineIntention() => 'decline(seat ${i.seat})',
     };
 
 // ---------------------------------------------------------------------------
