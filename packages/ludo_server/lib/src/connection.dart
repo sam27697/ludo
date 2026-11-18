@@ -246,7 +246,8 @@ class Connection {
             // Section 28 rule 4: `kick` is a message type only of a server
             // that plays the 2026-11 ruleset; on any other it is BAD_TYPE
             // exactly as before the section existed.
-            kickKnown: registry.ruleset == ruleset202611,
+            kickKnown: registry.ruleset == ruleset202611 ||
+                registry.ruleset == ruleset202612,
           );
     if (parsed is EnvelopeError) {
       _log(
@@ -338,6 +339,8 @@ class Connection {
         _handleRoll(envelope);
       case 'move':
         _handleMove(envelope);
+      case 'decline_release':
+        _handleDeclineRelease(envelope);
       case 'rematch':
         _handleRematch(envelope);
       case 'game_log':
@@ -1510,6 +1513,54 @@ class Connection {
       return;
     }
     _publishMove(envelope, result as MoveOk);
+  }
+
+  /// `decline_release`, `docs/PROTOCOL.md` section 30 rule 4. The ladder is
+  /// `roll`'s own, then `WRONG_PHASE` when no offer is pending, then the
+  /// payload check (`d` is empty), the same position `roll` gives it.
+  void _handleDeclineRelease(ParsedEnvelope envelope) {
+    if (!_hasIdentity) {
+      _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    final Room? liveRoom = registry.lookup(roomCode!);
+    ProtocolError? ladderError =
+        _turnLadderError(liveRoom, seatToken!, engine.GamePhase.awaitMove);
+    if (ladderError == null && !liveRoom!.game!.releaseOffered) {
+      ladderError = ProtocolError.wrongPhase;
+    }
+    if (ladderError != null) {
+      _reject(envelope, ladderError, room: roomCode);
+      return;
+    }
+    if (envelope.data.isNotEmpty) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+
+    final DeclineResult result =
+        registry.declineRelease(code: roomCode!, seatToken: seatToken!);
+    if (result is DeclineFailure) {
+      _reject(envelope, result.error, room: roomCode);
+      return;
+    }
+    final DeclineOk ok = result as DeclineOk;
+    for (final OutFrame frame in buildDeclineFrames(ok)) {
+      _sendAndBroadcast(
+        room: ok.room.code,
+        type: frame.type,
+        data: frame.data,
+        re: envelope.id,
+      );
+    }
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: 'ok',
+      room: ok.room.code,
+      seat: ok.events.whereType<engine.ReleaseDeclined>().single.seat,
+      seq: ok.turnSeq,
+    );
   }
 
   /// `docs/PROTOCOL.md` section 12.1/12.2: the ladder `roll` and `move`

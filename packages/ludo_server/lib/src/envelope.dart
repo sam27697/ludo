@@ -138,6 +138,7 @@ const Set<String> knownMessageTypes = <String>{
   'rematch',
   'game_log',
   'emote',
+  'decline_release',
 };
 
 /// `docs/PROTOCOL.md` section 28 rule 4: `kick` exists only on a server that

@@ -251,6 +251,33 @@ String buildVerifyPageHtml(
       : 'No 6 for 10 rolls with every piece at home: one piece comes out '
           '(rule 11r)';
 
+  // docs/PROTOCOL.md section 30 rule 7: under 2026-12 the line says what the
+  // release did. A taken one is a roll in `grants`, a declined one a roll in
+  // `declined`; a lapse is in neither and, as nothing came out and nothing was
+  // granted, gets no line. A 2026-11 record keeps the line above.
+  final bool shared = record['ruleset'] == '2026-12';
+  final Object? rawDeclined = record['declined'];
+  final Set<int> declinedKs = <int>{
+    if (rawDeclined is List<Object?>)
+      for (final Object? k in rawDeclined)
+        if (k is int) k,
+  };
+  final Object? rawGrants = record['grants'];
+  final Set<int> grantedKs = <int>{
+    if (rawGrants is List<Object?>)
+      for (final Object? g in rawGrants)
+        if (g is Map<String, Object?> && g['k'] is int) g['k']! as int,
+  };
+  final String takenLine = isAr
+      ? 'ما طلع 6 بعشر رميات وكل القطع بالبيت: بتطلع قطعة ويخلص دوره، '
+          'وكل واحد تاني بياخد 6.'
+      : 'No 6 for 10 rolls with every piece at home: one piece comes out '
+          'and the turn ends. Everyone else gets a six.';
+  final String declinedLine = isAr
+      ? 'ما طلع 6 بعشر رميات وكل القطع بالبيت: فضّل يبقي القطع بالبيت.'
+      : 'No 6 for 10 rolls with every piece at home: the player kept the '
+          'piece in the yard.';
+
   // The die cell is dir="ltr" on an ar page, so the Arabic line carries its
   // own direction instead of inheriting the cell's.
   final String rtlAttr = isAr ? ' dir="rtl"' : '';
@@ -260,9 +287,19 @@ String buildVerifyPageHtml(
     final Map<String, Object?> roll = entry as Map<String, Object?>;
     final Object? k = roll['k'];
     final String kEsc = _esc(k);
-    final String releaseMarkup = k is int && releaseKs.contains(k)
+    String? noteLine;
+    if (k is int && releaseKs.contains(k)) {
+      if (!shared) {
+        noteLine = releaseLine;
+      } else if (declinedKs.contains(k)) {
+        noteLine = declinedLine;
+      } else if (grantedKs.contains(k)) {
+        noteLine = takenLine;
+      }
+    }
+    final String releaseMarkup = noteLine != null
         ? '<br><span class="release-note"$rtlAttr data-release="$kEsc">'
-            '${_esc(releaseLine)}</span>'
+            '${_esc(noteLine)}</span>'
         : '';
     rollRows
       ..write('<tr><td data-label="$labelK"$ltrAttr>')

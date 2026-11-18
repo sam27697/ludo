@@ -73,6 +73,16 @@ Map<String, Object?> buildVerifyRecord(
     'winner': winner,
     if (ruleset202611) 'ruleset': room.ruleset,
     if (ruleset202611) 'releases': List<int>.of(room.releases),
+    // docs/PROTOCOL.md section 30 rule 7: 2026-12 only.
+    if (room.isRuleset202612) 'declined': List<int>.of(room.declined),
+    if (room.isRuleset202612)
+      'grants': <Map<String, Object?>>[
+        for (final Map<String, Object?> g in room.grants)
+          <String, Object?>{
+            'k': g['k'],
+            'seats': List<int>.of(g['seats']! as List<int>)
+          },
+      ],
     if (ruleset202611) 'placings': List<int>.of(game?.placings ?? <int>[]),
     if (ruleset202611) 'retired': List<int>.of(game?.retired ?? <int>[]),
     'finished_at': _formatFinishedAt(finishedAt),

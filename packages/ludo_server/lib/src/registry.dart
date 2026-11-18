@@ -264,6 +264,7 @@ class RollOk extends RollResult {
     required this.reveal,
     required this.rolledSeq,
     required this.rolledDeadlineMs,
+    this.release = false,
     this.turnPassedSeq,
     this.turnSeq,
     this.nextDeadlineMs,
@@ -272,6 +273,11 @@ class RollOk extends RollResult {
 
   final Room room;
   final List<engine.GameEvent> events;
+
+  /// Section 28 rule 2 and section 30 rule 2: this roll granted a yard
+  /// release (the `rolled` frame carries `release: true`), whether it was
+  /// taken at once, offered, or lapsed.
+  final bool release;
 
   /// 1-based within this game. `chain.reveal(k)` was read for exactly this
   /// value and no other.
@@ -318,6 +324,36 @@ class RollFailure extends RollResult {
   final ProtocolError error;
 }
 
+sealed class DeclineResult {}
+
+/// `decline_release`, `docs/PROTOCOL.md` section 30 rule 4: everything the
+/// wire layer needs for `release_declined`, `turn_passed` and the `turn` of
+/// the next seat.
+class DeclineOk extends DeclineResult {
+  DeclineOk({
+    required this.room,
+    required this.events,
+    required this.declinedSeq,
+    required this.turnPassedSeq,
+    required this.turnSeq,
+    required this.nextDeadlineMs,
+    this.nextGraceMs,
+  });
+
+  final Room room;
+  final List<engine.GameEvent> events;
+  final int declinedSeq;
+  final int turnPassedSeq;
+  final int turnSeq;
+  final int nextDeadlineMs;
+  final int? nextGraceMs;
+}
+
+class DeclineFailure extends DeclineResult {
+  DeclineFailure(this.error);
+  final ProtocolError error;
+}
+
 sealed class MoveResult {}
 
 /// `move`, `docs/PROTOCOL.md` section 12.2. Carries everything the wire
@@ -331,6 +367,7 @@ class MoveOk extends MoveResult {
     required this.movedSeq,
     required this.face,
     this.release = false,
+    this.sixesGrantedSeq,
     this.seatFinishedSeq,
     this.gameOverSeq,
     this.verifyUrl,
@@ -344,6 +381,11 @@ class MoveOk extends MoveResult {
   final Room room;
   final List<engine.GameEvent> events;
   final int movedSeq;
+
+  /// Section 30 rule 3: set when the move took a shared release that granted
+  /// at least one seat a six; the `seq` of `sixes_granted`, which follows
+  /// `moved`.
+  final int? sixesGrantedSeq;
 
   /// `docs/PROTOCOL.md` section 21.1: the face this move actually spent --
   /// the caller's own `face`, when it gave one, or `engine.defaultFace` of
@@ -659,7 +701,7 @@ class RoomRegistry {
         ruleset = _checkedRuleset(ruleset);
 
   /// `docs/PROTOCOL.md` section 28 rule 1: the ruleset every room created
-  /// from here on takes, [ruleset202610] or [ruleset202611]. `bin/server.dart`
+  /// from here on takes, [ruleset202610], [ruleset202611] or [ruleset202612]. `bin/server.dart`
   /// reads it once from `RULESET` at start; a room copies it at `create_room`
   /// and never looks at this again.
   final String ruleset;
@@ -1030,6 +1072,9 @@ class RoomRegistry {
         // took its ruleset at create_room, so a rematch plays the same one.
         yardRelease: room.isRuleset202611,
         playOut: room.isRuleset202611,
+        // Section 30 rule 1: the shared release is the 2026-12 ruleset, and
+        // only it; every config of the room, rematches included, has it.
+        sharedRelease: room.isRuleset202612,
       ),
       seed: _secureSeed(),
     );
@@ -1174,6 +1219,8 @@ class RoomRegistry {
     room.rollCount = 0;
     room.rollSeats.clear();
     room.releases.clear();
+    room.declined.clear();
+    room.grants.clear();
     room.turnSegmentStartedAt = null;
     room.turnGraceEndsAt = null;
     for (final Seat s in room.seats) {
@@ -1266,10 +1313,13 @@ class RoomRegistry {
     // so appending here, and only here, keeps rollSeats.length == rollCount
     // true without a second place either could drift from the other.
     room.rollSeats.add(seat.seat);
-    // docs/PROTOCOL.md section 28 rule 2: the roll numbers whose roll granted
-    // a yard release, lapses included, for the verify record. The engine's
-    // YardReleased event is the only source; nothing is re-derived.
-    if (appliedOk.events.whereType<engine.YardReleased>().isNotEmpty) {
+    // docs/PROTOCOL.md section 28 rule 2 and section 30 rule 7: the roll
+    // numbers whose roll granted a yard release, lapses included, for the
+    // verify record. Under 2026-11 the engine's YardReleased event is the
+    // source; under 2026-12 it is emitted when the release is taken, so the
+    // roll is read off the state it left behind instead.
+    final bool releaseRoll = _grantedRelease(game, appliedOk);
+    if (releaseRoll) {
       room.releases.add(k);
     }
 
@@ -1321,10 +1371,96 @@ class RoomRegistry {
       reveal: reveal,
       rolledSeq: rolledSeq,
       rolledDeadlineMs: rolledDeadlineMs,
+      release: releaseRoll,
       turnPassedSeq: turnPassedSeq,
       turnSeq: turnSeq,
       nextDeadlineMs: nextDeadlineMs,
       nextGraceMs: nextGraceMs,
+    );
+  }
+
+  /// True when the roll [applied] to [before] granted a yard release. Without
+  /// `sharedRelease` that is the engine's `YardReleased` event. With it the
+  /// event comes only when the release is taken, so the roll is an offer
+  /// (`releaseOffered` in the state it left) or a lapse (the seat's drought
+  /// stood at 9, every token in the yard, and a non-6 came up, which ends
+  /// the turn with nothing to release).
+  bool _grantedRelease(engine.GameState before, engine.Applied applied) {
+    if (!before.config.rules.sharedRelease) {
+      return applied.events.whereType<engine.YardReleased>().isNotEmpty;
+    }
+    if (applied.state.releaseOffered) {
+      return true;
+    }
+    final engine.Rolled rolled =
+        applied.events.whereType<engine.Rolled>().single;
+    final int seat = rolled.seat;
+    return rolled.value != 6 &&
+        before.drought[seat] == 9 &&
+        before.tokens[seat].every((int p) => p == -1) &&
+        applied.events.whereType<engine.TurnEnded>().isNotEmpty;
+  }
+
+  /// `decline_release`, `docs/PROTOCOL.md` section 30 rule 4. The ladder is
+  /// [roll]'s own (room, seat, game over, lobby, turn), then `WRONG_PHASE`
+  /// when no offer is pending, which is every room below 2026-12 too.
+  /// Nothing is touched before a rejection. The engine answers with
+  /// `ReleaseDeclined`, `TurnEnded` and the next seat's `TurnBegan`.
+  DeclineResult declineRelease({
+    required String code,
+    required String seatToken,
+  }) {
+    final Room? room = _rooms[code];
+    if (room == null) {
+      return DeclineFailure(ProtocolError.noSuchRoom);
+    }
+    final Seat? seat = _findSeat(room, seatToken);
+    if (seat == null) {
+      return DeclineFailure(ProtocolError.badSeatToken);
+    }
+    if (room.state == RoomState.finished) {
+      return DeclineFailure(ProtocolError.gameOver);
+    }
+    if (room.state == RoomState.lobby) {
+      return DeclineFailure(ProtocolError.wrongPhase);
+    }
+    final engine.GameState game = room.game!;
+    if (seat.seat != game.currentSeat) {
+      return DeclineFailure(ProtocolError.notYourTurn);
+    }
+    if (game.phase != engine.GamePhase.awaitMove || !game.releaseOffered) {
+      return DeclineFailure(ProtocolError.wrongPhase);
+    }
+
+    final engine.ApplyResult applied =
+        engine.apply(game, engine.DeclineIntention(seat.seat));
+    if (applied is engine.Rejected) {
+      return DeclineFailure(_mapEngineError(applied.error));
+    }
+    final engine.Applied appliedOk = applied as engine.Applied;
+    room.game = appliedOk.state;
+    seat.timerSteps = 0;
+    // The offering roll is the last one rolled: nothing rolls while an offer
+    // is pending.
+    room.declined.add(room.rollCount);
+
+    room.seq++;
+    final int declinedSeq = room.seq;
+    room.seq++;
+    final int turnPassedSeq = room.seq;
+    room.seq++;
+    final int turnSeq = room.seq;
+    _noteTurnOwner(room, seat.seat);
+    final int? graceMs = _graceFor(room, appliedOk.events, seat.seat);
+    final int nextDeadlineMs = _restartSegment(room, graceMs: graceMs);
+    return DeclineOk(
+      room: room,
+      events: appliedOk.events,
+      declinedSeq: declinedSeq,
+      turnPassedSeq: turnPassedSeq,
+      turnSeq: turnSeq,
+      nextDeadlineMs: nextDeadlineMs,
+      nextGraceMs: graceMs,
     );
   }
 
@@ -1406,6 +1542,22 @@ class RoomRegistry {
 
     final bool won = appliedOk.events.whereType<engine.GameWon>().isNotEmpty;
 
+    // Section 30 rule 3 and rule 7: a taken shared release is followed by
+    // `sixes_granted` when it granted anyone a six, ahead of the pass.
+    int? sixesGrantedSeq;
+    final List<engine.SixesBanked> banked =
+        appliedOk.events.whereType<engine.SixesBanked>().toList();
+    if (banked.isNotEmpty) {
+      room.seq++;
+      sixesGrantedSeq = room.seq;
+    }
+    if (game.releaseOffered) {
+      room.grants.add(<String, Object?>{
+        'k': room.rollCount,
+        'seats': banked.isEmpty ? <int>[] : List<int>.of(banked.single.seats),
+      });
+    }
+
     int? gameOverSeq;
     String? verifyUrl;
     List<FreedSeat> freed = const <FreedSeat>[];
@@ -1457,6 +1609,7 @@ class RoomRegistry {
       movedSeq: movedSeq,
       face: faceSpent,
       release: releaseSpent,
+      sixesGrantedSeq: sixesGrantedSeq,
       seatFinishedSeq: seatFinishedSeq,
       gameOverSeq: gameOverSeq,
       verifyUrl: verifyUrl,
@@ -2378,7 +2531,7 @@ String _checkedRuleset(String value) {
     throw ArgumentError.value(
       value,
       'ruleset',
-      'must be $ruleset202610 or $ruleset202611',
+      'must be $ruleset202610, $ruleset202611 or $ruleset202612',
     );
   }
   return value;
