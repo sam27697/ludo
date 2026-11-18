@@ -1864,9 +1864,14 @@ an older ruleset.
 5. **Banked sixes.** The `turn` frame of a seat that has banked sixes, in
    `await_roll`, carries `"banked": n` (n >= 1) and `queue` holding n sixes
    (plus whatever else the queue holds); every seat object in the snapshot
-   carries `banked`, an integer 0..3, under `2026-12` only. A banked six is
-   spent with `move` and `face: 6` like any queued 6, is never a `rolled` frame,
-   and has no `k`.
+   carries `banked`, an integer 0..3, under `2026-12` only: the sixes granted and
+   **not yet queued**, so it is 0 for a seat whose turn has begun (the sixes are
+   then in `queue`) and it moves to the queue, never twice. The snapshot's `turn`
+   object carries no `banked`; after a resume a queue of sixes in `await_roll`
+   before the seat's first roll is the banked six. As in rule 11q the seat rolls
+   first, then spends: `move` in `await_roll` is `WRONG_PHASE` as ever. A banked
+   six is spent with `move` and `face: 6` like any queued 6, is never a `rolled`
+   frame, and has no `k`.
 6. **The timer.** On expiry of an offer the server takes the release on the
    lowest releasable token (`moved` carries `by` as section 22). The segment
    restarts on the offering `rolled` and on a `turn` that follows as ever.
