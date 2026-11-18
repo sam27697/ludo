@@ -256,6 +256,11 @@ class _G {
   final List<String> frames = <String>[];
   int clockMs = 0;
 
+  /// The transport the controller holds after a resume; null before one.
+  FakeTransport? resumed;
+
+  FakeTransport get wire => resumed ?? drive.transport;
+
   String why(String expected, [String? observed]) =>
       'C-673t "$scenario" [${locale.languageCode}, ruleset ${ruleset ?? 'absent'}] '
       'at +${clockMs}ms: expected $expected; observed ${observed ?? _seen()}. '
@@ -297,11 +302,11 @@ class _G {
   List<String> cueIds() => <String>[for (final FeedbackCue c in cues) c.id];
 
   List<Map<String, Object?>> sent(String type) => <Map<String, Object?>>[
-    for (final String s in drive.transport.sentRaw)
+    for (final String s in wire.sentRaw)
       if (frameType(s) == type) frameData(s),
   ];
 
-  List<String> sentTypes() => sentTypesSince(drive.transport, 0);
+  List<String> sentTypes() => sentTypesSince(wire, 0);
 
   List<int> ringed() => <int>[
     for (int t = 0; t < 4; t++)
@@ -794,7 +799,7 @@ void main() {
   });
 
   _cases('M5 feedback: the offer fires one can_move, as the 2026-11 release '
-      'does, and decline fires none', (_G g) async {
+      'does, and the decline fires only the generic tap', (_G g) async {
     final int mark = g.cues.length;
     await g.push('rolled', _offerRolled(0, 4, const <int>[1, 3]));
     expect(
@@ -810,8 +815,11 @@ void main() {
     await g.push('release_declined', <String, Object?>{'seat': 0});
     expect(
       g.cueIds().skip(before).toList(),
-      isEmpty,
-      reason: g.why('declining fires no cue, got ${g.cueIds().skip(before)}'),
+      <String>[FeedbackCue.tap.id],
+      reason: g.why(
+        'the decline fires exactly the generic [tap] cue and nothing else, '
+        'got ${g.cueIds().skip(before)}',
+      ),
     );
   });
 
@@ -861,20 +869,25 @@ void main() {
     );
   });
 
-  _cases('M8 a pill tap after the offer was answered sends nothing', (
-    _G g,
-  ) async {
-    await g.push('rolled', _offerRolled(0, 4, const <int>[1, 3]));
-    await g.push('release_declined', <String, Object?>{'seat': 0});
-    await g.push('turn', _turnJson(1, 'await_roll'));
-    await g.tester.tap(find.byKey(_pillKey), warnIfMissed: false);
-    await g.tester.pump();
-    expect(
-      g.sent('decline_release'),
-      isEmpty,
-      reason: g.why('no decline_release from a pill that is gone'),
-    );
-  }, locales: const <Locale>[_en]);
+  _cases(
+    'M8 after the offer was answered the pill is absent and no decline is sent',
+    (_G g) async {
+      await g.push('rolled', _offerRolled(0, 4, const <int>[1, 3]));
+      await g.push('release_declined', <String, Object?>{'seat': 0});
+      await g.push('turn', _turnJson(1, 'await_roll'));
+      expect(
+        find.byKey(_pillKey),
+        findsNothing,
+        reason: g.why('the pill is gone once the offer was answered'),
+      );
+      expect(
+        g.sent('decline_release'),
+        isEmpty,
+        reason: g.why('no decline_release was sent by the answer'),
+      );
+    },
+    locales: const <Locale>[_en],
+  );
 
   // ===========================================================================
   // O: the others' view
@@ -1111,6 +1124,9 @@ void main() {
         ..._turnJson(0, 'await_roll', queue: const <int>[6]),
         'banked': 1,
       });
+      // PROTOCOL 29 rule 5 (the turn gate) holds in 2026-12: a tap right after
+      // a turn-passing frame sends nothing. Wait for the gate, then tap.
+      await g.pump(1500);
       await g.tester.tap(find.byKey(bigDieKey), warnIfMissed: false);
       await g.tester.pump();
       expect(
@@ -1140,6 +1156,7 @@ void main() {
     await g.pump(200);
     final FakeTransport next = FakeTransport();
     g.drive.enqueueTransport(next);
+    g.resumed = next;
     unawaited(g.controller.reconnect());
     await g.tester.runAsync(() => pumpEventQueue());
     await g.tester.pump();
