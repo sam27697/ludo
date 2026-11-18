@@ -43,6 +43,11 @@ void _validateConfig(GameConfig config) {
       'GameConfig.rules.yardRelease requires rules.rollQueue',
     );
   }
+  if (config.rules.sharedRelease && !config.rules.yardRelease) {
+    throw ArgumentError(
+      'GameConfig.rules.sharedRelease requires rules.yardRelease',
+    );
+  }
   final seats = config.seats;
   if (seats.length < 2 || seats.length > 4) {
     throw ArgumentError(
@@ -151,6 +156,7 @@ ApplyResult apply(GameState state, Intention intention) {
     RollIntention() => _applyRoll(state, intention),
     MoveIntention() => _applyMove(state, intention),
     RetireIntention() => _applyRetire(state, intention),
+    DeclineIntention() => _applyDecline(state, intention),
   };
 }
 
@@ -222,6 +228,8 @@ ApplyResult _applyRetire(GameState state, RetireIntention intention) {
         queue: state.queue,
         drought: state.drought,
         releaseOwed: state.releaseOwed,
+        banked: state.banked,
+        releaseOffered: state.releaseOffered,
       ),
       events,
     );
@@ -253,23 +261,29 @@ ApplyResult _afterSeatLeft({
   final seats = state.config.seats;
   final playing = _playingSeats(seats, placings, retired);
   if (playing.length >= 2) {
-    final nextSeat = _nextPlaying(seats, placings, retired, leaver);
-    events.add(TurnBegan(seat: nextSeat));
+    final turn = _beginNextTurn(
+      state,
+      leaver,
+      events,
+      placings: placings,
+      retired: retired,
+    );
     return Applied(
       GameState(
         config: state.config,
         placings: placings,
         retired: retired,
         tokens: tokens,
-        currentSeat: nextSeat,
+        currentSeat: turn.seat,
         phase: GamePhase.awaitRoll,
         roll: null,
         sixes: 0,
         winner: state.winner,
         seq: state.seq + 1,
         rngState: state.rngState,
-        queue: const <int>[],
+        queue: turn.queue,
         drought: drought,
+        banked: turn.banked,
       ),
       events,
     );
@@ -298,6 +312,7 @@ ApplyResult _afterSeatLeft({
       rngState: state.rngState,
       queue: const <int>[],
       drought: drought,
+      banked: state.banked,
     ),
     events,
   );
@@ -525,7 +540,13 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
     if (value == 6 || state.tokens[seat].any((p) => p != -1)) {
       drought = _withDrought(drought, seat, 0);
     } else if (drought[seat] + 1 >= _releaseAfter) {
-      drought = _withDrought(drought, seat, 0);
+      // Rule 18s: with a shared release the count rests at 9 while the offer
+      // is open, and only a lapse or a taken release brings it to 0.
+      drought = _withDrought(
+        drought,
+        seat,
+        state.config.rules.sharedRelease ? _releaseAfter - 1 : 0,
+      );
       releaseGranted = true;
     } else {
       drought = _withDrought(drought, seat, drought[seat] + 1);
@@ -539,27 +560,28 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
   if (value == 6 && state.sixes == 2) {
     // Rule 10q: the third consecutive 6 is not queued; every unspent face is
     // discarded and the turn passes. Moves already made this turn stand.
-    final nextSeat = _nextSeat(state, seat);
+    final events = <GameEvent>[
+      Rolled(seat: seat, value: value, legal: const <int>[]),
+      TurnEnded(seat: seat, reason: TurnEndReason.threeSixes),
+    ];
+    final turn = _beginNextTurn(state, seat, events);
     final newState = GameState(
       config: state.config,
       placings: state.placings,
       retired: state.retired,
       tokens: state.tokens,
-      currentSeat: nextSeat,
+      currentSeat: turn.seat,
       phase: GamePhase.awaitRoll,
       roll: null,
       sixes: 0,
       winner: state.winner,
       seq: state.seq + 1,
       rngState: state.rngState,
-      queue: const <int>[],
+      queue: turn.queue,
       drought: drought,
+      banked: turn.banked,
     );
-    return Applied(newState, <GameEvent>[
-      Rolled(seat: seat, value: value, legal: const <int>[]),
-      TurnEnded(seat: seat, reason: TurnEndReason.threeSixes),
-      TurnBegan(seat: nextSeat),
-    ]);
+    return Applied(newState, events);
   }
 
   final newQueue = <int>[...state.queue, value];
@@ -582,6 +604,7 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
       rngState: state.rngState,
       queue: newQueue,
       drought: drought,
+      banked: state.banked,
     );
     return Applied(newState, <GameEvent>[
       Rolled(seat: seat, value: value, legal: const <int>[]),
@@ -604,32 +627,34 @@ ApplyResult _applyRollQueued(GameState state, int seat, int value) {
     rngState: state.rngState,
     queue: newQueue,
     drought: drought,
+    banked: state.banked,
   );
 
   if (legalByFace(tentativeState).isEmpty) {
     // Rule 13q: no queued face has a legal move. The faces are discarded and
     // the turn passes, so Rolled.legal is [], not the closing face's set.
-    final nextSeat = _nextSeat(state, seat);
+    final events = <GameEvent>[
+      Rolled(seat: seat, value: value, legal: const <int>[]),
+      TurnEnded(seat: seat, reason: TurnEndReason.noLegalMove),
+    ];
+    final turn = _beginNextTurn(state, seat, events);
     final newState = GameState(
       config: state.config,
       placings: state.placings,
       retired: state.retired,
       tokens: state.tokens,
-      currentSeat: nextSeat,
+      currentSeat: turn.seat,
       phase: GamePhase.awaitRoll,
       roll: null,
       sixes: 0,
       winner: state.winner,
       seq: state.seq + 1,
       rngState: state.rngState,
-      queue: const <int>[],
+      queue: turn.queue,
       drought: drought,
+      banked: turn.banked,
     );
-    return Applied(newState, <GameEvent>[
-      Rolled(seat: seat, value: value, legal: const <int>[]),
-      TurnEnded(seat: seat, reason: TurnEndReason.noLegalMove),
-      TurnBegan(seat: nextSeat),
-    ]);
+    return Applied(newState, events);
   }
 
   // Section 10.3: the new state is awaitMove, so Rolled.legal is
@@ -740,6 +765,7 @@ ApplyResult _applyMoveQueued(
       rngState: state.rngState,
       queue: const <int>[],
       drought: droughtAfter,
+      banked: state.banked,
     );
     return Applied(newState, events);
   }
@@ -765,6 +791,7 @@ ApplyResult _applyMoveQueued(
       rngState: state.rngState,
       queue: queueAfterSpend,
       drought: droughtAfter,
+      banked: state.banked,
     );
     return Applied(newState, events);
   }
@@ -783,6 +810,7 @@ ApplyResult _applyMoveQueued(
     rngState: state.rngState,
     queue: queueAfterSpend,
     drought: droughtAfter,
+    banked: state.banked,
   );
 
   if (legalByFace(tentativeState).isNotEmpty) {
@@ -790,28 +818,26 @@ ApplyResult _applyMoveQueued(
     return Applied(tentativeState, events);
   }
 
-  final nextSeat = _nextSeat(state, seat);
-  if (queueAfterSpend.isEmpty) {
-    events.add(TurnBegan(seat: nextSeat));
-  } else {
+  if (queueAfterSpend.isNotEmpty) {
     // Rule 13q: faces remain but none can move. They are discarded.
     events.add(TurnEnded(seat: seat, reason: TurnEndReason.noLegalMove));
-    events.add(TurnBegan(seat: nextSeat));
   }
+  final turn = _beginNextTurn(state, seat, events);
   final newState = GameState(
     config: state.config,
     placings: state.placings,
     retired: state.retired,
     tokens: newTokens,
-    currentSeat: nextSeat,
+    currentSeat: turn.seat,
     phase: GamePhase.awaitRoll,
     roll: null,
     sixes: 0,
     winner: state.winner,
     seq: state.seq + 1,
     rngState: state.rngState,
-    queue: const <int>[],
+    queue: turn.queue,
     drought: droughtAfter,
+    banked: turn.banked,
   );
   return Applied(newState, events);
 }
@@ -820,8 +846,13 @@ ApplyResult _applyMoveQueued(
 const int _releaseAfter = 10;
 
 /// [drought] with [seat]'s count replaced by [count]; the input is untouched.
-List<int> _withDrought(List<int> drought, int seat, int count) {
-  final result = List<int>.of(drought);
+List<int> _withDrought(List<int> drought, int seat, int count) =>
+    _withCount(drought, seat, count);
+
+/// [counts] with the entry at [seat] replaced by [count]; the input is
+/// untouched.
+List<int> _withCount(List<int> counts, int seat, int count) {
+  final result = List<int>.of(counts);
   result[seat] = count;
   return result;
 }
@@ -845,6 +876,7 @@ ApplyResult _grantRelease(
 ) {
   final newQueue = <int>[...state.queue, value];
   final releasable = _releasableTokens(state, seat);
+  final shared = state.config.rules.sharedRelease;
   if (releasable.isNotEmpty) {
     final newState = GameState(
       config: state.config,
@@ -861,34 +893,40 @@ ApplyResult _grantRelease(
       queue: newQueue,
       drought: drought,
       releaseOwed: true,
+      banked: state.banked,
+      releaseOffered: shared,
     );
     return Applied(newState, <GameEvent>[
       Rolled(seat: seat, value: value, legal: releasable),
-      YardReleased(seat: seat),
+      // Section 13.5: with a shared release it is emitted when the release is
+      // taken, not here.
+      if (!shared) YardReleased(seat: seat),
     ]);
   }
-  final nextSeat = _nextSeat(state, seat);
+  final events = <GameEvent>[
+    Rolled(seat: seat, value: value, legal: const <int>[]),
+    // Section 13.3: a lapse is no release, so nothing is emitted for one.
+    if (!shared) YardReleased(seat: seat),
+    TurnEnded(seat: seat, reason: TurnEndReason.noLegalMove),
+  ];
+  final turn = _beginNextTurn(state, seat, events);
   final newState = GameState(
     config: state.config,
     placings: state.placings,
     retired: state.retired,
     tokens: state.tokens,
-    currentSeat: nextSeat,
+    currentSeat: turn.seat,
     phase: GamePhase.awaitRoll,
     roll: null,
     sixes: 0,
     winner: state.winner,
     seq: state.seq + 1,
     rngState: state.rngState,
-    queue: const <int>[],
-    drought: drought,
+    queue: turn.queue,
+    drought: shared ? _withDrought(drought, seat, 0) : drought,
+    banked: turn.banked,
   );
-  return Applied(newState, <GameEvent>[
-    Rolled(seat: seat, value: value, legal: const <int>[]),
-    YardReleased(seat: seat),
-    TurnEnded(seat: seat, reason: TurnEndReason.noLegalMove),
-    TurnBegan(seat: nextSeat),
-  ]);
+  return Applied(newState, events);
 }
 
 /// Rules 12r and 13r, docs/ENGINE_API.md section 11.4: a `MoveIntention`
@@ -909,6 +947,10 @@ ApplyResult _applyRelease(GameState state, MoveIntention intention, int token) {
   newTokens[seat][token] = 0;
   final events = <GameEvent>[Moved(seat: seat, token: token, from: -1, to: 0)];
 
+  if (state.releaseOffered) {
+    return _takeOffer(state, newTokens, events);
+  }
+
   final tentativeState = GameState(
     config: state.config,
     placings: state.placings,
@@ -923,30 +965,150 @@ ApplyResult _applyRelease(GameState state, MoveIntention intention, int token) {
     rngState: state.rngState,
     queue: state.queue,
     drought: state.drought,
+    banked: state.banked,
   );
   if (legalByFace(tentativeState).isNotEmpty) {
     return Applied(tentativeState, events);
   }
 
-  final nextSeat = _nextSeat(state, seat);
   events.add(TurnEnded(seat: seat, reason: TurnEndReason.noLegalMove));
-  events.add(TurnBegan(seat: nextSeat));
+  final turn = _beginNextTurn(state, seat, events);
   final newState = GameState(
     config: state.config,
     placings: state.placings,
     retired: state.retired,
     tokens: newTokens,
-    currentSeat: nextSeat,
+    currentSeat: turn.seat,
     phase: GamePhase.awaitRoll,
     roll: null,
     sixes: 0,
     winner: state.winner,
     seq: state.seq + 1,
     rngState: state.rngState,
-    queue: const <int>[],
+    queue: turn.queue,
     drought: state.drought,
+    banked: turn.banked,
   );
   return Applied(newState, events);
+}
+
+/// Rule 17s, docs/ENGINE_API.md section 13.4: the offered release is taken.
+/// [events] already holds the `Moved`. The drawn face and every other unspent
+/// face are discarded, every other playing seat is granted a banked six and
+/// the turn passes at once.
+ApplyResult _takeOffer(
+  GameState state,
+  List<List<int>> newTokens,
+  List<GameEvent> events,
+) {
+  final seat = state.currentSeat;
+  final grantees = <int>[
+    for (final other in _playingSeats(
+      state.config.seats,
+      state.placings,
+      state.retired,
+    ))
+      if (other != seat) other,
+  ];
+  var banked = state.banked;
+  if (grantees.isNotEmpty) {
+    banked = List<int>.of(banked);
+    for (final other in grantees) {
+      banked[other] += 1;
+    }
+  }
+  events.add(YardReleased(seat: seat));
+  if (grantees.isNotEmpty) {
+    events.add(SixesBanked(seats: grantees));
+  }
+  events.add(TurnEnded(seat: seat, reason: TurnEndReason.released));
+  final turn = _beginNextTurn(state, seat, events, banked: banked);
+  return Applied(
+    GameState(
+      config: state.config,
+      placings: state.placings,
+      retired: state.retired,
+      tokens: newTokens,
+      currentSeat: turn.seat,
+      phase: GamePhase.awaitRoll,
+      roll: null,
+      sixes: 0,
+      winner: state.winner,
+      seq: state.seq + 1,
+      rngState: state.rngState,
+      queue: turn.queue,
+      drought: _withDrought(state.drought, seat, 0),
+      banked: turn.banked,
+    ),
+    events,
+  );
+}
+
+/// Rule 18s, docs/ENGINE_API.md section 13.4: the offered release is
+/// declined. Nothing comes out, nothing is granted, the drought stays at 9
+/// and the turn passes as a roll with no legal move would.
+ApplyResult _applyDecline(GameState state, DeclineIntention intention) {
+  if (state.phase != GamePhase.awaitMove || !state.releaseOffered) {
+    return const Rejected(EngineError.wrongPhase);
+  }
+  final seat = state.currentSeat;
+  final events = <GameEvent>[
+    ReleaseDeclined(seat: seat),
+    TurnEnded(seat: seat, reason: TurnEndReason.noLegalMove),
+  ];
+  final turn = _beginNextTurn(state, seat, events);
+  return Applied(
+    GameState(
+      config: state.config,
+      placings: state.placings,
+      retired: state.retired,
+      tokens: state.tokens,
+      currentSeat: turn.seat,
+      phase: GamePhase.awaitRoll,
+      roll: null,
+      sixes: 0,
+      winner: state.winner,
+      seq: state.seq + 1,
+      rngState: state.rngState,
+      queue: turn.queue,
+      drought: state.drought,
+      banked: turn.banked,
+    ),
+    events,
+  );
+}
+
+/// The one place a next seat's turn begins (docs/ENGINE_API.md section 13.6):
+/// the next playing seat after [from], `TurnBegan`, and with `sharedRelease`
+/// on, when that seat holds banked sixes, `SixesQueued` and a queue of that
+/// many 6s with its bank emptied. [placings], [retired] and [banked] default
+/// to the state's own.
+({int seat, List<int> queue, List<int> banked}) _beginNextTurn(
+  GameState state,
+  int from,
+  List<GameEvent> events, {
+  List<int>? placings,
+  List<int>? retired,
+  List<int>? banked,
+}) {
+  final next = _nextPlaying(
+    state.config.seats,
+    placings ?? state.placings,
+    retired ?? state.retired,
+    from,
+  );
+  final bank = banked ?? state.banked;
+  events.add(TurnBegan(seat: next));
+  if (state.config.rules.sharedRelease && bank[next] > 0) {
+    final count = bank[next];
+    events.add(SixesQueued(seat: next, count: count));
+    return (
+      seat: next,
+      queue: List<int>.filled(count, 6),
+      banked: _withCount(bank, next, 0),
+    );
+  }
+  return (seat: next, queue: const <int>[], banked: bank);
 }
 
 /// The first occurrence of [face] removed from [queue], preserving the

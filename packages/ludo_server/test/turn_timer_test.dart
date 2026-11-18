@@ -175,6 +175,8 @@ String _turnPassedReason(engine.TurnEndReason reason) {
       return 'no_legal_move';
     case engine.TurnEndReason.threeSixes:
       return 'three_sixes';
+    case engine.TurnEndReason.released:
+      return 'released';
   }
 }
 

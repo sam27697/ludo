@@ -102,8 +102,9 @@ Future<void> _run() async {
   }
 
   // docs/PROTOCOL.md section 28 rule 1: the ruleset every room created from
-  // here on plays. Absent or empty is 2026-10. Anything but 2026-10 and
-  // 2026-11 stops the server before the port opens, as MIN_CLIENT_BUILD does.
+  // here on plays. Absent or empty is 2026-10. Anything but 2026-10, 2026-11
+  // and 2026-12 stops the server before the port opens, as MIN_CLIENT_BUILD
+  // does.
   final String ruleset;
   try {
     ruleset = parseRuleset(Platform.environment['RULESET']);

@@ -45,6 +45,9 @@ export 'src/registry.dart'
         MoveResult,
         MoveOk,
         MoveFailure,
+        DeclineResult,
+        DeclineOk,
+        DeclineFailure,
         ExpiredTurn,
         RematchResult,
         RematchOk,
@@ -56,7 +59,12 @@ export 'src/registry.dart'
         RetireFailure,
         RoomRegistry;
 export 'src/ruleset.dart'
-    show ruleset202610, ruleset202611, isKnownRuleset, parseRuleset;
+    show
+        ruleset202610,
+        ruleset202611,
+        ruleset202612,
+        isKnownRuleset,
+        parseRuleset;
 export 'src/rate_limit.dart' show RateLimiter, MessageRateOutcome;
 export 'src/envelope.dart'
     show

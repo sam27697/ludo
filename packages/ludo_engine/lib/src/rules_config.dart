@@ -1,5 +1,6 @@
 // docs/ENGINE_API.md section 2, verbatim shape; section 10.1 adds rollQueue,
-// section 11.1 adds yardRelease, section 12.1 adds playOut.
+// section 11.1 adds yardRelease, section 12.1 adds playOut,
+// section 13.1 adds sharedRelease.
 
 /// Toggles the server may set per room.
 class RulesConfig {
@@ -10,6 +11,7 @@ class RulesConfig {
     this.homeBonus = false,
     this.yardRelease = false,
     this.playOut = false,
+    this.sharedRelease = false,
   });
 
   /// Rule 21: two or more of a seat's tokens on one main-track square block
@@ -45,6 +47,13 @@ class RulesConfig {
   /// section 12.1).
   final bool playOut;
 
+  /// Rules 16s to 20s (docs/RULES.md section 3.2c): the exceptional release
+  /// brings out one token, ends the turn and grants every other playing seat a
+  /// banked six; the seat may decline it. Defaults off so older records replay
+  /// unchanged. Requires [yardRelease]; `newGame` throws [ArgumentError]
+  /// otherwise (docs/ENGINE_API.md section 13.1).
+  final bool sharedRelease;
+
   @override
   bool operator ==(Object other) =>
       other is RulesConfig &&
@@ -53,7 +62,8 @@ class RulesConfig {
       other.rollQueue == rollQueue &&
       other.homeBonus == homeBonus &&
       other.yardRelease == yardRelease &&
-      other.playOut == playOut;
+      other.playOut == playOut &&
+      other.sharedRelease == sharedRelease;
 
   @override
   int get hashCode => Object.hash(
@@ -63,10 +73,12 @@ class RulesConfig {
         homeBonus,
         yardRelease,
         playOut,
+        sharedRelease,
       );
 
   @override
   String toString() => 'RulesConfig(blocks: $blocks, '
       'captureBonus: $captureBonus, rollQueue: $rollQueue, '
-      'homeBonus: $homeBonus, yardRelease: $yardRelease, playOut: $playOut)';
+      'homeBonus: $homeBonus, yardRelease: $yardRelease, playOut: $playOut, '
+      'sharedRelease: $sharedRelease)';
 }

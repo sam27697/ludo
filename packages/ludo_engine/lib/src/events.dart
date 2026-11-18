@@ -115,6 +115,40 @@ class YardReleased extends GameEvent {
   String toString() => 'YardReleased(seat: $seat)';
 }
 
+/// docs/ENGINE_API.md section 13.1, rule 18s: the seat declined the release it
+/// was offered; nothing came out and nothing is granted.
+class ReleaseDeclined extends GameEvent {
+  const ReleaseDeclined({required this.seat});
+
+  final int seat;
+
+  @override
+  String toString() => 'ReleaseDeclined(seat: $seat)';
+}
+
+/// docs/ENGINE_API.md section 13.1, rule 17s: a release was taken and each of
+/// [seats] (every other playing seat, ascending) is granted one banked six.
+class SixesBanked extends GameEvent {
+  const SixesBanked({required this.seats});
+
+  final List<int> seats;
+
+  @override
+  String toString() => 'SixesBanked(seats: $seats)';
+}
+
+/// docs/ENGINE_API.md section 13.6, rule 19s: [count] banked sixes were put at
+/// the front of [seat]'s queue as its turn began.
+class SixesQueued extends GameEvent {
+  const SixesQueued({required this.seat, required this.count});
+
+  final int seat;
+  final int count;
+
+  @override
+  String toString() => 'SixesQueued(seat: $seat, count: $count)';
+}
+
 /// docs/ENGINE_API.md section 12.1, rule 33p: `seat` brought its fourth token
 /// home, or was the last seat playing, and takes `place` (1-based).
 class SeatFinished extends GameEvent {

@@ -31,3 +31,13 @@ ordinary `MoveIntention`.
   make a failing golden gate go green. A hash that changes is a defect until
   someone proves it was an intended rule change; regenerating the corpus proves
   nothing except that the code agrees with itself.
+
+## The shared release
+
+With `rules.sharedRelease` (which needs `yardRelease`) the exceptional release
+of rule 11r is an offer: the seat takes it with a `MoveIntention` of a
+releasable token and no face, or declines it with a `DeclineIntention`. A
+taken release ends the turn and banks one six for every other playing seat;
+`state.banked` holds the counts and the next turn of a seat with a bank begins
+with that many 6s in its queue. `docs/ENGINE_API.md` section 13 is the spec.
+With the toggle off nothing differs, byte for byte.

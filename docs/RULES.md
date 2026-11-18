@@ -187,6 +187,46 @@ once the server order lands. It requires `rollQueue`; a config with
     it, never a changed face. Under the timer (rule 15q), the server spends
     a release before any face, on the lowest-index token.
 
+### 3.2c The shared release (`sharedRelease`), Sam's ruling of 2026-11-19
+
+Sam, after the last game: the exceptional six releases ONE token and nothing
+else; the seat must not roll again after it. And the other seats did not get
+a six through no fault of the first, so they are given one too; the seat
+whose release fired chooses whether to take it, knowing that. Engine toggle
+`sharedRelease`, default off (older records replay unchanged); it requires
+`yardRelease`. It replaces rules 12r to 14r as stated here; 9r, 10r, 11r and
+15r keep their meaning, and the drought is still counted as there.
+
+16s. When a non-6 brings the drought to 10 (rule 11r) and some token can be
+     released (the legality of rule 12r), the seat is **offered** the release
+     and the turn waits for its answer. It answers with one of two things:
+     it **takes** the release (a move of a releasable token, no face) or it
+     **declines** it. If no token can be released the offer lapses: the turn
+     passes as rule 13q, nothing is banked, the drought returns to 0.
+17s. **Taking** it brings the chosen token out onto the seat's entry square
+     (a release, not a 6: no extra roll, not counted towards three 6s). The
+     drawn face is discarded, every other unspent face with it (a banked six it still held included), and the turn
+     passes at once. Every other seat still playing (not finished, not
+     retired) is granted one **banked six**, whether or not it is connected.
+18s. **Declining** it brings nothing out and grants nothing. The drawn face
+     is not spent on a release; with every token in the yard it has no legal
+     move, so the turn passes as rule 13q. The drought is set to 9, so the
+     seat's next roll that is not a 6 brings it to 10 and the offer repeats;
+     a 6 sets it to 0 as rule 10r says.
+19s. A **banked six** is a 6 added to the front of the queue of the seat's
+     next turn, before its first roll, and it is spent like any queued 6
+     (rule 11q): it may release a token or move one. It is not rolled, so it
+     is not a fair draw and not a face of the record; it does not count
+     towards three 6s and it owes no extra roll when spent (rule 12q). A seat
+     holds a count of them (a second release by another seat before it has
+     played adds one more); all are queued at the start of its next turn. If
+     the turn passes with no legal move, unspent banked sixes are discarded
+     with the rest of the queue (rule 13q).
+20s. The offer, the answer and every banked six are published rules applied
+     on top of the recorded fair draws, never a changed face (rule 15r). Under
+     the timer, on expiry of an offer the server **takes** the release, on
+     the lowest releasable token.
+
 ### 3.3 The timer
 
 14. A seat has 45 seconds from the moment the roll is delivered to it to select

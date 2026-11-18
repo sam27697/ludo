@@ -54,6 +54,8 @@ const Set<String> _stateChangingTypes = <String>{
   'game_over',
   'seat_finished',
   'seat_retired',
+  'sixes_granted',
+  'release_declined',
 };
 
 /// The production automatic-reconnect schedule: five attempts, the delay
@@ -889,6 +891,21 @@ class RoomController extends ChangeNotifier {
     }
   }
 
+  /// docs/PROTOCOL.md section 30 rule 4: declines the pending shared release.
+  /// Sent exactly like [roll]; the `release_declined` broadcast that answers
+  /// it is what changes the room.
+  Future<void> declineRelease() async {
+    final RoomConnection? connection = _connection;
+    if (_disposed || _phase != RoomPhase.connected || connection == null) {
+      return;
+    }
+    try {
+      await connection.declineRelease();
+    } catch (error) {
+      _failFromRollOrMove(error);
+    }
+  }
+
   /// Forwards to the connection when [phase] is [RoomPhase.connected] and is
   /// a silent no-op otherwise. The reply is a plain frame, not a snapshot; it
   /// is not parsed as one and changes nothing here. The `moved` frame that
@@ -1263,6 +1280,10 @@ class RoomController extends ChangeNotifier {
         _reduceSeatFinished(frame, room);
       case 'seat_retired':
         _reduceSeatRetired(frame, room);
+      case 'sixes_granted':
+        _reduceSixesGranted(frame, room);
+      case 'release_declined':
+        _reduceReleaseDeclined(frame, room);
     }
   }
 
@@ -1631,9 +1652,19 @@ class RoomController extends ChangeNotifier {
       legalByFace: legalByFace,
       segmentMs: _asInt(frame.data, 'segment_ms') ?? deadlineMs,
       release: frame.data['release'] == true,
+      offer: frame.data['offer'] == true && phase == TurnPhase.awaitMove,
+      banked: _asInt(frame.data, 'banked'),
       graceMs: _asInt(frame.data, 'grace_ms'),
     );
-    _room = room.copyWith(turn: turn, seq: seqValue);
+    // Section 30 rule 5: the sixes banked for this seat are in the queue now,
+    // so the count held on the seat goes back to 0.
+    final List<SeatState> seats = room.seats
+        .map(
+          (SeatState s) =>
+              s.seat == seatValue && s.banked != 0 ? s.copyWith(banked: 0) : s,
+        )
+        .toList(growable: false);
+    _room = room.copyWith(turn: turn, seats: seats, seq: seqValue);
     notifyListeners();
   }
 
@@ -1717,6 +1748,7 @@ class RoomController extends ChangeNotifier {
       legalByFace: releaseOwed ? null : legalByFace,
       segmentMs: segmentMs,
       release: release,
+      offer: releaseOwed && frame.data['offer'] == true,
     );
     _room = room.copyWith(
       turn: turn,
@@ -1847,7 +1879,9 @@ class RoomController extends ChangeNotifier {
     if (seatValue == null || reasonValue == null || seqValue == null) {
       return;
     }
-    if (reasonValue != 'no_legal_move' && reasonValue != 'three_sixes') {
+    if (reasonValue != 'no_legal_move' &&
+        reasonValue != 'three_sixes' &&
+        reasonValue != 'released') {
       return;
     }
 
@@ -1875,6 +1909,66 @@ class RoomController extends ChangeNotifier {
             settling: true,
           );
 
+    _room = turn == null
+        ? room.copyWith(seq: seqValue)
+        : room.copyWith(turn: turn, seq: seqValue);
+    notifyListeners();
+  }
+
+  /// docs/PROTOCOL.md section 30 rule 3: `{seats, seq}`. The listed seats each
+  /// hold one more banked six until their own `turn` moves it to the queue.
+  /// The frame names no `seat` of its own; a missing `seats` list is treated
+  /// as none granted, and the sequence is still checked.
+  void _reduceSixesGranted(Frame frame, RoomSnapshot room) {
+    final int? seqValue = frame.seq;
+    if (seqValue == null) {
+      return;
+    }
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+    final List<int> granted = _asIntList(frame.data, 'seats') ?? const <int>[];
+    final List<SeatState> seats = room.seats
+        .map(
+          (SeatState s) =>
+              granted.contains(s.seat) ? s.copyWith(banked: s.banked + 1) : s,
+        )
+        .toList(growable: false);
+    _room = room.copyWith(seats: seats, seq: seqValue);
+    notifyListeners();
+  }
+
+  /// docs/PROTOCOL.md section 30 rule 4: `{seat, seq}`. The offer is over; the
+  /// turn is cleared the way `turn_passed` clears it, ahead of the pass and
+  /// the `turn` frame that follow.
+  void _reduceReleaseDeclined(Frame frame, RoomSnapshot room) {
+    final int? seatValue = _asInt(frame.data, 'seat');
+    final int? seqValue = frame.seq;
+    if (seatValue == null || seqValue == null) {
+      return;
+    }
+    if (!room.seats.any((SeatState s) => s.seat == seatValue)) {
+      return;
+    }
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+    final TurnState? currentTurn = room.turn;
+    final TurnState? turn = currentTurn == null
+        ? null
+        : TurnState(
+            seat: currentTurn.seat,
+            phase: TurnPhase.awaitRoll,
+            deadlineMs: currentTurn.deadlineMs,
+            k: currentTurn.k,
+            value: null,
+            legal: null,
+            sixes: null,
+            segmentMs: currentTurn.segmentMs,
+            settling: true,
+          );
     _room = turn == null
         ? room.copyWith(seq: seqValue)
         : room.copyWith(turn: turn, seq: seqValue);

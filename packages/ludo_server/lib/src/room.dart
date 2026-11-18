@@ -183,12 +183,19 @@ class Room {
   final DateTime createdAt;
 
   /// `docs/PROTOCOL.md` section 28 rule 1: the ruleset this room was created
-  /// under, [ruleset202610] or [ruleset202611]. Taken from the server at
-  /// `create_room` and kept for the life of the room, rematches included.
+  /// under, [ruleset202610], [ruleset202611] or [ruleset202612]. Taken from
+  /// the server at `create_room` and kept for the life of the room,
+  /// rematches included.
   final String ruleset;
 
-  /// True when this room plays the 2026-11 ruleset (section 28).
-  bool get isRuleset202611 => ruleset == ruleset202611;
+  /// True when this room plays the 2026-11 ruleset (section 28) or the
+  /// 2026-12 one, which plays everything 2026-11 does (section 30 rule 1).
+  bool get isRuleset202611 =>
+      ruleset == ruleset202611 || ruleset == ruleset202612;
+
+  /// True when this room plays the 2026-12 ruleset (section 30): the shared
+  /// release.
+  bool get isRuleset202612 => ruleset == ruleset202612;
 
   /// The moment this room's current lifetime budget began.
   /// `docs/PROTOCOL.md` section 3, as amended by C-451: a LOBBY is reaped 60
@@ -294,6 +301,27 @@ class Room {
   /// ascending. `RoomRegistry.roll()` appends to it on the one code path
   /// that also appends to [rollSeats]. Always empty under 2026-10.
   final List<int> releases = <int>[];
+
+  /// `docs/PROTOCOL.md` section 30 rule 7: the roll numbers whose offered
+  /// release the player declined, ascending. Always empty before 2026-12.
+  final List<int> declined = <int>[];
+
+  /// Section 30 rule 7: the roll numbers whose release was a lapse (no piece
+  /// could come out), ascending, a subset of [releases]. Always empty before
+  /// 2026-12.
+  final List<int> lapsed = <int>[];
+
+  /// Section 30 rule 5: the seat whose turn began with banked sixes queued
+  /// and the count the engine's `SixesQueued` said, for a `turn` rebuilt
+  /// without the event (a reconnect). Written only by
+  /// `RoomRegistry._noteQueuedBanked`, cleared when that seat rolls, when the
+  /// turn passes, when the game ends and at a game start. 0 means none.
+  int queuedBankedSeat = -1;
+  int queuedBankedCount = 0;
+
+  /// Section 30 rule 7: for each taken release, the roll number and the
+  /// seats granted a six, in the order the releases were taken.
+  final List<Map<String, Object?>> grants = <Map<String, Object?>>[];
 
   /// The moment the currently active turn segment began, per section 6: a
   /// segment starts, and the full `rules.turnSeconds` is restored, on a

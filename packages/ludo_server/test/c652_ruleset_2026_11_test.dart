@@ -956,7 +956,7 @@ void main() {
     test('P1: a value that is not 2026-10 or 2026-11 stops the start',
         () async {
       final Directory root = await _packageRoot();
-      for (final String bad in <String>['abc', '2026-12', '2026-11x']) {
+      for (final String bad in <String>['abc', '2026-13', '2026-11x']) {
         final int port = await _freePort();
         final Process process = await Process.start(
           Platform.resolvedExecutable,
