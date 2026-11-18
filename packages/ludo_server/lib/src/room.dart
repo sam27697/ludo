@@ -306,6 +306,11 @@ class Room {
   /// release the player declined, ascending. Always empty before 2026-12.
   final List<int> declined = <int>[];
 
+  /// Section 30 rule 7: the roll numbers whose release was a lapse (no piece
+  /// could come out), ascending, a subset of [releases]. Always empty before
+  /// 2026-12.
+  final List<int> lapsed = <int>[];
+
   /// Section 30 rule 7: for each taken release, the roll number and the
   /// seats granted a six, in the order the releases were taken.
   final List<Map<String, Object?>> grants = <Map<String, Object?>>[];

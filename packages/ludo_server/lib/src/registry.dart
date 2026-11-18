@@ -1220,6 +1220,7 @@ class RoomRegistry {
     room.rollSeats.clear();
     room.releases.clear();
     room.declined.clear();
+    room.lapsed.clear();
     room.grants.clear();
     room.turnSegmentStartedAt = null;
     room.turnGraceEndsAt = null;
@@ -1321,6 +1322,10 @@ class RoomRegistry {
     final bool releaseRoll = _grantedRelease(game, appliedOk);
     if (releaseRoll) {
       room.releases.add(k);
+      // Section 30 rule 7: a release roll that raised no offer was a lapse.
+      if (game.config.rules.sharedRelease && !appliedOk.state.releaseOffered) {
+        room.lapsed.add(k);
+      }
     }
 
     room.seq++;

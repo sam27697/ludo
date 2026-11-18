@@ -565,6 +565,14 @@ class Connection {
           legal: fields.legal,
           legalByFace: fields.legalByFace,
           release: fields.release,
+          offer: fields.offer,
+          // Section 30 rule 5: no event carries the count here, so it is
+          // read off the state: under 2026-12 a queue of sixes in
+          // `await_roll` is the banked sixes queued as the turn began.
+          banked: ok.room.isRuleset202612 &&
+                  ok.room.game!.phase == engine.GamePhase.awaitRoll
+              ? fields.queue.where((int f) => f == 6).length
+              : null,
           graceMs: ok.turnGraceMs,
         ),
         exceptConn: this,
