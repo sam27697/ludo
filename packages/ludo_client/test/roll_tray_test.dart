@@ -87,9 +87,29 @@ void _expectChild(WidgetTester tester, Key parent, Key child, String reason) {
   );
 }
 
+// C-667t r2: the default test surface (800x600) is a large landscape since
+// C-667, and case 1 tests the tray, not the tablet layout, so it runs on a
+// phone surface: P1, 360x780 logical at density 3.0. The twins below run on
+// T2, 1480x924 logical at density 2.0 (contract D1).
+const Size _p1Surface = Size(360, 780);
+const double _p1Density = 3.0;
+const Size _t2Surface = Size(1480, 924);
+const double _t2Density = 2.0;
+const Key _sideBandKey = ValueKey<String>('c667-side-band');
+
+void _surface(WidgetTester tester, Size logical, double density) {
+  tester.view.physicalSize = Size(
+    logical.width * density,
+    logical.height * density,
+  );
+  tester.view.devicePixelRatio = density;
+  addTearDown(tester.view.reset);
+}
+
 void main() {
   testWidgets('case 1: 6, 6 then 3 shows three tray dice with no selection '
       'mark and the big die on turn.value', (tester) async {
+    _surface(tester, _p1Surface, _p1Density);
     final RollTrayDrive drive = await connectPlaying(
       tester,
       turn: turnJson(seat: 0, phase: 'await_roll', k: 0, queue: const <int>[]),
@@ -170,6 +190,109 @@ void main() {
       await releaseGame(tester, drive);
     }
   });
+
+  // C-667t r2: the large-landscape twin of case 1 (T2, contract D1). The die
+  // band sits beside the board on the end side, so the tray is not under the
+  // board: it is inside the side group, on the die's row, after the die in
+  // en and before it in ar. T2's side space is 356 wide and die + tray + hint
+  // need 296, so the tray does not wrap there.
+  for (final Locale locale in const <Locale>[Locale('en'), Locale('ar')]) {
+    final bool ar = locale.languageCode == 'ar';
+    testWidgets(
+      'case 1 twin T2 ${locale.languageCode}: 6, 6 then 3 shows the tray '
+      'inside the side group beside the die, not under the board',
+      (tester) async {
+        _surface(tester, _t2Surface, _t2Density);
+        final String where =
+            'scenario: T2 1480x924 dp at density 2.0, locale '
+            '${locale.languageCode}, 6, 6 then 3, rerun with --plain-name '
+            "'case 1 twin T2 ${locale.languageCode}'";
+        final RollTrayDrive drive = await connectPlaying(
+          tester,
+          turn: turnJson(
+            seat: 0,
+            phase: 'await_roll',
+            k: 0,
+            queue: const <int>[],
+          ),
+          seats: twoSeats(mine: const <int>[0, -1, -1, -1]),
+        );
+        try {
+          await mountGame(tester, drive, locale: locale);
+          await _pushSixSixThree(tester, drive);
+
+          final TurnState turn = drive.controller.room!.turn!;
+          expect(turn.queue, <int>[6, 6, 3], reason: 'fixture is broken');
+          expect(
+            find.byKey(rollTrayKey),
+            findsOneWidget,
+            reason: 'K1: game-roll-tray is in the tree. $where',
+          );
+          expect(
+            find.byKey(_sideBandKey),
+            findsOneWidget,
+            reason:
+                'D1: the visible band is one group keyed c667-side-band. '
+                '$where',
+          );
+
+          final Rect square = boardSquare(tester);
+          final Rect die = tester.getRect(find.byKey(bigDieKey));
+          final Rect tray = tester.getRect(find.byKey(rollTrayKey));
+          final Rect group = tester.getRect(find.byKey(_sideBandKey));
+          final Rect side = ar
+              ? Rect.fromLTRB(0, 0, square.left, 924)
+              : Rect.fromLTRB(square.right, 0, 1480, 924);
+
+          expect(
+            side.inflate(0.5).contains(tray.topLeft) &&
+                side.inflate(0.5).contains(tray.bottomRight),
+            isTrue,
+            reason:
+                'K1/D1: the tray is in the side space $side, not under the '
+                'board $square; tray $tray. $where',
+          );
+          expect(
+            tray.top,
+            lessThan(square.bottom - 1),
+            reason:
+                'K1/D1: the tray is no longer below the board (board bottom '
+                '${square.bottom}); tray $tray. $where',
+          );
+          expect(
+            group.inflate(0.5).contains(tray.topLeft) &&
+                group.inflate(0.5).contains(tray.bottomRight) &&
+                group.inflate(0.5).contains(die.topLeft) &&
+                group.inflate(0.5).contains(die.bottomRight),
+            isTrue,
+            reason:
+                'K1/D1: the tray and the die are inside the group $group; '
+                'tray $tray, die $die. $where',
+          );
+          if (ar) {
+            expect(
+              tray.center.dx,
+              lessThan(die.center.dx),
+              reason: 'K1: in ar the tray sits after the big die. $where',
+            );
+          } else {
+            expect(
+              tray.center.dx,
+              greaterThan(die.center.dx),
+              reason: 'K1: in en the tray sits after the big die. $where',
+            );
+          }
+          expect(
+            (tray.center.dy - die.center.dy).abs(),
+            lessThan(36),
+            reason: 'K1: the tray stays on the big die\'s row. $where',
+          );
+        } finally {
+          await releaseGame(tester, drive);
+        }
+      },
+    );
+  }
 
   testWidgets(
     'case 2: the rings are the union over every alive face and a tray tap '

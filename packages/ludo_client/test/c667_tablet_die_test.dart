@@ -50,7 +50,7 @@ import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
-import 'package:ludo_client/src/theme.dart' show buildAppTheme;
+import 'package:ludo_client/src/theme.dart' show buildAppTheme, kSpace2;
 
 import 'net/fake_transport.dart';
 
@@ -65,6 +65,9 @@ const Key _trayKey = Key('game-roll-tray');
 const Key _hintKey = Key('game-hint-button');
 const Key _bannerKey = Key('game-screen-turn-banner');
 const Key _noticeKey = Key('game-no-move-notice');
+const Key _markKey = Key('game-die-no-move-mark');
+// C-667 r2: the widget that bounds exactly the visible band group.
+const Key _groupKey = ValueKey<String>('c667-side-band');
 
 const double _dieHitFloor = 48;
 const double _boardFloor = 324;
@@ -1301,6 +1304,121 @@ void _expectLandscapeLayout(
   }
 }
 
+/// D1 (round 2): the visible band content is one compact group, the hint
+/// beside the die at kSpace2, and that group is centred horizontally in the
+/// side space to 1 dp. The group is measured by its own key; the die, the tray,
+/// the hint and the no-move mark must all lie inside it and the group must not
+/// be wider than they are, so a padded or lopsided box cannot pass.
+void _expectGroupCentred(
+  WidgetTester tester,
+  _Frame f,
+  _Size size,
+  Locale locale,
+  _St state,
+) {
+  void need(bool ok, String rule, String expected, String got) => _require(
+    ok,
+    rule: rule,
+    expected: expected,
+    got: '$got; frame: ${f.describe()}',
+    size: size,
+    locale: locale,
+    state: state,
+  );
+
+  final int count = tester.widgetList(find.byKey(_groupKey)).length;
+  need(
+    count == 1,
+    'D1 r2 (one c667-side-band group)',
+    'exactly one widget keyed c667-side-band',
+    '$count found',
+  );
+  final Rect group = tester.getRect(find.byKey(_groupKey));
+  final Rect side = _sideSpace(size, locale, f.square);
+  final double dx = group.center.dx - side.center.dx;
+  need(
+    dx.abs() <= 1.0,
+    'D1 r2 (the group is centred in the side space)',
+    'group centre x ${side.center.dx.toStringAsFixed(2)} +- 1.00 (side space '
+        '${_r(side)})',
+    'group ${_r(group)} centre x ${group.center.dx.toStringAsFixed(2)}, off '
+        'by ${dx.toStringAsFixed(2)}',
+  );
+  need(
+    group.left >= side.left - 0.5 && group.right <= side.right + 0.5,
+    'D1 r2 (the group lies inside the side space)',
+    'group inside ${_r(side)}',
+    'group ${_r(group)}',
+  );
+
+  Rect content = f.band;
+  final Rect? mark = _rectOfOne(tester, _markKey);
+  if (mark != null) {
+    content = content.expandToInclude(mark);
+  }
+  need(
+    _within(content, group),
+    'D1 r2 (the die, tray, hint and mark are inside the group)',
+    'content ${_r(content)} inside group ${_r(group)}',
+    'group ${_r(group)}',
+  );
+  need(
+    (group.left - content.left).abs() <= 1.0 &&
+        (group.right - content.right).abs() <= 1.0,
+    'D1 r2 (the group bounds exactly the visible content horizontally)',
+    'group left/right equal to the content ${_r(content)} to 1 dp',
+    'group ${_r(group)}',
+  );
+
+  final Rect? hint = f.hint;
+  need(
+    hint != null,
+    'D1 r2 (the hint bulb is visible)',
+    'game-hint-button in the tree',
+    'absent',
+  );
+  final Rect h = hint!;
+  need(
+    h.top < f.die.bottom && h.bottom > f.die.top,
+    'D1 r2 (the hint sits beside the die, on its row)',
+    'hint rows overlap the die rows ${f.die.top}..${f.die.bottom}',
+    'hint ${_r(h)}',
+  );
+  // The contract puts the hint beside the die and does not name the side, so
+  // the gap is the horizontal air between the two boxes on whichever side.
+  final double gap = math.max(h.left - f.die.right, f.die.left - h.right);
+  need(
+    (gap - kSpace2).abs() <= 0.5,
+    'D1 r2 (the hint is kSpace2 from the die, never parked at the board edge)',
+    'gap between hint and die $kSpace2',
+    'gap ${gap.toStringAsFixed(2)} (hint ${_r(h)}, die ${_r(f.die)})',
+  );
+
+  final Rect? tray = f.tray;
+  if (tray != null) {
+    final double need0 = h.width + kSpace2 + f.die.width + kSpace2 + tray.width;
+    final bool wraps = need0 > side.width + 0.01;
+    if (wraps) {
+      need(
+        tray.top >= f.die.bottom - 0.5,
+        'D1 r2 (the side space is ${side.width.toStringAsFixed(1)} wide and '
+            'the band needs ${need0.toStringAsFixed(1)}: the tray wraps under '
+            'the die)',
+        'tray.top >= die.bottom ${f.die.bottom}',
+        'tray ${_r(tray)}',
+      );
+    } else {
+      need(
+        tray.top < f.die.bottom && tray.bottom > f.die.top,
+        'D1 r2 (the band fits the side space, ${need0.toStringAsFixed(1)} of '
+            '${side.width.toStringAsFixed(1)}: the tray stays on the die row)',
+        'tray rows overlap the die rows ${f.die.top}..${f.die.bottom}',
+        'tray ${_r(tray)}',
+      );
+    }
+  }
+}
+
 /// D2: large portrait.
 void _expectPortraitLayout(
   _Frame f,
@@ -1598,6 +1716,23 @@ void main() {
                 locale,
                 state,
               );
+            });
+          });
+        }
+      }
+    }
+  });
+
+  group('D1 r2 the band is one group centred in the side space', () {
+    for (final _Size size in _landscapeTablets) {
+      for (final Locale locale in _locales) {
+        for (final _St state in _layoutStates) {
+          testWidgets('D1 centred ${_caseId(size, locale, state)}', (
+            WidgetTester tester,
+          ) async {
+            await _withScreen(tester, size, locale, state, (_Rig rig) async {
+              final _Frame f = _measure(tester, _caseId(size, locale, state));
+              _expectGroupCentred(tester, f, size, locale, state);
             });
           });
         }
