@@ -205,7 +205,7 @@ whose release fired chooses whether to take it, knowing that. Engine toggle
      passes as rule 13q, nothing is banked, the drought returns to 0.
 17s. **Taking** it brings the chosen token out onto the seat's entry square
      (a release, not a 6: no extra roll, not counted towards three 6s). The
-     drawn face is discarded, every other unspent face with it, and the turn
+     drawn face is discarded, every other unspent face with it (a banked six it still held included), and the turn
      passes at once. Every other seat still playing (not finished, not
      retired) is granted one **banked six**, whether or not it is connected.
 18s. **Declining** it brings nothing out and grants nothing. The drawn face
