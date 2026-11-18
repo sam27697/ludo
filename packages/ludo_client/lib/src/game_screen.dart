@@ -554,8 +554,11 @@ class _GameScreenState extends State<GameScreen> {
   // refused removal). The newest replaces the one up, each holds 2500 ms.
   _RulesetNotice? _rulesetNotice;
 
-  /// The `k` of the offer whose decline this screen already sent.
-  int? _declineSentForK;
+  /// True once an answer (a decline or a take) has gone out for the offer now
+  /// pending, so one offer never sends both. Cleared when the request ends
+  /// with the offer still pending, when the link drops, on a snapshot, when
+  /// the offer is gone and for a new game.
+  bool _offerAnswered = false;
 
   /// A banked-six notice of my turn that has not been shown yet.
   bool _bankedPending = false;
@@ -3086,6 +3089,8 @@ class _GameScreenState extends State<GameScreen> {
     _rulesetNoticeTimer?.cancel();
     _rulesetNoticeTimer = null;
     _rulesetNotice = null;
+    _offerAnswered = false;
+    _bankedPending = false;
     _rematchJoinTimer?.cancel();
     _rematchJoinTimer = null;
     _rematchJoin = null;
@@ -3455,6 +3460,7 @@ class _GameScreenState extends State<GameScreen> {
   /// snapshot of a PLAYING room (PROTOCOL section 8 rule 4, C-293 rule 3).
   void _rebaseFromSnapshot(RoomSnapshot room, {bool holdYourTurn = false}) {
     _dropDeadCandidate();
+    _offerAnswered = false;
     final TurnState? turn = room.turn;
     if (turn != null) {
       _rememberQueue(turn.seat, turn.queue);
@@ -4180,6 +4186,10 @@ class _GameScreenState extends State<GameScreen> {
     _notePlayingGame();
     if (controller.phase != RoomPhase.connected) {
       _dropWhatTheLinkArmed();
+    }
+    if (controller.phase != RoomPhase.connected ||
+        !(controller.room?.turn?.offer ?? false)) {
+      _offerAnswered = false;
     }
     // Throws first. A resync clears the remembered faces, and the sync
     // below records the holder's `turn.value` again (C-465 D2).
@@ -5160,6 +5170,13 @@ class _GameScreenState extends State<GameScreen> {
     if (_moveSentForK == k && _sameFaces(_moveSentForQueue, turn.queue)) {
       return false;
     }
+    // One answer per offer: a decline already sent is not followed by a take.
+    if (turn.offer) {
+      if (_offerAnswered) {
+        return false;
+      }
+      _offerAnswered = true;
+    }
     final int serial = ++_moveSendSerial;
     _moveSentForK = k;
     _moveSentForQueue = List<int>.from(turn.queue);
@@ -5171,6 +5188,7 @@ class _GameScreenState extends State<GameScreen> {
     unawaited(
       widget.controller.move(token, face: face).whenComplete(() {
         _dropMoveGuardFor(serial);
+        _reopenOfferIfPending();
       }),
     );
     return true;
@@ -7262,6 +7280,13 @@ class _GameScreenState extends State<GameScreen> {
       default:
         lead = null;
     }
+    // The shared release's notices carry a name and a sentence: they may take
+    // a second line. The slot reserves it in a 2026-12 room.
+    final bool twoLines =
+        notice.kind == _RulesetNoticeKind.releaseDeclined ||
+        notice.kind == _RulesetNoticeKind.releaseTakenOthers ||
+        notice.kind == _RulesetNoticeKind.releaseTakenGranted ||
+        notice.kind == _RulesetNoticeKind.releaseBanked;
     final bool gold =
         notice.kind == _RulesetNoticeKind.finishedMine ||
         notice.kind == _RulesetNoticeKind.finishedOther;
@@ -7275,7 +7300,7 @@ class _GameScreenState extends State<GameScreen> {
             _rulesetNoticeLine(loc, notice),
             textAlign: TextAlign.center,
             textScaler: scaler,
-            maxLines: 1,
+            maxLines: twoLines ? 2 : 1,
             overflow: TextOverflow.ellipsis,
             style: gold
                 ? TextStyle(
@@ -8135,12 +8160,39 @@ class _GameScreenState extends State<GameScreen> {
     )..layout(maxWidth: math.max(1, maxWidth - pill.width - kSpace2));
     final double height = line.height;
     line.dispose();
-    return math.max(pill.height, height);
+    // The shared release's own notices, each on at most two lines at the full
+    // width; the longest name the room allows is measured with them.
+    double notices = 0;
+    for (final String text in <String>[
+      loc.gameReleaseDeclinedOther('WWWWWWWWWWWW'),
+      loc.gameReleaseTakenOthers('WWWWWWWWWWWW'),
+      loc.gameReleaseTakenGranted('WWWWWWWWWWWW'),
+      loc.gameReleaseOfferOther('WWWWWWWWWWWW'),
+      loc.gameReleaseBanked,
+    ]) {
+      final TextPainter painter = TextPainter(
+        text: TextSpan(
+          text: text,
+          style: Theme.of(context).textTheme.bodyMedium!,
+        ),
+        textAlign: TextAlign.center,
+        textDirection: Directionality.of(context),
+        textScaler: scaler,
+        maxLines: 2,
+        ellipsis: '…',
+      )..layout(maxWidth: math.max(1, maxWidth));
+      notices = math.max(notices, painter.height);
+      painter.dispose();
+    }
+    return math.max(math.max(pill.height, height), notices);
   }
 
   /// My offer: the words, and beside them the one control that declines. The
   /// answer that takes the release is on the board, tapping a ringed piece.
   Widget _offerMineRow(AppLocalizations loc, TextScaler scaler) {
+    // My time is up: the server's timer takes the release, so the pill is
+    // drawn dimmed and does nothing, rather than looking live.
+    final bool live = !_myTimeUp;
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints box) {
         final Size pill = _offerPillSize(context, scaler, box.maxWidth, loc);
@@ -8162,16 +8214,19 @@ class _GameScreenState extends State<GameScreen> {
               button: true,
               label: loc.gameReleaseDecline,
               excludeSemantics: true,
-              onTap: _declineRelease,
+              enabled: live,
+              onTap: live ? _declineRelease : null,
               child: Material(
                 key: const Key('release-decline-button'),
-                color: LudoColors.paperElevated,
+                color: live
+                    ? LudoColors.paperElevated
+                    : LudoColors.paperElevated.withValues(alpha: 0.5),
                 shape: const StadiumBorder(
                   side: BorderSide(color: LudoColors.inkMuted, width: 2),
                 ),
                 child: InkWell(
                   customBorder: const StadiumBorder(),
-                  onTap: _declineRelease,
+                  onTap: live ? _declineRelease : null,
                   child: SizedBox(
                     width: pill.width,
                     height: pill.height,
@@ -8182,7 +8237,11 @@ class _GameScreenState extends State<GameScreen> {
                         textScaler: scaler,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: _offerPillStyle(),
+                        style: live
+                            ? _offerPillStyle()
+                            : _offerPillStyle().copyWith(
+                                color: LudoColors.inkMuted,
+                              ),
                       ),
                     ),
                   ),
@@ -8193,6 +8252,18 @@ class _GameScreenState extends State<GameScreen> {
         );
       },
     );
+  }
+
+  /// The request that answered the offer has ended. If the offer is still
+  /// pending (the request failed or was refused), the answer may be sent
+  /// again; otherwise the server's frame has already moved the room on.
+  void _reopenOfferIfPending() {
+    if (!mounted) {
+      return;
+    }
+    if (widget.controller.room?.turn?.offer ?? false) {
+      setState(() => _offerAnswered = false);
+    }
   }
 
   /// The decline pill's tap: the one intention `decline_release`, sent while
@@ -8206,12 +8277,14 @@ class _GameScreenState extends State<GameScreen> {
         turn.seat != widget.controller.seat) {
       return;
     }
-    if (_declineSentForK == turn.k) {
+    if (_offerAnswered) {
       return;
     }
-    _declineSentForK = turn.k;
+    _offerAnswered = true;
     _playCue(FeedbackScope.of(context), FeedbackCue.tap);
-    unawaited(widget.controller.declineRelease());
+    unawaited(
+      widget.controller.declineRelease().whenComplete(_reopenOfferIfPending),
+    );
   }
 
   /// C-250 rule 5: `game-screen-dice-value` moves off a visible line and
