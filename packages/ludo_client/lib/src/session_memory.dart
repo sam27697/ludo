@@ -347,6 +347,26 @@ class SessionMemory {
     }
   }
 
+  /// C-669 r2 D1: removes the stored seat record and its saved time only when
+  /// the stored record equals [expected], so a walk-off that outlived its
+  /// leave cannot wipe the record a newer controller wrote. The read and both
+  /// removals run with no await between them, so nothing can write in the
+  /// middle. Never throws.
+  static Future<void> clearSeatIf(SeatRecord expected) async {
+    try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      if (_readSeatRecord(prefs) != expected) {
+        return;
+      }
+      final Future<bool> seatRemoved = prefs.remove(_seatKey);
+      final Future<bool> savedAtRemoved = prefs.remove(_seatSavedAtKey);
+      await seatRemoved;
+      await savedAtRemoved;
+    } on Object {
+      return;
+    }
+  }
+
   /// A [SeatRecord] from [raw] when it is exactly three strings shaped as
   /// `[code, seat, seatToken]` with a valid room code, a seat in `0..3`
   /// written with no sign, space or extra leading zero, and a non-empty

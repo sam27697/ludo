@@ -142,6 +142,15 @@ const Set<String> _kickRejectedCodes = <String>{
   'NOT_ABSENT',
 };
 
+/// C-669 R4: the `error` codes a `leave_room` can come back with that say the
+/// server holds no seat for this phone any more. `NO_SUCH_ROOM`: the room is
+/// gone (reaped, or never the one this socket sat in). `BAD_SEAT_TOKEN`: the
+/// socket has no seat in a room, or the token matches none (a leave already
+/// processed, a takeover). Every other code `leave_room` can draw
+/// (PROTOCOL_VERSION, BAD_TYPE, BAD_FIELD, TOO_LARGE, RATE_LIMITED, and the
+/// INTERNAL or engine refusal of a retire) means the frame was not processed.
+const Set<String> _leaveGoneCodes = <String>{'NO_SUCH_ROOM', 'BAD_SEAT_TOKEN'};
+
 /// Holds the one [RoomConnection] a lobby screen is driving at any moment,
 /// re-creates it across a drop, and exposes the whole thing as a
 /// [ChangeNotifier] with no method that ever throws.
@@ -955,12 +964,17 @@ class RoomController extends ChangeNotifier {
   /// Never throws even if the socket had already died.
   ///
   /// C-669 R4: completes with whether the server heard the leave, that is,
-  /// whether the `leave_room` request was answered, by its reply or by an
-  /// `error` reply (either way the server processed the frame). False when
-  /// there was no live connection to send it on, the request timed out, or
-  /// the connection ended first: the server then still holds the seat as a
-  /// dropped one, and the caller must not throw away the key to it. Also
-  /// false on a controller that was already disposed.
+  /// whether the `leave_room` request was answered by its reply, or by an
+  /// `error` whose code says the seat or the room is already gone
+  /// ([_leaveGoneCodes]): the server then holds nothing for this phone, and
+  /// the caller may throw the key away. Any other `error` (BAD_FIELD,
+  /// RATE_LIMITED, INTERNAL, the engine's refusals of the retire a leave
+  /// can cause) means the server did not process the leave and still holds
+  /// the seat. False too when there was no live connection to send it on,
+  /// the request timed out, or the connection ended first: the server then
+  /// still holds the seat as a dropped one, and the caller must not throw
+  /// away the key to it. Also false on a controller that was already
+  /// disposed.
   Future<bool> leave() async {
     if (_disposed) {
       return false;
@@ -978,8 +992,8 @@ class RoomController extends ChangeNotifier {
       try {
         await connection.leaveRoom();
         delivered = true;
-      } on ProtocolErrorException {
-        delivered = true;
+      } on ProtocolErrorException catch (e) {
+        delivered = _leaveGoneCodes.contains(e.code);
       } catch (_) {
         // Best-effort. The socket may already be gone; that is not this
         // method's problem to report, only the caller's to know.

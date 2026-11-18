@@ -112,6 +112,15 @@ class _HomeScreenState extends State<HomeScreen>
   // always the last record this screen wrote to or cleared from storage, set
   // by the one-time load, by every write of H1 and cleared by H2.
   SeatRecord? _seatRecord;
+  // C-669 r2 D2: when [_seatRecord] was saved, so the trust age (C-447 D2)
+  // holds inside one app life as it does at the load: from the load's own
+  // saved time, or from this screen's write. Null with no record, or for a
+  // record whose stored time was absent (kept as the load keeps it).
+  DateTime? _seatSavedAt;
+  // C-669 r2 D1: bumped by every write or clear of [_seatRecord], so a walk-off
+  // that sat in leave() can tell that a newer controller changed the record
+  // while it waited, and then leaves the record alone.
+  int _seatGeneration = 0;
   // C-322 rule 3: home-last-game shows exactly when this is non-null and
   // not yet past rule 4's window. Set from _restoreSessionMemory's one-time
   // load, and again by _maybeRecordLastGame the moment a finished game is
@@ -297,8 +306,8 @@ class _HomeScreenState extends State<HomeScreen>
     _linkHadSay = true;
     final bool isCurrent = ModalRoute.of(context)?.isCurrent ?? false;
     if (isCurrent && !_linkJoinInFlight) {
-      final SeatRecord? record = _seatRecord;
-      if (record != null && record.code == code) {
+      final SeatRecord? record = _seatRecordFor(code);
+      if (record != null) {
         unawaited(_joinFromLink(rejoin: true, seatRecord: record));
         return;
       }
@@ -549,7 +558,7 @@ class _HomeScreenState extends State<HomeScreen>
             _nameController.text = name;
           }
           if (seatRecord != null) {
-            _seatRecord = seatRecord;
+            _setSeat(seatRecord, loaded.seatSavedAt);
           }
           if (lastGame != null) {
             _lastGame = lastGame;
@@ -716,9 +725,9 @@ class _HomeScreenState extends State<HomeScreen>
           }
           unawaited(SessionMemory.recordSeat(record, clock: widget.clock));
           // C-669 R1: the Rejoin control and the by-code paths read this.
-          if (mounted && _seatRecord != record) {
+          if (mounted) {
             setState(() {
-              _seatRecord = record;
+              _setSeat(record, now);
             });
           }
         }
@@ -731,10 +740,55 @@ class _HomeScreenState extends State<HomeScreen>
       unawaited(SessionMemory.clearSeat());
       if (mounted) {
         setState(() {
-          _seatRecord = null;
+          _setSeat(null, null);
         });
       }
     }
+  }
+
+  /// C-669 R1: the one place [_seatRecord] changes, so its saved time and the
+  /// generation move with it. Called inside setState where the screen is
+  /// mounted.
+  void _setSeat(SeatRecord? record, DateTime? savedAt) {
+    _seatRecord = record;
+    _seatSavedAt = record == null ? null : savedAt;
+    _seatGeneration++;
+  }
+
+  /// C-669 r2 D2: whether the held record is at least [kSeatRecordMaxAge] old
+  /// by the injected clock, the rule [SessionMemory.load] applies at startup.
+  bool _seatIsStale() {
+    final DateTime? savedAt = _seatSavedAt;
+    return _seatRecord != null &&
+        savedAt != null &&
+        (widget.clock ?? DateTime.now)().difference(savedAt) >=
+            kSeatRecordMaxAge;
+  }
+
+  /// C-669 r2 D2: the held record, or null once it is past the trust age, in
+  /// which case it is dropped from memory and, if storage still holds that
+  /// very record, from storage too. The Rejoin render and every by-code path
+  /// read the record through here. Does not call setState: the build reads it,
+  /// and the other callers rebuild on their own.
+  SeatRecord? _trustedSeat() {
+    final SeatRecord? record = _seatRecord;
+    if (record == null || !_seatIsStale()) {
+      return record;
+    }
+    _setSeat(null, null);
+    unawaited(SessionMemory.clearSeatIf(record));
+    return null;
+  }
+
+  /// C-669 R4: the seat [controller] holds right now, in the shape H1 writes.
+  SeatRecord? _recordOf(RoomController controller) {
+    final String? code = controller.room?.code;
+    final int? seat = controller.seat;
+    final String? seatToken = controller.seatToken;
+    if (code == null || seat == null || seatToken == null) {
+      return null;
+    }
+    return SeatRecord(code: code, seat: seat, seatToken: seatToken);
   }
 
   /// C-547 D4: a seat another phone took over is gone for this phone too;
@@ -864,6 +918,11 @@ class _HomeScreenState extends State<HomeScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _ownedController?.onAppResumed();
+      // C-669 r2 D2: a phone back after more than the trust age shows no
+      // Rejoin for a seat the server has long since played on.
+      if (mounted && _seatIsStale()) {
+        setState(_trustedSeat);
+      }
     }
   }
 
@@ -875,9 +934,17 @@ class _HomeScreenState extends State<HomeScreen>
   /// controller. C-669 R4: only when the server heard the leave, or the room
   /// is finished, or the seat is gone for good ([_seatIsGone], or [result]
   /// says the route left because the seat was removed or the room reaped).
-  /// A leave that never reached the server (no live connection, timed out)
-  /// leaves the seat held there as a dropped one, so the record, and the
-  /// Rejoin control with it, stay; the trust age expires them.
+  /// A leave that never reached the server (no live connection, timed out,
+  /// refused for a reason that is not a gone seat) leaves the seat held there
+  /// as a dropped one, so the record, and the Rejoin control with it, stay;
+  /// the trust age expires them.
+  ///
+  /// C-669 r2 D1: the record is hidden in memory from the first line, so the
+  /// Rejoin control never shows for the seat being left while [leave] waits
+  /// for its answer. It comes back only if the leave was not delivered and
+  /// nothing wrote or cleared the record meanwhile; storage is cleared only
+  /// if it still holds the record being left. A newer controller's record
+  /// is never touched.
   Future<void> _retireOwnedController(
     RoomController controller, {
     Object? result,
@@ -893,25 +960,40 @@ class _HomeScreenState extends State<HomeScreen>
         _seatIsGone(controller) ||
         result == GameScreenResult.removed ||
         result == GameScreenResult.gameGone;
+    final SeatRecord? held = _seatRecord;
+    final DateTime? heldSavedAt = _seatSavedAt;
+    final SeatRecord? leaving = held ?? _recordOf(controller);
+    if (held != null) {
+      if (!_screenDisposed && mounted) {
+        setState(() {
+          _setSeat(null, null);
+        });
+      } else {
+        _setSeat(null, null);
+      }
+    }
+    final int generation = _seatGeneration;
     final bool delivered = await controller.leave();
     // Section 27 rule 6: a build the server refused walks home with its seat
     // record intact, so the same seat resumes once the app is updated.
     final bool refusedBuild = controller.updateRequired;
     controller.dispose();
-    if (refusedBuild) {
+    // A write or a clear since the hide came from a newer controller or a
+    // refused resume: the record is theirs, not this walk-off's.
+    final bool untouched = generation == _seatGeneration;
+    if (!untouched) {
       return;
     }
-    if (!delivered && !seatEnded) {
+    if (refusedBuild || (!delivered && !seatEnded)) {
+      if (held != null && !_screenDisposed && mounted) {
+        setState(() {
+          _setSeat(held, heldSavedAt);
+        });
+      }
       return;
     }
-    unawaited(SessionMemory.clearSeat());
-    // `_screenDisposed` is set synchronously at the top of dispose(), ahead
-    // of the framework's own unmount bookkeeping that `mounted` reads; kept
-    // here alongside `mounted` as the stricter of the two checks.
-    if (!_screenDisposed && mounted) {
-      setState(() {
-        _seatRecord = null;
-      });
+    if (leaving != null) {
+      unawaited(SessionMemory.clearSeatIf(leaving));
     }
   }
 
@@ -1179,8 +1261,10 @@ class _HomeScreenState extends State<HomeScreen>
   /// C-669 R2: the seat this screen holds for [code], or null. Memory equals
   /// storage once the session-memory load has completed (R1); a tap that lands
   /// before it has no record to read yet and joins as it always did.
+  ///
+  /// C-669 r2 D2: a record past the trust age is absent here, and dropped.
   SeatRecord? _seatRecordFor(String code) {
-    final SeatRecord? record = _seatRecord;
+    final SeatRecord? record = _trustedSeat();
     return record != null && record.code == code ? record : null;
   }
 
@@ -1225,10 +1309,14 @@ class _HomeScreenState extends State<HomeScreen>
       _showNoticeFor(result);
       if (mounted && _seatRecord?.code == record.code) {
         setState(() {
-          _seatRecord = null;
+          _setSeat(null, null);
         });
       }
+      unawaited(SessionMemory.clearSeatIf(record));
     }
+    // C-669 r2 D4: a resume the server refused for a gone room leaves a dead
+    // code in the field when the player typed it, as a refused join does.
+    _clearDeadJoinCode(controller, record.code);
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
@@ -1295,7 +1383,7 @@ class _HomeScreenState extends State<HomeScreen>
     final bool joinPrimary = isValidRoomCode(
       normalizeRoomCode(_codeController.text),
     );
-    final SeatRecord? seatRecord = _seatRecord;
+    final SeatRecord? seatRecord = _trustedSeat();
     final TextTheme textTheme = Theme.of(context).textTheme;
     final MediaQueryData media = MediaQuery.of(context);
     // C-398: compact is the height inside the safe area, not the raw screen
