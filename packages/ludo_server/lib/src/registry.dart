@@ -17,6 +17,7 @@ import 'grace.dart';
 import 'room.dart';
 import 'room_code.dart';
 import 'ruleset.dart';
+import 'snapshot.dart' show queuedBankedSixes;
 import 'seat_token.dart';
 import 'snapshot.dart' show buildRoomSnapshot;
 import 'verify_record.dart';
@@ -1080,6 +1081,8 @@ class RoomRegistry {
     );
     room.game = engine.newGame(config);
     room.state = RoomState.playing;
+    room.queuedBankedCount = 0;
+    room.queuedBankedSeat = -1;
     // docs/PROTOCOL.md section 23 rule 3: game_started sets every seat's
     // timer_steps to 0, in the first game and in every rematch.
     for (final Seat s in room.seats) {
@@ -1221,6 +1224,8 @@ class RoomRegistry {
     room.releases.clear();
     room.declined.clear();
     room.lapsed.clear();
+    room.queuedBankedCount = 0;
+    room.queuedBankedSeat = -1;
     room.grants.clear();
     room.turnSegmentStartedAt = null;
     room.turnGraceEndsAt = null;
@@ -1306,6 +1311,7 @@ class RoomRegistry {
     }
     final engine.Applied appliedOk = applied as engine.Applied;
     room.game = appliedOk.state;
+    _noteQueuedBanked(room, appliedOk.events);
     room.rollCount = k;
     seat.timerSteps = 0;
     // docs/VERIFY.md section 1.2: this is the one code path that sets
@@ -1384,6 +1390,37 @@ class RoomRegistry {
     );
   }
 
+  /// Section 30 rule 5: keeps `room.queuedBankedCount` equal to what the
+  /// `SixesQueued` event of the step that began the current turn said, read by
+  /// `queuedBankedSixes` like every frame built from events, so the pushed
+  /// frames and a reconnect's frame share one source. Called after every
+  /// engine step. The count is dropped when the owning seat rolled, the turn
+  /// ended, the game was won, or the turn moved off that seat.
+  void _noteQueuedBanked(Room room, List<engine.GameEvent> events) {
+    final engine.GameState? game = room.game;
+    if (game == null) {
+      room.queuedBankedSeat = -1;
+      room.queuedBankedCount = 0;
+      return;
+    }
+    final int queued = queuedBankedSixes(events, game.currentSeat);
+    final bool over = events.whereType<engine.GameWon>().isNotEmpty;
+    if (queued > 0 && !over) {
+      room.queuedBankedSeat = game.currentSeat;
+      room.queuedBankedCount = queued;
+      return;
+    }
+    final int owner = room.queuedBankedSeat;
+    final bool ownerRolled = events
+        .whereType<engine.Rolled>()
+        .any((engine.Rolled r) => r.seat == owner);
+    final bool turnEnded = events.whereType<engine.TurnEnded>().isNotEmpty;
+    if (over || ownerRolled || turnEnded || game.currentSeat != owner) {
+      room.queuedBankedSeat = -1;
+      room.queuedBankedCount = 0;
+    }
+  }
+
   /// True when the roll [applied] to [before] granted a yard release. Without
   /// `sharedRelease` that is the engine's `YardReleased` event. With it the
   /// event comes only when the release is taken, so the roll is an offer
@@ -1444,6 +1481,7 @@ class RoomRegistry {
     }
     final engine.Applied appliedOk = applied as engine.Applied;
     room.game = appliedOk.state;
+    _noteQueuedBanked(room, appliedOk.events);
     seat.timerSteps = 0;
     // The offering roll is the last one rolled: nothing rolls while an offer
     // is pending.
@@ -1526,6 +1564,7 @@ class RoomRegistry {
     }
     final engine.Applied appliedOk = applied as engine.Applied;
     room.game = appliedOk.state;
+    _noteQueuedBanked(room, appliedOk.events);
     seat.timerSteps = 0;
 
     // docs/PROTOCOL.md section 21.1: the face this move spent. `face` is
@@ -2065,6 +2104,7 @@ class RoomRegistry {
     }
     final engine.Applied appliedOk = applied as engine.Applied;
     room.game = appliedOk.state;
+    _noteQueuedBanked(room, appliedOk.events);
     if (reason == 'left') {
       // The leaver's socket is gone from the room (the wire layer detaches
       // it); the seat stays, as `connected: false`. No `presence` is sent for

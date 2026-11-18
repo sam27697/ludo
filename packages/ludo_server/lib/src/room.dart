@@ -311,6 +311,14 @@ class Room {
   /// 2026-12.
   final List<int> lapsed = <int>[];
 
+  /// Section 30 rule 5: the seat whose turn began with banked sixes queued
+  /// and the count the engine's `SixesQueued` said, for a `turn` rebuilt
+  /// without the event (a reconnect). Written only by
+  /// `RoomRegistry._noteQueuedBanked`, cleared when that seat rolls, when the
+  /// turn passes, when the game ends and at a game start. 0 means none.
+  int queuedBankedSeat = -1;
+  int queuedBankedCount = 0;
+
   /// Section 30 rule 7: for each taken release, the roll number and the
   /// seats granted a six, in the order the releases were taken.
   final List<Map<String, Object?>> grants = <Map<String, Object?>>[];
