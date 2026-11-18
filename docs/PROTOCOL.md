@@ -1886,6 +1886,11 @@ an older ruleset.
    player kept the piece in the yard." (declined), ar «ما طلع 6 بعشر رميات
    وكل القطع بالبيت: بتطلع قطعة ويخلص دوره، وكل واحد تاني بياخد 6.» / «... فضّل
    يبقي القطع بالبيت.».
+   A roll in `releases` whose offer found no piece to release (a lapse) gets, in
+   the same place, en "No 6 for 10 rolls with every piece at home, but no piece
+   could come out: the turn passes." / ar «ما طلع 6 بعشر رميات وكل القطع بالبيت،
+   بس ما قدرت تطلع ولا قطعة: الدور بيعدّي.». An offer that ends unanswered
+   because its seat left, was retired or was kicked has no line.
 8. **Tests this section requires** (server, real sockets, fake clock): the
    switch (`2026-12` accepted, a `2026-11` room unaffected); ten non-6 rolls give
    `rolled` `offer: true`; `move` takes it and the order of frames is `moved`,
