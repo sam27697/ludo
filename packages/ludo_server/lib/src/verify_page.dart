@@ -26,6 +26,8 @@
 
 import 'dart:convert';
 
+import 'ruleset.dart';
+
 const HtmlEscape _escaper = HtmlEscape();
 
 const String _sourceUrl = 'https://github.com/sam27697/ludo';
@@ -253,9 +255,15 @@ String buildVerifyPageHtml(
 
   // docs/PROTOCOL.md section 30 rule 7: under 2026-12 the line says what the
   // release did. A taken one is a roll in `grants`, a declined one a roll in
-  // `declined`; a lapse is in neither and, as nothing came out and nothing was
-  // granted, gets no line. A 2026-11 record keeps the line above.
-  final bool shared = record['ruleset'] == '2026-12';
+  // `declined`; a lapse is in `lapsed` and gets its own line; an offer in
+  // none of the three ended unanswered and gets no line. A 2026-11 record keeps the line above.
+  final bool shared = record['ruleset'] == ruleset202612;
+  final Object? rawLapsed = record['lapsed'];
+  final Set<int> lapsedKs = <int>{
+    if (rawLapsed is List<Object?>)
+      for (final Object? k in rawLapsed)
+        if (k is int) k,
+  };
   final Object? rawDeclined = record['declined'];
   final Set<int> declinedKs = <int>{
     if (rawDeclined is List<Object?>)
@@ -278,6 +286,12 @@ String buildVerifyPageHtml(
       : 'No 6 for 10 rolls with every piece at home: the player kept the '
           'piece in the yard.';
 
+  final String lapsedLine = isAr
+      ? 'ما طلع 6 بعشر رميات وكل القطع بالبيت، بس ما قدرت تطلع ولا قطعة: '
+          'الدور بيعدّي.'
+      : 'No 6 for 10 rolls with every piece at home, but no piece could come '
+          'out: the turn passes.';
+
   // The die cell is dir="ltr" on an ar page, so the Arabic line carries its
   // own direction instead of inheriting the cell's.
   final String rtlAttr = isAr ? ' dir="rtl"' : '';
@@ -295,6 +309,8 @@ String buildVerifyPageHtml(
         noteLine = declinedLine;
       } else if (grantedKs.contains(k)) {
         noteLine = takenLine;
+      } else if (lapsedKs.contains(k)) {
+        noteLine = lapsedLine;
       }
     }
     final String releaseMarkup = noteLine != null

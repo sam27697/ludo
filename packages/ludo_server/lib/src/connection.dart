@@ -565,6 +565,13 @@ class Connection {
           legal: fields.legal,
           legalByFace: fields.legalByFace,
           release: fields.release,
+          offer: fields.offer,
+          // Section 30 rule 5: the count the room stored from the engine's
+          // `SixesQueued` for this turn, none once the seat has rolled.
+          banked: ok.room.isRuleset202612 &&
+                  ok.room.queuedBankedSeat == ok.room.game!.currentSeat
+              ? ok.room.queuedBankedCount
+              : null,
           graceMs: ok.turnGraceMs,
         ),
         exceptConn: this,

@@ -1878,7 +1878,7 @@ an older ruleset.
 7. **The verify record** (docs/VERIFY.md section 1.1) gains, under `2026-12`
    only: `"ruleset": "2026-12"`, `"releases": [k, ...]` (every roll that raised
    an offer or a lapse), `"declined": [k, ...]` (the offers declined; the
-   timer never declines) and `"grants": [{ "k": int, "seats": [int, ...] }, ...]`
+   timer never declines), `"lapsed": [k, ...]` (the releases that were a lapse) and `"grants": [{ "k": int, "seats": [int, ...] }, ...]`
    (for a taken release, the roll number and the seats granted a six). The fair
    draw of each roll `k` is unchanged and verifies alone. The page shows, next
    to each such roll, one line: en "No 6 for 10 rolls with every piece at home:

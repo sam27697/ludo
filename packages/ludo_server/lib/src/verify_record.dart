@@ -75,6 +75,7 @@ Map<String, Object?> buildVerifyRecord(
     if (ruleset202611) 'releases': List<int>.of(room.releases),
     // docs/PROTOCOL.md section 30 rule 7: 2026-12 only.
     if (room.isRuleset202612) 'declined': List<int>.of(room.declined),
+    if (room.isRuleset202612) 'lapsed': List<int>.of(room.lapsed),
     if (room.isRuleset202612)
       'grants': <Map<String, Object?>>[
         for (final Map<String, Object?> g in room.grants)

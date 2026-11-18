@@ -37,6 +37,7 @@ A JSON object with exactly these keys:
 | `ruleset` | string | `"2026-11"` or `"2026-12"`; absent under `2026-10` (PROTOCOL.md section 28 rule 2, section 30 rule 7) |
 | `releases` | list | the roll numbers `k` whose roll granted a yard release, lapses included, ascending; absent under `2026-10` |
 | `declined` | list | the roll numbers `k` whose offered release the player declined, ascending; the timer never declines; present under `2026-12` only |
+| `lapsed` | list | the roll numbers `k` whose release found no piece to release (a lapse), ascending, a subset of `releases`; present under `2026-12` only |
 | `grants` | list | one object per taken release, `{"k": int, "seats": [int, ...]}`: the roll number and the seats granted a six, ascending; present under `2026-12` only |
 | `placings` | list | the seats in place order, the last seat standing included; present under `2026-11` only (section 28 rule 3) |
 | `retired` | list | the seats in retirement order; present under `2026-11` only |
