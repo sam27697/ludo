@@ -3,11 +3,15 @@
 // same shape plus an optional `re` in. Deliberately does not import anything
 // from `package:ludo_server` or `test/support/wire_harness.dart`: this file
 // is the simulator's own black-box view of the wire, built only from the
-// protocol document, the same way a real client on a phone would be.
+// protocol document, the same way a real client on a phone would be. The one
+// exception is the name of the section 27 upgrade header, imported from
+// `lib/src/client_build.dart` so it is never retyped here (C-668).
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
+import 'package:ludo_server/src/client_build.dart' show clientBuildHeader;
 
 /// One decoded frame, either direction: the raw JSON object with string
 /// keys, exactly as it went over the wire.
@@ -26,6 +30,17 @@ Map<String, Object?> frameData(Frame frame) {
     throw StateError('frame has no object "d": $frame');
   }
   return d;
+}
+
+/// C-668: the `--client-build` value, or null if [raw] is not 1 to 9 ASCII
+/// decimal digits. The same pattern as the server's parser of the header
+/// (`parseClientBuildHeader`), so a value this accepts is one the server
+/// reads as a build and not as unknown.
+int? parseClientBuildFlag(String raw) {
+  if (!RegExp(r'^[0-9]{1,9}$').hasMatch(raw)) {
+    return null;
+  }
+  return int.parse(raw);
 }
 
 /// Thrown by the small helpers below when a frame does not have the shape a
@@ -51,6 +66,16 @@ void expectFrameType(Frame frame, String expectedType,
   }
   if (actual == 'error') {
     final Map<String, Object?> d = frameData(frame);
+    if (d['code'] == 'UPDATE_REQUIRED') {
+      // C-668: docs/PROTOCOL.md section 27 refusal, the first thing a gated
+      // server says on a socket that sent no (or too low a) build.
+      final Object? minBuild = d['min_build'];
+      throw UnexpectedFrame(
+        'server refused the client build (UPDATE_REQUIRED, min_build '
+        '$minBuild): pass --client-build N with N at least $minBuild; '
+        'expected a "$expectedType" frame ($because)',
+      );
+    }
     throw UnexpectedFrame(
       'expected a "$expectedType" frame ($because) but got error '
       '${d['code']}: ${d['message']}',
@@ -89,11 +114,24 @@ class SimSocket {
   bool _closed = false;
   int _idCounter = 0;
 
+  /// C-668: the build every socket opened by [connect] announces in the
+  /// section 27 `ludo-client-build` upgrade header. Null, the default, sends
+  /// no header at all. Set once by a tool's `main` after it has parsed
+  /// `--client-build`, so no scenario or reconnect path can open a socket
+  /// that forgets it.
+  static int? clientBuild;
+
   /// Connects to [uri] exactly as given -- no path is appended, per the
   /// work order, because docs/PROTOCOL.md does not specify one beyond what
   /// the server's own routing already accepts at its root.
   static Future<SimSocket> connect(Uri uri, {required String label}) async {
-    final WebSocket socket = await WebSocket.connect(uri.toString());
+    final int? build = clientBuild;
+    final WebSocket socket = await WebSocket.connect(
+      uri.toString(),
+      headers: build == null
+          ? null
+          : <String, Object>{clientBuildHeader: build.toString()},
+    );
     final SimSocket sim = SimSocket._(socket, label);
     sim._listen();
     return sim;

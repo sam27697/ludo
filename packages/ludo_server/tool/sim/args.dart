@@ -1,14 +1,18 @@
 // Argument parsing for the frozen invocation of order 014, plus the
 // order 217 addition of --fetch-record, and the order 235 (run 67) addition
-// of `rematch` to the set of names `--scenario` accepts:
+// of `rematch` to the set of names `--scenario` accepts, and the order 668
+// addition of --client-build:
 //
 //   dart run tool/simulator.dart --target <url>
 //       [--scenario all|full-game|reconnect|double-drop|rematch]
 //       [--timeout-seconds N] [--players N] [--fetch-record]
+//       [--client-build N]
 //
-// No third-party argument-parsing package: the whole surface is a handful
+// C-668 adds --client-build. No third-party argument-parsing package: the whole surface is a handful
 // of flags, most taking exactly one value, and a hand-rolled loop is easier
 // to audit against that frozen list than a dependency would be.
+
+import 'wire.dart' show parseClientBuildFlag;
 
 /// The `--scenario` values this simulator understands. `rematch` is in this
 /// list (run 67) so `--scenario rematch` is validated here like any other
@@ -50,6 +54,7 @@ class SimulatorArgs {
     required this.timeoutSeconds,
     required this.players,
     required this.fetchRecord,
+    this.clientBuild,
   });
 
   /// The base WebSocket URL of the server under test, `ws://` or `wss://`,
@@ -71,6 +76,10 @@ class SimulatorArgs {
   /// docs/SIMULATOR.md for why.
   final bool fetchRecord;
 
+  /// C-668: the build sent as `ludo-client-build` on every socket, or null
+  /// to send no header, which is what every run did before the flag.
+  final int? clientBuild;
+
   /// The scenario names this run should execute, in a fixed order,
   /// regardless of whether `--scenario` named one of them or `all`.
   /// `all` expands to [scenariosInAll], not [knownScenarios]: `rematch` is a
@@ -85,6 +94,7 @@ SimulatorArgs parseArgs(List<String> arguments) {
   int timeoutSeconds = 180;
   int players = 4;
   bool fetchRecord = false;
+  int? clientBuild;
 
   int i = 0;
   while (i < arguments.length) {
@@ -119,6 +129,17 @@ SimulatorArgs parseArgs(List<String> arguments) {
       case '--fetch-record':
         fetchRecord = true;
         i += 1;
+        break;
+      case '--client-build':
+        final String raw = _valueAfter(arguments, i, arg);
+        final int? parsed = parseClientBuildFlag(raw);
+        if (parsed == null) {
+          throw ArgsError(
+            '--client-build must be 1 to 9 decimal digits, got "$raw"',
+          );
+        }
+        clientBuild = parsed;
+        i += 2;
         break;
       default:
         throw ArgsError('unrecognised argument: $arg');
@@ -164,6 +185,7 @@ SimulatorArgs parseArgs(List<String> arguments) {
     timeoutSeconds: timeoutSeconds,
     players: players,
     fetchRecord: fetchRecord,
+    clientBuild: clientBuild,
   );
 }
 
@@ -176,7 +198,7 @@ String _valueAfter(List<String> arguments, int i, String flag) {
 
 /// Printed to stderr alongside any [ArgsError].
 const String usage = '''
-usage: dart run tool/simulator.dart --target <url> [--scenario all|full-game|reconnect|double-drop|rematch] [--timeout-seconds N] [--players N] [--fetch-record]
+usage: dart run tool/simulator.dart --target <url> [--scenario all|full-game|reconnect|double-drop|rematch] [--timeout-seconds N] [--players N] [--fetch-record] [--client-build N]
 
   --target           required. Base WebSocket URL of a running server, ws:// or wss://.
   --scenario         default: all. rematch is valid but never runs as part of all; select it on its own.
@@ -189,4 +211,9 @@ usage: dart run tool/simulator.dart --target <url> [--scenario all|full-game|rec
                       local server would check the wrong machine unless
                       LUDO_VERIFY_BASE_URL points the server at that same
                       local server.
+  --client-build    default: none, no header is sent. Sends `ludo-client-build: N` on
+                      every socket, N being 1 to 9 digits. A server run with
+                      MIN_CLIENT_BUILD (production is) refuses a socket that
+                      sends no build or one below its minimum with
+                      UPDATE_REQUIRED, so a run against it needs this flag.
 ''';

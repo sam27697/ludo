@@ -134,6 +134,9 @@ usage: dart run tool/record_real_games.dart --target <ws-url> [options]
   --out <path>           output file (default: ludo_client's
                          integration_test/fixtures/real_games.json)
   --timeout-seconds <n>  bound on the whole run (default 3000)
+  --client-build <n>     send `ludo-client-build: n` (1 to 9 digits) on every
+                         socket; a server run with MIN_CLIENT_BUILD refuses a
+                         socket without it (default: no header)
 ''';
 
 class _Args {
@@ -146,6 +149,7 @@ class _Args {
     required this.appendTo,
     required this.out,
     required this.timeoutSeconds,
+    this.clientBuild,
   });
 
   final Uri target;
@@ -158,6 +162,9 @@ class _Args {
   final String? appendTo;
   final String out;
   final int timeoutSeconds;
+
+  /// C-668: the build sent as `ludo-client-build`, or null for no header.
+  final int? clientBuild;
 }
 
 class _UsageError implements Exception {
@@ -180,6 +187,7 @@ _Args _parseArgs(List<String> argv) {
     '--append-to',
     '--out',
     '--timeout-seconds',
+    '--client-build',
   };
   for (int i = 0; i < argv.length; i++) {
     final String flag = argv[i];
@@ -209,6 +217,17 @@ _Args _parseArgs(List<String> argv) {
       throw _UsageError('$flag needs an integer >= $min, got "$raw"');
     }
     return parsed;
+  }
+
+  int? clientBuild;
+  final String? rawBuild = values['--client-build'];
+  if (rawBuild != null) {
+    clientBuild = parseClientBuildFlag(rawBuild);
+    if (clientBuild == null) {
+      throw _UsageError(
+        '--client-build must be 1 to 9 decimal digits, got "$rawBuild"',
+      );
+    }
   }
 
   final int maxGames = intFlag('--max-games', _roomLimit, min: 1);
@@ -269,6 +288,7 @@ _Args _parseArgs(List<String> argv) {
                 '../../ludo_client/integration_test/fixtures/real_games.json')
             .toFilePath(),
     timeoutSeconds: intFlag('--timeout-seconds', 3000, min: 1),
+    clientBuild: clientBuild,
   );
 }
 
@@ -1350,6 +1370,7 @@ Future<void> main(List<String> argv) async {
     exitCode = 64;
     return;
   }
+  SimSocket.clientBuild = args.clientBuild;
   final _Recorder recorder = _Recorder(args);
   try {
     await recorder.run().timeout(Duration(seconds: args.timeoutSeconds));

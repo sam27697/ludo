@@ -30,6 +30,7 @@ Flags:
 | `--timeout-seconds` | 180 | Bounds the whole run, not one frame. |
 | `--players` | 4 | Seats to play with, 2 to 4. |
 | `--fetch-record` | off | After each scenario's game ends, also fetch and check the stored verification record. See "The verify_url and record checks" below. |
+| `--client-build` | none | `N`, 1 to 9 decimal digits. Sends `ludo-client-build: N` (PROTOCOL.md section 27) on every socket the run opens, reconnects and rematch included. Without it no header is sent. A server with `MIN_CLIENT_BUILD` set, production since 2026-11-17, answers a socket without a build, or with one below the minimum, `UPDATE_REQUIRED`, so a run against it needs `--client-build` at or above the minimum. `tool/record_real_games.dart` takes the same flag. |
 
 Exit code `0` means every selected scenario passed. Any other exit code means
 at least one failed; nothing else signals the verdict. Output is one line per
@@ -183,6 +184,9 @@ protocol pins an order) the scenario or `k` needed to see it again:
   the server sent something other than what that step of the handshake or
   turn loop requires. If the unexpected frame was itself an `error`, its
   code and message are folded into the line instead of the raw payload.
+- `server refused the client build (UPDATE_REQUIRED, min_build <n>): pass
+  --client-build N ...` -- the server runs with `MIN_CLIENT_BUILD` and the
+  first socket sent no build or one below `<n>`; see `--client-build` above.
 - `k=<n>: ...` -- a fairness check failed at roll number `n`; see above for
   the three things that check.
 - `game_over.verify_url="<url>" does not end with "/v/<game_id>" ...` --
