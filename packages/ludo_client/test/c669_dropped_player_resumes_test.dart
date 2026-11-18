@@ -33,6 +33,23 @@
 //        with the socket already gone. 9c a takeover, then walk off.
 //   10   One Arabic case of 7.
 //
+// Round 2 (defects 1 to 4 of the verdict on round 1, ids prefixed r2-):
+//   r2-1a  a delivered leave whose answer is held five seconds: no Rejoin
+//          control at any pumped frame of the window, then the record is gone.
+//   r2-1b  walk off A with the leave pending, create B, answer A's leave: the
+//          record of B is still stored, and (r2-1b2, B walked off with a dead
+//          socket before the answer) Home still shows B's Rejoin control.
+//   r2-1c  a leave nobody answers: the record is kept the whole time and the
+//          Rejoin control is there after the timeout.
+//   r2-2   the age of a kept record, by the injected clock: 61 minutes is
+//          absent (typed code and link both join, the stored record is
+//          cleared), 59 minutes is still resumed.
+//   r2-3   a leave answered by an error frame: a code that does not say the
+//          seat is gone (RATE_LIMITED, BAD_FIELD) keeps the record, one that
+//          does (NO_SUCH_ROOM, BAD_SEAT_TOKEN) clears it.
+//   r2-4   a typed code whose resume is refused NO_SUCH_ROOM leaves the code
+//          field empty, as the refused join of a code with no record does.
+//
 // Rig: the real HomeScreen, RoomRoute, GameScreen and a real RoomController
 // per controller the factory hands out, over a FakeTransport, a fresh one per
 // connect (the rig of test/c540_test.dart, copied, not imported). The "leave
@@ -74,6 +91,7 @@ const Key _rejoinKey = Key('home-rejoin-button');
 const Key _appBarLeaveKey = Key('game-screen-appbar-leave');
 const Key _leaveConfirmLeaveKey = Key('game-leave-confirm-leave');
 const Key _lostLeaveKey = Key('game-screen-leave-button');
+const Key _lobbyLeaveKey = Key('lobby-leave-button');
 
 const String _testUrl = 'wss://c669-test.invalid/ws';
 const String _fileName = 'c669_dropped_player_resumes_test.dart';
@@ -81,6 +99,7 @@ const String _fileName = 'c669_dropped_player_resumes_test.dart';
 const String _codeA = 'K7M2QP';
 const String _codeB = 'W4X9HN';
 const String _token = 'tok-c669-seat-0001';
+const String _tokenB = 'tok-c669-seat-0002';
 const String _gameId = '7f3a9c1e5b2d4068';
 const String _verifyUrl = 'https://c669-test.invalid/v/7f3a9c1e5b2d4068';
 
@@ -328,6 +347,7 @@ class _World {
   final List<String> steps = <String>[];
   int seq = 0;
   String code = _codeA;
+  String token = _token;
 
   String why(String message) =>
       '$id: $message. steps: ${steps.join(' > ')}. '
@@ -359,8 +379,12 @@ class _World {
 
   /// Home, a Create tap, the server's answer and a PLAYING room: the player
   /// is host, seat 0, with [_token], on the game route.
-  Future<void> createAndPlay({String roomCode = _codeA}) async {
+  Future<void> createAndPlay({
+    String roomCode = _codeA,
+    String seatToken = _token,
+  }) async {
     code = roomCode;
+    token = seatToken;
     steps.add('create $roomCode');
     final int from = rig.transports.length;
     await tap(_createKey);
@@ -371,7 +395,7 @@ class _World {
     transport.pushText(
       _frame(
         type: 'seat_assigned',
-        data: <String, Object?>{'seat': 0, 'seat_token': _token},
+        data: <String, Object?>{'seat': 0, 'seat_token': token},
       ),
     );
     transport.pushText(
@@ -507,7 +531,7 @@ class _World {
     );
     expect(
       seat[2],
-      _token,
+      token,
       reason: why('$what; the stored token is not the one the server gave'),
     );
   }
@@ -630,6 +654,173 @@ class _World {
     await links.close();
   }
 
+  // ------------------------------------------------------------ round 2
+
+  /// Pumps [total] of test clock in [step] frames and asserts, at every one,
+  /// that Home shows no Rejoin control: the seat being left is not offered
+  /// back while its leave is still on the wire.
+  Future<void> pumpWatching(
+    Duration total, {
+    Duration step = const Duration(milliseconds: 50),
+  }) async {
+    Duration spent = Duration.zero;
+    while (spent < total) {
+      await tester.pump(step);
+      spent += step;
+      expect(
+        find.byKey(_rejoinKey),
+        findsNothing,
+        reason: why(
+          'the Rejoin control showed ${spent.inMilliseconds} ms into the '
+          'window of a leave that is still unanswered; nothing may be '
+          'offered for the seat being left',
+        ),
+      );
+    }
+  }
+
+  /// A walk-off on a live socket whose `leave_room` nobody answers yet. With
+  /// [watch] every frame from the corner Leave tap on is checked for a Rejoin
+  /// control. Returns where the pending leave went.
+  Future<({int transport, String leaveId})> walkOffHeld({
+    bool watch = false,
+  }) async {
+    steps.add('walk off through the corner Leave, leave left unanswered');
+    final int index = rig.transports.length - 1;
+    await tester.ensureVisible(find.byKey(_appBarLeaveKey));
+    await tester.tap(find.byKey(_appBarLeaveKey));
+    if (watch) {
+      await pumpWatching(const Duration(milliseconds: 600));
+    } else {
+      await _pumpBounded(tester, frames: 3);
+    }
+    if (find.byKey(_leaveConfirmLeaveKey).evaluate().isNotEmpty) {
+      await tester.ensureVisible(find.byKey(_leaveConfirmLeaveKey));
+      await tester.tap(find.byKey(_leaveConfirmLeaveKey));
+    }
+    if (watch) {
+      await pumpWatching(const Duration(seconds: 1));
+    } else {
+      await _pumpBounded(tester, frames: 3);
+    }
+    final List<String> leaves = rig.sent('leave_room', from: index);
+    expect(
+      leaves,
+      hasLength(1),
+      reason: why(
+        'fixture: Home must send exactly one leave_room on the live '
+        'socket; sent ${leaves.length}',
+      ),
+    );
+    return (transport: index, leaveId: _idOf(leaves.single));
+  }
+
+  /// Answers a leave left pending by [walkOffHeld]: with the `presence` the
+  /// server sends for a leave in PLAYING, or with an `error` frame of
+  /// [errorCode].
+  Future<void> answerLeave(
+    ({int transport, String leaveId}) held, {
+    String? errorCode,
+  }) async {
+    steps.add('answer the pending leave with ${errorCode ?? 'presence'}');
+    final FakeTransport transport = rig.transports[held.transport];
+    expect(
+      transport.isClosed,
+      isFalse,
+      reason: why(
+        'fixture: the transport of the pending leave closed before its '
+        'answer, so the late answer cannot be delivered',
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: errorCode == null ? 'presence' : 'error',
+        re: held.leaveId,
+        data: errorCode == null
+            ? <String, Object?>{'seat': 0, 'connected': false, 'seq': 500}
+            : <String, Object?>{'code': errorCode, 'message': ''},
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpBounded(tester, frames: 2);
+    await _drainStore(tester);
+  }
+
+  /// The connection-lost card's Leave without the wait for Home's retire.
+  Future<void> walkOffDeadQuick() async {
+    steps.add('walk off through the connection-lost Leave, no wait');
+    expect(
+      find.byKey(_lostLeaveKey),
+      findsOneWidget,
+      reason: why('fixture: the connection-lost card must offer Leave'),
+    );
+    await tap(_lostLeaveKey);
+    await _pumpBounded(tester, frames: 2);
+  }
+
+  void expectRejoinFor(String roomCode, String what) {
+    final Finder rejoin = find.byKey(_rejoinKey);
+    expect(
+      rejoin,
+      findsOneWidget,
+      reason: why('$what; Home must show the Rejoin control for $roomCode'),
+    );
+    final AppLocalizations loc = AppLocalizations.of(tester.element(rejoin));
+    expect(
+      find.descendant(
+        of: rejoin,
+        matching: find.text(loc.homeRejoinButton(roomCode)),
+      ),
+      findsOneWidget,
+      reason: why('$what; the Rejoin control must name the room $roomCode'),
+    );
+  }
+
+  void expectNoRejoin(String what) {
+    expect(
+      find.byKey(_rejoinKey),
+      findsNothing,
+      reason: why('$what; Home must not show a Rejoin control'),
+    );
+  }
+
+  String codeFieldText() => tester
+      .widget<TextField>(find.byKey(_codeKey, skipOffstage: false))
+      .controller!
+      .text;
+
+  /// Refuses the request [type] last sent, the way the server does.
+  Future<void> refuseLast(String type, String errorCode) async {
+    steps.add('refuse the $type with $errorCode');
+    rig.last.pushText(
+      _frame(
+        type: 'error',
+        re: rig.lastRequestId(type),
+        data: <String, Object?>{'code': errorCode, 'message': ''},
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpBounded(tester, frames: 3);
+    await _drainStore(tester);
+    await _pumpBounded(tester, frames: 2);
+  }
+
+  /// After a refusal the player is either already on Home or on the room
+  /// screen's error card, whose Back to home returns there (the way the
+  /// join path's dead code is cleared, test/c529_a1_test.dart A1.2b).
+  Future<void> backToHomeIfOffered() async {
+    final Finder back = find.byKey(_lobbyLeaveKey);
+    if (back.evaluate().isNotEmpty) {
+      steps.add('tap Back to home on the error card');
+      await tester.tap(back.first);
+      await tester.pump();
+      await _pumpBounded(tester, frames: 3);
+    }
+    await expectHomeCurrent();
+  }
+
   /// A resume was sent on a transport newer than [from], with the record's
   /// code and token, and no join_room went out on any of them.
   void expectResumeNotJoin(int from, String code) {
@@ -653,8 +844,8 @@ class _World {
     );
     expect(_dataOf(resumes.single), <String, Object?>{
       'code': code,
-      'seat_token': _token,
-    }, reason: why('expected resume to carry ($code, $_token) verbatim'));
+      'seat_token': token,
+    }, reason: why('expected resume to carry ($code, $token) verbatim'));
   }
 
   /// Answers the resume the way the server does, so the case ends in a game
@@ -665,7 +856,7 @@ class _World {
     rig.last.pushText(
       _frame(
         type: 'seat_assigned',
-        data: <String, Object?>{'seat': 0, 'seat_token': _token},
+        data: <String, Object?>{'seat': 0, 'seat_token': token},
       ),
     );
     rig.last.pushText(
@@ -1363,6 +1554,341 @@ void main() {
         isNull,
         reason: w.why('no exception while walking off in Arabic'),
       );
+    } finally {
+      await w.finish();
+    }
+  });
+
+  // ------------------------------------------------------------- round 2
+
+  testWidgets('r2-1a a delivered leave answered after 5 s: no Rejoin control '
+      'at any frame of the window, the record is gone after', (tester) async {
+    final _World w = _World(
+      tester,
+      'r2-1a held leave hides the Rejoin control',
+    );
+    await w.mount();
+    try {
+      await w.createAndPlay();
+      final held = await w.walkOffHeld(watch: true);
+      await w.expectHomeCurrent();
+      w.steps.add('hold the answer 5 s');
+      await w.pumpWatching(const Duration(seconds: 5));
+      await w.answerLeave(held);
+      await w.settleHome();
+
+      w.expectNoRejoin('the leave was delivered and answered');
+      await w.expectNotStored(
+        'the answered leave clears the record of the room that was left',
+      );
+    } finally {
+      await w.finish();
+    }
+  });
+
+  testWidgets('r2-1b walk off A with the leave pending, create B, answer A: '
+      'the record of B survives in storage', (tester) async {
+    final _World w = _World(tester, 'r2-1b late answer of A, B seated');
+    await w.mount();
+    try {
+      await w.createAndPlay();
+      final held = await w.walkOffHeld();
+      await w.expectHomeCurrent();
+
+      await w.createAndPlay(roomCode: _codeB, seatToken: _tokenB);
+      await w.answerLeave(held);
+      await w.settleHome();
+
+      await w.expectStored(
+        'the late answer of the leave of $_codeA must not clear the record '
+        'of $_codeB, which was written after it',
+      );
+      expect(
+        await _storedSavedAt(),
+        isNotNull,
+        reason: w.why('the record of $_codeB must carry its saved time'),
+      );
+
+      // The record of B is also the one Home would offer after a drop.
+      await w.dropSocket();
+      await w.walkOffDead();
+      await w.expectHomeCurrent();
+      await w.expectStored('B was walked off with a dead socket: kept');
+      w.expectRejoinFor(_codeB, 'B was seated, its leave never delivered');
+    } finally {
+      await w.finish();
+    }
+  });
+
+  testWidgets('r2-1b2 B walked off dead before the late answer of A: Home '
+      'still holds the record of B afterwards', (tester) async {
+    final _World w = _World(tester, 'r2-1b2 late answer of A over a kept B');
+    await w.mount();
+    try {
+      await w.createAndPlay();
+      final held = await w.walkOffHeld();
+      await w.expectHomeCurrent();
+
+      await w.createAndPlay(roomCode: _codeB, seatToken: _tokenB);
+      await w.dropSocket();
+      await w.walkOffDeadQuick();
+      await w.expectHomeCurrent();
+
+      await w.answerLeave(held);
+      await w.settleHome();
+
+      await w.expectStored(
+        'the late answer of the leave of $_codeA must not clear the record '
+        'of $_codeB',
+      );
+      w.expectRejoinFor(
+        _codeB,
+        'the late answer of the leave of $_codeA must not wipe Home\'s '
+        'record of $_codeB',
+      );
+    } finally {
+      await w.finish();
+    }
+  });
+
+  testWidgets('r2-1c a leave nobody answers: kept while pending, the Rejoin '
+      'control is shown after the timeout', (tester) async {
+    final _World w = _World(tester, 'r2-1c undelivered walk-off after timeout');
+    await w.mount();
+    try {
+      await w.createAndPlay();
+      await w.walkOffHeld();
+      await w.expectHomeCurrent();
+
+      w.steps.add('wait 5 s, leave still pending');
+      await tester.pump(const Duration(seconds: 5));
+      await w.expectStored('a leave still on the wire has cleared nothing');
+
+      w.steps.add('wait past the 10 s request timeout');
+      await tester.pump(const Duration(seconds: 7));
+      await w.settleHome();
+      await w.expectStored('R4: the leave timed out, the record stays');
+      w.expectRejoinFor(_codeA, 'R4: the leave timed out');
+    } finally {
+      await w.finish();
+    }
+  });
+
+  // The trust age (C-447 D2) of a record kept through an undelivered leave,
+  // inside one app life: the injected clock decides.
+
+  testWidgets('r2-2a a kept record 61 minutes old is absent: no Rejoin '
+      'control, a typed code joins, the stored record is cleared', (
+    tester,
+  ) async {
+    final _World w = _World(tester, 'r2-2a kept record at +61 min typed');
+    await w.mount();
+    try {
+      await w.createAndPlay();
+      await w.dropSocket();
+      await w.walkOffDead();
+      await w.expectHomeCurrent();
+      await w.expectStored('R4: the undelivered leave keeps the record');
+
+      w.steps.add('clock +61 min');
+      w.clock.now = _base.add(const Duration(minutes: 61));
+      final int from = w.rig.transports.length;
+      await w.typeCode(_codeA);
+      w.expectNoRejoin('the record is older than kSeatRecordMaxAge');
+      await w.tap(_joinKey);
+      final List<String> joins = w.rig.sent('join_room', from: from);
+      expect(
+        joins,
+        hasLength(1),
+        reason: w.why(
+          'a record 61 min old is absent: expected one join_room for '
+          '$_codeA; sent ${joins.length}',
+        ),
+      );
+      expect(
+        w.rig.sent('resume', from: from),
+        isEmpty,
+        reason: w.why('a record past the trust age must not be resumed'),
+      );
+      await w.expectNotStored('a record past the trust age is cleared');
+    } finally {
+      await w.finish();
+    }
+  });
+
+  testWidgets('r2-2b a kept record 61 minutes old and a link for its room: '
+      'join, no resume', (tester) async {
+    final _World w = _World(tester, 'r2-2b kept record at +61 min link');
+    await w.mount();
+    try {
+      await w.createAndPlay();
+      await w.dropSocket();
+      await w.walkOffDead();
+      await w.expectHomeCurrent();
+
+      w.steps.add('clock +61 min');
+      w.clock.now = _base.add(const Duration(minutes: 61));
+      final int from = w.rig.transports.length;
+      w.steps.add('link ${_linkFor(_codeA)}');
+      w.links.add(_linkFor(_codeA));
+      await _pumpBounded(tester, frames: 3);
+      expect(
+        w.rig.sent('resume', from: from),
+        isEmpty,
+        reason: w.why('a record past the trust age must not be resumed'),
+      );
+      expect(
+        w.rig.sent('join_room', from: from),
+        hasLength(1),
+        reason: w.why('a link for a room with a stale record joins it'),
+      );
+    } finally {
+      await w.finish();
+    }
+  });
+
+  testWidgets('r2-2c a kept record 59 minutes old is still offered and a '
+      'typed code resumes it', (tester) async {
+    final _World w = _World(tester, 'r2-2c kept record at +59 min typed');
+    await w.mount();
+    try {
+      await w.createAndPlay();
+      await w.dropSocket();
+      await w.walkOffDead();
+      await w.expectHomeCurrent();
+
+      w.steps.add('clock +59 min');
+      w.clock.now = _base.add(const Duration(minutes: 59));
+      final int from = w.rig.transports.length;
+      await w.typeCode(_codeA);
+      w.expectRejoinFor(_codeA, 'the record is inside kSeatRecordMaxAge');
+      await w.tap(_joinKey);
+      w.expectResumeNotJoin(from, _codeA);
+      await w.answerResume();
+    } finally {
+      await w.finish();
+    }
+  });
+
+  // What a leave answered by an error frame proves. The server's leave_room
+  // handler (ludo_server connection.dart _handleLeaveRoom, registry.dart
+  // leaveRoom) answers a leave it did not process with BAD_FIELD (the leave
+  // carries data), BAD_SEAT_TOKEN (no identity or the token is not seated),
+  // NO_SUCH_ROOM, and the retire errors of section 28; the transport layer
+  // adds RATE_LIMITED. NO_SUCH_ROOM and BAD_SEAT_TOKEN say the seat is gone
+  // (R4 names both); the others say the leave was not handled and the seat
+  // may still be held.
+  for (final String errorCode in <String>['RATE_LIMITED', 'BAD_FIELD']) {
+    testWidgets('r2-3a a leave answered $errorCode did not prove the seat '
+        'gone: the record is kept and Rejoin shows', (tester) async {
+      final _World w = _World(tester, 'r2-3a leave answered $errorCode');
+      await w.mount();
+      try {
+        await w.createAndPlay();
+        final held = await w.walkOffHeld();
+        await w.answerLeave(held, errorCode: errorCode);
+        await w.settleHome();
+        await w.expectHomeCurrent();
+
+        await w.expectStored(
+          'an error that does not say the seat is gone is not a delivered '
+          'leave, the record stays',
+        );
+        w.expectRejoinFor(_codeA, 'the leave was answered with $errorCode');
+      } finally {
+        await w.finish();
+      }
+    });
+  }
+
+  for (final String errorCode in <String>['NO_SUCH_ROOM', 'BAD_SEAT_TOKEN']) {
+    testWidgets('r2-3b a leave answered $errorCode says the seat is gone: the '
+        'record is cleared', (tester) async {
+      final _World w = _World(tester, 'r2-3b leave answered $errorCode');
+      await w.mount();
+      try {
+        await w.createAndPlay();
+        final held = await w.walkOffHeld();
+        await w.answerLeave(held, errorCode: errorCode);
+        await w.settleHome();
+        await w.expectHomeCurrent();
+
+        await w.expectNotStored(
+          '$errorCode on the leave means no seat to keep',
+        );
+        w.expectNoRejoin('the leave was answered with $errorCode');
+      } finally {
+        await w.finish();
+      }
+    });
+  }
+
+  // R5 keeps the failure handling of a refused resume: the record is
+  // cleared. Defect 4 adds the same treatment of the typed code that the join
+  // path already gives.
+
+  testWidgets('r2-4a anchor: a typed code with no record, join refused '
+      'NO_SUCH_ROOM: the code field is empty (green on the base)', (
+    tester,
+  ) async {
+    final _World w = _World(tester, 'r2-4a join refused NO_SUCH_ROOM');
+    await w.mount();
+    try {
+      await w.typeCode(_codeA);
+      await w.tap(_joinKey);
+      expect(
+        w.rig.sent('join_room'),
+        hasLength(1),
+        reason: w.why('fixture: one join_room for $_codeA'),
+      );
+      await w.refuseLast('join_room', 'NO_SUCH_ROOM');
+      await w.backToHomeIfOffered();
+      expect(
+        w.codeFieldText(),
+        isEmpty,
+        reason: w.why(
+          'a code the server says is gone is cleared from the field once the player is back on Home',
+        ),
+      );
+    } finally {
+      await w.finish();
+    }
+  });
+
+  testWidgets('r2-4 a typed code with a record, resume refused NO_SUCH_ROOM: '
+      'the code field is empty and the record is cleared', (tester) async {
+    final _World w = _World(tester, 'r2-4 resume refused NO_SUCH_ROOM');
+    await w.mount();
+    try {
+      await w.createAndPlay();
+      await w.dropSocket();
+      await w.walkOffDead();
+      await w.expectHomeCurrent();
+      await w.expectStored('R4: the undelivered leave keeps the record');
+
+      final int from = w.rig.transports.length;
+      w.steps.add('type $_codeA, tap Join');
+      await w.typeCode(_codeA);
+      await w.tap(_joinKey);
+      w.expectResumeNotJoin(from, _codeA);
+      expect(
+        w.codeFieldText(),
+        _codeA,
+        reason: w.why('fixture: the typed code is still in the field'),
+      );
+
+      await w.refuseLast('resume', 'NO_SUCH_ROOM');
+      await w.backToHomeIfOffered();
+      expect(
+        w.codeFieldText(),
+        isEmpty,
+        reason: w.why(
+          'the resume of $_codeA was refused NO_SUCH_ROOM: the dead code '
+          'must not stay in the field, as after a refused join; field holds '
+          '"${w.codeFieldText()}"',
+        ),
+      );
+      await w.expectNotStored('R5: a refused resume clears the record');
     } finally {
       await w.finish();
     }
