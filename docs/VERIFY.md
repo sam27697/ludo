@@ -39,8 +39,8 @@ A JSON object with exactly these keys:
 | `declined` | list | the roll numbers `k` whose offered release the player declined, ascending; the timer never declines; present under `2026-12` only |
 | `lapsed` | list | the roll numbers `k` whose release found no piece to release (a lapse), ascending, a subset of `releases`; present under `2026-12` only |
 | `grants` | list | one object per taken release, `{"k": int, "seats": [int, ...]}`: the roll number and the seats granted a six, ascending; present under `2026-12` only |
-| `placings` | list | the seats in place order, the last seat standing included; present under `2026-11` only (section 28 rule 3) |
-| `retired` | list | the seats in retirement order; present under `2026-11` only |
+| `placings` | list | the seats in place order, the last seat standing included; present under `2026-11` and `2026-12` (section 28 rule 3) |
+| `retired` | list | the seats in retirement order; present under `2026-11` and `2026-12` |
 | `finished_at` | string | the registry clock's `now` at the win, UTC, whole seconds, `YYYY-MM-DDTHH:MM:SSZ` |
 
 `reveal` is `room.chain.reveal(k)`; `die` is the face that roll produced;
