@@ -71,6 +71,8 @@ const Key _groupKey = ValueKey<String>('c667-side-band');
 
 const double _dieHitFloor = 48;
 const double _boardFloor = 324;
+// C-679: the most the reserved group may exceed the visible content, per side.
+const double _reserveCeiling = 16;
 
 const List<Locale> _locales = <Locale>[Locale('en'), Locale('ar')];
 
@@ -1362,12 +1364,21 @@ void _expectGroupCentred(
     'content ${_r(content)} inside group ${_r(group)}',
     'group ${_r(group)}',
   );
+  // C-679 r1 (X208): the group reserves the no-move mark's reach at all times,
+  // so it may be wider than the visible content by that reach on the mark's
+  // side, in every state. It may not be wider than the reach (a padded or
+  // lopsided box still fails). The mark hangs half its width off the die
+  // corner; _reserveCeiling is twice the 7.5 dp the order measured.
+  final double slackLeft = content.left - group.left;
+  final double slackRight = group.right - content.right;
   need(
-    (group.left - content.left).abs() <= 1.0 &&
-        (group.right - content.right).abs() <= 1.0,
-    'D1 r2 (the group bounds exactly the visible content horizontally)',
-    'group left/right equal to the content ${_r(content)} to 1 dp',
-    'group ${_r(group)}',
+    slackLeft <= _reserveCeiling && slackRight <= _reserveCeiling,
+    'D1 r2 / C-679 (the group bounds the visible content plus the mark reach '
+        'and no more)',
+    'group at most $_reserveCeiling dp wider than the content '
+        '${_r(content)} on each side',
+    'group ${_r(group)}: slack left ${slackLeft.toStringAsFixed(2)}, right '
+        '${slackRight.toStringAsFixed(2)}',
   );
 
   final Rect? hint = f.hint;
