@@ -1,6 +1,6 @@
 // Widget tests for HomeScreen session memory: after a successful create,
 // a fresh HomeScreen (a relaunch) restores the typed name without
-// retyping, shows home-last-table-chip, and still paints Create as the
+// retyping, shows no last-table chip (C-678), and still paints Create as the
 // elevated action while Join stays outlined. Since C-666 D1 there is no seat
 // count to restore: a create records seats 4, and an older stored count of
 // 2 or 3 is read and ignored, Create sending 4 either way.
@@ -338,16 +338,16 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('relaunch after successful create shows home-last-table-chip and '
+  testWidgets('relaunch after successful create shows no last-table chip and '
       'Create still outweighs Join', (tester) async {
     await _hostThenRelaunchHome(tester, name: 'Priya');
 
     expect(
-      find.byKey(_chipKey),
-      findsOneWidget,
+      find.byKey(_chipKey, skipOffstage: false),
+      findsNothing,
       reason:
-          'when last-table memory exists, Home must show a widget keyed '
-          'home-last-table-chip',
+          'C-678 removed the chip: even when last-table memory exists, Home '
+          'must not show a widget keyed home-last-table-chip',
     );
 
     expect(
@@ -367,7 +367,7 @@ void main() {
       _keyedButton(tester, _createKey),
       isA<ElevatedButton>(),
       reason:
-          'with home-last-table-chip visible and an empty code field, '
+          'with last-table memory and an empty code field, '
           'create-room-button must still be an ElevatedButton; found '
           '${_keyedButton(tester, _createKey).runtimeType}',
     );
@@ -375,14 +375,14 @@ void main() {
       find.byKey(_joinKey, skipOffstage: false),
       findsNothing,
       reason:
-          'with home-last-table-chip visible and an empty code field, '
+          'with last-table memory and an empty code field, '
           'join-room-button must be absent (C-523 D3)',
     );
   });
 
   for (final int legacy in <int>[2, 3]) {
     testWidgets('a table stored by an older build with $legacy seats is read '
-        'and ignored: the chip and name show, Create sends 4', (tester) async {
+        'and ignored: the name shows, no chip, Create sends 4', (tester) async {
       SharedPreferences.setMockInitialValues(<String, Object>{
         'session.lastName': 'Priya',
         'session.lastSeats': legacy,
@@ -404,9 +404,9 @@ void main() {
         reason: 'a stored seat count of $legacy must never be an error',
       );
       expect(
-        find.byKey(_chipKey),
-        findsOneWidget,
-        reason: 'the older stored table still shows home-last-table-chip',
+        find.byKey(_chipKey, skipOffstage: false),
+        findsNothing,
+        reason: 'C-678: the older stored table shows no home-last-table-chip',
       );
       expect(
         _nameFieldText(tester),

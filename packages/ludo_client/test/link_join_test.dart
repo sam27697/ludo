@@ -302,11 +302,11 @@ void _expectKnownName(WidgetTester tester) {
         '"${_fieldText(tester, _nameKey)}"',
   );
   expect(
-    find.byKey(_chipKey),
-    findsOneWidget,
+    find.byKey(_chipKey, skipOffstage: false),
+    findsNothing,
     reason:
-        'fixture is broken: a seeded name and seat count must show '
-        'home-last-table-chip, which is how Home treats a known player',
+        'a seeded name and seat count must not show home-last-table-chip '
+        '(C-678 removed it); the player is still known by the stored name',
   );
 }
 
