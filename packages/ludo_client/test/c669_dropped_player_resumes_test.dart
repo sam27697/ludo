@@ -1022,9 +1022,11 @@ void main() {
     }
   });
 
-  testWidgets('3 recent chip: a code earned by a typed join comes back as a '
-      'chip, and chip then Join resumes', (tester) async {
-    final _World w = _World(tester, '3 recent chip');
+  testWidgets('3 typed code: a code earned by a typed join is typed again '
+      'and Join resumes (C-678: the recent-code chips are gone)', (
+    tester,
+  ) async {
+    final _World w = _World(tester, '3 typed code');
     await w.mount();
     try {
       await w.joinAndPlay();
@@ -1033,25 +1035,16 @@ void main() {
       await w.expectHomeCurrent();
       await w.expectStored('R4: the undelivered leave keeps the record');
 
-      final Finder chip = find.byKey(const Key('home-recent-code-$_codeA'));
       expect(
-        chip,
-        findsOneWidget,
-        reason: w.why('fixture: a joined code must be a recent chip'),
+        find.byKey(const Key('home-recent-code-$_codeA'), skipOffstage: false),
+        findsNothing,
+        reason: w.why('C-678: no recent-code chip on Home'),
       );
       final int from = w.rig.transports.length;
-      w.steps.add('clear the field, tap the $_codeA chip, tap Join');
+      w.steps.add('clear the field, type $_codeA, tap Join');
       await tester.enterText(find.byKey(_codeKey), '');
       await tester.pump();
-      await tester.ensureVisible(chip);
-      await tester.tap(chip);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 250));
-      expect(
-        tester.widget<TextField>(find.byKey(_codeKey)).controller!.text,
-        _codeA,
-        reason: w.why('fixture: the chip fills the code field'),
-      );
+      await w.typeCode(_codeA);
       await w.tap(_joinKey);
       w.expectResumeNotJoin(from, _codeA);
       await w.answerResume();
