@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
@@ -1389,8 +1390,10 @@ class _HomeScreenState extends State<HomeScreen>
     // before the join step still fits at text scale 1.3, so a safe height
     // under 800 keeps the side-by-side hero and only the die grows.
     final bool compact = safeHeight < 640;
-    final double dieSize = homeDieMarkSize(compact);
-    final double logoHeight = compact ? 52 : 68;
+    final double dieSize = math.min(
+      dieMarkSize(compact),
+      homeDieMarkSize(compact),
+    );
     final double afterBrand = compact ? kSpace3 : kSpace6;
     final double afterDie = compact ? kSpace4 : kSpace7;
     final double beforeCreate = compact ? kSpace3 : kSpace4;
@@ -1487,7 +1490,7 @@ class _HomeScreenState extends State<HomeScreen>
                                       Text(
                                         loc.homeLocaleToggleCode,
                                         style: const TextStyle(
-                                          fontSize: 13,
+                                          fontSize: kTypeCode,
                                           fontWeight: FontWeight.w700,
                                           height: 1.1,
                                           letterSpacing: 0.5,
@@ -1535,17 +1538,17 @@ class _HomeScreenState extends State<HomeScreen>
                                     crossAxisAlignment:
                                         CrossAxisAlignment.stretch,
                                     children: [
-                                      HomeLogoPanel(height: logoHeight),
-                                      SizedBox(
-                                        height: compact ? kSpace2 : kSpace3,
-                                      ),
+                                      const HomeLogoPanel(),
+                                      const SizedBox(height: kSpace1),
                                       HomeGoldFrame(
                                         key: const Key('home-tagline'),
                                         child: Padding(
                                           padding:
-                                              const EdgeInsetsDirectional.symmetric(
-                                                horizontal: kSpace3,
-                                                vertical: kSpace2,
+                                              const EdgeInsetsDirectional.only(
+                                                start: kSpace3,
+                                                end: kSpace3,
+                                                top: kSpace1,
+                                                bottom: kSpace2,
                                               ),
                                           child: FittedBox(
                                             fit: BoxFit.scaleDown,

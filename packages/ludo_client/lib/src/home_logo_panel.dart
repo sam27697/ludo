@@ -8,9 +8,7 @@ import '../l10n/gen/app_localizations.dart';
 import 'theme.dart';
 
 class HomeLogoPanel extends StatelessWidget {
-  const HomeLogoPanel({super.key, required this.height});
-
-  final double height;
+  const HomeLogoPanel({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -21,30 +19,39 @@ class HomeLogoPanel extends StatelessWidget {
       child: ExcludeSemantics(
         child: DecoratedBox(
           key: const Key('home-logo-panel'),
+          position: DecorationPosition.foreground,
+          // Painted over the child so the border takes no layout space.
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(kRadiusControl + 4),
-            gradient: const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: <Color>[LudoColors.feltMid, LudoColors.feltDeep],
-            ),
             border: Border.all(
               color: LudoColors.gold.withValues(alpha: 0.85),
               width: 1.5,
             ),
-            boxShadow: <BoxShadow>[
-              BoxShadow(
-                color: LudoColors.feltDeep.withValues(alpha: 0.25),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
           ),
-          child: SizedBox(
-            height: height,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(kRadiusControl + 4),
+              gradient: const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: <Color>[LudoColors.feltMid, LudoColors.feltDeep],
+              ),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: LudoColors.feltDeep.withValues(alpha: 0.25),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            // Content-sized: the panel hugs the wordmark so the gap to the
+            // tagline below is the pinned token gap, not panel slack.
             child: Padding(
-              padding: const EdgeInsetsDirectional.symmetric(
-                horizontal: kSpace4,
+              padding: const EdgeInsetsDirectional.only(
+                start: kSpace4,
+                end: kSpace4,
+                top: kSpace2,
+                bottom: kSpace1,
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
