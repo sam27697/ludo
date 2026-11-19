@@ -1,9 +1,11 @@
-// Proves home and lobby share one die-size helper (or constants) from
+// Proves home and lobby take their die size from a symbol owned by
 // die_mark.dart or theme.dart, and that HomeScreen still paints DieMark.
 //
 // The size pair used to live as duplicated `compact ? 72 : 148` literals in
-// both screens. Those literals must be gone, and both screens must call the
-// same public symbol that owns the sizes.
+// both screens. Those literals must be gone. C-678 (X210 item 6) gave home
+// its own shorter pair, homeDieMarkSize, so home and lobby no longer share
+// one symbol: home must call a die-size symbol owned by die_mark.dart or
+// theme.dart (homeDieMarkSize included) and lobby keeps dieMarkSize.
 
 import 'dart:io';
 
@@ -66,32 +68,17 @@ String _stripLineComments(String source) {
       .join('\n');
 }
 
-/// Public top-level names in [source] whose declaration body mentions both
-/// size literals 72 and 148 (the shared compact/tall die sizes).
+/// Public top-level size helpers in [source]: functions or constants named
+/// like a die size that return a compact/tall pair of numeric literals.
 List<String> _sizeOwningSymbols(String source) {
   final String stripped = _stripLineComments(source);
-  final RegExp decl = RegExp(
-    r'(?:^|\n)\s*(?:const\s+|final\s+)?(?:double|int|num)\s+(\w+)\s*[=\(]([^;{]*)',
-    multiLine: true,
-  );
   final RegExp func = RegExp(
-    r'(?:^|\n)\s*(?:double|int|num)\s+(\w+)\s*\([^)]*\)\s*(?:=>|{)([^}]*)}?',
-    multiLine: true,
+    r'(?:^|\n)\s*(?:double|int|num)\s+(\w*[dD]ie\w*)\s*\([^)]*\)\s*=>\s*'
+    r'[^;]*\?\s*\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?\s*;',
   );
-
-  final Set<String> names = <String>{};
-  void consider(String name, String body) {
-    if (body.contains('72') && body.contains('148')) {
-      names.add(name);
-    }
-  }
-
-  for (final Match m in decl.allMatches(stripped)) {
-    consider(m.group(1)!, m.group(2)!);
-  }
-  for (final Match m in func.allMatches(stripped)) {
-    consider(m.group(1)!, m.group(2)!);
-  }
+  final Set<String> names = <String>{
+    for (final Match m in func.allMatches(stripped)) m.group(1)!,
+  };
   return names.toList()..sort();
 }
 
@@ -126,77 +113,98 @@ Widget _homeScreenApp({
 }
 
 void main() {
-  test('home_screen and lobby_screen call a shared die size from die_mark or theme', () {
-    final Directory root = _findPackageRoot();
-    final String homePath = p.join(root.path, 'lib', 'src', 'home_screen.dart');
-    final String lobbyPath = p.join(
-      root.path,
-      'lib',
-      'src',
-      'lobby_screen.dart',
-    );
-    final String dieMarkPath = p.join(root.path, 'lib', 'src', 'die_mark.dart');
-    final String themePath = p.join(root.path, 'lib', 'src', 'theme.dart');
+  test(
+    'home calls a die size owned by die_mark or theme, lobby keeps dieMarkSize',
+    () {
+      final Directory root = _findPackageRoot();
+      final String homePath = p.join(
+        root.path,
+        'lib',
+        'src',
+        'home_screen.dart',
+      );
+      final String lobbyPath = p.join(
+        root.path,
+        'lib',
+        'src',
+        'lobby_screen.dart',
+      );
+      final String dieMarkPath = p.join(
+        root.path,
+        'lib',
+        'src',
+        'die_mark.dart',
+      );
+      final String themePath = p.join(root.path, 'lib', 'src', 'theme.dart');
 
-    final String home = _stripLineComments(File(homePath).readAsStringSync());
-    final String lobby = _stripLineComments(File(lobbyPath).readAsStringSync());
-    final String dieMark = File(dieMarkPath).readAsStringSync();
-    final String theme = File(themePath).readAsStringSync();
+      final String home = _stripLineComments(File(homePath).readAsStringSync());
+      final String lobby = _stripLineComments(
+        File(lobbyPath).readAsStringSync(),
+      );
+      final String dieMark = File(dieMarkPath).readAsStringSync();
+      final String theme = File(themePath).readAsStringSync();
 
-    final RegExp forbidden = RegExp(r'72\s*:\s*148|compact\s*\?\s*72');
-    final List<String> homeHits = forbidden
-        .allMatches(home)
-        .map((Match m) => m.group(0)!)
-        .toList();
-    final List<String> lobbyHits = forbidden
-        .allMatches(lobby)
-        .map((Match m) => m.group(0)!)
-        .toList();
+      final RegExp forbidden = RegExp(r'72\s*:\s*148|compact\s*\?\s*72');
+      final List<String> homeHits = forbidden
+          .allMatches(home)
+          .map((Match m) => m.group(0)!)
+          .toList();
+      final List<String> lobbyHits = forbidden
+          .allMatches(lobby)
+          .map((Match m) => m.group(0)!)
+          .toList();
 
-    expect(
-      homeHits,
-      isEmpty,
-      reason:
-          'home_screen.dart must not contain compact ? 72 / 72 : 148 '
-          'literals; found $homeHits',
-    );
-    expect(
-      lobbyHits,
-      isEmpty,
-      reason:
-          'lobby_screen.dart must not contain compact ? 72 / 72 : 148 '
-          'literals; found $lobbyHits',
-    );
+      expect(
+        homeHits,
+        isEmpty,
+        reason:
+            'home_screen.dart must not contain compact ? 72 / 72 : 148 '
+            'literals; found $homeHits',
+      );
+      expect(
+        lobbyHits,
+        isEmpty,
+        reason:
+            'lobby_screen.dart must not contain compact ? 72 / 72 : 148 '
+            'literals; found $lobbyHits',
+      );
 
-    final List<String> fromDieMark = _sizeOwningSymbols(dieMark);
-    final List<String> fromTheme = _sizeOwningSymbols(theme);
-    final List<String> owners = <String>[...fromDieMark, ...fromTheme];
+      final List<String> fromDieMark = _sizeOwningSymbols(dieMark);
+      final List<String> fromTheme = _sizeOwningSymbols(theme);
+      final List<String> owners = <String>[...fromDieMark, ...fromTheme];
 
-    expect(
-      owners,
-      isNotEmpty,
-      reason:
-          'die_mark.dart or theme.dart must declare a public size helper '
-          'or constant that owns both 72 and 148',
-    );
+      expect(
+        owners,
+        isNotEmpty,
+        reason:
+            'die_mark.dart or theme.dart must declare a public die size '
+            'helper that owns a compact/tall literal pair',
+      );
 
-    final List<String> shared = owners
-        .where(
-          (String name) =>
-              RegExp('\\b$name\\b').hasMatch(home) &&
-              RegExp('\\b$name\\b').hasMatch(lobby),
-        )
-        .toList();
+      final List<String> homeCalls = owners
+          .where((String name) => RegExp('\\b$name\\s*\\(').hasMatch(home))
+          .toList();
+      expect(
+        homeCalls,
+        isNotEmpty,
+        reason:
+            'home_screen.dart must call a die size symbol owned by '
+            'die_mark.dart or theme.dart (homeDieMarkSize included); '
+            'size-owning symbols found: $owners',
+      );
 
-    expect(
-      shared,
-      isNotEmpty,
-      reason:
-          'home_screen.dart and lobby_screen.dart must both call the same '
-          'die size symbol from die_mark.dart or theme.dart; size-owning '
-          'symbols found: $owners',
-    );
-  });
+      expect(
+        RegExp(r'\bdieMarkSize\s*\(').hasMatch(lobby),
+        isTrue,
+        reason: 'lobby_screen.dart must keep calling dieMarkSize',
+      );
+      expect(
+        owners,
+        contains('dieMarkSize'),
+        reason: 'die_mark.dart must still own dieMarkSize for the lobby',
+      );
+    },
+  );
 
   testWidgets('HomeScreen shows DieMark', (WidgetTester tester) async {
     await tester.pumpWidget(_homeScreenApp());
