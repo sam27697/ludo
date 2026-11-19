@@ -6415,11 +6415,14 @@ class _GameScreenState extends State<GameScreen> {
       // clear of the hint control's whole 48 dp box.
       final double reach = _noMoveMarkReach;
       final bool markCovered = rtl ? hinted : trayInRow;
-      // C-679: in ar the hint control's 48 dp box sits kSpace2 from the die
-      // on the mark's side, so the die gives the mark what that gap does not.
-      final double markRight = rtl && hinted
-          ? math.max(0.0, reach - kSpace2)
-          : (markCovered ? 0 : reach);
+      final double markRight = markCovered ? 0 : reach;
+      // C-679: in ar the control's 48 dp box sits kSpace2 from the die, on
+      // the mark's side, and the mark is wider than that gap. The gap is
+      // fixed, so the control comes down by what the mark's lower edge
+      // overlaps the box's top, always, so it never moves as the mark does.
+      final double hintDrop = rtl
+          ? math.max(0.0, reach - (_dieRowHeight - kHintHitWidth) / 2)
+          : 0;
       final double cap = math.max(
         0.0,
         sideMaxWidth - reserved - markRight - (trayInRow ? kSpace2 : 0),
@@ -6433,7 +6436,12 @@ class _GameScreenState extends State<GameScreen> {
             // the bulb itself goes with the seat.
             SizedBox(
               width: kHintHitWidth,
-              child: _seatLost ? null : Center(child: hintWidget()),
+              child: _seatLost
+                  ? null
+                  : Padding(
+                      padding: EdgeInsets.only(top: 2 * hintDrop),
+                      child: Center(child: hintWidget()),
+                    ),
             ),
             const SizedBox(width: kSpace2),
           ],
