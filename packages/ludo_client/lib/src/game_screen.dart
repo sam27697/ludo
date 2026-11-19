@@ -6411,12 +6411,15 @@ class _GameScreenState extends State<GameScreen> {
       // as large as what it shows, the no-move mark included, and the
       // caller centres it in the side space. The mark hangs [reach] past
       // the die's top and physical right; it is given room only where the
-      // hint control or the tray beside the die does not already cover it
-      // (the control's own 48 dp box is wider than its 40 dp disc, so the
-      // mark never reaches the disc).
+      // tray beside the die does not already cover it, and in ar it keeps
+      // clear of the hint control's whole 48 dp box.
       final double reach = _noMoveMarkReach;
       final bool markCovered = rtl ? hinted : trayInRow;
-      final double markRight = markCovered ? 0 : reach;
+      // C-679: in ar the hint control's 48 dp box sits kSpace2 from the die
+      // on the mark's side, so the die gives the mark what that gap does not.
+      final double markRight = rtl && hinted
+          ? math.max(0.0, reach - kSpace2)
+          : (markCovered ? 0 : reach);
       final double cap = math.max(
         0.0,
         sideMaxWidth - reserved - markRight - (trayInRow ? kSpace2 : 0),
@@ -7182,10 +7185,11 @@ class _GameScreenState extends State<GameScreen> {
   static const double _liftRoundingMargin = 0.5;
 
   /// C-667 D1 r2: how far the no-move mark hangs past the die's top and its
-  /// physical right while it shows, zero otherwise.
-  double get _noMoveMarkReach => _noMoveVisible
-      ? deadBadgeRect(const Size.square(_dieRowHeight)).right - _dieRowHeight
-      : 0;
+  /// physical right while it shows. C-679: the side group reserves this at
+  /// all times, shown or not, so its width and the die's place never change
+  /// when the mark comes and goes.
+  double get _noMoveMarkReach =>
+      deadBadgeRect(const Size.square(_dieRowHeight)).right - _dieRowHeight;
 
   /// C-667 D1: where the die's centre sits on a large landscape screen, as a
   /// fraction of the screen height, and the band it may move in when the
