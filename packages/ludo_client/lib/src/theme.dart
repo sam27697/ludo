@@ -95,6 +95,7 @@ const List<String> kLudoFontFallbacks = <String>['Noto Sans Arabic'];
 /// Named type-token sizes. Screens and themes reference these, not literals.
 const double kTypeTitle = 18;
 const double kTypeLabel = 16;
+const double kTypeCode = 13;
 
 /// Motion duration tokens: short UI at most 300ms, long transitions at most 500ms.
 const Duration kMotionShort = Duration(milliseconds: 200);

@@ -25,7 +25,8 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
-import 'package:ludo_client/src/die_mark.dart' show DieMark, dieMarkSize;
+import 'package:ludo_client/src/die_mark.dart'
+    show DieMark, dieMarkSize, homeDieMarkSize;
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
@@ -1085,14 +1086,19 @@ Future<void> _runCompact(
   );
   final DieMark mark = tester.widget<DieMark>(find.byType(DieMark));
   final Size rendered = tester.getSize(find.byType(DieMark));
-  final double compactMark = dieMarkSize(true);
-  final double roomyMark = dieMarkSize(false);
+  // Home has its own shorter pair (C-678, X210 item 6); lobby keeps the old.
+  final double Function(bool) sizeFor = screen == 'home'
+      ? homeDieMarkSize
+      : dieMarkSize;
+  final String sizeName = screen == 'home' ? 'homeDieMarkSize' : 'dieMarkSize';
+  final double compactMark = sizeFor(true);
+  final double roomyMark = sizeFor(false);
   stdout.writeln(
     'COMPACT screen=$screen shape=${shape.id} scale=1.0 '
     'locale=${locale.languageCode} dieMark.size=${mark.size} '
     'rendered=${rendered.width.toStringAsFixed(1)}x'
     '${rendered.height.toStringAsFixed(1)} '
-    'dieMarkSize(true)=$compactMark dieMarkSize(false)=$roomyMark '
+    '$sizeName(true)=$compactMark $sizeName(false)=$roomyMark '
     'errors=${errors.length}',
   );
   expect(
@@ -1100,7 +1106,7 @@ Future<void> _runCompact(
     compactMark,
     reason:
         'decision 4, $where: $screen lays out compact. DieMark.size is '
-        '${mark.size}, dieMarkSize(true) is $compactMark, dieMarkSize(false) '
+        '${mark.size}, $sizeName(true) is $compactMark, $sizeName(false) '
         'is $roomyMark. Safe height is ${shape.height} - ${shape.topInset} - '
         '${shape.bottomInset} = '
         '${shape.height - shape.topInset - shape.bottomInset}, which is under '

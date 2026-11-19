@@ -6,9 +6,10 @@
 // them, rather than asserting a colour constant, so the gate stays
 // meaningful if the theme underneath changes again.
 //
-// C-276 took the toggle off the app bar. The fill is now the toggle's own
-// (LudoColors.paperElevated), read off the opaque Material the button
-// paints. The ratio below is the same 4.5 this file already required.
+// C-276 took the toggle off the app bar. C-678 made the fill the gradient
+// HomeGoldFrame paints behind a transparent button, so the check now
+// composites the frame's highest-alpha fill over each home backdrop colour
+// and measures the ink against the worst result. The floor is the same 4.5.
 //
 // To see the original failure, put
 // `style: const TextStyle(color: Colors.white)` back on the toggle's `Text`
@@ -20,12 +21,16 @@
 // with an ellipsis instead of wrapping.
 
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart';
+import 'package:ludo_client/src/home_style.dart';
+import 'package:ludo_client/src/theme.dart';
 
 /// WCAG 2.1 relative luminance of an sRGB colour. Each channel is
 /// gamma-decoded before the weighted sum; this is the formula the 4.5:1 / 3:1
@@ -49,26 +54,85 @@ double _contrastRatio(Color a, Color b) {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-/// The locale toggle's own painted fill: an opaque [Material] it builds
-/// for its background. That is what sits behind the label once the toggle
-/// is no longer drawn on an app bar. An ancestor's colour is not this fill.
-Color _toggleFill(WidgetTester tester) {
-  final materials = tester.widgetList<Material>(
-    find.descendant(
-      of: find.byKey(const Key('locale-toggle-button')),
-      matching: find.byType(Material),
+/// The frame [HomeGoldFrame] paints behind the locale toggle.
+CustomPaint _toggleFrame(WidgetTester tester) {
+  final Finder frame = find.ancestor(
+    of: find.byKey(const Key('locale-toggle-button')),
+    matching: find.byWidgetPredicate(
+      (Widget w) => w is CustomPaint && w.painter is HomeGoldFramePainter,
     ),
   );
-  for (final material in materials) {
-    final color = material.color;
-    if (color != null && color.a == 1.0) {
-      return color;
+  expect(
+    frame,
+    findsWidgets,
+    reason: 'locale-toggle-button has no HomeGoldFrame painter behind it',
+  );
+  return tester.widget<CustomPaint>(frame.first);
+}
+
+/// The backdrop colours the home page paints under the toggle: the
+/// [FeltBackdrop] wash stops. The toggle sits at the top, but the check
+/// takes the worst of all three so a change of wash cannot hide a failure.
+const List<Color> _backdrops = <Color>[
+  LudoColors.paperWashTop,
+  LudoColors.paper,
+  LudoColors.paperWashBottom,
+];
+
+/// The frame's worst fill under the label: the painter's own fill composited
+/// over [backdrop], read back from pixels on the first row below the border
+/// stroke, where the fill gradient is at its highest alpha.
+Future<Color> _frameOver(
+  WidgetTester tester,
+  CustomPaint frame,
+  Color backdrop,
+) async {
+  const int side = 48;
+  final ui.PictureRecorder recorder = ui.PictureRecorder();
+  final Canvas canvas = Canvas(recorder);
+  const Size size = Size(48, 48);
+  canvas.drawRect(Offset.zero & size, Paint()..color = backdrop);
+  frame.painter!.paint(canvas, size);
+  final Color? sampled = await tester.runAsync<Color>(() async {
+    final ui.Image image = await recorder.endRecording().toImage(side, side);
+    final ByteData data = (await image.toByteData())!;
+    const int x = side ~/ 2;
+    const int y = 2;
+    final int o = (y * side + x) * 4;
+    return Color.fromARGB(
+      255,
+      data.getUint8(o),
+      data.getUint8(o + 1),
+      data.getUint8(o + 2),
+    );
+  });
+  expect(
+    sampled,
+    isNot(backdrop),
+    reason:
+        'the frame painted nothing over backdrop $backdrop at the sampled '
+        'row, so the contrast below would measure the bare page',
+  );
+  return sampled!;
+}
+
+/// Lowest contrast of [foreground] over the frame's fill on every backdrop.
+Future<({double ratio, Color fill})> _worstContrast(
+  WidgetTester tester,
+  Color foreground,
+) async {
+  final CustomPaint frame = _toggleFrame(tester);
+  double worst = double.infinity;
+  Color worstFill = _backdrops.first;
+  for (final Color backdrop in _backdrops) {
+    final Color fill = await _frameOver(tester, frame, backdrop);
+    final double ratio = _contrastRatio(foreground, fill);
+    if (ratio < worst) {
+      worst = ratio;
+      worstFill = fill;
     }
   }
-  fail(
-    'no opaque Material found on locale-toggle-button to read its own '
-    'fill from',
-  );
+  return (ratio: worst, fill: worstFill);
 }
 
 /// The colour the locale toggle's label actually renders in: the resolved
@@ -76,8 +140,13 @@ Color _toggleFill(WidgetTester tester) {
 /// person) reads, rather than a style plucked off the button's constructor.
 Color _toggleForeground(WidgetTester tester) {
   final paragraph = tester.renderObject<RenderParagraph>(
+    // The button now holds a translate icon (also a RichText) above the code
+    // text, so read the paragraph of the Text, not of the icon.
     find.descendant(
-      of: find.byKey(const Key('locale-toggle-button')),
+      of: find.descendant(
+        of: find.byKey(const Key('locale-toggle-button')),
+        matching: find.byType(Text),
+      ),
       matching: find.byType(RichText),
     ),
   );
@@ -90,20 +159,21 @@ Color _toggleForeground(WidgetTester tester) {
 
 void main() {
   testWidgets(
-    'locale toggle text meets WCAG AA contrast (4.5:1) against its own fill',
+    'locale toggle text meets WCAG AA contrast (4.5:1) against the frame worst fill',
     (tester) async {
       await tester.pumpWidget(const LudoApp());
       await tester.pumpAndSettle();
 
-      final background = _toggleFill(tester);
       final foreground = _toggleForeground(tester);
-      final ratio = _contrastRatio(foreground, background);
+      final worst = await _worstContrast(tester, foreground);
+      final background = worst.fill;
+      final ratio = worst.ratio;
 
       expect(
         ratio,
         greaterThanOrEqualTo(4.5),
         reason:
-            'locale toggle foreground $foreground on its own fill '
+            'locale toggle foreground $foreground on the frame worst fill '
             '$background measures $ratio:1, below the WCAG AA minimum of '
             '4.5:1 for normal text',
       );
@@ -111,21 +181,22 @@ void main() {
   );
 
   testWidgets(
-    'locale toggle text meets WCAG AA contrast (4.5:1) against its own '
+    'locale toggle text meets WCAG AA contrast (4.5:1) against the frame worst '
     'fill in the Arabic locale too',
     (tester) async {
       await tester.pumpWidget(const LudoApp(initialLocale: Locale('ar')));
       await tester.pumpAndSettle();
 
-      final background = _toggleFill(tester);
       final foreground = _toggleForeground(tester);
-      final ratio = _contrastRatio(foreground, background);
+      final worst = await _worstContrast(tester, foreground);
+      final background = worst.fill;
+      final ratio = worst.ratio;
 
       expect(
         ratio,
         greaterThanOrEqualTo(4.5),
         reason:
-            'locale toggle foreground $foreground on its own fill '
+            'locale toggle foreground $foreground on the frame worst fill '
             '$background measures $ratio:1, below the WCAG AA minimum of '
             '4.5:1 for normal text',
       );

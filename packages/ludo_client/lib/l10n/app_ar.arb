@@ -16,6 +16,7 @@
   "homeLastGame": "جولتك الأخيرة: كل رمية قابلة للتحقق",
   "homeLocaleToggleTooltip": "تغيير اللغة",
   "homeLocaleToggleLabel": "English",
+  "homeLocaleToggleCode": "EN",
   "homeNameFieldLabel": "اسمك",
   "homeDefaultPlayerName": "لاعب",
   "lobbyConnecting": "جارٍ الاتصال بالغرفة...",

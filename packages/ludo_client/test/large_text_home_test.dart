@@ -1,43 +1,16 @@
-// Measurement for X54 (ludo-tester, order 349, run 89). HomeScreen's
-// last-table chip (`_LastTableChip`, lib/src/home_screen.dart:1655) paints
-// "<name> · <seats>" as one Text, maxLines: 1, ellipsis, at the ambient
-// system text scale. No implementation exists or is ordered; this test is
-// the measurement a contract may be written from. It may go red; it does
-// not merge alone.
+// Large-text coverage of HomeScreen with a remembered table (X54, run 89;
+// C-678). The last-table chip this file once measured is gone, so the cases
+// now assert that Home with a remembered name mounts and lays out without a
+// FlutterError at each size, text scale and locale, and shows no chip.
 //
-// Font loading and the RenderParagraph measurement plumbing
-// (_loadAppFonts, _paragraphOf, _layoutMaxWidth, _painterFor) are copied,
-// not imported, from test/large_text_fit_test.dart. The ambient
-// MediaQuery textScaler override through MaterialApp.builder is the same
-// technique that file's own _harness uses.
-//
-// Session-memory seeding (SharedPreferences.setMockInitialValues, then
-// SessionMemory.recordSuccessfulCreate) is copied from
-// test/home_chip_craft_test.dart, the file that already measures this
-// same chip's ellipsis behaviour at the default text scale. That file
-// seeds a 2-seat table; this file seeds the same seat count, so a case
-// here is comparable to that file's own green cases rather than to an
-// untested seat count invented for this file.
-//
-// "its width and the width of the chip's parent" (the order's own
-// wording) is ambiguous between (a) the RenderParagraph's own rendered
-// width versus the layout width it was given, the two quantities
-// test/large_text_fit_test.dart itself reports side by side as
-// `painterSize` and `width`, and (b) the literal render-tree parent of
-// the keyed chip widget, which in lib/src/home_screen.dart is the Center
-// wrapping Semantics wrapping the keyed DecoratedBox. This file reports
-// all of them, separately labelled, rather than guessing which one the
-// order meant: paragraphWidth (painted/measured), paragraphMaxWidth (the
-// layout bound passed to the paragraph), and parentWidth (the Center
-// ancestor's own rendered width). See the final report for this flagged
-// as an ambiguity.
+// Font loading and the ambient MediaQuery textScaler override through
+// MaterialApp.builder are the technique of test/large_text_fit_test.dart.
 //
 // One mount per case: a fresh HomeScreen, freshly seeded session memory,
 // real fonts, one surface size, one text scale, one locale.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -154,131 +127,6 @@ Future<void> _loadAppFonts() async {
   await notoSansArabic.load();
 }
 
-// ---------------------------------------------------------------------------
-// Measurement plumbing, copied from test/large_text_fit_test.dart's own
-// `_paragraphOf` / `_layoutMaxWidth` / `_painterFor`.
-// ---------------------------------------------------------------------------
-
-String _textOf(Text text) => text.data ?? text.textSpan?.toPlainText() ?? '';
-
-RenderParagraph _paragraphOf(WidgetTester tester, Finder textFinder) {
-  final Finder rich = find.descendant(
-    of: textFinder,
-    matching: find.byType(RichText),
-  );
-  return tester.renderObject<RenderParagraph>(rich);
-}
-
-/// RenderParagraph's own rule: unbounded unless it wraps or ellipsizes.
-double _layoutMaxWidth(RenderParagraph paragraph) {
-  final bool wraps =
-      paragraph.softWrap || paragraph.overflow == TextOverflow.ellipsis;
-  return wraps ? paragraph.constraints.maxWidth : double.infinity;
-}
-
-/// A fresh TextPainter from [paragraph]'s own resolved span, direction,
-/// scaler and maxLines, laid out at [paragraph]'s own rendered width
-/// (`_layoutMaxWidth`). Disposed by the caller.
-TextPainter _painterFor(RenderParagraph paragraph) {
-  final TextPainter painter = TextPainter(
-    text: paragraph.text,
-    textAlign: paragraph.textAlign,
-    textDirection: paragraph.textDirection,
-    textScaler: paragraph.textScaler,
-    maxLines: paragraph.maxLines,
-    locale: paragraph.locale,
-    strutStyle: paragraph.strutStyle,
-    textWidthBasis: paragraph.textWidthBasis,
-    textHeightBehavior: paragraph.textHeightBehavior,
-    ellipsis: paragraph.overflow == TextOverflow.ellipsis ? '…' : null,
-  );
-  painter.layout(
-    minWidth: paragraph.constraints.minWidth,
-    maxWidth: _layoutMaxWidth(paragraph),
-  );
-  return painter;
-}
-
-void _print(String line) {
-  // ignore: avoid_print
-  print(line);
-}
-
-/// Runs the X54 measurement against the mounted tree and prints one CASE
-/// line. Never throws: a missing or malformed chip is itself the finding,
-/// appended to the returned list, the same way
-/// test/large_text_fit_test.dart's own `_checkCase` works.
-List<String> _checkCase(WidgetTester tester, {required String label}) {
-  final List<String> reds = <String>[];
-
-  final Finder chipFinder = find.byKey(_chipKey);
-  if (!tester.any(chipFinder)) {
-    reds.add('$label: home-last-table-chip must be on screen, found none');
-    return reds;
-  }
-
-  final Finder textFinder = find.descendant(
-    of: chipFinder,
-    matching: find.byType(Text),
-  );
-  final int textCount = tester.widgetList(textFinder).length;
-  if (textCount != 1) {
-    reds.add(
-      '$label: home-last-table-chip must hold exactly one Text, found '
-      '$textCount',
-    );
-    return reds;
-  }
-
-  final Finder parentFinder = find.ancestor(
-    of: chipFinder,
-    matching: find.byType(Center),
-  );
-  if (!tester.any(parentFinder)) {
-    reds.add(
-      '$label: home-last-table-chip must have a Center ancestor to '
-      'measure as its parent (lib/src/home_screen.dart wraps '
-      '_LastTableChip in Center), found none',
-    );
-    return reds;
-  }
-
-  final String shownText = _textOf(tester.widget<Text>(textFinder));
-  final RenderParagraph paragraph = _paragraphOf(tester, textFinder);
-  final TextPainter painter = _painterFor(paragraph);
-  final double parentWidth = tester.getSize(parentFinder.first).width;
-  final double chipWidth = tester.getSize(chipFinder).width;
-  final double? styleFontSize = paragraph.text.style?.fontSize;
-  final double paintedFontSize = styleFontSize == null
-      ? 0
-      : paragraph.textScaler.scale(styleFontSize);
-
-  try {
-    _print(
-      'CASE $label text="$shownText" '
-      'ellipsized=${painter.didExceedMaxLines} '
-      'liveEllipsized=${paragraph.didExceedMaxLines} '
-      'fontSize=${paintedFontSize.toStringAsFixed(2)} '
-      'paragraphWidth=${painter.size.width.toStringAsFixed(1)} '
-      'paragraphMaxWidth=${paragraph.constraints.maxWidth.toStringAsFixed(1)} '
-      'parentWidth=${parentWidth.toStringAsFixed(1)} '
-      'chipWidth=${chipWidth.toStringAsFixed(1)}',
-    );
-    if (painter.didExceedMaxLines) {
-      reds.add(
-        '$label: home-last-table-chip text "$shownText" is cut '
-        '(ellipsized) at paragraph width '
-        '${paragraph.constraints.maxWidth.toStringAsFixed(1)} '
-        '(TextPainter.didExceedMaxLines=true)',
-      );
-    }
-  } finally {
-    painter.dispose();
-  }
-
-  return reds;
-}
-
 void main() {
   setUpAll(_loadAppFonts);
 
@@ -292,7 +140,9 @@ void main() {
         final String code = locale.languageCode;
         final String label = '$sizeLabel $code scale $scaleLabel';
 
-        testWidgets('$label: home-last-table-chip', (tester) async {
+        testWidgets('$label: home with a remembered table lays out, no chip', (
+          tester,
+        ) async {
           await _seedLastTable();
           final List<FlutterErrorDetails> captured = <FlutterErrorDetails>[];
           final FlutterExceptionHandler? previous = FlutterError.onError;
@@ -305,7 +155,12 @@ void main() {
               locale: locale,
               textScale: scale,
             );
-            reds.addAll(_checkCase(tester, label: label));
+            if (tester.any(find.byKey(_chipKey, skipOffstage: false))) {
+              reds.add(
+                '$label: expected no home-last-table-chip (C-678 removed '
+                'it), found one',
+              );
+            }
           } finally {
             FlutterError.onError = previous;
           }

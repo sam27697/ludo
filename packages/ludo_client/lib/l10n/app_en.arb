@@ -69,6 +69,10 @@
   "@homeLocaleToggleLabel": {
     "description": "Label of the language toggle button, naming the language it switches to."
   },
+  "homeLocaleToggleCode": "AR",
+  "@homeLocaleToggleCode": {
+    "description": "Two-letter code on the language toggle button, naming the language it switches to."
+  },
   "homeNameFieldLabel": "Your name",
   "@homeNameFieldLabel": {
     "description": "Label of the text field on the home screen where the player types the name shown to other players."

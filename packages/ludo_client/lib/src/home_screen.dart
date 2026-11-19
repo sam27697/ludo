@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
@@ -10,6 +11,8 @@ import 'deep_link.dart';
 import 'die_mark.dart';
 import 'directional_icon.dart';
 import 'game_screen.dart' show GameScreenResult;
+import 'home_logo_panel.dart';
+import 'home_style.dart';
 import 'lobby_screen.dart' show LobbyAction;
 import 'net/connection.dart' show RoomToggles;
 import 'net/room_controller.dart';
@@ -101,11 +104,9 @@ class _HomeScreenState extends State<HomeScreen>
   StreamSubscription<Uri>? _linkSubscription;
   late final AnimationController _enter;
   bool _enterMotionArmed = false;
-  bool _hasLastTable = false;
   // A stored non-empty name, with or without a seat count. The link gate
-  // reads this. The last-table chip still reads [_hasLastTable].
+  // reads this.
   bool _hasStoredName = false;
-  String? _lastTableName;
   List<String> _recentCodes = const <String>[];
   RoomController? _ownedController;
   // H3: the seat rejoin button shows exactly when this is non-null. C-669 R1:
@@ -553,8 +554,6 @@ class _HomeScreenState extends State<HomeScreen>
           }
           if (hasTable) {
             final String name = loaded.lastName!;
-            _hasLastTable = true;
-            _lastTableName = name;
             _nameController.text = name;
           }
           if (seatRecord != null) {
@@ -1119,8 +1118,6 @@ class _HomeScreenState extends State<HomeScreen>
       if (mounted) {
         setState(() {
           _hasStoredName = true;
-          _hasLastTable = true;
-          _lastTableName = name;
         });
       }
     }
@@ -1330,12 +1327,6 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// Fills the code field from a recent-chip tap. Does not navigate;
-  /// Join stays the next tap.
-  void _fillCodeFromRecent(String code) {
-    _codeController.text = code;
-  }
-
   /// Primary action is [ElevatedButton]; the quieter twin is [OutlinedButton].
   Widget _weightedButton({
     required Key key,
@@ -1345,20 +1336,23 @@ class _HomeScreenState extends State<HomeScreen>
     required bool primary,
   }) {
     final Widget labelWidget = Text(label);
-    if (primary) {
-      return ElevatedButton.icon(
-        key: key,
-        onPressed: onPressed,
-        icon: icon,
-        label: labelWidget,
-      );
-    }
-    return OutlinedButton.icon(
-      key: key,
-      onPressed: onPressed,
-      icon: icon,
-      label: labelWidget,
-    );
+    final ButtonStyle style = homeGoldButtonStyle();
+    final Widget button = primary
+        ? ElevatedButton.icon(
+            key: key,
+            onPressed: onPressed,
+            style: style,
+            icon: icon,
+            label: labelWidget,
+          )
+        : OutlinedButton.icon(
+            key: key,
+            onPressed: onPressed,
+            style: style,
+            icon: icon,
+            label: labelWidget,
+          );
+    return HomeGoldFrame(strong: primary, child: button);
   }
 
   Widget _joinButton(bool compact, bool joinPrimary, AppLocalizations loc) {
@@ -1396,20 +1390,14 @@ class _HomeScreenState extends State<HomeScreen>
     // before the join step still fits at text scale 1.3, so a safe height
     // under 800 keeps the side-by-side hero and only the die grows.
     final bool compact = safeHeight < 640;
-    final bool stackedHero = safeHeight >= 800;
-    final double dieSize = dieMarkSize(compact);
+    final double dieSize = math.min(
+      dieMarkSize(compact),
+      homeDieMarkSize(compact),
+    );
     final double afterBrand = compact ? kSpace3 : kSpace6;
     final double afterDie = compact ? kSpace4 : kSpace7;
-    // The D5 tagline wraps to more lines in the side-by-side hero's narrow
-    // text column, so the sections below it close up a step between 640 and
-    // 800 dp of safe height to keep the join step in view at text scale 1.3.
-    final double afterName = compact
-        ? kSpace3
-        : (stackedHero ? kSpace5 : kSpace4);
-    final double beforeCreate = compact
-        ? kSpace3
-        : (stackedHero ? kSpace6 : kSpace5);
-    final double aroundDivider = compact || !stackedHero ? kSpace1 : kSpace2;
+    final double beforeCreate = compact ? kSpace3 : kSpace4;
+    final double aroundDivider = compact ? kSpace1 : kSpace2;
 
     final Animation<double> brandOpacity = CurvedAnimation(
       parent: _enter,
@@ -1445,20 +1433,6 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         );
 
-    final TextStyle? brandStyle = compact
-        ? textTheme.headlineLarge?.copyWith(
-            fontWeight: FontWeight.w700,
-            color: LudoColors.ink,
-            letterSpacing: -0.5,
-            height: 1.05,
-          )
-        : textTheme.displaySmall?.copyWith(
-            fontWeight: FontWeight.w700,
-            color: LudoColors.ink,
-            letterSpacing: -0.5,
-            height: 1.05,
-          );
-
     return Scaffold(
       backgroundColor: LudoColors.paper,
       body: FeltBackdrop(
@@ -1482,46 +1456,52 @@ class _HomeScreenState extends State<HomeScreen>
                     children: [
                       // C-523 D7: the one sound switch, in the frame the
                       // settings button had.
-                      SoundToggleButton(
-                        key: const Key('home-sound-toggle'),
-                        style: IconButton.styleFrom(
-                          backgroundColor: LudoColors.paperElevated,
-                          foregroundColor: LudoColors.ink,
-                          minimumSize: const Size(48, 48),
-                          shape: StadiumBorder(
-                            side: BorderSide(
-                              color: LudoColors.inkMuted.withValues(alpha: 0.3),
-                              width: 1,
-                            ),
-                          ),
-                          side: BorderSide(
-                            color: LudoColors.inkMuted.withValues(alpha: 0.3),
-                            width: 1,
-                          ),
+                      HomeGoldFrame(
+                        radius: kHomeRadiusPill,
+                        child: SoundToggleButton(
+                          key: const Key('home-sound-toggle'),
+                          style: homeGoldIconStyle(),
                         ),
                       ),
                       const SizedBox(width: kSpace2),
-                      TextButton(
-                        key: const Key('locale-toggle-button'),
-                        onPressed: widget.onToggleLocale,
-                        style: TextButton.styleFrom(
-                          backgroundColor: LudoColors.paperElevated,
-                          foregroundColor: LudoColors.ink,
-                          minimumSize: const Size(48, 48),
-                          shape: StadiumBorder(
-                            side: BorderSide(
-                              color: LudoColors.inkMuted.withValues(alpha: 0.3),
-                              width: 1,
+                      HomeGoldFrame(
+                        radius: kHomeRadiusPill,
+                        child: TextButton(
+                          key: const Key('locale-toggle-button'),
+                          onPressed: widget.onToggleLocale,
+                          style: homeGoldIconStyle(),
+                          child: Semantics(
+                            label: loc.homeLocaleToggleLabel,
+                            excludeSemantics: true,
+                            child: Tooltip(
+                              message: loc.homeLocaleToggleTooltip,
+                              child: SizedBox(
+                                width: 40,
+                                height: 40,
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: <Widget>[
+                                      const Icon(
+                                        Icons.translate_rounded,
+                                        size: 18,
+                                      ),
+                                      Text(
+                                        loc.homeLocaleToggleCode,
+                                        style: const TextStyle(
+                                          fontSize: kTypeCode,
+                                          fontWeight: FontWeight.w700,
+                                          height: 1.1,
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
-                          side: BorderSide(
-                            color: LudoColors.inkMuted.withValues(alpha: 0.3),
-                            width: 1,
-                          ),
-                        ),
-                        child: Tooltip(
-                          message: loc.homeLocaleToggleTooltip,
-                          child: Text(loc.homeLocaleToggleLabel),
                         ),
                       ),
                     ],
@@ -1529,7 +1509,10 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               Expanded(
-                child: Center(
+                // Top-aligned, not centred: a notice that appears below the
+                // die must not move the logo and tagline above it.
+                child: Align(
+                  alignment: Alignment.topCenter,
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 400),
                     child: SingleChildScrollView(
@@ -1551,68 +1534,42 @@ class _HomeScreenState extends State<HomeScreen>
                                 opacity: dieOpacity,
                                 child: ScaleTransition(
                                   scale: dieScale,
-                                  child: !stackedHero
-                                      ? Row(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.center,
-                                          children: [
-                                            DieMark(
-                                              size: dieSize,
-                                              semanticsLabel: loc.appTitle,
-                                            ),
-                                            const SizedBox(width: kSpace4),
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    loc.appTitle,
-                                                    style: brandStyle,
-                                                  ),
-                                                  const SizedBox(
-                                                    height: kSpace1,
-                                                  ),
-                                                  Text(
-                                                    loc.homeTagline,
-                                                    style: textTheme.bodyMedium
-                                                        ?.copyWith(
-                                                          color: LudoColors
-                                                              .inkMuted,
-                                                          height: 1.3,
-                                                        ),
-                                                  ),
-                                                ],
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      const HomeLogoPanel(),
+                                      const SizedBox(height: kSpace1),
+                                      HomeGoldFrame(
+                                        key: const Key('home-tagline'),
+                                        child: Padding(
+                                          padding:
+                                              const EdgeInsetsDirectional.only(
+                                                start: kSpace3,
+                                                end: kSpace3,
+                                                top: kSpace1,
+                                                bottom: kSpace2,
                                               ),
-                                            ),
-                                          ],
-                                        )
-                                      : Column(
-                                          children: [
-                                            Text(
-                                              loc.appTitle,
-                                              textAlign: TextAlign.center,
-                                              style: brandStyle,
-                                            ),
-                                            const SizedBox(height: kSpace2),
-                                            Text(
+                                          child: FittedBox(
+                                            fit: BoxFit.scaleDown,
+                                            child: Text(
                                               loc.homeTagline,
+                                              maxLines: 1,
+                                              softWrap: false,
                                               textAlign: TextAlign.center,
-                                              style: textTheme.bodyLarge
+                                              style: textTheme.bodyMedium
                                                   ?.copyWith(
-                                                    color: LudoColors.inkMuted,
-                                                    height: 1.35,
+                                                    color: LudoColors.ink,
+                                                    height: 1.3,
                                                   ),
                                             ),
-                                            SizedBox(height: afterBrand),
-                                            Center(
-                                              child: DieMark(
-                                                size: dieSize,
-                                                semanticsLabel: loc.appTitle,
-                                              ),
-                                            ),
-                                          ],
+                                          ),
                                         ),
+                                      ),
+                                      SizedBox(height: afterBrand),
+                                      Center(child: DieMark(size: dieSize)),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
@@ -1764,11 +1721,6 @@ class _HomeScreenState extends State<HomeScreen>
                                           },
                                         ),
                                   ),
-                                  if (_hasLastTable &&
-                                      _lastTableName != null) ...[
-                                    SizedBox(height: afterName),
-                                    _LastTableChip(name: _lastTableName!),
-                                  ],
                                   SizedBox(height: beforeCreate),
                                   _weightedButton(
                                     key: const Key('create-room-button'),
@@ -1821,90 +1773,96 @@ class _HomeScreenState extends State<HomeScreen>
                                     key: _codeFieldScrollKey,
                                     child: Semantics(
                                       label: loc.homeRoomCodeFieldLabel,
-                                      child: TextField(
-                                        key: const Key('room-code-field'),
-                                        focusNode: _codeFocusNode,
-                                        controller: _codeController,
-                                        textAlign: TextAlign.center,
-                                        textCapitalization:
-                                            TextCapitalization.characters,
-                                        textInputAction: TextInputAction.go,
-                                        onSubmitted: (_) {
-                                          if (joinPrimary) {
-                                            _joinRoom(
-                                              fromLink: _codeIsFromLink,
-                                            );
-                                          }
-                                        },
-                                        inputFormatters:
-                                            const <TextInputFormatter>[
-                                              _RoomCodeInputFormatter(),
-                                            ],
-                                        style: textTheme.titleLarge?.copyWith(
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: 4,
-                                        ),
-                                        decoration: InputDecoration(
-                                          hintText: loc.homeRoomCodeFieldLabel,
-                                          hintStyle: textTheme.bodyLarge
-                                              ?.copyWith(
-                                                color: LudoColors.inkMuted,
-                                              ),
-                                          errorText: _errorText,
-                                          // Unset, InputDecoration truncates errorText
-                                          // to one line with an ellipsis.
-                                          // homeRoomCodeInvalid needs four lines to
-                                          // clear at this field's width in either
-                                          // locale.
-                                          errorMaxLines: 4,
-                                          filled: true,
-                                          fillColor: LudoColors.paperElevated,
-                                          isDense: compact,
-                                          prefixIcon: const Icon(
-                                            Icons.tag,
-                                            color: LudoColors.inkMuted,
+                                      child: HomeGoldFrame(
+                                        child: TextField(
+                                          key: const Key('room-code-field'),
+                                          focusNode: _codeFocusNode,
+                                          controller: _codeController,
+                                          textAlign: TextAlign.center,
+                                          textCapitalization:
+                                              TextCapitalization.characters,
+                                          textInputAction: TextInputAction.go,
+                                          onSubmitted: (_) {
+                                            if (joinPrimary) {
+                                              _joinRoom(
+                                                fromLink: _codeIsFromLink,
+                                              );
+                                            }
+                                          },
+                                          inputFormatters:
+                                              const <TextInputFormatter>[
+                                                _RoomCodeInputFormatter(),
+                                              ],
+                                          style: textTheme.titleLarge?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                            letterSpacing: 4,
                                           ),
-                                          border: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              kRadiusControl,
-                                            ),
-                                            borderSide: BorderSide.none,
-                                          ),
-                                          enabledBorder: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              kRadiusControl,
-                                            ),
-                                            borderSide: BorderSide.none,
-                                          ),
-                                          focusedBorder: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              kRadiusControl,
-                                            ),
-                                            borderSide: const BorderSide(
-                                              color: LudoColors.action,
-                                              width: 2,
-                                            ),
-                                          ),
-                                          errorBorder: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              kRadiusControl,
-                                            ),
-                                            borderSide: const BorderSide(
-                                              color: LudoColors.error,
-                                              width: 2,
-                                            ),
-                                          ),
-                                          focusedErrorBorder:
-                                              OutlineInputBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(
-                                                      kRadiusControl,
-                                                    ),
-                                                borderSide: const BorderSide(
-                                                  color: LudoColors.error,
-                                                  width: 2,
+                                          decoration: InputDecoration(
+                                            hintText:
+                                                loc.homeRoomCodeFieldLabel,
+                                            hintStyle: textTheme.bodyLarge
+                                                ?.copyWith(
+                                                  color: LudoColors.inkMuted,
                                                 ),
+                                            errorText: _errorText,
+                                            // Unset, InputDecoration truncates errorText
+                                            // to one line with an ellipsis.
+                                            // homeRoomCodeInvalid needs four lines to
+                                            // clear at this field's width in either
+                                            // locale.
+                                            errorMaxLines: 4,
+                                            filled: false,
+                                            isDense: compact,
+                                            prefixIcon: const Icon(
+                                              Icons.tag,
+                                              color: LudoColors.inkMuted,
+                                            ),
+                                            border: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                    kRadiusControl,
+                                                  ),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                            enabledBorder: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                    kRadiusControl,
+                                                  ),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                            focusedBorder: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                    kRadiusControl,
+                                                  ),
+                                              borderSide: const BorderSide(
+                                                color: LudoColors.action,
+                                                width: 2,
                                               ),
+                                            ),
+                                            errorBorder: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                    kRadiusControl,
+                                                  ),
+                                              borderSide: const BorderSide(
+                                                color: LudoColors.error,
+                                                width: 2,
+                                              ),
+                                            ),
+                                            focusedErrorBorder:
+                                                OutlineInputBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                        kRadiusControl,
+                                                      ),
+                                                  borderSide: const BorderSide(
+                                                    color: LudoColors.error,
+                                                    width: 2,
+                                                  ),
+                                                ),
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -1931,15 +1889,6 @@ class _HomeScreenState extends State<HomeScreen>
                                               width: double.infinity,
                                             ),
                                     ),
-                                  if (_recentCodes.isNotEmpty) ...[
-                                    SizedBox(
-                                      height: compact ? kSpace2 : kSpace3,
-                                    ),
-                                    _RecentCodes(
-                                      codes: _recentCodes,
-                                      onSelect: _fillCodeFromRecent,
-                                    ),
-                                  ],
                                   if (_showLastGame) ...[
                                     SizedBox(
                                       height: compact ? kSpace3 : kSpace4,
@@ -2267,68 +2216,11 @@ class _HomeNoticeState extends State<_HomeNotice> {
   }
 }
 
-/// Last successful table, shown when [SessionMemory.hasLastTable] is true.
-/// C-666 D1: the name only; the table size is no longer a choice, so the chip
-/// no longer states it.
-/// Visual weight stays below Create (muted paper, not action fill) so
-/// Create still outweighs Join with the chip on screen.
-class _LastTableChip extends StatelessWidget {
-  const _LastTableChip({required this.name});
-
-  final String name;
-
-  @override
-  Widget build(BuildContext context) {
-    final TextTheme textTheme = Theme.of(context).textTheme;
-    // C-351: at a system text scale of 1.5 and above the name may wrap to a
-    // second line; below that nothing changes (one line, ellipsis). The
-    // scale is read off the ambient TextScaler at this chip's own font
-    // size, never off the platform directly, so it answers "how much
-    // bigger is this text actually drawn", not "what did the OS report".
-    final double scaleAtLabel =
-        MediaQuery.textScalerOf(context).scale(kTypeLabel) / kTypeLabel;
-    final int maxLines = scaleAtLabel >= 1.5 ? 2 : 1;
-    return Center(
-      child: Semantics(
-        container: true,
-        label: name,
-        excludeSemantics: true,
-        child: DecoratedBox(
-          key: const Key('home-last-table-chip'),
-          decoration: BoxDecoration(
-            // Informational, not tappable: wash fill and a lighter felt
-            // edge so this chip cannot be mistaken for a recent-code pill.
-            color: LudoColors.paperWashTop,
-            borderRadius: BorderRadius.circular(kRadiusControl),
-            border: Border.all(color: LudoColors.feltLight),
-          ),
-          child: Padding(
-            padding: const EdgeInsetsDirectional.symmetric(
-              horizontal: kSpace3,
-              vertical: kSpace2,
-            ),
-            child: Text(
-              name,
-              maxLines: maxLines,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: textTheme.labelLarge?.copyWith(
-                color: LudoColors.ink,
-                fontSize: kTypeLabel,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// C-322: the last finished game's verify link, kept reachable from home
-/// for 90 days after the table is gone (rule 3). Same register as
-/// [_LastTableChip] -- paper wash, felt edge, ink text, no action fill --
-/// so a returning player reads this as a standing fact about their last
-/// game, not a third thing to tap toward. The leading icon is a second,
+/// for 90 days after the table is gone (rule 3). Same gold frame as the
+/// other home surfaces, ink text, no action fill, so a returning player
+/// reads this as a standing fact about their last game, not a third thing
+/// to tap toward. The leading icon is a second,
 /// non-colour signal that this entry carries a verified link (doctrine P9).
 class _LastGameEntry extends StatelessWidget {
   const _LastGameEntry({required this.game, required this.onCheck});
@@ -2340,13 +2232,8 @@ class _LastGameEntry extends StatelessWidget {
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
     final TextTheme textTheme = Theme.of(context).textTheme;
-    return DecoratedBox(
+    return HomeGoldFrame(
       key: const Key('home-last-game'),
-      decoration: BoxDecoration(
-        color: LudoColors.paperWashTop,
-        borderRadius: BorderRadius.circular(kRadiusControl),
-        border: Border.all(color: LudoColors.feltLight),
-      ),
       child: Padding(
         padding: const EdgeInsetsDirectional.all(kSpace3),
         child: Column(
@@ -2365,87 +2252,9 @@ class _LastGameEntry extends StatelessWidget {
             VerifyRollsButton(
               key: const Key('home-last-game-check'),
               onPressed: onCheck,
+              goldFrame: true,
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Recent successful join codes, shown under Join when the store has any.
-/// Visual weight stays below Join (muted paper, not action fill) so a chip
-/// tap fills the field and Join remains the next tap.
-class _RecentCodes extends StatelessWidget {
-  const _RecentCodes({required this.codes, required this.onSelect});
-
-  final List<String> codes;
-  final ValueChanged<String> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      key: const Key('home-recent-codes'),
-      alignment: WrapAlignment.center,
-      spacing: kSpace2,
-      runSpacing: kSpace2,
-      children: [
-        for (final String code in codes)
-          _RecentCodeChip(code: code, onPressed: () => onSelect(code)),
-      ],
-    );
-  }
-}
-
-/// One recent room code. Tapping fills [HomeScreen]'s code field only.
-class _RecentCodeChip extends StatelessWidget {
-  const _RecentCodeChip({required this.code, required this.onPressed});
-
-  final String code;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final TextTheme textTheme = Theme.of(context).textTheme;
-    return Semantics(
-      button: true,
-      label: code,
-      child: IntrinsicWidth(
-        child: Material(
-          color: LudoColors.paperElevated,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(kRadiusControl),
-            side: const BorderSide(color: LudoColors.feltMid),
-          ),
-          child: InkWell(
-            key: Key('home-recent-code-$code'),
-            onTap: onPressed,
-            customBorder: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(kRadiusControl),
-            ),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-              child: Padding(
-                padding: const EdgeInsetsDirectional.symmetric(
-                  horizontal: kSpace3,
-                  vertical: kSpace2,
-                ),
-                child: Align(
-                  alignment: Alignment.center,
-                  widthFactor: 1,
-                  heightFactor: 1,
-                  child: Text(
-                    code,
-                    textAlign: TextAlign.center,
-                    style: textTheme.labelLarge?.copyWith(
-                      color: LudoColors.ink,
-                      fontSize: kTypeLabel,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
         ),
       ),
     );

@@ -264,24 +264,6 @@ List<String> _paintedStrings() {
   return out;
 }
 
-/// Painted strings below [root] only.
-List<String> _paintedStringsUnder(Element root) {
-  final List<String> out = <String>[];
-  void visit(Element element) {
-    final Widget widget = element.widget;
-    if (widget is Icon) {
-      return;
-    }
-    if (widget is RichText) {
-      out.add(widget.text.toPlainText(includeSemanticsLabels: false));
-    }
-    element.visitChildren(visit);
-  }
-
-  visit(root);
-  return out;
-}
-
 Future<void> _scrollToEnd(WidgetTester tester) async {
   final ScrollPosition position = Scrollable.of(
     tester.element(find.byKey(_codeKey)),
@@ -527,49 +509,12 @@ void main() {
           final _LiveControllerFactory factory = _LiveControllerFactory();
           await _mount(tester, locale: locale, controllerFactory: factory.call);
 
-          final Finder chip = find.byKey(_lastTableKey);
           expect(
-            chip,
-            findsOneWidget,
-            reason:
-                'expected home-last-table-chip with a remembered table. '
-                '$repro',
-          );
-          expect(
-            find.descendant(
-              of: chip,
-              matching: find.byWidgetPredicate(
-                (Widget w) => w.runtimeType.toString() == 'PlayerCountIcon',
-              ),
-            ),
+            find.byKey(_lastTableKey, skipOffstage: false),
             findsNothing,
             reason:
-                'expected no PlayerCountIcon in the last-table chip. $repro',
-          );
-          expect(
-            find.descendant(
-              of: chip,
-              matching: find.byIcon(Icons.person_rounded),
-            ),
-            findsNothing,
-            reason: 'expected no person figure in the last-table chip. $repro',
-          );
-          final String painted = _paintedStringsUnder(tester.element(chip))
-              .join()
-              .replaceAll(RegExp('[\\s·]'), '');
-          expect(
-            painted,
-            'ZedQuartz',
-            reason:
-                'expected the chip to paint the table name and nothing else '
-                '(no seat text); it paints "$painted". $repro',
-          );
-          expect(
-            tester.getSemantics(chip).label.split('\n').first,
-            'Zed Quartz',
-            reason:
-                'expected the chip spoken label to be the table name '
-                'alone; got "${tester.getSemantics(chip).label}". $repro',
+                'expected no home-last-table-chip even with a remembered '
+                'table (C-678 removed it). $repro',
           );
           expect(
             find.byKey(_playersButtonKey, skipOffstage: false),
@@ -717,34 +662,24 @@ void main() {
         expectAbsent('after clearing the field');
       });
 
-      // Red on 7501227: same unconditional join-room-button at
-      // home_screen.dart:1754; the recent chip fills the field through
-      // _fillCodeFromRecent (:1120) without anything toggling Join.
-      testWidgets('a recent-code chip tap brings Join', (tester) async {
-        const String name = 'recent chip brings join';
+      // C-678: the recent-code chips are gone, so a remembered code neither
+      // shows as a chip nor brings Join; only typing does.
+      testWidgets('a remembered code shows no chip and no Join', (
+        tester,
+      ) async {
+        const String name = 'remembered code, no chip';
         final String repro = _repro(name, locale);
         await SessionMemory.recordSuccessfulJoin('AB23CD');
         await _mount(tester, locale: locale);
         expect(
+          find.byKey(const Key('home-recent-code-AB23CD'), skipOffstage: false),
+          findsNothing,
+          reason: 'expected no recent-code chip (C-678). $repro',
+        );
+        expect(
           _join(),
           findsNothing,
-          reason: 'expected no Join before the chip is tapped. $repro',
-        );
-        final Finder chip = find.byKey(const Key('home-recent-code-AB23CD'));
-        await tester.ensureVisible(chip);
-        await tester.tap(chip);
-        await tester.pumpAndSettle();
-        expect(
-          _codeText(tester),
-          'AB23CD',
-          reason: 'fixture: the chip tap must fill the field. $repro',
-        );
-        expect(
-          find.byKey(_joinKey),
-          findsOneWidget,
-          reason:
-              'expected join-room-button after a recent-code chip filled '
-              'the field with a full code. $repro',
+          reason: 'expected no Join while the code field is empty. $repro',
         );
       });
 

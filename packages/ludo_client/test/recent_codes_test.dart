@@ -1,9 +1,9 @@
-// Widget tests for recent room-code chips under Join.
+// Widget tests for the recent room-code memory behind Join.
 //
-// After a successful join, Home must show the joined code in a list keyed
-// home-recent-codes (max 3, newest first). Each chip is keyed
-// home-recent-code-<CODE>. Tapping a chip fills room-code-field and does
-// not navigate; Join stays the next tap.
+// After a successful join, session memory keeps the joined code (max 3,
+// newest first). Since C-678 Home no longer shows them as chips under the
+// join field: the data stays, the keys home-recent-codes and
+// home-recent-code-<CODE> are gone.
 //
 // Join Room builds a RoomController from widget.controllerFactory().
 // These tests inject a factory wired to FakeTransport so the join can
@@ -23,6 +23,7 @@ import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
+import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
@@ -119,21 +120,6 @@ class _RecordingControllerFactory {
   }
 }
 
-class _NavigatorProbe extends NavigatorObserver {
-  int pushCount = 0;
-  int popCount = 0;
-
-  @override
-  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    pushCount += 1;
-  }
-
-  @override
-  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    popCount += 1;
-  }
-}
-
 Widget _homeScreenApp(
   RoomControllerFactory controllerFactory, {
   Key? key,
@@ -188,30 +174,22 @@ String _codeFieldText(WidgetTester tester) {
 
 Key _recentChipKey(String code) => Key('$_recentChipKeyPrefix$code');
 
-List<String> _recentChipCodes(WidgetTester tester) {
-  final Finder list = find.byKey(_recentListKey);
+Future<List<String>> _storedCodes() async =>
+    (await SessionMemory.load()).recentCodes;
+
+void _expectNoChips(WidgetTester tester, List<String> codes) {
   expect(
-    list,
-    findsOneWidget,
-    reason:
-        'after a successful join, Home must show recent room-code chips '
-        'in a widget keyed home-recent-codes',
+    find.byKey(_recentListKey, skipOffstage: false),
+    findsNothing,
+    reason: 'C-678: Home must not show home-recent-codes',
   );
-  final List<String> codes = <String>[];
-  for (final Widget widget in tester.widgetList(
-    find.descendant(
-      of: list,
-      matching: find.byWidgetPredicate((Widget widget) {
-        final Key? key = widget.key;
-        return key is ValueKey<String> &&
-            key.value.startsWith(_recentChipKeyPrefix);
-      }),
-    ),
-  )) {
-    final String value = (widget.key! as ValueKey<String>).value;
-    codes.add(value.substring(_recentChipKeyPrefix.length));
+  for (final String code in codes) {
+    expect(
+      find.byKey(_recentChipKey(code), skipOffstage: false),
+      findsNothing,
+      reason: 'C-678: Home must not show home-recent-code-$code',
+    );
   }
-  return codes;
 }
 
 Future<void> _completeSuccessfulJoin(
@@ -324,8 +302,8 @@ void main() {
   });
 
   testWidgets(
-    'successful join then return to Home shows that code newest-first in '
-    'home-recent-codes',
+    'successful join then return to Home keeps that code in session memory '
+    'and shows no chip',
     (tester) async {
       final _RecordingControllerFactory factory = _RecordingControllerFactory();
       await tester.pumpWidget(_homeScreenApp(factory.call));
@@ -339,25 +317,17 @@ void main() {
       );
 
       expect(
-        _recentChipCodes(tester),
+        await _storedCodes(),
         <String>[_codeOldest],
         reason:
-            'after a successful join, Home must show the joined code '
-            '"$_codeOldest" in home-recent-codes, newest first',
+            'after a successful join, session memory must keep the joined '
+            'code "$_codeOldest"',
       );
-      expect(find.byKey(_recentChipKey(_codeOldest)), findsOneWidget);
-      expect(
-        find.descendant(
-          of: find.byKey(_recentListKey),
-          matching: find.text(_codeOldest),
-        ),
-        findsOneWidget,
-        reason: 'the recent chip for $_codeOldest must show that code',
-      );
+      _expectNoChips(tester, <String>[_codeOldest]);
     },
   );
 
-  testWidgets('four successful joins keep at most three chips newest first', (
+  testWidgets('four successful joins keep at most three codes newest first', (
     tester,
   ) async {
     final _RecordingControllerFactory factory = _RecordingControllerFactory();
@@ -375,27 +345,18 @@ void main() {
     }
 
     expect(
-      _recentChipCodes(tester),
+      await _storedCodes(),
       <String>[_codeNewest, _codeNewer, _codeMid],
       reason:
-          'home-recent-codes must keep at most three codes, newest first; '
-          'after joining $joined the list must be '
-          '[$_codeNewest, $_codeNewer, $_codeMid]',
+          'session memory must keep at most three codes, newest first; '
+          'after joining $joined it must be [$_codeNewest, $_codeNewer, '
+          '$_codeMid]',
     );
-    expect(
-      find.byKey(_recentChipKey(_codeOldest)),
-      findsNothing,
-      reason:
-          'the oldest of four successful joins ($_codeOldest) must drop '
-          'off the recent list',
-    );
-    expect(find.byKey(_recentChipKey(_codeNewest)), findsOneWidget);
-    expect(find.byKey(_recentChipKey(_codeNewer)), findsOneWidget);
-    expect(find.byKey(_recentChipKey(_codeMid)), findsOneWidget);
+    _expectNoChips(tester, joined);
   });
 
   testWidgets(
-    'relaunch after successful join still shows the code in home-recent-codes',
+    'relaunch after successful join keeps the code in memory, shows no chip',
     (tester) async {
       final _RecordingControllerFactory factory = _RecordingControllerFactory();
       await tester.pumpWidget(
@@ -419,87 +380,17 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        _recentChipCodes(tester),
+        await _storedCodes(),
         <String>[_codeMid],
         reason:
-            'after a successful join, relaunching Home must still show '
-            '"$_codeMid" in home-recent-codes without retyping',
+            'after a successful join, a relaunch must still find "$_codeMid" '
+            'in session memory',
       );
-      expect(find.byKey(_recentChipKey(_codeMid)), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'tapping a recent chip fills room-code-field and does not navigate',
-    (tester) async {
-      final _RecordingControllerFactory factory = _RecordingControllerFactory();
-      final _NavigatorProbe observer = _NavigatorProbe();
-      await tester.pumpWidget(_homeScreenApp(factory.call, observer: observer));
-      await tester.pumpAndSettle();
-
-      await _joinThenReturnHome(
-        tester,
-        factory,
-        code: _codeOldest,
-        name: 'Riri',
-      );
-
-      expect(
-        find.byKey(_recentChipKey(_codeOldest)),
-        findsOneWidget,
-        reason:
-            'after a successful join, Home must show a tappable chip keyed '
-            'home-recent-code-$_codeOldest so a tap can fill room-code-field '
-            'without navigating',
-      );
-
-      await tester.enterText(find.byKey(_codeKey), '');
-      await tester.pump();
+      _expectNoChips(tester, <String>[_codeMid]);
       expect(
         _codeFieldText(tester),
         isEmpty,
-        reason:
-            'fixture is broken: the code field must be empty before the '
-            'chip tap so a leftover join value cannot masquerade as a fill',
-      );
-
-      final int pushesBeforeTap = observer.pushCount;
-      final int popsBeforeTap = observer.popCount;
-
-      final Finder chip = find.byKey(_recentChipKey(_codeOldest));
-      await tester.ensureVisible(chip);
-      await tester.tap(chip);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-
-      expect(
-        _codeFieldText(tester),
-        _codeOldest,
-        reason:
-            'tapping home-recent-code-$_codeOldest must fill room-code-field '
-            'with "$_codeOldest" and nothing else',
-      );
-      expect(
-        find.byType(LobbyScreen),
-        findsNothing,
-        reason: 'tapping a recent chip must not navigate; Join is the next tap',
-      );
-      expect(
-        observer.pushCount,
-        pushesBeforeTap,
-        reason:
-            'tapping a recent chip must not push a route; pushes went from '
-            '$pushesBeforeTap to ${observer.pushCount}',
-      );
-      expect(
-        observer.popCount,
-        popsBeforeTap,
-        reason: 'tapping a recent chip must not pop a route',
-      );
-      expect(
-        find.byKey(_joinKey),
-        findsOneWidget,
-        reason: 'Join must remain on Home after a recent-chip tap',
+        reason: 'the relaunched code field starts empty; no chip fills it',
       );
     },
   );
