@@ -9,6 +9,10 @@ import 'theme.dart';
 /// this so compact and shoutable layouts stay locked together.
 double dieMarkSize(bool compact) => compact ? 72 : 148;
 
+/// Home's own face size: shorter than [dieMarkSize] so the front door fits
+/// a 780 dp phone without scrolling. The lobby keeps [dieMarkSize].
+double homeDieMarkSize(bool compact) => compact ? 56 : 88;
+
 /// Pip diameter on the compact game-chrome seat strip (space-2 on the 4/8 scale).
 const double kSeatPipSize = 8;
 

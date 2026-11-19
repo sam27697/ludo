@@ -10,7 +10,15 @@ import 'theme.dart';
 /// that opens the match's verification page. Quieter than primary actions,
 /// louder than a caption, mirrored in Arabic with EdgeInsetsDirectional.
 class VerifyRollsButton extends StatelessWidget {
-  const VerifyRollsButton({super.key, required this.onPressed});
+  const VerifyRollsButton({
+    super.key,
+    required this.onPressed,
+    this.goldFrame = false,
+  });
+
+  /// Home's last-game card: no border or fill of its own, because the
+  /// surrounding gold frame already draws them.
+  final bool goldFrame;
 
   final VoidCallback? onPressed;
 
@@ -25,9 +33,9 @@ class VerifyRollsButton extends StatelessWidget {
     return OutlinedButton(
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
-        foregroundColor: LudoColors.feltMid,
+        foregroundColor: goldFrame ? LudoColors.ink : LudoColors.feltMid,
         disabledForegroundColor: color,
-        side: BorderSide(color: color),
+        side: goldFrame ? BorderSide.none : BorderSide(color: color),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(kRadiusControl),
         ),
