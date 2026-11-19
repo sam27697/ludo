@@ -1391,8 +1391,8 @@ class _HomeScreenState extends State<HomeScreen>
     final bool compact = safeHeight < 640;
     final double dieSize = homeDieMarkSize(compact);
     final double logoHeight = compact ? 52 : 68;
-    final double afterBrand = compact ? kSpace1 : kSpace2;
-    final double afterDie = compact ? kSpace3 : kSpace5;
+    final double afterBrand = compact ? kSpace3 : kSpace6;
+    final double afterDie = compact ? kSpace4 : kSpace7;
     final double beforeCreate = compact ? kSpace3 : kSpace4;
     final double aroundDivider = compact ? kSpace1 : kSpace2;
 
@@ -1506,7 +1506,10 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               Expanded(
-                child: Center(
+                // Top-aligned, not centred: a notice that appears below the
+                // die must not move the logo and tagline above it.
+                child: Align(
+                  alignment: Alignment.topCenter,
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 400),
                     child: SingleChildScrollView(
