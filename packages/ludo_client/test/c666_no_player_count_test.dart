@@ -878,45 +878,12 @@ void main() {
                   'expected the stored table name restored into the name '
                   'field. $repro',
             );
-            final Finder chip = find.byKey(_lastTableKey);
             expect(
-              chip,
-              findsOneWidget,
-              reason: 'expected the last-table chip to show. $repro',
-            );
-            final String painted = _paintedStrings(tester.element(chip))
-                .join()
-                .replaceAll(RegExp('[\\s·]'), '');
-            expect(
-              painted,
-              'ZedQuartz',
-              reason:
-                  'expected the chip to paint the table name and nothing '
-                  'else; it paints "$painted". $repro',
-            );
-            expect(
-              find.descendant(
-                of: chip,
-                matching: find.byWidgetPredicate(_isPlayerCountIcon),
-              ),
+              find.byKey(_lastTableKey, skipOffstage: false),
               findsNothing,
-              reason: 'expected no PlayerCountIcon in the chip. $repro',
-            );
-            expect(
-              find.descendant(
-                of: chip,
-                matching: find.byIcon(Icons.person_rounded),
-              ),
-              findsNothing,
-              reason: 'expected no person figure in the chip. $repro',
-            );
-            final String spoken = tester.getSemantics(chip).label;
-            expect(
-              spoken.split('\n').first,
-              'Zed Quartz',
               reason:
-                  'expected the chip spoken label to be the table name '
-                  'alone; got "$spoken". $repro',
+                  'expected no last-table chip on Home (C-678 removed it). '
+                  '$repro',
             );
             expect(
               find.byKey(const Key('home-players-button'), skipOffstage: false),
@@ -1474,7 +1441,7 @@ void main() {
 
     testWidgets('320x568 at text scale 2.0, $lc: home with a long stored '
         'last table name throws no layout exception', (tester) async {
-      const String name = 'home small and large with chip';
+      const String name = 'home small and large with stored name';
       final String repro = _repro(name, locale, '320x568 at 2.0');
       await SessionMemory.recordSuccessfulCreate(
         name: lc == 'ar'
@@ -1484,14 +1451,16 @@ void main() {
       );
       await _mountHome(tester, locale: locale, size: small, textScale: 2.0);
       expect(
-        find.byKey(_lastTableKey),
-        findsOneWidget,
-        reason: 'fixture: the stored table must show its chip. $repro',
+        find.byKey(_lastTableKey, skipOffstage: false),
+        findsNothing,
+        reason: 'expected no chip for the stored table (C-678). $repro',
       );
       expect(
         tester.takeException(),
         isNull,
-        reason: 'expected no layout exception on home with the chip. $repro',
+        reason:
+            'expected no layout exception on home with a long stored name. '
+            '$repro',
       );
     });
 
