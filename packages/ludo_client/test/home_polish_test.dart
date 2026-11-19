@@ -34,6 +34,7 @@ import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/die_mark.dart';
 import 'package:ludo_client/src/home_screen.dart';
+import 'package:ludo_client/src/home_style.dart' show HomeGoldFramePainter;
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/session_memory.dart';
 import 'package:ludo_client/src/theme.dart' show buildAppTheme;
@@ -157,23 +158,30 @@ bool _sameFrame(Rect frame, Rect target, double slack) =>
     (frame.center - target.center).distance <= slack;
 
 class _Frame {
-  _Frame(this.gradients, this.colors);
+  _Frame(this.gradients, this.colors, this.painters);
   final List<Gradient> gradients;
   final List<Color> colors;
+
+  /// Gold frame painters found at the control's size, with that size.
+  final List<(HomeGoldFramePainter, Size)> painters;
 }
 
-/// Global rects of every semantics node [matches] finds.
+/// Global rects of every semantics node [matches] finds. A node's own
+/// transform is relative to its parent, so the chain up to the root is
+/// composed.
 List<Rect> _semanticsRects(WidgetTester tester, Finder matches) {
   final List<Rect> out = <Rect>[];
   final int n = matches.evaluate().length;
   for (int i = 0; i < n; i++) {
     final SemanticsNode node = tester.getSemantics(matches.at(i));
-    out.add(
-      MatrixUtils.transformRect(
-        node.transform ?? Matrix4.identity(),
-        node.rect,
-      ),
-    );
+    final Matrix4 toGlobal = Matrix4.identity();
+    SemanticsNode? up = node;
+    while (up != null) {
+      final Matrix4? t = up.transform;
+      if (t != null) toGlobal.multiply(t);
+      up = up.parent;
+    }
+    out.add(MatrixUtils.transformRect(toGlobal, node.rect));
   }
   return out;
 }
@@ -194,6 +202,8 @@ _Frame _frameOf(WidgetTester tester, Finder key) {
   final Rect target = _rectOf(keyed);
   final List<Gradient> gradients = <Gradient>[];
   final List<Color> colors = <Color>[];
+  final List<(HomeGoldFramePainter, Size)> painters =
+      <(HomeGoldFramePainter, Size)>[];
 
   void takeDecoration(Decoration? d) {
     if (d is BoxDecoration) {
@@ -228,6 +238,17 @@ _Frame _frameOf(WidgetTester tester, Finder key) {
       takeDecoration((e.widget as DecoratedBox).decoration);
     }
   }
+  final List<Element> painted = <Element>[
+    ...find.ancestor(of: key, matching: find.byType(CustomPaint)).evaluate(),
+    ...find.descendant(of: key, matching: find.byType(CustomPaint)).evaluate(),
+    ...key.evaluate().where((Element e) => e.widget is CustomPaint),
+  ];
+  for (final Element e in painted) {
+    final CustomPainter? p = (e.widget as CustomPaint).painter;
+    if (p is HomeGoldFramePainter && _sameFrame(_rectOf(e), target, 14)) {
+      painters.add((p, _rectOf(e).size));
+    }
+  }
   final List<Element> materials = <Element>[
     ...find.ancestor(of: key, matching: find.byType(Material)).evaluate(),
     ...find.descendant(of: key, matching: find.byType(Material)).evaluate(),
@@ -247,18 +268,43 @@ _Frame _frameOf(WidgetTester tester, Finder key) {
     final BorderSide? side = w.style!.side?.resolve(<WidgetState>{});
     if (side != null && side != BorderSide.none) colors.add(side.color);
   }
-  return _Frame(gradients, colors);
+  return _Frame(gradients, colors, painters);
 }
 
-void _expectGoldStyle(WidgetTester tester, Finder key, String what, String r) {
+/// Rasterises [painter] alone on a transparent canvas: the colours the shared
+/// frame helper really paints, independent of what sits behind it.
+Future<ByteData> _paintFrame(
+  WidgetTester tester,
+  HomeGoldFramePainter painter,
+  Size size,
+) async {
+  final ByteData? data = await tester.runAsync<ByteData?>(() async {
+    final ui.PictureRecorder rec = ui.PictureRecorder();
+    painter.paint(ui.Canvas(rec), size);
+    final ui.Image img = await rec.endRecording().toImage(
+      size.width.ceil(),
+      size.height.ceil(),
+    );
+    return img.toByteData();
+  });
+  return data!;
+}
+
+Future<void> _expectGoldStyle(
+  WidgetTester tester,
+  Finder key,
+  String what,
+  String r,
+) async {
   expect(key, findsOneWidget, reason: '$what must be on Home. $r');
   final _Frame f = _frameOf(tester, key);
   expect(
-    f.gradients,
-    isNotEmpty,
+    f.gradients.isNotEmpty || f.painters.isNotEmpty,
+    isTrue,
     reason:
-        'expected $what to sit in the shared gradient frame (a DecoratedBox '
-        'with a gradient at its own size); found none. $r',
+        'expected $what to sit in the shared gold frame (a DecoratedBox with '
+        'a gradient or a HomeGoldFramePainter at its own size); found none. '
+        '$r',
   );
   for (final Gradient g in f.gradients) {
     expect(
@@ -277,6 +323,49 @@ void _expectGoldStyle(WidgetTester tester, Finder key, String what, String r) {
         'expected no white fill or border on $what (light-gold tint instead); '
         'found $white. $r',
   );
+  for (final (HomeGoldFramePainter, Size) p in f.painters) {
+    final Size size = p.$2;
+    final ByteData px = await _paintFrame(tester, p.$1, size);
+    final int w = size.width.ceil();
+    int opaque = 0;
+    int whitePixels = 0;
+    for (int i = 0; i < px.lengthInBytes; i += 4) {
+      final int a = px.getUint8(i + 3);
+      if (a < 8) continue;
+      opaque++;
+      // Unpremultiplied channels: a white fill would stay near 255.
+      final double scale = 255 / a;
+      if (px.getUint8(i) * scale >= 240 &&
+          px.getUint8(i + 1) * scale >= 240 &&
+          px.getUint8(i + 2) * scale >= 240) {
+        whitePixels++;
+      }
+    }
+    expect(
+      opaque,
+      greaterThan(0),
+      reason: 'expected the frame painter of $what to paint something. $r',
+    );
+    expect(
+      whitePixels,
+      0,
+      reason:
+          'expected no white pixel in the frame painted for $what; '
+          '$whitePixels of $opaque are near white. $r',
+    );
+    // Fade: the fill is stronger at the top edge than at the bottom edge.
+    final int midX = w ~/ 2;
+    final int top = size.height.ceil() ~/ 3;
+    final int bottom = size.height.ceil() - 1 - size.height.ceil() ~/ 3;
+    int alphaAt(int y) => px.getUint8((y * w + midX) * 4 + 3);
+    expect(
+      alphaAt(top),
+      greaterThan(alphaAt(bottom)),
+      reason:
+          'expected the frame fill of $what to fade out downward, alpha '
+          '${alphaAt(top)} at y=$top vs ${alphaAt(bottom)} at y=$bottom. $r',
+    );
+  }
 }
 
 /// The nearest ancestors of [key] that are smaller than the screen: the card
@@ -510,10 +599,25 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 400));
 
-        _expectGoldStyle(tester, find.byKey(_localeKey), 'locale button', r);
-        _expectGoldStyle(tester, find.byKey(_soundKey), 'sound button', r);
-        _expectGoldStyle(tester, find.byKey(_createKey), 'create button', r);
-        _expectGoldStyle(tester, find.byKey(_joinKey), 'join button', r);
+        await _expectGoldStyle(
+          tester,
+          find.byKey(_localeKey),
+          'locale button',
+          r,
+        );
+        await _expectGoldStyle(
+          tester,
+          find.byKey(_soundKey),
+          'sound button',
+          r,
+        );
+        await _expectGoldStyle(
+          tester,
+          find.byKey(_createKey),
+          'create button',
+          r,
+        );
+        await _expectGoldStyle(tester, find.byKey(_joinKey), 'join button', r);
       });
 
       testWidgets('${_lang(locale)}: verify-rolls card takes the same '
@@ -530,7 +634,12 @@ void main() {
           ),
         );
         await _mount(tester, size: size, locale: locale);
-        _expectGoldStyle(tester, find.byKey(_lastGameKey), 'verify card', r);
+        await _expectGoldStyle(
+          tester,
+          find.byKey(_lastGameKey),
+          'verify card',
+          r,
+        );
       });
 
       testWidgets('${_lang(locale)}: join field focus still changes its '
@@ -684,23 +793,7 @@ void main() {
                     'tagline, found ${e.widget.runtimeType} filled $fill. $r',
               );
             }
-            expect(
-              _frameOf(tester, tag).gradients.isNotEmpty ||
-                  _cardAncestors(tag, size).any((Element e) {
-                    final Widget w = e.widget;
-                    return w is DecoratedBox &&
-                        ((w.decoration is BoxDecoration &&
-                                (w.decoration as BoxDecoration).gradient !=
-                                    null) ||
-                            (w.decoration is ShapeDecoration &&
-                                (w.decoration as ShapeDecoration).gradient !=
-                                    null));
-                  }),
-              isTrue,
-              reason:
-                  'expected the tagline to sit in the gold gradient '
-                  'frame. $r',
-            );
+            await _expectGoldStyle(tester, tag, 'the tagline', r);
           });
         }
       }
@@ -810,6 +903,64 @@ void main() {
                 'expected the die mark lower than the 148 dp measured on '
                 'origin/main 9a2758e at this size, got ${_rectOf(e).height}. $r',
           );
+        }
+      });
+    }
+
+    for (final Locale locale in _locales) {
+      testWidgets('${_lang(locale)}: name field, create, join and the '
+          'verify-rolls card all in view at scroll offset zero', (
+        tester,
+      ) async {
+        const Size size = Size(393, 780);
+        final String r = _repro(size, locale, 1.0, ', last game seeded');
+        await _seedMemoryFully();
+        await SessionMemory.recordLastGame(
+          LastGame(
+            gameId: 'game-polish-2',
+            verifyUrl: 'https://example.invalid/verify/game-polish-2',
+            finishedAt: DateTime.now(),
+            won: true,
+          ),
+        );
+        await _mount(tester, size: size, locale: locale);
+        await tester.enterText(find.byKey(_codeKey), 'AB23CD');
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+
+        final Rect screen = Offset.zero & size;
+        for (final MapEntry<String, Key> e in <String, Key>{
+          'home-name-field': _nameKey,
+          'create-room-button': _createKey,
+          'room-code-field': _codeKey,
+          'join-room-button': _joinKey,
+          'home-last-game': _lastGameKey,
+        }.entries) {
+          final Finder f = find.byKey(e.value);
+          expect(f, findsOneWidget, reason: '${e.key} missing. $r');
+          final Rect rect = tester.getRect(f);
+          expect(
+            screen.contains(rect.topLeft) &&
+                screen.contains(rect.bottomRight - const Offset(0.01, 0.01)),
+            isTrue,
+            reason:
+                'expected ${e.key} fully inside the $size viewport '
+                'without scrolling, laid out at $rect. $r',
+          );
+        }
+        for (final Element s in find.byType(Scrollable).evaluate()) {
+          final ScrollableState state =
+              (s as StatefulElement).state as ScrollableState;
+          if (state.axisDirection == AxisDirection.down ||
+              state.axisDirection == AxisDirection.up) {
+            expect(
+              state.position.maxScrollExtent,
+              lessThanOrEqualTo(0.5),
+              reason:
+                  'expected no vertical scrolling at all (max extent '
+                  '${state.position.maxScrollExtent}). $r',
+            );
+          }
         }
       });
     }

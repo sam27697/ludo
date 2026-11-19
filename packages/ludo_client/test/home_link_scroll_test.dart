@@ -50,7 +50,9 @@ import 'package:ludo_client/src/home_screen.dart';
 // size every case in this file mounts at, and every case reasserts it with
 // its own fixture check below before delivering a link, rather than
 // trusting this comment to still be true of whatever HomeScreen becomes.
-const Size _kSurfaceSize = Size(360, 420);
+// C-678 shortened the die mark and the hero gaps, so Join now settled inside
+// 360x420; the fixture shrank to 360x360 to keep it below the fold.
+const Size _kSurfaceSize = Size(360, 360);
 const double _kSurfaceDevicePixelRatio = 1.0;
 
 void _useFoldedSurface(WidgetTester tester) {
