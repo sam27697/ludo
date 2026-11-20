@@ -2001,3 +2001,18 @@ the flag (X200) are a later stage and nothing here depends on them. Needs
     empty for a non-host; a rematch keeps `guest_approval`, `link_id` and each
     `via`; the `/r/<id>` routes; a resume of a seat after its knock was
     accepted.
+11. **Rulings of 2026-11-20 (master, from the test hand's questions).**
+    (a) Knocks are expired by the same one-second sweep as turn timers
+    (`runTurnExpiryOnce`), on the injected clock. (b) A `link` join to a
+    FINISHED room, reaped or not, is `NO_SUCH_ROOM`; to a PLAYING room it is
+    `ROOM_STARTED` as a code join is. The web page for a FINISHED room's id is
+    the ended page. (c) The ended page: an id of the link shape
+    (`[0-9a-z]{4,10}-[0-9a-z]{6}`) that is not live serves what a well-formed
+    unknown code serves today; anything not of that shape is 404 as today.
+    (d) An accepted knocker gets `seat_assigned` and `room` and no
+    `knock_failed`; every other close sends it. (e) A knock open when the game
+    starts cannot exist: starting needs every seat filled, and any open knock
+    closes `full` when the last seat fills. (f) Two rooms created in the same
+    second never share a `link_id`: the server redraws the random part on a
+    collision with a live id. (g) `expires_ms` in the snapshot's `knocks` is the
+    time remaining, 1..60000.
