@@ -2021,3 +2021,14 @@ the flag (X200) are a later stage and nothing here depends on them. Needs
     second never share a `link_id`: the server redraws the random part on a
     collision with a live id. (g) `expires_ms` in the snapshot's `knocks` is the
     time remaining, 1..60000.
+12. **Rulings of 2026-11-20, second review.** (a) A socket holding an open knock
+    that sends `create_room` or `resume` closes that knock `withdrawn` first
+    (host gets `knock_closed`, with `seq`), so an accept can never re-home a
+    socket that has moved on. (b) When a room is reaped with knocks open, each
+    knocker gets `knock_failed` outcome `timeout` and its pending state is
+    cleared; nobody is barred. (c) `publishKnockEvents` for one event failing
+    must not stop the events after it. (d) Issued link ids are remembered only
+    as long as they could collide: ids whose time part is older than 2 seconds
+    are dropped from the issued set (the live map still holds live ones).
+    Open work, not in this contract: the invite page still calls the link id a
+    room code (order 683).
