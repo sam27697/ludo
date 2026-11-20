@@ -876,6 +876,39 @@ void main() {
       _hasSeq(kc, 'knock_closed');
     });
 
+    _scenario(
+        'K9b start_game closes every still-open knock full: knock_closed '
+        'with seq to the host, knock_failed (no seq) to the knocker',
+        (_Rig r) async {
+      final _Seat host = await _create(r, players: 2);
+      await _approval(host, true);
+      await r.flushAll();
+      final _Knock k = await _knock(r, host, 'K', install: _inst('k'));
+      await _join(r, <String, Object?>{'link': host.linkId}, 'Linker');
+      expect(_ofType(await _sync(k.c), 'knock_failed'), isEmpty,
+          reason: 'item 11e: the knock stays open when the last seat fills');
+      host.c.send('start_game', <String, Object?>{});
+      final List<Map<String, Object?>> hostFrames =
+          await drainUntil(host.c, 'knock_closed', maxFrames: 20);
+      final Map<String, Object?> kc = hostFrames.last;
+      expect(_d(kc)['outcome'], 'full',
+          reason: 'item 11e: start_game closes every open knock full; host '
+              'frames: $hostFrames');
+      expect(_d(kc)['knock_id'], k.id);
+      _hasSeq(kc, 'knock_closed');
+      final Map<String, Object?> kf = await receiveType(k.c, 'knock_failed');
+      expect(_d(kf)['outcome'], 'full');
+      expect(_d(kf)['knock_id'], k.id);
+      _noSeq(kf, 'knock_failed');
+      _answer(host, k, true);
+      final List<Map<String, Object?>> after = await _sync(host.c);
+      expect(
+          _ofType(after, 'error')
+              .map((Map<String, Object?> f) => _d(f)['code']),
+          contains('WRONG_PHASE'),
+          reason: 'answering after the game started: $after');
+    });
+
     _scenario('K10 withdrawn: the knocker\'s socket closing', (_Rig r) async {
       final _Seat host = await _create(r);
       await _approval(host, true);
@@ -1345,24 +1378,30 @@ void main() {
           reason: 'item 9: the page carries the link id, not the code '
               '${live.code}; ${livePage.desc}');
 
-      final Map<String, String> dead = <String, String>{
+      // Ruling 11(c): an id of the link shape that is not live serves what a
+      // well-formed unknown code serves today (200); anything not of that
+      // shape is 404 as today. Neither ever serves a room.
+      final Map<String, String> shaped = <String, String>{
         'a never-issued well-formed id': 't5k2q9a-x7m3pd',
-        'garbage': 'zzzz-garbage',
-        'a very long garbage id': 'x' * 60,
-        'the live room\'s former code (upper)': live.code,
-        'the live room\'s former code (lower)': live.code.toLowerCase(),
         'the finished room, reaped': fin.linkId,
         'the lobby room, reaped': lobby.linkId,
       };
+      final Map<String, String> unshaped = <String, String>{
+        'garbage with a dash': 'zzzz-garbage',
+        'a very long garbage id': 'x' * 60,
+        'the live room\'s former code (upper)': live.code,
+        'the live room\'s former code (lower)': live.code.toLowerCase(),
+      };
       final Map<String, _Page> pages = <String, _Page>{};
-      for (final MapEntry<String, String> e in dead.entries) {
+      for (final MapEntry<String, String> e in shaped.entries) {
         pages[e.key] = await _get(r, '/r/${e.value}');
       }
       final _Page base = pages['a never-issued well-formed id']!;
       for (final MapEntry<String, _Page> e in pages.entries) {
         expect(e.value.status, 200,
-            reason: 'item 9: ${e.key} serves the ended page with the status '
-                'an unknown code serves today (200); ${e.value.desc}');
+            reason: 'item 11c: ${e.key} is link-shaped and not live, so it '
+                'serves the ended page with the status a well-formed unknown '
+                'code serves today (200); ${e.value.desc}');
         final String id = e.value.path.substring(3);
         expect(e.value.body.replaceAll(id, '<<ID>>'),
             base.body.replaceAll('t5k2q9a-x7m3pd', '<<ID>>'),
@@ -1370,6 +1409,24 @@ void main() {
                 'any unknown id, so ids cannot be probed');
         expect(e.value.body.contains(live.linkId), isFalse,
             reason: 'the ended page must never carry a live room\'s link id');
+      }
+      final Map<String, _Page> cut = <String, _Page>{};
+      for (final MapEntry<String, String> e in unshaped.entries) {
+        cut[e.key] = await _get(r, '/r/${e.value}');
+      }
+      final _Page cutBase = cut.values.first;
+      for (final MapEntry<String, _Page> e in cut.entries) {
+        expect(e.value.status, 404,
+            reason: 'item 11c: ${e.key} is not of the link shape, so it is '
+                '404 as today; ${e.value.desc}');
+        expect(e.value.body, cutBase.body,
+            reason: 'item 11c: every non-shaped id serves the same page; '
+                '${e.key} differs; ${e.value.desc}');
+        expect(e.value.body.contains(live.linkId), isFalse,
+            reason: 'a non-shaped id must never serve a live room');
+        expect(e.value.body.toUpperCase().contains(live.code), isFalse,
+            reason: 'the former code ${live.code} must never serve a room; '
+                '${e.value.desc}');
       }
       expect(base.body, isNot(livePage.body),
           reason: 'the ended page must differ from the live invite page');
