@@ -400,11 +400,10 @@ class Connection {
           )
         : parseEnvelope(
             text,
-            // Section 28 rule 4: `kick` is a message type only of a server
-            // that plays the 2026-11 ruleset; on any other it is BAD_TYPE
-            // exactly as before the section existed.
-            kickKnown: registry.ruleset == ruleset202611 ||
-                registry.ruleset == ruleset202612,
+            // Section 31 item 11 (e2): `kick` is a known type everywhere; the
+            // PLAYING kick of section 28 is gated by ruleset in
+            // `_handleKick`, which answers BAD_TYPE as before.
+            kickKnown: true,
           );
     if (parsed is EnvelopeError) {
       _log(
@@ -699,7 +698,6 @@ class Connection {
       seat: ok.seat.seat,
       seq: ok.room.seq,
     );
-    publishKnockEvents(hub, ok.knockEvents);
   }
 
   /// `answer_knock`, section 31 item 4. Identity first, like the other
@@ -763,6 +761,12 @@ class Connection {
       data: ok.othersSnapshot,
     );
     publishKnockEvents(hub, ok.events);
+    if (ok.events.isNotEmpty) {
+      // The answer above described the room as the toggle left it; the knocks
+      // it settled moved the room on. The host is owed the room as it ends,
+      // at that final `seq` (a state description, not a new step).
+      _send(type: 'room', data: _snapshotFor(ok.room), re: null);
+    }
     _log(
       type: envelope.type,
       id: envelope.id,
@@ -1128,6 +1132,7 @@ class Connection {
       queue: openingFields.queue,
     );
     emit('turn', turnData);
+    publishKnockEvents(hub, ok.knockEvents);
     _log(
       type: unsolicited ? 'rematch_auto_start_${envelope.type}' : envelope.type,
       id: envelope.id,
@@ -1416,14 +1421,27 @@ class Connection {
   /// by the `seat_retired` broadcast with `re`; the frames that follow it
   /// (a `turn`, or `game_over` and its `player_left`s) carry `re` on this
   /// socket's copy too, as every burst a request causes does.
+  bool get _playingKickKnown =>
+      registry.ruleset == ruleset202611 || registry.ruleset == ruleset202612;
+
   void _handleKick(ParsedEnvelope envelope) {
     if (!_hasIdentity) {
-      _reject(envelope, ProtocolError.badSeatToken);
+      _reject(
+        envelope,
+        _playingKickKnown ? ProtocolError.badSeatToken : ProtocolError.badType,
+      );
       return;
     }
-    // Section 31 item 6: in LOBBY the same message frees the seat instead.
+    // Section 31 item 6 and item 11 (e2): in LOBBY the same message frees the
+    // seat, on every ruleset.
     if (registry.lookup(roomCode!)?.state == RoomState.lobby) {
       _handleKickLobby(envelope);
+      return;
+    }
+    // Section 28 rule 4: the PLAYING kick exists only on a 2026-11 or later
+    // server; on any other it is as unknown as it always was.
+    if (!_playingKickKnown) {
+      _reject(envelope, ProtocolError.badType);
       return;
     }
     final RetireResult result = registry.kick(

@@ -83,18 +83,9 @@ class CreateFailure extends CreateResult {
 sealed class JoinResult {}
 
 class JoinOk extends JoinResult {
-  JoinOk({
-    required this.room,
-    required this.seat,
-    this.knockEvents = const <KnockEvent>[],
-  });
+  JoinOk({required this.room, required this.seat});
   final Room room;
   final Seat seat;
-
-  /// Section 31 item 11 (e): when this seat filled the last free seat, every
-  /// open knock closed `full`; these are those closes, to publish after the
-  /// join's own frames.
-  final List<KnockEvent> knockEvents;
 }
 
 class JoinFailure extends JoinResult {
@@ -352,6 +343,11 @@ class StartOk extends StartResult {
   /// same call, read fresh rather than assumed to still be the full
   /// `rules.turnSeconds * 1000` it began at.
   final int nextDeadlineMs;
+
+  /// Section 31 item 11 (e): the knocks still open when the game started,
+  /// closed `full` after the start's own steps, so their `seq` values follow
+  /// the `turn`. Set by the registry; empty when none was open.
+  List<KnockEvent> knockEvents = const <KnockEvent>[];
 }
 
 class StartFailure extends StartResult {
@@ -1051,21 +1047,15 @@ class RoomRegistry {
       ..sort((Seat a, Seat b) => a.seat.compareTo(b.seat));
     _refreshIdleTracking(room);
     room.seq++;
-    final List<KnockEvent> closed = <KnockEvent>[];
-    _closeKnocksIfFull(room, closed);
-    return JoinOk(room: room, seat: seat, knockEvents: closed);
+    return JoinOk(room: room, seat: seat);
   }
 
-  /// Section 31 item 11 (e): once the last seat is taken, no knock can be
-  /// answered with a seat, so every open one closes `full`.
-  void _closeKnocksIfFull(Room room, List<KnockEvent> events) {
-    if (_freeSeats(room).isNotEmpty) {
-      return;
-    }
-    for (final Knock knock in List<Knock>.of(room.knocks)) {
-      events.add(_closeKnock(room, knock, 'full'));
-    }
-  }
+  /// Section 31 item 11 (e): `start_game` closes every knock still open,
+  /// outcome `full`.
+  List<KnockEvent> _closeAllKnocksFull(Room room) => <KnockEvent>[
+        for (final Knock knock in List<Knock>.of(room.knocks))
+          _closeKnock(room, knock, 'full'),
+      ];
 
   /// The room a link id names, for as long as that room lives and is not
   /// FINISHED; null for an unknown, reaped or finished one, and for garbage.
@@ -1255,7 +1245,6 @@ class RoomRegistry {
         ),
       ),
     );
-    _closeKnocksIfFull(room, events);
   }
 
   KnockClosed _closeKnock(
@@ -1417,6 +1406,14 @@ class RoomRegistry {
   }
 
   StartResult startGame({required String code, required String seatToken}) {
+    final StartResult result = _startGame(code: code, seatToken: seatToken);
+    if (result is StartOk) {
+      result.knockEvents = _closeAllKnocksFull(result.room);
+    }
+    return result;
+  }
+
+  StartResult _startGame({required String code, required String seatToken}) {
     final Room? room = _rooms[code];
     if (room == null) {
       return StartFailure(ProtocolError.noSuchRoom);
@@ -1745,7 +1742,11 @@ class RoomRegistry {
   /// nothing else called against this registry in between -- this file is
   /// synchronous throughout, so a caller that does not `await` anything
   /// between the two calls gets exactly that for free.
-  StartOk startRematchAuto(Room room) => _beginGame(room);
+  StartOk startRematchAuto(Room room) {
+    final StartOk result = _beginGame(room);
+    result.knockEvents = _closeAllKnocksFull(room);
+    return result;
+  }
 
   /// `docs/PROTOCOL.md` section 16.2: the first `rematch` of a cycle, taking
   /// a FINISHED room back to LOBBY with a fresh chain. Mutates [room] in
