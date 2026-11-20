@@ -2010,9 +2010,14 @@ the flag (X200) are a later stage and nothing here depends on them. Needs
     (`[0-9a-z]{4,10}-[0-9a-z]{6}`) that is not live serves what a well-formed
     unknown code serves today; anything not of that shape is 404 as today.
     (d) An accepted knocker gets `seat_assigned` and `room` and no
-    `knock_failed`; every other close sends it. (e) A knock open when the game
-    starts cannot exist: starting needs every seat filled, and any open knock
-    closes `full` when the last seat fills. (f) Two rooms created in the same
+    `knock_failed`; every other close sends it. (e) A knock stays open until it is answered, withdrawn or times out, even
+    if the last seat fills meanwhile (accepting it then closes it `full`).
+    `start_game` closes every knock still open, outcome `full`. (e2) The lobby
+    kick is not a ruleset matter: it works on every ruleset; only the PLAYING
+    kick of section 28 stays gated by ruleset. (e3) The `kick` payload ladder in
+    LOBBY is: NOT_HOST, then `seat` an int 0..3 and no other key (`BAD_FIELD`),
+    then `ILLEGAL_MOVE` for the host's own or an empty seat.
+    (f) Two rooms created in the same
     second never share a `link_id`: the server redraws the random part on a
     collision with a live id. (g) `expires_ms` in the snapshot's `knocks` is the
     time remaining, 1..60000.
