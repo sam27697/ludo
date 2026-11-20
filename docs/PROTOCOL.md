@@ -1901,3 +1901,103 @@ an older ruleset.
    of turn; the timer takes the offer; the lapse banks nothing; three seats:
    both others are granted and a finished seat is not; the banked six sits in the
    next turn's queue and spends on a release; the verify record's three keys.
+
+## 31. Room link ids, guest approval and the lobby kick, 2026-11-20
+
+Contract for X202, stage A. Short codes (X197), the strike ladder (X203) and
+the flag (X200) are a later stage and nothing here depends on them. Needs
+`MIN_CLIENT_BUILD` raised on release: the link format changes.
+
+1. **The link id.** Every room gets one `link_id` at creation: the creation
+   time in whole seconds since the epoch in base 36 lowercase, a `-`, then six
+   random characters of `[a-z0-9]` from the CSPRNG (example `t5k2q9a-x7m3pd`).
+   The time part makes it unique for the life of the server's process
+   history, the random part makes it unguessable. It is never reused and is
+   never derived from the room code; the code never appears in a link. The
+   server keeps a map link id to room for as long as the room lives.
+   Room links are `https://<host>/r/<link_id>`. The snapshot (section 6)
+   gains `link_id` (string) and `guest_approval` (bool), and each seat gains
+   `via`: `"host"` for the creating seat, `"link"` or `"code"` for the others,
+   `"approved"` for a seat a knock was accepted for. A seat keeps its `via`
+   across a resume and a rematch.
+2. **`join_room` takes one of two keys.** `d` is `{ "name": string,
+   "code": string }` (a typed code, as today) or `{ "name": string, "link":
+   string }` (a tapped link). Both or neither is `BAD_FIELD`. `install`
+   (optional, 16 to 64 characters of `[A-Za-z0-9_-]`, a random id the app
+   makes on first launch and keeps) may ride on either shape; a wrong shape is
+   `BAD_FIELD`. An unknown `link` is `NO_SUCH_ROOM`, identical for a finished
+   or reaped room and for garbage, so link ids cannot be probed. A `link`
+   join seats at once whatever `guest_approval` says, exactly as a code join
+   does today.
+3. **A typed code with approval on knocks.** When `guest_approval` is true, a
+   `join_room` by `code` that would otherwise succeed (room in LOBBY, a free
+   seat) does not seat the caller. It is answered by `knock_pending`
+   `{ "knock_id": string, "expires_ms": 60000 }` on that socket (no `seq`), and
+   the room's host socket gets `knock` `{ "knock_id", "name", "expires_ms" }`
+   with `seq`. Every other seated socket gets the same `seq` through a
+   `room` snapshot as ever; the snapshot gains `knocks`: `[{ "knock_id",
+   "name", "expires_ms" }]` (the open ones, empty when none), shown to the
+   host only (other seats see `[]`). `NO_SUCH_ROOM`, `ROOM_STARTED` and
+   `ROOM_FULL` come before a knock is made. Limits: one open knock per
+   socket (a second `join_room` from it is `RATE_LIMITED`), at most 3 open
+   knocks per room (a fourth is `TOO_MANY_KNOCKS`). `install` is required on
+   a knock only in that a socket without one can still knock but cannot be
+   barred (item 7).
+4. **`answer_knock`** `{ "knock_id": string, "accept": bool }`, host only,
+   LOBBY only. Unknown or already closed id: `NO_SUCH_KNOCK`. Accept seats the
+   knocker on the lowest free seat (`via: "approved"`): that socket gets
+   `seat_assigned` then `room`, everyone else `player_joined`. If no seat is
+   free any more the knock closes `full` and the knocker gets `ROOM_FULL`.
+   Reject closes it `rejected`. 60 seconds without an answer closes it
+   `timeout` on the server clock. Every close sends `knock_closed`
+   `{ "knock_id", "outcome": "accepted"|"rejected"|"timeout"|"full"|
+   "withdrawn"|"switched_off" }` with `seq` to the host and `knock_failed`
+   `{ "knock_id", "outcome" }` (no `seq`) to the knocker, which then holds no
+   seat. `withdrawn` is the knocker's socket closing or sending `leave_room`.
+   A rejected or timed-out knocker, identified by `install` when present and
+   otherwise by IP, cannot knock that room again: `KNOCK_REFUSED`. The bar
+   lives in the room's memory and ends with the room.
+5. **`set_guest_approval`** `{ "enabled": bool }`, host only, any state of a
+   live room. Default false at creation and unchanged by a rematch. Answered
+   by `room`, broadcast with `seq`. Switching it off while knocks are open
+   seats them in the order they arrived, up to the free seats (`via:
+   "approved"`, outcome `accepted`); the rest close `switched_off` and the
+   knocker gets `ROOM_FULL`. Switching it on leaves seated players seated.
+6. **The lobby kick.** `kick` `{ "seat": int }` from the host in LOBBY (it
+   was `WRONG_PHASE` before): the host's own seat is `ILLEGAL_MOVE`, an empty
+   seat `ILLEGAL_MOVE`, a non-host caller `NOT_HOST`. The kicked seat is freed
+   as by `leave_room`; the room gets `player_left`; the kicked socket gets
+   `kicked` `{ }` (no `seq`) and holds no seat afterwards, its seat token dead
+   (`resume` answers `BAD_SEAT_TOKEN`). Section 28's PLAYING kick is unchanged.
+7. **Bars.** A kicked seat, identified by its `install` when it sent one
+   (otherwise by IP), cannot take a seat in that room again by `link` or
+   `code`: `join_room` answers `KICKED`. A knock refused or timed out bars only
+   the typed-code path (item 4). The set holds a SHA-256 of the `install`
+   string or the IP, in the room's memory only; it is never written to a log,
+   a file or a frame, and ends with the room. Neither a lobby kick nor a
+   refusal is a strike for anything (X203 is later).
+8. **New errors:** `TOO_MANY_KNOCKS`, `NO_SUCH_KNOCK`, `KNOCK_REFUSED`,
+   `KICKED`. They are added to the table in section 7.
+9. **Web.** `GET /r/<id>`: a live `link_id` serves the invite page as today
+   (the page carries the link id, not a code). Anything else, a finished room,
+   a reaped room, a former code, garbage, serves the existing "this game has
+   ended" page with the same status as an unknown code serves today, and
+   never a room. `assetlinks.json` and the App Link host are unchanged. The
+   old `/r/<CODE>` is no longer a room link: a six-character code there is
+   an unknown id.
+10. **Tests this section requires** (server, real sockets, fake clock): link
+    id shape and uniqueness over 2000 creations; link join seats with approval
+    on and off; code join seats at once with approval off (`via: "code"`) and
+    knocks with it on; unknown, finished and reaped link = `NO_SUCH_ROOM`;
+    both keys or neither = `BAD_FIELD`; accept, reject, timeout at 59.999 and
+    60 s, `full`, `withdrawn`, `switched_off` in arrival order, 4th knock =
+    `TOO_MANY_KNOCKS`, second knock from one socket = `RATE_LIMITED`;
+    `answer_knock` by a non-host = `NOT_HOST`, in PLAYING = `WRONG_PHASE`;
+    rejected installer and rejected IP-only knocker both `KNOCK_REFUSED` but
+    both may still use the link; lobby kick frees the seat, kicked socket gets
+    `kicked`, old token `BAD_SEAT_TOKEN`, rejoin by link and by code =
+    `KICKED`, a second player on the kicked IP with a different `install` is
+    NOT barred; host kicking self `ILLEGAL_MOVE`; the snapshot's `knocks` is
+    empty for a non-host; a rematch keeps `guest_approval`, `link_id` and each
+    `via`; the `/r/<id>` routes; a resume of a seat after its knock was
+    accepted.
