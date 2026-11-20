@@ -376,17 +376,33 @@ class WireServer {
   /// stop the timer.
   void _runKnockExpiry() {
     try {
-      final List<KnockEvent> events = registry.expireKnocks();
-      publishKnockEvents(_hub, events);
-      for (final KnockEvent event in events) {
+      failReapedKnocks(registry.drainReapedKnocks());
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('knock reaped-notice failed error=$error\n$stack');
+    }
+    final List<KnockEvent> events;
+    try {
+      events = registry.expireKnocks();
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('knock-expiry sweep failed error=$error\n$stack');
+      return;
+    }
+    // Section 31 item 12 (c): one event failing to publish must not drop the
+    // ones after it.
+    for (final KnockEvent event in events) {
+      try {
+        publishKnockEvents(_hub, <KnockEvent>[event]);
         // ignore: avoid_print
         print('room=${event.room.code} type=- id=- seat=- '
             'outcome=knock_closed knock=${event.knock.id} '
             'reason=${(event as KnockClosed).outcome} seq=${event.seq}');
+      } catch (error, stack) {
+        // ignore: avoid_print
+        print('knock-expiry publish failed room=${event.room.code} '
+            'knock=${event.knock.id} error=$error\n$stack');
       }
-    } catch (error, stack) {
-      // ignore: avoid_print
-      print('knock-expiry sweep failed error=$error\n$stack');
     }
   }
 
@@ -433,6 +449,12 @@ class WireServer {
 
   void _runHousekeeping() {
     final int reaped = registry.reap();
+    try {
+      failReapedKnocks(registry.drainReapedKnocks());
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('knock reaped-notice failed error=$error\n$stack');
+    }
     if (reaped > 0) {
       // ignore: avoid_print
       print('housekeeping reaped=$reaped');

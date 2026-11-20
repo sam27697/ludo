@@ -871,7 +871,14 @@ class RoomRegistry {
 
   /// Every link id this process ever issued, so one is never reused even
   /// after its room is reaped.
+  /// Section 31 item 12 (d): only as long as they could collide, so an id is
+  /// dropped once its time part is more than 2 seconds old.
   final Set<String> _issuedLinkIds = <String>{};
+
+  /// Section 31 item 12 (b): knocks that were open when their room was reaped,
+  /// waiting for the wire layer to tell their knockers. See
+  /// [drainReapedKnocks].
+  final List<Knock> _reapedKnocks = <Knock>[];
 
   /// docs/VERIFY.md section 3. Where a finished game's record is written at
   /// the moment it is won, and read back for `/v/<game_id>` and
@@ -2771,6 +2778,8 @@ class RoomRegistry {
       final Room? gone = _rooms.remove(code);
       if (gone != null) {
         _roomsByLink.remove(gone.linkId);
+        _reapedKnocks.addAll(gone.knocks);
+        gone.knocks.clear();
       }
       _idleSince.remove(code);
       _finishedSince.remove(code);
@@ -3053,7 +3062,20 @@ class RoomRegistry {
     }
   }
 
+  /// The knocks whose room was reaped since the last call, each to be closed
+  /// `timeout` towards its knocker; nobody is barred (section 31 item 12 b).
+  List<Knock> drainReapedKnocks() {
+    final List<Knock> out = List<Knock>.of(_reapedKnocks);
+    _reapedKnocks.clear();
+    return out;
+  }
+
   String _generateUniqueLinkId() {
+    final int nowSeconds = _clock.now.millisecondsSinceEpoch ~/ 1000;
+    _issuedLinkIds.removeWhere((String id) {
+      final int? issued = int.tryParse(id.split('-').first, radix: 36);
+      return issued != null && issued < nowSeconds - 2;
+    });
     for (int attempt = 0; attempt < 1000; attempt++) {
       final String candidate = generateLinkId(_linkRandom, _clock.now);
       if (_issuedLinkIds.add(candidate)) {

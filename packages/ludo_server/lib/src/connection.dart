@@ -172,6 +172,26 @@ const int knockLifetimeMs = 60000;
 /// `install`, section 31 item 2: 16 to 64 characters of `[A-Za-z0-9_-]`.
 final RegExp _installPattern = RegExp(r'^[A-Za-z0-9_-]{16,64}$');
 
+/// Section 31 item 12 (b): tells the knocker of each knock whose room was
+/// reaped that it timed out, and clears its pending state.
+void failReapedKnocks(List<Knock> knocks) {
+  for (final Knock knock in knocks) {
+    final Object? owner = knock.owner;
+    if (owner is! Connection) {
+      continue;
+    }
+    if (owner.pendingKnockId == knock.id) {
+      owner.pendingKnockId = null;
+      owner.pendingKnockRoom = null;
+    }
+    owner._send(
+      type: 'knock_failed',
+      data: <String, Object?>{'knock_id': knock.id, 'outcome': 'timeout'},
+      re: null,
+    );
+  }
+}
+
 /// Sends one push to every connected seat of [room] but [exceptToken], one
 /// seat at a time, so a `room` can differ for the host.
 void sendToSeatsExcept(
@@ -530,6 +550,7 @@ class Connection {
       _reject(envelope, ProtocolError.rateLimited);
       return;
     }
+    _withdrawOwnKnock();
 
     const Set<String> allowedKeys = <String>{'name', 'players', 'rules'};
     if (!envelope.data.keys.every(allowedKeys.contains)) {
@@ -700,6 +721,20 @@ class Connection {
     );
   }
 
+  /// Section 31 item 12 (a): a socket that moves on to `create_room` or
+  /// `resume` closes its open knock `withdrawn` first, so an accept can never
+  /// re-home it.
+  void _withdrawOwnKnock() {
+    final String? knockId = pendingKnockId;
+    if (knockId == null) {
+      return;
+    }
+    final String knockRoom = pendingKnockRoom!;
+    pendingKnockId = null;
+    pendingKnockRoom = null;
+    publishKnockEvents(hub, registry.withdrawKnock(knockRoom, knockId));
+  }
+
   /// `answer_knock`, section 31 item 4. Identity first, like the other
   /// socket-identified messages; the registry runs the rest of the ladder.
   /// The host's own copy of each frame its answer caused carries `re`.
@@ -824,6 +859,7 @@ class Connection {
       _reject(envelope, ProtocolError.rateLimited);
       return;
     }
+    _withdrawOwnKnock();
 
     const Set<String> allowedKeys = <String>{'code', 'seat_token'};
     if (!envelope.data.keys.every(allowedKeys.contains)) {
