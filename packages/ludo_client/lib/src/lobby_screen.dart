@@ -476,7 +476,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// clipboard fallback `lobby-copy-link-button` uses, and the error is
   /// never swallowed silently.
   Future<void> _shareInvite(RoomSnapshot room, AppLocalizations loc) async {
-    final String link = kRoomLinkBase + room.code;
+    final String link =
+        kRoomLinkBase + (room.linkId.isEmpty ? room.code : room.linkId);
     final String text = loc.lobbyShareText(link, room.code);
     try {
       final Future<void> Function(String text)? shareText = widget.shareText;
@@ -1057,8 +1058,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
                               vertical: kSpace3,
                             ),
                           ),
-                          onPressed: () =>
-                              _copyToClipboard(kRoomLinkBase + room.code, loc),
+                          onPressed: () => _copyToClipboard(
+                            kRoomLinkBase +
+                                (room.linkId.isEmpty ? room.code : room.linkId),
+                            loc,
+                          ),
                           icon: const Icon(Icons.link, size: 18),
                           label: FittedBox(
                             fit: BoxFit.scaleDown,

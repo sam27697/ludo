@@ -22,6 +22,29 @@ enum TurnPhase { awaitRoll, awaitMove, finished }
 
 enum SeedOrigin { player, server }
 
+/// docs/PROTOCOL.md section 31 item 1: how a seat came to be taken. `unknown`
+/// is a missing key (an older server) or a value this build does not know.
+enum SeatVia { host, link, code, approved, unknown }
+
+/// docs/PROTOCOL.md section 31 item 3: one open knock, as the host's
+/// snapshot lists it. [expiresMs] is the time remaining when the snapshot
+/// was made.
+class Knock {
+  const Knock({required this.id, required this.name, required this.expiresMs});
+
+  final String id;
+  final String name;
+  final int expiresMs;
+
+  factory Knock.fromJson(Map<String, Object?> json) {
+    return Knock(
+      id: _reqString(json, 'knock_id'),
+      name: _reqString(json, 'name'),
+      expiresMs: _reqInt(json, 'expires_ms'),
+    );
+  }
+}
+
 class RulesConfig {
   const RulesConfig({
     this.blocks = true,
@@ -106,6 +129,7 @@ class SeatState {
     this.timerSteps,
     this.drought,
     this.banked = 0,
+    this.via = SeatVia.unknown,
   });
 
   final int seat;
@@ -135,6 +159,9 @@ class SeatState {
   /// instead.
   final int banked;
 
+  /// docs/PROTOCOL.md section 31 item 1.
+  final SeatVia via;
+
   factory SeatState.fromJson(Map<String, Object?> json) {
     final int seat = _reqInt(json, 'seat');
     if (seat < 0 || seat > 3) {
@@ -151,6 +178,7 @@ class SeatState {
     }
     final int? drought = _optInt(json, 'drought');
     final int banked = _optInt(json, 'banked') ?? 0;
+    final SeatVia via = _seatViaOf(json['via']);
 
     return SeatState(
       seat: seat,
@@ -162,6 +190,7 @@ class SeatState {
       timerSteps: timerSteps,
       drought: drought,
       banked: banked,
+      via: via,
     );
   }
 
@@ -179,6 +208,7 @@ class SeatState {
     int? timerSteps,
     int? drought,
     int? banked,
+    SeatVia? via,
   }) {
     return SeatState(
       seat: seat ?? this.seat,
@@ -190,6 +220,7 @@ class SeatState {
       timerSteps: timerSteps ?? this.timerSteps,
       drought: drought ?? this.drought,
       banked: banked ?? this.banked,
+      via: via ?? this.via,
     );
   }
 }
@@ -359,6 +390,9 @@ class RoomSnapshot {
     this.lastSpentFace,
     this.placings = const <int>[],
     this.retired = const <int>[],
+    this.linkId = '',
+    this.guestApproval = false,
+    this.knocks = const <Knock>[],
     required this.seq,
   });
 
@@ -416,6 +450,16 @@ class RoomSnapshot {
   /// docs/PROTOCOL.md section 28 rule 4: the seats retired from the game, in
   /// retirement order. Empty when the wire sends none.
   final List<int> retired;
+
+  /// docs/PROTOCOL.md section 31 item 1. Empty string from an old server.
+  final String linkId;
+
+  /// docs/PROTOCOL.md section 31 item 5. False when the key is absent.
+  final bool guestApproval;
+
+  /// docs/PROTOCOL.md section 31 item 3: the open knocks, host's snapshot
+  /// only. Empty when none or when the key is absent.
+  final List<Knock> knocks;
 
   final int seq;
 
@@ -489,6 +533,22 @@ class RoomSnapshot {
     final List<int> placings = _optSeatList(json, 'placings');
     final List<int> retired = _optSeatList(json, 'retired');
 
+    final String linkId = _optString(json, 'link_id') ?? '';
+    final bool guestApproval = _optBool(json, 'guest_approval') ?? false;
+    final List<Knock> knocks = <Knock>[];
+    final Object? knocksValue = json['knocks'];
+    if (knocksValue != null) {
+      if (knocksValue is! List) {
+        throw const SnapshotFormatException('knocks');
+      }
+      for (final Object? knockJson in knocksValue) {
+        if (knockJson is! Map<String, Object?>) {
+          throw const SnapshotFormatException('knocks');
+        }
+        knocks.add(Knock.fromJson(knockJson));
+      }
+    }
+
     final int seq = _reqInt(json, 'seq');
 
     return RoomSnapshot(
@@ -508,6 +568,9 @@ class RoomSnapshot {
       rematch: rematch,
       placings: placings,
       retired: retired,
+      linkId: linkId,
+      guestApproval: guestApproval,
+      knocks: knocks,
       seq: seq,
     );
   }
@@ -545,6 +608,9 @@ class RoomSnapshot {
     Object? lastSpentFace = _unset,
     List<int>? placings,
     List<int>? retired,
+    String? linkId,
+    bool? guestApproval,
+    List<Knock>? knocks,
     int? seq,
   }) {
     return RoomSnapshot(
@@ -571,6 +637,9 @@ class RoomSnapshot {
           : lastSpentFace as int?,
       placings: placings ?? this.placings,
       retired: retired ?? this.retired,
+      linkId: linkId ?? this.linkId,
+      guestApproval: guestApproval ?? this.guestApproval,
+      knocks: knocks ?? this.knocks,
       seq: seq ?? this.seq,
     );
   }
@@ -595,6 +664,21 @@ const Object _unset = Object();
 // than `1`) are rejected by the plain `is! int` check below rather than
 // coerced: the server always sends `int`, and accepting `1.0` would hide a
 // producer that has drifted.
+
+SeatVia _seatViaOf(Object? value) {
+  switch (value) {
+    case 'host':
+      return SeatVia.host;
+    case 'link':
+      return SeatVia.link;
+    case 'code':
+      return SeatVia.code;
+    case 'approved':
+      return SeatVia.approved;
+    default:
+      return SeatVia.unknown;
+  }
+}
 
 int _reqInt(Map<String, Object?> json, String key) {
   final Object? value = json[key];

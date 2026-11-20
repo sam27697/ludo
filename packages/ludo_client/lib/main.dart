@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'src/app.dart';
 import 'src/app_build.dart';
 import 'src/deep_link.dart';
+import 'src/install_id.dart';
 import 'src/locale_preference.dart';
 import 'src/server_config.dart' as server_config;
 
@@ -19,6 +20,9 @@ Future<void> main() async {
   // Section 27 rule 1: read once, before any socket can open. An unreadable
   // build is null and the upgrade then carries no header.
   server_config.clientBuild = await readAppBuild();
+  // Section 31 item 2: the install id is read (or made) here, before any
+  // join can be sent, so a join never waits on the platform store.
+  await installId();
   runApp(
     LudoApp(
       initialLocale: LocalePreference.startupLocale(

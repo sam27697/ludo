@@ -20,6 +20,7 @@ import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 
+import '../install_id.dart';
 import 'connection.dart';
 import 'frame.dart';
 import 'snapshot.dart';
@@ -37,6 +38,34 @@ enum RoomPhase { idle, connecting, connected, closed, failed }
 /// an error frame ([ProtocolErrorException]). failed: anything else (not
 /// connected, disposed, closed, timeout).
 enum EmoteOutcome { admitted, refused, failed }
+
+/// docs/PROTOCOL.md section 31 item 4: where this phone's own knock stands.
+enum KnockPhase {
+  none,
+  pending,
+  accepted,
+  rejected,
+  timedOut,
+  full,
+  withdrawn,
+  switchedOff,
+}
+
+/// This phone's own knock on a room that has guest approval on. [knockId] is
+/// null in [KnockPhase.none]. [expiresAtMs] is the device clock at the
+/// `knock_pending` plus its `expires_ms`; it is null unless the phase is
+/// [KnockPhase.pending]. The server alone decides when a knock ends.
+class KnockState {
+  const KnockState({
+    this.phase = KnockPhase.none,
+    this.knockId,
+    this.expiresAtMs,
+  });
+
+  final KnockPhase phase;
+  final String? knockId;
+  final int? expiresAtMs;
+}
 
 /// docs/PROTOCOL.md section 5's "Carrying seq" list: every frame type this
 /// controller reduces. `error`, `pong` and `seat_assigned` are not on it.
@@ -56,6 +85,8 @@ const Set<String> _stateChangingTypes = <String>{
   'seat_retired',
   'sixes_granted',
   'release_declined',
+  'knock',
+  'knock_closed',
 };
 
 /// The production automatic-reconnect schedule: five attempts, the delay
@@ -136,6 +167,13 @@ const Set<String> _setPlayersRejectedCodes = <String>{
 /// can read off the room and act on: not the host, not in play, a bad seat,
 /// a seat that is not a playing one, a seat whose socket is up. Each leaves
 /// the connection as it was. docs/PROTOCOL.md section 28 rule 4.
+const Set<String> _hostRequestSoftCodes = <String>{
+  'NO_SUCH_KNOCK',
+  'NOT_HOST',
+  'WRONG_PHASE',
+  'BAD_FIELD',
+};
+
 const Set<String> _kickRejectedCodes = <String>{
   'NOT_HOST',
   'WRONG_PHASE',
@@ -161,13 +199,18 @@ class RoomController extends ChangeNotifier {
     required this.serverUrl,
     required TransportConnector connect,
     List<Duration> autoReconnectDelays = const <Duration>[],
+    DateTime Function()? clock,
   }) : _connect = connect, // ignore: prefer_initializing_formals
+       _clock = clock ?? DateTime.now,
        autoReconnectDelays = List<Duration>.unmodifiable(autoReconnectDelays);
 
   /// The address every connection this controller opens is opened against.
   final Uri serverUrl;
 
   final TransportConnector _connect;
+
+  /// The device clock, injected by tests; read only to stamp a knock.
+  final DateTime Function() _clock;
 
   /// The bounded backoff schedule an automatic sequence (C5, C10) follows.
   /// An unmodifiable copy of whatever was passed in. Empty means automatic
@@ -188,6 +231,13 @@ class RoomController extends ChangeNotifier {
   int? _cachedSeat;
   int? _seatMovedFrom;
   String? _cachedSeatToken;
+
+  KnockState _knock = const KnockState();
+  bool _wasKicked = false;
+
+  /// The last link join, kept so the lobby's own retry (which can only call
+  /// [joinRoom]) repeats a link join as a link join. See [joinRoom].
+  String? _retryLink;
 
   bool _hasDesynced = false;
   String? _errorCode;
@@ -288,6 +338,14 @@ class RoomController extends ChangeNotifier {
   /// app. Screens draw the update card instead of anything else, and it
   /// outranks [seatTakenOver]. No reconnect, automatic or manual, follows.
   bool get updateRequired => _updateRequired;
+
+  /// Section 31 item 4: this phone's own knock. [KnockPhase.none] unless a
+  /// typed-code join met a room with guest approval on.
+  KnockState get knockState => _knock;
+
+  /// Section 31 item 6: set when the host removed this phone from a lobby
+  /// (a `kicked` frame); cleared by the next join.
+  bool get wasKicked => _wasKicked;
   String? get errorCode => _errorCode;
   String? get errorMessage => _errorMessage;
 
@@ -339,11 +397,68 @@ class RoomController extends ChangeNotifier {
     );
   }
 
+  /// A typed code. Sends `install`. With guest approval on, the answer may be
+  /// a knock instead of a seat: see [knockState].
+  ///
+  /// An empty [code] repeats the last [joinByLink] instead, when there was
+  /// one: the lobby screen can only retry through this method, and an empty
+  /// code is never a valid typed one.
   Future<void> joinRoom({required String code, required String name}) {
+    final String? retry = _retryLink;
+    if (code.isEmpty && retry != null) {
+      return joinByLink(link: retry, name: name);
+    }
+    return _join(<String, Object?>{'code': code, 'name': name});
+  }
+
+  /// A tapped room link (section 31 item 2): [link] is the link id from
+  /// `/r/<link id>`. Seats at once, whatever guest approval says. Sends
+  /// `install`.
+  Future<void> joinByLink({required String link, required String name}) {
+    if (_disposed ||
+        !(_phase == RoomPhase.idle || _phase == RoomPhase.failed)) {
+      return Future<void>.value();
+    }
+    _retryLink = link;
+    return _join(<String, Object?>{'link': link, 'name': name});
+  }
+
+  Future<void> _join(Map<String, Object?> fields) {
     return _openFresh(
       gate: _phase == RoomPhase.idle || _phase == RoomPhase.failed,
-      request: (RoomConnection connection) =>
-          connection.joinRoom(code: code, name: name),
+      isJoin: true,
+      request: (RoomConnection connection) async {
+        final String? install = installIdIfReady();
+        if (install == null) {
+          // Not read yet in this process: start it so the next join has it.
+          unawaited(installId());
+        }
+        final Frame reply = await connection.request(
+          'join_room',
+          <String, Object?>{...fields, 'install': ?install},
+        );
+        if (reply.type == 'knock_pending') {
+          _noteKnockPending(reply);
+          return null;
+        }
+        if (reply.type != 'room') {
+          throw FrameFormatException('expected room, got ${reply.type}');
+        }
+        return RoomSnapshot.fromJson(reply.data);
+      },
+    );
+  }
+
+  void _noteKnockPending(Frame reply) {
+    final String? id = _asString(reply.data, 'knock_id');
+    final int? expiresMs = _asInt(reply.data, 'expires_ms');
+    if (id == null || expiresMs == null) {
+      throw const FrameFormatException('knock_pending');
+    }
+    _knock = KnockState(
+      phase: KnockPhase.pending,
+      knockId: id,
+      expiresAtMs: _clock().millisecondsSinceEpoch + expiresMs,
     );
   }
 
@@ -427,10 +542,15 @@ class RoomController extends ChangeNotifier {
   /// send one request, and both handle its outcome identically.
   Future<void> _openFresh({
     required bool gate,
-    required Future<RoomSnapshot> Function(RoomConnection connection) request,
+    required Future<RoomSnapshot?> Function(RoomConnection connection) request,
+    bool isJoin = false,
   }) async {
     if (_disposed || !gate) {
       return;
+    }
+    if (isJoin) {
+      _knock = const KnockState();
+      _wasKicked = false;
     }
     _phase = RoomPhase.connecting;
     notifyListeners();
@@ -445,8 +565,14 @@ class RoomController extends ChangeNotifier {
     }
 
     try {
-      final RoomSnapshot snapshot = await request(connection);
+      final RoomSnapshot? snapshot = await request(connection);
       if (_disposed) {
+        return;
+      }
+      if (snapshot == null) {
+        // A knock: no seat yet. The phase stays connecting and
+        // [knockState] says why; the server's next frame decides.
+        notifyListeners();
         return;
       }
       _room = snapshot;
@@ -778,6 +904,71 @@ class RoomController extends ChangeNotifier {
     }
   }
 
+  /// Host-only, LOBBY only (section 31 item 4). Accepts or rejects the knock
+  /// [knockId]. The result arrives as `knock_closed` and, on accept,
+  /// `player_joined`, applied like any push. A race the server answers with
+  /// `NO_SUCH_KNOCK`, `NOT_HOST`, `WRONG_PHASE` or `BAD_FIELD` leaves the
+  /// connection up and is read from [errorCode]. A silent no-op when not
+  /// connected.
+  Future<void> answerKnock(String knockId, {required bool accept}) async {
+    final RoomConnection? connection = _connection;
+    if (_disposed || _phase != RoomPhase.connected || connection == null) {
+      return;
+    }
+    try {
+      await connection.request('answer_knock', <String, Object?>{
+        'knock_id': knockId,
+        'accept': accept,
+      });
+    } catch (error) {
+      _failFromHostRequest(error);
+    }
+  }
+
+  /// Host-only, any state of a live room (section 31 item 5). The answer is
+  /// the `room` broadcast, the requester's copy carrying `re`; it is applied
+  /// here exactly as [rematch] applies its own. A silent no-op when not
+  /// connected.
+  Future<void> setGuestApproval(bool on) async {
+    final RoomConnection? connection = _connection;
+    if (_disposed || _phase != RoomPhase.connected || connection == null) {
+      return;
+    }
+    try {
+      final Frame frame = await connection.request(
+        'set_guest_approval',
+        <String, Object?>{'enabled': on},
+      );
+      if (_disposed) {
+        return;
+      }
+      final RoomSnapshot? room = _room;
+      if (room != null && frame.type == 'room') {
+        final int? seqValue = frame.seq;
+        if (seqValue != null && seqValue <= room.seq) {
+          return;
+        }
+        _applyRoomFrame(frame, room);
+      }
+    } catch (error) {
+      _failFromHostRequest(error);
+    }
+  }
+
+  /// A host request refused for a race or a rights reason does not end the
+  /// connection: the code lands in [errorCode] and listeners are told. Any
+  /// other failure is an in-room failure as for every other request.
+  void _failFromHostRequest(Object error) {
+    if (error is ProtocolErrorException &&
+        _hostRequestSoftCodes.contains(error.code)) {
+      _errorCode = error.code;
+      _errorMessage = error.message;
+      notifyListeners();
+      return;
+    }
+    _failFromInRoomRequest(error);
+  }
+
   /// Host-only. Forwards to the connection when [phase] is
   /// [RoomPhase.connected] and is a silent no-op otherwise. The reply is a
   /// plain frame, not a snapshot; it is not parsed as one and changes
@@ -1000,6 +1191,7 @@ class RoomController extends ChangeNotifier {
     _sendRematchOnResume = false;
     _cancelAutoReconnect();
     _clearLastFinished();
+    _knock = const KnockState();
     final RoomConnection? connection = _connection;
     _connection = null;
     unawaited(_frameSub?.cancel());
@@ -1090,6 +1282,14 @@ class RoomController extends ChangeNotifier {
           // C-637 D1: the takeover already closed this phone's side and set
           // the phase; this is that close arriving, nothing left to change.
           return;
+        }
+        if (_knock.phase == KnockPhase.pending) {
+          // The socket went while a knock was open: the server closes that
+          // knock as withdrawn, and this phone holds no seat to resume.
+          _knock = KnockState(
+            phase: KnockPhase.withdrawn,
+            knockId: _knock.knockId,
+          );
         }
         _phase = RoomPhase.closed;
         notifyListeners();
@@ -1237,9 +1437,148 @@ class RoomController extends ChangeNotifier {
         notifyListeners();
       }
     }
+    if (frame.type == 'knock_failed') {
+      _onKnockFailed(frame);
+      return;
+    }
+    if (frame.type == 'kicked') {
+      _onKicked();
+      return;
+    }
+    if (frame.type == 'room' &&
+        frame.re == null &&
+        _room == null &&
+        _knock.phase == KnockPhase.pending) {
+      _onKnockAccepted(frame);
+      return;
+    }
     if (_stateChangingTypes.contains(frame.type)) {
       _reduce(frame);
     }
+  }
+
+  /// Section 31 item 4 and ruling (d): the knocker's seat arrives as
+  /// `seat_assigned` (already recorded by the connection) and an unsolicited
+  /// `room`. That `room` is the first snapshot this phone holds.
+  void _onKnockAccepted(Frame frame) {
+    final RoomSnapshot decoded;
+    try {
+      decoded = RoomSnapshot.fromJson(frame.data);
+    } on SnapshotFormatException {
+      return;
+    }
+    _room = decoded;
+    _clearLastFinished();
+    _lastRetirement = null;
+    _knock = KnockState(phase: KnockPhase.accepted, knockId: _knock.knockId);
+    _phase = RoomPhase.connected;
+    _blocked = false;
+    _seatTakenOver = false;
+    _errorCode = null;
+    _errorMessage = null;
+    _syncSeatCache();
+    notifyListeners();
+  }
+
+  /// Section 31 item 4: the knock ended without a seat. The socket holds
+  /// nothing, so it is closed and the phase goes back to idle; [knockState]
+  /// says how it ended. `full` and `switched_off` are the cases the server
+  /// answers with `ROOM_FULL`, and [errorCode] carries it.
+  void _onKnockFailed(Frame frame) {
+    if (_knock.phase != KnockPhase.pending) {
+      return;
+    }
+    final String? id = _asString(frame.data, 'knock_id');
+    final KnockPhase? outcome = switch (_asString(frame.data, 'outcome')) {
+      'rejected' => KnockPhase.rejected,
+      'timeout' => KnockPhase.timedOut,
+      'full' => KnockPhase.full,
+      'withdrawn' => KnockPhase.withdrawn,
+      'switched_off' => KnockPhase.switchedOff,
+      _ => null,
+    };
+    if (id == null || id != _knock.knockId || outcome == null) {
+      return;
+    }
+    _knock = KnockState(phase: outcome, knockId: id);
+    _dropConnection();
+    _phase = RoomPhase.idle;
+    final bool noSeat =
+        outcome == KnockPhase.full || outcome == KnockPhase.switchedOff;
+    _errorCode = noSeat ? 'ROOM_FULL' : null;
+    _errorMessage = noSeat ? '' : null;
+    notifyListeners();
+  }
+
+  /// Section 31 item 6: the host removed this phone from the lobby. The seat
+  /// and its token are dead on the server, so both are forgotten here, no
+  /// resume is ever tried, and [wasKicked] says why.
+  void _onKicked() {
+    _wasKicked = true;
+    _blocked = true;
+    _cancelAutoReconnect();
+    _cachedSeatToken = null;
+    _writeCachedSeat(null);
+    _hasDesynced = false;
+    _resyncInFlight = false;
+    _dropConnection();
+    _phase = RoomPhase.closed;
+    notifyListeners();
+  }
+
+  /// Closes and forgets the current connection without a `leave_room`.
+  void _dropConnection() {
+    final RoomConnection? connection = _connection;
+    _connection = null;
+    unawaited(_frameSub?.cancel());
+    _frameSub = null;
+    if (connection != null) {
+      unawaited(connection.close());
+    }
+  }
+
+  /// Host side, section 31 item 3: a knock opened. Same `seq` rule as every
+  /// state-changing push.
+  void _reduceKnock(Frame frame, RoomSnapshot room) {
+    final String? id = _asString(frame.data, 'knock_id');
+    final String? name = _asString(frame.data, 'name');
+    final int? expiresMs = _asInt(frame.data, 'expires_ms');
+    final int? seqValue = frame.seq;
+    if (id == null || name == null || expiresMs == null || seqValue == null) {
+      return;
+    }
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+    final List<Knock> knocks = <Knock>[
+      for (final Knock k in room.knocks)
+        if (k.id != id) k,
+      Knock(id: id, name: name, expiresMs: expiresMs),
+    ];
+    _room = room.copyWith(knocks: knocks, seq: seqValue);
+    notifyListeners();
+  }
+
+  /// Host side, section 31 item 4: a knock closed, whatever the outcome.
+  void _reduceKnockClosed(Frame frame, RoomSnapshot room) {
+    final String? id = _asString(frame.data, 'knock_id');
+    final int? seqValue = frame.seq;
+    if (id == null || seqValue == null) {
+      return;
+    }
+    if (seqValue != room.seq + 1) {
+      _beginResync(room);
+      return;
+    }
+    _room = room.copyWith(
+      knocks: <Knock>[
+        for (final Knock k in room.knocks)
+          if (k.id != id) k,
+      ],
+      seq: seqValue,
+    );
+    notifyListeners();
   }
 
   /// The order of checks a state-changing push goes through, normative and
@@ -1284,6 +1623,10 @@ class RoomController extends ChangeNotifier {
         _reduceSixesGranted(frame, room);
       case 'release_declined':
         _reduceReleaseDeclined(frame, room);
+      case 'knock':
+        _reduceKnock(frame, room);
+      case 'knock_closed':
+        _reduceKnockClosed(frame, room);
     }
   }
 
