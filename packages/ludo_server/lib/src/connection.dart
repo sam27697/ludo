@@ -165,6 +165,158 @@ void detachFreedSeats(RoomHub hub, String code, List<FreedSeat> freed) {
   }
 }
 
+/// `docs/PROTOCOL.md` section 31 item 3: `expires_ms` of a fresh knock, and
+/// the 60 s a knock lives.
+const int knockLifetimeMs = 60000;
+
+/// `install`, section 31 item 2: 16 to 64 characters of `[A-Za-z0-9_-]`.
+final RegExp _installPattern = RegExp(r'^[A-Za-z0-9_-]{16,64}$');
+
+/// Sends one push to every connected seat of [room] but [exceptToken], one
+/// seat at a time, so a `room` can differ for the host.
+void sendToSeatsExcept(
+  RoomHub hub,
+  Room room, {
+  required String? exceptToken,
+  required String type,
+  required Map<String, Object?> data,
+}) {
+  for (final Seat seat in room.seats) {
+    if (seat.seatToken == exceptToken || !seat.connected) {
+      continue;
+    }
+    hub.sendToSeatToken(
+      code: room.code,
+      seatToken: seat.seatToken,
+      type: type,
+      data: data,
+    );
+  }
+}
+
+/// Publishes what knocks did, in order, section 31 items 3 to 5:
+///
+/// - opened: `knock` to the host with its `seq`, the same `seq` as a `room`
+///   to every other seat;
+/// - closed: `knock_closed` to the host and a `room` to every other seat at
+///   the close's `seq`, and `knock_failed` to the knocker (then `ROOM_FULL`
+///   for `full` and `switched_off`), which holds no seat; an accepted knock
+///   sends the knocker nothing here, its seat follows;
+/// - seated: `seat_assigned` then `room` to the knocker, now attached to the
+///   room, and `player_joined` to everyone else.
+///
+/// [requester] is the host socket whose message caused these, and
+/// [requesterRe] the id its own copy of the host frames answers. A knocker
+/// that is [knockerRequester] gets [knockerRe] on its `knock_failed`.
+void publishKnockEvents(
+  RoomHub hub,
+  List<KnockEvent> events, {
+  Connection? requester,
+  String? requesterRe,
+  Connection? knockerRequester,
+  String? knockerRe,
+}) {
+  for (final KnockEvent event in events) {
+    final String code = event.room.code;
+    final String? hostToken = event.hostSeatToken;
+    void toHost(String type, Map<String, Object?> data) {
+      if (hostToken == null) {
+        return;
+      }
+      if (requester != null &&
+          requesterRe != null &&
+          requester.seatToken == hostToken) {
+        requester._send(type: type, data: data, re: requesterRe);
+        return;
+      }
+      hub.sendToSeatToken(
+        code: code,
+        seatToken: hostToken,
+        type: type,
+        data: data,
+      );
+    }
+
+    switch (event) {
+      case KnockOpened():
+        toHost('knock', <String, Object?>{
+          'knock_id': event.knock.id,
+          'name': event.knock.name,
+          'expires_ms': knockLifetimeMs,
+          'seq': event.seq,
+        });
+        sendToSeatsExcept(
+          hub,
+          event.room,
+          exceptToken: hostToken,
+          type: 'room',
+          data: event.others,
+        );
+      case KnockClosed():
+        toHost('knock_closed', <String, Object?>{
+          'knock_id': event.knock.id,
+          'outcome': event.outcome,
+          'seq': event.seq,
+        });
+        sendToSeatsExcept(
+          hub,
+          event.room,
+          exceptToken: hostToken,
+          type: 'room',
+          data: event.others,
+        );
+        final Object? owner = event.knock.owner;
+        if (owner is Connection) {
+          if (owner.pendingKnockId == event.knock.id) {
+            owner.pendingKnockId = null;
+            owner.pendingKnockRoom = null;
+          }
+          if (event.outcome != 'accepted') {
+            owner._send(
+              type: 'knock_failed',
+              data: <String, Object?>{
+                'knock_id': event.knock.id,
+                'outcome': event.outcome,
+              },
+              re: identical(owner, knockerRequester) ? knockerRe : null,
+            );
+            if (event.outcome == 'full' || event.outcome == 'switched_off') {
+              owner._sendError(
+                ProtocolError.roomFull,
+                re: event.knock.requestId.isEmpty
+                    ? null
+                    : event.knock.requestId,
+              );
+            }
+          }
+        }
+      case KnockSeated():
+        final Object? owner = event.knock.owner;
+        if (owner is Connection) {
+          owner.roomCode = code;
+          owner.seatToken = event.seat.seatToken;
+          hub.attach(code: code, conn: owner);
+          owner._send(
+            type: 'seat_assigned',
+            data: buildSeatAssigned(event.seat),
+            re: null,
+          );
+          owner._send(
+            type: 'room',
+            data: event.snapshot,
+            re: event.knock.requestId.isEmpty ? null : event.knock.requestId,
+          );
+          hub.broadcast(
+            code: code,
+            type: 'player_joined',
+            data: buildPlayerJoined(event.seat, event.seq),
+            exceptConn: owner,
+          );
+        }
+    }
+  }
+}
+
 /// One WebSocket connection and the seat it may or may not currently hold.
 /// A seat survives its socket (`docs/PROTOCOL.md` section 8): closing this
 /// connection never calls `leaveRoom`, only `setConnected(..., false)`.
@@ -203,6 +355,11 @@ class Connection {
   /// still re-validates `seatToken` against the room's live seats.
   String? roomCode;
   String? seatToken;
+
+  /// Section 31 item 3: the open knock this socket made, and the room it is
+  /// waiting at. Null when none. At most one at a time.
+  String? pendingKnockId;
+  String? pendingKnockRoom;
 
   bool _closed = false;
 
@@ -349,6 +506,10 @@ class Connection {
         _handleEmote(envelope);
       case 'kick':
         _handleKick(envelope);
+      case 'answer_knock':
+        _handleAnswerKnock(envelope);
+      case 'set_guest_approval':
+        _handleSetGuestApproval(envelope);
       default:
         // Unreachable: parseEnvelope already rejected anything outside
         // knownMessageTypes as BAD_TYPE.
@@ -437,22 +598,79 @@ class Connection {
       return;
     }
 
-    const Set<String> allowedKeys = <String>{'code', 'name'};
+    // Section 31 item 2: the room is named by `code` or by `link`, never both
+    // and never neither; `install` may ride on either.
+    const Set<String> allowedKeys = <String>{'code', 'link', 'name', 'install'};
     if (!envelope.data.keys.every(allowedKeys.contains)) {
       _reject(envelope, ProtocolError.badField);
       return;
     }
 
+    final bool hasCode = envelope.data.containsKey('code');
+    final bool hasLink = envelope.data.containsKey('link');
     final Object? rawCode = envelope.data['code'];
+    final Object? rawLink = envelope.data['link'];
     final Object? rawName = envelope.data['name'];
-    if (rawCode is! String || rawName is! String) {
+    final Object? rawInstall = envelope.data['install'];
+    if (hasCode == hasLink ||
+        rawName is! String ||
+        (hasCode && rawCode is! String) ||
+        (hasLink && rawLink is! String)) {
+      _reject(envelope, ProtocolError.badField);
+      return;
+    }
+    if (envelope.data.containsKey('install') &&
+        (rawInstall is! String || !_installPattern.hasMatch(rawInstall))) {
       _reject(envelope, ProtocolError.badField);
       return;
     }
 
-    final JoinResult result = registry.joinRoom(code: rawCode, name: rawName);
+    // Section 31 item 3: one open knock per socket. A knock whose room is
+    // gone (reaped before its minute ran out) no longer counts.
+    final String? pendingId = pendingKnockId;
+    if (pendingId != null) {
+      if (registry.hasOpenKnock(pendingKnockRoom!, pendingId)) {
+        _reject(envelope, ProtocolError.rateLimited);
+        return;
+      }
+      pendingKnockId = null;
+      pendingKnockRoom = null;
+    }
+
+    final String? install = rawInstall is String ? rawInstall : null;
+    final JoinResult result = registry.joinRoom(
+      code: hasCode ? rawCode as String : null,
+      link: hasLink ? rawLink as String : null,
+      name: rawName,
+      install: install,
+      ip: ip,
+      requestId: envelope.id,
+      owner: this,
+    );
     if (result is JoinFailure) {
-      _reject(envelope, result.error, room: rawCode);
+      // A link is never logged, and never stands in for the room code.
+      _reject(envelope, result.error, room: hasCode ? rawCode as String : '-');
+      return;
+    }
+    if (result is JoinKnocked) {
+      pendingKnockId = result.knock.id;
+      pendingKnockRoom = result.room.code;
+      _send(
+        type: 'knock_pending',
+        data: <String, Object?>{
+          'knock_id': result.knock.id,
+          'expires_ms': knockLifetimeMs,
+        },
+        re: envelope.id,
+      );
+      publishKnockEvents(hub, <KnockEvent>[result.opened]);
+      _log(
+        type: envelope.type,
+        id: envelope.id,
+        outcome: 'ok knock_opened knock=${result.knock.id}',
+        room: result.room.code,
+        seq: result.opened.seq,
+      );
       return;
     }
     final JoinOk ok = result as JoinOk;
@@ -464,7 +682,7 @@ class Connection {
     _send(type: 'seat_assigned', data: buildSeatAssigned(ok.seat), re: null);
     _send(
       type: 'room',
-      data: buildRoomSnapshot(ok.room, now: clock.now),
+      data: _snapshotFor(ok.room),
       re: envelope.id,
     );
     hub.broadcast(
@@ -476,11 +694,125 @@ class Connection {
     _log(
       type: envelope.type,
       id: envelope.id,
-      outcome: 'ok',
+      outcome: 'ok via=${ok.seat.via}',
       room: ok.room.code,
       seat: ok.seat.seat,
       seq: ok.room.seq,
     );
+    publishKnockEvents(hub, ok.knockEvents);
+  }
+
+  /// `answer_knock`, section 31 item 4. Identity first, like the other
+  /// socket-identified messages; the registry runs the rest of the ladder.
+  /// The host's own copy of each frame its answer caused carries `re`.
+  void _handleAnswerKnock(ParsedEnvelope envelope) {
+    if (!_hasIdentity) {
+      _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    final AnswerKnockResult result = registry.answerKnock(
+      code: roomCode!,
+      seatToken: seatToken!,
+      data: envelope.data,
+    );
+    if (result is AnswerKnockFailure) {
+      _reject(envelope, result.error, room: roomCode);
+      return;
+    }
+    final AnswerKnockOk ok = result as AnswerKnockOk;
+    publishKnockEvents(
+      hub,
+      ok.events,
+      requester: this,
+      requesterRe: envelope.id,
+    );
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: 'ok knock=${ok.events.first.knock.id} '
+          '${(ok.events.first as KnockClosed).outcome}',
+      room: ok.room.code,
+      seq: ok.events.last.seq,
+    );
+  }
+
+  /// `set_guest_approval`, section 31 item 5. Answered by `room` with `re`,
+  /// the same `room` going to every other seat at the same `seq`; knocks it
+  /// settled follow, one frame set each.
+  void _handleSetGuestApproval(ParsedEnvelope envelope) {
+    if (!_hasIdentity) {
+      _reject(envelope, ProtocolError.badSeatToken);
+      return;
+    }
+    final SetApprovalResult result = registry.setGuestApproval(
+      code: roomCode!,
+      seatToken: seatToken!,
+      data: envelope.data,
+    );
+    if (result is SetApprovalFailure) {
+      _reject(envelope, result.error, room: roomCode);
+      return;
+    }
+    final SetApprovalOk ok = result as SetApprovalOk;
+    _send(type: 'room', data: ok.hostSnapshot, re: envelope.id);
+    sendToSeatsExcept(
+      hub,
+      ok.room,
+      exceptToken: seatToken,
+      type: 'room',
+      data: ok.othersSnapshot,
+    );
+    publishKnockEvents(hub, ok.events);
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: 'ok guest_approval=${ok.room.guestApproval}',
+      room: ok.room.code,
+      seq: ok.events.isEmpty ? ok.seq : ok.events.last.seq,
+    );
+  }
+
+  /// The `room` this socket is sent for [room]: the host's own copy lists the
+  /// open knocks, every other seat's does not (section 31 item 3).
+  Map<String, Object?> _snapshotFor(Room room) {
+    bool isHost = false;
+    for (final Seat seat in room.seats) {
+      if (seat.seatToken == seatToken && seat.seat == room.hostSeat) {
+        isHost = true;
+        break;
+      }
+    }
+    return buildRoomSnapshot(room, now: clock.now, forHost: isHost);
+  }
+
+  /// A `room` to every socket of [room] but this one. With no knock open it
+  /// is one broadcast of one snapshot, as ever; with knocks open the host's
+  /// copy is the one that lists them.
+  void _broadcastRoomToOthers(Room room) {
+    if (room.knocks.isEmpty) {
+      hub.broadcast(
+        code: room.code,
+        type: 'room',
+        data: buildRoomSnapshot(room, now: clock.now),
+        exceptConn: this,
+      );
+      return;
+    }
+    for (final Seat seat in room.seats) {
+      if (seat.seatToken == seatToken || !seat.connected) {
+        continue;
+      }
+      hub.sendToSeatToken(
+        code: room.code,
+        seatToken: seat.seatToken,
+        type: 'room',
+        data: buildRoomSnapshot(
+          room,
+          now: clock.now,
+          forHost: seat.seat == room.hostSeat,
+        ),
+      );
+    }
   }
 
   Future<void> _handleResume(ParsedEnvelope envelope) async {
@@ -527,7 +859,7 @@ class Connection {
     );
     _send(
       type: 'room',
-      data: buildRoomSnapshot(ok.room, now: clock.now),
+      data: _snapshotFor(ok.room),
       re: envelope.id,
     );
     // A takeover -- this socket resuming a seat that was already connected,
@@ -854,8 +1186,7 @@ class Connection {
       return;
     }
     final SetPlayersOk ok = result as SetPlayersOk;
-    final Map<String, Object?> data =
-        buildRoomSnapshot(ok.room, now: clock.now);
+    final Map<String, Object?> data = _snapshotFor(ok.room);
 
     // docs/PROTOCOL.md section 15 rule 1: every connected seat whose number
     // this call actually changed gets its own `seat_assigned` before the
@@ -885,12 +1216,7 @@ class Connection {
         data: buildSeatAssigned(moved),
       );
     }
-    hub.broadcast(
-      code: ok.room.code,
-      type: 'room',
-      data: data,
-      exceptConn: this,
-    );
+    _broadcastRoomToOthers(ok.room);
     _log(
       type: envelope.type,
       id: envelope.id,
@@ -979,6 +1305,36 @@ class Connection {
 
   /// `leave_room`, docs/PROTOCOL.md section 4, section 16.3 and section 18.
   void _handleLeaveRoom(ParsedEnvelope envelope) {
+    // Section 31 item 4: `leave_room` withdraws this socket's open knock. A
+    // socket with no seat is answered by the `knock_failed` that closes it.
+    final String? knockId = pendingKnockId;
+    if (knockId != null && envelope.data.isEmpty) {
+      final String knockRoom = pendingKnockRoom!;
+      pendingKnockId = null;
+      pendingKnockRoom = null;
+      final List<KnockEvent> closed =
+          registry.withdrawKnock(knockRoom, knockId);
+      publishKnockEvents(
+        hub,
+        closed,
+        knockerRequester: this,
+        knockerRe: envelope.id,
+      );
+      if (!_hasIdentity) {
+        if (closed.isEmpty) {
+          _reject(envelope, ProtocolError.badSeatToken);
+        } else {
+          _log(
+            type: envelope.type,
+            id: envelope.id,
+            outcome: 'ok knock_withdrawn knock=$knockId',
+            room: knockRoom,
+            seq: closed.last.seq,
+          );
+        }
+        return;
+      }
+    }
     // docs/PROTOCOL.md section 7: identity before payload for the five
     // socket-identified messages.
     if (!_hasIdentity) {
@@ -1065,6 +1421,11 @@ class Connection {
       _reject(envelope, ProtocolError.badSeatToken);
       return;
     }
+    // Section 31 item 6: in LOBBY the same message frees the seat instead.
+    if (registry.lookup(roomCode!)?.state == RoomState.lobby) {
+      _handleKickLobby(envelope);
+      return;
+    }
     final RetireResult result = registry.kick(
       code: roomCode!,
       seatToken: seatToken!,
@@ -1085,6 +1446,51 @@ class Connection {
     }
     detachFreedSeats(hub, ok.room.code, ok.freed);
     _logRetire(envelope.type, envelope.id, ok);
+  }
+
+  /// `kick` in LOBBY, section 31 item 6. The kicked socket is detached first,
+  /// so it is sent `kicked` (no `seq`) and nothing that follows; every other
+  /// socket gets the `player_left`, the host's copy with `re`.
+  void _handleKickLobby(ParsedEnvelope envelope) {
+    final KickLobbyResult result = registry.kickLobby(
+      code: roomCode!,
+      seatToken: seatToken!,
+      data: envelope.data,
+    );
+    if (result is KickLobbyFailure) {
+      _reject(envelope, result.error, room: roomCode);
+      return;
+    }
+    final KickLobbyOk ok = result as KickLobbyOk;
+    final String code = ok.room.code;
+    final Connection? kickedConn = hub.detachSeatToken(
+      code: code,
+      seatToken: ok.seat.seatToken,
+    );
+    if (kickedConn != null) {
+      kickedConn.roomCode = null;
+      kickedConn.seatToken = null;
+      kickedConn._send(
+        type: 'kicked',
+        data: const <String, Object?>{},
+        re: null,
+      );
+    }
+    _sendAndBroadcast(
+      room: code,
+      type: 'player_left',
+      data: buildPlayerLeft(ok.seat.seat, ok.room.hostSeat, ok.room.seq),
+      re: envelope.id,
+    );
+    _log(
+      type: envelope.type,
+      id: envelope.id,
+      outcome: 'ok seat_kicked',
+      room: code,
+      seat: ok.seat.seat,
+      seq: ok.room.seq,
+    );
+    _startRematchIfReady(envelope, code);
   }
 
   /// One structured line for a retirement the request [type] caused.
@@ -1137,8 +1543,7 @@ class Connection {
       return;
     }
     final RematchOk ok = result as RematchOk;
-    final Map<String, Object?> data =
-        buildRoomSnapshot(ok.room, now: clock.now);
+    final Map<String, Object?> data = _snapshotFor(ok.room);
 
     if (!ok.changed) {
       // docs/PROTOCOL.md section 16.3: a double tap from a seat already
@@ -1155,8 +1560,8 @@ class Connection {
       return;
     }
 
-    _sendAndBroadcast(
-        room: ok.room.code, type: 'room', data: data, re: envelope.id);
+    _send(type: 'room', data: data, re: envelope.id);
+    _broadcastRoomToOthers(ok.room);
 
     if (ok.autoStart) {
       // docs/PROTOCOL.md section 16.4, "Everyone accepted": the room above
@@ -1880,6 +2285,26 @@ class Connection {
       }
     }
     _closed = true;
+    // Section 31 item 4: a knock does not outlive its socket. Done after
+    // `_closed`, so nothing is written to the socket that just went.
+    final String? knockId = pendingKnockId;
+    if (knockId != null) {
+      final String knockRoom = pendingKnockRoom!;
+      pendingKnockId = null;
+      pendingKnockRoom = null;
+      final List<KnockEvent> closed =
+          registry.withdrawKnock(knockRoom, knockId);
+      publishKnockEvents(hub, closed);
+      if (closed.isNotEmpty) {
+        _log(
+          type: '-',
+          id: '-',
+          outcome: 'disconnect knock_withdrawn knock=$knockId',
+          room: knockRoom,
+          seq: closed.last.seq,
+        );
+      }
+    }
   }
 
   /// Closes the underlying socket with [code] and [reason], one of the four
