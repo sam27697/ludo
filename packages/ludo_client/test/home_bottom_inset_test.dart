@@ -69,6 +69,46 @@ void _useInsetSurface(WidgetTester tester, {required double bottomInset}) {
   addTearDown(tester.view.reset);
 }
 
+/// A link id (shape [0-9a-z]{4,10}-[0-9a-z]{6}) that names no code.
+const String _linkId = 't5k2q9a-x7m3pd';
+
+/// The code typed before the link arrives, so Join is in the tree.
+const String _typedCode = 'K7M2QP';
+
+/// A link id fills no field, and on a Home that is the current route it joins
+/// at once, so the scroll under test now belongs to a link that arrives
+/// while a route sits above Home. This types a full code (Join is in the
+/// tree), puts the scroll back at the top with no focus, pushes a probe
+/// route, runs [deliver] (the link), settles, and pops the probe.
+Future<void> _linkUnderRoute(
+  WidgetTester tester, {
+  required void Function() deliver,
+  required Future<void> Function() settle,
+  required void Function() fixtureCheck,
+}) async {
+  await tester.enterText(find.byKey(const Key('room-code-field')), _typedCode);
+  await tester.pump();
+  FocusManager.instance.primaryFocus?.unfocus();
+  await settle();
+  final BuildContext field = tester.element(
+    find.byKey(const Key('room-code-field')),
+  );
+  Scrollable.of(field).position.jumpTo(0);
+  await tester.pump();
+  fixtureCheck();
+
+  Navigator.of(tester.element(find.byType(HomeScreen))).push(
+    MaterialPageRoute<void>(
+      builder: (_) => const Scaffold(key: Key('above-home-probe')),
+    ),
+  );
+  await tester.pumpAndSettle();
+  deliver();
+  await settle();
+  Navigator.of(tester.element(find.byKey(const Key('above-home-probe')))).pop();
+  await tester.pumpAndSettle();
+}
+
 double _viewHeight(WidgetTester tester) =>
     tester.view.physicalSize.height / tester.view.devicePixelRatio;
 
@@ -217,16 +257,20 @@ void main() {
 
       _expectInsetInEffect(tester, 'IN-LINK', _kBottomInset);
 
-      opener.add(_roomLink('H4XR9T'));
-      await _settle(tester);
+      await _linkUnderRoute(
+        tester,
+        deliver: () => opener.add(_roomLink(_linkId)),
+        settle: () => _settle(tester),
+        fixtureCheck: () {},
+      );
 
       expect(
         _codeFieldText(tester),
-        'H4XR9T',
+        _typedCode,
         reason:
-            'IN-LINK fixture: the warm-start link must still have '
-            'pre-filled the code field before this case can measure '
-            "whether join-room-button also stayed out of the inset",
+            'IN-LINK fixture: a link id fills no field, so the typed code '
+            'must still be the field text before this case can measure '
+            'whether join-room-button stayed within the inset',
       );
       _expectBottomWithinInset(
         tester,
@@ -317,16 +361,20 @@ void main() {
       await tester.pumpWidget(_homeScreenApp(linkStream: opener.call));
       await tester.pump();
 
-      opener.add(_roomLink('H4XR9T'));
-      await _settle(tester);
+      await _linkUnderRoute(
+        tester,
+        deliver: () => opener.add(_roomLink(_linkId)),
+        settle: () => _settle(tester),
+        fixtureCheck: () {},
+      );
 
       expect(
         _codeFieldText(tester),
-        'H4XR9T',
+        _typedCode,
         reason:
-            'IN-ZERO fixture: the warm-start link must still have '
-            'pre-filled the code field before this case can measure '
-            "whether join-room-button stayed in view",
+            'IN-ZERO fixture: a link id fills no field, so the typed code '
+            'must still be the field text before this case can measure '
+            'whether join-room-button stayed within the inset',
       );
       _expectBottomWithinInset(
         tester,
@@ -349,16 +397,20 @@ void main() {
 
     _expectInsetInEffect(tester, 'IN-AR', _kBottomInset);
 
-    opener.add(_roomLink('H4XR9T'));
-    await _settle(tester);
+    await _linkUnderRoute(
+      tester,
+      deliver: () => opener.add(_roomLink(_linkId)),
+      settle: () => _settle(tester),
+      fixtureCheck: () {},
+    );
 
     expect(
       _codeFieldText(tester),
-      'H4XR9T',
+      _typedCode,
       reason:
-          'IN-AR fixture: the warm-start link must still have pre-filled '
-          'the code field in the Arabic locale before this case can '
-          "measure whether join-room-button also stayed out of the inset",
+          'IN-AR fixture: a link id fills no field, so the typed code '
+          'must still be the field text before this case can measure '
+          'whether join-room-button stayed within the inset',
     );
     _expectBottomWithinInset(
       tester,

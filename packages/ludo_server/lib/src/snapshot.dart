@@ -23,10 +23,24 @@ import 'room.dart';
 /// own -- `clock.dart` says nothing under `lib/src/` calls `DateTime.now()`
 /// directly -- so the caller (`connection.dart`, holding the same injected
 /// `Clock` the registry was built with) passes the reading in.
-Map<String, Object?> buildRoomSnapshot(Room room, {required DateTime now}) {
+///
+/// Section 31 item 1 and 3: `link_id`, `guest_approval` and `knocks`. The open
+/// knocks are shown to the host only: [forHost] true lists them, and every
+/// other viewer, and every frame broadcast to a whole room, sees `[]`.
+Map<String, Object?> buildRoomSnapshot(
+  Room room, {
+  required DateTime now,
+  bool forHost = false,
+}) {
   final engine.GameState? game = room.game;
   return <String, Object?>{
     'code': room.code,
+    'link_id': room.linkId,
+    'guest_approval': room.guestApproval,
+    'knocks': <Object?>[
+      if (forHost)
+        for (final Knock knock in room.knocks) knockPayload(knock, now),
+    ],
     'state': _wireState(room.state),
     'host_seat': room.hostSeat,
     'players': room.players,
@@ -65,6 +79,17 @@ Map<String, Object?> buildRoomSnapshot(Room room, {required DateTime now}) {
   };
 }
 
+/// Section 31 item 3: `{ knock_id, name, expires_ms }`, `expires_ms` being the
+/// time left of the knock's 60 s at [now], 1 to 60000.
+Map<String, Object?> knockPayload(Knock knock, DateTime now) {
+  final int left = 60000 - now.difference(knock.createdAt).inMilliseconds;
+  return <String, Object?>{
+    'knock_id': knock.id,
+    'name': knock.name,
+    'expires_ms': left < 1 ? 1 : left,
+  };
+}
+
 Map<String, Object?>? _rematchSnapshot(Rematch? rematch) {
   if (rematch == null) {
     return null;
@@ -81,6 +106,7 @@ Map<String, Object?> _seatSnapshot(Room room, Seat seat) {
   return <String, Object?>{
     'seat': seat.seat,
     'name': seat.name,
+    'via': seat.via,
     'connected': seat.connected,
     'tokens': tokens,
     // docs/PROTOCOL.md section 6: null until this seat's seed is fixed,

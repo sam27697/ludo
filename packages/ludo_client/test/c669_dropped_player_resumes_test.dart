@@ -80,6 +80,7 @@ import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
+import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
@@ -97,6 +98,7 @@ const String _testUrl = 'wss://c669-test.invalid/ws';
 const String _fileName = 'c669_dropped_player_resumes_test.dart';
 
 const String _codeA = 'K7M2QP';
+const String _linkId = 't5k2q9a-x7m3pd';
 const String _codeB = 'W4X9HN';
 const String _token = 'tok-c669-seat-0001';
 const String _tokenB = 'tok-c669-seat-0002';
@@ -147,6 +149,11 @@ Map<String, Object?> _wireSeat(
   'seed_origin': null,
 };
 
+/// The share-link id the fake server puts on every room frame; null is a
+/// server from before section 31 (no `link_id`). Only the cases that tap a
+/// link set it, so every other case keeps the wire it was written against.
+String? _roomLinkId;
+
 Map<String, Object?> _wireRoom({
   required String code,
   required String state,
@@ -158,6 +165,7 @@ Map<String, Object?> _wireRoom({
   final bool finished = state == 'FINISHED';
   return <String, Object?>{
     'code': code,
+    if (_roomLinkId != null) 'link_id': _roomLinkId,
     'state': state,
     'host_seat': 0,
     'players': 2,
@@ -272,7 +280,8 @@ class _Links {
   Future<void> close() => _controller.close();
 }
 
-Uri _linkFor(String code) => Uri.parse('https://ludo.provefair.app/r/$code');
+Uri _linkFor(String linkId) =>
+    Uri.parse('https://ludo.provefair.app/r/$linkId');
 
 Widget _app(
   _Rig rig,
@@ -328,6 +337,24 @@ Future<int?> _storedSavedAt() async {
 void _seedLegacyRecord(String code) {
   SharedPreferences.setMockInitialValues(<String, Object>{
     _seatPrefsKey: <String>[code, '0', _token],
+  });
+}
+
+/// The same record, written by the app that knows the room's link id (order
+/// 681, R1), with the saved time removed so Home shows Rejoin and does not
+/// resume on its own at mount, exactly as [_seedLegacyRecord] leaves it.
+Future<void> _seedLegacyRecordWithLink(
+  WidgetTester tester,
+  String code,
+  String linkId,
+) async {
+  SharedPreferences.setMockInitialValues(<String, Object>{});
+  await tester.runAsync(() async {
+    await SessionMemory.recordSeat(
+      SeatRecord(code: code, seat: 0, seatToken: _token, linkId: linkId),
+    );
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_savedAtPrefsKey);
   });
 }
 
@@ -848,6 +875,52 @@ class _World {
     }, reason: why('expected resume to carry ($code, $token) verbatim'));
   }
 
+  /// A link id names no code, so it can never be matched to a stored record:
+  /// exactly one join_room carrying `link` (never `code`), no resume.
+  void expectJoinByLink(int from, String linkId) {
+    final List<String> joins = rig.sent('join_room', from: from);
+    final List<String> resumes = rig.sent('resume', from: from);
+    expect(
+      resumes,
+      isEmpty,
+      reason: why('expected no resume for a link id; sent ${resumes.length}'),
+    );
+    expect(
+      joins,
+      hasLength(1),
+      reason: why('expected exactly one join_room for link $linkId'),
+    );
+    final Map<String, Object?> data = Map<String, Object?>.of(
+      _dataOf(joins.single),
+    );
+    data.remove('install');
+    data.remove('name');
+    expect(data, <String, Object?>{
+      'link': linkId,
+    }, reason: why('expected join_room to carry the link id and no code'));
+  }
+
+  /// Answers the join the way the server does, so the case ends in a game.
+  Future<void> answerJoin() async {
+    final String id = rig.lastRequestId('join_room');
+    seq = 10;
+    rig.last.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 0, 'seat_token': token},
+      ),
+    );
+    rig.last.pushText(
+      _frame(
+        type: 'room',
+        re: id,
+        data: _wireRoom(code: code, state: 'PLAYING', seq: seq),
+      ),
+    );
+    await _pumpBounded(tester, frames: 3);
+    await expectOnGameRoute('the join must land the player in the game');
+  }
+
   /// Answers the resume the way the server does, so the case ends in a game
   /// and not on an unanswered request.
   Future<void> answerResume() async {
@@ -876,14 +949,18 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    _roomLinkId = null;
   });
 
   // The R4 dead-socket walk-off is how cases 1 to 3 get back to Home with the
   // seat still held. Every one of them says so in its fixture.
 
-  testWidgets('1 link: after a dead-socket walk-off a link for the same code '
-      'resumes with (code, token) and never joins', (tester) async {
+  testWidgets('1 link: after a dead-socket walk-off a link id equal to the '
+      'held seat\'s link id resumes with (code, token) and never joins', (
+    tester,
+  ) async {
     final _World w = _World(tester, '1 link same app life');
+    _roomLinkId = _linkId;
     await w.mount();
     try {
       await w.createAndPlay();
@@ -896,8 +973,8 @@ void main() {
       );
 
       final int from = w.rig.transports.length;
-      w.steps.add('link ${_linkFor(_codeA)}');
-      w.links.add(_linkFor(_codeA));
+      w.steps.add('link ${_linkFor(_linkId)}');
+      w.links.add(_linkFor(_linkId));
       await _pumpBounded(tester, frames: 3);
       w.expectResumeNotJoin(from, _codeA);
       await w.answerResume();
@@ -906,11 +983,11 @@ void main() {
     }
   });
 
-  testWidgets('1b link at cold start over a stored record resumes (anchor, '
-      'green on the base)', (tester) async {
-    _seedLegacyRecord(_codeA);
+  testWidgets('1b link id at cold start over a stored record that carries '
+      'that link id resumes', (tester) async {
+    await _seedLegacyRecordWithLink(tester, _codeA, _linkId);
     final _World w = _World(tester, '1b link cold start stored record');
-    await w.mount(initialLink: () async => _linkFor(_codeA));
+    await w.mount(initialLink: () async => _linkFor(_linkId));
     try {
       w.expectResumeNotJoin(0, _codeA);
     } finally {
@@ -918,9 +995,10 @@ void main() {
     }
   });
 
-  testWidgets('1c link delivered twice while the resume is under way: one '
+  testWidgets('1c link id delivered twice while the resume is under way: one '
       'resume, no join', (tester) async {
     final _World w = _World(tester, '1c link replayed');
+    _roomLinkId = _linkId;
     await w.mount();
     try {
       await w.createAndPlay();
@@ -930,8 +1008,8 @@ void main() {
 
       final int from = w.rig.transports.length;
       w.steps.add('link twice');
-      w.links.add(_linkFor(_codeA));
-      w.links.add(_linkFor(_codeA));
+      w.links.add(_linkFor(_linkId));
+      w.links.add(_linkFor(_linkId));
       await _pumpBounded(tester, frames: 3);
       w.expectResumeNotJoin(from, _codeA);
       expect(
@@ -1722,8 +1800,8 @@ void main() {
       w.steps.add('clock +61 min');
       w.clock.now = _base.add(const Duration(minutes: 61));
       final int from = w.rig.transports.length;
-      w.steps.add('link ${_linkFor(_codeA)}');
-      w.links.add(_linkFor(_codeA));
+      w.steps.add('link ${_linkFor(_linkId)}');
+      w.links.add(_linkFor(_linkId));
       await _pumpBounded(tester, frames: 3);
       expect(
         w.rig.sent('resume', from: from),

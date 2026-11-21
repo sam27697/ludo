@@ -28,8 +28,36 @@ import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart';
 import 'package:ludo_client/src/deep_link.dart';
 import 'package:ludo_client/src/home_screen.dart';
+import 'package:ludo_client/src/net/room_controller.dart';
+
+import 'net/fake_transport.dart';
 
 // --- shared fixtures --------------------------------------------------
+
+/// A link id (shape [0-9a-z]{4,10}-[0-9a-z]{6}) that names no code.
+const String _linkId = 't5k2q9a-x7m3pd';
+
+/// A controller on a [FakeTransport], so a link join opens no socket.
+RoomController _fakeController() => RoomController(
+  serverUrl: Uri.parse('wss://link-error-test.invalid/ws'),
+  connect: (Uri url) async => FakeTransport(),
+);
+
+/// Lets a link join run: the link waits for session memory to load (a few
+/// real-async turns), then the join pushes its route.
+Future<void> _settleLinkJoin(WidgetTester tester) async {
+  for (int i = 0; i < 6; i += 1) {
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
+/// Unmounts Home, which disposes the join's controller, and runs the clock
+/// past the ten second request timer so none is left pending.
+Future<void> _unmountAndDrain(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump(const Duration(seconds: 11));
+}
 
 /// A valid, well-formed app link built from a code that is itself already
 /// normalised (upper case, no dash or space).
@@ -146,6 +174,7 @@ Widget _homeScreenApp({
       onToggleLocale: () {},
       initialLinkReader: initialLinkReader,
       linkStream: linkStream,
+      controllerFactory: _fakeController,
     ),
   );
 }
@@ -311,7 +340,7 @@ void main() {
   group('E1 requirements 1-4: a stream error from linkStream', () {
     testWidgets(
       'reaches FlutterError.onError, the screen keeps working, and a later '
-      'valid Uri on the same stream still pre-fills the code field',
+      'valid link id on the same stream still reaches the join',
       (tester) async {
         final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
         final _RecordingNavigatorObserver observer =
@@ -342,18 +371,35 @@ void main() {
         // instance by using stream.listen(_handleLink).onError(...) instead
         // of the onError parameter of listen) passes every assertion above
         // and still fails this one.
-        opener.add(_validLink('AB23CD'));
-        await tester.pump();
+        final int pushesBefore = observer.pushCount;
+        opener.add(_validLink(_linkId));
+        await _settleLinkJoin(tester);
 
         expect(
-          _codeFieldText(tester),
-          'AB23CD',
+          observer.pushCount,
+          pushesBefore + 1,
           reason:
               'declaration E1 requirement 4: a stream error must not end '
-              'the subscription; a later valid Uri on the same stream must '
-              'still reach _handleLink and pre-fill the code field',
+              'the subscription; a later valid link id on the same stream '
+              'must still reach _handleLink and join, under one pushed '
+              'route; pushes went from $pushesBefore to '
+              '${observer.pushCount}',
         );
-        expect(_codeFieldError(tester), isNull);
+        expect(
+          find.byKey(const Key('room-code-field'), skipOffstage: false),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widget<TextField>(
+                find.byKey(const Key('room-code-field'), skipOffstage: false),
+              )
+              .controller!
+              .text,
+          isEmpty,
+          reason: 'a link id fills no code field',
+        );
+        await _unmountAndDrain(tester);
       },
     );
   });
@@ -527,9 +573,8 @@ void main() {
       expect(captured, isEmpty);
     });
 
-    testWidgets('a valid initial link still pre-fills the code field', (
-      tester,
-    ) async {
+    testWidgets('a valid initial link id still reaches the join and fills no '
+        'code field', (tester) async {
       final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
       final _RecordingNavigatorObserver observer =
           _RecordingNavigatorObserver();
@@ -540,14 +585,23 @@ void main() {
           );
           await tester.pump();
 
-          reader.complete(_validLink('AB23CD'));
-          await tester.pump();
+          reader.complete(_validLink(_linkId));
+          await _settleLinkJoin(tester);
         },
       );
 
-      expect(_codeFieldText(tester), 'AB23CD');
-      expect(_codeFieldError(tester), isNull);
+      expect(observer.pushCount, 2, reason: 'one route for Home, one join');
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const Key('room-code-field'), skipOffstage: false),
+            )
+            .controller!
+            .text,
+        isEmpty,
+      );
       expect(captured, isEmpty);
+      await _unmountAndDrain(tester);
     });
 
     testWidgets(

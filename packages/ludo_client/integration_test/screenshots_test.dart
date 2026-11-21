@@ -6682,7 +6682,7 @@ void main() {
       binding,
       shotName: '109-lobby-link-gone-first-time-ar',
       locale: const Locale('ar'),
-      code: 'LK9M3P',
+      code: 't5k2q9a-x7m3pd',
       fromLink: true,
       errorCode: 'NO_SUCH_ROOM',
     );
@@ -6752,7 +6752,7 @@ void main() {
       binding,
       shotName: '116-lobby-error-link-gone-ar',
       locale: const Locale('ar'),
-      code: 'LG6W4B',
+      code: 'w8h4n2c-m6r9tz',
       fromLink: true,
       errorCode: 'NO_SUCH_ROOM',
     );
@@ -17964,6 +17964,17 @@ Future<void> _mountShotHome(
       locale: locale,
     ),
   );
+  if (coldLink != null) {
+    // Section 31 (order 681): a cold room link joins by itself, so the lobby
+    // is pushed over Home and its connecting view never settles. The caller
+    // waits for the lobby; Home is underneath, offstage.
+    expect(
+      find.byType(HomeScreen, skipOffstage: false),
+      findsOneWidget,
+      reason: 'capture $shotName: expected the home screen mounted',
+    );
+    return;
+  }
   await tester.pumpAndSettle();
   await _expectHomeScreen(tester, localeName: locale.languageCode);
   expect(
@@ -18381,9 +18392,10 @@ Future<void> _shootHomeRoomClosed(
 /// 109, 110 (order 531, C-529 D4). A first-time player's Join answered with
 /// [errorCode]: the lobby's error body, no `lobby-retry-button`, and
 /// `lobby-leave-button` reading "Back to home" because this lobby never held
-/// a seat. [fromLink] true delivers [code] as a cold room link on a first
-/// launch, so the Join tap carries the link and the line is the link wording;
-/// false types the code, so the line is the typed one.
+/// a seat. [fromLink] true delivers [code], a link id, as a cold room link on
+/// a first launch: since order 681 the link fills no field and the link join
+/// starts without a tap, sending join_room with the link id, and the line is
+/// the link wording; false types the code, so the line is the typed one.
 Future<void> _shootLobbyJoinRefused(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding, {
@@ -18395,7 +18407,7 @@ Future<void> _shootLobbyJoinRefused(
 }) async {
   final bool en = locale.languageCode == 'en';
   final String scenario =
-      '${fromLink ? 'link-filled' : 'typed'} code $code, locale '
+      '${fromLink ? 'link id' : 'typed code'} $code, locale '
       '${locale.languageCode}, join answered $errorCode';
   final _ShotFactory factory = _ShotFactory();
   try {
@@ -18410,32 +18422,32 @@ Future<void> _shootLobbyJoinRefused(
           : null,
     );
     if (fromLink) {
+      // Section 31 (order 681): a link carries a link id, never a code, so it
+      // fills no field and shows no Join to tap. The cold link is the one
+      // tap: Home pushes the lobby and sends join_room with the link id.
+      for (int i = 0; i < 6; i += 1) {
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        await tester.pump(const Duration(milliseconds: 100));
+      }
       await _pumpUntilFound(
         tester,
-        find.byKey(const Key('join-room-button')),
-        'capture $shotName ($scenario): join-room-button once the cold '
-        'link filled the code field',
+        find.byType(LobbyScreen),
+        'capture $shotName ($scenario): the lobby pushed by the cold link '
+        'join, with no tap',
       );
       await _pumpRealDurationFrames(tester, frameCount: 8);
       expect(
         tester
-            .widget<TextField>(find.byKey(const Key('room-code-field')))
+            .widget<TextField>(
+              find.byKey(const Key('room-code-field'), skipOffstage: false),
+            )
             .controller!
             .text,
-        code,
-        reason:
-            'capture $shotName ($scenario): the link must fill the code '
-            'field',
-      );
-      expect(
-        factory.controllers,
         isEmpty,
         reason:
-            'capture $shotName ($scenario): a first-time player is never '
-            'joined by the link alone; a controller was built',
+            'capture $shotName ($scenario): a link id fills no code field, '
+            'so Home must hold an empty one under the lobby',
       );
-      await tester.ensureVisible(find.byKey(const Key('join-room-button')));
-      await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
     } else {
       await _typeCodeAndJoin(tester, code: code, shotName: shotName);
     }
@@ -18448,13 +18460,24 @@ Future<void> _shootLobbyJoinRefused(
           '${factory.allTypes}',
     );
     final String joinRaw = factory.sent('join_room').single;
-    expect(
-      _dataOfSent(joinRaw)['code'],
-      code,
-      reason:
-          'capture $shotName ($scenario): join_room must carry "$code", it '
-          'carries ${_dataOfSent(joinRaw)}',
-    );
+    if (fromLink) {
+      final Map<String, Object?> joinData = _dataOfSent(joinRaw);
+      expect(
+        <Object?>[joinData['link'], joinData.containsKey('code')],
+        <Object?>[code, false],
+        reason:
+            'capture $shotName ($scenario): join_room must carry the link id '
+            '"$code" and no code; it carries $joinData',
+      );
+    } else {
+      expect(
+        _dataOfSent(joinRaw)['code'],
+        code,
+        reason:
+            'capture $shotName ($scenario): join_room must carry "$code", it '
+            'carries ${_dataOfSent(joinRaw)}',
+      );
+    }
     factory.last.pushText(
       _frame(
         type: 'error',
