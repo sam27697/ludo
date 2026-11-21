@@ -333,6 +333,15 @@ Map<String, Object?> _createData(_LiveControllerFactory factory, String repro) {
   return sent.single['d']! as Map<String, Object?>;
 }
 
+/// Lets a link join run: the link waits for session memory to load (a few
+/// real-async turns), then the join pushes its route.
+Future<void> _settleLink(WidgetTester tester) async {
+  for (int i = 0; i < 6; i += 1) {
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
 Future<void> _drainRequestTimeout(WidgetTester tester) async {
   await tester.pump(const Duration(seconds: 11));
   await tester.pump();
@@ -730,57 +739,95 @@ void main() {
       });
 
       // Red on 7501227: same unconditional button (home_screen.dart:1754).
+      // Order 681: a link carries a link id, never a code, so it fills no
+      // field and brings no Join; it joins by itself under one pushed route.
+      // Join still comes only from a typed full-length code.
       testWidgets('a cold-start room link and a warm-start room link each '
-          'bring Join', (tester) async {
+          'join by link id, fill no field and bring no Join', (tester) async {
         const String name = 'link brings join';
         final String repro = _repro(name, locale);
         final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
         final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
+        final _PushProbe observer = _PushProbe();
         await _mount(
           tester,
           locale: locale,
           initialLinkReader: reader.call,
           linkStream: opener.call,
+          observer: observer,
         );
         expect(
           _join(),
           findsNothing,
           reason: 'expected no Join before any link arrives. $repro',
         );
+        final int pushesBefore = observer.pushCount;
 
-        reader.complete(Uri.parse('https://$kAppLinkHost/r/K7M2QP'));
-        await tester.pumpAndSettle();
+        reader.complete(Uri.parse('https://$kAppLinkHost/r/t5k2q9a-x7m3pd'));
+        await _settleLink(tester);
         expect(
-          _codeText(tester),
-          'K7M2QP',
-          reason: 'fixture: the cold link must fill the field. $repro',
+          observer.pushCount,
+          pushesBefore + 1,
+          reason: 'expected the cold link id to join under one route. $repro',
         );
+        expect(
+          tester
+              .widget<TextField>(find.byKey(_codeKey, skipOffstage: false))
+              .controller!
+              .text,
+          isEmpty,
+          reason: 'expected the cold link id to fill no field. $repro',
+        );
+        expect(
+          _join(),
+          findsNothing,
+          reason: 'expected no Join after a cold-start link id. $repro',
+        );
+        Navigator.of(
+          tester.element(find.byType(HomeScreen, skipOffstage: false)),
+        ).pop();
+        await _drainRequestTimeout(tester);
+        await tester.pumpAndSettle();
+
+        await tester.enterText(find.byKey(_codeKey), 'K7M2QP');
+        await tester.pumpAndSettle();
         expect(
           find.byKey(_joinKey),
           findsOneWidget,
-          reason: 'expected Join after a cold-start room link. $repro',
+          reason: 'expected Join from the typed full-length code. $repro',
         );
-
         await tester.enterText(find.byKey(_codeKey), '');
         await tester.pumpAndSettle();
         expect(
           _join(),
           findsNothing,
-          reason: 'expected Join gone once the linked code is cleared. $repro',
+          reason: 'expected Join gone once the typed code is cleared. $repro',
         );
 
-        opener.add(Uri.parse('https://$kAppLinkHost/r/H4XR9T'));
-        await tester.pumpAndSettle();
+        opener.add(Uri.parse('https://$kAppLinkHost/r/w8n4b6c2-q3z9rt'));
+        await _settleLink(tester);
         expect(
-          _codeText(tester),
-          'H4XR9T',
-          reason: 'fixture: the warm link must fill the field. $repro',
+          observer.pushCount,
+          pushesBefore + 2,
+          reason: 'expected the warm link id to join under one route. $repro',
         );
         expect(
-          find.byKey(_joinKey),
-          findsOneWidget,
-          reason: 'expected Join after a warm-start room link. $repro',
+          tester
+              .widget<TextField>(find.byKey(_codeKey, skipOffstage: false))
+              .controller!
+              .text,
+          isEmpty,
+          reason: 'expected the warm link id to fill no field. $repro',
         );
+        expect(
+          _join(),
+          findsNothing,
+          reason: 'expected no Join after a warm-start link id. $repro',
+        );
+        Navigator.of(
+          tester.element(find.byType(HomeScreen, skipOffstage: false)),
+        ).pop();
+        await _drainRequestTimeout(tester);
       });
 
       // Red on 7501227: the Join button is unconditional, so a tap path

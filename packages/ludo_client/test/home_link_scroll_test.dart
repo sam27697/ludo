@@ -163,6 +163,46 @@ Uri _foreignLink(String code) => Uri.parse('https://example.com/r/$code');
 
 // --- viewport geometry ------------------------------------------------------
 
+/// A link id (shape [0-9a-z]{4,10}-[0-9a-z]{6}) that names no code.
+const String _linkId = 't5k2q9a-x7m3pd';
+
+/// The code typed before the link arrives, so Join is in the tree.
+const String _typedCode = 'K7M2QP';
+
+/// A link id fills no field, and on a Home that is the current route it joins
+/// at once, so the scroll under test now belongs to a link that arrives
+/// while a route sits above Home. This types a full code (Join is in the
+/// tree), puts the scroll back at the top with no focus, pushes a probe
+/// route, runs [deliver] (the link), settles, and pops the probe.
+Future<void> _linkUnderRoute(
+  WidgetTester tester, {
+  required void Function() deliver,
+  required Future<void> Function() settle,
+  required void Function() fixtureCheck,
+}) async {
+  await tester.enterText(find.byKey(const Key('room-code-field')), _typedCode);
+  await tester.pump();
+  FocusManager.instance.primaryFocus?.unfocus();
+  await settle();
+  final BuildContext field = tester.element(
+    find.byKey(const Key('room-code-field')),
+  );
+  Scrollable.of(field).position.jumpTo(0);
+  await tester.pump();
+  fixtureCheck();
+
+  Navigator.of(tester.element(find.byType(HomeScreen))).push(
+    MaterialPageRoute<void>(
+      builder: (_) => const Scaffold(key: Key('above-home-probe')),
+    ),
+  );
+  await tester.pumpAndSettle();
+  deliver();
+  await settle();
+  Navigator.of(tester.element(find.byKey(const Key('above-home-probe')))).pop();
+  await tester.pumpAndSettle();
+}
+
 bool _fullyInView(Rect rect, double viewHeight) =>
     rect.top >= 0 && rect.bottom <= viewHeight;
 
@@ -235,18 +275,20 @@ void main() {
       await tester.pumpWidget(_homeScreenApp(initialLinkReader: reader.call));
       await tester.pump();
 
-      _expectButtonBelowFold(tester, 'LS-COLD');
-
-      reader.complete(_roomLink('K7M2QP'));
-      await _settleAfterLink(tester);
+      await _linkUnderRoute(
+        tester,
+        deliver: () => reader.complete(_roomLink(_linkId)),
+        settle: () => _settleAfterLink(tester),
+        fixtureCheck: () => _expectButtonBelowFold(tester, 'LS-COLD'),
+      );
 
       expect(
         _codeFieldText(tester),
-        'K7M2QP',
+        _typedCode,
         reason:
-            'LS-COLD fixture: the cold-start link must still have pre-filled '
-            'the code field before this case can measure whether it also '
-            'scrolled',
+            'LS-COLD fixture: a link id fills no field, so the typed code '
+            'must still be the field text before this case can measure '
+            'whether the link also scrolled',
       );
       _expectFullyInView(
         tester,
@@ -266,18 +308,20 @@ void main() {
       await tester.pumpWidget(_homeScreenApp(linkStream: opener.call));
       await tester.pump();
 
-      _expectButtonBelowFold(tester, 'LS-WARM');
-
-      opener.add(_roomLink('H4XR9T'));
-      await _settleAfterLink(tester);
+      await _linkUnderRoute(
+        tester,
+        deliver: () => opener.add(_roomLink(_linkId)),
+        settle: () => _settleAfterLink(tester),
+        fixtureCheck: () => _expectButtonBelowFold(tester, 'LS-WARM'),
+      );
 
       expect(
         _codeFieldText(tester),
-        'H4XR9T',
+        _typedCode,
         reason:
-            'LS-WARM fixture: the warm-start link must still have pre-filled '
-            'the code field before this case can measure whether it also '
-            'scrolled',
+            'LS-WARM fixture: a link id fills no field, so the typed code '
+            'must still be the field text before this case can measure '
+            'whether the link also scrolled',
       );
       _expectFullyInView(
         tester,
@@ -372,18 +416,20 @@ void main() {
     );
     await tester.pump();
 
-    _expectButtonBelowFold(tester, 'LS-AR');
-
-    opener.add(_roomLink('H4XR9T'));
-    await _settleAfterLink(tester);
+    await _linkUnderRoute(
+      tester,
+      deliver: () => opener.add(_roomLink(_linkId)),
+      settle: () => _settleAfterLink(tester),
+      fixtureCheck: () => _expectButtonBelowFold(tester, 'LS-AR'),
+    );
 
     expect(
       _codeFieldText(tester),
-      'H4XR9T',
+      _typedCode,
       reason:
-          'LS-AR fixture: the warm-start link must still have pre-filled '
-          'the code field in the Arabic locale before this case can measure '
-          'whether it also scrolled',
+          'LS-AR fixture: a link id fills no field, so the typed code must '
+          'still be the field text in the Arabic locale before this case '
+          'can measure whether the link also scrolled',
     );
     _expectFullyInView(
       tester,

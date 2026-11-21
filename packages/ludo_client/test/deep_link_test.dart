@@ -23,9 +23,57 @@ import 'package:ludo_client/src/app.dart';
 import 'package:ludo_client/src/deep_link.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
+import 'package:ludo_client/src/net/room_controller.dart';
+import 'package:ludo_client/src/server_config.dart';
 import 'package:path/path.dart' as p;
 
+import 'net/fake_transport.dart';
+
 // --- shared fixtures --------------------------------------------------
+
+/// A link id (shape [0-9a-z]{4,10}-[0-9a-z]{6}) that names no code.
+const String _linkId = 't5k2q9a-x7m3pd';
+
+/// An [HttpClient] that refuses every request with a plain socket error, so a
+/// join built on the real connector (LudoApp has no factory to substitute)
+/// fails the way an unreachable server does and opens no socket.
+class _RefusingHttpClient implements HttpClient {
+  _RefusingHttpClient(this.urls);
+
+  final List<Uri> urls;
+
+  @override
+  Future<HttpClientRequest> openUrl(String method, Uri url) {
+    urls.add(url);
+    return Future<HttpClientRequest>.error(const SocketException('refused'));
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+class _RefusingHttpOverrides extends HttpOverrides {
+  _RefusingHttpOverrides(this.urls);
+
+  final List<Uri> urls;
+
+  @override
+  HttpClient createHttpClient(SecurityContext? context) =>
+      _RefusingHttpClient(urls);
+}
+
+/// Lets a link join run: the link waits for session memory to load, then the
+/// join pushes its route. A few real-async turns and bounded pumps, no sleep
+/// on a condition that never comes.
+Future<void> _settleLinkJoin(WidgetTester tester) async {
+  for (int i = 0; i < 6; i += 1) {
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
+/// A second link id, for the cases that deliver two links.
+const String _linkId2 = 'w8n4b6c2-q3z9rt';
 
 /// A valid, well-formed app link built from a code that is itself already
 /// normalised (upper case, no dash or space), so a test that just needs
@@ -131,6 +179,7 @@ Widget _homeScreenApp({
   InitialLinkReader initialLinkReader = noInitialLink,
   LinkStreamOpener linkStream = noLinkStream,
   NavigatorObserver? observer,
+  RoomController Function()? controllerFactory,
 }) {
   return MaterialApp(
     supportedLocales: appSupportedLocales,
@@ -147,8 +196,35 @@ Widget _homeScreenApp({
       onToggleLocale: () {},
       initialLinkReader: initialLinkReader,
       linkStream: linkStream,
+      controllerFactory: controllerFactory ?? defaultRoomControllerFactory,
     ),
   );
+}
+
+/// Controllers made by [_fakeController] in the running test; a link join
+/// builds one, and [_settleLinkJoin]'s caller must dispose it.
+final List<RoomController> _madeControllers = <RoomController>[];
+
+/// A controller on a [FakeTransport], so a link join never opens a socket.
+RoomController _fakeController() {
+  final FakeTransport transport = FakeTransport();
+  final RoomController made = RoomController(
+    serverUrl: Uri.parse('wss://deep-link-test.invalid/ws'),
+    connect: (Uri url) async => transport,
+  );
+  _madeControllers.add(made);
+  return made;
+}
+
+/// Unmounts the tree and disposes every controller a link join made, then
+/// runs the clock past the ten second request timer so none is pending.
+Future<void> _disposeLinkJoin(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  for (final RoomController c in List<RoomController>.of(_madeControllers)) {
+    c.dispose();
+  }
+  _madeControllers.clear();
+  await tester.pump(const Duration(seconds: 11));
 }
 
 /// Pumps [LudoApp] directly with a substitutable [initialLinkReader] and
@@ -568,41 +644,63 @@ void main() {
 
   group('the cold path', () {
     testWidgets('item 10: first-time player (empty memory): a valid cold '
-        'link fills the room code field through HomeScreen directly, and '
-        'nothing navigates', (tester) async {
+        'link id fills no field through HomeScreen directly, and joins by '
+        'one pushed route', (tester) async {
       final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
       final _RecordingNavigatorObserver observer =
           _RecordingNavigatorObserver();
       await tester.pumpWidget(
-        _homeScreenApp(initialLinkReader: reader.call, observer: observer),
+        _homeScreenApp(
+          initialLinkReader: reader.call,
+          observer: observer,
+          controllerFactory: _fakeController,
+        ),
       );
       await tester.pump();
       final int pushesBefore = observer.pushCount;
       final int popsBefore = observer.popCount;
 
-      reader.complete(_validLink('AB23CD'));
-      await tester.pump();
+      reader.complete(_validLink(_linkId));
+      await _settleLinkJoin(tester);
 
-      expect(_codeFieldText(tester), 'AB23CD');
-      expect(_codeFieldError(tester), isNull);
-      expect(observer.pushCount, pushesBefore);
+      expect(_codeFieldText(tester, skipOffstage: false), isEmpty);
+      expect(_codeFieldError(tester, skipOffstage: false), isNull);
+      expect(observer.pushCount, pushesBefore + 1);
       expect(observer.popCount, popsBefore);
-      expect(find.byType(LobbyScreen), findsNothing);
+      expect(find.byType(LobbyScreen), findsOneWidget);
+      await _disposeLinkJoin(tester);
     });
 
     testWidgets('item 10: first-time player (empty memory): a valid cold '
-        'link fills the room code field through LudoApp, and nothing '
-        'navigates', (tester) async {
-      final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
-      await tester.pumpWidget(_ludoApp(initialLinkReader: reader.call));
-      await tester.pump();
+        'link id fills no field through LudoApp, and joins by one pushed '
+        'route', (tester) async {
+      final List<Uri> refusedUrls = <Uri>[];
+      await HttpOverrides.runWithHttpOverrides(() async {
+        final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
+        await tester.pumpWidget(_ludoApp(initialLinkReader: reader.call));
+        await tester.pump();
 
-      reader.complete(_validLink('AB23CD'));
-      await tester.pump();
+        reader.complete(_validLink(_linkId));
+        await _settleLinkJoin(tester);
 
-      expect(_codeFieldText(tester), 'AB23CD');
-      expect(_codeFieldError(tester), isNull);
-      expect(find.byType(LobbyScreen), findsNothing);
+        expect(_codeFieldText(tester, skipOffstage: false), isEmpty);
+        expect(_codeFieldError(tester, skipOffstage: false), isNull);
+        expect(find.byType(LobbyScreen), findsOneWidget);
+        // LudoApp builds its own controller on the real connector, whose
+        // socket the test binding refuses; unmount so the lobby's controller
+        // is disposed and no request timer is left pending.
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 11));
+        // The refusal of the real socket is the proof that the link reached a
+        // join; take it so it is not reported as a stray error.
+      }, _RefusingHttpOverrides(refusedUrls));
+      expect(
+        refusedUrls,
+        isNotEmpty,
+        reason:
+            'a link id through LudoApp must start a join, which opens a '
+            'socket; the refusing client saw $refusedUrls',
+      );
     });
 
     testWidgets(
@@ -710,37 +808,59 @@ void main() {
 
   group('the warm path', () {
     testWidgets(
-      'item 13: a valid uri emitted on the stream after the first frame '
-      'fills the field',
+      'item 13: a valid link id emitted on the stream after the first frame '
+      'fills no field and joins by one pushed route',
       (tester) async {
         final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
-        await tester.pumpWidget(_homeScreenApp(linkStream: opener.call));
+        await tester.pumpWidget(
+          _homeScreenApp(
+            linkStream: opener.call,
+            controllerFactory: _fakeController,
+          ),
+        );
         await tester.pump();
 
-        opener.add(_validLink('AB23CD'));
-        await tester.pump();
+        opener.add(_validLink(_linkId));
+        await _settleLinkJoin(tester);
 
-        expect(_codeFieldText(tester), 'AB23CD');
-        expect(_codeFieldError(tester), isNull);
+        expect(_codeFieldText(tester, skipOffstage: false), isEmpty);
+        expect(_codeFieldError(tester, skipOffstage: false), isNull);
+        expect(find.byType(LobbyScreen), findsOneWidget);
+        await _disposeLinkJoin(tester);
       },
     );
 
-    testWidgets('item 14: a second uri emitted later replaces the first code', (
-      tester,
-    ) async {
-      final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
-      await tester.pumpWidget(_homeScreenApp(linkStream: opener.call));
-      await tester.pump();
+    testWidgets(
+      'item 14: a second link id emitted while the first one joined opens '
+      'no second route and fills no field',
+      (tester) async {
+        final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
+        final _RecordingNavigatorObserver observer =
+            _RecordingNavigatorObserver();
+        await tester.pumpWidget(
+          _homeScreenApp(
+            linkStream: opener.call,
+            observer: observer,
+            controllerFactory: _fakeController,
+          ),
+        );
+        await tester.pump();
 
-      opener.add(_validLink('AB23CD'));
-      await tester.pump();
-      expect(_codeFieldText(tester), 'AB23CD');
+        opener.add(_validLink(_linkId));
+        await _settleLinkJoin(tester);
+        expect(_codeFieldText(tester, skipOffstage: false), isEmpty);
+        expect(find.byType(LobbyScreen), findsOneWidget);
+        final int pushesAfterFirst = observer.pushCount;
 
-      opener.add(_validLink('ZY98XW'));
-      await tester.pump();
+        opener.add(_validLink(_linkId2));
+        await _settleLinkJoin(tester);
 
-      expect(_codeFieldText(tester), 'ZY98XW');
-    });
+        expect(_codeFieldText(tester, skipOffstage: false), isEmpty);
+        expect(find.byType(LobbyScreen), findsOneWidget);
+        expect(observer.pushCount, pushesAfterFirst);
+        await _disposeLinkJoin(tester);
+      },
+    );
 
     testWidgets(
       'item 15: a stream uri whose room code is invalid sets the error and '
@@ -985,17 +1105,17 @@ void main() {
         final int pushesAfterProbe = observer.pushCount;
         final int popsAfterProbe = observer.popCount;
 
-        opener.add(_validLink('AB23CD'));
+        opener.add(_validLink(_linkId));
         await tester.pump();
 
         expect(
           _codeFieldText(tester, skipOffstage: false),
-          'AB23CD',
+          isEmpty,
           reason:
-              'declaration rule B5: the home screen underneath a pushed '
-              'route must still absorb the link exactly as B4 describes; a '
+              'declaration rule B5: a link id fills no field, and the home '
+              'screen underneath a pushed route must not join on it; a '
               'player already inside a lobby or a game is not exempt, the '
-              'field just is not the visible one right now',
+              'link just changes nothing right now',
         );
         expect(
           find.byKey(const Key('above-home-probe')),
