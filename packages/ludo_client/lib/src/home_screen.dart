@@ -72,6 +72,9 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+/// C-682: the lines home can show after a join that ended without a seat.
+enum _KnockNotice { notJoined, full, switchedOff, kicked }
+
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final TextEditingController _codeController = TextEditingController();
@@ -84,6 +87,9 @@ class _HomeScreenState extends State<HomeScreen>
   // C-529 D3: the lobby's room closed while the player was away. Null when
   // there is no such notice, otherwise which of the two lines it carries.
   GameScreenResult? _roomClosedNotice;
+  // C-682: how a typed-code knock ended without a seat, or the lobby kick that
+  // sent this player home. Null when there is no such line.
+  _KnockNotice? _knockNotice;
   // C-529 D4: the code a room link filled into the code field, kept only
   // while the field still holds exactly it. A Join tap on it is a link join.
   String? _linkFilledCode;
@@ -1004,7 +1010,10 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   bool get _hasNotice =>
-      _removedNotice || _gameGoneNotice || _roomClosedNotice != null;
+      _removedNotice ||
+      _gameGoneNotice ||
+      _roomClosedNotice != null ||
+      _knockNotice != null;
 
   /// D2 of C-449: the player closes the notice by hand. Every other event
   /// that hides it (create, join, rejoin) is handled where it starts.
@@ -1013,6 +1022,7 @@ class _HomeScreenState extends State<HomeScreen>
       _removedNotice = false;
       _gameGoneNotice = false;
       _roomClosedNotice = null;
+      _knockNotice = null;
     });
   }
 
@@ -1030,12 +1040,14 @@ class _HomeScreenState extends State<HomeScreen>
           _removedNotice = true;
           _gameGoneNotice = false;
           _roomClosedNotice = null;
+          _knockNotice = null;
         });
       case GameScreenResult.gameGone:
         setState(() {
           _removedNotice = false;
           _gameGoneNotice = true;
           _roomClosedNotice = null;
+          _knockNotice = null;
         });
       case GameScreenResult.roomClosedHost:
       case GameScreenResult.roomClosedGuest:
@@ -1047,6 +1059,35 @@ class _HomeScreenState extends State<HomeScreen>
       default:
         break;
     }
+  }
+
+  /// C-682: read once from a join route that has just returned, before the
+  /// controller is retired: how this phone's knock ended, or that the host
+  /// removed it. The rejected and timed-out outcomes say the same thing, so a
+  /// stranger learns nothing; a withdrawn knock was this player's own Cancel
+  /// and says nothing. Sets nothing when neither happened.
+  void _noteKnockOutcome(RoomController controller) {
+    if (!mounted) {
+      return;
+    }
+    final _KnockNotice? notice = controller.wasKicked
+        ? _KnockNotice.kicked
+        : switch (controller.knockState.phase) {
+            KnockPhase.rejected ||
+            KnockPhase.timedOut => _KnockNotice.notJoined,
+            KnockPhase.full => _KnockNotice.full,
+            KnockPhase.switchedOff => _KnockNotice.switchedOff,
+            _ => null,
+          };
+    if (notice == null) {
+      return;
+    }
+    setState(() {
+      _removedNotice = false;
+      _gameGoneNotice = false;
+      _roomClosedNotice = null;
+      _knockNotice = notice;
+    });
   }
 
   /// C-529 D4: a join that came back refused NO_SUCH_ROOM or ROOM_STARTED
@@ -1090,6 +1131,7 @@ class _HomeScreenState extends State<HomeScreen>
         _removedNotice = false;
         _gameGoneNotice = false;
         _roomClosedNotice = null;
+        _knockNotice = null;
       });
     }
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -1178,6 +1220,7 @@ class _HomeScreenState extends State<HomeScreen>
       _removedNotice = false;
       _gameGoneNotice = false;
       _roomClosedNotice = null;
+      _knockNotice = null;
     });
     // C-669 R2: a code this phone holds a seat for is a seat to take back, not
     // a room to join: join_room would be refused ROOM_STARTED while the game
@@ -1234,6 +1277,7 @@ class _HomeScreenState extends State<HomeScreen>
     // C-316 rule 3: set the notice before the retire below; see the
     // matching comment in _createRoom.
     _showNoticeFor(result);
+    _noteKnockOutcome(controller);
     // C-529 D4: read before the retire below, which ends the controller.
     _clearDeadJoinCode(controller, normalized);
     // See the matching comment in _createRoom: leave() must be awaited
@@ -1259,6 +1303,7 @@ class _HomeScreenState extends State<HomeScreen>
       _removedNotice = false;
       _gameGoneNotice = false;
       _roomClosedNotice = null;
+      _knockNotice = null;
     });
     final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
@@ -1306,6 +1351,7 @@ class _HomeScreenState extends State<HomeScreen>
       controller.removeListener(persistSuccessfulJoin);
     }
     _showNoticeFor(result);
+    _noteKnockOutcome(controller);
     await _retireOwnedController(controller, result: result);
     if (!mounted) {
       return;
@@ -1346,6 +1392,7 @@ class _HomeScreenState extends State<HomeScreen>
         _removedNotice = false;
         _gameGoneNotice = false;
         _roomClosedNotice = null;
+        _knockNotice = null;
       });
     }
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -1654,21 +1701,35 @@ class _HomeScreenState extends State<HomeScreen>
                                   if (_hasNotice) ...[
                                     _HomeNotice(
                                       cardKey: const Key('home-notice'),
-                                      textKey: _roomClosedNotice != null
+                                      textKey: _knockNotice != null
+                                          ? const Key('home-knock-notice')
+                                          : _roomClosedNotice != null
                                           ? const Key('home-room-closed-notice')
                                           : _gameGoneNotice
                                           ? const Key('home-game-gone-notice')
                                           : const Key('home-removed-notice'),
-                                      text: switch (_roomClosedNotice) {
-                                        GameScreenResult.roomClosedHost =>
-                                          loc.homeRoomClosedHostNotice,
-                                        GameScreenResult.roomClosedGuest =>
-                                          loc.homeRoomClosedGuestNotice,
-                                        _ =>
-                                          _gameGoneNotice
-                                              ? loc.homeGameGoneNotice
-                                              : loc.homeRemovedNotice,
-                                      },
+                                      text: _knockNotice != null
+                                          ? switch (_knockNotice!) {
+                                              _KnockNotice.notJoined =>
+                                                loc.knockOutcomeNotJoined,
+                                              _KnockNotice.full =>
+                                                loc.knockOutcomeFull,
+                                              _KnockNotice.switchedOff =>
+                                                loc.knockOutcomeSwitchedOff,
+                                              _KnockNotice.kicked =>
+                                                loc.knockWasKicked,
+                                            }
+                                          : switch (_roomClosedNotice) {
+                                              GameScreenResult.roomClosedHost =>
+                                                loc.homeRoomClosedHostNotice,
+                                              GameScreenResult
+                                                  .roomClosedGuest =>
+                                                loc.homeRoomClosedGuestNotice,
+                                              _ =>
+                                                _gameGoneNotice
+                                                    ? loc.homeGameGoneNotice
+                                                    : loc.homeRemovedNotice,
+                                            },
                                       dismissLabel: loc.homeNoticeDismiss,
                                       onDismiss: _dismissNotice,
                                     ),

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import 'net/snapshot.dart' show SeatState;
 import 'seat_mark.dart';
+import 'seat_origin_mark.dart';
 import 'theme.dart';
 
 /// Every card in the lobby grid is at least this tall (C-254 rule 3).
@@ -74,6 +75,7 @@ class SeatCard extends StatelessWidget {
     required this.isHost,
     required this.youLabel,
     this.displayName,
+    this.originLabel,
   });
 
   final SeatState seat;
@@ -85,6 +87,11 @@ class SeatCard extends StatelessWidget {
   /// two seats of one name. Null draws the seat's own name.
   final String? displayName;
 
+  /// C-682: the spoken words for how this seat came in (`seat.via`), or null
+  /// for a seat that shows no origin mark. When set, the glyph is drawn on the
+  /// token disc and the card reads as one node, name and origin together.
+  final String? originLabel;
+
   @override
   Widget build(BuildContext context) {
     final Color seatColor = LudoColors.seats[seat.seat];
@@ -93,7 +100,8 @@ class SeatCard extends StatelessWidget {
         ? LudoColors.inkMuted.withValues(alpha: 0.08)
         : seatColor.withValues(alpha: 0.16);
 
-    return Container(
+    final String? origin = originLabel;
+    final Widget card = Container(
       key: Key('lobby-seat-${seat.seat}'),
       constraints: const BoxConstraints(minHeight: kSeatCardMinHeight),
       padding: const EdgeInsets.symmetric(
@@ -168,6 +176,17 @@ class SeatCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                if (origin != null)
+                  PositionedDirectional(
+                    bottom: -5,
+                    end: -3,
+                    child: SeatOriginMark(
+                      key: Key('seat-origin-${seat.seat}'),
+                      seat: seat.seat,
+                      via: seat.via,
+                      label: origin,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -231,6 +250,7 @@ class SeatCard extends StatelessWidget {
         ],
       ),
     );
+    return origin == null ? card : MergeSemantics(child: card);
   }
 }
 

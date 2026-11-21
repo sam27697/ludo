@@ -1708,33 +1708,13 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
     final String name = _seatNameFor(seat) ?? '';
-    final AppLocalizations loc = AppLocalizations.of(context);
     FeedbackScope.of(context).play(FeedbackCue.tap);
     _kickSheetSeat = seat;
-    showModalBottomSheet<bool>(
-      context: context,
-      backgroundColor: LudoColors.paperElevated,
-      barrierColor: LudoColors.ink.withValues(alpha: 0.45),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      builder: (BuildContext sheetContext) {
-        final ModalRoute<bool>? sheetRoute = ModalRoute.of<bool>(sheetContext);
-        if (sheetRoute != null) {
-          _kickSheetRoute = sheetRoute;
-        }
-        return _KickSheet(
-          seat: seat,
-          title: loc.kickSheetTitle(name),
-          removeLabel: loc.kickSheetRemove,
-          waitLabel: loc.kickSheetWait,
-          // Remove commits at once: the route goes without an exit
-          // animation, so the board change that follows is the only motion.
-          onRemove: () =>
-              Navigator.of(sheetContext).removeRoute(sheetRoute!, true),
-          onWait: () => Navigator.of(sheetContext).pop(false),
-        );
-      },
+    showKickSheet(
+      context,
+      seat: seat,
+      name: name,
+      onRoute: (Route<bool> route) => _kickSheetRoute = route,
     ).then((bool? remove) {
       _kickSheetRoute = null;
       _kickSheetSeat = null;
@@ -10128,11 +10108,50 @@ class _RulesetNotice {
   }
 }
 
+/// C-656 S6, C-682: the host's remove question in the board's own colours,
+/// one place for the game's away mark and the lobby's seat card. Resolves
+/// true when Remove was chosen (the route goes without an exit animation, so
+/// the change that follows is the only motion) and false or null otherwise.
+/// [onRoute] receives the sheet's route so a caller can close it when the
+/// seat it asks about changes under the host's finger.
+Future<bool?> showKickSheet(
+  BuildContext context, {
+  required int seat,
+  required String name,
+  void Function(Route<bool> route)? onRoute,
+}) {
+  final AppLocalizations loc = AppLocalizations.of(context);
+  return showModalBottomSheet<bool>(
+    context: context,
+    backgroundColor: LudoColors.paperElevated,
+    barrierColor: LudoColors.ink.withValues(alpha: 0.45),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+    ),
+    builder: (BuildContext sheetContext) {
+      final ModalRoute<bool>? sheetRoute = ModalRoute.of<bool>(sheetContext);
+      if (sheetRoute != null) {
+        onRoute?.call(sheetRoute);
+      }
+      return KickSheet(
+        seat: seat,
+        title: loc.kickSheetTitle(name),
+        removeLabel: loc.kickSheetRemove,
+        waitLabel: loc.kickSheetWait,
+        onRemove: () =>
+            Navigator.of(sheetContext).removeRoute(sheetRoute!, true),
+        onWait: () => Navigator.of(sheetContext).pop(false),
+      );
+    },
+  );
+}
+
 /// C-656 S6: the host's remove sheet. The absent seat's mark on a disc of its
 /// colour, one question, two big buttons. Remove is the filled one; Wait is
 /// the way back and is as easy to reach.
-class _KickSheet extends StatelessWidget {
-  const _KickSheet({
+class KickSheet extends StatelessWidget {
+  const KickSheet({
+    super.key,
     required this.seat,
     required this.title,
     required this.removeLabel,

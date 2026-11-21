@@ -13,8 +13,10 @@ import 'package:share_plus/share_plus.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'die_mark.dart';
 import 'feedback.dart';
-import 'game_screen.dart' show GameScreenResult;
+import 'game_screen.dart' show GameScreenResult, showKickSheet;
 import 'net/connection.dart' show RoomToggles;
+import 'knock_bar.dart';
+import 'knock_waiting_view.dart';
 import 'net/frame.dart';
 import 'net/room_controller.dart';
 import 'net/snapshot.dart';
@@ -22,6 +24,7 @@ import 'seat_card.dart';
 import 'seat_entrance.dart';
 import 'seat_mark.dart';
 import 'seat_names.dart';
+import 'seat_origin_mark.dart';
 import 'sound_toggle.dart';
 import 'spoken_line.dart';
 import 'rule_off_strike.dart';
@@ -55,6 +58,8 @@ const Set<String> _unretryableLobbyErrorCodes = <String>{
   'NO_SUCH_ROOM',
   'ROOM_STARTED',
   'BAD_FIELD',
+  'KNOCK_REFUSED',
+  'KICKED',
 };
 
 /// C-536 D1: the label each seat in [seats] is drawn and spoken with,
@@ -89,6 +94,12 @@ String lobbyErrorMessage(AppLocalizations loc, String? code) {
       return loc.lobbyErrorRoomStarted;
     case 'RATE_LIMITED':
       return loc.lobbyErrorRateLimited;
+    case 'KNOCK_REFUSED':
+      return loc.lobbyErrorKnockRefused;
+    case 'KICKED':
+      return loc.knockWasKicked;
+    case 'TOO_MANY_KNOCKS':
+      return loc.lobbyErrorTooManyKnocks;
     case 'transport':
       return loc.lobbyErrorTransport;
     default:
@@ -227,11 +238,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   void _onControllerChanged() {
     setState(() {});
+    _syncKickSheet();
     _syncUpdateRequiredAnnouncement();
     if (_resumeRefusalHandled || widget.controller.updateRequired) {
       return;
     }
-    if (_resumeRefused) {
+    if (_knockEndedWithoutSeat || widget.controller.wasKicked) {
+      // C-682: a knock that ended without a seat, or the host removing this
+      // phone, goes home at once; Home reads the controller for the one line
+      // that says why before it retires it.
+      _resumeRefusalHandled = true;
+      _leaveLobby();
+    } else if (_resumeRefused) {
       _resumeRefusalHandled = true;
       // C-540 D2: a seat only drops its socket and keeps its token, so a
       // refused token means the next game started without this player.
@@ -296,6 +314,28 @@ class _LobbyScreenState extends State<LobbyScreen> {
       _leaveLobby(result);
     } else {
       navigator.removeRoute(route, result);
+    }
+  }
+
+  /// C-682: this phone's own knock was answered, or ran out, and it holds no
+  /// seat. A knock the player withdrew themselves says nothing and goes home
+  /// all the same.
+  bool get _knockEndedWithoutSeat {
+    final RoomController controller = widget.controller;
+    if (controller.room != null) {
+      return false;
+    }
+    switch (controller.knockState.phase) {
+      case KnockPhase.rejected:
+      case KnockPhase.timedOut:
+      case KnockPhase.full:
+      case KnockPhase.switchedOff:
+      case KnockPhase.withdrawn:
+        return true;
+      case KnockPhase.none:
+      case KnockPhase.pending:
+      case KnockPhase.accepted:
+        return false;
     }
   }
 
@@ -553,6 +593,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
       // card included: this build cannot play on this server, so there is
       // nothing else to show. Home is what the corner close does.
       phaseBody = UpdateRequiredView(onHome: _leaveLobby);
+    } else if (controller.room == null &&
+        controller.knockState.phase == KnockPhase.pending) {
+      // C-682: a typed code on a room that approves newcomers. No seat yet:
+      // one full card says whose answer is awaited, and Cancel leaves.
+      phaseBody = KnockWaitingView(
+        expiresAtMs: controller.knockState.expiresAtMs,
+        onCancel: _leaveLobby,
+      );
     } else if (stale) {
       // C-284 rules 1 and 2: a dropped or retrying connection keeps the
       // room in view (dimmed, untappable) under the connection-lost card.
@@ -1091,7 +1139,25 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       ),
                     ],
                   ),
+                  // C-682: the host's door control, one switch under the code
+                  // actions; nobody else is shown it.
+                  if (controller.isHost) ...[
+                    SizedBox(height: compact ? kSpace1 : kSpace3),
+                    ApprovalSwitch(
+                      value: room.guestApproval,
+                      onChanged: (bool on) =>
+                          unawaited(controller.setGuestApproval(on)),
+                    ),
+                  ],
                   SizedBox(height: compact ? kSpace1 : kSpace6),
+                  // C-682: one card per person waiting at the door, above the
+                  // seat cards. The server lists knocks to the host only.
+                  if (controller.isHost && room.knocks.isNotEmpty)
+                    KnockBar(
+                      knocks: room.knocks,
+                      onAnswer: (String id, bool accept) =>
+                          unawaited(controller.answerKnock(id, accept: accept)),
+                    ),
                   _seatGrid(loc, room, controller),
                   _friendJoinedLine(loc, room),
                   // C-523 D6: a default room shows no rule chip; only a room
@@ -1283,12 +1349,20 @@ class _LobbyScreenState extends State<LobbyScreen> {
           key: _entranceKeys.putIfAbsent(seat.seat, () => GlobalKey()),
           seat: seat.seat,
           entering: !drawnBefore.contains(seat.seat),
-          child: SeatCard(
-            seat: seat,
-            displayName: labels[seat.seat],
-            isMine: controller.seat == seat.seat,
-            isHost: seat.seat == room.hostSeat,
-            youLabel: loc.seatYou,
+          child: _kickable(
+            loc,
+            room,
+            controller,
+            seat,
+            labels[seat.seat] ?? seat.name,
+            SeatCard(
+              seat: seat,
+              displayName: labels[seat.seat],
+              isMine: controller.seat == seat.seat,
+              isHost: seat.seat == room.hostSeat,
+              youLabel: loc.seatYou,
+              originLabel: seatOriginLabel(loc, seat.via),
+            ),
           ),
         ),
       for (int i = 0; i < openCount; i++)
@@ -1338,6 +1412,86 @@ class _LobbyScreenState extends State<LobbyScreen> {
         return Column(children: rows);
       },
     );
+  }
+
+  /// C-682: the host touches another player's card to be asked whether to
+  /// remove them (tap or long press, the doctrine's "touch the thing"). The
+  /// host's own card and every card on a guest's phone are returned as they
+  /// are.
+  Widget _kickable(
+    AppLocalizations loc,
+    RoomSnapshot room,
+    RoomController controller,
+    SeatState seat,
+    String name,
+    Widget card,
+  ) {
+    if (!controller.isHost ||
+        seat.seat == controller.seat ||
+        seat.seat == room.hostSeat ||
+        room.state != RoomState.lobby ||
+        controller.phase != RoomPhase.connected) {
+      return card;
+    }
+    return Semantics(
+      onTap: () => _askKick(seat.seat, name),
+      onLongPress: () => _askKick(seat.seat, name),
+      hint: loc.lobbyKickSeat(name),
+      child: GestureDetector(
+        key: Key('lobby-kick-${seat.seat}'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _askKick(seat.seat, name),
+        onLongPress: () => _askKick(seat.seat, name),
+        child: card,
+      ),
+    );
+  }
+
+  /// The remove question's route while it is up, and the seat it is about.
+  Route<bool>? _kickRoute;
+  int? _kickSeat;
+
+  /// Opens the same remove sheet the game's away mark opens. Remove sends
+  /// `kick`; Wait or a tap outside sends nothing. A refusal the server answers
+  /// (the seat emptied meanwhile, say) is felt as an invalid tap and the next
+  /// snapshot is what the grid shows.
+  Future<void> _askKick(int seat, String name) async {
+    if (!mounted || _kickRoute != null) {
+      return;
+    }
+    FeedbackScope.of(context).play(FeedbackCue.tap);
+    _kickSeat = seat;
+    final bool? remove = await showKickSheet(
+      context,
+      seat: seat,
+      name: name,
+      onRoute: (Route<bool> route) => _kickRoute = route,
+    );
+    _kickRoute = null;
+    _kickSeat = null;
+    if (remove != true || !mounted) {
+      return;
+    }
+    final String? refused = await widget.controller.kick(seat);
+    if (refused != null && mounted) {
+      FeedbackScope.of(context).play(FeedbackCue.invalidTap);
+    }
+  }
+
+  /// A frame that empties the seat the remove sheet is about closes it under
+  /// the host's finger, with no kick sent.
+  void _syncKickSheet() {
+    final int? seat = _kickSeat;
+    final Route<bool>? route = _kickRoute;
+    if (seat == null || route == null) {
+      return;
+    }
+    final RoomSnapshot? room = widget.controller.room;
+    if (room == null || !room.seats.any((SeatState s) => s.seat == seat)) {
+      if (route.isActive) {
+        route.navigator?.removeRoute(route);
+      }
+    }
   }
 
   /// C-599 D5(c): speaks, in arrival order, the join of every queued seat
