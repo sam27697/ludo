@@ -876,6 +876,39 @@ void main() {
       _hasSeq(kc, 'knock_closed');
     });
 
+    _scenario(
+        'K9b start_game closes every still-open knock full: knock_closed '
+        'with seq to the host, knock_failed (no seq) to the knocker',
+        (_Rig r) async {
+      final _Seat host = await _create(r, players: 2);
+      await _approval(host, true);
+      await r.flushAll();
+      final _Knock k = await _knock(r, host, 'K', install: _inst('k'));
+      await _join(r, <String, Object?>{'link': host.linkId}, 'Linker');
+      expect(_ofType(await _sync(k.c), 'knock_failed'), isEmpty,
+          reason: 'item 11e: the knock stays open when the last seat fills');
+      host.c.send('start_game', <String, Object?>{});
+      final List<Map<String, Object?>> hostFrames =
+          await drainUntil(host.c, 'knock_closed', maxFrames: 20);
+      final Map<String, Object?> kc = hostFrames.last;
+      expect(_d(kc)['outcome'], 'full',
+          reason: 'item 11e: start_game closes every open knock full; host '
+              'frames: $hostFrames');
+      expect(_d(kc)['knock_id'], k.id);
+      _hasSeq(kc, 'knock_closed');
+      final Map<String, Object?> kf = await receiveType(k.c, 'knock_failed');
+      expect(_d(kf)['outcome'], 'full');
+      expect(_d(kf)['knock_id'], k.id);
+      _noSeq(kf, 'knock_failed');
+      _answer(host, k, true);
+      final List<Map<String, Object?>> after = await _sync(host.c);
+      expect(
+          _ofType(after, 'error')
+              .map((Map<String, Object?> f) => _d(f)['code']),
+          contains('WRONG_PHASE'),
+          reason: 'answering after the game started: $after');
+    });
+
     _scenario('K10 withdrawn: the knocker\'s socket closing', (_Rig r) async {
       final _Seat host = await _create(r);
       await _approval(host, true);
@@ -1345,24 +1378,30 @@ void main() {
           reason: 'item 9: the page carries the link id, not the code '
               '${live.code}; ${livePage.desc}');
 
-      final Map<String, String> dead = <String, String>{
+      // Ruling 11(c): an id of the link shape that is not live serves what a
+      // well-formed unknown code serves today (200); anything not of that
+      // shape is 404 as today. Neither ever serves a room.
+      final Map<String, String> shaped = <String, String>{
         'a never-issued well-formed id': 't5k2q9a-x7m3pd',
-        'garbage': 'zzzz-garbage',
-        'a very long garbage id': 'x' * 60,
-        'the live room\'s former code (upper)': live.code,
-        'the live room\'s former code (lower)': live.code.toLowerCase(),
         'the finished room, reaped': fin.linkId,
         'the lobby room, reaped': lobby.linkId,
       };
+      final Map<String, String> unshaped = <String, String>{
+        'garbage with a dash': 'zzzz-garbage',
+        'a very long garbage id': 'x' * 60,
+        'the live room\'s former code (upper)': live.code,
+        'the live room\'s former code (lower)': live.code.toLowerCase(),
+      };
       final Map<String, _Page> pages = <String, _Page>{};
-      for (final MapEntry<String, String> e in dead.entries) {
+      for (final MapEntry<String, String> e in shaped.entries) {
         pages[e.key] = await _get(r, '/r/${e.value}');
       }
       final _Page base = pages['a never-issued well-formed id']!;
       for (final MapEntry<String, _Page> e in pages.entries) {
         expect(e.value.status, 200,
-            reason: 'item 9: ${e.key} serves the ended page with the status '
-                'an unknown code serves today (200); ${e.value.desc}');
+            reason: 'item 11c: ${e.key} is link-shaped and not live, so it '
+                'serves the ended page with the status a well-formed unknown '
+                'code serves today (200); ${e.value.desc}');
         final String id = e.value.path.substring(3);
         expect(e.value.body.replaceAll(id, '<<ID>>'),
             base.body.replaceAll('t5k2q9a-x7m3pd', '<<ID>>'),
@@ -1371,6 +1410,24 @@ void main() {
         expect(e.value.body.contains(live.linkId), isFalse,
             reason: 'the ended page must never carry a live room\'s link id');
       }
+      final Map<String, _Page> cut = <String, _Page>{};
+      for (final MapEntry<String, String> e in unshaped.entries) {
+        cut[e.key] = await _get(r, '/r/${e.value}');
+      }
+      final _Page cutBase = cut.values.first;
+      for (final MapEntry<String, _Page> e in cut.entries) {
+        expect(e.value.status, 404,
+            reason: 'item 11c: ${e.key} is not of the link shape, so it is '
+                '404 as today; ${e.value.desc}');
+        expect(e.value.body, cutBase.body,
+            reason: 'item 11c: every non-shaped id serves the same page; '
+                '${e.key} differs; ${e.value.desc}');
+        expect(e.value.body.contains(live.linkId), isFalse,
+            reason: 'a non-shaped id must never serve a live room');
+        expect(e.value.body.toUpperCase().contains(live.code), isFalse,
+            reason: 'the former code ${live.code} must never serve a room; '
+                '${e.value.desc}');
+      }
       expect(base.body, isNot(livePage.body),
           reason: 'the ended page must differ from the live invite page');
       expect(finBefore.status, 200);
@@ -1378,6 +1435,172 @@ void main() {
           base.body.replaceAll('t5k2q9a-x7m3pd', '<<ID>>'),
           reason: 'item 9: a finished (not yet reaped) room serves the '
               'ended page too; ${finBefore.desc}');
+    });
+  });
+
+  group('item 12: a knock never outlives the socket moving on', () {
+    _scenario(
+        'N1 a knocker that sends create_room withdraws its knock first: '
+        'host gets knock_closed withdrawn with seq, a later accept is '
+        'NO_SUCH_KNOCK, the socket stays in its new room and hears nothing '
+        'of the first', (_Rig r) async {
+      final _Seat host = await _create(r);
+      await _approval(host, true);
+      await r.flushAll();
+      final _Knock k = await _knock(r, host, 'K', install: _inst('k'));
+      await r.flushAll();
+
+      k.c.send('create_room', <String, Object?>{'name': 'K', 'players': 2});
+      final Map<String, Object?> sa = await k.c.next();
+      expect(sa['t'], 'seat_assigned',
+          reason: 'item 12 a: create_room from a knocker must create its '
+              'room; got ${sa['t']}: ${sa['d']}');
+      final Map<String, Object?> room = await k.c.next();
+      expect(room['t'], 'room');
+      final String newCode = _d(room)['code']! as String;
+      expect(newCode, isNot(host.code));
+
+      final Map<String, Object?> kc = await receiveType(host.c, 'knock_closed');
+      expect(_d(kc)['outcome'], 'withdrawn',
+          reason: 'item 12 a: the knock closes withdrawn');
+      expect(_d(kc)['knock_id'], k.id);
+      _hasSeq(kc, 'knock_closed');
+
+      _answer(host, k, true);
+      _err(await host.c.next(), 'NO_SUCH_KNOCK',
+          'item 12 a: answering a knock whose socket moved on');
+
+      final List<Map<String, Object?>> after = await _sync(k.c);
+      expect(
+          after.where((Map<String, Object?> f) =>
+              f['t'] == 'seat_assigned' ||
+              f['t'] == 'knock_failed' ||
+              f['t'] == 'error' ||
+              (f['t'] == 'room' && _d(f)['code'] != newCode)),
+          isEmpty,
+          reason: 'item 12 a: the socket must receive nothing of the first '
+              'room after create_room; got $after');
+      final List<Map<String, Object?>> hostAfter = await _sync(host.c);
+      expect(_ofType(hostAfter, 'player_joined'), isEmpty,
+          reason: 'the first room must not have gained a seat: $hostAfter');
+      final Map<String, Object?> snap =
+          await _resumeRoom(r, host.code, host.token);
+      expect(snap['seats'], hasLength(1),
+          reason: 'the knocker holds no seat in the first room');
+      expect(snap['knocks'], isEmpty);
+    });
+
+    _scenario(
+        'N2 a knocker that sends resume withdraws its knock first, '
+        'same outcome as create_room', (_Rig r) async {
+      final _Seat host = await _create(r);
+      final _Seat other = await _create(r, players: 2, name: 'Other');
+      await _approval(host, true);
+      await r.flushAll();
+      final _Knock k = await _knock(r, host, 'K', install: _inst('k'));
+      await r.flushAll();
+
+      k.c.send('resume',
+          <String, Object?>{'code': other.code, 'seat_token': other.token});
+      r.gone.add(other.c); // displaced by the takeover
+      final Map<String, Object?> sa = await k.c.next();
+      expect(sa['t'], 'seat_assigned',
+          reason: 'resume of a valid seat by a knocker; got ${sa['t']}: '
+              '${sa['d']}');
+      expect(_d(sa)['seat'], other.seat);
+
+      final Map<String, Object?> kc = await receiveType(host.c, 'knock_closed');
+      expect(_d(kc)['outcome'], 'withdrawn',
+          reason: 'item 12 a: a resume closes the open knock withdrawn');
+      expect(_d(kc)['knock_id'], k.id);
+      _hasSeq(kc, 'knock_closed');
+
+      _answer(host, k, true);
+      _err(await host.c.next(), 'NO_SUCH_KNOCK',
+          'item 12 a: answering a knock whose socket resumed elsewhere');
+
+      final List<Map<String, Object?>> after = await _sync(k.c);
+      expect(
+          after.where((Map<String, Object?> f) =>
+              f['t'] == 'knock_failed' ||
+              f['t'] == 'error' ||
+              (f['t'] == 'room' && _d(f)['code'] != other.code)),
+          isEmpty,
+          reason: 'item 12 a: nothing of the first room may reach the '
+              'resumed socket; got $after');
+      final Map<String, Object?> snap =
+          await _resumeRoom(r, host.code, host.token);
+      expect(snap['seats'], hasLength(1),
+          reason: 'the knocker must not have been seated in the first room');
+    });
+
+    _scenario(
+        'N3 reaping a room with an open knock: knock_failed timeout '
+        '(no seq) to the knocker, who can knock again elsewhere at once and '
+        'is barred nowhere', (_Rig r) async {
+      final _Seat host = await _create(r);
+      await _approval(host, true);
+      await r.flushAll();
+      final _Knock k = await _knock(r, host, 'K', install: _inst('k'));
+      await r.flushAll();
+
+      // Only reap runs: the knock-expiry sweep must not be what closes it.
+      r.h.clock.advance(const Duration(minutes: 61));
+      expect(r.h.registry.reap(), greaterThanOrEqualTo(1),
+          reason: 'fixture: the 61 minute old LOBBY must be reaped');
+      expect(r.h.registry.lookup(host.code), isNull);
+
+      final Map<String, Object?> kf = await receiveType(k.c, 'knock_failed');
+      expect(_d(kf)['outcome'], 'timeout',
+          reason: 'item 12 b: a reaped room closes its open knocks timeout');
+      expect(_d(kf)['knock_id'], k.id);
+      _noSeq(kf, 'knock_failed');
+
+      final _Seat host2 = await _create(r, name: 'Host2');
+      await _approval(host2, true);
+      await r.flushAll();
+      k.c.send('join_room', <String, Object?>{
+        'code': host2.code,
+        'name': 'K',
+        'install': _inst('k'),
+      });
+      final Map<String, Object?> again = await k.c.next();
+      expect(again['t'], 'knock_pending',
+          reason: 'item 12 b: pending state cleared and nobody barred, so '
+              'the knocker may knock on another room at once; got '
+              '${again['t']}: ${again['d']}');
+      final Map<String, Object?> hk = await receiveType(host2.c, 'knock');
+      expect(_d(hk)['name'], 'K');
+    });
+  });
+
+  group('item 12 d: link ids across simulated time', () {
+    _scenario(
+        'T1 2000 link ids spread over 400 simulated seconds are all '
+        'distinct and well formed', (_Rig r) async {
+      final Set<String> ids = <String>{};
+      for (int second = 0; second < 400; second++) {
+        for (int i = 0; i < 5; i++) {
+          final CreateResult made = r.h.registry.createRoom(
+            name: 'H',
+            players: 2,
+            rules: const RulesConfig(),
+          );
+          expect(made, isA<CreateOk>(),
+              reason: 'second $second room $i: createRoom failed: $made');
+          final String id = (made as CreateOk).room.linkId;
+          expect(_linkShape.hasMatch(id), isTrue,
+              reason: 'second $second room $i: link id "$id" has the wrong '
+                  'shape');
+          expect(int.parse(id.split('-').first, radix: 36),
+              r.h.clock.now.millisecondsSinceEpoch ~/ 1000,
+              reason: 'second $second room $i: time part of "$id"');
+          expect(ids.add(id), isTrue,
+              reason: 'second $second room $i: link id "$id" issued twice');
+        }
+        r.h.clock.advance(const Duration(seconds: 1));
+      }
+      expect(ids.length, 2000);
     });
   });
 }

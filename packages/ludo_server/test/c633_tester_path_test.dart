@@ -1090,10 +1090,26 @@ void main() {
   });
 
   group('6 over the real routes', () {
+    // Section 31 item 9: the room page is served only for a live room's link
+    // id, so `<ID>` in the route table below stands for the link id of a room
+    // created here (it was the never-created code ABCDEF).
+    late String liveId;
+
     setUpAll(() async {
       final FakeClock clock = FakeClock(DateTime.utc(2026, 11, 12));
+      final RoomRegistry registry =
+          RoomRegistry(clock: clock, secure: Random.secure());
+      final CreateResult created = registry.createRoom(
+        name: 'Host',
+        players: 2,
+        rules: const RulesConfig(),
+      );
+      if (created is! CreateOk) {
+        fail('fixture: could not create a live room: $created');
+      }
+      liveId = created.room.linkId;
       _server = WireServer(
-        registry: RoomRegistry(clock: clock, secure: Random.secure()),
+        registry: registry,
         rateLimiter: RateLimiter(clock: clock),
         clock: clock,
       );
@@ -1107,8 +1123,8 @@ void main() {
     });
 
     final List<List<Object?>> routes = <List<Object?>>[
-      <Object?>['/r/ABCDEF', 200, 'room', 'en'],
-      <Object?>['/r/ABCDEF?lang=ar', 200, 'room', 'ar'],
+      <Object?>['/r/<ID>', 200, 'room', 'en'],
+      <Object?>['/r/<ID>?lang=ar', 200, 'room', 'ar'],
       <Object?>['/', 200, 'home', 'en'],
       <Object?>['/?lang=ar', 200, 'home', 'ar'],
       <Object?>['/r/AB', 404, 'cut', 'en'],
@@ -1117,12 +1133,13 @@ void main() {
       <Object?>['/nope?lang=ar', 404, 'plain', 'ar'],
     ];
     for (final List<Object?> r in routes) {
-      final String path = r[0]! as String;
+      final String routeName = r[0]! as String;
       final int status = r[1]! as int;
       final String kind = r[2]! as String;
       final String lang = r[3]! as String;
-      test('6 GET $path answers $status with the tester steps', () async {
-        final String name = '6 GET $path';
+      test('6 GET $routeName answers $status with the tester steps', () async {
+        final String path = routeName.replaceAll('<ID>', liveId);
+        final String name = '6 GET $routeName';
         final _Res res = await _get(path);
         expect(res.status, status,
             reason: 'GET $path must answer $status as today. '
@@ -1146,7 +1163,7 @@ void main() {
         final String built;
         switch (kind) {
           case 'room':
-            built = buildRoomLandingPageHtml(_code, language: lang);
+            built = buildRoomLandingPageHtml(liveId, language: lang);
           case 'home':
             built = buildHomePageHtml(language: lang);
           case 'cut':
@@ -1159,8 +1176,9 @@ void main() {
                 '${_firstDiff(built, res.body)}. ${_repro(name)}');
       });
 
-      test('6 GET $path keeps its headers', () async {
-        final String name = '6 headers of GET $path';
+      test('6 GET $routeName keeps its headers', () async {
+        final String path = routeName.replaceAll('<ID>', liveId);
+        final String name = '6 headers of GET $routeName';
         final _Res res = await _get(path);
         final String cache = path.startsWith('/?') || path == '/'
             ? 'public, max-age=300'

@@ -172,6 +172,26 @@ const int knockLifetimeMs = 60000;
 /// `install`, section 31 item 2: 16 to 64 characters of `[A-Za-z0-9_-]`.
 final RegExp _installPattern = RegExp(r'^[A-Za-z0-9_-]{16,64}$');
 
+/// Section 31 item 12 (b): tells the knocker of each knock whose room was
+/// reaped that it timed out, and clears its pending state.
+void failReapedKnocks(List<Knock> knocks) {
+  for (final Knock knock in knocks) {
+    final Object? owner = knock.owner;
+    if (owner is! Connection) {
+      continue;
+    }
+    if (owner.pendingKnockId == knock.id) {
+      owner.pendingKnockId = null;
+      owner.pendingKnockRoom = null;
+    }
+    owner._send(
+      type: 'knock_failed',
+      data: <String, Object?>{'knock_id': knock.id, 'outcome': 'timeout'},
+      re: null,
+    );
+  }
+}
+
 /// Sends one push to every connected seat of [room] but [exceptToken], one
 /// seat at a time, so a `room` can differ for the host.
 void sendToSeatsExcept(
@@ -207,7 +227,9 @@ void sendToSeatsExcept(
 ///
 /// [requester] is the host socket whose message caused these, and
 /// [requesterRe] the id its own copy of the host frames answers. A knocker
-/// that is [knockerRequester] gets [knockerRe] on its `knock_failed`.
+/// that is [knockerRequester] gets [knockerRe] on its `knock_failed`. The
+/// knocker that is [silentKnocker] (a socket moving on, item 12 a) is sent
+/// nothing: only the host hears of the close.
 void publishKnockEvents(
   RoomHub hub,
   List<KnockEvent> events, {
@@ -215,6 +237,7 @@ void publishKnockEvents(
   String? requesterRe,
   Connection? knockerRequester,
   String? knockerRe,
+  Connection? silentKnocker,
 }) {
   for (final KnockEvent event in events) {
     final String code = event.room.code;
@@ -271,7 +294,7 @@ void publishKnockEvents(
             owner.pendingKnockId = null;
             owner.pendingKnockRoom = null;
           }
-          if (event.outcome != 'accepted') {
+          if (event.outcome != 'accepted' && !identical(owner, silentKnocker)) {
             owner._send(
               type: 'knock_failed',
               data: <String, Object?>{
@@ -400,11 +423,10 @@ class Connection {
           )
         : parseEnvelope(
             text,
-            // Section 28 rule 4: `kick` is a message type only of a server
-            // that plays the 2026-11 ruleset; on any other it is BAD_TYPE
-            // exactly as before the section existed.
-            kickKnown: registry.ruleset == ruleset202611 ||
-                registry.ruleset == ruleset202612,
+            // Section 31 item 11 (e2): `kick` is a known type everywhere; the
+            // PLAYING kick of section 28 is gated by ruleset in
+            // `_handleKick`, which answers BAD_TYPE as before.
+            kickKnown: true,
           );
     if (parsed is EnvelopeError) {
       _log(
@@ -531,6 +553,7 @@ class Connection {
       _reject(envelope, ProtocolError.rateLimited);
       return;
     }
+    _withdrawOwnKnock();
 
     const Set<String> allowedKeys = <String>{'name', 'players', 'rules'};
     if (!envelope.data.keys.every(allowedKeys.contains)) {
@@ -699,7 +722,24 @@ class Connection {
       seat: ok.seat.seat,
       seq: ok.room.seq,
     );
-    publishKnockEvents(hub, ok.knockEvents);
+  }
+
+  /// Section 31 item 12 (a): a socket that moves on to `create_room` or
+  /// `resume` closes its open knock `withdrawn` first, so an accept can never
+  /// re-home it.
+  void _withdrawOwnKnock() {
+    final String? knockId = pendingKnockId;
+    if (knockId == null) {
+      return;
+    }
+    final String knockRoom = pendingKnockRoom!;
+    pendingKnockId = null;
+    pendingKnockRoom = null;
+    publishKnockEvents(
+      hub,
+      registry.withdrawKnock(knockRoom, knockId),
+      silentKnocker: this,
+    );
   }
 
   /// `answer_knock`, section 31 item 4. Identity first, like the other
@@ -763,6 +803,12 @@ class Connection {
       data: ok.othersSnapshot,
     );
     publishKnockEvents(hub, ok.events);
+    if (ok.events.isNotEmpty) {
+      // The answer above described the room as the toggle left it; the knocks
+      // it settled moved the room on. The host is owed the room as it ends,
+      // at that final `seq` (a state description, not a new step).
+      _send(type: 'room', data: _snapshotFor(ok.room), re: null);
+    }
     _log(
       type: envelope.type,
       id: envelope.id,
@@ -820,6 +866,7 @@ class Connection {
       _reject(envelope, ProtocolError.rateLimited);
       return;
     }
+    _withdrawOwnKnock();
 
     const Set<String> allowedKeys = <String>{'code', 'seat_token'};
     if (!envelope.data.keys.every(allowedKeys.contains)) {
@@ -1128,6 +1175,7 @@ class Connection {
       queue: openingFields.queue,
     );
     emit('turn', turnData);
+    publishKnockEvents(hub, ok.knockEvents);
     _log(
       type: unsolicited ? 'rematch_auto_start_${envelope.type}' : envelope.type,
       id: envelope.id,
@@ -1416,14 +1464,27 @@ class Connection {
   /// by the `seat_retired` broadcast with `re`; the frames that follow it
   /// (a `turn`, or `game_over` and its `player_left`s) carry `re` on this
   /// socket's copy too, as every burst a request causes does.
+  bool get _playingKickKnown =>
+      registry.ruleset == ruleset202611 || registry.ruleset == ruleset202612;
+
   void _handleKick(ParsedEnvelope envelope) {
     if (!_hasIdentity) {
-      _reject(envelope, ProtocolError.badSeatToken);
+      _reject(
+        envelope,
+        _playingKickKnown ? ProtocolError.badSeatToken : ProtocolError.badType,
+      );
       return;
     }
-    // Section 31 item 6: in LOBBY the same message frees the seat instead.
+    // Section 31 item 6 and item 11 (e2): in LOBBY the same message frees the
+    // seat, on every ruleset.
     if (registry.lookup(roomCode!)?.state == RoomState.lobby) {
       _handleKickLobby(envelope);
+      return;
+    }
+    // Section 28 rule 4: the PLAYING kick exists only on a 2026-11 or later
+    // server; on any other it is as unknown as it always was.
+    if (!_playingKickKnown) {
+      _reject(envelope, ProtocolError.badType);
       return;
     }
     final RetireResult result = registry.kick(

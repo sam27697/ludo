@@ -156,6 +156,24 @@ String _repro(String scenario) =>
 // ---------------------------------------------------------------------
 
 late WireServer _server;
+late RoomRegistry _registry;
+
+/// Section 31 item 9: `/r/<id>` serves the room page only for a live room's
+/// link id, so the served-page cases below create a real room and request its
+/// id. The id is replaced by the old sample code before hashing, so the frozen
+/// hashes still pin every other byte of the page.
+String _liveLinkId() {
+  final CreateResult result = _registry.createRoom(
+    name: 'Host',
+    players: 2,
+    rules: const RulesConfig(),
+  );
+  if (result is! CreateOk) {
+    fail('fixture: could not create a live room: $result');
+  }
+  return result.room.linkId;
+}
+
 late HttpClient _client;
 
 int get _port => _server.port;
@@ -694,8 +712,9 @@ Future<void> _expectCreateRoomExchange(String path, String scenario) async {
 void main() {
   setUpAll(() async {
     final FakeClock clock = FakeClock(DateTime.utc(2026, 11, 10));
+    _registry = RoomRegistry(clock: clock, secure: Random.secure());
     _server = WireServer(
-      registry: RoomRegistry(clock: clock, secure: Random.secure()),
+      registry: _registry,
       rateLimiter: RateLimiter(clock: clock),
       clock: clock,
     );
@@ -1011,20 +1030,22 @@ void main() {
     const String servedName =
         '(h) GET /r/ABCDEF serves the frozen page with the base headers';
     test(servedName, () async {
-      final _Res res = await _get('/r/ABCDEF');
+      final String id = _liveLinkId();
+      final _Res res = await _get('/r/$id');
       _expectStatus(res, 200, servedName);
       _roomPageHeaders.forEach((String header, String value) {
         expect(
           res.header(header),
           value,
-          reason: 'room page header $header on /r/ABCDEF. '
+          reason: 'room page header $header on /r/$id. '
               '${_repro(servedName)}. ${res.describe()}',
         );
       });
       expect(
-        _sha(res.body),
+        _sha(res.body.replaceAll(id, 'ABCDEF')),
         _roomPageClosedEnSha,
-        reason: 'served /r/ABCDEF body differs from the closed-test page. '
+        reason: 'served /r/$id body (id shown as ABCDEF) differs from the '
+            'closed-test page. '
             '${_repro(servedName)}. ${res.describe()}',
       );
     });
@@ -1032,12 +1053,14 @@ void main() {
     const String servedArName =
         '(h) GET /r/abcdef?lang=ar serves the frozen Arabic page';
     test(servedArName, () async {
-      final _Res res = await _get('/r/abcdef?lang=ar');
+      final String id = _liveLinkId();
+      final _Res res = await _get('/r/$id?lang=ar');
       _expectStatus(res, 200, servedArName);
       expect(
-        _sha(res.body),
+        _sha(res.body.replaceAll(id, 'ABCDEF')),
         _roomPageClosedArSha,
-        reason: 'served Arabic /r/abcdef body differs from the closed-test '
+        reason: 'served Arabic /r/$id body (id shown as ABCDEF) differs from '
+            'the closed-test '
             'page. '
             '${_repro(servedArName)}. ${res.describe()}',
       );
