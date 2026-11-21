@@ -80,6 +80,7 @@ import 'package:ludo_client/src/game_screen.dart';
 import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
+import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
@@ -148,6 +149,11 @@ Map<String, Object?> _wireSeat(
   'seed_origin': null,
 };
 
+/// The share-link id the fake server puts on every room frame; null is a
+/// server from before section 31 (no `link_id`). Only the cases that tap a
+/// link set it, so every other case keeps the wire it was written against.
+String? _roomLinkId;
+
 Map<String, Object?> _wireRoom({
   required String code,
   required String state,
@@ -159,6 +165,7 @@ Map<String, Object?> _wireRoom({
   final bool finished = state == 'FINISHED';
   return <String, Object?>{
     'code': code,
+    if (_roomLinkId != null) 'link_id': _roomLinkId,
     'state': state,
     'host_seat': 0,
     'players': 2,
@@ -330,6 +337,24 @@ Future<int?> _storedSavedAt() async {
 void _seedLegacyRecord(String code) {
   SharedPreferences.setMockInitialValues(<String, Object>{
     _seatPrefsKey: <String>[code, '0', _token],
+  });
+}
+
+/// The same record, written by the app that knows the room's link id (order
+/// 681, R1), with the saved time removed so Home shows Rejoin and does not
+/// resume on its own at mount, exactly as [_seedLegacyRecord] leaves it.
+Future<void> _seedLegacyRecordWithLink(
+  WidgetTester tester,
+  String code,
+  String linkId,
+) async {
+  SharedPreferences.setMockInitialValues(<String, Object>{});
+  await tester.runAsync(() async {
+    await SessionMemory.recordSeat(
+      SeatRecord(code: code, seat: 0, seatToken: _token, linkId: linkId),
+    );
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_savedAtPrefsKey);
   });
 }
 
@@ -924,14 +949,18 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    _roomLinkId = null;
   });
 
   // The R4 dead-socket walk-off is how cases 1 to 3 get back to Home with the
   // seat still held. Every one of them says so in its fixture.
 
-  testWidgets('1 link: after a dead-socket walk-off a link id joins by link, '
-      'once, and never sends a resume', (tester) async {
+  testWidgets('1 link: after a dead-socket walk-off a link id equal to the '
+      'held seat\'s link id resumes with (code, token) and never joins', (
+    tester,
+  ) async {
     final _World w = _World(tester, '1 link same app life');
+    _roomLinkId = _linkId;
     await w.mount();
     try {
       await w.createAndPlay();
@@ -947,28 +976,29 @@ void main() {
       w.steps.add('link ${_linkFor(_linkId)}');
       w.links.add(_linkFor(_linkId));
       await _pumpBounded(tester, frames: 3);
-      w.expectJoinByLink(from, _linkId);
-      await w.answerJoin();
+      w.expectResumeNotJoin(from, _codeA);
+      await w.answerResume();
     } finally {
       await w.finish();
     }
   });
 
-  testWidgets('1b link id at cold start over a stored record joins by link '
-      '(no code to match a record)', (tester) async {
-    _seedLegacyRecord(_codeA);
+  testWidgets('1b link id at cold start over a stored record that carries '
+      'that link id resumes', (tester) async {
+    await _seedLegacyRecordWithLink(tester, _codeA, _linkId);
     final _World w = _World(tester, '1b link cold start stored record');
     await w.mount(initialLink: () async => _linkFor(_linkId));
     try {
-      w.expectJoinByLink(0, _linkId);
+      w.expectResumeNotJoin(0, _codeA);
     } finally {
       await w.finish();
     }
   });
 
-  testWidgets('1c link id delivered twice while the join is under way: one '
-      'join, no resume', (tester) async {
+  testWidgets('1c link id delivered twice while the resume is under way: one '
+      'resume, no join', (tester) async {
     final _World w = _World(tester, '1c link replayed');
+    _roomLinkId = _linkId;
     await w.mount();
     try {
       await w.createAndPlay();
@@ -981,7 +1011,7 @@ void main() {
       w.links.add(_linkFor(_linkId));
       w.links.add(_linkFor(_linkId));
       await _pumpBounded(tester, frames: 3);
-      w.expectJoinByLink(from, _linkId);
+      w.expectResumeNotJoin(from, _codeA);
       expect(
         w.rig.controllers.length,
         from + 1,
@@ -990,7 +1020,7 @@ void main() {
           '${w.rig.controllers.length - from} after the walk-off',
         ),
       );
-      await w.answerJoin();
+      await w.answerResume();
     } finally {
       await w.finish();
     }

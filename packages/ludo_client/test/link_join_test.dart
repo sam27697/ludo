@@ -58,6 +58,21 @@ List<String> _storedSeat(String code) => <String>[
   _seatToken,
 ];
 
+SeatRecord _seatRecord(String code, {String linkId = ''}) =>
+    SeatRecord(code: code, seat: _seat, seatToken: _seatToken, linkId: linkId);
+
+/// Stores a seat record that carries the id of the room's share link, the way
+/// the app writes one once the server has sent `link_id` (order 681, R1).
+Future<void> _storeSeatWithLink(WidgetTester tester, String code) async {
+  await tester.runAsync(() async {
+    await SessionMemory.recordSeat(_seatRecord(code, linkId: _linkId));
+    // No saved time, as a record from before C-447: Home must not resume on
+    // its own at mount, the tapped link is what resumes it.
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.remove('session.seatSavedAt');
+  });
+}
+
 void _seedKnownPlayer({String? seatCode}) {
   SharedPreferences.setMockInitialValues(<String, Object>{
     _namePrefsKey: _knownName,
@@ -386,6 +401,28 @@ LobbyScreen _lobby(WidgetTester tester) {
   return tester.widget<LobbyScreen>(finder);
 }
 
+void _expectResumeFrame(FakeTransport transport, {required String code}) {
+  expect(
+    transport.sentRaw.map(_typeOf).toList(),
+    <String>['resume'],
+    reason:
+        'a seat record whose link id is the tapped link must send resume, '
+        'not join_room; sent ${transport.sentRaw.map(_typeOf).toList()}',
+  );
+  expect(
+    transport.sentRaw.any((String text) => _typeOf(text) == 'join_room'),
+    isFalse,
+    reason: 'resume for the link\'s room must not also send join_room',
+  );
+  expect(
+    _dataOf(transport.sentRaw.single),
+    <String, Object?>{'code': code, 'seat_token': _seatToken},
+    reason:
+        'resume must carry the stored code "$code" and seat token '
+        '"$_seatToken"; sent ${_dataOf(transport.sentRaw.single)}',
+  );
+}
+
 void _expectConnectingJoin(WidgetTester tester) {
   final LobbyScreen lobby = _lobby(tester);
   expect(lobby.action, LobbyAction.join);
@@ -512,10 +549,11 @@ void main() {
   });
 
   testWidgets(
-    'known player, seat record for another room than the link: join by link, '
-    'no resume',
+    'known player, seat record whose link id is the tapped link: resume, no '
+    'join_room',
     (tester) async {
       _seedKnownPlayer(seatCode: _linkCode);
+      await _storeSeatWithLink(tester, _linkCode);
       final _Mount mount = _prepare(tester);
       await _pumpHome(tester, mount);
       _expectKnownName(tester);
@@ -536,16 +574,14 @@ void main() {
         replacesBefore: replacesBefore,
         removesBefore: removesBefore,
         pushDelta: 1,
-        reason: 'known player, seat record beside a link id',
+        reason: 'known player, seat record carrying the tapped link id',
       );
       _expectOneController(mount.factory);
       final LobbyScreen lobby = _lobby(tester);
-      expect(lobby.action, LobbyAction.join);
-      expect(lobby.resume, isNull);
+      expect(lobby.action, LobbyAction.resume);
+      expect(lobby.resume, _seatRecord(_linkCode, linkId: _linkId));
       expect(find.byKey(_connectingKey), findsOneWidget);
-      // A link id names no code, so a stored seat cannot be matched to it:
-      // one join_room by link, never a resume.
-      _expectJoinFrame(mount.factory.transports.single);
+      _expectResumeFrame(mount.factory.transports.single, code: _linkCode);
       await _disposeControllers(tester, mount.factory);
     },
   );

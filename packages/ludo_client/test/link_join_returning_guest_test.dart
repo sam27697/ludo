@@ -30,6 +30,7 @@ import 'package:ludo_client/src/home_screen.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
+import 'package:ludo_client/src/session_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
@@ -886,11 +887,25 @@ void main() {
   // resume whether or not a name is stored. -------------------------------
 
   testWidgets(
-    'decision 4: a stored seat beside a link id still joins by link (a link '
-    'id names no code to resume) even when no name is stored',
+    'decision 4: a stored seat whose link id is the tapped link resumes even '
+    'when no name is stored',
     (tester) async {
       SharedPreferences.setMockInitialValues(<String, Object>{
         _seatPrefsKey: _storedSeat(_linkCode, seat: 2, token: 'tok-d4-001'),
+      });
+      await tester.runAsync(() async {
+        await SessionMemory.recordSeat(
+          SeatRecord(
+            code: _linkCode,
+            seat: 2,
+            seatToken: 'tok-d4-001',
+            linkId: _linkId,
+          ),
+        );
+        // No saved time, as a record from before C-447: Home must not resume
+        // on its own at mount, the tapped link is what resumes it.
+        final SharedPreferences prefs = await SharedPreferences.getInstance();
+        await prefs.remove('session.seatSavedAt');
       });
       final _Mount mount = _prepareLink(tester);
       await _pumpLinkHome(tester, mount);
@@ -903,7 +918,7 @@ void main() {
         mount.observer.pushCount,
         pushesBefore + 1,
         reason:
-            'decision 4: a stored seat for the link\'s own code must rejoin '
+            'decision 4: a stored seat for the link\'s own room must rejoin '
             'with resume whether or not a name is stored -- "resume needs '
             'no name" -- so this must push exactly one route even though '
             'no name is stored here (pushCount ${mount.observer.pushCount}, '
@@ -918,29 +933,34 @@ void main() {
       final LobbyScreen lobby = _lobby(tester);
       expect(
         lobby.action,
-        LobbyAction.join,
+        LobbyAction.resume,
         reason:
-            'decision 4: the pushed route must be a join by link: a link '
-            'id names no code, so a stored seat cannot be matched to it',
+            'decision 4: the pushed route must be a resume, not a join, for '
+            'a stored seat whose link id is the tapped link',
       );
-      expect(lobby.resume, isNull);
+      expect(
+        lobby.resume,
+        SeatRecord(
+          code: _linkCode,
+          seat: 2,
+          seatToken: 'tok-d4-001',
+          linkId: _linkId,
+        ),
+      );
       final FakeTransport transport = mount.factory.transports.single;
       expect(
         transport.sentRaw.map(_typeOf).toList(),
-        <String>['join_room'],
+        <String>['resume'],
         reason:
-            'decision 4: a link id sends join_room, never resume; sent '
-            '${transport.sentRaw.map(_typeOf).toList()}',
-      );
-      final AppLocalizations loc = AppLocalizations.of(
-        tester.element(find.byType(LobbyScreen)),
+            'decision 4: a seat record for the link must send resume, '
+            'not join_room; sent ${transport.sentRaw.map(_typeOf).toList()}',
       );
       expect(
-        _noInstall(_dataOf(transport.sentRaw.single)),
-        <String, Object?>{'link': _linkId, 'name': loc.homeDefaultPlayerName},
+        _dataOf(transport.sentRaw.single),
+        <String, Object?>{'code': _linkCode, 'seat_token': 'tok-d4-001'},
         reason:
-            'decision 4: the join must carry the link id and the default '
-            'name; sent ${_dataOf(transport.sentRaw.single)}',
+            'decision 4: resume must carry the stored code and seat token '
+            'verbatim; sent ${_dataOf(transport.sentRaw.single)}',
       );
       await _disposeControllers(tester, mount.factory);
     },
