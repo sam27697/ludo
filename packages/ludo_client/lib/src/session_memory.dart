@@ -41,6 +41,7 @@ class SeatRecord {
     required this.code,
     required this.seat,
     required this.seatToken,
+    this.linkId = '',
   });
 
   /// The room this seat was taken in.
@@ -52,16 +53,22 @@ class SeatRecord {
   /// The capability `resume` is sent with. Never printed.
   final String seatToken;
 
+  /// The link id the room's snapshot carried when the seat was recorded, so a
+  /// tapped link for a room this device still holds a seat in resumes that
+  /// seat (C-681 R1). Empty for a record written before link ids were kept.
+  final String linkId;
+
   @override
   bool operator ==(Object other) {
     return other is SeatRecord &&
         other.code == code &&
         other.seat == seat &&
-        other.seatToken == seatToken;
+        other.seatToken == seatToken &&
+        other.linkId == linkId;
   }
 
   @override
-  int get hashCode => Object.hash(code, seat, seatToken);
+  int get hashCode => Object.hash(code, seat, seatToken, linkId);
 
   @override
   String toString() => 'SeatRecord(code: $code, seat: $seat)';
@@ -140,6 +147,7 @@ class SessionMemory {
   static const String _seatsKey = 'session.lastSeats';
   static const String _codesKey = 'session.recentCodes';
   static const String _seatKey = 'session.seat';
+  static const String _seatLinkKey = 'session.seatLink';
   static const String _seatSavedAtKey = 'session.seatSavedAt';
   static const String _lastGameKey = 'session.lastGame';
 
@@ -200,6 +208,7 @@ class SessionMemory {
         final DateTime now = (clock ?? DateTime.now)();
         if (now.difference(seatSavedAt) >= kSeatRecordMaxAge) {
           await prefs.remove(_seatKey);
+          await prefs.remove(_seatLinkKey);
           await prefs.remove(_seatSavedAtKey);
           seatRecord = null;
           seatSavedAt = null;
@@ -239,7 +248,11 @@ class SessionMemory {
   /// yields `null` here without disturbing the rest of [load].
   static SeatRecord? _readSeatRecord(SharedPreferences prefs) {
     try {
-      return _seatRecordFrom(prefs.getStringList(_seatKey));
+      final Object? link = prefs.get(_seatLinkKey);
+      return _seatRecordFrom(
+        prefs.getStringList(_seatKey),
+        linkId: link is String ? link : '',
+      );
     } on Object {
       return null;
     }
@@ -248,7 +261,8 @@ class SessionMemory {
   /// Writes [record] under the single seat key, replacing any previous
   /// record, and the time it wrote (milliseconds since epoch, read from
   /// [clock], the wall clock when null) under a second key (C-447 D1). The
-  /// seat key keeps exactly `[code, seat, seatToken]`. Never throws: an
+  /// seat key keeps exactly `[code, seat, seatToken]`; the link id (C-681 R1)
+  /// lives under its own key, absent when empty. Never throws: an
   /// unusable store is swallowed, same as [recordSuccessfulCreate].
   static Future<void> recordSeat(
     SeatRecord record, {
@@ -261,6 +275,11 @@ class SessionMemory {
         record.seat.toString(),
         record.seatToken,
       ]);
+      if (record.linkId.isEmpty) {
+        await prefs.remove(_seatLinkKey);
+      } else {
+        await prefs.setString(_seatLinkKey, record.linkId);
+      }
       await prefs.setInt(
         _seatSavedAtKey,
         (clock ?? DateTime.now)().millisecondsSinceEpoch,
@@ -341,6 +360,7 @@ class SessionMemory {
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
       await prefs.remove(_seatKey);
+      await prefs.remove(_seatLinkKey);
       await prefs.remove(_seatSavedAtKey);
     } on Object {
       return;
@@ -358,8 +378,10 @@ class SessionMemory {
       if (_readSeatRecord(prefs) != expected) {
         return;
       }
+      final Future<bool> linkRemoved = prefs.remove(_seatLinkKey);
       final Future<bool> seatRemoved = prefs.remove(_seatKey);
       final Future<bool> savedAtRemoved = prefs.remove(_seatSavedAtKey);
+      await linkRemoved;
       await seatRemoved;
       await savedAtRemoved;
     } on Object {
@@ -368,10 +390,11 @@ class SessionMemory {
   }
 
   /// A [SeatRecord] from [raw] when it is exactly three strings shaped as
-  /// `[code, seat, seatToken]` with a valid room code, a seat in `0..3`
+  /// `[code, seat, seatToken]` (C-681 R1: [linkId] comes from its own key,
+  /// '' for an old record) with a valid room code, a seat in `0..3`
   /// written with no sign, space or extra leading zero, and a non-empty
   /// token. Anything else is not trusted and yields null.
-  static SeatRecord? _seatRecordFrom(List<String>? raw) {
+  static SeatRecord? _seatRecordFrom(List<String>? raw, {String linkId = ''}) {
     if (raw == null || raw.length != 3) {
       return null;
     }
@@ -391,7 +414,12 @@ class SessionMemory {
     if (seat == null || seat < 0 || seat > 3) {
       return null;
     }
-    return SeatRecord(code: code, seat: seat, seatToken: seatToken);
+    return SeatRecord(
+      code: code,
+      seat: seat,
+      seatToken: seatToken,
+      linkId: linkId,
+    );
   }
 
   /// Writes [name] and [seats] so a later [load] can restore them.

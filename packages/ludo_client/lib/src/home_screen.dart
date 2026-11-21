@@ -304,6 +304,16 @@ class _HomeScreenState extends State<HomeScreen>
     _linkHadSay = true;
     final bool isCurrent = ModalRoute.of(context)?.isCurrent ?? false;
     if (isCurrent && !_linkJoinInFlight) {
+      // C-681 R1: a link for a room this phone still holds a seat in takes
+      // that seat back, the same as a typed code equal to the stored code.
+      final SeatRecord? held = _seatRecordForLink(linkId);
+      if (held != null) {
+        _linkJoinInFlight = true;
+        unawaited(
+          _rejoinRoom(held).whenComplete(() => _linkJoinInFlight = false),
+        );
+        return;
+      }
       // A link id fills no field, so there is nothing for a first-time player
       // to tap: the tapped link is the one tap, and the default name stands
       // in for a name never typed.
@@ -688,6 +698,7 @@ class _HomeScreenState extends State<HomeScreen>
           code: room.code,
           seat: seat,
           seatToken: seatToken,
+          linkId: room.linkId,
         );
         final DateTime now = (widget.clock ?? DateTime.now)();
         final DateTime? lastWriteAt = _lastSeatWriteAt;
@@ -770,7 +781,12 @@ class _HomeScreenState extends State<HomeScreen>
     if (code == null || seat == null || seatToken == null) {
       return null;
     }
-    return SeatRecord(code: code, seat: seat, seatToken: seatToken);
+    return SeatRecord(
+      code: code,
+      seat: seat,
+      seatToken: seatToken,
+      linkId: controller.room?.linkId ?? '',
+    );
   }
 
   /// C-547 D4: a seat another phone took over is gone for this phone too;
@@ -1307,6 +1323,15 @@ class _HomeScreenState extends State<HomeScreen>
   SeatRecord? _seatRecordFor(String code) {
     final SeatRecord? record = _trustedSeat();
     return record != null && record.code == code ? record : null;
+  }
+
+  /// C-681 R1: the seat this screen holds for the room [linkId] names, or
+  /// null. A record with no link id never matches (join by link as before).
+  SeatRecord? _seatRecordForLink(String linkId) {
+    final SeatRecord? record = _trustedSeat();
+    return record != null && record.linkId.isNotEmpty && record.linkId == linkId
+        ? record
+        : null;
   }
 
   /// H4: the H3 button's tap. Builds a controller the same way create and
