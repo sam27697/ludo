@@ -558,7 +558,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
       return;
     }
     navigator.pop(result);
-    if (route.navigator != null) {
+    // A route popped before its entrance has moved at all finishes through
+    // its own animation status listener, in the same call; finalizing it
+    // again is an error. Only a route still reversing is finished here.
+    final Animation<double>? entrance = route is TransitionRoute<dynamic>
+        ? route.animation
+        : null;
+    if (route.navigator != null && !(entrance?.isDismissed ?? false)) {
       navigator.finalizeRoute(route);
     }
   }

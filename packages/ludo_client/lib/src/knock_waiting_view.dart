@@ -8,6 +8,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'knock_bar.dart' show KnockDrainBar, kKnockWindowMs;
 import 'theme.dart';
 
 /// The diameter of the waiting ring.
@@ -38,6 +39,8 @@ class KnockWaitingView extends StatefulWidget {
 class _KnockWaitingViewState extends State<KnockWaitingView>
     with SingleTickerProviderStateMixin {
   late final AnimationController _drain;
+  int _leftMs = 1;
+  bool get _noClock => widget.expiresAtMs == null;
 
   @override
   void initState() {
@@ -46,6 +49,7 @@ class _KnockWaitingViewState extends State<KnockWaitingView>
     final int leftMs = expiresAt == null
         ? 0
         : math.max(0, expiresAt - widget.now().millisecondsSinceEpoch);
+    _leftMs = math.max(1, leftMs);
     _drain = AnimationController(
       vsync: this,
       duration: Duration(milliseconds: math.max(1, leftMs)),
@@ -87,15 +91,29 @@ class _KnockWaitingViewState extends State<KnockWaitingView>
                     child: AnimatedBuilder(
                       animation: _drain,
                       builder: (BuildContext context, Widget? child) {
-                        return CustomPaint(
-                          key: const Key('knock-waiting-ring'),
-                          size: const Size.square(kKnockWaitingRing),
-                          painter: _WaitingRingPainter(
-                            fraction: 1 - _drain.value,
-                            color: LudoColors.action,
-                            track: LudoColors.inkMuted.withValues(alpha: 0.2),
+                        final double fraction =
+                            ((1 - _drain.value) * _leftMs / kKnockWindowMs)
+                                .clamp(0.0, 1.0);
+                        return SizedBox.square(
+                          dimension: kKnockWaitingRing,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: <Widget>[
+                              SizedBox.square(
+                                dimension: kKnockWaitingRing,
+                                child: CircularProgressIndicator(
+                                  key: const Key('knock-waiting-ring'),
+                                  value: _noClock ? 1 : fraction,
+                                  strokeWidth: 8,
+                                  strokeCap: StrokeCap.round,
+                                  color: LudoColors.action,
+                                  backgroundColor: LudoColors.inkMuted
+                                      .withValues(alpha: 0.2),
+                                ),
+                              ),
+                              child!,
+                            ],
                           ),
-                          child: child,
                         );
                       },
                       child: const SizedBox.square(
@@ -109,6 +127,17 @@ class _KnockWaitingViewState extends State<KnockWaitingView>
                         ),
                       ),
                     ),
+                  ),
+                  const SizedBox(height: kSpace4),
+                  AnimatedBuilder(
+                    animation: _drain,
+                    builder: (BuildContext context, Widget? child) {
+                      return KnockDrainBar(
+                        fraction: _noClock
+                            ? 1
+                            : (1 - _drain.value) * _leftMs / kKnockWindowMs,
+                      );
+                    },
                   ),
                   const SizedBox(height: kSpace4),
                   Text(
@@ -139,47 +168,4 @@ class _KnockWaitingViewState extends State<KnockWaitingView>
       ),
     );
   }
-}
-
-class _WaitingRingPainter extends CustomPainter {
-  const _WaitingRingPainter({
-    required this.fraction,
-    required this.color,
-    required this.track,
-  });
-
-  final double fraction;
-  final Color color;
-  final Color track;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const double stroke = 8;
-    final Rect rect = (Offset.zero & size).deflate(stroke / 2);
-    canvas.drawArc(
-      rect,
-      0,
-      2 * math.pi,
-      false,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke
-        ..color = track,
-    );
-    canvas.drawArc(
-      rect,
-      -math.pi / 2,
-      2 * math.pi * fraction.clamp(0.0, 1.0),
-      false,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke
-        ..strokeCap = StrokeCap.round
-        ..color = color,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_WaitingRingPainter old) =>
-      old.fraction != fraction || old.color != color || old.track != track;
 }

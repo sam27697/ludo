@@ -19,6 +19,11 @@ const double kKnockTargetSize = 48;
 /// The diameter of the draining ring on a knock card.
 const double kKnockRingSize = 40;
 
+/// How long the server holds a knock open (docs/PROTOCOL.md section 31). The
+/// ring is full at this much time left and empty at none, so a knock that
+/// reaches the host with 20 s left starts at a third.
+const int kKnockWindowMs = 60000;
+
 /// The host's approval switch: a pill with a lock glyph, the label and a
 /// switch, and under it, while on, one hint line. The switch's value is the
 /// server's [value]; a tap sends the opposite through [onChanged] and the
@@ -28,10 +33,15 @@ class ApprovalSwitch extends StatelessWidget {
     super.key,
     required this.value,
     required this.onChanged,
+    this.compact = false,
   });
 
   final bool value;
   final ValueChanged<bool> onChanged;
+
+  /// The in-game form: only as wide as its content and no hint line, so it
+  /// can float over a table without taking any of the table's room.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +49,9 @@ class ApprovalSwitch extends StatelessWidget {
     final TextTheme textTheme = Theme.of(context).textTheme;
     final Color tint = value ? LudoColors.action : LudoColors.inkMuted;
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: compact
+          ? CrossAxisAlignment.start
+          : CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         Material(
@@ -56,6 +68,7 @@ class ApprovalSwitch extends StatelessWidget {
                   end: kSpace2,
                 ),
                 child: Row(
+                  mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
                   children: <Widget>[
                     ExcludeSemantics(
                       child: Icon(
@@ -65,9 +78,12 @@ class ApprovalSwitch extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: kSpace2),
-                    Expanded(
+                    Flexible(
+                      fit: compact ? FlexFit.loose : FlexFit.tight,
                       child: Text(
                         loc.approvalSwitchLabel,
+                        maxLines: compact ? 1 : null,
+                        overflow: compact ? TextOverflow.ellipsis : null,
                         style: textTheme.bodyMedium?.copyWith(
                           color: LudoColors.ink,
                           fontWeight: FontWeight.w600,
@@ -85,7 +101,7 @@ class ApprovalSwitch extends StatelessWidget {
             ),
           ),
         ),
-        if (value)
+        if (value && !compact)
           Padding(
             key: const Key('approval-hint'),
             padding: const EdgeInsetsDirectional.only(
@@ -147,8 +163,7 @@ class _KnockBarState extends State<KnockBar> {
 
   @override
   Widget build(BuildContext context) {
-    final bool still = MediaQuery.disableAnimationsOf(context);
-    final Widget column = Column(
+    return Column(
       key: const Key('knock-bar'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -156,23 +171,47 @@ class _KnockBarState extends State<KnockBar> {
           Padding(
             key: ValueKey<String>('knock-slot-${knock.id}'),
             padding: const EdgeInsets.only(bottom: kSpace2),
-            child: KnockCard(
-              key: Key('knock-card-${knock.id}'),
-              knock: knock,
-              onAnswer: (bool accept) => widget.onAnswer(knock.id, accept),
+            child: _KnockEntrance(
+              child: KnockCard(
+                key: Key('knock-card-${knock.id}'),
+                knock: knock,
+                onAnswer: (bool accept) => widget.onAnswer(knock.id, accept),
+              ),
             ),
           ),
       ],
     );
-    // AnimatedSize asserts on a zero duration, so under reduced motion the
-    // bar simply is or is not there.
-    return still
-        ? column
-        : AnimatedSize(
-            duration: kMotionShort,
-            alignment: Alignment.topCenter,
-            child: column,
-          );
+  }
+}
+
+/// A card slides in and fades up when it first appears. It moves a painted
+/// layer only, so the layout under it is final from the first frame and a
+/// target is never somewhere other than where it is hit-tested.
+class _KnockEntrance extends StatelessWidget {
+  const _KnockEntrance({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return child;
+    }
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: kMotionShort,
+      curve: Curves.easeOutCubic,
+      builder: (BuildContext context, double t, Widget? child) {
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, (1 - t) * -kSpace4),
+            child: child,
+          ),
+        );
+      },
+      child: child,
+    );
   }
 }
 
@@ -190,18 +229,18 @@ class KnockCard extends StatefulWidget {
 
 class _KnockCardState extends State<KnockCard>
     with SingleTickerProviderStateMixin {
-  /// The ring is full at 0 and empty at 1, over the knock's whole life as
-  /// first seen. The server closes the knock; the ring only shows its clock.
+  /// 0 at the time the server last reported, 1 when it runs out. The server
+  /// closes the knock; the ring only shows its clock.
   late final AnimationController _drain;
-  late final int _totalMs;
+  late int _startMs;
 
   @override
   void initState() {
     super.initState();
-    _totalMs = math.max(1, widget.knock.expiresMs);
+    _startMs = math.max(1, widget.knock.expiresMs);
     _drain = AnimationController(
       vsync: this,
-      duration: Duration(milliseconds: _totalMs),
+      duration: Duration(milliseconds: _startMs),
     )..forward();
   }
 
@@ -211,9 +250,9 @@ class _KnockCardState extends State<KnockCard>
     if (oldWidget.knock.expiresMs != widget.knock.expiresMs) {
       // A newer snapshot of the same knock carries the time left at that
       // moment; the server's clock wins over the one this card has run.
-      final double left = (widget.knock.expiresMs / _totalMs).clamp(0.0, 1.0);
-      _drain.value = 1 - left;
-      _drain.forward();
+      _startMs = math.max(1, widget.knock.expiresMs);
+      _drain.duration = Duration(milliseconds: _startMs);
+      _drain.forward(from: 0);
     }
   }
 
@@ -234,8 +273,14 @@ class _KnockCardState extends State<KnockCard>
       elevation: 3,
       borderRadius: BorderRadius.circular(kRadiusControl),
       child: Padding(
-        padding: const EdgeInsets.all(kSpace3),
+        padding: const EdgeInsetsDirectional.only(
+          start: kSpace3,
+          end: kSpace2,
+          top: kSpace2,
+          bottom: kSpace2,
+        ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             Row(
@@ -243,20 +288,28 @@ class _KnockCardState extends State<KnockCard>
                 AnimatedBuilder(
                   animation: _drain,
                   builder: (BuildContext context, Widget? child) {
-                    final double left = 1 - _drain.value;
-                    final int seconds = (left * _totalMs / 1000).ceil();
+                    final double leftMs = (1 - _drain.value) * _startMs;
+                    final double fraction = (leftMs / kKnockWindowMs).clamp(
+                      0.0,
+                      1.0,
+                    );
+                    final int seconds = (leftMs / 1000).ceil();
                     return Semantics(
                       label: loc.knockSecondsLeft(
                         material.formatDecimal(seconds),
                       ),
                       child: ExcludeSemantics(
-                        child: CustomPaint(
-                          key: Key('knock-ring-$id'),
-                          size: const Size.square(kKnockRingSize),
-                          painter: _KnockRingPainter(
-                            fraction: left,
+                        child: SizedBox.square(
+                          dimension: kKnockRingSize,
+                          child: CircularProgressIndicator(
+                            key: Key('knock-ring-$id'),
+                            value: fraction,
+                            strokeWidth: 5,
+                            strokeCap: StrokeCap.round,
                             color: LudoColors.action,
-                            track: LudoColors.inkMuted.withValues(alpha: 0.2),
+                            backgroundColor: LudoColors.inkMuted.withValues(
+                              alpha: 0.2,
+                            ),
                           ),
                         ),
                       ),
@@ -265,56 +318,49 @@ class _KnockCardState extends State<KnockCard>
                 ),
                 const SizedBox(width: kSpace3),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        widget.knock.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: textTheme.titleLarge?.copyWith(
-                          color: LudoColors.ink,
-                          fontWeight: FontWeight.w700,
-                        ),
+                  child: Semantics(
+                    label: loc.knockWantsToJoin(widget.knock.name),
+                    excludeSemantics: true,
+                    child: Text(
+                      widget.knock.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.titleLarge?.copyWith(
+                        color: LudoColors.ink,
+                        fontWeight: FontWeight.w700,
                       ),
-                      Text(
-                        loc.knockWantsToJoin(widget.knock.name),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: textTheme.bodySmall?.copyWith(
-                          color: LudoColors.inkMuted,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
+                ),
+                const SizedBox(width: kSpace2),
+                _KnockTarget(
+                  targetKey: Key('knock-reject-$id'),
+                  icon: Icons.close_rounded,
+                  label: loc.knockReject,
+                  background: LudoColors.error,
+                  foreground: Colors.white,
+                  onTap: () => widget.onAnswer(false),
+                ),
+                const SizedBox(width: kSpace2),
+                _KnockTarget(
+                  targetKey: Key('knock-accept-$id'),
+                  icon: Icons.check_rounded,
+                  label: loc.knockAccept,
+                  background: LudoColors.success,
+                  foreground: LudoColors.ink,
+                  onTap: () => widget.onAnswer(true),
                 ),
               ],
             ),
-            const SizedBox(height: kSpace3),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: _KnockTarget(
-                    targetKey: Key('knock-reject-$id'),
-                    icon: Icons.close_rounded,
-                    label: loc.knockReject,
-                    background: LudoColors.error,
-                    foreground: Colors.white,
-                    onTap: () => widget.onAnswer(false),
-                  ),
-                ),
-                const SizedBox(width: kSpace3),
-                Expanded(
-                  child: _KnockTarget(
-                    targetKey: Key('knock-accept-$id'),
-                    icon: Icons.check_rounded,
-                    label: loc.knockAccept,
-                    background: LudoColors.success,
-                    foreground: LudoColors.ink,
-                    onTap: () => widget.onAnswer(true),
-                  ),
-                ),
-              ],
+            const SizedBox(height: kSpace2),
+            AnimatedBuilder(
+              animation: _drain,
+              builder: (BuildContext context, Widget? child) {
+                final double leftMs = (1 - _drain.value) * _startMs;
+                return KnockDrainBar(
+                  fraction: (leftMs / kKnockWindowMs).clamp(0.0, 1.0),
+                );
+              },
             ),
           ],
         ),
@@ -323,8 +369,9 @@ class _KnockCardState extends State<KnockCard>
   }
 }
 
-/// A big rounded target: a shape (check or cross) and one word, never a colour
-/// alone. At least [kKnockTargetSize] in both directions at any text scale.
+/// A round target holding a shape (check or cross), never a colour alone,
+/// named for TalkBack by its label. [kKnockTargetSize] square at any text
+/// scale, because it holds no text that could grow.
 class _KnockTarget extends StatelessWidget {
   const _KnockTarget({
     required this.targetKey,
@@ -349,41 +396,19 @@ class _KnockTarget extends StatelessWidget {
       label: label,
       excludeSemantics: true,
       onTap: onTap,
-      child: Material(
-        key: targetKey,
-        color: background,
-        borderRadius: BorderRadius.circular(kKnockTargetSize),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(kKnockTargetSize),
-          onTap: onTap,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              minHeight: kKnockTargetSize,
-              minWidth: kKnockTargetSize,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: kSpace2,
-                vertical: kSpace2,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: <Widget>[
-                  Icon(icon, color: foreground, size: kSpace6),
-                  const SizedBox(width: kSpace1),
-                  Flexible(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: foreground,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+      child: Tooltip(
+        message: label,
+        excludeFromSemantics: true,
+        child: Material(
+          key: targetKey,
+          color: background,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onTap,
+            child: SizedBox.square(
+              dimension: kKnockTargetSize,
+              child: Icon(icon, color: foreground, size: kSpace6),
             ),
           ),
         ),
@@ -392,43 +417,37 @@ class _KnockTarget extends StatelessWidget {
   }
 }
 
-/// The ring: a faint full circle and an arc over it that shrinks to nothing,
-/// clockwise from the top in both text directions.
-class _KnockRingPainter extends CustomPainter {
-  const _KnockRingPainter({
-    required this.fraction,
-    required this.color,
-    required this.track,
-  });
+/// A thin bar under a knock that shortens as the time runs out, anchored at
+/// the reading start so it mirrors in Arabic. It says the same thing as the
+/// ring in a second shape, for anyone who does not read the ring.
+class KnockDrainBar extends StatelessWidget {
+  const KnockDrainBar({super.key, required this.fraction});
 
+  /// 1 with the whole window left, 0 with none.
   final double fraction;
-  final Color color;
-  final Color track;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    const double stroke = 5;
-    final Rect rect = (Offset.zero & size).deflate(stroke / 2);
-    final Paint trackPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..color = track;
-    canvas.drawArc(rect, 0, 2 * math.pi, false, trackPaint);
-    final Paint arcPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..strokeCap = StrokeCap.round
-      ..color = color;
-    canvas.drawArc(
-      rect,
-      -math.pi / 2,
-      2 * math.pi * fraction.clamp(0.0, 1.0),
-      false,
-      arcPaint,
+  Widget build(BuildContext context) {
+    return ExcludeSemantics(
+      child: SizedBox(
+        height: kSpace1,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: LudoColors.inkMuted.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(kSpace1),
+          ),
+          child: FractionallySizedBox(
+            alignment: AlignmentDirectional.centerStart,
+            widthFactor: fraction.clamp(0.0, 1.0),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: LudoColors.action,
+                borderRadius: BorderRadius.circular(kSpace1),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
-
-  @override
-  bool shouldRepaint(_KnockRingPainter old) =>
-      old.fraction != fraction || old.color != color || old.track != track;
 }

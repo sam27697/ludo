@@ -57,6 +57,7 @@ import 'safe_cue.dart';
 import 'seat_die.dart';
 import 'seat_mark.dart';
 import 'session_memory.dart';
+import 'knock_bar.dart' show ApprovalSwitch;
 import 'sound_toggle.dart';
 import 'spoken_line.dart';
 import 'table_entrance.dart';
@@ -5849,6 +5850,29 @@ class _GameScreenState extends State<GameScreen> {
                   start: 0,
                   child: SpokenLineRegion(controller: _spokenLine),
                 ),
+                // C-682: the host's door control, floated just under the header
+                // so it costs the table nothing. Same widget and label as the
+                // lobby's; it sends the intention and the next snapshot moves
+                // the switch.
+                if (controller.isHost &&
+                    room != null &&
+                    room.state == RoomState.playing &&
+                    controller.phase == RoomPhase.connected &&
+                    !controller.updateRequired &&
+                    !_seatLost)
+                  PositionedDirectional(
+                    top: kFeltEdgeThickness + 48 + kSpace1,
+                    start: kSpace2,
+                    // The end corner below the header is the turn countdown's;
+                    // the pill stops short of it and shortens its label first.
+                    end: kSpace2 + 64,
+                    child: ApprovalSwitch(
+                      compact: true,
+                      value: room.guestApproval,
+                      onChanged: (bool on) =>
+                          unawaited(controller.setGuestApproval(on)),
+                    ),
+                  ),
                 if (chatLine != null && !controller.updateRequired)
                   _chatLayer(
                     loc,
