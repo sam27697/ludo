@@ -14,7 +14,7 @@ const String _alphabet =
     'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
 
 /// Section 31 item 2: 16 to 64 characters of `[A-Za-z0-9_-]`.
-final RegExp _installShape = RegExp(r'^[A-Za-z0-9_-]{16,64}$');
+final RegExp _installShape = RegExp(r'^[A-Za-z0-9_-]{32}$');
 
 /// The id once this process has read or made it. [installIdIfReady] hands it
 /// out without waiting. When the platform store is unusable this is the

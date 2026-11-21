@@ -21,6 +21,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 
 import '../install_id.dart';
+import '../session_memory.dart';
 import 'connection.dart';
 import 'frame.dart';
 import 'snapshot.dart';
@@ -202,7 +203,10 @@ class RoomController extends ChangeNotifier {
     DateTime Function()? clock,
   }) : _connect = connect, // ignore: prefer_initializing_formals
        _clock = clock ?? DateTime.now,
-       autoReconnectDelays = List<Duration>.unmodifiable(autoReconnectDelays);
+       autoReconnectDelays = List<Duration>.unmodifiable(autoReconnectDelays) {
+    // Read or make the install id now, so the first join already has it.
+    unawaited(installId());
+  }
 
   /// The address every connection this controller opens is opened against.
   final Uri serverUrl;
@@ -415,24 +419,26 @@ class RoomController extends ChangeNotifier {
   /// `/r/<link id>`. Seats at once, whatever guest approval says. Sends
   /// `install`.
   Future<void> joinByLink({required String link, required String name}) {
-    if (_disposed ||
-        !(_phase == RoomPhase.idle || _phase == RoomPhase.failed)) {
+    if (_disposed || !_canJoin) {
       return Future<void>.value();
     }
     _retryLink = link;
     return _join(<String, Object?>{'link': link, 'name': name});
   }
 
+  /// A join may start from idle or failed, and from closed once the host
+  /// removed this phone: the next join is how it learns whether it is barred.
+  bool get _canJoin =>
+      _phase == RoomPhase.idle ||
+      _phase == RoomPhase.failed ||
+      (_phase == RoomPhase.closed && _wasKicked);
+
   Future<void> _join(Map<String, Object?> fields) {
     return _openFresh(
-      gate: _phase == RoomPhase.idle || _phase == RoomPhase.failed,
+      gate: _canJoin,
       isJoin: true,
       request: (RoomConnection connection) async {
         final String? install = installIdIfReady();
-        if (install == null) {
-          // Not read yet in this process: start it so the next join has it.
-          unawaited(installId());
-        }
         final Frame reply = await connection.request(
           'join_room',
           <String, Object?>{...fields, 'install': ?install},
@@ -1521,7 +1527,10 @@ class RoomController extends ChangeNotifier {
     _writeCachedSeat(null);
     _hasDesynced = false;
     _resyncInFlight = false;
+    _knock = const KnockState();
     _dropConnection();
+    // Session memory never offers a resume for a seat the host removed.
+    unawaited(SessionMemory.clearSeat());
     _phase = RoomPhase.closed;
     notifyListeners();
   }
