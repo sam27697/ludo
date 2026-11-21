@@ -1034,8 +1034,10 @@ void main() {
     );
 
     testWidgets(
-      'item 19: first-time player (empty memory): cold and warm, valid '
-      'and invalid, none of it pushes or pops a route',
+      'item 19: first-time player (empty memory): cold and warm, a link in '
+      'the old six-character code shape or on another host is not one of '
+      'ours and pushes or pops no route (a link id that is ours joins: '
+      'items 10, 13, 14)',
       (tester) async {
         final _FakeInitialLinkReader reader = _FakeInitialLinkReader();
         final _FakeLinkStreamOpener opener = _FakeLinkStreamOpener();
@@ -1068,9 +1070,8 @@ void main() {
           observer.pushCount,
           pushesAfterLoad,
           reason:
-              'first-time player (empty memory): cold or warm, valid or '
-              'invalid, a link does not push a route. A known player with '
-              'a valid link is not this case',
+              'first-time player (empty memory): a link that is not of the '
+              'link id shape or not on our host pushes no route',
         );
         expect(observer.popCount, popsAfterLoad);
         expect(observer.replaceCount, replacesAfterLoad);
