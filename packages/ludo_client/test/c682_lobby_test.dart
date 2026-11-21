@@ -637,10 +637,11 @@ void main() {
     testWidgets('the hint shows only while approval is on', (tester) async {
       final _Lobby l = await _Lobby.open(tester, 'switch.hint');
       expect(find.text(_hint), findsNothing, reason: 'off: ${l.why}');
+      l._seq += 1;
       await l.push(
         'room',
         _roomJson(
-          seq: 20,
+          seq: l._seq,
           seats: const <(int, String)>[(0, 'Sam|host')],
           approval: true,
         ),
@@ -651,9 +652,10 @@ void main() {
         isTrue,
         reason: 'switch follows the snapshot. ${l.why}',
       );
+      l._seq += 1;
       await l.push(
         'room',
-        _roomJson(seq: 21, seats: const <(int, String)>[(0, 'Sam|host')]),
+        _roomJson(seq: l._seq, seats: const <(int, String)>[(0, 'Sam|host')]),
       );
       expect(find.text(_hint), findsNothing, reason: 'off again: ${l.why}');
       expect(_switchOn(tester), isFalse, reason: l.why);
@@ -1026,7 +1028,10 @@ void main() {
         others: const <(int, String)>[(1, 'Ann|link'), (2, 'Bea|code')],
       );
       await tester.tap(_k('lobby-kick-2'));
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(Duration.zero);
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 600));
+
       expect(
         find.text('Remove'),
         findsOneWidget,
@@ -1038,7 +1043,9 @@ void main() {
         reason: 'opening must send nothing. ${l.why}',
       );
       await tester.tap(find.text('Remove'));
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(Duration.zero);
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 600));
       expect(l.sent('kick'), <Map<String, Object?>>[
         <String, Object?>{'seat': 2},
       ], reason: 'expected exactly one kick {seat:2}. ${l.why}');
@@ -1049,9 +1056,13 @@ void main() {
     ) async {
       final _Lobby l = await _Lobby.open(tester, 'kick.cancel');
       await tester.tap(_k('lobby-kick-1'));
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(Duration.zero);
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 600));
       expect(find.text('Wait'), findsOneWidget, reason: l.why);
       await tester.tap(find.text('Wait'));
+      await tester.pump(Duration.zero);
+      await tester.pump(const Duration(milliseconds: 600));
       await tester.pump(const Duration(milliseconds: 600));
       expect(l.sent('kick'), isEmpty, reason: 'cancel sends nothing. ${l.why}');
       expect(find.text('Wait'), findsNothing, reason: 'sheet closed. ${l.why}');
@@ -1062,12 +1073,17 @@ void main() {
     ) async {
       final _Lobby l = await _Lobby.open(tester, 'kick.card_leaves');
       await tester.tap(_k('lobby-kick-1'));
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(Duration.zero);
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 600));
       await tester.tap(find.text('Remove'));
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(Duration.zero);
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 600));
+      l._seq += 1;
       await l.push(
         'room',
-        _roomJson(seq: 30, seats: const <(int, String)>[(0, 'Sam|host')]),
+        _roomJson(seq: l._seq, seats: const <(int, String)>[(0, 'Sam|host')]),
       );
       await tester.pump(const Duration(seconds: 1));
       expect(
