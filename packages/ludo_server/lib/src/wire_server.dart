@@ -179,7 +179,11 @@ class WireServer {
           // in the running process's own environment, read once here and
           // never again.
           appSigningSha256 ?? Platform.environment['LUDO_APP_SIGNING_SHA256'],
-        );
+        ) {
+    // Section 31 item 12 (b): whoever calls reap(), the knockers of a reaped
+    // room are told at once.
+    registry.onKnocksReaped = failReapedKnocks;
+  }
 
   final RoomRegistry registry;
   final RateLimiter rateLimiter;

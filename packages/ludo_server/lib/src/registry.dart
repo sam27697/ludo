@@ -880,6 +880,11 @@ class RoomRegistry {
   /// [drainReapedKnocks].
   final List<Knock> _reapedKnocks = <Knock>[];
 
+  /// Called at the end of [reap] with the knocks it just orphaned, so their
+  /// knockers hear `knock_failed` at once rather than at the next sweep.
+  /// Set by the wire layer; unset, [drainReapedKnocks] is the only way out.
+  void Function(List<Knock> knocks)? onKnocksReaped;
+
   /// docs/VERIFY.md section 3. Where a finished game's record is written at
   /// the moment it is won, and read back for `/v/<game_id>` and
   /// `/v/<game_id>.json`. Defaults to an in-memory store when no caller
@@ -2792,6 +2797,10 @@ class RoomRegistry {
     // housekeeping cadence as everything else this method already sweeps,
     // rather than on a timer of its own.
     verifyStore.purgeOlderThan(now.subtract(verifyRetention));
+    final void Function(List<Knock> knocks)? notify = onKnocksReaped;
+    if (notify != null && _reapedKnocks.isNotEmpty) {
+      notify(drainReapedKnocks());
+    }
     return toRemove.length;
   }
 

@@ -227,7 +227,9 @@ void sendToSeatsExcept(
 ///
 /// [requester] is the host socket whose message caused these, and
 /// [requesterRe] the id its own copy of the host frames answers. A knocker
-/// that is [knockerRequester] gets [knockerRe] on its `knock_failed`.
+/// that is [knockerRequester] gets [knockerRe] on its `knock_failed`. The
+/// knocker that is [silentKnocker] (a socket moving on, item 12 a) is sent
+/// nothing: only the host hears of the close.
 void publishKnockEvents(
   RoomHub hub,
   List<KnockEvent> events, {
@@ -235,6 +237,7 @@ void publishKnockEvents(
   String? requesterRe,
   Connection? knockerRequester,
   String? knockerRe,
+  Connection? silentKnocker,
 }) {
   for (final KnockEvent event in events) {
     final String code = event.room.code;
@@ -291,7 +294,7 @@ void publishKnockEvents(
             owner.pendingKnockId = null;
             owner.pendingKnockRoom = null;
           }
-          if (event.outcome != 'accepted') {
+          if (event.outcome != 'accepted' && !identical(owner, silentKnocker)) {
             owner._send(
               type: 'knock_failed',
               data: <String, Object?>{
@@ -732,7 +735,11 @@ class Connection {
     final String knockRoom = pendingKnockRoom!;
     pendingKnockId = null;
     pendingKnockRoom = null;
-    publishKnockEvents(hub, registry.withdrawKnock(knockRoom, knockId));
+    publishKnockEvents(
+      hub,
+      registry.withdrawKnock(knockRoom, knockId),
+      silentKnocker: this,
+    );
   }
 
   /// `answer_knock`, section 31 item 4. Identity first, like the other
