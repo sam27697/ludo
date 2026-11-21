@@ -66,7 +66,9 @@ const Key _chatSheetKey = Key('quick-chat-sheet');
 const String _testUrl = 'wss://c529-a1-test.invalid/ws';
 const String _code = 'K7M2QP';
 const String _deadCode = 'ZY98XW';
-const String _linkCode = 'AB23CD';
+
+/// A link id (shape [0-9a-z]{4,10}-[0-9a-z]{6}) that names no code.
+const String _linkId = 't5k2q9a-x7m3pd';
 const String _token = 'tok-c529-a1-001';
 const String _gameId = '7f3a9c1e5b2d4068';
 
@@ -767,12 +769,13 @@ void main() {
     for (final String deadAnswer in <String>['NO_SUCH_ROOM', 'ROOM_STARTED']) {
       testWidgets(
         'A1.2a: join of dead code answered $deadAnswer, a room link for '
-        'another code arrives while the lobby route is up, Back to home: the '
-        'field holds the link code, Join sends it as a link join',
+        'a room link id arrives while the lobby route is up, Back to home: the '
+        'link fills no field, and the link delivered again on Home sends a '
+        'link join',
         (tester) async {
           final String scenario =
               'A1.2a typed join of $_deadCode answered $deadAnswer, link '
-              'for $_linkCode delivered on the link stream while the lobby '
+              'id $_linkId delivered on the link stream while the lobby '
               'route is pushed, Back to home';
           final _Rig rig = _Rig();
           final _LinkRig links = _LinkRig();
@@ -788,7 +791,7 @@ void main() {
             reason: '$scenario: fixture: lobby-error must show for the join',
           );
 
-          links.stream.add(_linkTo(_linkCode));
+          links.stream.add(_linkTo(_linkId));
           await _pumpBounded(tester, frames: 3);
           expect(
             find.byKey(_lobbyErrorKey),
@@ -796,6 +799,13 @@ void main() {
             reason:
                 '$scenario: fixture: a link while a route is up must not '
                 'move the player off the lobby route',
+          );
+          expect(
+            rig.sent('join_room'),
+            hasLength(1),
+            reason:
+                '$scenario: a link while a route is up sends nothing; sent '
+                '${rig.allTypes}',
           );
 
           await tester.tap(find.byKey(_lobbyLeaveKey));
@@ -809,32 +819,35 @@ void main() {
 
           expect(
             _fieldText(tester, _codeKey),
-            _linkCode,
+            isEmpty,
             reason:
-                '$scenario: the code the link filled must stay; the field '
-                'holds "${_fieldText(tester, _codeKey)}"',
-          );
-          expect(
-            find.byKey(_joinKey),
-            findsOneWidget,
-            reason: '$scenario: Join must be primary for the link code',
+                '$scenario: a link id fills no field; the field holds '
+                '"${_fieldText(tester, _codeKey)}"',
           );
 
-          await _tap(tester, _joinKey);
+          links.stream.add(_linkTo(_linkId));
+          await _pumpBounded(tester, frames: 3);
           final List<String> joins = rig.sent('join_room');
           expect(
             joins,
             hasLength(2),
             reason:
-                '$scenario: the second Join must send a join_room; sent '
+                '$scenario: the link on Home must send a join_room; sent '
                 '${rig.allTypes}',
           );
           expect(
-            _dataOf(joins.last)['code'],
-            _linkCode,
+            _dataOf(joins.last)['link'],
+            _linkId,
             reason:
-                '$scenario: the second join_room must carry the link code; '
+                '$scenario: the second join_room must carry the link id; '
                 'sent ${_dataOf(joins.last)}',
+          );
+          expect(
+            _dataOf(joins.last).containsKey('code'),
+            isFalse,
+            reason:
+                '$scenario: a link join names no code; sent '
+                '${_dataOf(joins.last)}',
           );
           _answerError(rig.last, _idOf(joins.last), 'NO_SUCH_ROOM');
           await _pumpBounded(tester, frames: 3);

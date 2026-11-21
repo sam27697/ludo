@@ -1242,5 +1242,95 @@
   "gloatLine8": "See you at the start!",
   "@gloatLine8": {
     "description": "Short playful line shown over the laughing face after a capture."
+  },
+  "seatOriginLink": "joined by link",
+  "@seatOriginLink": {
+    "description": "Spoken label of the small mark on a lobby seat card whose player came in through the shared link."
+  },
+  "seatOriginCode": "joined with the code",
+  "@seatOriginCode": {
+    "description": "Spoken label of the small mark on a lobby seat card whose player typed the room code."
+  },
+  "seatOriginApproved": "joined with the code and was approved",
+  "@seatOriginApproved": {
+    "description": "Spoken label of the small mark on a lobby seat card whose player typed the code and was accepted by the host."
+  },
+  "approvalSwitchLabel": "Approve typed codes",
+  "@approvalSwitchLabel": {
+    "description": "Label of the host's switch beside the room code: when on, a person who types the code waits for the host's answer."
+  },
+  "approvalSwitchHint": "Anyone typing the code waits for your tap",
+  "@approvalSwitchHint": {
+    "description": "Hint under the approval switch while it is on."
+  },
+  "knockWantsToJoin": "{name} wants to join",
+  "@knockWantsToJoin": {
+    "description": "Title of a knock card the host sees: a person who typed the code waits for an answer.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Sam"
+      }
+    }
+  },
+  "knockAccept": "Accept",
+  "@knockAccept": {
+    "description": "Host's green target on a knock card: let the person in."
+  },
+  "knockReject": "Reject",
+  "@knockReject": {
+    "description": "Host's red target on a knock card: do not let the person in."
+  },
+  "knockSecondsLeft": "{seconds} seconds left",
+  "@knockSecondsLeft": {
+    "description": "Spoken remaining time of a knock card, the seconds already formatted for the locale.",
+    "placeholders": {
+      "seconds": {
+        "type": "String",
+        "example": "42"
+      }
+    }
+  },
+  "lobbyKickSeat": "Remove {name}",
+  "@lobbyKickSeat": {
+    "description": "Spoken action on another player's seat card in the lobby: opens the remove question.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "Cy"
+      }
+    }
+  },
+  "knockWaitingTitle": "Waiting for the host",
+  "@knockWaitingTitle": {
+    "description": "Title of the full-screen card a person sees after typing a code of a room whose host approves each newcomer."
+  },
+  "knockWaitingCancel": "Cancel",
+  "@knockWaitingCancel": {
+    "description": "Button on the waiting card: stop waiting and go back."
+  },
+  "knockOutcomeNotJoined": "You could not join this room",
+  "@knockOutcomeNotJoined": {
+    "description": "Line on home after a knock was rejected or timed out. The same text for both on purpose."
+  },
+  "knockOutcomeFull": "This room is full",
+  "@knockOutcomeFull": {
+    "description": "Line on home after a knock ended because no seat was free."
+  },
+  "knockOutcomeSwitchedOff": "No seat is free in this room",
+  "@knockOutcomeSwitchedOff": {
+    "description": "Line on home after the host switched approval off and the seats filled before this person's turn."
+  },
+  "knockWasKicked": "The host removed you from this room",
+  "@knockWasKicked": {
+    "description": "Line on home, shown once, after the host removed this player from the lobby."
+  },
+  "lobbyErrorKnockRefused": "You cannot knock on this room again",
+  "@lobbyErrorKnockRefused": {
+    "description": "Error when the server reports KNOCK_REFUSED."
+  },
+  "lobbyErrorTooManyKnocks": "Too many people are waiting, try again in a minute",
+  "@lobbyErrorTooManyKnocks": {
+    "description": "Error when the server reports TOO_MANY_KNOCKS."
   }
 }

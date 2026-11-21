@@ -5,15 +5,17 @@
 // clock, the injected random source, and its arguments). Nothing here reads
 // a wall clock, opens a socket or parses JSON; those are order 007's job.
 
-import 'dart:convert' show jsonEncode;
+import 'dart:convert' show jsonEncode, utf8;
 import 'dart:io' show stderr;
 import 'dart:math';
 
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:fair_dice/fair_dice.dart' show DiceChain, drawDie, hexEncode;
 import 'package:ludo_engine/ludo_engine.dart' as engine;
 
 import 'clock.dart';
 import 'grace.dart';
+import 'link_id.dart';
 import 'room.dart';
 import 'room_code.dart';
 import 'ruleset.dart';
@@ -51,6 +53,18 @@ enum ProtocolError {
 
   /// Section 28 rule 4: a `kick` named a playing seat whose socket is up.
   notAbsent,
+
+  /// Section 31 item 3: a room already holds 3 open knocks.
+  tooManyKnocks,
+
+  /// Section 31 item 4: `answer_knock` named an unknown or closed knock.
+  noSuchKnock,
+
+  /// Section 31 item 4: this knocker was refused or timed out in this room.
+  knockRefused,
+
+  /// Section 31 item 7: this seat was kicked from this room.
+  kicked,
 }
 
 sealed class CreateResult {}
@@ -76,6 +90,131 @@ class JoinOk extends JoinResult {
 
 class JoinFailure extends JoinResult {
   JoinFailure(this.error);
+  final ProtocolError error;
+}
+
+/// Section 31 item 3: the typed code of a room with guest approval on did not
+/// seat the caller; it opened [knock], announced by [opened].
+class JoinKnocked extends JoinResult {
+  JoinKnocked({required this.room, required this.knock, required this.opened});
+  final Room room;
+  final Knock knock;
+  final KnockEvent opened;
+}
+
+/// One thing a knock did, with its `seq` already fixed and the snapshots the
+/// frames need already built, so a later event of the same call cannot change
+/// what an earlier one says. Section 31 items 3, 4 and 5.
+sealed class KnockEvent {
+  KnockEvent({
+    required this.room,
+    required this.knock,
+    required this.seq,
+    required this.hostSeatToken,
+    required this.others,
+  });
+
+  final Room room;
+  final Knock knock;
+  final int seq;
+
+  /// The seat token of the room's host at that moment, null when none.
+  final String? hostSeatToken;
+
+  /// The `room` snapshot every seated socket but the host is owed at [seq]
+  /// (`knocks` empty), because they take no `knock` or `knock_closed`.
+  final Map<String, Object?> others;
+}
+
+class KnockOpened extends KnockEvent {
+  KnockOpened({
+    required super.room,
+    required super.knock,
+    required super.seq,
+    required super.hostSeatToken,
+    required super.others,
+  });
+}
+
+class KnockClosed extends KnockEvent {
+  KnockClosed({
+    required super.room,
+    required super.knock,
+    required super.seq,
+    required super.hostSeatToken,
+    required super.others,
+    required this.outcome,
+  });
+
+  /// `accepted`, `rejected`, `timeout`, `full`, `withdrawn` or `switched_off`.
+  final String outcome;
+}
+
+/// The seating that follows an accepted knock: [seat] took the lowest free
+/// seat at [seq]. [snapshot] is the `room` the new seat is sent.
+class KnockSeated extends KnockEvent {
+  KnockSeated({
+    required super.room,
+    required super.knock,
+    required super.seq,
+    required super.hostSeatToken,
+    required super.others,
+    required this.seat,
+    required this.snapshot,
+  });
+  final Seat seat;
+  final Map<String, Object?> snapshot;
+}
+
+sealed class AnswerKnockResult {}
+
+class AnswerKnockOk extends AnswerKnockResult {
+  AnswerKnockOk({required this.room, required this.events});
+  final Room room;
+  final List<KnockEvent> events;
+}
+
+class AnswerKnockFailure extends AnswerKnockResult {
+  AnswerKnockFailure(this.error);
+  final ProtocolError error;
+}
+
+sealed class SetApprovalResult {}
+
+/// Section 31 item 5. [seq] is the toggle's own step; [hostSnapshot] and
+/// [othersSnapshot] are the `room` it is answered and broadcast with, built
+/// before the knocks it may have settled ([events]) changed the room again.
+class SetApprovalOk extends SetApprovalResult {
+  SetApprovalOk({
+    required this.room,
+    required this.seq,
+    required this.hostSnapshot,
+    required this.othersSnapshot,
+    required this.events,
+  });
+  final Room room;
+  final int seq;
+  final Map<String, Object?> hostSnapshot;
+  final Map<String, Object?> othersSnapshot;
+  final List<KnockEvent> events;
+}
+
+class SetApprovalFailure extends SetApprovalResult {
+  SetApprovalFailure(this.error);
+  final ProtocolError error;
+}
+
+sealed class KickLobbyResult {}
+
+/// Section 31 item 6. [seat] is the seat as it stood before removal.
+class KickLobbyOk extends KickLobbyResult {
+  KickLobbyOk({required this.room, required this.seat});
+  final Room room;
+  final Seat seat;
+}
+
+class KickLobbyFailure extends KickLobbyResult {
+  KickLobbyFailure(this.error);
   final ProtocolError error;
 }
 
@@ -204,6 +343,11 @@ class StartOk extends StartResult {
   /// same call, read fresh rather than assumed to still be the full
   /// `rules.turnSeconds * 1000` it began at.
   final int nextDeadlineMs;
+
+  /// Section 31 item 11 (e): the knocks still open when the game started,
+  /// closed `full` after the start's own steps, so their `seq` values follow
+  /// the `turn`. Set by the registry; empty when none was open.
+  List<KnockEvent> knockEvents = const <KnockEvent>[];
 }
 
 class StartFailure extends StartResult {
@@ -667,6 +811,11 @@ const Duration _lobbyLifetime = Duration(minutes: 60);
 const Duration _maxRoomLifetime = Duration(hours: 6);
 const Duration _codeQuarantine = Duration(hours: 24);
 
+/// `docs/PROTOCOL.md` section 31 item 4: a knock unanswered this long closes
+/// `timeout`; item 3: a room holds at most this many open knocks.
+const Duration _knockLifetime = Duration(milliseconds: 60000);
+const int _maxOpenKnocks = 3;
+
 const int _minName = 1;
 const int _maxName = 24;
 const int _minTurnSeconds = 15;
@@ -695,8 +844,10 @@ class RoomRegistry {
     VerifyStore? verifyStore,
     String verifyUrlBase = defaultVerifyUrlBase,
     String ruleset = ruleset202610,
+    Random? linkRandom,
   })  : _clock = clock,
         _secure = secure,
+        _linkRandom = linkRandom ?? Random.secure(),
         verifyStore = verifyStore ?? MemoryVerifyStore(clock),
         _verifyUrlBase = verifyUrlBase,
         ruleset = _checkedRuleset(ruleset);
@@ -709,6 +860,30 @@ class RoomRegistry {
 
   final Clock _clock;
   final Random _secure;
+
+  /// Section 31 item 1: the source of link ids and knock ids. A separate
+  /// CSPRNG from [_secure] so drawing them never moves a sequence the dice
+  /// chain, the codes or the seeds are drawn from.
+  final Random _linkRandom;
+
+  /// Link id -> the room it names, for as long as the room lives.
+  final Map<String, Room> _roomsByLink = <String, Room>{};
+
+  /// Every link id this process ever issued, so one is never reused even
+  /// after its room is reaped.
+  /// Section 31 item 12 (d): only as long as they could collide, so an id is
+  /// dropped once its time part is more than 2 seconds old.
+  final Set<String> _issuedLinkIds = <String>{};
+
+  /// Section 31 item 12 (b): knocks that were open when their room was reaped,
+  /// waiting for the wire layer to tell their knockers. See
+  /// [drainReapedKnocks].
+  final List<Knock> _reapedKnocks = <Knock>[];
+
+  /// Called at the end of [reap] with the knocks it just orphaned, so their
+  /// knockers hear `knock_failed` at once rather than at the next sweep.
+  /// Set by the wire layer; unset, [drainReapedKnocks] is the only way out.
+  void Function(List<Knock> knocks)? onKnocksReaped;
 
   /// docs/VERIFY.md section 3. Where a finished game's record is written at
   /// the moment it is won, and read back for `/v/<game_id>` and
@@ -768,6 +943,7 @@ class RoomRegistry {
       name: trimmedName,
       seatToken: generateSeatToken(_secure),
       connected: true,
+      via: 'host',
     );
     // docs/PROTOCOL.md section 11.1: the chain is built, and its commitment
     // fixed, before this room exists anywhere a `set_seed` could reach it --
@@ -785,15 +961,42 @@ class RoomRegistry {
       seats: <Seat>[hostSeat],
       game: null,
       chain: chain,
+      linkId: _generateUniqueLinkId(),
       ruleset: ruleset,
     );
     _rooms[code] = room;
+    _roomsByLink[room.linkId] = room;
     _refreshIdleTracking(room);
     return CreateOk(room: room, seat: hostSeat);
   }
 
-  JoinResult joinRoom({required String code, required String name}) {
-    final Room? room = _rooms[code];
+  /// `join_room`, docs/PROTOCOL.md section 3 and section 31 items 2, 3 and 7.
+  /// Exactly one of [code] and [link] names the room. [install] and [ip]
+  /// identify the caller for the bars; [requestId] and [owner] are kept on a
+  /// knock so its close can be answered. The ladder: the room (an unknown or
+  /// finished link and an unknown code are `NO_SUCH_ROOM`), `ROOM_STARTED`,
+  /// the name, `KICKED`, `ROOM_FULL`, and only then, for a typed code with
+  /// approval on, `KNOCK_REFUSED`, `TOO_MANY_KNOCKS` and the knock itself.
+  JoinResult joinRoom({
+    String? code,
+    String? link,
+    required String name,
+    String? install,
+    String ip = '',
+    String requestId = '',
+    Object? owner,
+  }) {
+    if ((code == null) == (link == null)) {
+      return JoinFailure(ProtocolError.badField);
+    }
+    final Room? room;
+    if (link != null) {
+      final Room? byLink = _roomsByLink[link];
+      room =
+          byLink != null && byLink.state != RoomState.finished ? byLink : null;
+    } else {
+      room = _rooms[code];
+    }
     if (room == null) {
       return JoinFailure(ProtocolError.noSuchRoom);
     }
@@ -804,6 +1007,10 @@ class RoomRegistry {
     if (trimmedName == null) {
       return JoinFailure(ProtocolError.badField);
     }
+    final String barKey = _barKey(install: install, ip: ip);
+    if (room.kickBars.contains(barKey)) {
+      return JoinFailure(ProtocolError.kicked);
+    }
     final Set<int> taken = room.seats.map((Seat s) => s.seat).toSet();
     final List<int> free = _seatIndicesFor(room.players)
         .where((int s) => !taken.contains(s))
@@ -811,17 +1018,346 @@ class RoomRegistry {
     if (free.isEmpty) {
       return JoinFailure(ProtocolError.roomFull);
     }
+    if (link == null && room.guestApproval) {
+      if (room.knockBars.contains(barKey)) {
+        return JoinFailure(ProtocolError.knockRefused);
+      }
+      if (room.knocks.length >= _maxOpenKnocks) {
+        return JoinFailure(ProtocolError.tooManyKnocks);
+      }
+      final Knock knock = Knock(
+        id: _generateKnockId(room),
+        name: trimmedName,
+        createdAt: _clock.now,
+        barKey: barKey,
+        requestId: requestId,
+        owner: owner,
+      );
+      room.knocks.add(knock);
+      room.seq++;
+      return JoinKnocked(
+        room: room,
+        knock: knock,
+        opened: KnockOpened(
+          room: room,
+          knock: knock,
+          seq: room.seq,
+          hostSeatToken: _hostToken(room),
+          others: buildRoomSnapshot(room, now: _clock.now),
+        ),
+      );
+    }
     final Seat seat = Seat(
       seat: free.first,
       name: trimmedName,
       seatToken: generateSeatToken(_secure),
       connected: true,
+      via: link != null ? 'link' : 'code',
+      barKey: barKey,
     );
     room.seats = <Seat>[...room.seats, seat]
       ..sort((Seat a, Seat b) => a.seat.compareTo(b.seat));
     _refreshIdleTracking(room);
     room.seq++;
     return JoinOk(room: room, seat: seat);
+  }
+
+  /// Section 31 item 11 (e): `start_game` closes every knock still open,
+  /// outcome `full`.
+  List<KnockEvent> _closeAllKnocksFull(Room room) => <KnockEvent>[
+        for (final Knock knock in List<Knock>.of(room.knocks))
+          _closeKnock(room, knock, 'full'),
+      ];
+
+  /// The room a link id names, for as long as that room lives and is not
+  /// FINISHED; null for an unknown, reaped or finished one, and for garbage.
+  /// Section 31 items 2 and 9.
+  Room? lookupByLink(String link) {
+    final Room? room = _roomsByLink[link];
+    if (room == null || room.state == RoomState.finished) {
+      return null;
+    }
+    return room;
+  }
+
+  /// True while [knockId] is still open in room [code].
+  bool hasOpenKnock(String code, String knockId) {
+    final Room? room = _rooms[code];
+    return room != null && room.knocks.any((Knock k) => k.id == knockId);
+  }
+
+  /// `answer_knock`, section 31 item 4. [data] is the message's whole `d`: the
+  /// ladder puts `NOT_HOST` and the phase ahead of the payload check, so the
+  /// payload is looked at here, in that order: room, seat authorised,
+  /// `NOT_HOST`, LOBBY (`WRONG_PHASE`), `knock_id` a string and `accept` a
+  /// bool with no other key (`BAD_FIELD`), the knock (`NO_SUCH_KNOCK`).
+  AnswerKnockResult answerKnock({
+    required String code,
+    required String seatToken,
+    required Map<String, Object?> data,
+  }) {
+    final Room? room = _rooms[code];
+    if (room == null) {
+      return AnswerKnockFailure(ProtocolError.noSuchRoom);
+    }
+    final Seat? caller = _findSeat(room, seatToken);
+    if (caller == null) {
+      return AnswerKnockFailure(ProtocolError.badSeatToken);
+    }
+    if (caller.seat != room.hostSeat) {
+      return AnswerKnockFailure(ProtocolError.notHost);
+    }
+    if (room.state != RoomState.lobby) {
+      return AnswerKnockFailure(ProtocolError.wrongPhase);
+    }
+    final Object? rawId = data['knock_id'];
+    final Object? rawAccept = data['accept'];
+    if (data.length != 2 || rawId is! String || rawAccept is! bool) {
+      return AnswerKnockFailure(ProtocolError.badField);
+    }
+    Knock? knock;
+    for (final Knock k in room.knocks) {
+      if (k.id == rawId) {
+        knock = k;
+        break;
+      }
+    }
+    if (knock == null) {
+      return AnswerKnockFailure(ProtocolError.noSuchKnock);
+    }
+    final List<KnockEvent> events = <KnockEvent>[];
+    if (!rawAccept) {
+      events.add(_closeKnock(room, knock, 'rejected', bar: true));
+    } else {
+      _settleKnock(room, knock, events);
+    }
+    return AnswerKnockOk(room: room, events: events);
+  }
+
+  /// `set_guest_approval`, section 31 item 5. Ladder: room, seat authorised,
+  /// `NOT_HOST`, then the payload (`enabled` a bool, nothing else), in any
+  /// state of a live room.
+  SetApprovalResult setGuestApproval({
+    required String code,
+    required String seatToken,
+    required Map<String, Object?> data,
+  }) {
+    final Room? room = _rooms[code];
+    if (room == null) {
+      return SetApprovalFailure(ProtocolError.noSuchRoom);
+    }
+    final Seat? caller = _findSeat(room, seatToken);
+    if (caller == null) {
+      return SetApprovalFailure(ProtocolError.badSeatToken);
+    }
+    if (caller.seat != room.hostSeat) {
+      return SetApprovalFailure(ProtocolError.notHost);
+    }
+    final Object? enabled = data['enabled'];
+    if (data.length != 1 || enabled is! bool) {
+      return SetApprovalFailure(ProtocolError.badField);
+    }
+    room.guestApproval = enabled;
+    room.seq++;
+    final int seq = room.seq;
+    final DateTime now = _clock.now;
+    final Map<String, Object?> hostSnapshot =
+        buildRoomSnapshot(room, now: now, forHost: true);
+    final Map<String, Object?> othersSnapshot =
+        buildRoomSnapshot(room, now: now);
+    final List<KnockEvent> events = <KnockEvent>[];
+    if (!enabled) {
+      // Item 5: open knocks are settled in the order they arrived, seating up
+      // to the free seats and closing the rest `switched_off`.
+      for (final Knock knock in List<Knock>.of(room.knocks)) {
+        if (!room.knocks.any((Knock k) => k.id == knock.id)) {
+          continue;
+        }
+        if (_freeSeats(room).isEmpty || room.state != RoomState.lobby) {
+          events.add(_closeKnock(room, knock, 'switched_off'));
+        } else {
+          _settleKnock(room, knock, events);
+        }
+      }
+    }
+    return SetApprovalOk(
+      room: room,
+      seq: seq,
+      hostSnapshot: hostSnapshot,
+      othersSnapshot: othersSnapshot,
+      events: events,
+    );
+  }
+
+  /// Closes the knock [knockId] of room [code] as `withdrawn` (its socket
+  /// closed or sent `leave_room`). Empty when it is no longer open.
+  List<KnockEvent> withdrawKnock(String code, String knockId) {
+    final Room? room = _rooms[code];
+    if (room == null) {
+      return const <KnockEvent>[];
+    }
+    for (final Knock knock in room.knocks) {
+      if (knock.id == knockId) {
+        return <KnockEvent>[_closeKnock(room, knock, 'withdrawn')];
+      }
+    }
+    return const <KnockEvent>[];
+  }
+
+  /// Closes every knock open for [_knockLifetime] or more on the injected
+  /// clock as `timeout`, barring its knocker from the typed-code path. Run by
+  /// the wire layer's 1 s sweep.
+  List<KnockEvent> expireKnocks() {
+    final DateTime now = _clock.now;
+    final List<KnockEvent> events = <KnockEvent>[];
+    for (final Room room in _rooms.values.toList(growable: false)) {
+      for (final Knock knock in List<Knock>.of(room.knocks)) {
+        if (now.difference(knock.createdAt) >= _knockLifetime) {
+          events.add(_closeKnock(room, knock, 'timeout', bar: true));
+        }
+      }
+    }
+    return events;
+  }
+
+  /// Accepts [knock]: seats it on the lowest free seat, or closes it `full`
+  /// when none is free. Appends what happened to [events].
+  void _settleKnock(Room room, Knock knock, List<KnockEvent> events) {
+    final List<int> free = _freeSeats(room);
+    if (free.isEmpty) {
+      events.add(_closeKnock(room, knock, 'full'));
+      return;
+    }
+    events.add(_closeKnock(room, knock, 'accepted'));
+    final Seat seat = Seat(
+      seat: free.first,
+      name: knock.name,
+      seatToken: generateSeatToken(_secure),
+      connected: true,
+      via: 'approved',
+      barKey: knock.barKey,
+    );
+    room.seats = <Seat>[...room.seats, seat]
+      ..sort((Seat a, Seat b) => a.seat.compareTo(b.seat));
+    _refreshIdleTracking(room);
+    room.seq++;
+    final DateTime now = _clock.now;
+    events.add(
+      KnockSeated(
+        room: room,
+        knock: knock,
+        seq: room.seq,
+        hostSeatToken: _hostToken(room),
+        others: buildRoomSnapshot(room, now: now),
+        seat: seat,
+        snapshot: buildRoomSnapshot(
+          room,
+          now: now,
+          forHost: seat.seat == room.hostSeat,
+        ),
+      ),
+    );
+  }
+
+  KnockClosed _closeKnock(
+    Room room,
+    Knock knock,
+    String outcome, {
+    bool bar = false,
+  }) {
+    room.knocks.removeWhere((Knock k) => k.id == knock.id);
+    if (bar) {
+      room.knockBars.add(knock.barKey);
+    }
+    room.seq++;
+    return KnockClosed(
+      room: room,
+      knock: knock,
+      seq: room.seq,
+      hostSeatToken: _hostToken(room),
+      others: buildRoomSnapshot(room, now: _clock.now),
+      outcome: outcome,
+    );
+  }
+
+  List<int> _freeSeats(Room room) {
+    final Set<int> taken = room.seats.map((Seat s) => s.seat).toSet();
+    return _seatIndicesFor(room.players)
+        .where((int s) => !taken.contains(s))
+        .toList();
+  }
+
+  String? _hostToken(Room room) {
+    final Seat? host = _seatAt(room, room.hostSeat);
+    return host?.seatToken;
+  }
+
+  /// Section 31 item 7: the SHA-256 (hex) of the `install` when there is one,
+  /// otherwise of the IP. The two are prefixed apart so one string can never
+  /// stand for the other.
+  String _barKey({String? install, required String ip}) {
+    final String basis = install != null ? 'i:$install' : 'p:$ip';
+    return sha256.convert(utf8.encode(basis)).toString();
+  }
+
+  /// `kick` in LOBBY, section 31 item 6. [data] is the whole `d`. Ladder:
+  /// room, seat authorised, `NOT_HOST`, LOBBY (`WRONG_PHASE`), `seat` an int
+  /// 0..3 and no other key (`BAD_FIELD`), then the host's own seat and an
+  /// empty seat (`ILLEGAL_MOVE`). The seat is freed as `leave_room` frees it
+  /// and its install or IP is barred from the room.
+  KickLobbyResult kickLobby({
+    required String code,
+    required String seatToken,
+    required Map<String, Object?> data,
+  }) {
+    final Room? room = _rooms[code];
+    if (room == null) {
+      return KickLobbyFailure(ProtocolError.noSuchRoom);
+    }
+    final Seat? caller = _findSeat(room, seatToken);
+    if (caller == null) {
+      return KickLobbyFailure(ProtocolError.badSeatToken);
+    }
+    if (caller.seat != room.hostSeat) {
+      return KickLobbyFailure(ProtocolError.notHost);
+    }
+    if (room.state != RoomState.lobby) {
+      return KickLobbyFailure(ProtocolError.wrongPhase);
+    }
+    final Object? rawSeat = data['seat'];
+    if (data.length != 1 || rawSeat is! int || rawSeat < 0 || rawSeat > 3) {
+      return KickLobbyFailure(ProtocolError.badField);
+    }
+    final Seat? target = _seatAt(room, rawSeat);
+    if (target == null || target.seat == room.hostSeat) {
+      return KickLobbyFailure(ProtocolError.illegalMove);
+    }
+    final String? key = target.barKey;
+    if (key != null) {
+      room.kickBars.add(key);
+    }
+    _removeLobbySeat(room, target);
+    room.seq++;
+    return KickLobbyOk(room: room, seat: target);
+  }
+
+  /// Frees [seat] of a LOBBY or FINISHED room the way `leave_room` does.
+  void _removeLobbySeat(Room room, Seat seat) {
+    room.seats =
+        room.seats.where((Seat s) => s.seatToken != seat.seatToken).toList();
+    if (room.hostSeat == seat.seat) {
+      room.hostSeat = room.seats.isEmpty
+          ? -1
+          : room.seats.map((Seat s) => s.seat).reduce(min);
+    }
+    final Rematch? current = room.rematch;
+    if (current != null && current.ready.contains(seat.seat)) {
+      room.rematch = Rematch(
+        by: current.by,
+        ready: current.ready.where((int s) => s != seat.seat).toList(),
+      );
+    }
+    _refreshIdleTracking(room);
   }
 
   ResumeResult resume({required String code, required String seatToken}) {
@@ -882,6 +1418,14 @@ class RoomRegistry {
   }
 
   StartResult startGame({required String code, required String seatToken}) {
+    final StartResult result = _startGame(code: code, seatToken: seatToken);
+    if (result is StartOk) {
+      result.knockEvents = _closeAllKnocksFull(result.room);
+    }
+    return result;
+  }
+
+  StartResult _startGame({required String code, required String seatToken}) {
     final Room? room = _rooms[code];
     if (room == null) {
       return StartFailure(ProtocolError.noSuchRoom);
@@ -980,6 +1524,8 @@ class RoomRegistry {
           connected: keep[i].connected,
           clientSeed: keep[i].clientSeed,
           seedOrigin: keep[i].seedOrigin,
+          via: keep[i].via,
+          barKey: keep[i].barKey,
         ),
     ];
     // docs/PROTOCOL.md section 15 rule 1, reused here per section 16.4.
@@ -1208,7 +1754,11 @@ class RoomRegistry {
   /// nothing else called against this registry in between -- this file is
   /// synchronous throughout, so a caller that does not `await` anything
   /// between the two calls gets exactly that for free.
-  StartOk startRematchAuto(Room room) => _beginGame(room);
+  StartOk startRematchAuto(Room room) {
+    final StartOk result = _beginGame(room);
+    result.knockEvents = _closeAllKnocksFull(room);
+    return result;
+  }
 
   /// `docs/PROTOCOL.md` section 16.2: the first `rematch` of a cycle, taking
   /// a FINISHED room back to LOBBY with a fresh chain. Mutates [room] in
@@ -1839,6 +2389,8 @@ class RoomRegistry {
           connected: ordered[i].connected,
           clientSeed: ordered[i].clientSeed,
           seedOrigin: ordered[i].seedOrigin,
+          via: ordered[i].via,
+          barKey: ordered[i].barKey,
         ),
     ];
     // docs/PROTOCOL.md section 15 rule 1: compared index by index against
@@ -1958,7 +2510,7 @@ class RoomRegistry {
   /// because the ladder puts `NOT_HOST` and the phase check ahead of the
   /// payload check, so the payload is only looked at here, in that order:
   /// room exists, seat authorised, `NOT_HOST`, state not PLAYING
-  /// (`WRONG_PHASE`, a lobby kick is X202), `seat` an int 0..3 and no other
+  /// (`WRONG_PHASE`; the LOBBY kick is [kickLobby], section 31 item 6), `seat` an int 0..3 and no other
   /// key (`BAD_FIELD`), a playing seat (`ILLEGAL_MOVE`), its socket down
   /// (`NOT_ABSENT`).
   RetireResult kick({
@@ -2228,7 +2780,12 @@ class RoomRegistry {
       }
     }
     for (final String code in toRemove) {
-      _rooms.remove(code);
+      final Room? gone = _rooms.remove(code);
+      if (gone != null) {
+        _roomsByLink.remove(gone.linkId);
+        _reapedKnocks.addAll(gone.knocks);
+        gone.knocks.clear();
+      }
       _idleSince.remove(code);
       _finishedSince.remove(code);
       _quarantine[code] = now.add(_codeQuarantine);
@@ -2240,6 +2797,10 @@ class RoomRegistry {
     // housekeeping cadence as everything else this method already sweeps,
     // rather than on a timer of its own.
     verifyStore.purgeOlderThan(now.subtract(verifyRetention));
+    final void Function(List<Knock> knocks)? notify = onKnocksReaped;
+    if (notify != null && _reapedKnocks.isNotEmpty) {
+      notify(drainReapedKnocks());
+    }
     return toRemove.length;
   }
 
@@ -2507,6 +3068,45 @@ class RoomRegistry {
         continue;
       }
       return candidate;
+    }
+  }
+
+  /// The knocks whose room was reaped since the last call, each to be closed
+  /// `timeout` towards its knocker; nobody is barred (section 31 item 12 b).
+  List<Knock> drainReapedKnocks() {
+    final List<Knock> out = List<Knock>.of(_reapedKnocks);
+    _reapedKnocks.clear();
+    return out;
+  }
+
+  String _generateUniqueLinkId() {
+    final int nowSeconds = _clock.now.millisecondsSinceEpoch ~/ 1000;
+    _issuedLinkIds.removeWhere((String id) {
+      final int? issued = int.tryParse(id.split('-').first, radix: 36);
+      return issued != null && issued < nowSeconds - 2;
+    });
+    for (int attempt = 0; attempt < 1000; attempt++) {
+      final String candidate = generateLinkId(_linkRandom, _clock.now);
+      if (_issuedLinkIds.add(candidate)) {
+        return candidate;
+      }
+    }
+    throw StateError('could not draw an unused link id');
+  }
+
+  /// A knock id: 16 characters of `[a-z0-9]`, unique among [room]'s open
+  /// knocks.
+  String _generateKnockId(Room room) {
+    while (true) {
+      final StringBuffer buffer = StringBuffer();
+      for (int i = 0; i < 16; i++) {
+        buffer
+            .write(linkIdAlphabet[_linkRandom.nextInt(linkIdAlphabet.length)]);
+      }
+      final String candidate = buffer.toString();
+      if (!room.knocks.any((Knock k) => k.id == candidate)) {
+        return candidate;
+      }
     }
   }
 

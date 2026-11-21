@@ -75,6 +75,14 @@ String wireErrorCode(ProtocolError error) {
       return 'UPDATE_REQUIRED';
     case ProtocolError.notAbsent:
       return 'NOT_ABSENT';
+    case ProtocolError.tooManyKnocks:
+      return 'TOO_MANY_KNOCKS';
+    case ProtocolError.noSuchKnock:
+      return 'NO_SUCH_KNOCK';
+    case ProtocolError.knockRefused:
+      return 'KNOCK_REFUSED';
+    case ProtocolError.kicked:
+      return 'KICKED';
   }
 }
 
@@ -139,6 +147,8 @@ const Set<String> knownMessageTypes = <String>{
   'game_log',
   'emote',
   'decline_release',
+  'answer_knock',
+  'set_guest_approval',
 };
 
 /// `docs/PROTOCOL.md` section 28 rule 4: `kick` exists only on a server that
@@ -276,6 +286,14 @@ String defaultErrorMessage(ProtocolError error) {
       return 'this version of the app is too old for this server';
     case ProtocolError.notAbsent:
       return 'that seat is connected';
+    case ProtocolError.tooManyKnocks:
+      return 'too many people are waiting to join this room';
+    case ProtocolError.noSuchKnock:
+      return 'no such request to join';
+    case ProtocolError.knockRefused:
+      return 'the host did not accept your request to join';
+    case ProtocolError.kicked:
+      return 'you were removed from this room';
   }
 }
 

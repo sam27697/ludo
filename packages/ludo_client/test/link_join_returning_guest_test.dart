@@ -51,8 +51,14 @@ const String _seatPrefsKey = 'session.seat';
 const String _codesPrefsKey = 'session.recentCodes';
 
 const String _linkCode = 'AB23CD';
+const String _linkId = 't5k2q9a-x7m3pd';
 
-Uri _validLink(String code) => Uri.parse('https://ludo.provefair.app/r/$code');
+Uri _validLink(String linkId) =>
+    Uri.parse('https://ludo.provefair.app/r/$linkId');
+
+/// A `join_room` body without its `install` id, which is random per install.
+Map<String, Object?> _noInstall(Map<String, Object?> data) =>
+    <String, Object?>{...data}..remove('install');
 
 Uri _invalidCodeLink() => Uri.parse('https://ludo.provefair.app/r/AB0234');
 
@@ -800,7 +806,7 @@ void main() {
       );
 
       final int pushesBefore = mount.observer.pushCount;
-      mount.reader.complete(_validLink(_linkCode));
+      mount.reader.complete(_validLink(_linkId));
       await _pumpAfterLink(tester);
 
       expect(
@@ -826,11 +832,11 @@ void main() {
             '${transport.sentRaw.map(_typeOf).toList()}',
       );
       expect(
-        _dataOf(transport.sentRaw.single),
-        <String, Object?>{'code': _linkCode, 'name': 'Nour'},
+        _noInstall(_dataOf(transport.sentRaw.single)),
+        <String, Object?>{'link': _linkId, 'name': 'Nour'},
         reason:
-            'decision 3: that join_room must carry the link code '
-            '"$_linkCode" and the stored name "Nour"; sent '
+            'decision 3: that join_room must carry the link id '
+            '"$_linkId" and the stored name "Nour"; sent '
             '${_dataOf(transport.sentRaw.single)}',
       );
       await _disposeControllers(tester, mount.factory);
@@ -852,7 +858,7 @@ void main() {
       await tester.pump();
 
       final int pushesBefore = mount.observer.pushCount;
-      mount.opener.add(_validLink(_linkCode));
+      mount.opener.add(_validLink(_linkId));
       await _pumpAfterLink(tester);
 
       expect(
@@ -866,11 +872,11 @@ void main() {
       );
       final FakeTransport transport = mount.factory.transports.single;
       expect(
-        _dataOf(transport.sentRaw.single),
-        <String, Object?>{'code': _linkCode, 'name': 'Nour'},
+        _noInstall(_dataOf(transport.sentRaw.single)),
+        <String, Object?>{'link': _linkId, 'name': 'Nour'},
         reason:
             'decision 3: the warm link\'s join_room must carry the link '
-            'code "$_linkCode" and the stored name "Nour"; sent '
+            'id "$_linkId" and the stored name "Nour"; sent '
             '${_dataOf(transport.sentRaw.single)}',
       );
       await _disposeControllers(tester, mount.factory);
@@ -881,24 +887,38 @@ void main() {
   // resume whether or not a name is stored. -------------------------------
 
   testWidgets(
-    'decision 4: a stored seat for the link\'s own code resumes even when '
-    'no name is stored',
+    'decision 4: a stored seat whose link id is the tapped link resumes even '
+    'when no name is stored',
     (tester) async {
       SharedPreferences.setMockInitialValues(<String, Object>{
         _seatPrefsKey: _storedSeat(_linkCode, seat: 2, token: 'tok-d4-001'),
+      });
+      await tester.runAsync(() async {
+        await SessionMemory.recordSeat(
+          SeatRecord(
+            code: _linkCode,
+            seat: 2,
+            seatToken: 'tok-d4-001',
+            linkId: _linkId,
+          ),
+        );
+        // No saved time, as a record from before C-447: Home must not resume
+        // on its own at mount, the tapped link is what resumes it.
+        final SharedPreferences prefs = await SharedPreferences.getInstance();
+        await prefs.remove('session.seatSavedAt');
       });
       final _Mount mount = _prepareLink(tester);
       await _pumpLinkHome(tester, mount);
 
       final int pushesBefore = mount.observer.pushCount;
-      mount.reader.complete(_validLink(_linkCode));
+      mount.reader.complete(_validLink(_linkId));
       await _pumpAfterLink(tester);
 
       expect(
         mount.observer.pushCount,
         pushesBefore + 1,
         reason:
-            'decision 4: a stored seat for the link\'s own code must rejoin '
+            'decision 4: a stored seat for the link\'s own room must rejoin '
             'with resume whether or not a name is stored -- "resume needs '
             'no name" -- so this must push exactly one route even though '
             'no name is stored here (pushCount ${mount.observer.pushCount}, '
@@ -916,18 +936,23 @@ void main() {
         LobbyAction.resume,
         reason:
             'decision 4: the pushed route must be a resume, not a join, for '
-            'a stored seat matching the link\'s own code',
+            'a stored seat whose link id is the tapped link',
       );
       expect(
         lobby.resume,
-        SeatRecord(code: _linkCode, seat: 2, seatToken: 'tok-d4-001'),
+        SeatRecord(
+          code: _linkCode,
+          seat: 2,
+          seatToken: 'tok-d4-001',
+          linkId: _linkId,
+        ),
       );
       final FakeTransport transport = mount.factory.transports.single;
       expect(
         transport.sentRaw.map(_typeOf).toList(),
         <String>['resume'],
         reason:
-            'decision 4: a seat record for the link code must send resume, '
+            'decision 4: a seat record for the link must send resume, '
             'not join_room; sent ${transport.sentRaw.map(_typeOf).toList()}',
       );
       expect(
@@ -964,15 +989,16 @@ void main() {
       expect(find.byKey(_aboveHomeKey), findsOneWidget);
 
       final int pushesBefore = mount.observer.pushCount;
-      mount.opener.add(_validLink(_linkCode));
+      mount.opener.add(_validLink(_linkId));
       await tester.pump();
 
       expect(
         _fieldText(tester, _codeKey, skipOffstage: false),
-        _linkCode,
+        isEmpty,
         reason:
-            'decision 5: a link while another route sits above home must '
-            'still fill room-code-field, even for a stored-name-only player',
+            'decision 5: a link id while another route sits above home '
+            'fills no field and starts no join, even for a stored-name-only '
+            'player',
       );
       expect(
         find.byKey(_aboveHomeKey),
@@ -1055,11 +1081,11 @@ void main() {
       // measures it.
       final int pushesBefore = mount.observer.pushCount;
 
-      mount.opener.add(_validLink(_linkCode));
+      mount.opener.add(_validLink(_linkId));
       // Deliberately no pump between the two links: the second must land
       // while the first join is still in flight (RoomController.connect has
       // not resolved, because nothing has answered the FakeTransport yet).
-      mount.opener.add(_validLink(_linkCode));
+      mount.opener.add(_validLink(_linkId));
       await _pumpAfterLink(tester);
 
       expect(
@@ -1092,7 +1118,7 @@ void main() {
 
   testWidgets(
     'decision 6: recent codes with no stored name is still first-time for '
-    'the link',
+    'the link, which joins by link id under the default name',
     (tester) async {
       SharedPreferences.setMockInitialValues(<String, Object>{
         _codesPrefsKey: <String>['ZY98XW', 'QW34ER'],
@@ -1101,41 +1127,40 @@ void main() {
       await _pumpLinkHome(tester, mount);
 
       final int pushesBefore = mount.observer.pushCount;
-      mount.reader.complete(_validLink(_linkCode));
-      await tester.pump();
+      mount.reader.complete(_validLink(_linkId));
+      await _pumpAfterLink(tester);
 
       expect(
-        _fieldText(tester, _codeKey),
-        _linkCode,
-        reason:
-            'decision 6: a valid link must still fill room-code-field for '
-            'a player whose only memory is recent join codes, no name',
+        _fieldText(tester, _codeKey, skipOffstage: false),
+        isEmpty,
+        reason: 'decision 6: a link id fills no room-code-field',
       );
       expect(
-        _codeFieldError(tester),
+        _codeFieldError(tester, skipOffstage: false),
         isNull,
-        reason: 'decision 6: a valid code must not show the invalid-code error',
+        reason:
+            'decision 6: a valid link id must not show the invalid-code error',
       );
       expect(
         mount.observer.pushCount,
-        pushesBefore,
+        pushesBefore + 1,
         reason:
-            'decision 6: recent codes with no stored name are not enough '
-            'to be a known player; the link must push nothing '
+            'decision 6: a link id is the one tap for a first-time player '
+            'too (recent codes with no stored name): exactly one push '
             '(pushCount ${mount.observer.pushCount}, before $pushesBefore)',
       );
-      expect(
-        find.byType(LobbyScreen),
-        findsNothing,
-        reason: 'decision 6: no LobbyScreen must appear',
+      final FakeTransport transport = mount.factory.transports.single;
+      final AppLocalizations loc = AppLocalizations.of(
+        tester.element(find.byType(LobbyScreen)),
       );
       expect(
-        mount.factory.controllers,
-        isEmpty,
+        _noInstall(_dataOf(transport.sentRaw.single)),
+        <String, Object?>{'link': _linkId, 'name': loc.homeDefaultPlayerName},
         reason:
-            'decision 6: no controller, and so no frame, must be sent for '
-            'this link',
+            'decision 6: one join_room by link under the default name; sent '
+            '${transport.sentRaw.map(_typeOf).toList()}',
       );
+      await _disposeControllers(tester, mount.factory);
     },
   );
 }

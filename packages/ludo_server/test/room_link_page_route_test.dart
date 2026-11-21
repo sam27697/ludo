@@ -46,11 +46,14 @@ const String _testerOptIn =
 const String _playListing =
     'https://play.google.com/store/apps/details?id=app.fayad.ludo';
 
-/// A well-formed code that no test ever creates a room for.
-const String _code = 'K7M2QP';
+/// Section 31: the id of the live room the current test owns. The page at
+/// `/r/<id>` is served only for a live room's link id, so this is set by
+/// `setUp` from the `link_id` of a real room and is what used to be the
+/// never-created code 'K7M2QP'.
+String _code = '';
 
-/// A second well-formed code, used as the never-created partner.
-const String _otherCode = 'ABCDEF';
+/// A well-formed link id (item 11 c) that no test ever creates a room for.
+const String _unknownLink = 't5k2q9a-x7m3pd';
 
 /// The verify page's CSP string, verbatim (C-457 D7).
 const String _expectedCsp = "default-src 'none'; script-src 'self'; "
@@ -202,8 +205,8 @@ Future<_Res> _get(
 
 /// GET [path] for [lang] using the `?lang=` query, the unambiguous way to
 /// ask for a language.
-Future<_Res> _page(String lang, {String code = _code}) =>
-    _get('/r/$code?lang=$lang');
+Future<_Res> _page(String lang, {String? code}) =>
+    _get('/r/${code ?? _code}?lang=$lang');
 
 // ---------------------------------------------------------------------
 // HTML helpers (package:html is not a dependency)
@@ -714,9 +717,10 @@ bool _selectedRoomCode(Map<String, Object?> r) =>
 // ---------------------------------------------------------------------
 
 class _LiveRoom {
-  _LiveRoom(this.code, this._socket);
+  _LiveRoom(this.code, this.linkId, this._socket);
 
   final String code;
+  final String linkId;
   final WebSocket _socket;
 
   Future<void> close() => _socket.close();
@@ -725,12 +729,17 @@ class _LiveRoom {
 Future<_LiveRoom> _createLiveRoom(String testName) async {
   final WebSocket socket = await WebSocket.connect(_server.wsUri.toString());
   final Completer<String> codeFound = Completer<String>();
+  final Completer<String> linkFound = Completer<String>();
   socket.listen((Object? raw) {
     final Object? frame = jsonDecode(raw! as String);
     if (frame is Map<String, Object?> && frame['d'] is Map<String, Object?>) {
       final Object? code = (frame['d']! as Map<String, Object?>)['code'];
       if (code is String && !codeFound.isCompleted) {
         codeFound.complete(code);
+      }
+      final Object? link = (frame['d']! as Map<String, Object?>)['link_id'];
+      if (link is String && !linkFound.isCompleted) {
+        linkFound.complete(link);
       }
     }
   });
@@ -747,7 +756,14 @@ Future<_LiveRoom> _createLiveRoom(String testName) async {
       '${_repro(testName)}',
     ),
   );
-  return _LiveRoom(code, socket);
+  final String linkId = await linkFound.future.timeout(
+    const Duration(seconds: 5),
+    onTimeout: () => throw TestFailure(
+      'the room snapshot carried no string link_id within 5s (section 31 '
+      'item 1). ${_repro(testName)}',
+    ),
+  );
+  return _LiveRoom(code, linkId, socket);
 }
 
 /// How far a room created by [_createRoomInState] has progressed.
@@ -828,9 +844,10 @@ class _Wire {
 
 /// A room held open over real WebSockets, in the state [_RoomState] names.
 class _StagedRoom {
-  _StagedRoom(this.code, this.host, this.guest, this.scenario);
+  _StagedRoom(this.code, this.linkId, this.host, this.guest, this.scenario);
 
   final String code;
+  final String linkId;
   final _Wire host;
   final _Wire? guest;
   final String scenario;
@@ -846,7 +863,7 @@ class _StagedRoom {
   Future<_StagedRoom> toFull() async {
     final _Wire joined = await _join(code, scenario);
     await host.take('player_joined', scenario);
-    return _StagedRoom(code, host, joined, scenario);
+    return _StagedRoom(code, linkId, host, joined, scenario);
   }
 
   /// Moves a full room to started: the host sends start_game.
@@ -880,7 +897,14 @@ Future<_StagedRoom> _createWaitingRoom(String scenario) async {
       '${_repro(scenario)}',
     );
   }
-  return _StagedRoom(code, host, null, scenario);
+  final Object? link = data is Map<String, Object?> ? data['link_id'] : null;
+  if (link is! String) {
+    throw TestFailure(
+      'the room frame answering create_room carried no string link_id '
+      '(section 31 item 1): $room. ${_repro(scenario)}',
+    );
+  }
+  return _StagedRoom(code, link, host, null, scenario);
 }
 
 /// A room in [state]: waiting for a player, full, or with its game started.
@@ -907,10 +931,25 @@ Future<_StagedRoom> _createRoomInState(
 // ---------------------------------------------------------------------
 
 void main() {
+  _StagedRoom? ownedRoom;
+
   setUpAll(() async {
     _server = _Server.build();
     await _server.start();
     _client = HttpClient();
+  });
+
+  // Section 31 item 9: a page exists only for a live link id, so every test
+  // runs against the link id of a real room created for it.
+  setUp(() async {
+    final _StagedRoom room = await _createWaitingRoom('setUp live room');
+    ownedRoom = room;
+    _code = room.linkId;
+  });
+
+  tearDown(() async {
+    await ownedRoom?.close();
+    ownedRoom = null;
   });
 
   tearDownAll(() async {
@@ -946,15 +985,23 @@ void main() {
               '${tag.attrs['href']}. ${_repro(name)}');
     });
 
-    test('a lower-case request path carries the upper-case code', () async {
-      const String name = 'D1 lower-case path upper-cases the code';
-      final _Res res = await _get('/r/${_code.toLowerCase()}');
+    test('the request path carries the link id verbatim, never re-cased',
+        () async {
+      // Was: a lower-case request path carries the upper-case code. A link id
+      // is already lower case and matched exactly (section 31 item 9), so the
+      // case rule becomes: the id goes into the intent URL as it is, and the
+      // same id in upper case is not a room.
+      const String name = 'D1 the link id is carried verbatim';
+      final _Res res = await _get('/r/$_code');
       expect(res.status, 200, reason: '${_repro(name)}. ${res.describe()}');
       final _Tag tag = _requireTag(res, 'open-app', name);
       expect(tag.attrs['href'], _intentUrl(_code),
-          reason: 'GET /r/${_code.toLowerCase()} must put the upper-case '
-              'code $_code in the intent URL; got ${tag.attrs['href']}. '
-              '${_repro(name)}');
+          reason: 'GET /r/$_code must put the link id $_code in the intent '
+              'URL; got ${tag.attrs['href']}. ${_repro(name)}');
+      final _Res upper = await _get('/r/${_code.toUpperCase()}');
+      expect(upper.body.contains('id="open-app"'), isFalse,
+          reason: 'the upper-cased link id must not serve a room. '
+              '${_repro(name)}. ${upper.describe()}');
     });
 
     test('the intent URL host and path match the manifest App Links filter',
@@ -1153,60 +1200,60 @@ void main() {
     }
 
     final List<List<String?>> cases = <List<String?>>[
-      <String?>['no header', '/r/$_code', null, 'en'],
-      <String?>['?lang=ar', '/r/$_code?lang=ar', null, 'ar'],
-      <String?>['?lang=en', '/r/$_code?lang=en', null, 'en'],
+      <String?>['no header', '/r/<ID>', null, 'en'],
+      <String?>['?lang=ar', '/r/<ID>?lang=ar', null, 'ar'],
+      <String?>['?lang=en', '/r/<ID>?lang=en', null, 'en'],
       <String?>[
         '?lang=en beats Accept-Language ar',
-        '/r/$_code?lang=en',
+        '/r/<ID>?lang=en',
         'ar',
         'en'
       ],
       <String?>[
         '?lang=ar beats Accept-Language en',
-        '/r/$_code?lang=ar',
+        '/r/<ID>?lang=ar',
         'en',
         'ar'
       ],
       <String?>[
         'Accept-Language ar-AE,ar;q=0.9,en;q=0.8',
-        '/r/$_code',
+        '/r/<ID>',
         'ar-AE,ar;q=0.9,en;q=0.8',
         'ar',
       ],
       <String?>[
         'Accept-Language en-US,en;q=0.9,ar;q=0.5',
-        '/r/$_code',
+        '/r/<ID>',
         'en-US,en;q=0.9,ar;q=0.5',
         'en',
       ],
       <String?>[
         '?lang=xx falls through to the header',
-        '/r/$_code?lang=xx',
+        '/r/<ID>?lang=xx',
         'ar',
         'ar'
       ],
       <String?>[
         '?lang=xx with no header is English',
-        '/r/$_code?lang=xx',
+        '/r/<ID>?lang=xx',
         null,
         'en'
       ],
       <String?>[
         '?lang=AR is not exactly ar, falls through',
-        '/r/$_code?lang=AR',
+        '/r/<ID>?lang=AR',
         null,
         'en'
       ],
       <String?>[
         'Accept-Language ar;q=0 is refused',
-        '/r/$_code',
+        '/r/<ID>',
         'ar;q=0, en;q=0.5',
         'en'
       ],
       <String?>[
         'unrelated Accept-Language is English',
-        '/r/$_code',
+        '/r/<ID>',
         'fr-FR,de;q=0.8',
         'en'
       ],
@@ -1214,9 +1261,12 @@ void main() {
     for (final List<String?> c in cases) {
       test('language choice: ${c[0]}', () async {
         final String name = 'D3 language choice: ${c[0]}';
-        final String got = await chosen(c[1]!, acceptLanguage: c[2]);
+        // `<ID>` stands for the live room's link id, known only once setUp
+        // has created the room.
+        final String path = c[1]!.replaceAll('<ID>', _code);
+        final String got = await chosen(path, acceptLanguage: c[2]);
         expect(got, c[3],
-            reason: 'GET ${c[1]} with accept-language ${c[2]} must render '
+            reason: 'GET $path with accept-language ${c[2]} must render '
                 '${c[3]}, rendered $got. ${_repro(name)}');
       });
     }
@@ -1503,35 +1553,39 @@ void main() {
   group('D6 unchanged behaviour', () {
     for (final String lang in <String>['en', 'ar']) {
       test(
-          'the $lang body for a live room code matches the body for a '
-          'never-created code', () async {
+          'the $lang body for a live link id differs from the body for a '
+          'never-created id, headers alike', () async {
         final String name = 'D6 live versus unknown ($lang)';
         final _LiveRoom room = await _createLiveRoom(name);
         try {
-          final String path = '/r/${room.code}?lang=$lang';
+          final String path = '/r/${room.linkId}?lang=$lang';
           final _Res live = await _get(path);
           expect(live.status, 200,
-              reason: 'live code ${room.code}. ${_repro(name)}. '
+              reason: 'live code ${room.linkId}. ${_repro(name)}. '
                   '${live.describe()}');
           // A second request for the same code, then a never-created code.
           final _Res again = await _get(path);
           expect(again.body, live.body,
-              reason: 'two requests for the live code ${room.code} differ. '
+              reason: 'two requests for the live code ${room.linkId} differ. '
                   '${_repro(name)}');
 
-          final String unknownCode =
-              room.code == _otherCode ? _code : _otherCode;
+          final String unknownCode = _unknownLink;
           final _Res unknown = await _get('/r/$unknownCode?lang=$lang');
           expect(unknown.status, live.status,
-              reason: 'status differs for live ${room.code} and unknown '
+              reason: 'status differs for live ${room.linkId} and unknown '
                   '$unknownCode. ${_repro(name)}');
+          // Section 31 item 9 reverses the old body equality: a live link id
+          // serves the invite page and a dead one the ended page, so the two
+          // bodies must differ and the dead one must never be the invite.
           expect(
             unknown.body.replaceAll(unknownCode, '<<CODE>>'),
-            live.body.replaceAll(room.code, '<<CODE>>'),
-            reason: 'body differs between live code ${room.code} and unknown '
-                'code $unknownCode apart from the code itself; that is an '
-                'oracle for room existence. ${_repro(name)}',
+            isNot(live.body.replaceAll(room.linkId, '<<CODE>>')),
+            reason: 'the live link id ${room.linkId} and the unknown id '
+                '$unknownCode must serve different pages. ${_repro(name)}',
           );
+          expect(unknown.body.contains('id="open-app"'), isFalse,
+              reason: 'an unknown id must never serve the invite page. '
+                  '${_repro(name)}. ${unknown.describe()}');
           for (final String header in <String>[
             'content-type',
             'cache-control',
@@ -1541,7 +1595,7 @@ void main() {
             'referrer-policy',
           ]) {
             expect(unknown.header(header), live.header(header),
-                reason: 'header $header differs between live ${room.code} '
+                reason: 'header $header differs between live ${room.linkId} '
                     'and unknown $unknownCode. ${_repro(name)}');
           }
         } finally {
@@ -1550,23 +1604,28 @@ void main() {
       });
 
       test(
-          'the $lang body for one code is identical while its room is live '
-          'and after it is gone', () async {
+          'the $lang body for one id is the invite while its room is live '
+          'and no longer once it is gone', () async {
         final String name = 'D6 same code during and after ($lang)';
         // The server mints the code, so the page is fetched while the room
         // is live, the room is closed, and the same path is fetched again.
         final _LiveRoom room = await _createLiveRoom(name);
-        final String path = '/r/${room.code}?lang=$lang';
+        final String path = '/r/${room.linkId}?lang=$lang';
         late final _Res during;
         try {
           during = await _get(path);
         } finally {
           await room.close();
         }
+        // The room is gone when the registry reaps it (a LOBBY at 60 minutes).
+        _server.clock.advance(const Duration(minutes: 61));
+        _server.registry.reap();
         final _Res after = await _get(path);
-        expect(after.body, during.body,
-            reason: 'the page for ${room.code} changed once its room was '
-                'gone. ${_repro(name)}');
+        expect(after.body, isNot(during.body),
+            reason: 'section 31 item 9: the page for ${room.linkId} must stop '
+                'being the invite once its room is gone. ${_repro(name)}');
+        expect(after.body.contains('id="open-app"'), isFalse,
+            reason: '${_repro(name)}. ${after.describe()}');
       });
     }
 
@@ -1576,31 +1635,39 @@ void main() {
     ]) {
       for (final String lang in <String>['en', 'ar']) {
         test(
-            'the $lang body for a ${state.name} room code matches the body '
-            'for a never-created code', () async {
+            'the $lang body for a ${state.name} room id matches a waiting '
+            'room\'s body and differs from a never-created id', () async {
           final String name = 'D6 ${state.name} versus unknown ($lang)';
           final _StagedRoom room = await _createRoomInState(state, name);
           try {
-            final String path = '/r/${room.code}?lang=$lang';
+            final String path = '/r/${room.linkId}?lang=$lang';
             final _Res live = await _get(path);
             expect(live.status, 200,
-                reason: '${state.name} room ${room.code} must serve the page '
+                reason: '${state.name} room ${room.linkId} must serve the page '
                     'like any code. ${_repro(name)}. ${live.describe()}');
-            final String unknownCode =
-                room.code == _otherCode ? _code : _otherCode;
+            final String unknownCode = _unknownLink;
             final _Res unknown = await _get('/r/$unknownCode?lang=$lang');
             expect(unknown.status, live.status,
                 reason: 'status differs for the ${state.name} room '
-                    '${room.code} and the unknown code $unknownCode. '
+                    '${room.linkId} and the unknown code $unknownCode. '
                     '${_repro(name)}');
+            final _Res waitingPage = await _page(lang);
+            expect(
+              live.body.replaceAll(room.linkId, '<<CODE>>'),
+              waitingPage.body.replaceAll(_code, '<<CODE>>'),
+              reason: 'body differs between the ${state.name} room '
+                  '${room.linkId} and a waiting room apart from the id; the '
+                  'invite page must not depend on the room state. '
+                  '${_repro(name)}',
+            );
+            // Section 31 item 9: a live id and an unknown id are no longer
+            // the same page.
             expect(
               unknown.body.replaceAll(unknownCode, '<<CODE>>'),
-              live.body.replaceAll(room.code, '<<CODE>>'),
-              reason: 'body differs between the ${state.name} room '
-                  '${room.code} and the never-created code $unknownCode '
-                  'apart from the code itself; the page must not read the '
-                  'room, because that is an oracle for room state. '
-                  '${_repro(name)}',
+              isNot(live.body.replaceAll(room.linkId, '<<CODE>>')),
+              reason: 'the ${state.name} room ${room.linkId} and the '
+                  'never-created id $unknownCode must serve different '
+                  'pages. ${_repro(name)}',
             );
             for (final String header in <String>[
               'content-type',
@@ -1612,7 +1679,7 @@ void main() {
             ]) {
               expect(unknown.header(header), live.header(header),
                   reason: 'header $header differs between the ${state.name} '
-                      'room ${room.code} and the unknown code $unknownCode. '
+                      'room ${room.linkId} and the unknown code $unknownCode. '
                       '${_repro(name)}');
             }
           } finally {
@@ -1633,7 +1700,7 @@ void main() {
         );
         _StagedRoom room = waiting;
         try {
-          final String path = '/r/${waiting.code}?lang=$lang';
+          final String path = '/r/${waiting.linkId}?lang=$lang';
           final _Res whileWaiting = await _get(path);
           expect(whileWaiting.status, 200,
               reason: '${_repro(name)}. ${whileWaiting.describe()}');
@@ -1642,16 +1709,19 @@ void main() {
           await room.toStarted();
           final _Res whileStarted = await _get(path);
           expect(whileFull.body, whileWaiting.body,
-              reason: 'the page for ${room.code} changed when its room went '
+              reason: 'the page for ${room.linkId} changed when its room went '
                   'from waiting to full. ${_repro(name)}');
           expect(whileStarted.body, whileWaiting.body,
-              reason: 'the page for ${room.code} changed when its game '
+              reason: 'the page for ${room.linkId} changed when its game '
                   'started. ${_repro(name)}');
           await room.close();
+          _server.clock.advance(const Duration(hours: 7));
+          _server.registry.reap();
           final _Res after = await _get(path);
-          expect(after.body, whileWaiting.body,
-              reason: 'the page for ${room.code} changed once its room was '
-                  'gone. ${_repro(name)}');
+          expect(after.body, isNot(whileWaiting.body),
+              reason: 'section 31 item 9: the page for ${room.linkId} must '
+                  'stop being the invite once its room is gone. '
+                  '${_repro(name)}');
         } finally {
           await room.close();
         }

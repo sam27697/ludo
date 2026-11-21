@@ -72,6 +72,9 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+/// C-682: the lines home can show after a join that ended without a seat.
+enum _KnockNotice { notJoined, full, switchedOff, kicked }
+
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final TextEditingController _codeController = TextEditingController();
@@ -84,6 +87,9 @@ class _HomeScreenState extends State<HomeScreen>
   // C-529 D3: the lobby's room closed while the player was away. Null when
   // there is no such notice, otherwise which of the two lines it carries.
   GameScreenResult? _roomClosedNotice;
+  // C-682: how a typed-code knock ended without a seat, or the lobby kick that
+  // sent this player home. Null when there is no such line.
+  _KnockNotice? _knockNotice;
   // C-529 D4: the code a room link filled into the code field, kept only
   // while the field still holds exactly it. A Join tap on it is a link join.
   String? _linkFilledCode;
@@ -104,9 +110,6 @@ class _HomeScreenState extends State<HomeScreen>
   StreamSubscription<Uri>? _linkSubscription;
   late final AnimationController _enter;
   bool _enterMotionArmed = false;
-  // A stored non-empty name, with or without a seat count. The link gate
-  // reads this.
-  bool _hasStoredName = false;
   List<String> _recentCodes = const <String>[];
   RoomController? _ownedController;
   // H3: the seat rejoin button shows exactly when this is non-null. C-669 R1:
@@ -255,12 +258,12 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
     final AppLocalizations loc = AppLocalizations.of(context);
-    final String? code = roomCodeFromUri(uri);
-    final bool codeIsValid = code != null;
+    // Section 31: a room link carries a link id, never a code. A six-letter
+    // code in /r/ is not one of ours and reads as an unreadable link.
+    final String? linkId = roomLinkIdFromUri(uri);
+    final bool codeIsValid = linkId != null;
     setState(() {
       if (codeIsValid) {
-        _linkFilledCode = code;
-        _codeController.text = code;
         _errorText = null;
       } else {
         _errorText = loc.homeRoomCodeInvalid;
@@ -292,7 +295,7 @@ class _HomeScreenState extends State<HomeScreen>
       );
       return;
     }
-    _decideLinkAction(code);
+    _decideLinkAction(linkId);
   }
 
   /// Evaluates whether an incoming link with valid [code] can push into the
@@ -300,22 +303,28 @@ class _HomeScreenState extends State<HomeScreen>
   ///
   /// The seat-record check stands on its own, ahead of the stored-name
   /// check: resume needs no name, and neither check is the last-table chip.
-  void _decideLinkAction(String code) {
+  void _decideLinkAction(String linkId) {
     if (!mounted) {
       return;
     }
     _linkHadSay = true;
     final bool isCurrent = ModalRoute.of(context)?.isCurrent ?? false;
     if (isCurrent && !_linkJoinInFlight) {
-      final SeatRecord? record = _seatRecordFor(code);
-      if (record != null) {
-        unawaited(_joinFromLink(rejoin: true, seatRecord: record));
+      // C-681 R1: a link for a room this phone still holds a seat in takes
+      // that seat back, the same as a typed code equal to the stored code.
+      final SeatRecord? held = _seatRecordForLink(linkId);
+      if (held != null) {
+        _linkJoinInFlight = true;
+        unawaited(
+          _rejoinRoom(held).whenComplete(() => _linkJoinInFlight = false),
+        );
         return;
       }
-      if (_hasStoredName) {
-        unawaited(_joinFromLink(rejoin: false));
-        return;
-      }
+      // A link id fills no field, so there is nothing for a first-time player
+      // to tap: the tapped link is the one tap, and the default name stands
+      // in for a name never typed.
+      unawaited(_joinFromLink(linkId));
+      return;
     }
     // Run 57: first-time player (rule 2) or home screen sitting underneath
     // an existing route (rule 3) scrolls the target into view rather than
@@ -340,11 +349,11 @@ class _HomeScreenState extends State<HomeScreen>
     if (uri == null) {
       return false;
     }
-    final String? code = roomCodeFromUri(uri);
-    if (code == null) {
+    final String? linkId = roomLinkIdFromUri(uri);
+    if (linkId == null) {
       return false;
     }
-    _decideLinkAction(code);
+    _decideLinkAction(linkId);
     return true;
   }
 
@@ -403,27 +412,18 @@ class _HomeScreenState extends State<HomeScreen>
     if (uri == null) {
       return;
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      _scrollLinkTargetIntoView(codeIsValid: true);
-    });
+    final String? linkId = roomLinkIdFromUri(uri);
+    if (linkId != null) {
+      _decideLinkAction(linkId);
+    }
   }
 
-  /// Runs a link-driven join or rejoin, guarding against duplicate pushes
-  /// while the route is in flight (rule 6).
-  Future<void> _joinFromLink({
-    required bool rejoin,
-    SeatRecord? seatRecord,
-  }) async {
+  /// Runs a link-driven join, guarding against duplicate pushes while the
+  /// route is in flight (rule 6).
+  Future<void> _joinFromLink(String linkId) async {
     _linkJoinInFlight = true;
     try {
-      if (rejoin && seatRecord != null) {
-        await _rejoinRoom(seatRecord);
-      } else {
-        await _joinRoom(fromLink: true);
-      }
+      await _joinByLink(linkId);
     } finally {
       _linkJoinInFlight = false;
     }
@@ -549,7 +549,6 @@ class _HomeScreenState extends State<HomeScreen>
             _recentCodes = List<String>.from(loaded.recentCodes);
           }
           if (storedName != null && storedName.isNotEmpty) {
-            _hasStoredName = true;
             _nameController.text = storedName;
           }
           if (hasTable) {
@@ -705,6 +704,7 @@ class _HomeScreenState extends State<HomeScreen>
           code: room.code,
           seat: seat,
           seatToken: seatToken,
+          linkId: room.linkId,
         );
         final DateTime now = (widget.clock ?? DateTime.now)();
         final DateTime? lastWriteAt = _lastSeatWriteAt;
@@ -787,7 +787,12 @@ class _HomeScreenState extends State<HomeScreen>
     if (code == null || seat == null || seatToken == null) {
       return null;
     }
-    return SeatRecord(code: code, seat: seat, seatToken: seatToken);
+    return SeatRecord(
+      code: code,
+      seat: seat,
+      seatToken: seatToken,
+      linkId: controller.room?.linkId ?? '',
+    );
   }
 
   /// C-547 D4: a seat another phone took over is gone for this phone too;
@@ -797,6 +802,7 @@ class _HomeScreenState extends State<HomeScreen>
   bool _seatIsGone(RoomController controller) {
     return !controller.updateRequired &&
         (controller.seatTakenOver ||
+            controller.wasKicked ||
             (controller.phase == RoomPhase.failed &&
                 (controller.errorCode == 'BAD_SEAT_TOKEN' ||
                     controller.errorCode == 'NO_SUCH_ROOM')));
@@ -1004,7 +1010,10 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   bool get _hasNotice =>
-      _removedNotice || _gameGoneNotice || _roomClosedNotice != null;
+      _removedNotice ||
+      _gameGoneNotice ||
+      _roomClosedNotice != null ||
+      _knockNotice != null;
 
   /// D2 of C-449: the player closes the notice by hand. Every other event
   /// that hides it (create, join, rejoin) is handled where it starts.
@@ -1013,6 +1022,7 @@ class _HomeScreenState extends State<HomeScreen>
       _removedNotice = false;
       _gameGoneNotice = false;
       _roomClosedNotice = null;
+      _knockNotice = null;
     });
   }
 
@@ -1030,12 +1040,14 @@ class _HomeScreenState extends State<HomeScreen>
           _removedNotice = true;
           _gameGoneNotice = false;
           _roomClosedNotice = null;
+          _knockNotice = null;
         });
       case GameScreenResult.gameGone:
         setState(() {
           _removedNotice = false;
           _gameGoneNotice = true;
           _roomClosedNotice = null;
+          _knockNotice = null;
         });
       case GameScreenResult.roomClosedHost:
       case GameScreenResult.roomClosedGuest:
@@ -1047,6 +1059,35 @@ class _HomeScreenState extends State<HomeScreen>
       default:
         break;
     }
+  }
+
+  /// C-682: read once from a join route that has just returned, before the
+  /// controller is retired: how this phone's knock ended, or that the host
+  /// removed it. The rejected and timed-out outcomes say the same thing, so a
+  /// stranger learns nothing; a withdrawn knock was this player's own Cancel
+  /// and says nothing. Sets nothing when neither happened.
+  void _noteKnockOutcome(RoomController controller) {
+    if (!mounted) {
+      return;
+    }
+    final _KnockNotice? notice = controller.wasKicked
+        ? _KnockNotice.kicked
+        : switch (controller.knockState.phase) {
+            KnockPhase.rejected ||
+            KnockPhase.timedOut => _KnockNotice.notJoined,
+            KnockPhase.full => _KnockNotice.full,
+            KnockPhase.switchedOff => _KnockNotice.switchedOff,
+            _ => null,
+          };
+    if (notice == null) {
+      return;
+    }
+    setState(() {
+      _removedNotice = false;
+      _gameGoneNotice = false;
+      _roomClosedNotice = null;
+      _knockNotice = notice;
+    });
   }
 
   /// C-529 D4: a join that came back refused NO_SUCH_ROOM or ROOM_STARTED
@@ -1090,6 +1131,7 @@ class _HomeScreenState extends State<HomeScreen>
         _removedNotice = false;
         _gameGoneNotice = false;
         _roomClosedNotice = null;
+        _knockNotice = null;
       });
     }
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -1115,11 +1157,6 @@ class _HomeScreenState extends State<HomeScreen>
       unawaited(
         SessionMemory.recordSuccessfulCreate(name: name, seats: players),
       );
-      if (mounted) {
-        setState(() {
-          _hasStoredName = true;
-        });
-      }
     }
 
     controller.addListener(persistSuccessfulCreate);
@@ -1183,6 +1220,7 @@ class _HomeScreenState extends State<HomeScreen>
       _removedNotice = false;
       _gameGoneNotice = false;
       _roomClosedNotice = null;
+      _knockNotice = null;
     });
     // C-669 R2: a code this phone holds a seat for is a seat to take back, not
     // a room to join: join_room would be refused ROOM_STARTED while the game
@@ -1210,7 +1248,6 @@ class _HomeScreenState extends State<HomeScreen>
       unawaited(SessionMemory.recordSuccessfulJoin(normalized, name: name));
       if (mounted) {
         setState(() {
-          _hasStoredName = true;
           _recentCodes = SessionMemory.prependRecentCode(
             _recentCodes,
             normalized,
@@ -1240,12 +1277,81 @@ class _HomeScreenState extends State<HomeScreen>
     // C-316 rule 3: set the notice before the retire below; see the
     // matching comment in _createRoom.
     _showNoticeFor(result);
+    _noteKnockOutcome(controller);
     // C-529 D4: read before the retire below, which ends the controller.
     _clearDeadJoinCode(controller, normalized);
     // See the matching comment in _createRoom: leave() must be awaited
     // before dispose() so a leave_room request actually reaches the wire,
     // and the up-to-10-second worst case on a dead socket is bounded and
     // deliberate, not a bug.
+    await _retireOwnedController(controller, result: result);
+    if (!mounted) {
+      return;
+    }
+    if (result == GameScreenResult.newTable) {
+      await _createRoom();
+    }
+  }
+
+  /// Section 31: joins the room a tapped link names, by link id. The same
+  /// route and the same bookkeeping as [_joinRoom], with no code to check or
+  /// remember until the server has answered with the room.
+  Future<void> _joinByLink(String linkId) async {
+    final AppLocalizations loc = AppLocalizations.of(context);
+    setState(() {
+      _errorText = null;
+      _removedNotice = false;
+      _gameGoneNotice = false;
+      _roomClosedNotice = null;
+      _knockNotice = null;
+    });
+    final String name = _resolvedName(loc);
+    final RoomController controller = widget.controllerFactory();
+    _watchOwnedController(controller);
+    bool recordedJoin = false;
+    void persistSuccessfulJoin() {
+      if (recordedJoin) {
+        return;
+      }
+      final RoomSnapshot? room = controller.room;
+      if (controller.phase != RoomPhase.connected || room == null) {
+        return;
+      }
+      recordedJoin = true;
+      unawaited(SessionMemory.recordSuccessfulJoin(room.code, name: name));
+      if (mounted) {
+        setState(() {
+          _recentCodes = SessionMemory.prependRecentCode(
+            _recentCodes,
+            room.code,
+          );
+        });
+      }
+    }
+
+    controller.addListener(persistSuccessfulJoin);
+    // Started here, from a handler, so the first notification is not raised
+    // while a route builds. The lobby's own join request then finds the
+    // controller already connecting and does nothing (its code is empty).
+    unawaited(controller.joinByLink(link: linkId, name: name));
+    final Object? result;
+    try {
+      result = await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => RoomRoute(
+            controller: controller,
+            action: LobbyAction.join,
+            code: '',
+            playerName: name,
+            fromLink: true,
+          ),
+        ),
+      );
+    } finally {
+      controller.removeListener(persistSuccessfulJoin);
+    }
+    _showNoticeFor(result);
+    _noteKnockOutcome(controller);
     await _retireOwnedController(controller, result: result);
     if (!mounted) {
       return;
@@ -1265,6 +1371,15 @@ class _HomeScreenState extends State<HomeScreen>
     return record != null && record.code == code ? record : null;
   }
 
+  /// C-681 R1: the seat this screen holds for the room [linkId] names, or
+  /// null. A record with no link id never matches (join by link as before).
+  SeatRecord? _seatRecordForLink(String linkId) {
+    final SeatRecord? record = _trustedSeat();
+    return record != null && record.linkId.isNotEmpty && record.linkId == linkId
+        ? record
+        : null;
+  }
+
   /// H4: the H3 button's tap. Builds a controller the same way create and
   /// join do, watches it the same way, and pushes the same [RoomRoute],
   /// with [LobbyAction.resume] and [record] standing in for the code and
@@ -1277,6 +1392,7 @@ class _HomeScreenState extends State<HomeScreen>
         _removedNotice = false;
         _gameGoneNotice = false;
         _roomClosedNotice = null;
+        _knockNotice = null;
       });
     }
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -1585,21 +1701,35 @@ class _HomeScreenState extends State<HomeScreen>
                                   if (_hasNotice) ...[
                                     _HomeNotice(
                                       cardKey: const Key('home-notice'),
-                                      textKey: _roomClosedNotice != null
+                                      textKey: _knockNotice != null
+                                          ? const Key('home-knock-notice')
+                                          : _roomClosedNotice != null
                                           ? const Key('home-room-closed-notice')
                                           : _gameGoneNotice
                                           ? const Key('home-game-gone-notice')
                                           : const Key('home-removed-notice'),
-                                      text: switch (_roomClosedNotice) {
-                                        GameScreenResult.roomClosedHost =>
-                                          loc.homeRoomClosedHostNotice,
-                                        GameScreenResult.roomClosedGuest =>
-                                          loc.homeRoomClosedGuestNotice,
-                                        _ =>
-                                          _gameGoneNotice
-                                              ? loc.homeGameGoneNotice
-                                              : loc.homeRemovedNotice,
-                                      },
+                                      text: _knockNotice != null
+                                          ? switch (_knockNotice!) {
+                                              _KnockNotice.notJoined =>
+                                                loc.knockOutcomeNotJoined,
+                                              _KnockNotice.full =>
+                                                loc.knockOutcomeFull,
+                                              _KnockNotice.switchedOff =>
+                                                loc.knockOutcomeSwitchedOff,
+                                              _KnockNotice.kicked =>
+                                                loc.knockWasKicked,
+                                            }
+                                          : switch (_roomClosedNotice) {
+                                              GameScreenResult.roomClosedHost =>
+                                                loc.homeRoomClosedHostNotice,
+                                              GameScreenResult
+                                                  .roomClosedGuest =>
+                                                loc.homeRoomClosedGuestNotice,
+                                              _ =>
+                                                _gameGoneNotice
+                                                    ? loc.homeGameGoneNotice
+                                                    : loc.homeRemovedNotice,
+                                            },
                                       dismissLabel: loc.homeNoticeDismiss,
                                       onDismiss: _dismissNotice,
                                     ),
