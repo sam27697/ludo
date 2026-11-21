@@ -25,7 +25,9 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart' hide testWidgets;
+import 'package:flutter_test/flutter_test.dart' as ft show testWidgets;
+import 'package:ludo_client/src/install_id.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
 import 'package:ludo_client/src/net/transport.dart';
@@ -107,6 +109,30 @@ Map<String, Object?> _roomJson({
   'knocks': ?knocks,
 };
 
+/// Controllers made by the scenario helper in the running test. Each one is
+/// disposed inside the test body (as the app retires a controller), so the
+/// 10 s request timer of a request nobody answered is not left pending when
+/// the framework checks its invariants.
+final List<RoomController> _owned = <RoomController>[];
+
+void testWidgets(
+  String description,
+  Future<void> Function(WidgetTester tester) body,
+) {
+  ft.testWidgets(description, (WidgetTester tester) async {
+    _owned.clear();
+    try {
+      await body(tester);
+    } finally {
+      for (final RoomController controller in _owned) {
+        controller.dispose();
+      }
+      _owned.clear();
+      await tester.pump(const Duration(seconds: 11));
+    }
+  });
+}
+
 class _Connector {
   final List<FakeTransport> _queue = <FakeTransport>[];
   final List<Uri> calls = <Uri>[];
@@ -129,7 +155,7 @@ class _Scn {
   final FakeTransport transport;
   final _Connector connector;
 
-  static _Scn open(WidgetTester tester, String id) {
+  static Future<_Scn> open(WidgetTester tester, String id) async {
     final _Connector connector = _Connector();
     final FakeTransport transport = FakeTransport();
     connector.enqueue(transport);
@@ -137,7 +163,10 @@ class _Scn {
       serverUrl: Uri.parse(_testUrl),
       connect: connector.call,
     );
-    addTearDown(controller.dispose);
+    _owned.add(controller);
+    // The app reads the install id at startup, long before any join; let the
+    // async read settle the same way before the test joins.
+    await tester.runAsync(installId);
     return _Scn(id, tester, controller, transport, connector);
   }
 
@@ -189,7 +218,7 @@ void main() {
     testWidgets('joinRoom by code sends name, code and install, no link', (
       tester,
     ) async {
-      final _Scn s = _Scn.open(tester, 'jf.code');
+      final _Scn s = await _Scn.open(tester, 'jf.code');
       unawaited(s.controller.joinRoom(code: _code, name: 'Bob'));
       await s.settle();
       final Map<String, Object?> d = s.sentData('join_room');
@@ -210,7 +239,7 @@ void main() {
     testWidgets('joinByLink sends name, link and install, no code', (
       tester,
     ) async {
-      final _Scn s = _Scn.open(tester, 'jf.link');
+      final _Scn s = await _Scn.open(tester, 'jf.link');
       unawaited(s.controller.joinByLink(link: _linkId, name: 'Bob'));
       await s.settle();
       final Map<String, Object?> d = s.sentData('join_room');
@@ -232,7 +261,7 @@ void main() {
       tester,
     ) async {
       for (final bool byLink in <bool>[true, false]) {
-        final _Scn s = _Scn.open(tester, 'jf.never_both.$byLink');
+        final _Scn s = await _Scn.open(tester, 'jf.never_both.$byLink');
         unawaited(
           byLink
               ? s.controller.joinByLink(link: _linkId, name: 'Bob')
@@ -258,7 +287,7 @@ void main() {
       tester,
     ) async {
       SharedPreferences.setMockInitialValues(<String, Object>{});
-      final _Scn s = _Scn.open(tester, 'jf.install_made');
+      final _Scn s = await _Scn.open(tester, 'jf.install_made');
       unawaited(s.controller.joinByLink(link: _linkId, name: 'Bob'));
       await s.settle();
       final Object? install = s.sentData('join_room')['install'];
@@ -285,7 +314,7 @@ void main() {
       SharedPreferences.setMockInitialValues(<String, Object>{});
       final List<Object?> seen = <Object?>[];
       for (final bool byLink in <bool>[true, false, true]) {
-        final _Scn s = _Scn.open(
+        final _Scn s = await _Scn.open(
           tester,
           'jf.install_stable.$byLink.${seen.length}',
         );
@@ -310,7 +339,7 @@ void main() {
     testWidgets('a join made while one is in flight sends one frame only', (
       tester,
     ) async {
-      final _Scn s = _Scn.open(tester, 'jf.double_join');
+      final _Scn s = await _Scn.open(tester, 'jf.double_join');
       unawaited(s.controller.joinByLink(link: _linkId, name: 'Bob'));
       unawaited(s.controller.joinByLink(link: _linkId, name: 'Bob'));
       unawaited(s.controller.joinRoom(code: _code, name: 'Bob'));
@@ -337,7 +366,7 @@ void main() {
     testWidgets('a link join answered by seat_assigned and room is seated', (
       tester,
     ) async {
-      final _Scn s = _Scn.open(tester, 'jr.link_seated');
+      final _Scn s = await _Scn.open(tester, 'jr.link_seated');
       final Future<void> joined = s.controller.joinByLink(
         link: _linkId,
         name: 'Bob',
@@ -381,7 +410,7 @@ void main() {
     testWidgets('a code join answered by knock_pending holds no seat', (
       tester,
     ) async {
-      final _Scn s = _Scn.open(tester, 'jr.code_knock');
+      final _Scn s = await _Scn.open(tester, 'jr.code_knock');
       unawaited(s.controller.joinRoom(code: _code, name: 'Bob'));
       await s.settle();
       s.transport.pushText(
@@ -433,7 +462,7 @@ void main() {
         'NO_SUCH_KNOCK',
       ]) {
         for (final bool byLink in <bool>[true, false]) {
-          final _Scn s = _Scn.open(tester, 'jr.refused.$code.$byLink');
+          final _Scn s = await _Scn.open(tester, 'jr.refused.$code.$byLink');
           unawaited(
             byLink
                 ? s.controller.joinByLink(link: _linkId, name: 'Bob')

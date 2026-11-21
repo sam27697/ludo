@@ -91,6 +91,7 @@ const String _testUrl = 'wss://dead-rooms-test.invalid/ws';
 const String _code = 'K7M2QP';
 const String _otherCode = 'ZY98XW';
 const String _linkCode = 'AB23CD';
+const String _linkId = 't5k2q9a-x7m3pd';
 const String _token = 'tok-dead-rooms-001';
 const String _verifyUrl = 'https://provefair.app/v/dead-rooms-529';
 const String _gameId = '7f3a9c1e5b2d4068';
@@ -304,7 +305,11 @@ class _LinkRig {
   Stream<Uri> open() => stream.stream;
 }
 
-Uri _linkTo(String code) => Uri.parse('https://ludo.provefair.app/r/$code');
+Uri _linkTo(String linkId) => Uri.parse('https://ludo.provefair.app/r/$linkId');
+
+/// A `join_room` body without its `install` id, which is random per install.
+Map<String, Object?> _noInstall(Map<String, Object?> data) =>
+    <String, Object?>{...data}..remove('install');
 
 Widget _app(RoomControllerFactory factory, {Locale? locale, _LinkRig? links}) {
   return MaterialApp(
@@ -619,26 +624,28 @@ void main() {
 
   // ------------------------------------------------------------------ D1
   group('D1 Go on the name field follows the primary action', () {
-    testWidgets('D1a: a code a link filled, the name edited, Go on the name field: '
-        'join_room for that code with the edited name, never create_room, and '
+    testWidgets('D1a: a link id arriving after the name was edited: join_room '
+        'by link with the edited name, never create_room, and '
         'a vanished room reads in the link\'s terms', (tester) async {
-      const String scenario = 'D1a first-time link, edit name, Go';
+      const String scenario = 'D1a first-time, edit name, link id arrives';
       final _Rig rig = _Rig();
-      await _mount(tester, rig, links: _LinkRig(cold: _linkTo(_linkCode)));
+      final _LinkRig links = _LinkRig();
+      await _mount(tester, rig, links: links);
 
       expect(
         _fieldText(tester, _codeKey),
-        _linkCode,
-        reason: '$scenario: fixture: the link must fill the code field',
+        isEmpty,
+        reason: '$scenario: fixture: no link yet, the code field is empty',
       );
       expect(
         rig.controllers,
         isEmpty,
-        reason: '$scenario: fixture: a first-time player is not pushed',
+        reason: '$scenario: fixture: nothing joined before the link',
       );
 
       await tester.enterText(find.byKey(_nameKey), 'Dee');
-      await tester.testTextInput.receiveAction(TextInputAction.go);
+      links.stream.add(_linkTo(_linkId));
+      await tester.pump();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
@@ -656,10 +663,10 @@ void main() {
         reason: '$scenario: Go must send one join_room; sent ${rig.allTypes}',
       );
       expect(
-        _dataOf(joins.single),
-        <String, Object?>{'code': _linkCode, 'name': 'Dee'},
+        _noInstall(_dataOf(joins.single)),
+        <String, Object?>{'link': _linkId, 'name': 'Dee'},
         reason:
-            '$scenario: join_room must carry the link code and the edited '
+            '$scenario: join_room must carry the link id and the edited '
             'name; sent ${_dataOf(joins.single)}',
       );
 
@@ -674,7 +681,7 @@ void main() {
         ),
         findsOneWidget,
         reason:
-            '$scenario: Go carries the same fromLink value as Join, so the '
+            '$scenario: a link join is fromLink, so the '
             'error reads lobbyErrorLinkRoomGone; texts are '
             '${tester.widgetList<Text>(find.descendant(of: error, matching: find.byType(Text))).map((Text t) => t.data).toList()}',
       );
@@ -707,7 +714,7 @@ void main() {
           hasLength(1),
           reason: '$scenario: one join_room; sent ${rig.allTypes}',
         );
-        expect(_dataOf(joins.single), <String, Object?>{
+        expect(_noInstall(_dataOf(joins.single)), <String, Object?>{
           'code': _otherCode,
           'name': 'Eli',
         }, reason: '$scenario: sent ${_dataOf(joins.single)}');
@@ -1276,22 +1283,27 @@ void main() {
 
   // ------------------------------------------------------------------ D4
   group('D4 a join that cannot succeed says so and leaves no dead end', () {
-    testWidgets('D4a: a first-time friend, code filled by a link and untouched, Join '
+    testWidgets('D4a: a first-time friend opened by a link id, join_room by link '
         'answered NO_SUCH_ROOM: the link wording, no Retry', (tester) async {
-      const String scenario = 'D4a first-time link, untouched, Join, gone';
+      const String scenario = 'D4a first-time link id, joined, gone';
       final _Rig rig = _Rig();
-      await _mount(tester, rig, links: _LinkRig(cold: _linkTo(_linkCode)));
+      await _mount(tester, rig, links: _LinkRig(cold: _linkTo(_linkId)));
       expect(
         _fieldText(tester, _codeKey),
-        _linkCode,
-        reason: '$scenario: fixture: the link fills the code field',
+        isEmpty,
+        reason: '$scenario: fixture: a link id fills no code field',
       );
-      await _tap(tester, _joinKey);
+      await _pumpBounded(tester, frames: 3);
       final List<String> joins = rig.sent('join_room');
       expect(
         joins,
         hasLength(1),
         reason: '$scenario: one join_room; sent ${rig.allTypes}',
+      );
+      expect(
+        _noInstall(_dataOf(joins.single)).keys,
+        contains('link'),
+        reason: '$scenario: the join carries the link id; sent ${joins.single}',
       );
       _answerError(rig.last, _idOf(joins.single), 'NO_SUCH_ROOM');
       await _pumpBounded(tester, frames: 3);
@@ -1305,7 +1317,7 @@ void main() {
         ),
         findsOneWidget,
         reason:
-            '$scenario: the Join tap must pass fromLink true, so the error '
+            '$scenario: a link join is fromLink, so the error '
             'reads lobbyErrorLinkRoomGone; texts are '
             '${tester.widgetList<Text>(find.descendant(of: error, matching: find.byType(Text))).map((Text t) => t.data).toList()}',
       );
@@ -1317,20 +1329,21 @@ void main() {
       await _finish(tester, rig);
     });
 
-    testWidgets('D4b: the link code edited and typed back is a typed code (any edit '
-        'makes it typed): the typed-code wording, no Retry', (tester) async {
+    testWidgets('D4b: a code partly typed, edited and typed in full is a typed '
+        'code (a link id fills no field, so nothing is ever link-filled): '
+        'the typed-code wording, no Retry', (tester) async {
       const String scenario =
-          'D4b first-time link, code edited then restored by typing, Join';
+          'D4b first-time, code edited then restored by typing, Join';
       final _Rig rig = _Rig();
-      await _mount(tester, rig, links: _LinkRig(cold: _linkTo(_linkCode)));
-      expect(_fieldText(tester, _codeKey), _linkCode);
+      await _mount(tester, rig);
+      expect(_fieldText(tester, _codeKey), isEmpty);
       await tester.enterText(find.byKey(_codeKey), 'AB23C');
       await tester.pump();
       await _typeCode(tester, _linkCode);
       expect(
         _fieldText(tester, _codeKey),
         _linkCode,
-        reason: '$scenario: fixture: the field is back at the link code',
+        reason: '$scenario: fixture: the field holds the full code',
       );
       await _tap(tester, _joinKey);
       final List<String> joins = rig.sent('join_room');
@@ -1414,8 +1427,8 @@ void main() {
         ]) {
           final String scenario = 'D4d link join answered $code';
           final _Rig rig = _Rig();
-          await _mount(tester, rig, links: _LinkRig(cold: _linkTo(_linkCode)));
-          await _tap(tester, _joinKey);
+          await _mount(tester, rig, links: _LinkRig(cold: _linkTo(_linkId)));
+          await _pumpBounded(tester, frames: 3);
           _answerError(rig.last, rig.lastRequestId('join_room'), code);
           await _pumpBounded(tester, frames: 3);
           expect(
@@ -1600,12 +1613,15 @@ void main() {
           await _mount(
             tester,
             rig,
-            links: fromLink ? _LinkRig(cold: _linkTo(_linkCode)) : null,
+            links: fromLink ? _LinkRig(cold: _linkTo(_linkId)) : null,
           );
-          if (!fromLink) {
+          if (fromLink) {
+            // A link id joins at once, so there is no Join to tap.
+            await _pumpBounded(tester, frames: 3);
+          } else {
             await _typeCode(tester, _linkCode);
+            await _tap(tester, _joinKey);
           }
-          await _tap(tester, _joinKey);
           _answerError(rig.last, rig.lastRequestId('join_room'), code);
           await _pumpBounded(tester, frames: 3);
           expect(

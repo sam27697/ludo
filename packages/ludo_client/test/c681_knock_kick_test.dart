@@ -23,7 +23,8 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart' hide testWidgets;
+import 'package:flutter_test/flutter_test.dart' as ft show testWidgets;
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
 import 'package:ludo_client/src/net/transport.dart';
@@ -102,6 +103,30 @@ Map<String, Object?> _roomJson({
   'knocks': knocks,
 };
 
+/// Controllers made by the scenario helper in the running test. Each one is
+/// disposed inside the test body (as the app retires a controller), so the
+/// 10 s request timer of a request nobody answered is not left pending when
+/// the framework checks its invariants.
+final List<RoomController> _owned = <RoomController>[];
+
+void testWidgets(
+  String description,
+  Future<void> Function(WidgetTester tester) body,
+) {
+  ft.testWidgets(description, (WidgetTester tester) async {
+    _owned.clear();
+    try {
+      await body(tester);
+    } finally {
+      for (final RoomController controller in _owned) {
+        controller.dispose();
+      }
+      _owned.clear();
+      await tester.pump(const Duration(seconds: 11));
+    }
+  });
+}
+
 class _Connector {
   final List<FakeTransport> _queue = <FakeTransport>[];
   final List<Uri> calls = <Uri>[];
@@ -139,7 +164,7 @@ class _Scn {
       connect: connector.call,
       autoReconnectDelays: delays,
     );
-    addTearDown(controller.dispose);
+    _owned.add(controller);
     return _Scn(id, tester, controller, transport, connector);
   }
 
@@ -1030,9 +1055,30 @@ void main() {
       final _Scn s = _Scn.open(tester, 'kicked.twice');
       await s.seat(host: false);
       await s.push('kicked', <String, Object?>{});
-      await s.push('kicked', <String, Object?>{});
+      expect(
+        s.transport.isClosed,
+        isTrue,
+        reason:
+            'expected the socket closed after kicked (a second kicked cannot '
+            'arrive on it). ${s.why}',
+      );
+      expect(s.controller.wasKicked, isTrue, reason: 'kicked. ${s.why}');
+      expect(s.controller.seat, isNull, reason: 'no seat. ${s.why}');
+      // A second `kicked` can only arrive on a fresh socket, after a join
+      // reopened one; it leaves the same final state.
+      final FakeTransport next = FakeTransport();
+      s.connector.enqueue(next);
+      unawaited(s.controller.joinByLink(link: _linkId, name: 'Bob'));
+      await s.settle();
+      next.pushText(_frame(type: 'kicked', data: <String, Object?>{}));
+      await s.settle();
       expect(s.controller.wasKicked, isTrue, reason: 'still kicked. ${s.why}');
       expect(s.controller.seat, isNull, reason: 'still no seat. ${s.why}');
+      expect(
+        s.controller.seatToken,
+        isNull,
+        reason: 'still no token. ${s.why}',
+      );
     });
 
     testWidgets('kicked with no room held (a knocker) does not throw', (

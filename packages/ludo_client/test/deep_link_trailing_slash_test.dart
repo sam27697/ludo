@@ -34,6 +34,7 @@ const Key _codeKey = Key('room-code-field');
 
 const String _testUrl = 'wss://trailing-slash-test.invalid/ws';
 const String _code = 'ABC234';
+const String _linkId = 't5k2q9a-x7m3pd';
 
 Uri _u(String text) => Uri.parse(text);
 
@@ -255,60 +256,67 @@ void main() {
 
   group('D7 Home', () {
     testWidgets(
-      'D7j+: a first-time player opened by /r/ABC234/ finds the code filled in',
+      'D7j+: a first-time player opened by /r/<link id>/ joins by link and '
+      'fills no code field',
       (tester) async {
         final _Rig rig = _Rig();
         await _mountWithColdLink(
           tester,
           rig,
-          _u('https://ludo.provefair.app/r/ABC234/'),
+          _u('https://ludo.provefair.app/r/$_linkId/'),
         );
         final String text = tester
-            .widget<TextField>(find.byKey(_codeKey))
+            .widget<TextField>(find.byKey(_codeKey, skipOffstage: false))
             .controller!
             .text;
         expect(
           text,
-          _code,
+          isEmpty,
           reason:
-              'D7j+: the link with a trailing slash must fill the code field '
-              'like the link without one; field holds "$text"',
+              'D7j+: a link id fills no code field, with or without the '
+              'trailing slash; field holds "$text"',
         );
         expect(
           rig.controllers,
-          isEmpty,
-          reason: 'D7j+: a first-time player is not pushed into a room',
+          hasLength(1),
+          reason:
+              'D7j+: the link with a trailing slash joins like the link '
+              'without one (one controller)',
         );
+        expect(rig.sentTypes(), <String>[
+          'join_room',
+        ], reason: 'D7j+: one join_room; sent ${rig.sentTypes()}');
         await _finish(tester, rig);
       },
     );
 
-    testWidgets('D7k+: a known player opened by /r/ABC234/ joins that room', (
-      tester,
-    ) async {
-      SharedPreferences.setMockInitialValues(<String, Object>{
-        'session.lastName': 'Nour',
-        'session.lastSeats': 4,
-      });
-      final _Rig rig = _Rig();
-      await _mountWithColdLink(
-        tester,
-        rig,
-        _u('https://ludo.provefair.app/r/ABC234/'),
-      );
-      expect(
-        rig.sentTypes(),
-        <String>['join_room'],
-        reason:
-            'D7k+: the link must send one join_room and nothing else; '
-            'sent ${rig.sentTypes()}',
-      );
-      expect(
-        rig.firstJoinData(),
-        <String, Object?>{'code': _code, 'name': 'Nour'},
-        reason: 'D7k+: join_room must carry the link code and the stored name',
-      );
-      await _finish(tester, rig);
-    });
+    testWidgets(
+      'D7k+: a known player opened by /r/<link id>/ joins that room',
+      (tester) async {
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          'session.lastName': 'Nour',
+          'session.lastSeats': 4,
+        });
+        final _Rig rig = _Rig();
+        await _mountWithColdLink(
+          tester,
+          rig,
+          _u('https://ludo.provefair.app/r/$_linkId/'),
+        );
+        expect(
+          rig.sentTypes(),
+          <String>['join_room'],
+          reason:
+              'D7k+: the link must send one join_room and nothing else; '
+              'sent ${rig.sentTypes()}',
+        );
+        expect(
+          <String, Object?>{...rig.firstJoinData()}..remove('install'),
+          <String, Object?>{'link': _linkId, 'name': 'Nour'},
+          reason: 'D7k+: join_room must carry the link id and the stored name',
+        );
+        await _finish(tester, rig);
+      },
+    );
   });
 }

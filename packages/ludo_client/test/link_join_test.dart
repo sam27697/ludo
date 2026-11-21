@@ -38,6 +38,7 @@ const String _testUrl = 'wss://link-join-test.invalid/ws';
 const String _knownName = 'Nour';
 const int _knownSeats = 4;
 const String _linkCode = 'AB23CD';
+const String _linkId = 't5k2q9a-x7m3pd';
 const String _otherCode = 'ZY98XW';
 const int _seat = 2;
 const String _seatToken = 'tok-link-join-001';
@@ -46,7 +47,8 @@ const String _namePrefsKey = 'session.lastName';
 const String _seatsPrefsKey = 'session.lastSeats';
 const String _seatPrefsKey = 'session.seat';
 
-Uri _validLink(String code) => Uri.parse('https://ludo.provefair.app/r/$code');
+Uri _validLink(String linkId) =>
+    Uri.parse('https://ludo.provefair.app/r/$linkId');
 
 Uri _invalidCodeLink() => Uri.parse('https://ludo.provefair.app/r/AB0234');
 
@@ -55,9 +57,6 @@ List<String> _storedSeat(String code) => <String>[
   _seat.toString(),
   _seatToken,
 ];
-
-SeatRecord _seatRecord(String code) =>
-    SeatRecord(code: code, seat: _seat, seatToken: _seatToken);
 
 void _seedKnownPlayer({String? seatCode}) {
   SharedPreferences.setMockInitialValues(<String, Object>{
@@ -356,34 +355,22 @@ void _expectJoinFrame(FakeTransport transport) {
         'the link must send one join_room and nothing else; sent '
         '${transport.sentRaw.map(_typeOf).toList()}',
   );
+  final Map<String, Object?> data = _dataOf(transport.sentRaw.single);
   expect(
-    _dataOf(transport.sentRaw.single),
-    <String, Object?>{'code': _linkCode, 'name': _knownName},
+    <String, Object?>{...data}..remove('install'),
+    <String, Object?>{'link': _linkId, 'name': _knownName},
     reason:
-        'join_room must carry the link code "$_linkCode" and the stored '
-        'name "$_knownName"; sent ${_dataOf(transport.sentRaw.single)}',
-  );
-}
-
-void _expectResumeFrame(FakeTransport transport, {required String code}) {
-  expect(
-    transport.sentRaw.map(_typeOf).toList(),
-    <String>['resume'],
-    reason:
-        'a seat record for the link code must send resume, not join_room; '
-        'sent ${transport.sentRaw.map(_typeOf).toList()}',
+        'join_room must carry the link id "$_linkId" and the stored '
+        'name "$_knownName", never a code; sent $data',
   );
   expect(
-    transport.sentRaw.any((String text) => _typeOf(text) == 'join_room'),
-    isFalse,
-    reason: 'resume for the link code must not also send join_room',
-  );
-  expect(
-    _dataOf(transport.sentRaw.single),
-    <String, Object?>{'code': code, 'seat_token': _seatToken},
-    reason:
-        'resume must carry the stored code "$code" and seat token '
-        '"$_seatToken"; sent ${_dataOf(transport.sentRaw.single)}',
+    data['install'],
+    isA<String>().having(
+      (String v) => RegExp(r'^[A-Za-z0-9_-]{16,64}$').hasMatch(v),
+      'install shape',
+      isTrue,
+    ),
+    reason: 'join_room carries the install id (section 31 item 2); sent $data',
   );
 }
 
@@ -404,10 +391,10 @@ void _expectConnectingJoin(WidgetTester tester) {
   expect(lobby.action, LobbyAction.join);
   expect(
     lobby.code,
-    _linkCode,
+    isEmpty,
     reason:
-        'LobbyScreen.code must be the link code while the connecting view '
-        'is up; the connecting body does not paint the code itself',
+        'LobbyScreen.code must be empty for a link-id join (no code is '
+        'known until the server answers)',
   );
   expect(lobby.playerName, _knownName);
   expect(find.byKey(_connectingKey), findsOneWidget);
@@ -468,10 +455,10 @@ void main() {
     final int replacesBefore = mount.observer.replaceCount;
     final int removesBefore = mount.observer.removeCount;
 
-    mount.reader.complete(_validLink(_linkCode));
+    mount.reader.complete(_validLink(_linkId));
     await _pumpAfterLink(tester);
 
-    expect(_fieldText(tester, _codeKey, skipOffstage: false), _linkCode);
+    expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
     expect(_codeFieldError(tester, skipOffstage: false), isNull);
     _expectNavigation(
       observer: mount.observer,
@@ -504,10 +491,10 @@ void main() {
     final int replacesBefore = mount.observer.replaceCount;
     final int removesBefore = mount.observer.removeCount;
 
-    mount.opener.add(_validLink(_linkCode));
+    mount.opener.add(_validLink(_linkId));
     await _pumpAfterLink(tester);
 
-    expect(_fieldText(tester, _codeKey, skipOffstage: false), _linkCode);
+    expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
     expect(_codeFieldError(tester, skipOffstage: false), isNull);
     _expectNavigation(
       observer: mount.observer,
@@ -525,7 +512,8 @@ void main() {
   });
 
   testWidgets(
-    'known player, seat record for the link code: resume, no join_room',
+    'known player, seat record for another room than the link: join by link, '
+    'no resume',
     (tester) async {
       _seedKnownPlayer(seatCode: _linkCode);
       final _Mount mount = _prepare(tester);
@@ -537,10 +525,10 @@ void main() {
       final int replacesBefore = mount.observer.replaceCount;
       final int removesBefore = mount.observer.removeCount;
 
-      mount.reader.complete(_validLink(_linkCode));
+      mount.reader.complete(_validLink(_linkId));
       await _pumpAfterLink(tester);
 
-      expect(_fieldText(tester, _codeKey, skipOffstage: false), _linkCode);
+      expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
       _expectNavigation(
         observer: mount.observer,
         pushesBefore: pushesBefore,
@@ -548,14 +536,16 @@ void main() {
         replacesBefore: replacesBefore,
         removesBefore: removesBefore,
         pushDelta: 1,
-        reason: 'known player, seat record for the link code',
+        reason: 'known player, seat record beside a link id',
       );
       _expectOneController(mount.factory);
       final LobbyScreen lobby = _lobby(tester);
-      expect(lobby.action, LobbyAction.resume);
-      expect(lobby.resume, _seatRecord(_linkCode));
+      expect(lobby.action, LobbyAction.join);
+      expect(lobby.resume, isNull);
       expect(find.byKey(_connectingKey), findsOneWidget);
-      _expectResumeFrame(mount.factory.transports.single, code: _linkCode);
+      // A link id names no code, so a stored seat cannot be matched to it:
+      // one join_room by link, never a resume.
+      _expectJoinFrame(mount.factory.transports.single);
       await _disposeControllers(tester, mount.factory);
     },
   );
@@ -573,10 +563,10 @@ void main() {
       final int replacesBefore = mount.observer.replaceCount;
       final int removesBefore = mount.observer.removeCount;
 
-      mount.reader.complete(_validLink(_linkCode));
+      mount.reader.complete(_validLink(_linkId));
       await _pumpAfterLink(tester);
 
-      expect(_fieldText(tester, _codeKey, skipOffstage: false), _linkCode);
+      expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
       _expectNavigation(
         observer: mount.observer,
         pushesBefore: pushesBefore,
@@ -594,7 +584,8 @@ void main() {
   );
 
   testWidgets(
-    'first-time player: valid link fills the code and pushes nothing',
+    'first-time player: valid link id pushes once and joins with the default '
+    'name, filling no field',
     (tester) async {
       final _Mount mount = _prepare(tester);
       await _pumpHome(tester, mount);
@@ -607,22 +598,31 @@ void main() {
       final int replacesBefore = mount.observer.replaceCount;
       final int removesBefore = mount.observer.removeCount;
 
-      mount.reader.complete(_validLink(_linkCode));
-      await tester.pump();
+      mount.reader.complete(_validLink(_linkId));
+      await _pumpAfterLink(tester);
 
-      expect(_fieldText(tester, _codeKey), _linkCode);
-      expect(_codeFieldError(tester), isNull);
+      expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
+      expect(_codeFieldError(tester, skipOffstage: false), isNull);
       _expectNavigation(
         observer: mount.observer,
         pushesBefore: pushesBefore,
         popsBefore: popsBefore,
         replacesBefore: replacesBefore,
         removesBefore: removesBefore,
-        pushDelta: 0,
-        reason: 'first-time player, valid cold link',
+        pushDelta: 1,
+        reason: 'first-time player, valid cold link id',
       );
-      expect(find.byType(LobbyScreen), findsNothing);
-      expect(mount.factory.controllers, isEmpty);
+      _expectOneController(mount.factory);
+      final AppLocalizations loc = AppLocalizations.of(
+        tester.element(find.byType(HomeScreen, skipOffstage: false)),
+      );
+      expect(
+        _dataOf(mount.factory.transports.single.sentRaw.single)['name'],
+        loc.homeDefaultPlayerName,
+        reason: 'a first-time player joins under the default name',
+      );
+      expect(_lobby(tester).action, LobbyAction.join);
+      await _disposeControllers(tester, mount.factory);
     },
   );
 
@@ -649,10 +649,10 @@ void main() {
       final int replacesBefore = mount.observer.replaceCount;
       final int removesBefore = mount.observer.removeCount;
 
-      mount.opener.add(_validLink(_linkCode));
+      mount.opener.add(_validLink(_linkId));
       await tester.pump();
 
-      expect(_fieldText(tester, _codeKey, skipOffstage: false), _linkCode);
+      expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
       expect(find.byKey(_aboveHomeKey), findsOneWidget);
       _expectNavigation(
         observer: mount.observer,
@@ -672,10 +672,7 @@ void main() {
     'known player, link before memory has loaded: one push after the load',
     (tester) async {
       _seedKnownPlayer();
-      final _Mount mount = _prepare(
-        tester,
-        immediateLink: _validLink(_linkCode),
-      );
+      final _Mount mount = _prepare(tester, immediateLink: _validLink(_linkId));
       mount.observer.readNameOnAbovePush = () =>
           _optionalFieldText(tester, _nameKey);
 
@@ -701,9 +698,9 @@ void main() {
         );
         expect(
           _optionalFieldText(tester, _codeKey),
-          _linkCode,
+          isEmpty,
           reason:
-              'the link must already be applied to the code field while '
+              'a link id fills no code field while '
               'the push is still waiting on the load',
         );
       }
@@ -735,7 +732,7 @@ void main() {
       expect(mount.observer.popCount, 0);
       expect(mount.observer.replaceCount, 0);
       expect(mount.observer.removeCount, 0);
-      expect(_fieldText(tester, _codeKey, skipOffstage: false), _linkCode);
+      expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
       _expectOneController(mount.factory);
       _expectConnectingJoin(tester);
       _expectJoinFrame(mount.factory.transports.single);
@@ -759,12 +756,12 @@ void main() {
       // Both sources in one turn, with no pump between them. The stream
       // listener runs inside add. The cold callback runs as the microtask
       // of this same turn, before the next frame.
-      final Uri link = _validLink(_linkCode);
+      final Uri link = _validLink(_linkId);
       mount.reader.complete(link);
       mount.opener.add(link);
       await _pumpAfterLink(tester);
 
-      expect(_fieldText(tester, _codeKey, skipOffstage: false), _linkCode);
+      expect(_fieldText(tester, _codeKey, skipOffstage: false), isEmpty);
       _expectNavigation(
         observer: mount.observer,
         pushesBefore: pushesBefore,
