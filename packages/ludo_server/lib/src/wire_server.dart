@@ -21,12 +21,12 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'client_build.dart';
 import 'clock.dart';
 import 'connection.dart';
+import 'link_id.dart';
 import 'link_pages.dart';
 import 'privacy_page.dart';
 import 'rate_limit.dart';
 import 'registry.dart';
 import 'room.dart';
-import 'room_code.dart';
 import 'snapshot.dart';
 import 'verify_page.dart';
 import 'verify_scripts.dart';
@@ -82,9 +82,8 @@ const String _privacyPathWithSlash = '/privacy/';
 const String _assetLinksPath = '/.well-known/assetlinks.json';
 
 /// Matches `/r/<anything with no further slash>`, the shared-room landing
-/// page. The captured group is handed to [buildRoomLandingPageHtml] only
-/// after being upper-cased and checked with `isWellFormedRoomCode`; this
-/// pattern alone says nothing about whether the code is well-formed.
+/// page. The captured group is looked up as a link id by [_handleRoomLink];
+/// this pattern alone says nothing about whether it names a live room.
 final RegExp _roomLinkPathPattern = RegExp(r'^/r/([^/]+)$');
 
 /// Matches `/v/<anything>`, deliberately including further slashes: unlike
@@ -180,7 +179,11 @@ class WireServer {
           // in the running process's own environment, read once here and
           // never again.
           appSigningSha256 ?? Platform.environment['LUDO_APP_SIGNING_SHA256'],
-        );
+        ) {
+    // Section 31 item 12 (b): whoever calls reap(), the knockers of a reaped
+    // room are told at once.
+    registry.onKnocksReaped = failReapedKnocks;
+  }
 
   final RoomRegistry registry;
   final RateLimiter rateLimiter;
@@ -326,6 +329,7 @@ class WireServer {
   /// cannot stop the publish for every other room this same sweep decided
   /// on.
   void _runTurnExpiry() {
+    _runKnockExpiry();
     _runAbsentRetirement();
     final List<ExpiredTurn> expired;
     try {
@@ -366,6 +370,42 @@ class WireServer {
         // ignore: avoid_print
         print('turn-expiry publish failed room=${one.code} '
             'seat=${one.seat} error=$error\n$stack');
+      }
+    }
+  }
+
+  /// `docs/PROTOCOL.md` section 31 item 4: closes every knock that has gone 60
+  /// seconds unanswered on the injected clock, `timeout`, and publishes what
+  /// that sends. Guarded like the other sweeps: a throw is logged and does not
+  /// stop the timer.
+  void _runKnockExpiry() {
+    try {
+      failReapedKnocks(registry.drainReapedKnocks());
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('knock reaped-notice failed error=$error\n$stack');
+    }
+    final List<KnockEvent> events;
+    try {
+      events = registry.expireKnocks();
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('knock-expiry sweep failed error=$error\n$stack');
+      return;
+    }
+    // Section 31 item 12 (c): one event failing to publish must not drop the
+    // ones after it.
+    for (final KnockEvent event in events) {
+      try {
+        publishKnockEvents(_hub, <KnockEvent>[event]);
+        // ignore: avoid_print
+        print('room=${event.room.code} type=- id=- seat=- '
+            'outcome=knock_closed knock=${event.knock.id} '
+            'reason=${(event as KnockClosed).outcome} seq=${event.seq}');
+      } catch (error, stack) {
+        // ignore: avoid_print
+        print('knock-expiry publish failed room=${event.room.code} '
+            'knock=${event.knock.id} error=$error\n$stack');
       }
     }
   }
@@ -413,6 +453,12 @@ class WireServer {
 
   void _runHousekeeping() {
     final int reaped = registry.reap();
+    try {
+      failReapedKnocks(registry.drainReapedKnocks());
+    } catch (error, stack) {
+      // ignore: avoid_print
+      print('knock reaped-notice failed error=$error\n$stack');
+    }
     if (reaped > 0) {
       // ignore: avoid_print
       print('housekeeping reaped=$reaped');
@@ -624,21 +670,17 @@ class WireServer {
     );
   }
 
-  /// `GET /r/<CODE>` and `HEAD` of the same, never reaching the WebSocket
-  /// upgrade path either. [rawCode] is whatever text matched the path
-  /// pattern in [start]'s handler, upper-cased and checked against
-  /// `isWellFormedRoomCode` here -- the only validation this route performs.
-  /// It deliberately never asks [registry] whether a room with this code
-  /// exists: a valid-shape code answers `200` whether or not the room is
-  /// real, because the code is the only thing protecting a private room and
-  /// a route that answered differently for a live code than a dead one
-  /// would let brute-forcing codes work.
+  /// `GET /r/<id>` and `HEAD` of the same, never reaching the WebSocket
+  /// upgrade path either (`docs/PROTOCOL.md` section 31 item 9). [rawCode] is
+  /// whatever text matched the path pattern in [start]'s handler; it is a
+  /// link id, matched exactly and never upper-cased. A live room's link id
+  /// serves the invite page, which carries the link id and never the room
+  /// code. Everything else answers the same `404` page. A six-character room
+  /// code is no longer a room link: it is just an unknown id here.
   ///
-  /// C-457: `room.js`, the page's one script, is matched before the shape
-  /// check so it never reaches [isWellFormedRoomCode]. The page's language
-  /// is resolved once here by [resolveVerifyLanguage], from the query and
-  /// `Accept-Language`, and handed to the builder; the body depends on that
-  /// header, hence the `vary` header, and still never on the registry.
+  /// `room.js`, the page's one script, is matched first. The page's language
+  /// is resolved once by [resolveVerifyLanguage], from the query and
+  /// `Accept-Language`; the body depends on that header, hence `vary`.
   shelf.Response _handleRoomLink(shelf.Request request, String rawCode) {
     switch (request.method) {
       case 'GET':
@@ -654,13 +696,16 @@ class WireServer {
             },
           );
         }
-        final String code = rawCode.toUpperCase();
-        if (!isWellFormedRoomCode(code)) {
-          // C-615: a cut or mistyped invite link gets a page that points at
-          // the next step. The code is never echoed into it.
+        // Section 31 item 9: the id is a link id, matched exactly. A live one
+        // gets the invite page; anything else -- a finished or reaped room, a
+        // former code, garbage -- gets the same not-found page, never a room.
+        final Room? room = registry.lookupByLink(rawCode);
+        if (room == null) {
+          // Section 31 item 11 (c): a link-shaped id that is not live gets what
+          // a well-formed unknown code gets, a 200; any other shape, a 404.
           return _htmlPage(
             request,
-            status: 404,
+            status: isWellFormedLinkId(rawCode) ? 200 : 404,
             cacheControl: 'no-store',
             build: (String language) =>
                 buildLinkNotFoundHtml(cutInvite: true, language: language),
@@ -671,7 +716,9 @@ class WireServer {
           acceptLanguageHeader: request.headers['accept-language'],
         );
         return shelf.Response.ok(
-          isHead ? '' : buildRoomLandingPageHtml(code, language: language),
+          isHead
+              ? ''
+              : buildRoomLandingPageHtml(room.linkId, language: language),
           headers: const <String, String>{
             'content-type': 'text/html; charset=utf-8',
             'vary': 'accept-language',

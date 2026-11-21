@@ -209,8 +209,16 @@ Future<void> _completeSuccessfulJoin(
         'check treats the join as successful; sent '
         '${transport.sentRaw.map(_typeOf).toList()}',
   );
-  expect(
+  final Map<String, Object?> joinBody = Map<String, Object?>.of(
     _dataOf(joinMessages.single),
+  );
+  expect(
+    joinBody.remove('install'),
+    isA<String>(),
+    reason: 'join_room carries the install id; sent $joinBody',
+  );
+  expect(
+    joinBody,
     <String, Object?>{'code': code, 'name': name},
     reason:
         'the typed code and name must reach the wire before the join '

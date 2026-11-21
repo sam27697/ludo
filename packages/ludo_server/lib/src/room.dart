@@ -95,7 +95,20 @@ class Seat {
     required this.connected,
     this.clientSeed,
     this.seedOrigin,
+    this.via = 'code',
+    this.barKey,
   });
+
+  /// `docs/PROTOCOL.md` section 31 item 1: how this seat was taken, `"host"`
+  /// for the creating seat, `"link"` or `"code"` for a join, `"approved"` for
+  /// a seat a knock was accepted for. Fixed at seating; kept across a resume,
+  /// a reseat and a rematch.
+  final String via;
+
+  /// Section 31 item 7: the SHA-256 (hex) of the `install` this seat's socket
+  /// sent, or of its IP when it sent none. Room state only; never logged,
+  /// never on the wire. Null for a seat that has no such identity (the host).
+  final String? barKey;
 
   /// 0..3, the engine seat index.
   final int seat;
@@ -152,6 +165,34 @@ class Seat {
   String toString() => 'Seat(seat: $seat, name: $name, connected: $connected)';
 }
 
+/// One open knock, `docs/PROTOCOL.md` section 31 item 3: a typed-code join
+/// that is waiting for the host while guest approval is on.
+class Knock {
+  Knock({
+    required this.id,
+    required this.name,
+    required this.createdAt,
+    required this.barKey,
+    required this.requestId,
+    this.owner,
+  });
+
+  final String id;
+  final String name;
+  final DateTime createdAt;
+
+  /// SHA-256 hex of the knocker's `install`, or of its IP when it sent none.
+  final String barKey;
+
+  /// The `id` of the `join_room` that made this knock, for the answer a close
+  /// owes the knocker.
+  final String requestId;
+
+  /// Whatever the wire layer attached to identify the knocker's socket. The
+  /// registry never looks inside it.
+  final Object? owner;
+}
+
 /// A room, from creation to reap. `state`, `hostSeat`, `seats` and `game`
 /// are mutated in place by the registry (and, from order 008 on, by the
 /// turn loop) rather than replaced, because a `Room` is handed out to
@@ -167,6 +208,7 @@ class Room {
     required this.seats,
     required this.game,
     required this.chain,
+    this.linkId = '',
     this.chainIndex = 0,
     this.gameId,
     this.clientSeeds,
@@ -180,7 +222,25 @@ class Room {
         turnSegmentMs = rules.turnSeconds * 1000;
 
   final String code;
+
+  /// `docs/PROTOCOL.md` section 31 item 1: the id room links carry. Set once
+  /// at creation, never derived from [code].
+  final String linkId;
+
   final DateTime createdAt;
+
+  /// Section 31 item 5: whether a typed-code join knocks instead of seating.
+  /// False at creation, kept across a rematch.
+  bool guestApproval = false;
+
+  /// Section 31 item 3: the open knocks, in arrival order.
+  final List<Knock> knocks = <Knock>[];
+
+  /// Section 31 item 7: bars by SHA-256 hex, in this room's memory only. A
+  /// kicked seat bars `link` and `code` joins; a refused or timed-out knock
+  /// bars the typed-code path.
+  final Set<String> kickBars = <String>{};
+  final Set<String> knockBars = <String>{};
 
   /// `docs/PROTOCOL.md` section 28 rule 1: the ruleset this room was created
   /// under, [ruleset202610], [ruleset202611] or [ruleset202612]. Taken from

@@ -73,6 +73,9 @@ const String _kCode = 'K7M2QP';
 const int _kSeat = 2;
 const String _kToken = 'tok-relaunch-seed-001';
 const String _otherCode = 'ZY98XW';
+
+/// A link id (shape [0-9a-z]{4,10}-[0-9a-z]{6}) that names no code.
+const String _linkId = 't6k2q9a-x7m3pd';
 const String _knownName = 'Nour';
 
 const Duration _kFresh = Duration(minutes: 5);
@@ -319,7 +322,7 @@ class _LinkRig {
   Stream<Uri> open() => stream.stream;
 }
 
-Uri _linkTo(String code) => Uri.parse('https://ludo.provefair.app/r/$code');
+Uri _linkTo(String id) => Uri.parse('https://ludo.provefair.app/r/$id');
 
 Widget _app(
   RoomControllerFactory factory, {
@@ -404,11 +407,19 @@ Future<void> _expectOtherLinkHandled(
     hasLength(1),
     reason: '$scenario: the link joins once; sent ${factory.allTypes}',
   );
-  expect(
+  final Map<String, Object?> body = Map<String, Object?>.of(
     _dataOf(joins.single),
-    <String, Object?>{'code': _otherCode, 'name': _knownName},
+  );
+  expect(
+    body.remove('install'),
+    isA<String>(),
+    reason: '$scenario: join_room carries an install id; sent $body',
+  );
+  expect(
+    body,
+    <String, Object?>{'link': _linkId, 'name': _knownName},
     reason:
-        '$scenario: join_room carries the link code and the stored name; '
+        '$scenario: join_room carries the link id and the stored name; '
         'sent ${_dataOf(joins.single)}',
   );
   expect(
@@ -914,7 +925,7 @@ void main() {
       _seedFresh(known: true);
       final _Factory factory = _Factory();
       final _Observer observer = _Observer();
-      final _LinkRig links = _LinkRig(cold: _linkTo(_otherCode));
+      final _LinkRig links = _LinkRig(cold: _linkTo(_linkId));
       addTearDown(links.stream.close);
       await _mount(
         tester,
@@ -924,7 +935,7 @@ void main() {
       await _expectOtherLinkHandled(
         factory,
         observer,
-        scenario: 'R6 fresh record for $_kCode, cold link for $_otherCode',
+        scenario: 'R6 fresh record for $_kCode, cold link id $_linkId',
       );
 
       await _finish(tester, factory.disposeAll);
@@ -949,7 +960,7 @@ void main() {
       );
       const String scenario =
           'R6b fresh record for $_kCode, reader answers a link for '
-          '$_otherCode at +200 ms';
+          '$_linkId at +200 ms';
 
       await tester.pump(const Duration(milliseconds: 200));
       expect(
@@ -959,7 +970,7 @@ void main() {
             '$scenario: while the reader is pending inside the 500 ms window '
             'nothing may be sent; sent ${factory.allTypes} at +200 ms',
       );
-      links.late.complete(_linkTo(_otherCode));
+      links.late.complete(_linkTo(_linkId));
       await _pumpBounded(tester);
 
       await _expectOtherLinkHandled(factory, observer, scenario: scenario);
@@ -1390,13 +1401,13 @@ void main() {
     final _Factory factory = _Factory();
     final _LinkRig links = warm
         ? (_LinkRig()..deferred = true)
-        : _LinkRig(cold: _linkTo(_kCode));
+        : _LinkRig(cold: _linkTo(_linkId));
     addTearDown(links.stream.close);
     await _mount(tester, _app(factory.call, locale: locale, links: links));
     if (warm) {
       links.late.complete(null);
       await tester.pump();
-      links.stream.add(_linkTo(_kCode));
+      links.stream.add(_linkTo(_linkId));
       await _pumpBounded(tester, frames: 4);
     }
 

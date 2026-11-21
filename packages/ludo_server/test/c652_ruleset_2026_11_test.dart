@@ -2477,12 +2477,12 @@ void main() {
     test('K2: kick errors, in the stated order', () async {
       await _withFixture('K2 kick error order', (_Fixture fx) async {
         final _Table t = await _openTable(fx, players: 3);
-        // LOBBY: NOT_HOST before WRONG_PHASE before BAD_FIELD.
+        // LOBBY (section 31 item 11 e3): NOT_HOST, then BAD_FIELD.
         fx.send(t.c(1), 'kick', <String, Object?>{'seat': 'x'});
         _expectError(fx, await _flush(fx, t.c(1)), 'NOT_HOST',
             'a non-host kick in LOBBY with a bad payload');
         fx.send(t.c(0), 'kick', <String, Object?>{'seat': 'x'});
-        _expectError(fx, await _flush(fx, t.c(0)), 'WRONG_PHASE',
+        _expectError(fx, await _flush(fx, t.c(0)), 'BAD_FIELD',
             'a host kick in LOBBY with a bad payload');
         await _startGame(t);
         // PLAYING.

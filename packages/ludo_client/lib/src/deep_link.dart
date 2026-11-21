@@ -67,6 +67,25 @@ String? roomCodeFromUri(Uri uri) {
   return isValidRoomCode(normalized) ? normalized : null;
 }
 
+/// docs/PROTOCOL.md section 31 item 1 and ruling (c): the shape of a room
+/// link id, `[0-9a-z]{4,10}-[0-9a-z]{6}`.
+final RegExp _linkIdShape = RegExp(r'^[0-9a-z]{4,10}-[0-9a-z]{6}$');
+
+/// Extracts a room link id from an incoming link, or `null` when the link is
+/// not one of ours (see [isAppRoomLinkUri]) or its last segment is not shaped
+/// like a link id. The segment is folded to lower case first; a trailing empty
+/// segment is accepted as for [isAppRoomLinkUri]. A six-character room code
+/// is not a link id and gives `null`. Untrusted input: the shape check is the
+/// whole of what is trusted. The query string and the fragment are never
+/// inspected.
+String? roomLinkIdFromUri(Uri uri) {
+  if (!isAppRoomLinkUri(uri)) {
+    return null;
+  }
+  final String folded = uri.pathSegments[1].toLowerCase();
+  return _linkIdShape.hasMatch(folded) ? folded : null;
+}
+
 /// Reads whatever link launched the app (the cold-start path), or `null` if
 /// it was not launched by a link at all.
 typedef InitialLinkReader = Future<Uri?> Function();

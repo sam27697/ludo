@@ -1055,35 +1055,40 @@ void main() {
   });
 
   test(
-      'GET /r/<CODE>, item 1: a code of valid shape answers 200 with '
-      'content-type text/html; charset=utf-8 and the code in the body',
-      () async {
+      'GET /r/<CODE>, item 1: the link id of a live room answers 200 with '
+      'content-type text/html; charset=utf-8 and the id in the body', () async {
     final ServerHarness harness = ServerHarness.build();
     harnesses.add(harness);
     await harness.start();
 
+    // Section 31 item 9: /r/<id> serves the invite page only for a live
+    // room's link id, so the room is created first and its id used.
+    final WireTestLobby liveLobby =
+        await buildWireTestLobby(harness.wsUri, wireClients);
+    final String liveId = liveLobby.hostRoom['link_id']! as String;
+
     final HttpClientResponse response =
-        await _send(client, _httpUri(harness, '/r/$validSampleCode'));
+        await _send(client, _httpUri(harness, '/r/$liveId'));
     final String body = await _bodyOf(response);
 
     expect(
       response.statusCode,
       200,
-      reason: 'GET /r/$validSampleCode (valid shape) must answer 200, got '
+      reason: 'GET /r/$liveId (valid shape) must answer 200, got '
           '${response.statusCode} with body "$body"',
     );
     expect(
       response.headers.value('content-type'),
       'text/html; charset=utf-8',
-      reason: 'content-type on GET /r/$validSampleCode must be exactly '
+      reason: 'content-type on GET /r/$liveId must be exactly '
           '"text/html; charset=utf-8", got '
           '"${response.headers.value('content-type')}"',
     );
     expect(
-      body.contains(validSampleCode),
+      body.contains(liveId),
       isTrue,
-      reason: 'expected the code "$validSampleCode" to appear in the body '
-          'of GET /r/$validSampleCode; full body: $body',
+      reason: 'expected the code "$liveId" to appear in the body '
+          'of GET /r/$liveId; full body: $body',
     );
   });
 
@@ -1206,19 +1211,25 @@ void main() {
   });
 
   test(
-      'GET /r/<CODE>, item 3: lower-case input of an otherwise valid code '
-      'is upper-cased and accepted (200)', () async {
+      'GET /r/<CODE>, item 3: the lower-case link id of a live room is '
+      'accepted (200) verbatim, its upper-case form is not a room', () async {
     final ServerHarness harness = ServerHarness.build();
     harnesses.add(harness);
     await harness.start();
 
-    final String lowered = validSampleCode.toLowerCase();
+    // Section 31 item 9: /r/<id> serves the invite page only for a live
+    // room's link id, so the room is created first and its id used.
+    final WireTestLobby liveLobby =
+        await buildWireTestLobby(harness.wsUri, wireClients);
+    final String liveId = liveLobby.hostRoom['link_id']! as String;
+
+    // Section 31 item 9: a link id is lower case and matched exactly, so the
+    // old upper-casing of the path is gone. The id itself is what is served.
+    final String lowered = liveId;
     expect(
       lowered,
-      isNot(validSampleCode),
-      reason: 'test setup error: lower-casing "$validSampleCode" produced '
-          'no change, so this case is not exercising case-normalization '
-          'at all',
+      liveId.toLowerCase(),
+      reason: 'a link id is base 36 lower case: "$liveId"',
     );
 
     final HttpClientResponse response =
@@ -1229,52 +1240,51 @@ void main() {
       response.statusCode,
       200,
       reason: 'GET /r/$lowered (lower-case of the valid code '
-          '"$validSampleCode") must answer 200, upper-cased and accepted '
+          '"$liveId") must answer 200, upper-cased and accepted '
           '-- a person typing a code off a phone screen types lower-case '
           'letters; got ${response.statusCode} with body "$body"',
     );
     expect(
-      body.contains(validSampleCode),
+      body.contains(liveId),
       isTrue,
-      reason: 'expected the upper-cased code "$validSampleCode" to appear '
+      reason: 'expected the upper-cased code "$liveId" to appear '
           'in the body of GET /r/$lowered; full body: $body',
+    );
+
+    final HttpClientResponse upperResponse =
+        await _send(client, _httpUri(harness, '/r/${liveId.toUpperCase()}'));
+    final String upperBody = await _bodyOf(upperResponse);
+    expect(
+      upperBody.contains('id="open-app"'),
+      isFalse,
+      reason: 'GET /r/${liveId.toUpperCase()} (the live id upper-cased) must '
+          'not serve the room; got ${upperResponse.statusCode} with body '
+          '"$upperBody"',
     );
   });
 
   test(
-      'GET /r/<CODE>, item 4 (the security assertion): a valid-shape code '
-      'for a live room and a valid-shape code for a room that does not '
-      'exist answer byte-for-byte identically apart from the code itself',
-      () async {
+      'GET /r/<CODE>, item 4 (the security assertion): a live link id and a '
+      'link-shaped id that does not exist answer with the same status and '
+      'content-type, the dead one is never the room, and two dead ids '
+      'answer byte-for-byte identically apart from the id itself', () async {
     final ServerHarness harness = ServerHarness.build();
     harnesses.add(harness);
     await harness.start();
 
     final WireTestLobby lobby =
         await buildWireTestLobby(harness.wsUri, wireClients);
-    final String liveCode = lobby.code;
-
-    // A valid-shape code that is, with overwhelming probability, not the
-    // one just minted (32^6 possible codes; a real collision here would be
-    // a defect in this test, not in the route, and would be visible
-    // immediately as the two "different" codes being equal below).
-    final String deadCode = liveCode == validSampleCode
-        ? roomCodeAlphabet.substring(0, roomCodeLength - 1) +
-            roomCodeAlphabet[roomCodeAlphabet.length - 1]
-        : validSampleCode;
+    // Section 31 item 9: the live room is named by its link id; its code is
+    // no longer a route. Two never-issued, link-shaped ids stand for "dead".
+    final String liveCode = lobby.hostRoom['link_id']! as String;
+    final String deadCode = 't5k2q9a-x7m3pd';
+    final String otherDeadCode = 'u8m4r2b-z1x9qc';
     expect(
       deadCode,
       isNot(liveCode),
-      reason: 'test setup error: the constructed "dead" code '
-          '"$deadCode" collided with the live room\'s own code '
-          '"$liveCode"; this case is not comparing two different codes',
-    );
-    expect(
-      isWellFormedRoomCode(deadCode),
-      isTrue,
-      reason: 'test setup error: the constructed "dead" code "$deadCode" '
-          'must itself be well-formed shape or this case is not '
-          'comparing two valid-shape codes',
+      reason: 'test setup error: the constructed "dead" id '
+          '"$deadCode" collided with the live room\'s own link id '
+          '"$liveCode"; this case is not comparing two different ids',
     );
 
     final HttpClientResponse liveResponse =
@@ -1307,21 +1317,33 @@ void main() {
           'the body',
     );
 
-    final String liveNormalized = liveBody.replaceAll(liveCode, '<<CODE>>');
-    final String deadNormalized = deadBody.replaceAll(deadCode, '<<CODE>>');
     expect(
-      deadNormalized,
-      liveNormalized,
-      reason: 'SECURITY: GET /r/$liveCode (live room) and GET /r/$deadCode '
-          '(no such room) must answer byte-for-byte identically apart '
-          'from the code substring itself, per order 077\'s explicit '
-          'security assertion; after replacing each response\'s own code '
-          'with a placeholder the two bodies still differ. This is the '
-          'most important test in this order: a mismatch here means room '
-          'existence can be inferred without ever opening a WebSocket, '
-          'defeating the unguessable-codes protection entirely.\n'
-          'live (code elided): $liveNormalized\n'
-          'dead (code elided): $deadNormalized',
+      deadBody.contains('id="open-app"'),
+      isFalse,
+      reason: 'SECURITY: GET /r/$deadCode (no such room) served the invite '
+          'page; dead body: "$deadBody"',
+    );
+    expect(
+      liveBody.contains('id="open-app"'),
+      isTrue,
+      reason: 'GET /r/$liveCode (live room) must serve the invite page; '
+          'live body: "$liveBody"',
+    );
+    final HttpClientResponse otherDeadResponse =
+        await _send(client, _httpUri(harness, '/r/$otherDeadCode'));
+    final String otherDeadBody = await _bodyOf(otherDeadResponse);
+    expect(
+      otherDeadResponse.statusCode,
+      deadResponse.statusCode,
+      reason: 'SECURITY: two dead ids must answer the same status',
+    );
+    expect(
+      otherDeadBody.replaceAll(otherDeadCode, '<<CODE>>'),
+      deadBody.replaceAll(deadCode, '<<CODE>>'),
+      reason: 'SECURITY: GET /r/$deadCode and GET /r/$otherDeadCode (no '
+          'such rooms) must answer byte-for-byte identically apart from the '
+          'id itself\n'
+          'dead: $deadBody\nother dead: $otherDeadBody',
     );
   });
 
@@ -1333,6 +1355,12 @@ void main() {
     final ServerHarness harness = ServerHarness.build();
     harnesses.add(harness);
     await harness.start();
+
+    // Section 31 item 9: /r/<id> serves the invite page only for a live
+    // room's link id, so the room is created first and its id used.
+    final WireTestLobby liveLobby =
+        await buildWireTestLobby(harness.wsUri, wireClients);
+    final String liveId = liveLobby.hostRoom['link_id']! as String;
 
     final RegExp arabicScript = RegExp(r'[؀-ۿ]');
     final RegExp playLink = RegExp(
@@ -1353,20 +1381,20 @@ void main() {
     }
 
     final HttpClientResponse englishResponse =
-        await _send(client, _httpUri(harness, '/r/$validSampleCode'));
+        await _send(client, _httpUri(harness, '/r/$liveId'));
     final String english = await _bodyOf(englishResponse);
 
     expect(
       english.contains('<html lang="en">'),
       isTrue,
-      reason: 'GET /r/$validSampleCode with no Accept-Language header and '
+      reason: 'GET /r/$liveId with no Accept-Language header and '
           'no ?lang= must render the English page, which opens with '
           '<html lang="en"> (C-457 D3); full body: $english',
     );
     expect(
       english.contains('dir="rtl"'),
       isFalse,
-      reason: 'the English page for GET /r/$validSampleCode must not be '
+      reason: 'the English page for GET /r/$liveId must not be '
           'right-to-left; full body: $english',
     );
     expect(
@@ -1387,19 +1415,19 @@ void main() {
       reason: 'expected an <a href="..."> pointing at a play.google.com URL '
           'that names app.fayad.ludo (the Play listing for this app, '
           '`packages/ludo_client/android/app/build.gradle.kts:46`) in the '
-          'English body of GET /r/$validSampleCode; full body: $english',
+          'English body of GET /r/$liveId; full body: $english',
     );
 
     final HttpClientResponse arabicResponse = await _send(
       client,
-      _httpUri(harness, '/r/$validSampleCode').replace(query: 'lang=ar'),
+      _httpUri(harness, '/r/$liveId').replace(query: 'lang=ar'),
     );
     final String arabic = await _bodyOf(arabicResponse);
 
     expect(
       arabic.contains('<html lang="ar" dir="rtl">'),
       isTrue,
-      reason: 'GET /r/$validSampleCode?lang=ar must render the Arabic page, '
+      reason: 'GET /r/$liveId?lang=ar must render the Arabic page, '
           'which opens with <html lang="ar" dir="rtl"> (C-457 D3); full '
           'body: $arabic',
     );
@@ -1426,7 +1454,7 @@ void main() {
       isTrue,
       reason: 'expected an <a href="..."> pointing at a play.google.com URL '
           'that names app.fayad.ludo in the Arabic body of GET '
-          '/r/$validSampleCode?lang=ar; full body: $arabic',
+          '/r/$liveId?lang=ar; full body: $arabic',
     );
   });
 
@@ -1437,15 +1465,21 @@ void main() {
     harnesses.add(harness);
     await harness.start();
 
+    // Section 31 item 9: /r/<id> serves the invite page only for a live
+    // room's link id, so the room is created first and its id used.
+    final WireTestLobby liveLobby =
+        await buildWireTestLobby(harness.wsUri, wireClients);
+    final String liveId = liveLobby.hostRoom['link_id']! as String;
+
     final HttpClientResponse response =
-        await _send(client, _httpUri(harness, '/r/$validSampleCode'));
+        await _send(client, _httpUri(harness, '/r/$liveId'));
     final String body = await _bodyOf(response);
 
     expect(
       body.contains('—'),
       isFalse,
       reason: 'found an em-dash (U+2014) in the body of GET '
-          '/r/$validSampleCode; this page is public and must not carry '
+          '/r/$liveId; this page is public and must not carry '
           'that tell. Full body: $body',
     );
 
@@ -1454,13 +1488,13 @@ void main() {
       lower.contains('note that'),
       isFalse,
       reason: 'found the banned phrase "note that" (any casing) in the '
-          'body of GET /r/$validSampleCode; full body: $body',
+          'body of GET /r/$liveId; full body: $body',
     );
     expect(
       lower.contains('this ensures'),
       isFalse,
       reason: 'found the banned phrase "this ensures" (any casing) in the '
-          'body of GET /r/$validSampleCode; full body: $body',
+          'body of GET /r/$liveId; full body: $body',
     );
   });
 }
