@@ -1,14 +1,6 @@
-// C-682t: the approval switch in the in-game menu (order 682 item 2: "the
-// switch also appears in the in-game menu for the host (same widget, same
-// label)").
-//
-// The order says only "wherever the in-game menu is built today". game_screen
-// has no widget called a menu on the base this was written against, so the
-// switch is looked for on the open game screen first and, if it is not there,
-// behind the first control the host can open from the header (the sound
-// toggle row is not it; the leave and chat buttons are not it). If no way to
-// reach `approval-switch` exists the test fails and says so: that is an
-// ambiguity to settle with the lib hand, not a reason to loosen the check.
+// C-682t, re-aimed by C-687t: the approval switch is NOT on the game screen
+// (order 687 removed the in-play switch that covered the turn status line;
+// order 682 item 2 had put it there).
 //
 // Replay: flutter test test/c682_game_menu_test.dart --plain-name '<name>'
 
@@ -159,7 +151,7 @@ Future<(RoomController, FakeTransport)> _mount(
 }
 
 void main() {
-  testWidgets('game.menu.host: the host reaches the approval switch', (
+  testWidgets('game.menu.host: the host has no approval switch in play', (
     tester,
   ) async {
     final (RoomController c, FakeTransport t) = await _mount(
@@ -168,27 +160,24 @@ void main() {
     );
     expect(
       find.byKey(const Key('approval-switch')),
-      findsOneWidget,
+      findsNothing,
       reason:
-          'expected approval-switch with the host on the game screen (the '
-          'order says the in-game menu carries the same widget). Not found '
-          'without opening anything; see the note at the head of this file. '
-          'scenario game.menu.host',
+          'expected no approval-switch on the game screen for the host in '
+          'PLAYING (order 687: it covered the turn status line; no knock can '
+          'happen once a game is playing). It was found. scenario '
+          'game.menu.host',
     );
     expect(
       find.text('Approve typed codes'),
-      findsOneWidget,
-      reason: 'expected the same label as the lobby. scenario game.menu.host',
-    );
-    await tester.tap(find.byKey(const Key('approval-switch')));
-    await tester.pump();
-    final List<String> sent = t.sentRaw.map(_typeOf).toList();
-    expect(
-      sent.where((String s) => s == 'set_guest_approval').length,
-      1,
+      findsNothing,
       reason:
-          'expected one set_guest_approval after one tap, sent $sent. '
-          'scenario game.menu.host',
+          'expected no switch label on the game screen. scenario '
+          'game.menu.host',
+    );
+    expect(
+      t.sentRaw.map(_typeOf).where((String s) => s == 'set_guest_approval'),
+      isEmpty,
+      reason: 'expected no set_guest_approval sent. scenario game.menu.host',
     );
     expect(c.room, isNotNull);
   });
