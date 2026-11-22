@@ -2155,3 +2155,17 @@ type a code shorter than six characters.
     server starts, a set dir without a salt refuses to start; no hash, IP or
     install in captured log output; the simulator's `--scenario all` passes
     locally.
+15. **Rulings of 2026-11-23 (master, from the pre-review).** (a) Distinct hosts are
+    counted by the host's IP, not by its `install`: each strike records the keyed
+    hash of the host's IP, and item 8's count is the number of distinct host IP
+    keys. A strike whose host IP equals the struck socket's IP is not recorded.
+    An install string is free to invent; six rooms from six places is not. (b) A
+    record keeps one strike per host IP key (the latest), at most 16 strikes; the
+    store keeps at most 100000 records and drops the oldest level-0 record first.
+    (c) The 365-day reset runs from the later of the last strike and the end of
+    the last ban (`ban_until`), never from the ban's start. (d) Folding touches
+    ASCII only: any other character stays as typed (and the lookup answers
+    `NO_SUCH_ROOM`). (e) Any failure to read, create or write in
+    `LUDO_STRIKE_DIR` at start exits 64 with one line naming the path; a salt
+    with whitespace is refused like a short one; the temporary file name is
+    unique per write.
