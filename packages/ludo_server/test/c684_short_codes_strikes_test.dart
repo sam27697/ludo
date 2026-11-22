@@ -1314,33 +1314,34 @@ void main() {
       await _climb(r, d, 1);
     });
 
-    _scenario('L2 six strikes from one host count once: no ban',
-        (_Rig r) async {
+    _scenario(
+        'L2 eight strikes from one host IP (a new install each time) count '
+        'once: no ban', (_Rig r) async {
       final _Dev d = r.dev('l2');
-      final String hostInstall = r.freshInstall('samehost');
+      final String hostIp = r.freshIp();
       for (int i = 0; i < 8; i++) {
-        final _Host h =
-            await r.host(install: hostInstall, approval: true, ip: r.freshIp());
-        _expectNoBan(await r.strikeReject(h, d), 'repeat strike ${i + 1}');
+        final _Host h = await r.host(approval: true, ip: hostIp);
+        _expectNoBan(await r.strikeReject(h, d),
+            'item 15a: repeat strike ${i + 1} from one host IP');
         await h.c.close();
       }
-      await _expectNotBanned(r, d, 'eight strikes from one host key count 1');
+      await _expectNotBanned(r, d, 'eight strikes from one host IP count 1');
     });
 
     _scenario(
         'L3 five distinct plus a repeat is still five; the next distinct '
         'host makes six', (_Rig r) async {
       final _Dev d = r.dev('l3');
-      final List<String> hostInstalls = <String>[
-        for (int i = 0; i < 5; i++) r.freshInstall('hh')
+      final List<String> hostIps = <String>[
+        for (int i = 0; i < 5; i++) r.freshIp()
       ];
-      for (final String inst in hostInstalls) {
-        final _Host h = await r.host(install: inst, approval: true);
+      for (final String ip in hostIps) {
+        final _Host h = await r.host(approval: true, ip: ip);
         _expectNoBan(await r.strikeReject(h, d), 'distinct strike');
         await h.c.close();
       }
       final _Host again = await r.host(
-          install: hostInstalls[0], approval: true, ip: r.freshIp());
+          approval: true, ip: hostIps[0], install: r.freshInstall('hh'));
       _expectNoBan(await r.strikeReject(again, d),
           'a 6th strike from a host already counted');
       await _expectNotBanned(r, d, '5 distinct hosts, 6 strikes');
@@ -1350,29 +1351,28 @@ void main() {
     });
 
     _scenario(
-        'L4 a host key is its install when create_room carried one, else '
-        'its IP', (_Rig r) async {
+        'L4 a host key is its IP whatever its install: four installs on one '
+        'IP are one key, install-less hosts count by IP too', (_Rig r) async {
       final _Dev d = r.dev('l4');
       final String sharedIp = r.freshIp();
-      // Four hosts with their own installs, all from ONE IP: 4 keys.
       for (int i = 0; i < 4; i++) {
         final _Host h = await r.host(approval: true, ip: sharedIp);
         _expectNoBan(await r.strikeReject(h, d), 'install host ${i + 1}');
+        await h.c.close();
       }
-      // Three hosts WITHOUT install from one IP: they share one key.
-      final String bareIp = r.freshIp();
-      for (int i = 0; i < 3; i++) {
-        final _Host h =
-            await r.host(approval: true, ip: bareIp, withInstall: false);
-        _expectNoBan(await r.strikeReject(h, d),
-            'install-less host ${i + 1} on one IP (keyed by IP)');
+      // Four more keys, each on its own IP, alternating with and without an
+      // install: 5 distinct IP keys in all.
+      for (int i = 0; i < 4; i++) {
+        final _Host h = await r.host(
+            approval: true, ip: r.freshIp(), withInstall: i.isEven);
+        _expectNoBan(await r.strikeReject(h, d), 'distinct IP ${i + 2}');
+        await h.c.close();
       }
-      await _expectNotBanned(r, d, '4 install keys + 1 IP key = 5 distinct');
+      await _expectNotBanned(r, d, '4 installs on one IP + 4 IPs = 5 keys');
       final _Host other =
           await r.host(approval: true, ip: r.freshIp(), withInstall: false);
       expect((await r.strikeReject(other, d)).containsKey('ban'), isTrue,
-          reason: 'item 7 and 8: an install-less host on another IP is a '
-              'sixth distinct key');
+          reason: 'item 15a: a sixth distinct host IP bans');
     });
 
     _scenario('L5 strikes against different installs are not pooled',
@@ -1830,6 +1830,7 @@ void main() {
       final String hostInstall = r.freshInstall('p2host');
       final String bareIp = r.freshIp();
       final _Host named = await r.host(install: hostInstall, approval: true);
+      final String namedIp = named.ip;
       await r.strikeReject(named, d);
       final _Host bare =
           await r.host(approval: true, ip: bareIp, withInstall: false);
@@ -1867,12 +1868,14 @@ void main() {
       expect(text.contains(_hmacHex(_salt, d.install)), isTrue,
           reason: 'item 11: the struck install is held as '
               'HMAC-SHA256(salt, install) in lower-case hex');
-      expect(text.contains(_hmacHex(_salt, hostInstall)), isTrue,
-          reason: 'item 7: the striking host key is the keyed hash of its '
-              'install');
+      expect(text.contains(_hmacHex(_salt, namedIp)), isTrue,
+          reason: 'item 15a: the striking host key is the keyed hash of its '
+              'IP even when its create_room carried an install');
+      expect(text.contains(_hmacHex(_salt, hostInstall)), isFalse,
+          reason: 'item 15a: the host install is no longer stored');
       expect(text.contains(_hmacHex(_salt, bareIp)), isTrue,
-          reason: 'item 7: an install-less host is keyed by the hash of its '
-              'IP');
+          reason: 'item 15a: an install-less host is keyed by the hash of '
+              'its IP');
       expect(
           text.contains(
               _hmacHex('another-salt-0123456789-abcdefghijklmnop', d.install)),
