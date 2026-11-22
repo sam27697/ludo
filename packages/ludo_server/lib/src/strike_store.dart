@@ -32,6 +32,10 @@ const Duration _resetAfter = Duration(days: 365);
 /// Item 10: an IP block never lasts longer than this.
 const Duration _ipBlockCap = Duration(hours: 24);
 
+/// Item 15 (b): strikes kept in one record, and records kept in the store.
+const int _maxStrikesPerRecord = 16;
+const int _maxRecords = 100000;
+
 /// One rung of the ladder: how many distinct hosts fire a ban, how long it
 /// is, and the level the record has afterwards.
 class _Rung {
@@ -225,8 +229,17 @@ class StrikeStore {
       record = _records[installKey];
     }
     record ??= _records[installKey] = _Record();
+    // Item 15 (b): one strike per host IP key, the latest, at most 16.
+    record.strikes.removeWhere((_Strike s) => s.host == hostKey);
     record.strikes.add(_Strike(now, hostKey));
+    if (record.strikes.length > _maxStrikesPerRecord) {
+      record.strikes.removeRange(
+        0,
+        record.strikes.length - _maxStrikesPerRecord,
+      );
+    }
     record.lastMs = now;
+    _trimRecords();
 
     final int countedFrom = record.level == 0
         ? now - _levelZeroWindow.inMilliseconds
@@ -263,6 +276,28 @@ class StrikeStore {
     }
     _save();
     return fired;
+  }
+
+  /// Item 15 (b): at most [_maxRecords] records; the oldest level-0 record
+  /// goes first.
+  void _trimRecords() {
+    while (_records.length > _maxRecords) {
+      String? oldest;
+      int oldestMs = 0;
+      for (final MapEntry<String, _Record> e in _records.entries) {
+        if (e.value.level != 0) {
+          continue;
+        }
+        if (oldest == null || e.value.lastMs < oldestMs) {
+          oldest = e.key;
+          oldestMs = e.value.lastMs;
+        }
+      }
+      if (oldest == null) {
+        return;
+      }
+      _records.remove(oldest);
+    }
   }
 
   /// Item 11's housekeeping: the 30-day and 365-day ageing, and the delete of
@@ -397,6 +432,7 @@ class StrikeStore {
         loadedBlocks[e.key] = until;
       }
       _records.addAll(loadedRecords);
+      _trimRecords();
       _ipBlocks.addAll(loadedBlocks);
     } on FormatException {
       _moveAside(file);
