@@ -323,15 +323,19 @@ class StrikeStore {
   }
 
   /// Item 8's ageing for one record. A record above level 0 whose last
-  /// strike or ban start is more than 365 days old, and whose ban has run
+  /// strike or ban end is more than 365 days old, and whose ban has run
   /// out, drops to level 0 with no strikes; a level-0 record forgets strikes
   /// older than 30 days and is deleted when none is left. Returns whether
   /// anything changed.
   bool _age(String k, _Record record, int now, {bool save = true}) {
     bool changed = false;
+    // Item 15 (c): the 365 days run from the later of the last strike and
+    // the end of the last ban.
+    final int quietSince =
+        record.lastMs > record.banUntilMs ? record.lastMs : record.banUntilMs;
     if (record.level > 0 &&
         record.banUntilMs <= now &&
-        now - record.lastMs > _resetAfter.inMilliseconds) {
+        now - quietSince > _resetAfter.inMilliseconds) {
       record.level = 0;
       record.strikes = <_Strike>[];
       record.banUntilMs = 0;
