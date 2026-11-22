@@ -1517,17 +1517,18 @@ void main() {
     });
 
     _scenario(
-        'L13 the 365 day reset: a level 1 record whose ban started more '
-        'than 365 days ago is level 0 again', (_Rig r) async {
+        'L13 the 365 day reset: a level 1 record is level 0 again more '
+        'than 365 days after ban_until (item 15c)', (_Rig r) async {
       final _Dev d = r.dev('l13');
       await _climb(r, d, 1);
-      r.tick(const Duration(days: 366));
+      // The 24 h ban ends 24 h after it started; the 365 days run from there.
+      r.tick(_h24 + const Duration(days: 365, minutes: 1));
       // At level 0 the ban needs 6. At level 1 it would fire at the 3rd.
       for (int i = 1; i <= 5; i++) {
         final _Host h = await r.host(approval: true);
         _expectNoBan(
             await r.strikeReject(h, d),
-            'item 8: strike $i, 366 days after the last ban started; the '
+            'item 15c: strike $i, 365 days and 1 minute after ban_until; the '
             'record is level 0 again so a ban needs 6');
         await h.c.close();
       }
@@ -1539,6 +1540,24 @@ void main() {
           untilMs: at + _h24.inMilliseconds,
           nextMs: _d7.inMilliseconds,
           because: 'the 6th strike after the reset is a fresh level 1 ban');
+    });
+
+    _scenario(
+        'L13b 364 days after ban_until the level is kept: the third strike '
+        'bans at level 2', (_Rig r) async {
+      final _Dev d = r.dev('l13b');
+      await _climb(r, d, 1);
+      r.tick(_h24 + const Duration(days: 364));
+      await _rejects(r, d, 2, lastMayBan: false);
+      final int at = r.nowMs;
+      final _Host h = await r.host(approval: true);
+      _expectBan(await r.strikeReject(h, d),
+          scope: 'device',
+          level: 2,
+          untilMs: at + _d7.inMilliseconds,
+          nextMs: _d30.inMilliseconds,
+          because: 'item 15c: 364 days after ban_until the level 1 record '
+              'is kept, so the 3rd strike bans at level 2');
     });
 
     _scenario(
