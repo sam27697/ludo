@@ -735,8 +735,11 @@ void main() {
     test('a never-issued code', () async {
       final Uri uri = await start();
       final WireTestClient client = await connect(uri);
-      client
-          .send('join_room', <String, Object?>{'code': 'ZZZZZZ', 'name': 'P'});
+      client.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': 'ZZZZZZ',
+        'name': 'P'
+      });
       final Map<String, Object?> reply = await client.next();
       expectErrorFrame(reply, 'NO_SUCH_ROOM',
           because: 'code ZZZZZZ was never created in this harness');
@@ -767,13 +770,19 @@ void main() {
       expect(harness.registry.lookup(lobby.code), isNull);
 
       final WireTestClient strayExpired = await connect(uri);
-      strayExpired.send(
-          'join_room', <String, Object?>{'code': lobby.code, 'name': 'P'});
+      strayExpired.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': lobby.code,
+        'name': 'P'
+      });
       final Map<String, Object?> expiredReply = await strayExpired.next();
 
       final WireTestClient strayNever = await connect(uri);
-      strayNever
-          .send('join_room', <String, Object?>{'code': 'QWERTY', 'name': 'P'});
+      strayNever.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': 'QWERTY',
+        'name': 'P'
+      });
       final Map<String, Object?> neverReply = await strayNever.next();
 
       expect(expiredReply['t'], 'error');
@@ -807,8 +816,11 @@ void main() {
       final WireTestLobby lobby =
           await buildWireTestLobby(uri, clients, players: 2);
       final WireTestClient third = await connect(uri);
-      third.send(
-          'join_room', <String, Object?>{'code': lobby.code, 'name': 'Third'});
+      third.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': lobby.code,
+        'name': 'Third'
+      });
       final Map<String, Object?> reply = await third.next();
       expectErrorFrame(reply, 'ROOM_FULL',
           because: 'room ${lobby.code} is a 2-player room with both seats '
@@ -822,8 +834,11 @@ void main() {
           await buildWireTestLobby(uri, clients, players: 2);
       await startGame(lobby);
       final WireTestClient third = await connect(uri);
-      third.send(
-          'join_room', <String, Object?>{'code': lobby.code, 'name': 'Third'});
+      third.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': lobby.code,
+        'name': 'Third'
+      });
       final Map<String, Object?> reply = await third.next();
       expectErrorFrame(reply, 'ROOM_STARTED',
           because: 'room ${lobby.code} is PLAYING, not LOBBY');
@@ -866,15 +881,21 @@ void main() {
           (hostRoomFrame['d']! as Map<String, Object?>)['code']! as String;
 
       final WireTestClient guest1 = await connect(uri);
-      guest1
-          .send('join_room', <String, Object?>{'code': code, 'name': 'Guest1'});
+      guest1.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': code,
+        'name': 'Guest1'
+      });
       await guest1.next(); // seat_assigned
       await guest1.next(); // room
       await host.next(); // player_joined
 
       final WireTestClient guest2 = await connect(uri);
-      guest2
-          .send('join_room', <String, Object?>{'code': code, 'name': 'Guest2'});
+      guest2.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': code,
+        'name': 'Guest2'
+      });
       await guest2.next(); // seat_assigned
       await guest2.next(); // room
       await host.next(); // player_joined
@@ -1333,14 +1354,21 @@ void main() {
       final Uri uri = await start();
       final WireTestClient stray = await connect(uri);
       for (int i = 1; i <= 20; i++) {
-        stray.send(
-            'join_room', <String, Object?>{'code': 'ZZZZZZ', 'name': 'P'});
+        stray.send('join_room', <String, Object?>{
+          'install': 'testinstall-00000001',
+          'code': 'ZZZZZZ',
+          'name': 'P'
+        });
         final Map<String, Object?> reply = await stray.next();
         expectErrorFrame(reply, 'NO_SUCH_ROOM',
             because: 'attempt $i of 20, under the per-minute limit, '
                 'against a code that was never issued');
       }
-      stray.send('join_room', <String, Object?>{'code': 'ZZZZZZ', 'name': 'P'});
+      stray.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': 'ZZZZZZ',
+        'name': 'P'
+      });
       final Map<String, Object?> reply21 = await stray.next();
       expectErrorFrame(reply21, 'RATE_LIMITED',
           because: 'this is the 21st join_room/resume from this IP within '
@@ -1554,22 +1582,32 @@ void main() {
       final Uri uri = await start();
       final WireTestClient client = await connect(uri);
 
-      client.send('join_room', <String, Object?>{'code': 12345, 'name': 'P'});
+      client.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': 12345,
+        'name': 'P'
+      });
       final Map<String, Object?> nonString = await client.next();
       expectErrorFrame(nonString, 'BAD_FIELD',
           because: 'code was the JSON number 12345, not a string at all, '
               'so no lookup can be attempted with it');
 
-      client.send('join_room',
-          <String, Object?>{'code': 'not-a-valid-code-shape!!', 'name': 'P'});
+      client.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': 'not-a-valid-code-shape!!',
+        'name': 'P'
+      });
       final Map<String, Object?> malformedString = await client.next();
       expectErrorFrame(malformedString, 'NO_SUCH_ROOM',
           because: 'code is a string but the wrong shape; docs/PROTOCOL.md '
               'section 7 says this is not pre-validated and goes to the '
               'registry exactly as received');
 
-      client
-          .send('join_room', <String, Object?>{'code': 'QWERTY', 'name': 'P'});
+      client.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': 'QWERTY',
+        'name': 'P'
+      });
       final Map<String, Object?> wellFormedUnknown = await client.next();
       expectErrorFrame(wellFormedUnknown, 'NO_SUCH_ROOM',
           because: 'code is well-formed but was never issued by this '

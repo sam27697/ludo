@@ -314,9 +314,28 @@ void main() {
         await _send(client, harness.uri('/health'));
     final String body = await _bodyOf(response);
 
+    // Codes are now 1 to 6 symbols (section 32), so a substring match would
+    // find them inside `"uptime_s":0` or `"rooms":3`. A leak is a code as a
+    // JSON key or a JSON string value.
+    final Object? decoded = jsonDecode(body);
+    final List<String> strings = <String>[];
+    void collect(Object? node) {
+      if (node is Map<String, Object?>) {
+        for (final MapEntry<String, Object?> e in node.entries) {
+          strings.add(e.key);
+          collect(e.value);
+        }
+      } else if (node is List<Object?>) {
+        node.forEach(collect);
+      } else if (node is String) {
+        strings.add(node);
+      }
+    }
+
+    collect(decoded);
     for (final String code in codes) {
       expect(
-        body.contains(code),
+        strings.contains(code),
         isFalse,
         reason: 'room code "$code" leaked into the /health body: $body',
       );

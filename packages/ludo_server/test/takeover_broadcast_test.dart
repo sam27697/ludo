@@ -174,7 +174,11 @@ void main() {
   /// `seat_assigned` and `room`, so nothing of its handshake is left queued.
   Future<WireTestSeat> joinGuest(String code, String name) async {
     final WireTestClient guest = await dial();
-    guest.send('join_room', <String, Object?>{'code': code, 'name': name});
+    guest.send('join_room', <String, Object?>{
+      'install': 'testinstall-00000001',
+      'code': code,
+      'name': name
+    });
     final Map<String, Object?> assigned = await guest.next();
     expect(assigned['t'], 'seat_assigned',
         reason: 'joining "$name" into $code: got ${assigned['t']}');

@@ -1,120 +1,105 @@
-// Conformance tests for the room code half of docs/PROTOCOL.md section 2:
-// "Short, human-readable, dictatable over a phone call... 6 characters from
-// the alphabet ABCDEFGHJKLMNPQRSTUVWXYZ23456789 -- 32 symbols, no 0/O, no
-// 1/I/L. Generated from a CSPRNG, never sequential."
-import 'dart:math';
-
+// Conformance tests for the room code half of docs/PROTOCOL.md section 32
+// items 1, 2 and 4: a numeral in the 33-symbol alphabet
+// 0123456789ABCDEFGHJKMNPQRSTUVWXYZ, most significant symbol first, no leading
+// 0 except the code `0` itself, handed out lowest first.
 import 'package:ludo_server/ludo_server.dart';
 import 'package:test/test.dart';
 
 void main() {
   group('roomCodeAlphabet', () {
-    test('is exactly 32 distinct symbols', () {
-      expect(roomCodeAlphabet.length, 32);
-      expect(roomCodeAlphabet.split('').toSet().length, 32);
+    test('is exactly 33 distinct symbols', () {
+      expect(roomCodeAlphabet.length, 33);
+      expect(roomCodeAlphabet.split('').toSet().length, 33);
     });
 
-    test('excludes 0, O, 1 and I', () {
-      expect(roomCodeAlphabet.contains('0'), isFalse);
-      expect(roomCodeAlphabet.contains('O'), isFalse);
-      expect(roomCodeAlphabet.contains('1'), isFalse);
+    test('excludes I, L and O', () {
       expect(roomCodeAlphabet.contains('I'), isFalse);
+      expect(roomCodeAlphabet.contains('L'), isFalse);
+      expect(roomCodeAlphabet.contains('O'), isFalse);
     });
 
-    test(
-        'includes L, because with 1 absent there is nothing for it to be '
-        'confused with', () {
-      expect(roomCodeAlphabet.contains('L'), isTrue);
+    test('includes every digit', () {
+      for (final String digit in '0123456789'.split('')) {
+        expect(roomCodeAlphabet.contains(digit), isTrue);
+      }
     });
   });
 
-  test('roomCodeLength is 6', () {
+  test('roomCodeLength, the longest typed code, is 6', () {
     expect(roomCodeLength, 6);
   });
 
-  group('generateRoomCode', () {
-    test(
-        'produces a code of roomCodeLength characters, all in the '
-        'alphabet', () {
-      final Random secure = Random.secure();
-      for (int i = 0; i < 200; i++) {
-        final String code = generateRoomCode(secure);
-        expect(code.length, roomCodeLength,
-            reason: 'code "$code" (draw $i) '
-                'is the wrong length');
-        for (final String char in code.split('')) {
-          expect(roomCodeAlphabet.contains(char), isTrue,
-              reason: 'code '
-                  '"$code" (draw $i) contains "$char", which is outside '
-                  'roomCodeAlphabet');
+  group('roomCodeForIndex', () {
+    test('counts 0 to Z, then 10 to ZZ, then 100', () {
+      expect(roomCodeForIndex(0), '0');
+      expect(roomCodeForIndex(9), '9');
+      expect(roomCodeForIndex(10), 'A');
+      expect(roomCodeForIndex(32), 'Z');
+      expect(roomCodeForIndex(33), '10');
+      expect(roomCodeForIndex(34), '11');
+      expect(roomCodeForIndex(33 * 33 - 1), 'ZZ');
+      expect(roomCodeForIndex(33 * 33), '100');
+    });
+
+    test('never issues a leading 0 and is strictly increasing', () {
+      final Set<String> seen = <String>{};
+      for (int i = 0; i < 3000; i++) {
+        final String code = roomCodeForIndex(i);
+        expect(seen.add(code), isTrue, reason: 'index $i repeated "$code"');
+        if (code.length > 1) {
+          expect(code.startsWith('0'), isFalse, reason: code);
         }
+        expect(isWellFormedRoomCode(code), isTrue, reason: code);
       }
     });
 
-    test('does not repeat over a large sample', () {
-      // Sample size chosen from the birthday bound: with n draws over a
-      // space of N = 32^6 codes, collision probability is roughly
-      // n^2 / (2N). At n = 2000 and N = 32^6 (~1.07e9) that is about
-      // 0.19%, low enough that this test does not flake in practice while
-      // still being large enough to actually exercise the generator.
-      final Random secure = Random.secure();
-      final Set<String> seen = <String>{};
-      const int sampleSize = 2000;
-      for (int i = 0; i < sampleSize; i++) {
-        seen.add(generateRoomCode(secure));
-      }
-      expect(seen.length, sampleSize,
-          reason: 'expected $sampleSize distinct '
-              'codes over $sampleSize draws, got ${seen.length} distinct values '
-              '-- rerun to confirm this is not a one in ~500 birthday '
-              'collision before treating it as a defect');
+    test('rejects a negative index', () {
+      expect(() => roomCodeForIndex(-1), throwsArgumentError);
+    });
+  });
+
+  group('foldRoomCode', () {
+    test('drops surrounding whitespace and upper-cases', () {
+      expect(foldRoomCode(' 0 '), '0');
+      expect(foldRoomCode('\t ab7\n'), 'AB7');
+    });
+
+    test('reads O as 0 and I and L as 1', () {
+      expect(foldRoomCode('o'), '0');
+      expect(foldRoomCode('i'), '1');
+      expect(foldRoomCode('l'), '1');
+      expect(foldRoomCode('OIL'), '011');
+    });
+
+    test('leaves a malformed code malformed', () {
+      expect(isWellFormedRoomCode(foldRoomCode('AB#')), isFalse);
     });
   });
 
   group('isWellFormedRoomCode', () {
-    late String goodCode;
-
-    setUp(() {
-      goodCode = generateRoomCode(Random.secure());
-    });
-
-    test('accepts a well-formed code', () {
-      expect(isWellFormedRoomCode(goodCode), isTrue,
-          reason: 'generated '
-              'code "$goodCode" was rejected as malformed');
+    test('accepts 1 to 6 symbols of the alphabet', () {
+      expect(isWellFormedRoomCode('0'), isTrue);
+      expect(isWellFormedRoomCode('Z'), isTrue);
+      expect(isWellFormedRoomCode('ZZZZZZ'), isTrue);
     });
 
     test('rejects the empty string', () {
       expect(isWellFormedRoomCode(''), isFalse);
     });
 
-    test('rejects a 5 character string', () {
-      final String short = goodCode.substring(0, 5);
-      expect(isWellFormedRoomCode(short), isFalse,
-          reason: '"$short" is 5 '
-              'characters and must be rejected');
-    });
-
     test('rejects a 7 character string', () {
-      final String long = '${goodCode}A';
-      expect(isWellFormedRoomCode(long), isFalse,
-          reason: '"$long" is 7 '
-              'characters and must be rejected');
+      expect(isWellFormedRoomCode('ZZZZZZZ'), isFalse);
     });
 
     test('rejects a lowercase code', () {
-      final String lower = goodCode.toLowerCase();
-      expect(isWellFormedRoomCode(lower), isFalse,
-          reason: '"$lower" is '
-              'lowercase and must be rejected even though its uppercase form '
-              'is well formed');
+      expect(isWellFormedRoomCode('abc'), isFalse,
+          reason: 'folding is the caller\'s step; the shape check is exact');
     });
 
-    test('rejects a code containing a character outside the alphabet', () {
-      final String withZero = '0${goodCode.substring(1)}';
-      expect(isWellFormedRoomCode(withZero), isFalse,
-          reason: '"$withZero" '
-              "contains '0', which is not in roomCodeAlphabet");
+    test('rejects a character outside the alphabet', () {
+      for (final String bad in <String>['O', 'I', 'L', 'A-B', 'A B']) {
+        expect(isWellFormedRoomCode(bad), isFalse, reason: bad);
+      }
     });
   });
 }

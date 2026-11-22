@@ -449,6 +449,7 @@ void main() {
     final _RawClient guest = await _RawClient.connect(uri);
     clients.add(guest);
     guest.send('join_room', <String, Object?>{
+      'install': 'testinstall-00000001',
       'code': code,
       'name': 'Guest',
     });

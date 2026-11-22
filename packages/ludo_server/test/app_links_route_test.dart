@@ -1104,17 +1104,20 @@ void main() {
     // leaves "lowercase input" to the item-3 group below, which is the
     // more specific of the two conflicting instructions and is internally
     // consistent on its own.
-    test('too short (one character removed) answers 404', () async {
+    test('a shorter code (one character removed) answers 404', () async {
       final ServerHarness harness = ServerHarness.build();
       harnesses.add(harness);
       await harness.start();
 
+      // Section 32 item 4: 1 to 6 symbols is a well-formed room code now, so a
+      // shortened one is no longer malformed. It is still not a link id, and
+      // /r/ serves link ids only (section 31 item 9), so it answers 404.
       final String tooShort = validSampleCode.substring(0, roomCodeLength - 1);
       expect(
         isWellFormedRoomCode(tooShort),
-        isFalse,
-        reason: 'test setup error: "$tooShort" must itself be malformed '
-            '(too short) or this case is not testing what its name claims',
+        isTrue,
+        reason: 'test setup error: "$tooShort" must be a well-formed code or '
+            'this case is not testing a code at /r/',
       );
 
       final HttpClientResponse response =
@@ -1124,9 +1127,8 @@ void main() {
       expect(
         response.statusCode,
         404,
-        reason: 'GET /r/$tooShort (too short, ${tooShort.length} chars '
-            'instead of $roomCodeLength) must answer 404, got '
-            '${response.statusCode} with body "$body"',
+        reason: 'GET /r/$tooShort (a room code, not a link id) must answer '
+            '404, got ${response.statusCode} with body "$body"',
       );
     });
 
@@ -1156,22 +1158,9 @@ void main() {
       );
     });
 
-    // The confusable characters the order names as deliberately excluded
-    // are 0, O, 1, I and L. Of those, only 0, O, 1 and I are actually
-    // absent from the imported roomCodeAlphabet; L is present in it
-    // (`roomCodeAlphabet` = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789", and
-    // `lib/src/room_code.dart`'s own header comment says so explicitly: "L
-    // is kept on purpose"). That is a second contradiction between the
-    // order's prose and the source of truth the order itself says to
-    // import from rather than re-declare. Following the order's explicit
-    // instruction to import the alphabet rather than hardcode a copy of
-    // it, L is not tested here as an excluded character, since the
-    // imported alphabet says it is not one; using it would produce a test
-    // that fails for the wrong reason once the route exists (a live
-    // implementation checking membership in the real alphabet would
-    // correctly accept a code containing L, and a test asserting 404 for
-    // it would be asserting a false requirement).
-    for (final String excluded in <String>['0', 'O', '1', 'I']) {
+    // Section 32 item 1: the alphabet leaves out exactly I, L and O. A path
+    // with one of them is not a code and not a link id, so it answers 404.
+    for (final String excluded in <String>['O', 'I', 'L']) {
       test(
           'a code containing the excluded character "$excluded" answers '
           '404', () async {

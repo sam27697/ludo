@@ -145,6 +145,18 @@ StringBuffer _englishBody(String? trimmedEmail) {
       'you, are not sold, and are not shared with anyone except where the '
       'law requires it.</p>',
     )
+    ..writeln('<h2>Stopping repeated unwanted joins.</h2>')
+    ..writeln(
+      '<p>The app makes a random install id the first time it is opened '
+      'and sends it to the game server. It is not linked to you. When a '
+      'host rejects or removes a player who joined by typing a room '
+      'code, the server keeps that install id, only as a keyed hash, '
+      'together with the time and a keyed hash standing for that host, '
+      'to stop people who keep entering strangers\' rooms. Such a record '
+      'is deleted 30 days after the last strike, or 12 months after the '
+      'last ban. An IP address is kept, as a keyed hash, only for the '
+      'length of a block, and for at most 24 hours.</p>',
+    )
     ..writeln('<h2>Verifiable rolls.</h2>')
     ..writeln(
       '<p>Every dice roll is accompanied by information that lets you '
@@ -241,6 +253,20 @@ StringBuffer _arabicBody(String? trimmedEmail) {
       'ومعلومات الأخطاء. تُحفظ هذه السجلات لفترة قصيرة، ولا '
       'تُستخدم لبناء ملف عنك، ولا تُباع، ولا تُشارك مع أحد إلا '
       'حيث يفرض القانون ذلك.</p>',
+    )
+    ..writeln(
+      '<h2>منع تكرار الانضمام غير المرغوب فيه.</h2>',
+    )
+    ..writeln(
+      '<p>ينشئ التطبيق معرّف تثبيت عشوائيًا عند أول تشغيل ويرسله إلى '
+      'خادم اللعبة. هذا المعرّف غير مرتبط بك. عندما يرفض مضيف '
+      'لاعبًا انضم بكتابة رمز الغرفة أو يزيله، يحتفظ الخادم بمعرّف '
+      'التثبيت هذا، على هيئة بصمة مشفّرة بمفتاح فقط، مع الوقت '
+      'وبصمة مشفّرة بمفتاح تمثّل ذلك المضيف، لمنع من يواصلون '
+      'دخول غرف الغرباء. يُحذف هذا السجل بعد 30 يومًا من آخر '
+      'إنذار، أو بعد 12 شهرًا من آخر حظر. ولا يُحتفظ بعنوان IP '
+      'إلا على هيئة بصمة مشفّرة بمفتاح، ولمدة الحظر فقط، وبحد '
+      'أقصى 24 ساعة.</p>',
     )
     ..writeln(
       '<h2>رميات قابلة للتحقق.</h2>',

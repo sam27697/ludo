@@ -119,7 +119,11 @@ Future<_ThreeSeatLobby> _buildThreeSeatLobby(
 
   final WireTestClient midClient = await WireTestClient.connect(uri);
   clients.add(midClient);
-  midClient.send('join_room', <String, Object?>{'code': code, 'name': 'Mid'});
+  midClient.send('join_room', <String, Object?>{
+    'install': 'testinstall-00000001',
+    'code': code,
+    'name': 'Mid'
+  });
   final Map<String, Object?> midSeatAssigned = await midClient.next();
   await midClient.next(); // room
   await hostClient.next(); // player_joined
@@ -130,7 +134,11 @@ Future<_ThreeSeatLobby> _buildThreeSeatLobby(
 
   final WireTestClient farClient = await WireTestClient.connect(uri);
   clients.add(farClient);
-  farClient.send('join_room', <String, Object?>{'code': code, 'name': 'Far'});
+  farClient.send('join_room', <String, Object?>{
+    'install': 'testinstall-00000001',
+    'code': code,
+    'name': 'Far'
+  });
   final Map<String, Object?> farSeatAssigned = await farClient.next();
   await farClient.next(); // room
   await hostClient.next(); // player_joined
@@ -249,8 +257,11 @@ void main() {
       final WireTestClient newJoiner =
           await WireTestClient.connect(harness.wsUri);
       clients.add(newJoiner);
-      newJoiner.send(
-          'join_room', <String, Object?>{'code': lobby.code, 'name': 'New'});
+      newJoiner.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': lobby.code,
+        'name': 'New'
+      });
       final Map<String, Object?> newJoinerSeatAssigned = await newJoiner.next();
       await newJoiner.next(); // room
       await lobby.mid.client.next(); // player_joined
@@ -597,8 +608,11 @@ void main() {
 
       final WireTestClient newJoiner = await WireTestClient.connect(uri);
       clients.add(newJoiner);
-      newJoiner.send(
-          'join_room', <String, Object?>{'code': lobby.code, 'name': 'New'});
+      newJoiner.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': lobby.code,
+        'name': 'New'
+      });
       final Map<String, Object?> newJoinerReply = await newJoiner.next();
       expect(newJoinerReply['t'], isNot('error'),
           reason: 'section 18 rule 4 / 16.9 rule 4: the freed seat '
