@@ -215,7 +215,7 @@ void main() {
 
       await tester.enterText(
         find.byKey(const Key('room-code-field')),
-        'invali',
+        'inval#',
       );
       // Join is in the tree only for a full-length code (C-523 D3), so the
       // typed text is six characters that still fail isValidRoomCode.

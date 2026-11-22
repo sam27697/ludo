@@ -25,30 +25,34 @@ void main() {
       expect(isValidRoomCode('AB23CD'), isTrue);
     });
 
-    test('accepts a code containing L', () {
-      // L is deliberately kept in the alphabet: with 1 gone there is nothing
-      // left for it to be confused with. A code containing L must validate.
-      expect(isValidRoomCode('ABLCDE'), isTrue);
+    test('a code containing L is valid only once L is folded to 1', () {
+      // Section 32 item 1: the alphabet has no I, L or O. A typed L is read
+      // as 1 (item 4), so the normalised code is valid and the raw one is not.
+      expect(isValidRoomCode('ABLCDE'), isFalse);
+      expect(isValidRoomCode(normalizeRoomCode('ABLCDE')), isTrue);
     });
 
-    test('rejects a code containing 0', () {
-      expect(isValidRoomCode('AB023C'), isFalse);
+    test('accepts a code containing 0', () {
+      // Section 32 item 1: 0 is a symbol now.
+      expect(isValidRoomCode('AB023C'), isTrue);
     });
 
     test('rejects a code containing O', () {
       expect(isValidRoomCode('ABOZ3C'), isFalse);
     });
 
-    test('rejects a code containing 1', () {
-      expect(isValidRoomCode('AB1Z3C'), isFalse);
+    test('accepts a code containing 1', () {
+      // Section 32 item 1: 1 is a symbol now.
+      expect(isValidRoomCode('AB1Z3C'), isTrue);
     });
 
     test('rejects a code containing I', () {
       expect(isValidRoomCode('ABIZ3C'), isFalse);
     });
 
-    test('rejects a code that is too short', () {
-      expect(isValidRoomCode('AB23C'), isFalse);
+    test('accepts a code shorter than six symbols', () {
+      // Section 32 item 1: codes are 1 to 6 symbols.
+      expect(isValidRoomCode('AB23C'), isTrue);
     });
 
     test('rejects a code that is too long', () {

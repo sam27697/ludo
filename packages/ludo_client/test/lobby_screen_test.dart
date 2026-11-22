@@ -1644,7 +1644,8 @@ void main() {
         );
         final sentData = _dataOf(createMessages.single);
         expect(
-          sentData,
+          // Section 32 item 6: create_room also carries `install`.
+          Map<String, Object?>.of(sentData)..remove('install'),
           <String, Object?>{
             'name': 'Sam',
             'players': 2,

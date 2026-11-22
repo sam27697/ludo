@@ -273,7 +273,10 @@ void main() {
               '${transport.sentRaw.map(_typeOf).toList()}',
         );
         expect(
-          _dataOf(createMessages.single),
+          // Section 32 item 6: create_room also carries `install`; the rest
+          // of the frame is unchanged.
+          Map<String, Object?>.of(_dataOf(createMessages.single))
+            ..remove('install'),
           <String, Object?>{
             'name': 'Priya',
             'players': 4,
@@ -720,8 +723,18 @@ void main() {
               '(home_screen.dart:182), to have sent exactly one join_room '
               'request; sent ${transport.sentRaw.map(_typeOf).toList()}',
         );
-        expect(
+        final Map<String, Object?> joinBody = Map<String, Object?>.of(
           _dataOf(joinMessages.single),
+        );
+        expect(
+          joinBody.remove('install'),
+          isA<String>(),
+          reason:
+              'section 32 item 6: a code join always carries install; sent '
+              '$joinBody',
+        );
+        expect(
+          joinBody,
           <String, Object?>{'code': 'K7M2QP', 'name': 'Riri'},
           reason:
               'the code and name typed on the home screen must both reach '
