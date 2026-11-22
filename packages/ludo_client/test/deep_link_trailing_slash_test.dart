@@ -242,11 +242,7 @@ void main() {
     });
 
     test('D7i: a bad code with the slash is still a bad code', () {
-      _expectNotRoomLink('https://ludo.provefair.app/r/AB0234/', id: 'D7i 0');
-      _expectNotRoomLink(
-        'https://ludo.provefair.app/r/AB23C/',
-        id: 'D7i short',
-      );
+      _expectNotRoomLink('https://ludo.provefair.app/r/AB_234/', id: 'D7i _');
       _expectNotRoomLink(
         'https://ludo.provefair.app/r/AB23CDE/',
         id: 'D7i long',

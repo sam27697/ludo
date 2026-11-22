@@ -178,7 +178,7 @@ void main() {
     },
   );
 
-  testWidgets('invalid short code ABC uses elevated Create and no Join', (
+  testWidgets('short code ABC is a code: elevated Join and outlined Create', (
     tester,
   ) async {
     await tester.pumpWidget(_homeScreenApp());
@@ -191,25 +191,24 @@ void main() {
       tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
       'ABC',
     );
-    _expectCreateElevatedJoinAbsent(tester);
+    _expectJoinElevatedCreateOutlined(tester);
   });
 
-  testWidgets(
-    'invalid banned-zero code AB023C uses elevated Create and outlined Join',
-    (tester) async {
-      await tester.pumpWidget(_homeScreenApp());
-      await tester.pumpAndSettle();
+  testWidgets('invalid code AB02#C uses elevated Create and outlined Join', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_homeScreenApp());
+    await tester.pumpAndSettle();
 
-      await tester.enterText(find.byKey(_codeKey), 'AB023C');
-      await tester.pump();
+    await tester.enterText(find.byKey(_codeKey), 'AB02#C');
+    await tester.pump();
 
-      expect(
-        tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
-        'AB023C',
-      );
-      _expectCreateElevatedJoinOutlined(tester);
-    },
-  );
+    expect(
+      tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
+      'AB02#C',
+    );
+    _expectCreateElevatedJoinOutlined(tester);
+  });
 
   testWidgets('Create Room still pushes create with an empty code field', (
     tester,

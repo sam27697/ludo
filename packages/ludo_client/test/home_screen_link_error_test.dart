@@ -70,7 +70,7 @@ Uri _validLink([String code = 'AB23CD']) {
 /// (it contains the excluded character 0, so roomCodeFromUri returns null
 /// for it): the "right host, right scheme, bad code" fixture, matching the
 /// retargeted case in test/deep_link_test.dart item 11.
-Uri _invalidCodeLink() => Uri.parse('https://ludo.provefair.app/r/AB0234');
+Uri _invalidCodeLink() => Uri.parse('https://ludo.provefair.app/r/AB_234');
 
 /// A well-formed https link whose host is not kAppLinkHost, so
 /// isAppRoomLinkUri returns false: this was never a room link at all, as

@@ -372,7 +372,7 @@ void main() {
 
       await tester.enterText(
         find.byKey(const Key('room-code-field')),
-        'AB01CD',
+        'AB#1CD',
       );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('join-room-button')));
