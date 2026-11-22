@@ -45,7 +45,6 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:ludo_server/ludo_server.dart';
-import 'package:ludo_server/src/strike_store.dart';
 import 'package:test/test.dart';
 
 const String _file = 'test/c684_short_codes_strikes_test.dart';
@@ -951,10 +950,16 @@ void main() {
       final String inst = r.freshInstall('t2');
       final _C c = await r.open(ip);
       for (int i = 0; i < 20; i++) {
+        if (i == 7 || i == 14) {
+          // Past one minute so section 7's 20 per minute join limit cannot
+          // fire first; the 10 minute typed window still holds all of them.
+          r.clock.advance(const Duration(seconds: 61));
+        }
         c.send('join_room',
             <String, Object?>{'code': 'ZZZZZ', 'name': 'G', 'install': inst});
         _err(await c.next(), 'NO_SUCH_ROOM', 'typed code ${i + 1}');
       }
+      r.clock.advance(const Duration(seconds: 61));
       c.send('join_room', <String, Object?>{'code': 'ZZZZZ', 'name': 'G'});
       _err(await c.next(), 'BAD_FIELD',
           'item 5: validation (install missing) is before the window');
@@ -1833,6 +1838,18 @@ void main() {
           ready: (String t) => t.contains(_hmacHex(_salt, bareIp)));
       expect(() => jsonDecode(text), returnsNormally,
           reason: 'item 11: strikes.json is JSON');
+      final List<String> values = <String>[];
+      void collect(Object? node) {
+        if (node is String) {
+          values.add(node);
+        } else if (node is List) {
+          node.forEach(collect);
+        } else if (node is Map) {
+          node.values.forEach(collect);
+        }
+      }
+
+      collect(jsonDecode(text));
       for (final String raw in <String>[
         d.install,
         d.ip,
@@ -1843,8 +1860,9 @@ void main() {
         'Host',
         'Guest',
       ]) {
-        expect(text.contains(raw), isFalse,
-            reason: 'item 11: "$raw" must not be in the store');
+        expect(values.contains(raw), isFalse,
+            reason: 'item 11: no string value in the store may equal '
+                '"$raw"; values: $values');
       }
       expect(text.contains(_hmacHex(_salt, d.install)), isTrue,
           reason: 'item 11: the struck install is held as '
