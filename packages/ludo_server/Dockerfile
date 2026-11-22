@@ -92,6 +92,11 @@ COPY --from=build /server /server
 # every game the server has finished.
 RUN mkdir -p /data/verify && chown 10001:10001 /data/verify && chmod 0700 /data/verify
 
+# /data/strikes holds the strike store (order 684). Same reasoning as
+# /data/verify above: created here, owned by 10001:10001 and 0700, so a fresh
+# named volume inherits that ownership and the process can write to it.
+RUN mkdir -p /data/strikes && chown 10001:10001 /data/strikes && chmod 0700 /data/strikes
+
 # Rootless Docker on the deploy host already maps this container's root to
 # an unprivileged host uid, so this is defence in depth rather than the only
 # defence. A fixed, unused numeric uid:gid; no /etc/passwd entry is needed

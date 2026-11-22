@@ -26,7 +26,7 @@ import 'dart:convert';
 
 /// `YYYY-MM-DD`, matching the "Last updated" line in the rendered page.
 /// Bump this string, and only this string, the day the policy text changes.
-const String privacyLastUpdated = '2026-09-30';
+const String privacyLastUpdated = '2026-11-23';
 
 const HtmlEscape _escaper = HtmlEscape();
 
