@@ -28,26 +28,40 @@ String roomCodeForIndex(int index) {
   return symbols.reversed.join();
 }
 
-/// Section 32 item 4: surrounding whitespace dropped, letters upper-cased,
+/// Section 32 item 4: surrounding ASCII whitespace dropped, ASCII letters upper-cased,
 /// `O` read as `0`, `I` and `L` read as `1`. The result may still be
 /// malformed; the lookup answers that the same way it answers absence.
 String foldRoomCode(String raw) {
-  final String upper = raw.trim().toUpperCase();
+  final List<int> units = raw.codeUnits;
+  int start = 0;
+  int end = units.length;
+  while (start < end && _isAsciiSpace(units[start])) {
+    start++;
+  }
+  while (end > start && _isAsciiSpace(units[end - 1])) {
+    end--;
+  }
   final StringBuffer out = StringBuffer();
-  for (final int unit in upper.codeUnits) {
-    final String ch = String.fromCharCode(unit);
-    switch (ch) {
-      case 'O':
-        out.write('0');
-      case 'I':
-      case 'L':
-        out.write('1');
+  for (int i = start; i < end; i++) {
+    int unit = units[i];
+    // Item 15 (d): ASCII only; every other code unit stays as typed.
+    if (unit >= 0x61 && unit <= 0x7A) {
+      unit -= 0x20;
+    }
+    switch (unit) {
+      case 0x4F: // O
+        out.writeCharCode(0x30);
+      case 0x49: // I
+      case 0x4C: // L
+        out.writeCharCode(0x31);
       default:
-        out.write(ch);
+        out.writeCharCode(unit);
     }
   }
   return out.toString();
 }
+
+bool _isAsciiSpace(int unit) => unit == 0x20 || (unit >= 0x09 && unit <= 0x0D);
 
 /// Length (1 to [roomCodeLength]) and alphabet only. This does not mean a room
 /// with this code exists, and a leading `0` before another symbol is

@@ -128,6 +128,12 @@ Future<void> _run() async {
   } on FormatException catch (error) {
     stderr.writeln(error.message);
     exit(64);
+  } on FileSystemException catch (error) {
+    stderr.writeln(
+      'LUDO_STRIKE_DIR is unusable: ${error.path ?? rawStrikeDir} '
+      '(${error.message})',
+    );
+    exit(64);
   }
 
   final RoomRegistry registry = RoomRegistry(
