@@ -6950,6 +6950,146 @@ void main() {
       locale: const Locale('ar'),
     );
   });
+
+  // ==========================================================================
+  // 166-171: order 685t (C-685t), the X202 lobby (docs/PROTOCOL.md section 31)
+  // as order 682 draws it. 166 the host lobby with approval on, two open
+  // knocks and every origin mark; 167 approval off with the kick sheet open
+  // on a code seat; 168 the knocker waiting; 169 the knocker after a
+  // rejection; 170 the kicked player; 171 the in-game approval switch.
+  // Bodies live at the bottom of the file.
+  // ==========================================================================
+  testWidgets('capture 166-lobby-approval-knocks-en', (tester) async {
+    await _shootX202HostLobby(
+      tester,
+      binding,
+      shotName: '166-lobby-approval-knocks-en',
+      locale: const Locale('en'),
+      roomCode: 'KN6E1A',
+      seatToken: 'tok-shot-166',
+      approvalOn: true,
+    );
+  });
+
+  testWidgets('capture 166-lobby-approval-knocks-ar', (tester) async {
+    await _shootX202HostLobby(
+      tester,
+      binding,
+      shotName: '166-lobby-approval-knocks-ar',
+      locale: const Locale('ar'),
+      roomCode: 'KN6A2K',
+      seatToken: 'tok-shot-166',
+      approvalOn: true,
+    );
+  });
+
+  testWidgets('capture 167-lobby-kick-confirm-en', (tester) async {
+    await _shootX202HostLobby(
+      tester,
+      binding,
+      shotName: '167-lobby-kick-confirm-en',
+      locale: const Locale('en'),
+      roomCode: 'KC7E3W',
+      seatToken: 'tok-shot-167',
+      approvalOn: false,
+    );
+  });
+
+  testWidgets('capture 167-lobby-kick-confirm-ar', (tester) async {
+    await _shootX202HostLobby(
+      tester,
+      binding,
+      shotName: '167-lobby-kick-confirm-ar',
+      locale: const Locale('ar'),
+      roomCode: 'KC7A4L',
+      seatToken: 'tok-shot-167',
+      approvalOn: false,
+    );
+  });
+
+  testWidgets('capture 168-knock-waiting-en', (tester) async {
+    await _shootX202Knocker(
+      tester,
+      binding,
+      shotName: '168-knock-waiting-en',
+      locale: const Locale('en'),
+      roomCode: 'KW8E5A',
+      ending: _X202End.waiting,
+    );
+  });
+
+  testWidgets('capture 168-knock-waiting-ar', (tester) async {
+    await _shootX202Knocker(
+      tester,
+      binding,
+      shotName: '168-knock-waiting-ar',
+      locale: const Locale('ar'),
+      roomCode: 'KW8A6K',
+      ending: _X202End.waiting,
+    );
+  });
+
+  testWidgets('capture 169-knock-rejected-en', (tester) async {
+    await _shootX202Knocker(
+      tester,
+      binding,
+      shotName: '169-knock-rejected-en',
+      locale: const Locale('en'),
+      roomCode: 'KR9E7W',
+      ending: _X202End.rejected,
+    );
+  });
+
+  testWidgets('capture 169-knock-rejected-ar', (tester) async {
+    await _shootX202Knocker(
+      tester,
+      binding,
+      shotName: '169-knock-rejected-ar',
+      locale: const Locale('ar'),
+      roomCode: 'KR9A8L',
+      ending: _X202End.rejected,
+    );
+  });
+
+  testWidgets('capture 170-kicked-en', (tester) async {
+    await _shootX202Knocker(
+      tester,
+      binding,
+      shotName: '170-kicked-en',
+      locale: const Locale('en'),
+      roomCode: 'KKHE9A',
+      ending: _X202End.kicked,
+    );
+  });
+
+  testWidgets('capture 170-kicked-ar', (tester) async {
+    await _shootX202Knocker(
+      tester,
+      binding,
+      shotName: '170-kicked-ar',
+      locale: const Locale('ar'),
+      roomCode: 'KKHA2K',
+      ending: _X202End.kicked,
+    );
+  });
+
+  testWidgets('capture 171-game-approval-switch-en', (tester) async {
+    await _shootX202GameSwitch(
+      tester,
+      binding,
+      shotName: '171-game-approval-switch-en',
+      locale: const Locale('en'),
+    );
+  });
+
+  testWidgets('capture 171-game-approval-switch-ar', (tester) async {
+    await _shootX202GameSwitch(
+      tester,
+      binding,
+      shotName: '171-game-approval-switch-ar',
+      locale: const Locale('ar'),
+    );
+  });
 }
 
 /// A bare MaterialApp around [child] alone -- the same scaffolding
@@ -25166,4 +25306,484 @@ Future<void> _shootRelease(
   } finally {
     await _releaseTrayGame(tester, controller);
   }
+}
+
+// --- order 685t: the X202 lobby captures. Frames follow docs/PROTOCOL.md
+// --- section 31: snapshots gain `link_id`, `guest_approval`, `knocks`, and
+// --- each seat gains `via`.
+
+Map<String, Object?> _x202Seat(int seat, String name, String via) =>
+    <String, Object?>{..._seatJson(seat, name: name), 'via': via};
+
+Map<String, Object?> _x202Room({
+  required String code,
+  required List<Map<String, Object?>> seats,
+  required bool approval,
+  List<Map<String, Object?>> knocks = const <Map<String, Object?>>[],
+  required int seq,
+}) => <String, Object?>{
+  ..._roomJson(code: code, players: 4, seats: seats, seq: seq),
+  'link_id': 't5k2q9a-x7m3pd',
+  'guest_approval': approval,
+  'knocks': knocks,
+};
+
+/// Captures 166 and 167: the host's own lobby. With [approvalOn], two open
+/// knocks (names of different lengths, a long one in Arabic) over four
+/// seats that show host, link, code and approved. Without it, the lobby
+/// kick sheet opened on the code seat (seat 2).
+Future<void> _shootX202HostLobby(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required String seatToken,
+  required bool approvalOn,
+}) async {
+  final bool ar = locale.languageCode == 'ar';
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, host lobby of four '
+      'seats (host, link, code, approved), approval '
+      '${approvalOn ? 'on with two open knocks' : 'off, kick sheet on seat 2'}';
+  final String repro =
+      'flutter test integration_test/screenshots_test.dart -d flutter-tester '
+      '--plain-name "capture $shotName"';
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final FakeTransport socket = FakeTransport();
+  final RoomController controller = RoomController(
+    serverUrl: Uri.parse(_testUrl),
+    connect: (Uri url) async => socket,
+  );
+  addTearDown(controller.dispose);
+  final String hostName = ar ? 'ديمة' : 'Dee';
+  await tester.pumpWidget(
+    _reconnectingCaptureHarness(
+      LobbyScreen(
+        controller: controller,
+        action: LobbyAction.create,
+        playerName: hostName,
+        players: 4,
+      ),
+      locale: locale,
+    ),
+  );
+  await tester.pump();
+  expect(
+    socket.sentRaw,
+    isNotEmpty,
+    reason:
+        '$shotName ($scenario): fixture broken, LobbyScreen.initState must '
+        'have sent create_room. Reproduce: $repro',
+  );
+  final String createId = _idOf(socket.sentRaw.last);
+  final List<Map<String, Object?>> seats = <Map<String, Object?>>[
+    _x202Seat(0, hostName, 'host'),
+    _x202Seat(1, ar ? 'ليلى' : 'Lina', 'link'),
+    _x202Seat(2, ar ? 'كريم' : 'Karim', 'code'),
+    _x202Seat(3, ar ? 'هنادي' : 'Hana', 'approved'),
+  ];
+  final List<Map<String, Object?>> knocks = approvalOn
+      ? <Map<String, Object?>>[
+          <String, Object?>{
+            'knock_id': 'k-shot-166a',
+            'name': ar ? 'سام' : 'Sam',
+            'expires_ms': 47000,
+          },
+          <String, Object?>{
+            'knock_id': 'k-shot-166b',
+            'name': ar
+                ? 'عبد الرحمن بن محمد الفياض الحمصي'
+                : 'Alexandrina Montgomery-Hargreaves',
+            'expires_ms': 29000,
+          },
+        ]
+      : const <Map<String, Object?>>[];
+  socket.pushText(
+    _frame(
+      type: 'seat_assigned',
+      data: <String, Object?>{'seat': 0, 'seat_token': seatToken},
+    ),
+  );
+  socket.pushText(
+    _frame(
+      type: 'room',
+      re: createId,
+      data: _x202Room(
+        code: roomCode,
+        seats: seats,
+        approval: approvalOn,
+        knocks: knocks,
+        seq: 1,
+      ),
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byType(LobbyScreen),
+    '$shotName: LobbyScreen after the room frame. $scenario',
+  );
+  await _expectLobbyScreen(
+    tester,
+    localeName: locale.languageCode,
+    code: roomCode,
+    expectedSeatCount: 4,
+  );
+  expect(
+    <Object?>[controller.phase, controller.isHost],
+    <Object?>[RoomPhase.connected, true],
+    reason:
+        '$shotName ($scenario): expected a connected host, got '
+        '${controller.phase}, isHost ${controller.isHost}. Reproduce: $repro',
+  );
+  expect(
+    find.byKey(const Key('approval-switch')),
+    findsOneWidget,
+    reason:
+        '$shotName ($scenario): expected the host approval switch. '
+        'Reproduce: $repro',
+  );
+  for (final int s in <int>[1, 2, 3]) {
+    expect(
+      find.byKey(Key('seat-origin-$s')),
+      findsOneWidget,
+      reason:
+          '$shotName ($scenario): expected the origin mark of seat $s. '
+          'Reproduce: $repro',
+    );
+  }
+  for (final Map<String, Object?> k in knocks) {
+    expect(
+      find.byKey(Key('knock-card-${k['knock_id']}')),
+      findsOneWidget,
+      reason:
+          '$shotName ($scenario): expected a card for knock '
+          '${k['knock_id']}, shown to the host. Reproduce: $repro',
+    );
+  }
+  if (approvalOn) {
+    await _capture(binding, tester, shotName);
+    return;
+  }
+
+  expect(
+    find.byKey(const Key('knock-bar')),
+    findsNothing,
+    reason: '$shotName ($scenario): no knock bar without knocks',
+  );
+  final Finder kick = find.byKey(const Key('lobby-kick-2'));
+  expect(
+    kick,
+    findsOneWidget,
+    reason:
+        '$shotName ($scenario): expected the kick control on the code '
+        'seat. Reproduce: $repro',
+  );
+  await tester.tap(kick);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 600));
+  await tester.pump(const Duration(milliseconds: 600));
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(LobbyScreen)),
+  );
+  expect(
+    find.text(loc.kickSheetRemove),
+    findsOneWidget,
+    reason:
+        '$shotName ($scenario): expected the kick sheet with '
+        '"${loc.kickSheetRemove}" after tapping seat 2. Reproduce: $repro',
+  );
+  expect(
+    socket.sentRaw.where((String s) => _typeOf(s) == 'kick'),
+    isEmpty,
+    reason:
+        '$shotName ($scenario): opening the sheet must send no kick. '
+        'Reproduce: $repro',
+  );
+  await _capture(binding, tester, shotName);
+}
+
+enum _X202End { waiting, rejected, kicked }
+
+/// Captures 168, 169 and 170, all from the phone that typed a code into
+/// Home. 168: the host's approval is on, `knock_pending` came back and the
+/// waiting card stands. 169: `knock_failed` outcome `rejected` after it, and
+/// Home with its one plain line. 170: approval off, the phone seated by
+/// code, then `kicked`, and Home with its line.
+Future<void> _shootX202Knocker(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+  required String roomCode,
+  required _X202End ending,
+}) async {
+  final bool ar = locale.languageCode == 'ar';
+  final String scenario =
+      'room $roomCode, locale ${locale.languageCode}, a typed code joined '
+      'from Home, ending ${ending.name}';
+  final String repro =
+      'flutter test integration_test/screenshots_test.dart -d flutter-tester '
+      '--plain-name "capture $shotName"';
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(_replayHome(factory, locale));
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+  // Home retires and disposes the controller itself once a knock ends or a
+  // kick lands (home_screen.dart), so the teardown must not do it twice.
+  var homeRetires = false;
+  addTearDown(() {
+    if (homeRetires) {
+      return;
+    }
+    for (final RoomController c in factory.controllers) {
+      c.dispose();
+    }
+  });
+  expect(
+    isValidRoomCode(normalizeRoomCode(roomCode)),
+    isTrue,
+    reason:
+        '$shotName: fixture broken, "$roomCode" is not a typeable room '
+        'code. $scenario',
+  );
+  final String joiner = ar ? 'سام' : 'Sam';
+  await tester.enterText(find.byKey(const Key('home-name-field')), joiner);
+  await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
+  await tester.pumpAndSettle();
+  await _tapAndAwaitPushedRoute(tester, const Key('join-room-button'));
+  expect(
+    factory.controllers,
+    hasLength(1),
+    reason: '$shotName ($scenario): expected one controller. $repro',
+  );
+  final RoomController controller = factory.controllers.single;
+  final FakeTransport transport = factory.transports.single;
+  final List<String> joins = transport.sentRaw
+      .where((String s) => _typeOf(s) == 'join_room')
+      .toList();
+  expect(
+    joins,
+    hasLength(1),
+    reason:
+        '$shotName ($scenario): expected one join_room, sent '
+        '${transport.sentRaw.map(_typeOf).toList()}. Reproduce: $repro',
+  );
+  final String joinId = _idOf(joins.single);
+  expect(
+    _dataOf(joins.single)['code'],
+    roomCode,
+    reason: '$shotName ($scenario): the join must carry the typed code',
+  );
+
+  final AppLocalizations loc;
+  if (ending == _X202End.kicked) {
+    transport.pushText(
+      _frame(
+        type: 'seat_assigned',
+        data: <String, Object?>{'seat': 2, 'seat_token': 'tok-shot-170'},
+      ),
+    );
+    transport.pushText(
+      _frame(
+        type: 'room',
+        re: joinId,
+        data: _x202Room(
+          code: roomCode,
+          seats: <Map<String, Object?>>[
+            _x202Seat(0, ar ? 'ديمة' : 'Dee', 'host'),
+            _x202Seat(1, ar ? 'ليلى' : 'Lina', 'link'),
+            _x202Seat(2, joiner, 'code'),
+          ],
+          approval: false,
+          seq: 1,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byType(LobbyScreen),
+      '$shotName: LobbyScreen after the room frame. $scenario',
+    );
+    expect(
+      controller.seat,
+      2,
+      reason: '$shotName ($scenario): expected seat 2, got ${controller.seat}',
+    );
+    homeRetires = true;
+    transport.pushText(_frame(type: 'kicked'));
+    await tester.pump();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('home-knock-notice')),
+      '$shotName: Home with the kicked line after the kicked frame. '
+      '$scenario',
+    );
+    loc = AppLocalizations.of(tester.element(find.byType(HomeScreen)));
+    expect(
+      find.byType(LobbyScreen),
+      findsNothing,
+      reason:
+          '$shotName ($scenario): the lobby must be gone. Reproduce: $repro',
+    );
+    expect(
+      controller.wasKicked,
+      true,
+      reason:
+          '$shotName ($scenario): expected wasKicked and the lobby gone. '
+          'Reproduce: $repro',
+    );
+    expect(
+      find.text(loc.knockWasKicked),
+      findsOneWidget,
+      reason:
+          '$shotName ($scenario): expected the line '
+          '"${loc.knockWasKicked}" on Home. Reproduce: $repro',
+    );
+    await _capture(binding, tester, shotName);
+    return;
+  }
+
+  transport.pushText(
+    _frame(
+      type: 'knock_pending',
+      re: joinId,
+      data: const <String, Object?>{
+        'knock_id': 'k-shot-168',
+        'expires_ms': 60000,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('knock-waiting')),
+    '$shotName: the waiting card after knock_pending. $scenario',
+  );
+  loc = AppLocalizations.of(
+    tester.element(find.byKey(const Key('knock-waiting'))),
+  );
+  expect(
+    <Object?>[controller.knockState.phase, controller.room],
+    <Object?>[KnockPhase.pending, isNull],
+    reason:
+        '$shotName ($scenario): expected a pending knock holding no room, '
+        'got ${controller.knockState.phase}, ${controller.room}. '
+        'Reproduce: $repro',
+  );
+  expect(
+    find.text(loc.knockWaitingTitle),
+    findsOneWidget,
+    reason:
+        '$shotName ($scenario): expected "${loc.knockWaitingTitle}". '
+        'Reproduce: $repro',
+  );
+  if (ending == _X202End.waiting) {
+    await _capture(binding, tester, shotName);
+    return;
+  }
+
+  homeRetires = true;
+  transport.pushText(
+    _frame(
+      type: 'knock_failed',
+      data: const <String, Object?>{
+        'knock_id': 'k-shot-168',
+        'outcome': 'rejected',
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('home-knock-notice')),
+    '$shotName: Home with the rejected line after knock_failed. $scenario',
+  );
+  expect(
+    find.byType(LobbyScreen),
+    findsNothing,
+    reason: '$shotName ($scenario): the lobby must be gone. Reproduce: $repro',
+  );
+  expect(
+    find.text(loc.knockOutcomeNotJoined),
+    findsOneWidget,
+    reason:
+        '$shotName ($scenario): expected the line '
+        '"${loc.knockOutcomeNotJoined}" on Home. Reproduce: $repro',
+  );
+  await _capture(binding, tester, shotName);
+}
+
+/// Captures 171: the host's in-game approval switch, a pill under the header
+/// (game_screen.dart, shown to the host while the room plays). The recorded
+/// game host_wins_1, viewer seat 0 (the host), entered through Home and
+/// started, then the board on screen at its first moments.
+Future<void> _shootX202GameSwitch(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  binding.testTextInput.register();
+  _stubScreenshotChannel(tester);
+  await binding.convertFlutterSurfaceToImage();
+  await (await SharedPreferences.getInstance()).clear();
+  tester.platformDispatcher.clearTextScaleFactorTestValue();
+
+  final _ScreenshotControllerFactory factory = _ScreenshotControllerFactory();
+  await tester.pumpWidget(_replayHome(factory, locale));
+  await tester.pumpAndSettle();
+  await _expectHomeScreen(tester, localeName: locale.languageCode);
+  addTearDown(() {
+    for (final RoomController c in factory.controllers) {
+      c.dispose();
+    }
+  });
+  final String capture = 'capture $shotName';
+  final _RealEntry entry = await _enterRealGame(
+    tester,
+    factory,
+    capture: capture,
+    gameName: 'host_wins_1',
+    seat: 0,
+    localeName: locale.languageCode,
+  );
+  final String where =
+      '${entry.where}; host seat 0, in play, locale ${locale.languageCode}';
+  expect(
+    <Object?>[entry.controller.isHost, entry.controller.room?.state],
+    <Object?>[true, RoomState.playing],
+    reason:
+        '$where: expected the host of a playing room, got isHost '
+        '${entry.controller.isHost}, ${entry.controller.room?.state}',
+  );
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('approval-switch')),
+    '$capture: the in-game approval switch for the host. $where',
+  );
+  expect(
+    find.byKey(const Key('approval-switch')),
+    findsOneWidget,
+    reason: '$capture: expected one approval-switch. $where',
+  );
+  await _capture(binding, tester, shotName);
 }
