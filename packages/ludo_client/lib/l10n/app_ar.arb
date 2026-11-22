@@ -293,5 +293,11 @@
   "knockOutcomeSwitchedOff": "ما في مكان فاضي بالغرفة",
   "knockWasKicked": "المضيف شالك من هالغرفة",
   "lobbyErrorKnockRefused": "ما فيك تدق عهالغرفة مرة تانية",
-  "lobbyErrorTooManyKnocks": "في ناس كتير عم تستنى، جرّب بعد دقيقة"
+  "lobbyErrorTooManyKnocks": "في ناس كتير عم تستنى، جرّب بعد دقيقة",
+  "codeBanDevice": "الرموز اللي بتكتبها مسكّرة عهالتلفون لحد {until}، لأنو المضيفين كانو عم يرفضوك.",
+  "codeBanDeviceNext": "{days, plural, =1{إذا انعاد الشي، الحظر الجاي يوم واحد.} =2{إذا انعاد الشي، الحظر الجاي يومين.} few{إذا انعاد الشي، الحظر الجاي {days} أيام.} other{إذا انعاد الشي، الحظر الجاي {days} يوم.}}",
+  "codeBanNetwork": "الرموز اللي بتكتبها موقوفة عهالشبكة لحد {until}.",
+  "codeBanLinkStillWorks": "الرابط اللي بيبعتلك ياه صاحبك بيضل شغال.",
+  "codeBanUntilFormat": "{date}، {time}",
+  "lobbyErrorCodeBanned": "الرموز اللي بتكتبها ما عم تشتغل عهالتلفون هلق. الرابط اللي بيبعتلك ياه صاحبك بيضل شغال."
 }

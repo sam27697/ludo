@@ -448,6 +448,7 @@ class RoomConnection {
     required int players,
     RulesConfig? rules,
     RoomToggles? toggles,
+    String? install,
   }) async {
     if (rules != null && toggles != null) {
       throw ArgumentError('createRoom: pass rules or toggles, not both');
@@ -457,6 +458,7 @@ class RoomConnection {
       'players': players,
       if (rules != null) 'rules': rules.toJson(),
       if (toggles != null) 'rules': toggles.toJson(),
+      'install': ?install,
     };
     final Frame frame = await request('create_room', data);
     return _asRoomSnapshot(frame);
@@ -465,10 +467,12 @@ class RoomConnection {
   Future<RoomSnapshot> joinRoom({
     required String code,
     required String name,
+    String? install,
   }) async {
     final Frame frame = await request('join_room', <String, Object?>{
       'code': code,
       'name': name,
+      'install': ?install,
     });
     return _asRoomSnapshot(frame);
   }
