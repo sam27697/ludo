@@ -21,6 +21,8 @@ const int minStrikeSaltLength = 32;
 /// The file inside `LUDO_STRIKE_DIR`.
 const String strikeFileName = 'strikes.json';
 
+final RegExp _whitespace = RegExp(r'\s');
+
 const Duration _day = Duration(days: 1);
 
 /// Item 8: a level-0 record forgets a strike this old.
@@ -152,10 +154,11 @@ class StrikeStore {
 
   static String _resolveSalt(String? salt, String? dir, Random? random) {
     if (salt != null && salt.isNotEmpty) {
-      if (salt.length < minStrikeSaltLength) {
+      if (salt.length < minStrikeSaltLength || salt.contains(_whitespace)) {
         throw const FormatException(
-          'LUDO_STRIKE_SALT is too short: it must be at least '
-          '$minStrikeSaltLength characters',
+          'LUDO_STRIKE_SALT is too short or holds whitespace: it must be at '
+          'least $minStrikeSaltLength characters with none of them '
+          'whitespace',
         );
       }
       return salt;
@@ -378,7 +381,10 @@ class StrikeStore {
 
   void _load() {
     final File file = _file!;
+    // Item 15 (e): a directory that cannot be created, read or written to
+    // stops the start with a FileSystemException naming the path.
     Directory(_dir!).createSync(recursive: true);
+    _probeWrite();
     if (!file.existsSync()) {
       return;
     }
@@ -440,11 +446,21 @@ class StrikeStore {
       _ipBlocks.addAll(loadedBlocks);
     } on FormatException {
       _moveAside(file);
-    } on FileSystemException catch (error) {
-      _log('error: strike store unreadable reason=${error.message}');
-      rethrow;
     }
   }
+
+  /// Writes and removes one uniquely named file in the directory, so a
+  /// directory that cannot be written to fails at start, not at the first
+  /// strike.
+  void _probeWrite() {
+    final File probe = File('${_file!.path}.probe.${_tempSuffix()}');
+    probe.writeAsStringSync('', flush: true);
+    probe.deleteSync();
+  }
+
+  static int _tempCounter = 0;
+
+  String _tempSuffix() => '$pid.${_nowMs}.${_tempCounter++}';
 
   void _moveAside(File file) {
     final String target = '${file.path}.bad-${_nowMs}';
@@ -468,7 +484,7 @@ class StrikeStore {
       },
       'ip_blocks': Map<String, Object?>.of(_ipBlocks),
     };
-    final File temporary = File('${file.path}.tmp');
+    final File temporary = File('${file.path}.tmp.${_tempSuffix()}');
     try {
       temporary.writeAsStringSync(jsonEncode(body), flush: true);
       temporary.renameSync(file.path);
