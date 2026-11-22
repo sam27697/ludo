@@ -1320,6 +1320,10 @@ void main() {
       final _Dev d = r.dev('l2');
       final String hostIp = r.freshIp();
       for (int i = 0; i < 8; i++) {
+        if (i > 0) {
+          // create_room is 5 per hour per IP (section 7): stay under it.
+          r.tick(const Duration(minutes: 61));
+        }
         final _Host h = await r.host(approval: true, ip: hostIp);
         _expectNoBan(await r.strikeReject(h, d),
             'item 15a: repeat strike ${i + 1} from one host IP');
@@ -1356,6 +1360,9 @@ void main() {
       final _Dev d = r.dev('l4');
       final String sharedIp = r.freshIp();
       for (int i = 0; i < 4; i++) {
+        if (i > 0) {
+          r.tick(const Duration(minutes: 61));
+        }
         final _Host h = await r.host(approval: true, ip: sharedIp);
         _expectNoBan(await r.strikeReject(h, d), 'install host ${i + 1}');
         await h.c.close();
@@ -1549,6 +1556,167 @@ void main() {
           untilMs: at + _d7.inMilliseconds,
           nextMs: _d30.inMilliseconds,
           because: 'the 3rd strike at level 1, 364 days after its ban');
+    });
+  });
+
+  group('item 15: rulings of 2026-11-23', () {
+    _scenario(
+        'R1 (a) six hosts with six installs on ONE IP reject a joiner: no '
+        'ban', (_Rig r) async {
+      final _Dev d = r.dev('r1');
+      final String hostIp = r.freshIp();
+      for (int i = 0; i < 6; i++) {
+        if (i > 0) {
+          // create_room is 5 per hour per IP (section 7): stay under it.
+          r.tick(const Duration(minutes: 61));
+        }
+        final _Host h = await r.host(
+            approval: true, ip: hostIp, install: r.freshInstall('r1h'));
+        _expectNoBan(await r.strikeReject(h, d),
+            'item 15a: reject ${i + 1} from the one host IP');
+        await h.c.close();
+      }
+      await _expectNotBanned(
+          r, d, 'six installs on one IP are one distinct host');
+      final Map<String, Object?> probe = await r.getJson('/health');
+      expect(probe['status'], 200, reason: 'fixture: the server is alive');
+    });
+
+    _scenario(
+        'R2 (a2) a host on the joiner\'s own IP: its strike is not '
+        'recorded', (_Rig r) async {
+      final _Dev d = r.dev('r2');
+      for (int i = 0; i < 5; i++) {
+        final _Host h = await r.host(approval: true);
+        _expectNoBan(await r.strikeReject(h, d), 'distinct strike ${i + 1}');
+        await h.c.close();
+      }
+      // Self strikes: reject and kick, host IP equals the struck IP.
+      final _Host selfA = await r.host(approval: true, ip: d.ip);
+      _expectNoBan(await r.strikeReject(selfA, d),
+          'item 15a: a reject by a host on the struck socket\'s own IP');
+      final _Host selfB = await r.host(ip: d.ip);
+      _expectNoBan(await r.strikeKick(selfB, d, 'code'),
+          'item 15a: a kick by a host on the struck socket\'s own IP');
+      await _expectNotBanned(
+          r, d, 'five real strikes plus self strikes; a self strike is no 6th');
+      final String text = await r.fileText(
+          ready: (String t) => t.contains(_hmacHex(_salt, d.install)));
+      expect(text.contains(_hmacHex(_salt, d.ip)), isFalse,
+          reason: 'item 15a: no host key for the struck IP is recorded; '
+              'the store holds the hash of ${d.ip}');
+      final _Host sixth = await r.host(approval: true);
+      expect((await r.strikeReject(sixth, d)).containsKey('ban'), isTrue,
+          reason: 'item 15a: the 6th distinct host IP bans, so exactly five '
+              'were recorded before it');
+    });
+
+    _scenario(
+        'R3 (b) one host IP striking 3 times holds one entry; 17 distinct '
+        'host IPs never leave a record above 16 strikes', (_Rig r) async {
+      final _Dev d = r.dev('r3');
+      final String hostIp = r.freshIp();
+      final String hostHash = _hmacHex(_salt, hostIp);
+      for (int i = 0; i < 3; i++) {
+        final _Host h = await r.host(approval: true, ip: hostIp);
+        await r.strikeReject(h, d);
+        await h.c.close();
+      }
+      final String text = await r.fileText(
+          ready: (String t) => t.contains(_hmacHex(_salt, d.install)));
+      expect(hostHash.allMatches(text).length, 1,
+          reason: 'item 15b: three strikes from one host IP keep one '
+              '(the latest) strike; the file holds the host hash '
+              '${hostHash.allMatches(text).length} times: $text');
+      // 17 hosts, all seated by typed code first, then kicked in turn, so
+      // the ban that fires on the way does not stop the strikes.
+      final _Dev e = r.dev('r3e');
+      final List<_Host> hosts = <_Host>[];
+      final List<_Joined> seats = <_Joined>[];
+      final List<String> hostHashes = <String>[];
+      for (int i = 0; i < 17; i++) {
+        final _Host h = await r.host();
+        hostHashes.add(_hmacHex(_salt, h.ip));
+        hosts.add(h);
+        seats.add(await r.seatVia(h, e, 'code'));
+      }
+      final String eHash = _hmacHex(_salt, e.install);
+      for (int i = 0; i < 17; i++) {
+        await r.kick(hosts[i], seats[i]);
+        final String t =
+            await r.fileText(ready: (String x) => x.contains(eHash));
+        final int held = hostHashes.where((String hh) => t.contains(hh)).length;
+        expect(held, lessThanOrEqualTo(16),
+            reason: 'item 15b: after strike ${i + 1} the record holds $held '
+                'host keys; at most 16 are allowed');
+        for (final String hh in hostHashes) {
+          expect(hh.allMatches(t).length, lessThanOrEqualTo(1),
+              reason: 'item 15b: one entry per host IP key');
+        }
+      }
+    });
+
+    _scenario(
+        'R4 (c) 364 days after ban_until with no strike the level is kept '
+        '(the 7 day ban started 371 days earlier)', (_Rig r) async {
+      final _Dev d = r.dev('r4');
+      await _climb(r, d, 2);
+      r.tick(_d7 + const Duration(days: 364));
+      await _expectNotBanned(r, d, 'the 7 day ban is long over');
+      await _rejects(r, d, 2, lastMayBan: false);
+      final int at = r.nowMs;
+      final _Host h = await r.host(approval: true);
+      _expectBan(await r.strikeReject(h, d),
+          scope: 'device',
+          level: 3,
+          untilMs: at + _d30.inMilliseconds,
+          nextMs: _d730.inMilliseconds,
+          because: 'item 15c: 364 days after ban_until the record is still '
+              'level 2, so its third strike bans for 30 days');
+    });
+
+    _scenario(
+        'R5 (c) 366 days after ban_until with no strike the record is '
+        'level 0 again', (_Rig r) async {
+      final _Dev d = r.dev('r5');
+      await _climb(r, d, 2);
+      r.tick(_d7 + const Duration(days: 366));
+      await _rejects(r, d, 5, lastMayBan: false);
+      await _expectNotBanned(
+          r,
+          d,
+          'item 15c: 366 days after ban_until the record is level 0, five '
+          'strikes are no ban');
+      final int at = r.nowMs;
+      final _Host h = await r.host(approval: true);
+      _expectBan(await r.strikeReject(h, d),
+          scope: 'device',
+          level: 1,
+          untilMs: at + _h24.inMilliseconds,
+          nextMs: _d7.inMilliseconds,
+          because: 'item 15c: the 6th strike after the reset is a level 1 '
+              'ban of 24 hours');
+    });
+
+    _scenario(
+        'R6 (d) a non-ASCII dotless i typed for room 1 answers '
+        'NO_SUCH_ROOM; ASCII i still reaches it', (_Rig r) async {
+      final _Host zero = await r.host();
+      final _Host one = await r.host();
+      expect(<String>[zero.code, one.code], <String>['0', '1'],
+          reason: 'fixture: the first two rooms are 0 and 1');
+      for (final String typed in <String>['ı', 'İ', ' ı ']) {
+        final _Dev d = r.dev('r6');
+        _err(
+            await r.tryCode(d, typed),
+            'NO_SUCH_ROOM',
+            'item 15d: ${typed.runes.map((int c) => 'U+${c.toRadixString(16)}').join(' ')} '
+                'is not ASCII, so it is not folded to 1');
+      }
+      final _Dev ok = r.dev('r6ok');
+      final _Joined j = await r.joinSeat(<String, Object?>{'code': 'i'},
+          install: ok.install, ip: ok.ip);
+      expect(j.room['code'], '1', reason: 'ASCII i folds to 1');
     });
   });
 
@@ -2133,6 +2301,79 @@ void main() {
         dir.deleteSync(recursive: true);
       }
     }, timeout: const Timeout(Duration(minutes: 4)));
+
+    Future<void> expectExit64(
+        Map<String, String> extra, List<String> needles, String because) async {
+      final Process p = await spawn(<String, String>{
+        'PORT': '${await freePort()}',
+        ...extra,
+      });
+      final Future<String> err = p.stderr.transform(utf8.decoder).join();
+      final Future<String> out = p.stdout.transform(utf8.decoder).join();
+      int? code;
+      try {
+        code = await p.exitCode.timeout(const Duration(seconds: 90));
+      } on TimeoutException {
+        Process.runSync('pkill', <String>['-KILL', '-P', '${p.pid}']);
+        p.kill(ProcessSignal.sigkill);
+        fail('$because: expected the server to exit 64 at start-up, but it '
+            'was still running after 90 s (it started); env: '
+            '${extra.keys.toList()}');
+      }
+      final String text = '${await err}${await out}';
+      expect(code, 64,
+          reason: '$because: expected exit code 64; got $code; '
+              'output: $text; env: ${extra.keys.toList()}');
+      for (final String n in needles) {
+        expect(text, contains(n),
+            reason: '$because: the message must name "$n"; output: $text');
+      }
+    }
+
+    test('X5 (e) an unwritable LUDO_STRIKE_DIR exits 64 naming the path',
+        () async {
+      final Directory dir = Directory.systemTemp.createTempSync('c684x_');
+      try {
+        Process.runSync('chmod', <String>['0500', dir.path]);
+        final String probe = '${dir.path}/probe-write';
+        bool writable = true;
+        try {
+          File(probe).writeAsStringSync('x');
+          File(probe).deleteSync();
+        } on FileSystemException {
+          writable = false;
+        }
+        if (!writable) {
+          await expectExit64(<String, String>{
+            'LUDO_STRIKE_DIR': dir.path,
+            'LUDO_STRIKE_SALT': _salt,
+          }, <String>[
+            dir.path
+          ], 'item 15e: a read-only strike dir');
+        } else {
+          fail('fixture: the 0500 directory is still writable by this user; '
+              'run as an unprivileged user');
+        }
+      } finally {
+        Process.runSync('chmod', <String>['0700', dir.path]);
+        dir.deleteSync(recursive: true);
+      }
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
+    test('X6 (e) a salt of 32 spaces exits 64 naming LUDO_STRIKE_SALT',
+        () async {
+      final Directory dir = Directory.systemTemp.createTempSync('c684x_');
+      try {
+        await expectExit64(<String, String>{
+          'LUDO_STRIKE_DIR': dir.path,
+          'LUDO_STRIKE_SALT': ' ' * 32,
+        }, <String>[
+          'LUDO_STRIKE_SALT'
+        ], 'item 15e: a whitespace salt');
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    }, timeout: const Timeout(Duration(minutes: 3)));
 
     test(
         'X4 a real ban over the real binary: log lines carry no hash, IP or '
