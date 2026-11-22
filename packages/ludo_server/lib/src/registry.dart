@@ -889,8 +889,8 @@ class RoomRegistry {
   final Map<String, Map<String, _StrikeIdentity>> _identities =
       <String, Map<String, _StrikeIdentity>>{};
 
-  /// Room code -> the host's strike key: the keyed hash of the host's
-  /// `install` when its `create_room` carried one, else of its IP.
+  /// Room code -> the host's strike key: the keyed hash of the host's IP
+  /// (section 32 item 15 (a)), empty when the IP was not known.
   final Map<String, String> _hostKeys = <String, String>{};
 
   /// Section 31 item 1: the source of link ids and knock ids. A separate
@@ -1000,7 +1000,7 @@ class RoomRegistry {
     );
     _rooms[code] = room;
     _roomsByLink[room.linkId] = room;
-    _hostKeys[code] = strikes.key(install ?? ip);
+    _hostKeys[code] = ip.isEmpty ? '' : strikes.key(ip);
     _refreshIdleTracking(room);
     return CreateOk(room: room, seat: hostSeat);
   }
@@ -1353,6 +1353,11 @@ class RoomRegistry {
       return null;
     }
     final String hostKey = _hostKeys[room.code] ?? '';
+    // Item 15 (a): a host with no known IP, or the struck socket's own IP,
+    // is not a distinct host and records nothing.
+    if (hostKey.isEmpty || hostKey == target.ipKey) {
+      return null;
+    }
     return strikes.recordStrike(
       installKey: installKey,
       hostKey: hostKey,
