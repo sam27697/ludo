@@ -56,6 +56,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math';
 
 import 'package:ludo_client/src/net/connection.dart';
 import 'package:ludo_client/src/net/frame.dart';
@@ -700,6 +701,22 @@ Future<ScenarioResult> runFullGame(
   }
 }
 
+const String _installAlphabet =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
+
+/// A fresh install id per simulated player: docs/PROTOCOL.md section 31
+/// item 2, 32 characters of [A-Za-z0-9_-] from Random.secure(). Kept here
+/// rather than importing lib/src/install_id.dart, which pulls in Flutter's
+/// shared_preferences.
+String newInstallId() {
+  final Random random = Random.secure();
+  final StringBuffer buffer = StringBuffer();
+  for (int i = 0; i < 32; i++) {
+    buffer.write(_installAlphabet[random.nextInt(_installAlphabet.length)]);
+  }
+  return buffer.toString();
+}
+
 Future<ScenarioResult> _playFullGame({
   required int players,
   required Future<RoomConnection> Function(String label) open,
@@ -713,7 +730,11 @@ Future<ScenarioResult> _playFullGame({
   final RoomConnection host = await open('host');
   final Paced hostPaced = Paced(paceMs);
   final RoomSnapshot created = await hostPaced.send(
-    () => host.createRoom(name: 'wire-smoke-host', players: players),
+    () => host.createRoom(
+      name: 'wire-smoke-host',
+      players: players,
+      install: newInstallId(),
+    ),
   );
   final String code = created.code;
   attachAgent(host, hostPaced, reportError);
@@ -722,7 +743,11 @@ Future<ScenarioResult> _playFullGame({
     final RoomConnection guest = await open('guest-$i');
     final Paced guestPaced = Paced(paceMs);
     await guestPaced.send(
-      () => guest.joinRoom(code: code, name: 'wire-smoke-guest-$i'),
+      () => guest.joinRoom(
+        code: code,
+        name: 'wire-smoke-guest-$i',
+        install: newInstallId(),
+      ),
     );
     attachAgent(guest, guestPaced, reportError);
   }
@@ -791,6 +816,7 @@ class _DropPlayerRequest {
     required this.target,
     required this.code,
     required this.name,
+    required this.install,
     required this.replyPort,
     required this.paceMs,
   });
@@ -798,6 +824,9 @@ class _DropPlayerRequest {
   final String target;
   final String code;
   final String name;
+
+  /// This player's own install id (section 31 item 2 shape).
+  final String install;
   final SendPort replyPort;
 
   /// D1's per-connection pacing, applied inside this isolate exactly as it
@@ -842,7 +871,11 @@ Future<void> _dropPlayerIsolateMain(_DropPlayerRequest request) async {
     await connection.open();
     attachAgent(connection, paced, reportError);
     await paced.send(
-      () => connection.joinRoom(code: request.code, name: request.name),
+      () => connection.joinRoom(
+        code: request.code,
+        name: request.name,
+        install: request.install,
+      ),
     );
     final int? seat = connection.seat;
     final String? seatToken = connection.seatToken;
@@ -967,7 +1000,11 @@ Future<ScenarioResult> _playReconnect({
   final RoomConnection host = await open('host');
   final Paced hostPaced = Paced(paceMs);
   final RoomSnapshot created = await hostPaced.send(
-    () => host.createRoom(name: 'wire-smoke-host', players: players),
+    () => host.createRoom(
+      name: 'wire-smoke-host',
+      players: players,
+      install: newInstallId(),
+    ),
   );
   final String code = created.code;
   attachAgent(host, hostPaced, reportError);
@@ -976,7 +1013,11 @@ Future<ScenarioResult> _playReconnect({
     final RoomConnection guest = await open('guest-$i');
     final Paced guestPaced = Paced(paceMs);
     await guestPaced.send(
-      () => guest.joinRoom(code: code, name: 'wire-smoke-guest-$i'),
+      () => guest.joinRoom(
+        code: code,
+        name: 'wire-smoke-guest-$i',
+        install: newInstallId(),
+      ),
     );
     attachAgent(guest, guestPaced, reportError);
   }
@@ -1022,6 +1063,7 @@ Future<ScenarioResult> _playReconnect({
       target: target.toString(),
       code: code,
       name: _dropPlayerName,
+      install: newInstallId(),
       replyPort: dropPort.sendPort,
       paceMs: paceMs,
     ),
