@@ -63,7 +63,7 @@ const String _ninetyDaySentenceFragment =
 /// The exact "Last updated" line work order 216 specifies. The literal
 /// date, not `privacyLastUpdated`, so a source that forgets to bump the
 /// constant is caught the same as one that bumps it to the wrong value.
-const String _expectedLastUpdatedLine = 'Last updated: 2026-09-30';
+const String _expectedLastUpdatedLine = 'Last updated: 2026-11-23';
 
 /// The existing "No advertising, no analytics, no tracking." paragraph's
 /// closing sentence, unchanged by work order 216. Asserting this stays
@@ -1205,7 +1205,7 @@ void main() {
       );
     });
 
-    test('Last updated: 2026-09-30 appears exactly once', () {
+    test('Last updated: 2026-11-23 appears exactly once', () {
       final int occurrences = RegExp(RegExp.escape(_expectedLastUpdatedLine))
           .allMatches(body)
           .length;

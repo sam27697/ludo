@@ -15,6 +15,11 @@ const int _createRoomLimit = 5;
 const Duration _joinOrResumeWindow = Duration(minutes: 1);
 const int _joinOrResumeLimit = 20;
 
+/// `docs/PROTOCOL.md` section 32 item 5: every `join_room` that carries a
+/// typed `code` counts against this second per-IP window.
+const Duration _typedCodeWindow = Duration(minutes: 10);
+const int _typedCodeLimit = 20;
+
 const Duration _gameLogWindow = Duration(minutes: 1);
 const int _gameLogLimit = 2;
 
@@ -74,6 +79,7 @@ class RateLimiter {
       <String, _SlidingWindow>{};
   final Map<String, _SlidingWindow> _joinOrResumeByIp =
       <String, _SlidingWindow>{};
+  final Map<String, _SlidingWindow> _typedCodeByIp = <String, _SlidingWindow>{};
   final Map<Object, _SlidingWindow> _messagesByConnection =
       <Object, _SlidingWindow>{};
   final Map<Object, _SlidingWindow> _gameLogByConnection =
@@ -100,6 +106,15 @@ class RateLimiter {
         _joinOrResumeByIp.putIfAbsent(ip, () => _SlidingWindow());
     final int count = window.recordAndCount(_clock.now, _joinOrResumeWindow);
     return count <= _joinOrResumeLimit;
+  }
+
+  /// True if this typed-code `join_room` may proceed, section 32 item 5: 20
+  /// per 10 minutes per IP. The 21st is refused and is not counted, so a
+  /// refused attempt does not push the window out.
+  bool recordTypedCode(String ip) {
+    final _SlidingWindow window =
+        _typedCodeByIp.putIfAbsent(ip, () => _SlidingWindow());
+    return window.pruneAndAdmit(_clock.now, _typedCodeWindow, _typedCodeLimit);
   }
 
   /// True if this `game_log` may proceed, `docs/PROTOCOL.md` section 17: "At
@@ -152,6 +167,10 @@ class RateLimiter {
     _joinOrResumeByIp.removeWhere(
       (String ip, _SlidingWindow window) =>
           window.pruneAndIsEmpty(now, _joinOrResumeWindow),
+    );
+    _typedCodeByIp.removeWhere(
+      (String ip, _SlidingWindow window) =>
+          window.pruneAndIsEmpty(now, _typedCodeWindow),
     );
   }
 }

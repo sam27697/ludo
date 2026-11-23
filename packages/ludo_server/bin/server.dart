@@ -113,12 +113,36 @@ Future<void> _run() async {
     exit(64);
   }
 
+  // docs/PROTOCOL.md section 32 item 11: the strike store. LUDO_STRIKE_DIR set
+  // without a valid LUDO_STRIKE_SALT stops the server before the port opens,
+  // naming the variable; neither set is an in-memory store with a random salt.
+  final String rawStrikeDir = Platform.environment['LUDO_STRIKE_DIR'] ?? '';
+  final String rawStrikeSalt = Platform.environment['LUDO_STRIKE_SALT'] ?? '';
+  final StrikeStore strikeStore;
+  try {
+    strikeStore = StrikeStore(
+      clock: const SystemClock(),
+      dir: rawStrikeDir.isEmpty ? null : rawStrikeDir,
+      salt: rawStrikeSalt.isEmpty ? null : rawStrikeSalt,
+    );
+  } on FormatException catch (error) {
+    stderr.writeln(error.message);
+    exit(64);
+  } on FileSystemException catch (error) {
+    stderr.writeln(
+      'LUDO_STRIKE_DIR is unusable: ${error.path ?? rawStrikeDir} '
+      '(${error.message})',
+    );
+    exit(64);
+  }
+
   final RoomRegistry registry = RoomRegistry(
     clock: const SystemClock(),
     secure: Random.secure(),
     verifyStore: verifyStore,
     verifyUrlBase: verifyUrlBase,
     ruleset: ruleset,
+    strikeStore: strikeStore,
   );
   final RateLimiter rateLimiter = RateLimiter(clock: const SystemClock());
   final WireServer server = WireServer(

@@ -494,9 +494,30 @@ void main() {
         'host seat token': played.hostSeatToken,
         'guest seat token': played.guestSeatToken,
       };
+      // A room code is 1 to 6 symbols now (section 32), so a substring test
+      // would find it inside a hash or a date. It must not appear as a JSON
+      // key or a whole string value.
+      final List<String> strings = <String>[];
+      void collect(Object? node) {
+        if (node is Map<String, Object?>) {
+          for (final MapEntry<String, Object?> e in node.entries) {
+            strings.add(e.key);
+            collect(e.value);
+          }
+        } else if (node is List<Object?>) {
+          node.forEach(collect);
+        } else if (node is String) {
+          strings.add(node);
+        }
+      }
+
+      collect(jsonDecode(rawRecord));
       needles.forEach((String label, String needle) {
+        final bool found = label == 'room code'
+            ? strings.contains(needle)
+            : rawRecord.contains(needle);
         expect(
-          rawRecord.contains(needle),
+          found,
           isFalse,
           reason: 'the $label ("$needle") must never appear in the stored '
               'verify record; raw record: $rawRecord',

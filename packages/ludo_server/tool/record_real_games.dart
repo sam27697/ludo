@@ -601,6 +601,8 @@ class _Recorder {
       await guest.send('join_room', <String, Object?>{
         'code': code,
         'name': args.names[i + 1],
+        // Section 32 item 6: a code join carries the app's install id.
+        'install': 'record-install-guest-${i + 1}-0123456789',
       });
       final Frame guestSeat =
           await _awaitType(guest, 'seat_assigned', because: 'join_room reply');

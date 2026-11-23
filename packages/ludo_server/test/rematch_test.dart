@@ -170,7 +170,11 @@ Future<_ThreeSeatLobby> _finishedThreeSeatRoom(
 
   final WireTestClient midClient = await WireTestClient.connect(harness.wsUri);
   clients.add(midClient);
-  midClient.send('join_room', <String, Object?>{'code': code, 'name': 'Mid'});
+  midClient.send('join_room', <String, Object?>{
+    'install': 'testinstall-00000001',
+    'code': code,
+    'name': 'Mid'
+  });
   final Map<String, Object?> midSeatAssigned = await midClient.next();
   await midClient.next(); // room
   await hostClient.next(); // player_joined
@@ -181,7 +185,11 @@ Future<_ThreeSeatLobby> _finishedThreeSeatRoom(
 
   final WireTestClient farClient = await WireTestClient.connect(harness.wsUri);
   clients.add(farClient);
-  farClient.send('join_room', <String, Object?>{'code': code, 'name': 'Far'});
+  farClient.send('join_room', <String, Object?>{
+    'install': 'testinstall-00000001',
+    'code': code,
+    'name': 'Far'
+  });
   final Map<String, Object?> farSeatAssigned = await farClient.next();
   await farClient.next(); // room
   await hostClient.next(); // player_joined
@@ -835,16 +843,22 @@ void main() {
 
       final WireTestClient midClient = await WireTestClient.connect(uri);
       clients.add(midClient);
-      midClient
-          .send('join_room', <String, Object?>{'code': code, 'name': 'Mid'});
+      midClient.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': code,
+        'name': 'Mid'
+      });
       final Map<String, Object?> midSeatAssigned = await midClient.next();
       await midClient.next(); // room
       await hostClient.next(); // player_joined
 
       final WireTestClient farClient = await WireTestClient.connect(uri);
       clients.add(farClient);
-      farClient
-          .send('join_room', <String, Object?>{'code': code, 'name': 'Far'});
+      farClient.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': code,
+        'name': 'Far'
+      });
       final Map<String, Object?> farSeatAssigned = await farClient.next();
       await farClient.next(); // room
       await hostClient.next(); // player_joined
@@ -1293,8 +1307,11 @@ void main() {
 
       final WireTestClient newcomer = await WireTestClient.connect(uri);
       clients.add(newcomer);
-      newcomer.send('join_room',
-          <String, Object?>{'code': lobby.code, 'name': 'Newcomer'});
+      newcomer.send('join_room', <String, Object?>{
+        'install': 'testinstall-00000001',
+        'code': lobby.code,
+        'name': 'Newcomer'
+      });
       final Map<String, Object?> newcomerSeatAssigned = await newcomer.next();
       final Map<String, Object?> newcomerRoom = await newcomer.next();
       await lobby.host.client.next(); // player_joined

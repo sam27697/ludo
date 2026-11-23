@@ -146,6 +146,8 @@ Future<GameSetup> setUpGame(Uri target, int players) async {
     await guestSocket.send('join_room', <String, Object?>{
       'code': code,
       'name': 'Sim Guest $i',
+      // Section 32 item 6: a code join carries the app's install id.
+      'install': 'sim-install-guest-$i-0123456789',
     });
     final Frame seatAssigned = await guestSocket.next();
     expectFrameType(seatAssigned, 'seat_assigned',

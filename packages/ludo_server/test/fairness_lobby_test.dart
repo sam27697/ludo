@@ -163,6 +163,7 @@ void main() {
 
     final WireTestClient guestClient = await connect(uri);
     guestClient.send('join_room', <String, Object?>{
+      'install': 'testinstall-00000001',
       'code': hostRoom.roomData['code']! as String,
       'name': guestName,
     });

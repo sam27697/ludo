@@ -337,6 +337,7 @@ Future<WireTestLobby> buildWireTestLobby(
   final WireTestClient guestClient = await WireTestClient.connect(uri);
   clients.add(guestClient);
   guestClient.send('join_room', <String, Object?>{
+    'install': 'testinstall-00000001',
     'code': code,
     'name': guestName,
   });

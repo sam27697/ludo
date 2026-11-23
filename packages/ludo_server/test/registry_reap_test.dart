@@ -8,14 +8,12 @@
 //     60 minute total does not apply.
 //   Any room that is not LOBBY: reaped 6 hours after its lifetime started,
 //     regardless.
-//   A reaped room's code is not reissued for 24 hours.
+//   A reaped room's code rests for 10 minutes before it is handed out again.
 // All FakeClock-driven, so timing is exact rather than approximate.
 import 'dart:math';
 
 import 'package:ludo_server/ludo_server.dart';
 import 'package:test/test.dart';
-
-import 'support/scripted_random.dart';
 
 const RulesConfig _defaultRules = RulesConfig();
 
@@ -148,11 +146,11 @@ void main() {
   });
 
   test(
-      'a reaped code is not reissued for 24 hours; the same forced draw '
-      'yields it again once the window has elapsed', () {
+      'a reaped code rests for 10 minutes; the lowest free code is handed out '
+      'again once the rest has elapsed, and not before', () {
     final FakeClock clock = FakeClock(DateTime.utc(2026, 1, 1));
-    final ScriptedRandom scripted = ScriptedRandom('BCDFGH');
-    final RoomRegistry registry = RoomRegistry(clock: clock, secure: scripted);
+    final RoomRegistry registry =
+        RoomRegistry(clock: clock, secure: Random.secure());
 
     final CreateResult victimResult =
         registry.createRoom(name: 'Host', players: 2, rules: _defaultRules);
@@ -160,9 +158,8 @@ void main() {
     final CreateOk victim = victimResult as CreateOk;
     expect(
       victim.room.code,
-      'BCDFGH',
-      reason:
-          'ScriptedRandom must force the first draw to spell the target code',
+      '0',
+      reason: 'section 32 item 2: the first room alive gets the lowest code',
     );
 
     registry.setConnected(
@@ -171,30 +168,27 @@ void main() {
         connected: false);
     clock.advance(const Duration(minutes: 10));
     expect(registry.reap(), 1);
-    expect(registry.lookup('BCDFGH'), isNull);
+    expect(registry.lookup('0'), isNull);
 
-    scripted.rearm();
+    clock.advance(const Duration(minutes: 9, seconds: 59));
     final CreateResult duringResult =
         registry.createRoom(name: 'Someone', players: 2, rules: _defaultRules);
     expect(duringResult, isA<CreateOk>(), reason: 'got $duringResult');
     expect(
       (duringResult as CreateOk).room.code,
-      isNot('BCDFGH'),
-      reason:
-          'a code reaped less than 24h ago must not be reissued, even when the CSPRNG draws it again',
+      '1',
+      reason: 'a code reaped less than 10 minutes ago must not be reissued',
     );
 
-    clock.advance(const Duration(hours: 24) + const Duration(minutes: 1));
-    scripted.rearm();
+    clock.advance(const Duration(seconds: 1));
     final CreateResult afterResult =
         registry.createRoom(name: 'Another', players: 2, rules: _defaultRules);
     expect(afterResult, isA<CreateOk>(), reason: 'got $afterResult');
     expect(
       (afterResult as CreateOk).room.code,
-      'BCDFGH',
-      reason:
-          'once the 24h quarantine has elapsed, the same forced draw must be allowed to '
-          'yield the code again',
+      '0',
+      reason: 'once the 10 minute rest has elapsed the lowest free code is '
+          'handed out again',
     );
   });
 

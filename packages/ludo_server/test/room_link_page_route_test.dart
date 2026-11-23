@@ -855,7 +855,11 @@ class _StagedRoom {
   /// Moves a waiting room to full: a second player joins.
   static Future<_Wire> _join(String code, String scenario) async {
     final _Wire guest = await _Wire.connect('guest');
-    guest.send('join_room', <String, Object?>{'code': code, 'name': 'Guest'});
+    guest.send('join_room', <String, Object?>{
+      'install': 'testinstall-00000001',
+      'code': code,
+      'name': 'Guest'
+    });
     await guest.take('room', scenario);
     return guest;
   }
