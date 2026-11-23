@@ -41,11 +41,32 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:ludo_server/ludo_server.dart';
 import 'package:test/test.dart';
+
+/// The ludo_server package directory, resolved from the package URI so the
+/// subprocess tests work from the repo root and from the package directory.
+/// Same approach as `_packageRoot()` in app_links_route_test.dart.
+Future<String>? _packageRootFuture;
+
+Future<String> _packageRoot() {
+  return _packageRootFuture ??= () async {
+    final Uri? libUri = await Isolate.resolvePackageUri(
+      Uri.parse('package:ludo_server/ludo_server.dart'),
+    );
+    if (libUri == null) {
+      fail(
+        'could not resolve package:ludo_server/ludo_server.dart to a file '
+        'URI; cannot locate bin/server.dart for the subprocess tests',
+      );
+    }
+    return File.fromUri(libUri).parent.parent.path;
+  }();
+}
 
 const String _file = 'test/c684_short_codes_strikes_test.dart';
 
@@ -2211,12 +2232,16 @@ void main() {
       return p;
     }
 
-    Future<Process> spawn(Map<String, String> extra) => Process.start(
-          Platform.resolvedExecutable,
-          <String>['run', 'bin/server.dart'],
-          environment: cleanEnv(extra),
-          includeParentEnvironment: false,
-        );
+    Future<Process> spawn(Map<String, String> extra) async {
+      final String packageRoot = await _packageRoot();
+      return Process.start(
+        Platform.resolvedExecutable,
+        <String>['run', 'bin/server.dart'],
+        environment: cleanEnv(extra),
+        includeParentEnvironment: false,
+        workingDirectory: packageRoot,
+      );
+    }
 
     Future<void> waitHealth(int port, Process p) async {
       bool exited = false;
