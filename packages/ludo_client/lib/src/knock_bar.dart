@@ -34,6 +34,7 @@ class ApprovalSwitch extends StatelessWidget {
     required this.value,
     required this.onChanged,
     this.compact = false,
+    this.inline = false,
   });
 
   final bool value;
@@ -43,11 +44,42 @@ class ApprovalSwitch extends StatelessWidget {
   /// can float over a table without taking any of the table's room.
   final bool compact;
 
+  /// The in-row form for a row that is already 48 dp tall: the lock mark and
+  /// the switch only, no pill and no text line. The label and the hint ride
+  /// on the semantics label and the tooltip instead.
+  final bool inline;
+
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
     final TextTheme textTheme = Theme.of(context).textTheme;
     final Color tint = value ? LudoColors.action : LudoColors.inkMuted;
+    if (inline) {
+      return Tooltip(
+        message: loc.approvalSwitchLabel,
+        child: Semantics(
+          container: true,
+          label: '${loc.approvalSwitchLabel}. ${loc.approvalSwitchHint}',
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              ExcludeSemantics(
+                child: Icon(
+                  value ? Icons.lock_person_outlined : Icons.lock_open,
+                  size: kSpace5,
+                  color: tint,
+                ),
+              ),
+              Switch(
+                key: const Key('approval-switch'),
+                value: value,
+                onChanged: onChanged,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Column(
       crossAxisAlignment: compact
           ? CrossAxisAlignment.start
@@ -187,9 +219,10 @@ class _KnockBarState extends State<KnockBar> {
   }
 }
 
-/// A card slides in and fades up when it first appears. It moves a painted
-/// layer only, so the layout under it is final from the first frame and a
-/// target is never somewhere other than where it is hit-tested.
+/// A card fades up when it first appears. It never travels: the door switch
+/// sits directly above the first card, so a card painted off its laid-out
+/// place would cross it, and a target is never somewhere other than where it
+/// is hit-tested.
 class _KnockEntrance extends StatelessWidget {
   const _KnockEntrance({required this.child});
 
@@ -205,13 +238,7 @@ class _KnockEntrance extends StatelessWidget {
       duration: kMotionShort,
       curve: Curves.easeOutCubic,
       builder: (BuildContext context, double t, Widget? child) {
-        return Opacity(
-          opacity: t,
-          child: Transform.translate(
-            offset: Offset(0, (1 - t) * -kSpace4),
-            child: child,
-          ),
-        );
+        return Opacity(opacity: t, child: child);
       },
       child: child,
     );

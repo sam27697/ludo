@@ -106,6 +106,9 @@ const Duration kFriendJoinedLineHold = Duration(milliseconds: 2500);
 /// Codes where the host or the strike ladder said no to this player: the
 /// error card carries the refusal mark, not the neutral info icon.
 const Set<String> _refusalCodes = {
+  'NO_SUCH_ROOM',
+  'ROOM_FULL',
+  'ROOM_STARTED',
   'KICKED',
   'KNOCK_REFUSED',
   'CODE_BANNED',
@@ -832,9 +835,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         widget.action != LobbyAction.resume && controller.room == null;
     // C-533 D2: the card shape of the game screen's connection-lost body.
     // The icon says what kind of refusal this is; the text is unchanged.
-    final IconData icon = linkRoomGone || controller.errorCode == 'NO_SUCH_ROOM'
-        ? Icons.link_off_rounded
-        : controller.errorCode == 'transport'
+    final IconData icon = controller.errorCode == 'transport'
         ? Icons.wifi_off_rounded
         : Icons.info_outline_rounded;
     final Widget leaveLabel = Text(
@@ -1110,9 +1111,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (knocksOpen)
-                    _knockCodeRow(loc, room, textTheme)
-                  else ...[
+                  if (knocksOpen) ...[
+                    _knockCodeRow(loc, room, textTheme),
+                  ] else ...[
                     Text(
                       loc.lobbyRoomCodeLabel,
                       textAlign: TextAlign.center,
@@ -1329,6 +1330,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           ),
           const Spacer(),
+          // X216: switching approval off seats the knockers in order, so the
+          // host keeps the switch while knocks are open, inside this row.
+          if (widget.controller.isHost)
+            ApprovalSwitch(
+              inline: true,
+              value: room.guestApproval,
+              onChanged: (bool on) =>
+                  unawaited(widget.controller.setGuestApproval(on)),
+            ),
           IconButton(
             key: const Key('lobby-copy-code-button'),
             style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
