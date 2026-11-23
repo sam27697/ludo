@@ -103,6 +103,15 @@ TextStyle? _roomCodeStyle(TextTheme textTheme, int length) {
 /// C-599 D5(b): how long the "Karim joined" line stays under the seat grid.
 const Duration kFriendJoinedLineHold = Duration(milliseconds: 2500);
 
+/// Codes where the host or the strike ladder said no to this player: the
+/// error card carries the refusal mark, not the neutral info icon.
+const Set<String> _refusalCodes = {
+  'KICKED',
+  'KNOCK_REFUSED',
+  'CODE_BANNED',
+  'TOO_MANY_KNOCKS',
+};
+
 /// Maps a RoomController error code to a localised message. Pure and
 /// top-level so it can be tested without pumping a widget.
 String lobbyErrorMessage(AppLocalizations loc, String? code) {
@@ -836,7 +845,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       child: _lobbyCard(
         cardKey: const Key('lobby-error-card'),
         icon: icon,
-        mark: controller.errorCode == 'KICKED'
+        mark: _refusalCodes.contains(controller.errorCode)
             ? const RefusalNoticeMark(size: 32)
             : null,
         title: linkRoomGone
