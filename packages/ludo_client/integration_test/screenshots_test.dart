@@ -7049,7 +7049,7 @@ void main() {
       binding,
       shotName: '169-knock-rejected-ar',
       locale: const Locale('ar'),
-      roomCode: 'KR9A8L',
+      roomCode: 'KR9A8M',
       ending: _X202End.rejected,
     );
   });
@@ -7998,6 +7998,7 @@ Future<_RealEntry> _enterRealGame(
   );
   final Map<String, Object?> roomData = view[1]['d']! as Map<String, Object?>;
   final String roomCode = roomData['code']! as String;
+  final String typedCode = normalizeRoomCode(roomCode);
   final bool isHost = roomData['host_seat'] == seat;
   final String playerName = game.nameOf(seat);
   final int seatCount = (roomData['players']! as int) == game.playerCount
@@ -8019,10 +8020,16 @@ Future<_RealEntry> _enterRealGame(
   if (isHost) {
     await _tapCreateRoom(tester);
   } else {
+    // The recorded code may predate section 32 (fixture four_seats_1 holds
+    // "TCCLX3", recorded when L was a symbol). The device types it as a
+    // person would and the client folds it; what must hold is that the
+    // folded code is valid.
     expect(
-      isValidRoomCode(roomCode),
+      isValidRoomCode(typedCode),
       isTrue,
-      reason: '$where: the recorded room code "$roomCode" is not typeable',
+      reason:
+          '$where: the recorded room code "$roomCode" folds to "$typedCode", '
+          'which is not a valid section 32 code',
     );
     await tester.enterText(find.byKey(const Key('room-code-field')), roomCode);
     // Join is in the tree only once the field holds a full code (C-523 D3).
@@ -8055,8 +8062,10 @@ Future<_RealEntry> _enterRealGame(
   if (!isHost) {
     expect(
       openData['code'],
-      roomCode,
-      reason: '$where: the join must carry the recorded room code',
+      typedCode,
+      reason:
+          '$where: the join must carry the recorded room code folded by '
+          'section 32 ("$roomCode" -> "$typedCode")',
     );
   }
 
@@ -25509,13 +25518,33 @@ Future<void> _shootX202HostLobby(
         '$shotName ($scenario): expected a connected host, got '
         '${controller.phase}, isHost ${controller.isHost}. Reproduce: $repro',
   );
+  // Order 688 (X213): while any knock is open the code die, the share rows
+  // and the approval switch fold into one code row.
   expect(
     find.byKey(const Key('approval-switch')),
-    findsOneWidget,
-    reason:
-        '$shotName ($scenario): expected the host approval switch. '
-        'Reproduce: $repro',
+    approvalOn ? findsNothing : findsOneWidget,
+    reason: approvalOn
+        ? '$shotName ($scenario): expected the approval switch ABSENT while '
+              'knocks are open (the folded code row stands in). '
+              'Reproduce: $repro'
+        : '$shotName ($scenario): expected the host approval switch. '
+              'Reproduce: $repro',
   );
+  if (approvalOn) {
+    for (final String k in <String>[
+      'lobby-room-code',
+      'lobby-copy-code-button',
+      'lobby-share-button',
+    ]) {
+      expect(
+        find.byKey(Key(k)),
+        findsOneWidget,
+        reason:
+            '$shotName ($scenario): expected the folded code row key "$k". '
+            'Reproduce: $repro',
+      );
+    }
+  }
   for (final int s in <int>[1, 2, 3]) {
     expect(
       find.byKey(Key('seat-origin-$s')),
@@ -25535,6 +25564,25 @@ Future<void> _shootX202HostLobby(
     );
   }
   if (approvalOn) {
+    for (final Map<String, Object?> k in knocks) {
+      for (final String verb in <String>['accept', 'reject']) {
+        expect(
+          find.byKey(Key('knock-$verb-${k['knock_id']}')),
+          findsOneWidget,
+          reason:
+              '$shotName ($scenario): expected the $verb control on knock '
+              '${k['knock_id']}. Reproduce: $repro',
+        );
+      }
+    }
+    for (final int n in <int>[0, 1, 2, 3]) {
+      _expectRectInsideView(
+        tester,
+        find.byKey(Key('lobby-seat-$n')),
+        label: 'lobby-seat-$n',
+        context: '($shotName, $scenario, two knocks open). Reproduce: $repro',
+      );
+    }
     await _capture(binding, tester, shotName);
     return;
   }
