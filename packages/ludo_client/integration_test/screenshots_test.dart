@@ -147,7 +147,8 @@ import 'package:ludo_client/src/app.dart'
 import 'package:ludo_client/src/board.dart' show LudoBoard;
 import 'package:ludo_client/src/board_geometry.dart' show cellFor;
 import 'package:ludo_client/src/chat_bubble.dart' show kChatMinDwell;
-import 'package:ludo_client/src/code_ban_notice.dart' show RefusalNoticeMark;
+import 'package:ludo_client/src/code_ban_notice.dart'
+    show RefusalNoticeMark, kRefusalNoticeFrame, kRefusalNoticeFrameWidth;
 import 'package:ludo_client/src/die_cube.dart' show BoardThrownDie;
 import 'package:ludo_client/src/end_card.dart' show EndCard;
 import 'package:ludo_client/src/feedback.dart'
@@ -7140,6 +7141,29 @@ void main() {
         tester,
         binding,
         shotName: '177-lobby-kicked-card-$lang',
+        locale: locale,
+      );
+    });
+
+    // 178-179: order 698s (X215). A room that is full is a refusal: the
+    // lobby card and the home notice both wear the red mark.
+    testWidgets('capture 178-lobby-room-full-$lang', (tester) async {
+      await _shootLobbyJoinRefused(
+        tester,
+        binding,
+        shotName: '178-lobby-room-full-$lang',
+        locale: locale,
+        code: 'RF4K7M',
+        fromLink: false,
+        errorCode: 'ROOM_FULL',
+      );
+    });
+
+    testWidgets('capture 179-home-knock-full-$lang', (tester) async {
+      await _shootHomeKnockFull(
+        tester,
+        binding,
+        shotName: '179-home-knock-full-$lang',
         locale: locale,
       );
     });
@@ -18737,7 +18761,9 @@ Future<void> _shootLobbyJoinRefused(
             'typed-code line "${loc.lobbyErrorNoSuchRoom}"',
       );
     } else {
-      line = en ? _roomStartedEn : _roomStartedAr;
+      line = errorCode == 'ROOM_FULL'
+          ? loc.lobbyErrorRoomFull
+          : (en ? _roomStartedEn : _roomStartedAr);
     }
     expect(
       find.descendant(of: error, matching: find.text(line)),
@@ -18746,12 +18772,15 @@ Future<void> _shootLobbyJoinRefused(
           'capture $shotName ($scenario): lobby-error must read "$line"; '
           'the texts on screen are ${_viewText(tester)}',
     );
+    // ROOM_FULL can clear when a seat frees, so it keeps Retry; the other
+    // refusals here can never succeed on a retry.
+    final bool retry = errorCode == 'ROOM_FULL';
     expect(
       find.byKey(const Key('lobby-retry-button'), skipOffstage: false),
-      findsNothing,
+      retry ? findsOneWidget : findsNothing,
       reason:
-          'capture $shotName ($scenario): $errorCode can never succeed on '
-          'a retry, so lobby-retry-button must be absent',
+          'capture $shotName ($scenario): $errorCode '
+          '${retry ? 'can clear, so lobby-retry-button must be shown' : 'can never succeed on a retry, so lobby-retry-button must be absent'}',
     );
     final Finder leave = find.byKey(const Key('lobby-leave-button'));
     expect(
@@ -18779,11 +18808,10 @@ Future<void> _shootLobbyJoinRefused(
       shotName: shotName,
       scenario: scenario,
       locale: locale,
-      icon: errorCode == 'NO_SUCH_ROOM'
-          ? Icons.link_off_rounded
-          : Icons.info_outline_rounded,
+      icon: Icons.cancel_rounded,
+      refusal: true,
       line: line,
-      retry: false,
+      retry: retry,
       leaveText: leaveText,
     );
     await _capture(binding, tester, shotName, frames: 0);
@@ -18805,6 +18833,7 @@ void _expectLobbyErrorCard(
   required String scenario,
   required Locale locale,
   required IconData icon,
+  bool refusal = false,
   required String line,
   required bool retry,
   required String leaveText,
@@ -18874,6 +18903,43 @@ void _expectLobbyErrorCard(
     findsOneWidget,
     reason: '$who: the card carries the one icon and no other',
   );
+  // X215: a card that tells this player they cannot get in wears the red
+  // refusal mark and never the info icon; every other card holds no mark.
+  final Finder refusalMark = find.descendant(
+    of: card,
+    matching: find.byType(RefusalNoticeMark),
+  );
+  expect(
+    refusalMark,
+    refusal ? findsOneWidget : findsNothing,
+    reason:
+        '$who: X215, the card must ${refusal ? 'wear' : 'not wear'} the '
+        'RefusalNoticeMark; the texts on screen are ${_viewText(tester)}',
+  );
+  if (refusal) {
+    final Finder markIcon = find.descendant(
+      of: refusalMark,
+      matching: find.byIcon(Icons.cancel_rounded),
+    );
+    expect(
+      markIcon,
+      findsOneWidget,
+      reason: '$who: X215, the mark must hold Icons.cancel_rounded',
+    );
+    expect(
+      tester.widget<Icon>(markIcon).color,
+      LudoColors.error,
+      reason: '$who: X215, the refusal mark is LudoColors.error red',
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.byIcon(Icons.info_outline_rounded),
+      ),
+      findsNothing,
+      reason: '$who: X215, no info icon beside the refusal mark',
+    );
+  }
   expect(
     find.descendant(of: card, matching: find.text(line)),
     findsOneWidget,
@@ -25518,18 +25584,53 @@ Future<void> _shootX202HostLobby(
         '$shotName ($scenario): expected a connected host, got '
         '${controller.phase}, isHost ${controller.isHost}. Reproduce: $repro',
   );
-  // Order 688 (X213): while any knock is open the code die, the share rows
-  // and the approval switch fold into one code row.
+  // Order 688 (X213) folds the code die and share rows into one code row
+  // while any knock is open; order 696 (X216) keeps the approval switch, in
+  // its compact form, one row under it, because switching approval off seats
+  // every knocker (the one-tap "let them all in").
   expect(
     find.byKey(const Key('approval-switch')),
-    approvalOn ? findsNothing : findsOneWidget,
+    findsOneWidget,
     reason: approvalOn
-        ? '$shotName ($scenario): expected the approval switch ABSENT while '
-              'knocks are open (the folded code row stands in). '
-              'Reproduce: $repro'
+        ? '$shotName ($scenario): X216, expected exactly one approval-switch '
+              'while knocks are open. Reproduce: $repro'
         : '$shotName ($scenario): expected the host approval switch. '
               'Reproduce: $repro',
   );
+  if (approvalOn) {
+    final Finder switchFinder = find.byKey(const Key('approval-switch'));
+    _expectRectInsideView(
+      tester,
+      switchFinder,
+      label: 'approval-switch',
+      context: 'with knocks open before capture $shotName. Reproduce: $repro',
+    );
+    final Rect switchRect = tester.getRect(switchFinder);
+    final RegExp seatKey = RegExp(r'^lobby-seat-\d+$');
+    final Finder seatCards = find.byWidgetPredicate(
+      (widget) =>
+          widget.key is ValueKey<String> &&
+          seatKey.hasMatch((widget.key! as ValueKey<String>).value),
+    );
+    final List<String> crossed = <String>[
+      for (final Element e in seatCards.evaluate())
+        if (tester.getRect(find.byWidget(e.widget)).overlaps(switchRect))
+          (e.widget.key! as ValueKey<String>).value,
+      for (final Map<String, Object?> k in knocks)
+        if (tester
+            .getRect(find.byKey(Key('knock-card-${k['knock_id']}')))
+            .overlaps(switchRect))
+          'knock-card-${k['knock_id']}',
+    ];
+    expect(
+      crossed,
+      isEmpty,
+      reason:
+          '$shotName ($scenario): X216, the approval-switch rect '
+          '$switchRect must intersect no knock-card-* and no lobby-seat-*, '
+          'it crosses $crossed. Reproduce: $repro',
+    );
+  }
   if (approvalOn) {
     for (final String k in <String>[
       'lobby-room-code',
@@ -26389,6 +26490,117 @@ Future<void> _shootHomeKnockRejectedBan(
     untilMs: untilMs,
     nextMs: nextMs,
     fullInsideView: false,
+  );
+  await _capture(binding, tester, shotName);
+}
+
+/// 179 (order 698s, X215): `knock_failed` outcome `full`: the home notice
+/// reads the full line, wears the red refusal mark and the red frame.
+Future<void> _shootHomeKnockFull(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding, {
+  required String shotName,
+  required Locale locale,
+}) async {
+  final _X203Join j = await _x203JoinFromHome(
+    tester,
+    binding,
+    shotName: shotName,
+    locale: locale,
+    code: 'KF5',
+    detail: 'knock closed full',
+  );
+  j.transport.pushText(
+    _frame(
+      type: 'knock_pending',
+      re: j.joinId,
+      data: const <String, Object?>{
+        'knock_id': 'k-shot-179',
+        'expires_ms': 60000,
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('knock-waiting')),
+    '$shotName: the waiting card after knock_pending. ${j.scenario}',
+  );
+  j.transport.pushText(
+    _frame(
+      type: 'knock_failed',
+      data: const <String, Object?>{
+        'knock_id': 'k-shot-179',
+        'outcome': 'full',
+      },
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
+  await _pumpUntilFound(
+    tester,
+    find.byKey(const Key('home-knock-notice')),
+    '$shotName: Home with the full line after knock_failed. ${j.scenario}',
+  );
+  await tester.pumpAndSettle();
+  expect(
+    find.byType(LobbyScreen),
+    findsNothing,
+    reason: '$shotName (${j.scenario}): the lobby must be gone. ${j.repro}',
+  );
+  final AppLocalizations loc = AppLocalizations.of(
+    tester.element(find.byType(HomeScreen)),
+  );
+  expect(
+    find.text(loc.knockOutcomeFull),
+    findsOneWidget,
+    reason:
+        '$shotName (${j.scenario}): expected the line '
+        '"${loc.knockOutcomeFull}" on Home. Reproduce: ${j.repro}',
+  );
+  final Finder card = find.byKey(const Key('home-notice'));
+  expect(
+    card,
+    findsOneWidget,
+    reason:
+        '$shotName (${j.scenario}): expected the full card (home-notice). '
+        'Reproduce: ${j.repro}',
+  );
+  expect(
+    find.descendant(of: card, matching: find.byType(RefusalNoticeMark)),
+    findsOneWidget,
+    reason:
+        '$shotName (${j.scenario}): X215, expected the red refusal mark on '
+        'the full line. Reproduce: ${j.repro}',
+  );
+  expect(
+    find.descendant(
+      of: card,
+      matching: find.byIcon(Icons.info_outline_rounded),
+    ),
+    findsNothing,
+    reason:
+        '$shotName (${j.scenario}): X215, the full line must not wear the '
+        'neutral mark. Reproduce: ${j.repro}',
+  );
+  final Border? frame =
+      (tester.widget<DecoratedBox>(card).decoration as BoxDecoration).border
+          as Border?;
+  expect(
+    <Object?>[frame?.top.color, frame?.top.width],
+    <Object?>[kRefusalNoticeFrame, kRefusalNoticeFrameWidth],
+    reason:
+        '$shotName (${j.scenario}): X215, expected the red refusal frame '
+        '(kRefusalNoticeFrame, ${kRefusalNoticeFrameWidth}dp) on the card, '
+        'it reads ${frame?.top.color} ${frame?.top.width}. '
+        'Reproduce: ${j.repro}',
+  );
+  _expectRectInsideView(
+    tester,
+    card,
+    label: 'home-notice',
+    context: 'before capture $shotName (${j.scenario})',
   );
   await _capture(binding, tester, shotName);
 }
