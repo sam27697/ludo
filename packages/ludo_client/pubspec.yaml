@@ -71,6 +71,11 @@ dependencies:
   # the clock flutter_test's fake time moves (C-520 D1).
   clock: ^1.1.1
 
+  # lib/src/fair_check.dart: the end card rechecks every roll of a finished
+  # game with the same chain and draw the server rolls with (C-704).
+  fair_dice:
+    path: ../fair_dice
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

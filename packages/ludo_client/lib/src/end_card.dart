@@ -4,8 +4,10 @@
 // This widget never reads `RoomController` itself and never computes
 // `GameStats` on its own: every number it shows is a field handed in,
 // already computed on the device from frames the screen already held
-// (doctrine P9, C-232). The only state this widget owns is the winner's
-// one-shot celebration animation.
+// (doctrine P9, C-232). The state this widget owns is the winner's one-shot
+// celebration animation and, since C-704, the fair game line: the card runs
+// `checkFairness` itself over frames its caller's [EndCardFairSource] loads,
+// once per game, and shows the verdict above the verify link.
 //
 // Doctrine P6: the winner gets a real celebration; the loser gets warmth
 // and their own numbers, never a verdict, and no red anywhere. Doctrine P7:
@@ -22,8 +24,11 @@ import 'package:flutter/material.dart';
 import '../l10n/gen/app_localizations.dart';
 import 'board.dart' show placeWord;
 import 'chat_bubble.dart';
+import 'code_ban_notice.dart' show RefusalNoticeMark;
+import 'fair_check.dart';
 import 'feedback.dart';
 import 'game_stats.dart';
+import 'net/frame.dart';
 import 'net/snapshot.dart' show RematchState;
 import 'quick_chat.dart';
 import 'refusal_mark.dart';
@@ -108,6 +113,32 @@ class EndCardPlace {
   /// True for a seat that was retired from the game.
   final bool out;
 }
+
+/// C-704: what the card needs to recheck every roll of the game it shows:
+/// the game's id, the `chain_commit` the room published before the game
+/// began, and where the game's frames come from. [loadFrames] completes with
+/// the frames [checkFairness] reads, or with an [Exception] when they cannot
+/// be had (offline, an error answer, a timeout).
+@immutable
+class EndCardFairSource {
+  const EndCardFairSource({
+    required this.gameId,
+    required this.chainCommit,
+    required this.loadFrames,
+  });
+
+  /// The finished game's `game_id`. A new id is a new game: the card drops
+  /// the result it holds and checks again.
+  final String gameId;
+
+  /// `chain_commit` of the room the game was played in.
+  final String chainCommit;
+
+  final Future<List<Frame>> Function() loadFrames;
+}
+
+/// The four states of the fair game line (C-704).
+enum _FairLine { checking, ok, failed, unavailable }
 
 /// Built by `GameScreen._gameOverBody`; never constructed from a
 /// `RoomController` or a `RoomSnapshot` directly. [winnerSeat] and
@@ -252,6 +283,10 @@ class EndCard extends StatefulWidget {
   /// not offered and New table is the one action.
   final bool iAmOut;
 
+  /// C-704: the source of the fair game line above the verify link. Null
+  /// draws no line.
+  final EndCardFairSource? fairCheck;
+
   const EndCard({
     super.key,
     required this.mySeat,
@@ -284,6 +319,7 @@ class EndCard extends StatefulWidget {
     this.places = const <EndCardPlace>[],
     this.myPlace,
     this.iAmOut = false,
+    this.fairCheck,
   });
 
   @override
@@ -344,6 +380,23 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
     });
   }
 
+  /// C-704: the fair game line's state, null while the card has no
+  /// [EndCard.fairCheck] to run.
+  _FairLine? _fairLine;
+
+  /// The game [_fairLine] speaks for.
+  String? _fairGameId;
+
+  /// Counts check runs, so the answer of a run that a newer one (a retry, a
+  /// new game) has replaced is dropped.
+  int _fairRun = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncFairCheck();
+  }
+
   @override
   void didUpdateWidget(EndCard oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -352,6 +405,81 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
     } else if (!_primaryNewTable(oldWidget) && _showsPlayAgain(oldWidget)) {
       _newTableGuard.forward(from: 0);
     }
+    if (widget.fairCheck?.gameId != _fairGameId) {
+      _syncFairCheck();
+    }
+  }
+
+  /// Starts the check once per game: when the card is first shown, and again
+  /// only when it is handed another game (a rematch that has finished). The
+  /// request goes out after the frame, never from inside a build.
+  void _syncFairCheck() {
+    final EndCardFairSource? source = widget.fairCheck;
+    _fairRun += 1;
+    _fairGameId = source?.gameId;
+    _fairLine = source == null ? null : _FairLine.checking;
+    if (source == null) {
+      return;
+    }
+    final int run = _fairRun;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && run == _fairRun) {
+        _runFairCheck();
+      }
+    });
+  }
+
+  /// One check: load the game's frames, check every roll, show the verdict.
+  /// A mismatch is logged as one line and goes nowhere else. Frames that
+  /// cannot be had leave the line unavailable, never fair and never failed.
+  Future<void> _runFairCheck() async {
+    final EndCardFairSource? source = widget.fairCheck;
+    if (source == null) {
+      return;
+    }
+    _fairRun += 1;
+    final int run = _fairRun;
+    if (_fairLine != _FairLine.checking) {
+      setState(() => _fairLine = _FairLine.checking);
+    }
+    List<Frame> frames;
+    try {
+      frames = await source.loadFrames();
+    } on Exception catch (error) {
+      if (mounted && run == _fairRun) {
+        debugPrint('fair-check unavailable: $error');
+        setState(() => _fairLine = _FairLine.unavailable);
+      }
+      return;
+    }
+    if (!mounted || run != _fairRun) {
+      return;
+    }
+    // A log is the room's current game. One that has moved on to another
+    // game holds nothing this card's commitment can be checked against.
+    String? loggedGame;
+    bool started = false;
+    for (final Frame frame in frames) {
+      if (frame.type == 'game_started') {
+        started = true;
+        final Object? id = frame.data['game_id'];
+        loggedGame = id is String ? id : null;
+      }
+    }
+    if (started && loggedGame != null && loggedGame != source.gameId) {
+      setState(() => _fairLine = _FairLine.unavailable);
+      return;
+    }
+    final FairCheck result = checkFairness(
+      chainCommit: source.chainCommit,
+      frames: frames,
+    );
+    if (!result.isFair) {
+      debugPrint(
+        'fair-check mismatch k=${result.badK} reason=${result.reason}',
+      );
+    }
+    setState(() => _fairLine = result.isFair ? _FairLine.ok : _FairLine.failed);
   }
 
   @override
@@ -976,14 +1104,26 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
   /// no verification page the card says the record was not kept instead.
   Widget _fairness(BuildContext context, AppLocalizations loc) {
     final String? url = widget.verifyUrl;
+    final Widget? fairLine = _fairCheckLine(context, loc);
     if (url == null || url.isEmpty) {
-      return Text(
+      final Widget notKept = Text(
         loc.endRecordNotKept,
         key: const Key('end-card-record-not-kept'),
         style: const TextStyle(
           color: LudoColors.inkMuted,
           fontSize: kTypeLabel,
         ),
+      );
+      if (fairLine == null) {
+        return notKept;
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          fairLine,
+          const SizedBox(height: kSpace1),
+          notKept,
+        ],
       );
     }
     return Column(
@@ -1009,6 +1149,7 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
             ),
           ],
         ),
+        ?fairLine,
         const SizedBox(height: kSpace1),
         Center(
           child: VerifyRollsButton(
@@ -1016,6 +1157,115 @@ class _EndCardState extends State<EndCard> with SingleTickerProviderStateMixin {
             onPressed: widget.onVerify,
           ),
         ),
+      ],
+    );
+  }
+
+  /// C-704: the one small fair game line, or null with no check to show.
+  /// Each state carries its own key and a mark of its own shape, so no state
+  /// rests on colour: a drawn check in the "you can" green, the red X of
+  /// every refusal, or none for the two muted states. A state change fades
+  /// across rather than jumping.
+  Widget? _fairCheckLine(BuildContext context, AppLocalizations loc) {
+    final _FairLine? state = _fairLine;
+    if (state == null) {
+      return null;
+    }
+    final TextScaler scaler = MediaQuery.textScalerOf(context);
+    final double markSize = scaler.scale(kTypeLabel + 2);
+    const TextStyle muted = TextStyle(
+      color: LudoColors.inkMuted,
+      fontSize: kTypeLabel,
+    );
+    final Widget line = switch (state) {
+      _FairLine.checking => _fairLineRow(
+        key: const Key('end-fair-checking'),
+        // A still mark, not a spinner: the check is a few milliseconds of
+        // hashing, and a repeating animation would keep the screen from ever
+        // settling while a log request waits on a slow network.
+        mark: ExcludeSemantics(
+          child: Icon(
+            Icons.hourglass_top_rounded,
+            color: LudoColors.inkMuted,
+            size: markSize,
+          ),
+        ),
+        text: loc.endFairGameChecking,
+        style: muted,
+      ),
+      _FairLine.ok => _fairLineRow(
+        key: const Key('end-fair-ok'),
+        mark: ExcludeSemantics(
+          child: Icon(
+            Icons.check_circle_rounded,
+            color: LudoColors.success,
+            size: markSize,
+          ),
+        ),
+        text: loc.endFairGame,
+        style: const TextStyle(
+          color: LudoColors.ink,
+          fontSize: kTypeLabel,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      _FairLine.failed => _fairLineRow(
+        key: const Key('end-fair-failed'),
+        mark: RefusalNoticeMark(size: markSize),
+        text: loc.endFairGameFailed,
+        style: const TextStyle(
+          color: LudoColors.error,
+          fontSize: kTypeLabel,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      _FairLine.unavailable => Semantics(
+        key: const Key('end-fair-unavailable'),
+        button: true,
+        child: InkWell(
+          onTap: _runFairCheck,
+          borderRadius: BorderRadius.circular(kRadiusControl),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Center(
+              child: _fairLineRow(
+                mark: ExcludeSemantics(
+                  child: Icon(
+                    Icons.refresh_rounded,
+                    color: LudoColors.inkMuted,
+                    size: markSize,
+                  ),
+                ),
+                text: loc.endFairGameUnavailable,
+                style: muted,
+              ),
+            ),
+          ),
+        ),
+      ),
+    };
+    final bool still = MediaQuery.disableAnimationsOf(context);
+    return AnimatedSwitcher(
+      duration: Duration(milliseconds: still ? 0 : 220),
+      child: line,
+    );
+  }
+
+  /// The mark, then the words, centred above the verify link; the words wrap
+  /// rather than clip at a large text scale, and the row mirrors in Arabic.
+  Widget _fairLineRow({
+    Key? key,
+    required Widget mark,
+    required String text,
+    required TextStyle style,
+  }) {
+    return Row(
+      key: key,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: <Widget>[
+        mark,
+        const SizedBox(width: kSpace2),
+        Flexible(child: Text(text, style: style)),
       ],
     );
   }

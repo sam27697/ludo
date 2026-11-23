@@ -38,6 +38,7 @@ import 'dead_mark.dart' show deadBadgeRect;
 import 'die_cube.dart';
 import 'die_mark.dart';
 import 'end_card.dart';
+import 'fair_check.dart' show wholeGameFrames;
 import 'feedback.dart';
 import 'game_die.dart';
 import 'game_stats.dart';
@@ -744,6 +745,9 @@ class _GameScreenState extends State<GameScreen> {
   // C-445 D3: the game the last game_log request was made for, so a snapshot
   // naming that same game does not forget the request already made for it.
   String? _gameLogTargetId;
+  // C-704: that request itself, so the end card's fair check waits on it
+  // rather than sending a second game_log.
+  Future<List<Frame>>? _gameLogRequest;
 
   @override
   void initState() {
@@ -8674,6 +8678,7 @@ class _GameScreenState extends State<GameScreen> {
         places: _endCardPlaces(finished, rematchSeatNames),
         myPlace: myPlace,
         iAmOut: iAmOut,
+        fairCheck: _fairSourceOf(finished),
       ),
       trailing: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -8864,6 +8869,44 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
+  /// C-704: the end card's fair check for [finished], or null when it names
+  /// no finished game (a rematch LOBBY with no finished snapshot held).
+  EndCardFairSource? _fairSourceOf(RoomSnapshot finished) {
+    final String? gameId = finished.gameId;
+    if (finished.state != RoomState.finished ||
+        gameId == null ||
+        gameId.isEmpty) {
+      return null;
+    }
+    return EndCardFairSource(
+      gameId: gameId,
+      chainCommit: finished.chainCommit,
+      loadFrames: () => _fairCheckFrames(gameId),
+    );
+  }
+
+  /// C-704: the frames of game [gameId] for the fair check. The whole game as
+  /// this device received it when nothing is missing, with no request at
+  /// all; otherwise the game log, through C-304's own request when one is out
+  /// for this game, so the card never adds a second.
+  Future<List<Frame>> _fairCheckFrames(String gameId) {
+    final List<Frame>? whole = wholeGameFrames(
+      widget.controller.gameTranscript,
+      gameId: gameId,
+    );
+    if (whole != null) {
+      return Future<List<Frame>>.value(whole);
+    }
+    _maybeFetchGameLog();
+    final Future<List<Frame>>? pending = _gameLogRequest;
+    if (pending != null &&
+        _gameLogFetchInFlight &&
+        _gameLogTargetId == gameId) {
+      return pending;
+    }
+    return widget.controller.fetchGameLog();
+  }
+
   /// C-304 rules 3, 4, 5: when the end card is up and local gameTranscript
   /// stats are incomplete, requests game_log from the server at most once,
   /// plus one more only if the first failed because the socket was down and
@@ -8946,7 +8989,9 @@ class _GameScreenState extends State<GameScreen> {
     _gameLogTargetId = targetGameId;
     _gameLogRequestsCount++;
     try {
-      final List<Frame> frames = await widget.controller.fetchGameLog();
+      final Future<List<Frame>> request = widget.controller.fetchGameLog();
+      _gameLogRequest = request;
+      final List<Frame> frames = await request;
       if (!mounted) {
         return;
       }
