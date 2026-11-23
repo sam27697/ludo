@@ -1148,6 +1148,17 @@ class _GameScreenState extends State<GameScreen> {
       _hurryActiveThrow();
     }
     if (frame.type == 'rolled') {
+      // C-699: once this device's own throw is in play, no other seat's
+      // watcher dead line is shown, now or later (a showing one is dropped,
+      // a pending one for a throw still in the air is discarded).
+      final int? ownSeat = widget.controller.seat;
+      if (ownSeat != null &&
+          !cues.contains(FeedbackCue.noMove) &&
+          _intAt(frame.data, 'seat') == ownSeat &&
+          _intAt(frame.data, 'value') != null) {
+        _dropPendingWatchDead();
+        _dropWatchDead();
+      }
       if (cues.contains(FeedbackCue.noMove)) {
         _armNoMoveHold(_intAt(frame.data, 'value'), thirdSix: thirdSix);
       } else if (_intAt(frame.data, 'value') != null) {
