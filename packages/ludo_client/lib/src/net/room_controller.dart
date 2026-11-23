@@ -20,6 +20,7 @@ import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 
+import '../code_ban_notice.dart';
 import '../install_id.dart';
 import '../session_memory.dart';
 import 'connection.dart';
@@ -239,6 +240,10 @@ class RoomController extends ChangeNotifier {
   KnockState _knock = const KnockState();
   bool _wasKicked = false;
 
+  /// Section 32 item 12: the `ban` a `CODE_BANNED` error, a rejecting
+  /// `knock_failed` or a `kicked` frame carried, or null.
+  CodeBan? _ban;
+
   /// The last link join, kept so the lobby's own retry (which can only call
   /// [joinRoom]) repeats a link join as a link join. See [joinRoom].
   String? _retryLink;
@@ -350,6 +355,10 @@ class RoomController extends ChangeNotifier {
   /// Section 31 item 6: set when the host removed this phone from a lobby
   /// (a `kicked` frame); cleared by the next join.
   bool get wasKicked => _wasKicked;
+
+  /// The code ban the server last told this controller about, exactly as
+  /// sent; null when the last answer carried none or it was unreadable.
+  CodeBan? get ban => _ban;
   String? get errorCode => _errorCode;
   String? get errorMessage => _errorMessage;
 
@@ -396,8 +405,17 @@ class RoomController extends ChangeNotifier {
   }) {
     return _openFresh(
       gate: _phase == RoomPhase.idle || _phase == RoomPhase.failed,
-      request: (RoomConnection connection) =>
-          connection.createRoom(name: name, players: players, toggles: toggles),
+      request: (RoomConnection connection) {
+        // Section 32 item 6: the install id rides on create_room when it is
+        // known, which it is from app start and controller construction on.
+        // Creating a room never waits for it: the field is optional here.
+        return connection.createRoom(
+          name: name,
+          players: players,
+          toggles: toggles,
+          install: installIdIfReady(),
+        );
+      },
     );
   }
 
@@ -438,7 +456,11 @@ class RoomController extends ChangeNotifier {
       gate: _canJoin,
       isJoin: true,
       request: (RoomConnection connection) async {
-        final String? install = installIdIfReady();
+        // Section 32 item 6: a typed code always carries the install id, so
+        // it is waited for; a link join sends it when it is already known.
+        final String? install = fields.containsKey('code')
+            ? (installIdIfReady() ?? await installId())
+            : installIdIfReady();
         final Frame reply = await connection.request(
           'join_room',
           <String, Object?>{...fields, 'install': ?install},
@@ -557,6 +579,7 @@ class RoomController extends ChangeNotifier {
     if (isJoin) {
       _knock = const KnockState();
       _wasKicked = false;
+      _ban = null;
     }
     _phase = RoomPhase.connecting;
     notifyListeners();
@@ -1448,7 +1471,7 @@ class RoomController extends ChangeNotifier {
       return;
     }
     if (frame.type == 'kicked') {
-      _onKicked();
+      _onKicked(frame);
       return;
     }
     if (frame.type == 'room' &&
@@ -1507,6 +1530,9 @@ class RoomController extends ChangeNotifier {
       return;
     }
     _knock = KnockState(phase: outcome, knockId: id);
+    _ban = outcome == KnockPhase.rejected
+        ? CodeBan.tryParse(frame.data['ban'])
+        : null;
     _dropConnection();
     _phase = RoomPhase.idle;
     final bool noSeat =
@@ -1519,8 +1545,9 @@ class RoomController extends ChangeNotifier {
   /// Section 31 item 6: the host removed this phone from the lobby. The seat
   /// and its token are dead on the server, so both are forgotten here, no
   /// resume is ever tried, and [wasKicked] says why.
-  void _onKicked() {
+  void _onKicked(Frame frame) {
     _wasKicked = true;
+    _ban = CodeBan.tryParse(frame.data['ban']);
     _blocked = true;
     _cancelAutoReconnect();
     _cachedSeatToken = null;
@@ -2625,6 +2652,9 @@ class RoomController extends ChangeNotifier {
     if (error is ProtocolErrorException) {
       code = error.code;
       message = error.message;
+      if (code == 'CODE_BANNED') {
+        _ban = CodeBan.tryParse(error.frame.data['ban']);
+      }
     } else if (error is RequestTimeoutException) {
       code = 'timeout';
       message = '';

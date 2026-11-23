@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'code_ban_notice.dart' show RefusalNoticeMark;
 import 'die_mark.dart';
 import 'feedback.dart';
 import 'game_screen.dart' show GameScreenResult, showKickSheet;
@@ -60,6 +61,7 @@ const Set<String> _unretryableLobbyErrorCodes = <String>{
   'BAD_FIELD',
   'KNOCK_REFUSED',
   'KICKED',
+  'CODE_BANNED',
 };
 
 /// C-536 D1: the label each seat in [seats] is drawn and spoken with,
@@ -79,8 +81,36 @@ Map<int, String> seatLabelsFor(
   );
 }
 
+/// The face style for a room code of [length] symbols on the lobby die. A
+/// code of one or two symbols is drawn larger, so it fills the die and reads
+/// as a chosen room code, never as a stray character; six symbols are drawn
+/// at the base size as before. The FittedBox around it only ever shrinks.
+TextStyle? _roomCodeStyle(TextTheme textTheme, int length) {
+  final TextStyle? base = textTheme.headlineMedium;
+  final double? size = base?.fontSize;
+  if (base == null || size == null) {
+    return base;
+  }
+  final double scale = switch (length) {
+    <= 2 => 1.9,
+    3 => 1.5,
+    4 => 1.25,
+    _ => 1.0,
+  };
+  return base.copyWith(fontSize: size * scale);
+}
+
 /// C-599 D5(b): how long the "Karim joined" line stays under the seat grid.
 const Duration kFriendJoinedLineHold = Duration(milliseconds: 2500);
+
+/// Codes where the host or the strike ladder said no to this player: the
+/// error card carries the refusal mark, not the neutral info icon.
+const Set<String> _refusalCodes = {
+  'KICKED',
+  'KNOCK_REFUSED',
+  'CODE_BANNED',
+  'TOO_MANY_KNOCKS',
+};
 
 /// Maps a RoomController error code to a localised message. Pure and
 /// top-level so it can be tested without pumping a widget.
@@ -98,6 +128,8 @@ String lobbyErrorMessage(AppLocalizations loc, String? code) {
       return loc.lobbyErrorKnockRefused;
     case 'KICKED':
       return loc.knockWasKicked;
+    case 'CODE_BANNED':
+      return loc.lobbyErrorCodeBanned;
     case 'TOO_MANY_KNOCKS':
       return loc.lobbyErrorTooManyKnocks;
     case 'transport':
@@ -243,7 +275,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
     if (_resumeRefusalHandled || widget.controller.updateRequired) {
       return;
     }
-    if (_knockEndedWithoutSeat || widget.controller.wasKicked) {
+    if (_knockEndedWithoutSeat ||
+        widget.controller.wasKicked ||
+        _codeBannedWithNotice) {
       // C-682: a knock that ended without a seat, or the host removing this
       // phone, goes home at once; Home reads the controller for the one line
       // that says why before it retires it.
@@ -315,6 +349,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
     } else {
       navigator.removeRoute(route, result);
     }
+  }
+
+  /// Section 32 item 12: a typed code answered CODE_BANNED with a ban Home can
+  /// word. Asking again returns the same answer, so the route goes home at once
+  /// and Home shows the notice; a ban that could not be read stays here as the
+  /// plain error card.
+  bool get _codeBannedWithNotice {
+    final RoomController controller = widget.controller;
+    return widget.action == LobbyAction.join &&
+        controller.phase == RoomPhase.failed &&
+        controller.errorCode == 'CODE_BANNED' &&
+        controller.ban != null;
   }
 
   /// C-682: this phone's own knock was answered, or ran out, and it holds no
@@ -799,6 +845,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       child: _lobbyCard(
         cardKey: const Key('lobby-error-card'),
         icon: icon,
+        mark: _refusalCodes.contains(controller.errorCode)
+            ? const RefusalNoticeMark(size: 32)
+            : null,
         title: linkRoomGone
             ? loc.lobbyErrorLinkRoomGone
             : lobbyErrorMessage(loc, controller.errorCode),
@@ -908,6 +957,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     required IconData icon,
     required String title,
     required List<Widget> children,
+    Widget? mark,
   }) {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 320),
@@ -922,7 +972,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Icon(icon, size: 32, color: LudoColors.inkMuted),
+              mark ?? Icon(icon, size: 32, color: LudoColors.inkMuted),
               const SizedBox(height: kSpace2),
               Text(
                 title,
@@ -1072,11 +1122,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           room.code,
                           key: const Key('lobby-room-code'),
                           textAlign: TextAlign.center,
-                          style: textTheme.headlineMedium?.copyWith(
-                            color: LudoColors.ink,
-                            fontWeight: FontWeight.w700,
-                            height: 1.0,
-                          ),
+                          style: _roomCodeStyle(textTheme, room.code.length)
+                              ?.copyWith(
+                                color: LudoColors.ink,
+                                fontWeight: FontWeight.w700,
+                                height: 1.0,
+                              ),
                         ),
                       ),
                     ),
