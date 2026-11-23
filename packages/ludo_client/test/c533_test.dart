@@ -746,6 +746,7 @@ void _expectCard(
   required Key? outlined,
   required String leaveLabel,
   required TextDirection direction,
+  Color iconColor = LudoColors.inkMuted,
 }) {
   final Finder cardFinder = find.byKey(card);
   expect(
@@ -814,9 +815,9 @@ void _expectCard(
   );
   expect(
     iconWidget.color,
-    LudoColors.inkMuted,
+    iconColor,
     reason:
-        '$id: expected the icon in inkMuted; saw ${iconWidget.color}. '
+        '$id: expected the icon in $iconColor; saw ${iconWidget.color}. '
         '${_reproduce(id)}',
   );
 
@@ -1567,7 +1568,7 @@ void main() {
       final String tag = locale.languageCode;
 
       testWidgets(
-        'D2.1a $tag: NO_SUCH_ROOM on a typed code: link_off icon, the text, '
+        'D2.1a $tag: NO_SUCH_ROOM on a typed code: red refusal mark, the text, '
         'the way out is the one ElevatedButton',
         (tester) async {
           const String base = 'D2.1a';
@@ -1601,6 +1602,7 @@ void main() {
               id: id,
               card: _errorCardKey,
               icon: Icons.cancel_rounded,
+              iconColor: LudoColors.error,
               text: loc.lobbyErrorNoSuchRoom,
               elevated: _leaveKey,
               outlined: null,
@@ -1614,7 +1616,7 @@ void main() {
       );
 
       testWidgets(
-        'D2.1b $tag: NO_SUCH_ROOM on a room link: link_off icon, the link '
+        'D2.1b $tag: NO_SUCH_ROOM on a room link: red refusal mark, the link '
         'line, the way out is the one ElevatedButton',
         (tester) async {
           const String base = 'D2.1b';
@@ -1632,6 +1634,7 @@ void main() {
               id: id,
               card: _errorCardKey,
               icon: Icons.cancel_rounded,
+              iconColor: LudoColors.error,
               text: loc.lobbyErrorLinkRoomGone,
               elevated: _leaveKey,
               outlined: null,
@@ -1702,7 +1705,7 @@ void main() {
       );
 
       testWidgets(
-        'D2.1e $tag: ROOM_STARTED (another code, no Retry): info icon, the '
+        'D2.1e $tag: ROOM_STARTED (another code, no Retry): red refusal mark, the '
         'way out is the one ElevatedButton',
         (tester) async {
           const String base = 'D2.1e';
@@ -1721,6 +1724,7 @@ void main() {
               id: id,
               card: _errorCardKey,
               icon: Icons.cancel_rounded,
+              iconColor: LudoColors.error,
               text: loc.lobbyErrorRoomStarted,
               elevated: _leaveKey,
               outlined: null,
