@@ -1113,16 +1113,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 children: [
                   if (knocksOpen) ...[
                     _knockCodeRow(loc, room, textTheme),
-                    // X216: switching approval off seats the knockers in
-                    // order, so the host keeps the switch while knocks are
-                    // open, in its compact form above the cards.
-                    ApprovalSwitch(
-                      compact: true,
-                      value: room.guestApproval,
-                      onChanged: (bool on) =>
-                          unawaited(controller.setGuestApproval(on)),
-                    ),
-                    const SizedBox(height: kSpace1),
                   ] else ...[
                     Text(
                       loc.lobbyRoomCodeLabel,
@@ -1340,6 +1330,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           ),
           const Spacer(),
+          // X216: switching approval off seats the knockers in order, so the
+          // host keeps the switch while knocks are open, inside this row.
+          if (widget.controller.isHost)
+            ApprovalSwitch(
+              inline: true,
+              value: room.guestApproval,
+              onChanged: (bool on) =>
+                  unawaited(widget.controller.setGuestApproval(on)),
+            ),
           IconButton(
             key: const Key('lobby-copy-code-button'),
             style: IconButton.styleFrom(minimumSize: const Size(48, 48)),

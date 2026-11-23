@@ -34,6 +34,7 @@ class ApprovalSwitch extends StatelessWidget {
     required this.value,
     required this.onChanged,
     this.compact = false,
+    this.inline = false,
   });
 
   final bool value;
@@ -43,11 +44,42 @@ class ApprovalSwitch extends StatelessWidget {
   /// can float over a table without taking any of the table's room.
   final bool compact;
 
+  /// The in-row form for a row that is already 48 dp tall: the lock mark and
+  /// the switch only, no pill and no text line. The label and the hint ride
+  /// on the semantics label and the tooltip instead.
+  final bool inline;
+
   @override
   Widget build(BuildContext context) {
     final AppLocalizations loc = AppLocalizations.of(context);
     final TextTheme textTheme = Theme.of(context).textTheme;
     final Color tint = value ? LudoColors.action : LudoColors.inkMuted;
+    if (inline) {
+      return Tooltip(
+        message: loc.approvalSwitchLabel,
+        child: Semantics(
+          container: true,
+          label: '${loc.approvalSwitchLabel}. ${loc.approvalSwitchHint}',
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              ExcludeSemantics(
+                child: Icon(
+                  value ? Icons.lock_person_outlined : Icons.lock_open,
+                  size: kSpace5,
+                  color: tint,
+                ),
+              ),
+              Switch(
+                key: const Key('approval-switch'),
+                value: value,
+                onChanged: onChanged,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Column(
       crossAxisAlignment: compact
           ? CrossAxisAlignment.start
