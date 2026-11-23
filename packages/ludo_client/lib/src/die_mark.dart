@@ -14,6 +14,13 @@ double dieMarkSize(bool compact) => compact ? 72 : 148;
 /// size. The lobby keeps [dieMarkSize].
 double homeDieMarkSize(bool compact) => compact ? dieMarkSize(true) : 88;
 
+/// Half the height of the pip-free horizontal band through the die's centre,
+/// as a fraction of the die size. The corner pips sit at +-0.22 with radius
+/// 0.095 and an edge stroke of up to 0.014 (half of it outside), so between
+/// the two pip rows everything with |y| < 0.118 of the size is clear, across
+/// the whole width of the face. A code painted on the die stays inside it.
+const double kDieMarkPipFreeHalfBand = 0.115;
+
 /// Pip diameter on the compact game-chrome seat strip (space-2 on the 4/8 scale).
 const double kSeatPipSize = 8;
 
