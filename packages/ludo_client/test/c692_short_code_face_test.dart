@@ -257,17 +257,25 @@ void main() {
         });
       }
 
-      for (final String code in <String>['Z', 'Z7']) {
+      // Floors: 1 symbol keeps the square (0.26); 2 symbols are limited by the
+      // pips to a centred 2:1 box about 0.236 high (ruling C-692t Return 1,
+      // option a), so Z7 is held to 0.22.
+      const Map<String, double> floors = <String, double>{
+        'Z': 0.26,
+        'Z7': 0.22,
+      };
+      for (final String code in floors.keys) {
+        final double floor = floors[code]!;
         testWidgets('code "$code" fills the pip-free centre', (tester) async {
           final _Face f = await _Face.open(tester, code, lang);
           final double ratio = f.code_.height / f.die.shortestSide;
           // ignore: avoid_print
           print('height ratio ${f.id}: ${ratio.toStringAsFixed(4)}');
           expect(
-            ratio >= 0.26,
+            ratio >= floor,
             isTrue,
             reason:
-                'expected the painted code height >= 0.26 x the die side '
+                'expected the painted code height >= $floor x the die side '
                 '(${f.die.shortestSide}), measured ${f.code_.height} = '
                 '${ratio.toStringAsFixed(4)}. ${f.why}',
           );
