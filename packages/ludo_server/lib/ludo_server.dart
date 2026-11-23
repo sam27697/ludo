@@ -11,8 +11,11 @@ export 'src/room_code.dart'
     show
         roomCodeAlphabet,
         roomCodeLength,
-        generateRoomCode,
+        roomCodeForIndex,
+        foldRoomCode,
         isWellFormedRoomCode;
+export 'src/strike_store.dart'
+    show StrikeStore, BanInfo, minStrikeSaltLength, strikeFileName;
 export 'src/seat_token.dart' show generateSeatToken, isWellFormedSeatToken;
 export 'src/room.dart' show RulesConfig, RoomState, Seat, Room;
 export 'src/registry.dart'

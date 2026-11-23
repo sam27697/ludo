@@ -119,7 +119,10 @@ class ApprovalSwitch extends StatelessWidget {
   }
 }
 
-/// One card per open knock, above the seat cards. Plays the `your_turn` cue
+/// One compact card per open knock, above the seat cards. A card is one
+/// 48 dp row plus the drain bar, so three of them leave the seats in view
+/// on a 640 dp phone.
+/// Plays the `your_turn` cue
 /// once for each knock id it has not shown before, through the one feedback
 /// service; no other pattern is used.
 class KnockBar extends StatefulWidget {
@@ -170,7 +173,7 @@ class _KnockBarState extends State<KnockBar> {
         for (final Knock knock in widget.knocks)
           Padding(
             key: ValueKey<String>('knock-slot-${knock.id}'),
-            padding: const EdgeInsets.only(bottom: kSpace2),
+            padding: const EdgeInsets.only(bottom: kSpace1),
             child: _KnockEntrance(
               child: KnockCard(
                 key: Key('knock-card-${knock.id}'),
@@ -276,8 +279,8 @@ class _KnockCardState extends State<KnockCard>
         padding: const EdgeInsetsDirectional.only(
           start: kSpace3,
           end: kSpace2,
-          top: kSpace2,
-          bottom: kSpace2,
+          top: kSpaceTight,
+          bottom: kSpace1,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -325,7 +328,7 @@ class _KnockCardState extends State<KnockCard>
                       widget.knock.name,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: textTheme.titleLarge?.copyWith(
+                      style: textTheme.titleMedium?.copyWith(
                         color: LudoColors.ink,
                         fontWeight: FontWeight.w700,
                       ),
@@ -352,7 +355,7 @@ class _KnockCardState extends State<KnockCard>
                 ),
               ],
             ),
-            const SizedBox(height: kSpace2),
+            const SizedBox(height: kSpaceTight),
             AnimatedBuilder(
               animation: _drain,
               builder: (BuildContext context, Widget? child) {

@@ -20,9 +20,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart';
 import 'package:ludo_client/src/home_screen.dart';
+import 'package:ludo_client/src/install_id.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const Key _createKey = Key('create-room-button');
 const Key _joinKey = Key('join-room-button');
@@ -137,6 +139,21 @@ void _expectJoinElevatedCreateOutlined(WidgetTester tester) {
 }
 
 void main() {
+  // A code join waits for the install id (PROTOCOL 32 item 6). Make it once,
+  // and give every test a store holding only that id, so a record saved by an
+  // earlier test cannot turn the next join into a resume and the join never
+  // depends on how the platform-channel failure path resolves under fake async.
+  late String install;
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    install = await installId();
+  });
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      kInstallIdKey: install,
+    });
+  });
+
   testWidgets('empty code field uses elevated Create and no Join', (
     tester,
   ) async {
@@ -178,7 +195,7 @@ void main() {
     },
   );
 
-  testWidgets('invalid short code ABC uses elevated Create and no Join', (
+  testWidgets('short code ABC is a code: elevated Join and outlined Create', (
     tester,
   ) async {
     await tester.pumpWidget(_homeScreenApp());
@@ -191,25 +208,24 @@ void main() {
       tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
       'ABC',
     );
-    _expectCreateElevatedJoinAbsent(tester);
+    _expectJoinElevatedCreateOutlined(tester);
   });
 
-  testWidgets(
-    'invalid banned-zero code AB023C uses elevated Create and outlined Join',
-    (tester) async {
-      await tester.pumpWidget(_homeScreenApp());
-      await tester.pumpAndSettle();
+  testWidgets('invalid code AB02#C uses elevated Create and outlined Join', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_homeScreenApp());
+    await tester.pumpAndSettle();
 
-      await tester.enterText(find.byKey(_codeKey), 'AB023C');
-      await tester.pump();
+    await tester.enterText(find.byKey(_codeKey), 'AB02#C');
+    await tester.pump();
 
-      expect(
-        tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
-        'AB023C',
-      );
-      _expectCreateElevatedJoinOutlined(tester);
-    },
-  );
+    expect(
+      tester.widget<TextField>(find.byKey(_codeKey)).controller?.text,
+      'AB02#C',
+    );
+    _expectCreateElevatedJoinOutlined(tester);
+  });
 
   testWidgets('Create Room still pushes create with an empty code field', (
     tester,

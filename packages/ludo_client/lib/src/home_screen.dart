@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n/gen/app_localizations.dart';
+import 'code_ban_notice.dart';
 import 'deep_link.dart';
 import 'die_mark.dart';
 import 'directional_icon.dart';
@@ -90,6 +91,9 @@ class _HomeScreenState extends State<HomeScreen>
   // C-682: how a typed-code knock ended without a seat, or the lobby kick that
   // sent this player home. Null when there is no such line.
   _KnockNotice? _knockNotice;
+  // Section 32 item 12: the ban a typed-code join, a rejected knock or a host
+  // removal just told this phone about. Null when there is none to show.
+  CodeBan? _codeBan;
   // C-529 D4: the code a room link filled into the code field, kept only
   // while the field still holds exactly it. A Join tap on it is a link join.
   String? _linkFilledCode;
@@ -500,11 +504,11 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// C-523 D3: Join is in the tree only while the field holds a full-length
-  /// code. A full-length code that is not valid still shows it; the tap says
-  /// why it will not go.
-  bool get _joinShown =>
-      normalizeRoomCode(_codeController.text).length == roomCodeLength;
+  /// C-523 D3, section 32: Join is in the tree while the field holds any
+  /// code at all, one symbol to six (the field takes no more). A code with a
+  /// symbol outside the alphabet still shows it; the tap says why it will not
+  /// go.
+  bool get _joinShown => normalizeRoomCode(_codeController.text).isNotEmpty;
 
   /// Restores a stored name (from a create or a join), last successful-create
   /// seats, the last-table chip, recent join codes, a seat record held
@@ -1013,6 +1017,13 @@ class _HomeScreenState extends State<HomeScreen>
       _removedNotice ||
       _gameGoneNotice ||
       _roomClosedNotice != null ||
+      _knockNotice != null ||
+      _codeBan != null;
+
+  bool get _hasPlainNotice =>
+      _removedNotice ||
+      _gameGoneNotice ||
+      _roomClosedNotice != null ||
       _knockNotice != null;
 
   /// D2 of C-449: the player closes the notice by hand. Every other event
@@ -1023,6 +1034,7 @@ class _HomeScreenState extends State<HomeScreen>
       _gameGoneNotice = false;
       _roomClosedNotice = null;
       _knockNotice = null;
+      _codeBan = null;
     });
   }
 
@@ -1079,7 +1091,15 @@ class _HomeScreenState extends State<HomeScreen>
             KnockPhase.switchedOff => _KnockNotice.switchedOff,
             _ => null,
           };
-    if (notice == null) {
+    // Section 32 item 12: the ban rides on the frame that fired it, or on a
+    // CODE_BANNED answer to a typed code. Shown whatever else is shown.
+    final CodeBan? ban =
+        controller.wasKicked ||
+            controller.knockState.phase == KnockPhase.rejected ||
+            controller.errorCode == 'CODE_BANNED'
+        ? controller.ban
+        : null;
+    if (notice == null && ban == null) {
       return;
     }
     setState(() {
@@ -1087,6 +1107,7 @@ class _HomeScreenState extends State<HomeScreen>
       _gameGoneNotice = false;
       _roomClosedNotice = null;
       _knockNotice = notice;
+      _codeBan = ban;
     });
   }
 
@@ -1132,6 +1153,7 @@ class _HomeScreenState extends State<HomeScreen>
         _gameGoneNotice = false;
         _roomClosedNotice = null;
         _knockNotice = null;
+        _codeBan = null;
       });
     }
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -1221,6 +1243,7 @@ class _HomeScreenState extends State<HomeScreen>
       _gameGoneNotice = false;
       _roomClosedNotice = null;
       _knockNotice = null;
+      _codeBan = null;
     });
     // C-669 R2: a code this phone holds a seat for is a seat to take back, not
     // a room to join: join_room would be refused ROOM_STARTED while the game
@@ -1304,6 +1327,7 @@ class _HomeScreenState extends State<HomeScreen>
       _gameGoneNotice = false;
       _roomClosedNotice = null;
       _knockNotice = null;
+      _codeBan = null;
     });
     final String name = _resolvedName(loc);
     final RoomController controller = widget.controllerFactory();
@@ -1393,6 +1417,7 @@ class _HomeScreenState extends State<HomeScreen>
         _gameGoneNotice = false;
         _roomClosedNotice = null;
         _knockNotice = null;
+        _codeBan = null;
       });
     }
     final AppLocalizations loc = AppLocalizations.of(context);
@@ -1698,7 +1723,18 @@ class _HomeScreenState extends State<HomeScreen>
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
-                                  if (_hasNotice) ...[
+                                  if (_codeBan != null) ...[
+                                    CodeBanNotice(
+                                      key: const Key('home-code-ban'),
+                                      ban: _codeBan!,
+                                      dismissLabel: loc.homeNoticeDismiss,
+                                      onDismiss: _dismissNotice,
+                                    ),
+                                    SizedBox(
+                                      height: compact ? kSpace3 : kSpace4,
+                                    ),
+                                  ],
+                                  if (_hasNotice && _hasPlainNotice) ...[
                                     _HomeNotice(
                                       cardKey: const Key('home-notice'),
                                       textKey: _knockNotice != null
@@ -1730,6 +1766,10 @@ class _HomeScreenState extends State<HomeScreen>
                                                     ? loc.homeGameGoneNotice
                                                     : loc.homeRemovedNotice,
                                             },
+                                      refusal:
+                                          _knockNotice ==
+                                              _KnockNotice.notJoined ||
+                                          _knockNotice == _KnockNotice.kicked,
                                       dismissLabel: loc.homeNoticeDismiss,
                                       onDismiss: _dismissNotice,
                                     ),
@@ -2172,7 +2212,10 @@ class _RoomCodeInputFormatter extends TextInputFormatter {
     TextEditingValue oldValue,
     TextEditingValue newValue,
   ) {
-    final String normalized = normalizeRoomCode(newValue.text);
+    String normalized = normalizeRoomCode(newValue.text);
+    if (normalized.length > roomCodeLength) {
+      normalized = normalized.substring(0, roomCodeLength);
+    }
     if (normalized == newValue.text) {
       return newValue;
     }
@@ -2193,7 +2236,8 @@ class _RoomCodeInputFormatter extends TextInputFormatter {
       return offset;
     }
     final int end = offset < raw.length ? offset : raw.length;
-    return normalizeRoomCode(raw.substring(0, end)).length;
+    final int mapped = normalizeRoomCode(raw.substring(0, end)).length;
+    return mapped > roomCodeLength ? roomCodeLength : mapped;
   }
 }
 
@@ -2209,8 +2253,12 @@ class _HomeNotice extends StatefulWidget {
     required this.text,
     required this.dismissLabel,
     required this.onDismiss,
+    this.refusal = false,
   });
 
+  /// A refusal (not joined, kicked) wears the red mark family of the code-ban
+  /// notice; every other notice keeps the neutral mark.
+  final bool refusal;
   final Key cardKey;
   final Key textKey;
   final String text;
@@ -2285,7 +2333,12 @@ class _HomeNoticeState extends State<_HomeNotice> {
       decoration: BoxDecoration(
         color: LudoColors.paperWashTop,
         borderRadius: BorderRadius.circular(kRadiusControl),
-        border: Border.all(color: LudoColors.feltLight),
+        border: widget.refusal
+            ? Border.all(
+                color: kRefusalNoticeFrame,
+                width: kRefusalNoticeFrameWidth,
+              )
+            : Border.all(color: LudoColors.feltLight),
       ),
       child: Padding(
         padding: const EdgeInsetsDirectional.only(
@@ -2295,11 +2348,14 @@ class _HomeNoticeState extends State<_HomeNotice> {
         ),
         child: Row(
           children: [
-            const Icon(
-              Icons.info_outline_rounded,
-              color: LudoColors.ink,
-              size: 24,
-            ),
+            if (widget.refusal)
+              const RefusalNoticeMark()
+            else
+              const Icon(
+                Icons.info_outline_rounded,
+                color: LudoColors.ink,
+                size: 24,
+              ),
             const SizedBox(width: kSpace3),
             Expanded(
               child: Padding(

@@ -386,7 +386,11 @@ Future<Table> openTable(
   final String code = dataOf(room)['code']! as String;
   for (int i = 1; i < players; i++) {
     final WireTestClient g = await fx.connect();
-    fx.send(g, 'join_room', <String, Object?>{'code': code, 'name': 'Guest$i'});
+    fx.send(g, 'join_room', <String, Object?>{
+      'install': 'testinstall-00000001',
+      'code': code,
+      'name': 'Guest$i'
+    });
     final Frame gsa = await g.next();
     final Frame groom = await g.next();
     if (gsa['t'] != 'seat_assigned' || groom['t'] != 'room') {

@@ -178,7 +178,9 @@ Future<void> _completeSuccessfulCreate(
         '${transport.sentRaw.map(_typeOf).toList()}',
   );
   expect(
-    _dataOf(createMessages.single),
+    // Section 32 item 6: create_room also carries `install`; the rest of the
+    // frame is unchanged.
+    Map<String, Object?>.of(_dataOf(createMessages.single))..remove('install'),
     <String, Object?>{
       'name': name,
       'players': seats,

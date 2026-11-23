@@ -1332,5 +1332,53 @@
   "lobbyErrorTooManyKnocks": "Too many people are waiting, try again in a minute",
   "@lobbyErrorTooManyKnocks": {
     "description": "Error when the server reports TOO_MANY_KNOCKS."
+  },
+  "codeBanDevice": "Typed room codes are blocked on this phone until {until}, because hosts kept turning it away.",
+  "@codeBanDevice": {
+    "description": "First line of the code-ban notice on home when the block is on this device. until is the local date and time it ends.",
+    "placeholders": {
+      "until": {
+        "type": "String"
+      }
+    }
+  },
+  "codeBanDeviceNext": "{days, plural, =1{If it happens again, the next block is 1 day.} other{If it happens again, the next block is {days} days.}}",
+  "@codeBanDeviceNext": {
+    "description": "Second line of the device code-ban notice, only when the server names a next block. days is its length in whole days.",
+    "placeholders": {
+      "days": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
+  "codeBanNetwork": "Typed room codes are paused on this network until {until}.",
+  "@codeBanNetwork": {
+    "description": "First line of the code-ban notice on home when the block is on the network the phone is using. until is the local date and time it ends.",
+    "placeholders": {
+      "until": {
+        "type": "String"
+      }
+    }
+  },
+  "codeBanLinkStillWorks": "A link a friend sends still works.",
+  "@codeBanLinkStillWorks": {
+    "description": "Last line of every code-ban notice."
+  },
+  "codeBanUntilFormat": "{date}, {time}",
+  "@codeBanUntilFormat": {
+    "description": "A local date and a local time joined for the code-ban notice.",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lobbyErrorCodeBanned": "Typed room codes are not working on this phone right now. A link a friend sends still works.",
+  "@lobbyErrorCodeBanned": {
+    "description": "Fallback error when the server answers CODE_BANNED without a readable ban object."
   }
 }

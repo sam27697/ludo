@@ -402,7 +402,11 @@ Future<_Seated> _create(_Fixture f, _Client c, {int players = 2}) async {
 }
 
 Future<_Seated> _join(_Fixture f, _Client c, String code) async {
-  c.send('join_room', <String, Object?>{'code': code, 'name': 'Guest'});
+  c.send('join_room', <String, Object?>{
+    'install': 'testinstall-00000001',
+    'code': code,
+    'name': 'Guest'
+  });
   return _readSeated(f, c, 'the room answering join_room');
 }
 
@@ -1129,6 +1133,7 @@ void main() {
             final _Seated hosted = await _create(f, host);
             final _Client refused = await f.dial('${n - 1}');
             refused.send('join_room', <String, Object?>{
+              'install': 'testinstall-00000001',
               'code': hosted.code,
               'name': 'Sneak',
             });
@@ -1261,6 +1266,7 @@ void main() {
             }
             for (int i = 0; i < 25; i++) {
               refused.send('join_room', <String, Object?>{
+                'install': 'testinstall-00000001',
                 'code': 'ABCDEF',
                 'name': 'Spam',
               });
@@ -1455,7 +1461,11 @@ void main() {
             'name': 'Late',
             'players': 2,
           });
-          c.send('join_room', <String, Object?>{'code': 'ABCDEF', 'name': 'L'});
+          c.send('join_room', <String, Object?>{
+            'install': 'testinstall-00000001',
+            'code': 'ABCDEF',
+            'name': 'L'
+          });
           await _expectRefused(f, c, min: n);
           await _until(
             () => f.lines.any(
@@ -1626,6 +1636,7 @@ void main() {
           );
           await b.conn.handleFrame(
             b.frame('join_room', <String, Object?>{
+              'install': 'testinstall-00000001',
               'code': code,
               'name': 'Sneak',
             }),
@@ -1647,6 +1658,7 @@ void main() {
           for (int i = 0; i < 25; i++) {
             await b.conn.handleFrame(
               b.frame('join_room', <String, Object?>{
+                'install': 'testinstall-00000001',
                 'code': code,
                 'name': 'Spam',
               }),
@@ -1818,6 +1830,7 @@ void main() {
           );
           await b.conn.handleFrame(
             b.frame('join_room', <String, Object?>{
+              'install': 'testinstall-00000001',
               'code': live.room.code,
               'name': 'Guest',
             }),

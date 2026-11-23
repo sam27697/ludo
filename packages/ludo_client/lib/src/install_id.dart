@@ -34,7 +34,8 @@ String _newInstallId() {
 /// `Random.secure()`) and stored on first use. A stored value of the wrong
 /// shape is replaced. When the platform store cannot be used at all, the id
 /// lives for the process only, the same way [SessionMemory] treats an unusable
-/// store: the id is optional on the wire, so a join must not fail for it.
+/// store: a join must not fail for want of a store, and a typed-code join
+/// (section 32 item 6) always has an id to send.
 Future<String> installId() async {
   try {
     final SharedPreferences prefs = await SharedPreferences.getInstance();

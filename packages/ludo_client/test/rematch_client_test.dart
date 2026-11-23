@@ -97,11 +97,13 @@ import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
 import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/game_screen.dart';
+import 'package:ludo_client/src/install_id.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/snapshot.dart';
 import 'package:ludo_client/src/net/transport.dart';
 import 'package:ludo_client/src/theme.dart' show LudoColors;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
 
@@ -756,6 +758,21 @@ int _wholeSecondsShown(WidgetTester tester, Key key) {
 // =============================================================================
 
 void main() {
+  // A code join waits for the install id (PROTOCOL 32 item 6). Make it once,
+  // and give every test a store holding only that id, so a record saved by an
+  // earlier test cannot turn the next join into a resume and the join never
+  // depends on how the platform-channel failure path resolves under fake async.
+  late String install;
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    install = await installId();
+  });
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      kInstallIdKey: install,
+    });
+  });
+
   // ===========================================================================
   // Bullet 1: FINISHED -> tap end-card-rematch -> exactly one `rematch`
   // frame with `d` `{}`; a second tap while it is open sends nothing.

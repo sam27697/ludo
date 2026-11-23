@@ -13,8 +13,8 @@
 // draws nothing at all):
 //
 //   RoomRegistry.createRoom (lib/src/registry.dart:313)
-//     1. _generateUniqueCode()            -- roomCodeLength (6) draws,
-//        (:330, :892)                        nextInt(roomCodeAlphabet.length)
+//     1. _generateUniqueCode()            -- no draws: section 32 item 2 hands
+//        out the lowest free code in order
 //     2. generateSeatToken() [host seat]  -- 32 draws, nextInt(256)
 //        (:335, seat_token.dart:16)
 //     3. DiceChain.build(_drawBytes(32))  -- 32 draws, nextInt(256): the
@@ -54,12 +54,10 @@
 
 import 'dart:math';
 
-/// `nextInt(roomCodeAlphabet.length)` draws in step 1 above.
-/// `docs/PROTOCOL.md` section 2 and `lib/src/room_code.dart` fix the room
-/// code at 6 characters (`roomCodeLength`); duplicated here as a literal
-/// rather than imported so this file has no dependency on `lib/` beyond the
-/// one constructor argument it exists to supply.
-const int roomCodeDraws = 6;
+/// Random draws the room code costs, step 1 above. Section 32 item 2 makes
+/// the code the lowest free one in order, not a random draw, so none; kept as
+/// a constant so the offsets below still read as they did.
+const int roomCodeDraws = 0;
 
 /// `nextInt(256)` draws for one seat token (`lib/src/seat_token.dart`,
 /// `_seatTokenBytes`), steps 2 and 4 above.

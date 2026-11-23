@@ -102,6 +102,17 @@ const String _arPLogs =
     'ومعلومات الأخطاء. تُحفظ هذه السجلات لفترة قصيرة، ولا '
     'تُستخدم لبناء ملف عنك، ولا تُباع، ولا تُشارك مع أحد إلا '
     'حيث يفرض القانون ذلك.';
+const String _arH2Joins = 'منع تكرار الانضمام غير المرغوب فيه.';
+const String _arPJoins =
+    'ينشئ التطبيق معرّف تثبيت عشوائيًا عند أول تشغيل ويرسله إلى '
+    'خادم اللعبة. هذا المعرّف غير مرتبط بك. عندما يرفض مضيف '
+    'لاعبًا انضم بكتابة رمز الغرفة أو يزيله، يحتفظ الخادم بمعرّف '
+    'التثبيت هذا، على هيئة بصمة مشفّرة بمفتاح فقط، مع الوقت '
+    'وبصمة مشفّرة بمفتاح تمثّل ذلك المضيف، لمنع من يواصلون '
+    'دخول غرف الغرباء. يُحذف هذا السجل بعد 30 يومًا من آخر '
+    'إنذار، أو بعد 12 شهرًا من آخر حظر. ولا يُحتفظ بعنوان IP '
+    'إلا على هيئة بصمة مشفّرة بمفتاح، ولمدة الحظر فقط، وبحد '
+    'أقصى 24 ساعة.';
 const String _arH2Rolls = 'رميات قابلة للتحقق.';
 const String _arPRolls =
     'ترافق كل رمية نرد معلوماتٌ تتيح لك التحقق من أن الرمية '
@@ -168,6 +179,17 @@ const String _enPLogs =
     'kept for a short period and are not used to build a profile of '
     'you, are not sold, and are not shared with anyone except where the '
     'law requires it.';
+const String _enH2Joins = 'Stopping repeated unwanted joins.';
+const String _enPJoins =
+    'The app makes a random install id the first time it is opened '
+    'and sends it to the game server. It is not linked to you. When a '
+    'host rejects or removes a player who joined by typing a room '
+    'code, the server keeps that install id, only as a keyed hash, '
+    'together with the time and a keyed hash standing for that host, '
+    "to stop people who keep entering strangers' rooms. Such a record "
+    'is deleted 30 days after the last strike, or 12 months after the '
+    'last ban. An IP address is kept, as a keyed hash, only for the '
+    'length of a block, and for at most 24 hours.';
 const String _enH2Rolls = 'Verifiable rolls.';
 const String _enPRolls =
     'Every dice roll is accompanied by information that lets you '
@@ -211,6 +233,8 @@ List<String> _expectedEnglish({String? escapedEmail}) => <String>[
       '<p>$_enPTyped</p>',
       '<h2>$_enH2Logs</h2>',
       '<p>$_enPLogs</p>',
+      '<h2>$_enH2Joins</h2>',
+      '<p>$_enPJoins</p>',
       '<h2>$_enH2Rolls</h2>',
       '<p>$_enPRolls</p>',
       '<h2>$_enH2Children</h2>',
@@ -238,6 +262,8 @@ List<String> _expectedArabic({String? escapedEmail}) => <String>[
       '<p>$_arPTyped</p>',
       '<h2>$_arH2Logs</h2>',
       '<p>$_arPLogs</p>',
+      '<h2>$_arH2Joins</h2>',
+      '<p>$_arPJoins</p>',
       '<h2>$_arH2Rolls</h2>',
       '<p>$_arPRolls</p>',
       '<h2>$_arH2Children</h2>',

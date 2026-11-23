@@ -355,13 +355,13 @@ void main() {
   );
 
   testWidgets(
-    'control: typing k7m2o0 and tapping Join still sets homeRoomCodeInvalid',
+    'control: typing k7m2#0 and tapping Join still sets homeRoomCodeInvalid',
     (WidgetTester tester) async {
       await _pumpHome(tester);
 
       // A full-length code that fails isValidRoomCode: Join is in the tree
       // for it (C-523 D3), and a shorter one would have no Join to tap.
-      await tester.enterText(find.byKey(_codeKey), 'k7m2o0');
+      await tester.enterText(find.byKey(_codeKey), 'k7m2#0');
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
       await tester.tap(find.byKey(_joinKey));
@@ -371,7 +371,7 @@ void main() {
         _field(tester, _codeKey).decoration?.errorText,
         _loc(tester).homeRoomCodeInvalid,
         reason:
-            'an invalid code k7m2o0 must still set errorText to '
+            'an invalid code k7m2#0 must still set errorText to '
             'homeRoomCodeInvalid',
       );
     },
@@ -498,7 +498,7 @@ void main() {
       );
 
       // Full length, so Join is in the tree to tap (C-523 D3).
-      await tester.enterText(find.byKey(_codeKey), 'k7m2o0');
+      await tester.enterText(find.byKey(_codeKey), 'k7m2#0');
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
       await tester.ensureVisible(find.byKey(_joinKey));

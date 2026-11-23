@@ -2,24 +2,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/src/room_code.dart';
 
 void main() {
-  test('room code alphabet matches docs/PROTOCOL.md section 2 exactly', () {
-    // Copied by hand from docs/PROTOCOL.md, section 2, "Identity and the two
-    // secrets": "6 characters from the alphabet
-    // `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` -- 32 symbols. `0`, `O`, `1` and `I`
-    // are all excluded. `L` is kept deliberately."
+  test('room code alphabet matches docs/PROTOCOL.md section 32 exactly', () {
+    // Copied by hand from docs/PROTOCOL.md, section 32 item 1: "33 symbols,
+    // `0123456789ABCDEFGHJKMNPQRSTUVWXYZ`: the digits and the letters without
+    // `I`, `L` and `O`." This replaces section 2's 32-symbol alphabet.
     //
     // This is the one place the client's alphabet is checked against the
-    // spec rather than against itself. If docs/PROTOCOL.md section 2 ever
-    // changes, this literal and lib/src/room_code.dart change together, on
-    // purpose, in the same change.
-    const documentedAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    // spec rather than against itself. If docs/PROTOCOL.md ever changes it,
+    // this literal and lib/src/room_code.dart change together, on purpose.
+    const documentedAlphabet = '0123456789ABCDEFGHJKMNPQRSTUVWXYZ';
 
     expect(roomCodeAlphabet, documentedAlphabet);
-    expect(roomCodeAlphabet.length, 32);
-    expect(roomCodeAlphabet.contains('0'), isFalse);
+    expect(roomCodeAlphabet.length, 33);
+    expect(roomCodeAlphabet.contains('0'), isTrue);
+    expect(roomCodeAlphabet.contains('1'), isTrue);
     expect(roomCodeAlphabet.contains('O'), isFalse);
-    expect(roomCodeAlphabet.contains('1'), isFalse);
     expect(roomCodeAlphabet.contains('I'), isFalse);
-    expect(roomCodeAlphabet.contains('L'), isTrue);
+    expect(roomCodeAlphabet.contains('L'), isFalse);
   });
 }

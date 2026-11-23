@@ -590,9 +590,9 @@ void main() {
     group('join, $lc', () {
       // Red on 7501227: home_screen.dart:1754 builds join-room-button
       // unconditionally, so it is in the tree for an empty field.
-      testWidgets('Join is absent (not hidden) for empty, 5, whitespace-only '
-          'and 7 characters, present at exactly 6, absent after a '
-          'deletion', (tester) async {
+      testWidgets('Join is absent (not hidden) for empty and whitespace-only, '
+          'present from 1 to 6 symbols, 7 typed shows the first 6, absent '
+          'after clearing', (tester) async {
         const String name = 'join appears at six';
         final String repro = _repro(name, locale);
         await _mount(tester, locale: locale);
@@ -613,7 +613,13 @@ void main() {
 
         await tester.enterText(field, 'ABC23');
         await tester.pumpAndSettle();
-        expectAbsent('with 5 characters');
+        expect(
+          _join(),
+          findsOneWidget,
+          reason:
+              'section 32 item 1: 5 symbols are a code to join; expected '
+              'join-room-button present. $repro',
+        );
 
         await tester.enterText(field, '   ');
         await tester.pumpAndSettle();
@@ -621,9 +627,12 @@ void main() {
 
         await tester.enterText(field, 'AB C23');
         await tester.pumpAndSettle();
-        expectAbsent(
-          'with "AB C23" (5 characters once normalizeRoomCode strips the '
-          'space)',
+        expect(
+          _join(),
+          findsOneWidget,
+          reason:
+              'section 32 item 1: "AB C23" is 5 symbols once spaces are '
+              'stripped; expected join-room-button present. $repro',
         );
 
         await tester.enterText(field, 'ABC234');
@@ -644,7 +653,18 @@ void main() {
 
         await tester.enterText(field, 'ABC2345');
         await tester.pumpAndSettle();
-        expectAbsent('with 7 characters');
+        expect(
+          _codeText(tester),
+          'ABC234',
+          reason:
+              'section 32 item 1 and the order: the field caps at 6 '
+              'symbols, so 7 typed shows the first 6. $repro',
+        );
+        expect(
+          _join(),
+          findsOneWidget,
+          reason: 'expected Join for the capped 6 symbols. $repro',
+        );
 
         await tester.enterText(field, 'abc-2 34');
         await tester.pumpAndSettle();
@@ -665,7 +685,11 @@ void main() {
 
         await tester.enterText(field, 'ABC23');
         await tester.pumpAndSettle();
-        expectAbsent('after deleting back to 5 characters');
+        expect(
+          _join(),
+          findsOneWidget,
+          reason: 'expected Join after deleting back to 5 symbols. $repro',
+        );
         await tester.enterText(field, '');
         await tester.pumpAndSettle();
         expectAbsent('after clearing the field');
@@ -842,7 +866,9 @@ void main() {
         final _PushProbe observer = _PushProbe();
         await _mount(tester, locale: locale, observer: observer);
         final AppLocalizations loc = _loc(tester);
-        const String invalid = 'AB0234';
+        // Section 32 item 1: 0 is a symbol now; the symbol outside the
+        // alphabet that stays invalid is a punctuation mark.
+        const String invalid = 'AB#234';
         expect(
           isValidRoomCode(invalid),
           isFalse,
@@ -876,12 +902,12 @@ void main() {
           reason: 'expected an invalid code to push no route. $repro',
         );
 
-        await tester.enterText(find.byKey(_codeKey), 'AB023');
+        await tester.enterText(find.byKey(_codeKey), '');
         await tester.pumpAndSettle();
         expect(
           _join(),
           findsNothing,
-          reason: 'expected Join gone after deleting to 5 characters. $repro',
+          reason: 'expected Join gone after clearing the field. $repro',
         );
       });
 

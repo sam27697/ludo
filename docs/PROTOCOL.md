@@ -2032,3 +2032,140 @@ the flag (X200) are a later stage and nothing here depends on them. Needs
     are dropped from the issued set (the live map still holds live ones).
     Open work, not in this contract: the invite page still calls the link id a
     room code (order 683).
+
+## 32. Short room codes and the strike ladder, 2026-11-22
+
+Contract for X197 and X203, server side. It changes section 2's room code
+and section 7's limits; section 31 stands except where item 9 below says
+otherwise. Needs `MIN_CLIENT_BUILD` raised on release: an older app cannot
+type a code shorter than six characters.
+
+1. **The code alphabet.** 33 symbols, `0123456789ABCDEFGHJKMNPQRSTUVWXYZ`:
+   the digits and the letters without `I`, `L` and `O`. A code is a numeral in
+   that alphabet, most significant symbol first, with no leading `0` except
+   the one-symbol code `0` itself. So the codes in order are `0` .. `Z` (33
+   codes), then `10` .. `ZZ`, then `100` and so on.
+2. **The lowest free code.** `create_room` gets the lowest code in that order
+   that no live room holds and that is not resting (item 3). The first 33 rooms
+   alive at one time get one symbol each. This replaces section 2's random
+   draw: the code is a label a person can say, and the link (section 31) is
+   the capability that cannot be guessed.
+3. **Rest.** A code is freed when its room is reaped and rests 10 minutes on
+   the server clock before it can be handed out again. This replaces the
+   24-hour quarantine. Link ids are still never reused, so an old link never
+   reaches a new room whatever happens to the code.
+4. **Folding.** The server folds every `code` it receives before the lookup:
+   surrounding whitespace dropped, letters upper-cased, `O` read as `0`, `I`
+   and `L` read as `1`. A code that is then not 1 to 6 symbols of the alphabet
+   still goes to the lookup and still answers `NO_SUCH_ROOM` (section 7: shape
+   is never told apart from absence). `room` and `seat_assigned` frames carry
+   the code in its canonical form.
+5. **The typed-code limit.** Every `join_room` that carries `code` counts
+   against a second per-IP window: 20 per 10 minutes. The 21st answers
+   `RATE_LIMITED` and is not counted. This sits after payload validation and
+   before the ban check (item 8). A `link` join and a `resume` do not count
+   here. Section 7's 20 per minute for `join_room` and `resume` stays as it is.
+6. **`install` on `create_room` and on a code join.** `create_room` takes the
+   optional `install` with section 31 item 2's shape. A `join_room` by `code`
+   now requires it: missing is `BAD_FIELD`. A `link` join keeps it optional.
+7. **Strikes.** A strike is recorded against the `install` of the person
+   struck, at the moment of one of exactly two events:
+   (a) the host answers a knock with `accept: false`;
+   (b) the host's lobby kick (section 31 item 6) removes a seat whose `via` is
+   `"code"` or `"approved"`.
+   Nothing else is a strike: a knock that times out, is withdrawn, closes
+   `full` or `switched_off`; a kick of a `"link"` seat; section 28's PLAYING
+   kick; the absent-seat removal. Each strike records the striking host's key:
+   the keyed hash (item 11) of the host's `install` when its `create_room`
+   carried one, else of the host's IP.
+8. **The ladder.** A device record holds a `level` (0 to 4), the strikes since
+   the record's `counted_from`, and `ban_until`. The count is the number of
+   DISTINCT host keys among the strikes at or after `counted_from`; two strikes
+   from one host inside one step count once. At level 0, `counted_from` is now
+   minus 30 days (old strikes age out). A ban fires when the count reaches:
+   level 0: 6 -> 24 hours, level becomes 1;
+   level 1: 3 -> 7 days, level 2;
+   level 2: 3 -> 30 days, level 3;
+   level 3: 5 -> 730 days, level 4;
+   level 4: 5 -> 730 days, stays 4.
+   When a ban fires: `ban_until` = now + its length, `counted_from` = now, the
+   strike list is emptied. A record above level 0 whose last strike (or last
+   ban start, when no strike follows it) is more than 365 days old drops to
+   level 0 with no strikes. A level-0 record with no strike inside 30 days is
+   deleted.
+9. **What a ban does.** It stops typed codes and nothing else. While the
+   device's `ban_until` is ahead of the server clock, or while the IP is
+   blocked (item 10), every `join_room` by `code` from it answers
+   `CODE_BANNED`, whether the room exists or not, whether approval is on or
+   off, and before the lookup. `link` joins, `resume`, `create_room` and play
+   are untouched. Section 31's in-room bars are unchanged and separate.
+10. **The IP block.** When a ban fires, the IP of the struck socket gets a
+    block of the same length capped at 24 hours. The IP is held, as a keyed
+    hash, only while its block runs, then deleted.
+11. **Keys and storage.** Every install and IP held by this section is held as
+    HMAC-SHA256 under `LUDO_STRIKE_SALT` (an `.env` secret, at least 32
+    characters), lower-case hex. Nothing else about the person is kept: no
+    name, no room, no code. The store is the file `strikes.json` in
+    `LUDO_STRIKE_DIR`, loaded at start and rewritten whole (temporary file,
+    then rename) after every change. `LUDO_STRIKE_DIR` set without a valid
+    salt: the server refuses to start and says which variable is wrong. An
+    existing file that does not parse is renamed `strikes.json.bad-<epoch ms>`,
+    logged at error level, and the server starts with an empty store. Neither
+    variable set (tests, a laptop): an in-memory store with a random salt per
+    process. A hash, an IP or an install never appears in a log line or a
+    frame; the log says `strike`, `ban` with the level and length only.
+    Housekeeping (item 8's ageing, item 10's deletes) rides the existing
+    one-second sweep on the injected clock.
+12. **Telling the person.** `CODE_BANNED` is a new error. Its frame carries,
+    besides `code` and `message`, `ban`: `{ "scope": "device"|"network",
+    "until_ms": int (epoch ms), "level": int, "next_ms": int }`. `scope` is
+    `"device"` when the device's own ban is the reason (it wins when both
+    apply), `"network"` for an IP block alone. `level` is the device's level
+    (0 for a network-only block). `next_ms` is the length of the ban the
+    device's next step would give (level 1 -> 7 days, 2 -> 30 days, 3 and 4 ->
+    730 days; 0 for a network-only block). When a strike makes a ban fire, the
+    struck socket's `knock_failed` (outcome `rejected`) or `kicked` frame
+    carries the same `ban` object, so the warning is shown at once, not only
+    at the next try. Neither frame carries `ban` otherwise.
+13. **Web and privacy.** The invite page and the ended page show the code in
+    canonical form where they show one. The privacy page gains, in both
+    languages it already serves: a random app install id is sent to the game
+    server; it is kept, only as a keyed hash, when a host rejects or removes a
+    player who joined by typed code, together with the time and a keyed hash
+    standing for that host, to stop people who keep entering strangers' rooms;
+    such a record is deleted 30 days after the last strike, or 12 months after
+    the last ban; an IP address is kept, as a keyed hash, only for the length
+    of a block, at most 24 hours.
+14. **Tests this section requires** (server, real sockets, fake clock, temp
+    directories): the code order `0`..`Z`, `10` after the 33rd live room, the
+    lowest free after a middle room is reaped AND its rest ends (not before);
+    folding (`o`, ` 0 `, `i`, `l`, lower case) reaches the room; malformed and
+    absent both `NO_SUCH_ROOM`; the 21st typed code in 10 minutes from one IP
+    `RATE_LIMITED`, the next window admitted, link joins not counted; code join
+    without `install` `BAD_FIELD`; each strike source and each non-strike event
+    of item 7; the ladder at every step with distinct and repeated hosts (5
+    distinct = no ban, 6th = 24 h; then 3 = 7 days; 3 = 30 days; 5 = 730 days;
+    level 4 again 730 days); level-0 ageing at 30 days; the 365-day reset;
+    `CODE_BANNED` with each `ban` field, before the lookup, approval on and off;
+    a banned device still joins by link and still creates; the IP block hits a
+    second install on the same IP, ends at 24 hours even for a 7-day device ban,
+    and the hash is gone after it; `ban` on the `knock_failed` and `kicked`
+    frame that fired a ban and absent otherwise; the store survives a restart
+    (new registry over the same directory), a corrupt file is renamed and the
+    server starts, a set dir without a salt refuses to start; no hash, IP or
+    install in captured log output; the simulator's `--scenario all` passes
+    locally.
+15. **Rulings of 2026-11-23 (master, from the pre-review).** (a) Distinct hosts are
+    counted by the host's IP, not by its `install`: each strike records the keyed
+    hash of the host's IP, and item 8's count is the number of distinct host IP
+    keys. A strike whose host IP equals the struck socket's IP is not recorded.
+    An install string is free to invent; six rooms from six places is not. (b) A
+    record keeps one strike per host IP key (the latest), at most 16 strikes; the
+    store keeps at most 100000 records and drops the oldest level-0 record first.
+    (c) The 365-day reset runs from the later of the last strike and the end of
+    the last ban (`ban_until`), never from the ban's start. (d) Folding touches
+    ASCII only: any other character stays as typed (and the lookup answers
+    `NO_SUCH_ROOM`). (e) Any failure to read, create or write in
+    `LUDO_STRIKE_DIR` at start exits 64 with one line naming the path; a salt
+    with whitespace is refused like a short one; the temporary file name is
+    unique per write.

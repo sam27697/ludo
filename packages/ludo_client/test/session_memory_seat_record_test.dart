@@ -26,12 +26,12 @@ const List<_UntrustedSeatCase> _untrustedSeatCases = <_UntrustedSeatCase>[
     seatValue: <String>['K7M2QP', '2', 'tok', 'extra'],
   ),
   (
-    description: "invalid room code: one confusable character ('0')",
-    seatValue: <String>['K7M2Q0', '2', 'tok'],
+    description: "invalid room code: a symbol outside the alphabet ('#')",
+    seatValue: <String>['K7M2Q#', '2', 'tok'],
   ),
   (
-    description: 'invalid room code: wrong length (5 characters)',
-    seatValue: <String>['K7M2Q', '2', 'tok'],
+    description: 'invalid room code: too long (7 characters)',
+    seatValue: <String>['K7M2QPX', '2', 'tok'],
   ),
   (description: "seat '4'", seatValue: <String>['K7M2QP', '4', 'tok']),
   (description: "seat '-1'", seatValue: <String>['K7M2QP', '-1', 'tok']),

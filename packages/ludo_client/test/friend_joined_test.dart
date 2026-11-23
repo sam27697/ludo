@@ -40,6 +40,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
+import 'package:ludo_client/src/install_id.dart';
 import 'package:ludo_client/src/spoken_line.dart';
 import 'package:ludo_client/src/feedback.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
@@ -48,6 +49,7 @@ import 'package:ludo_client/src/net/transport.dart';
 import 'package:ludo_client/src/seat_card.dart' show OpenSeatCard;
 import 'package:ludo_client/src/seat_mark.dart';
 import 'package:ludo_client/src/theme.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
 
@@ -497,6 +499,21 @@ _Change _change(_Pixels shot, _Pixels settled) {
 }
 
 void main() {
+  // Section 32 item 6: a typed-code join waits for the install id. A launched
+  // app has read or made it already, so the fixtures do the same once, and
+  // every test starts from a store that holds only that id (a record one test
+  // saves must not turn the next test's join into a resume).
+  late String install;
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    install = await installId();
+  });
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      kInstallIdKey: install,
+    });
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   // --- D3, D4: the cue, once per frame, through the scope -------------------

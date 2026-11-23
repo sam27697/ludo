@@ -1070,35 +1070,38 @@ void main() {
     }
   });
 
-  testWidgets('2c a short code with a record held: the shape error, nothing '
-      'on any wire', (tester) async {
-    _seedLegacyRecord(_codeA);
-    final _World w = _World(tester, '2c short code with a record');
-    await w.mount();
-    try {
-      w.steps.add('type K7M2Q, tap Join');
-      await w.typeCode('K7M2Q');
-      final bool joinShown = find.byKey(_joinKey).evaluate().isNotEmpty;
-      if (joinShown) {
-        await w.tap(_joinKey);
+  testWidgets(
+    '2c an out-of-alphabet code with a record held: the shape error, nothing '
+    'on any wire',
+    (tester) async {
+      _seedLegacyRecord(_codeA);
+      final _World w = _World(tester, '2c out-of-alphabet code with a record');
+      await w.mount();
+      try {
+        w.steps.add('type K7M2Q#, tap Join');
+        await w.typeCode('K7M2Q#');
+        final bool joinShown = find.byKey(_joinKey).evaluate().isNotEmpty;
+        if (joinShown) {
+          await w.tap(_joinKey);
+        }
+        expect(
+          w.rig.controllers,
+          isEmpty,
+          reason: w.why(
+            'a code that is not a code must build no controller; built '
+            '${w.rig.controllers.length}',
+          ),
+        );
+        expect(
+          w.rig.sent('resume'),
+          isEmpty,
+          reason: w.why('a code outside the alphabet must not resume'),
+        );
+      } finally {
+        await w.finish();
       }
-      expect(
-        w.rig.controllers,
-        isEmpty,
-        reason: w.why(
-          'a code that is not a code must build no controller; built '
-          '${w.rig.controllers.length}',
-        ),
-      );
-      expect(
-        w.rig.sent('resume'),
-        isEmpty,
-        reason: w.why('a short code must not resume'),
-      );
-    } finally {
-      await w.finish();
-    }
-  });
+    },
+  );
 
   testWidgets('3 typed code: a code earned by a typed join is typed again '
       'and Join resumes (C-678: the recent-code chips are gone)', (
