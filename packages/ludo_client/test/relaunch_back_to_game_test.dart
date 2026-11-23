@@ -827,7 +827,7 @@ void main() {
     'resumes nothing and shows no button',
     (tester) async {
       _seed(
-        seat: <String>['K7M2Q0', '2', 'tok'],
+        seat: <String>['K7M2Q07', '2', 'tok'],
         savedAt: DateTime.now().millisecondsSinceEpoch,
       );
       final _Factory factory = _Factory();

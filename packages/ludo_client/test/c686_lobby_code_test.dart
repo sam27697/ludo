@@ -220,12 +220,22 @@ void main() {
               'expected the same font weight as a six-symbol code '
               '($sixWeight), saw ${s.text.style?.fontWeight}. ${s.why}',
         );
+        final double? size = s.text.style?.fontSize;
         expect(
-          s.text.style?.fontSize,
-          sixSize,
+          size != null && sixSize != null && size >= sixSize,
+          isTrue,
           reason:
-              'expected the same font size as a six-symbol code ($sixSize), '
-              'saw ${s.text.style?.fontSize}. ${s.why}',
+              'expected a face for "$code" at least as large as the six '
+              'symbol face ($sixSize), saw $size. ${s.why}',
+        );
+        final Rect die = tester.getRect(s.frame);
+        final Rect painted = tester.getRect(s.codeText);
+        expect(
+          die.contains(painted.topLeft) && die.contains(painted.bottomRight),
+          isTrue,
+          reason:
+              'expected the rendered code of "$code" ($painted) inside the '
+              'die ($die). ${s.why}',
         );
       }
     });

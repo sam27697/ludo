@@ -127,7 +127,24 @@ class _Rig {
     return (tester.widget(inner.first) as ButtonStyleButton).onPressed != null;
   }
 
+  /// Pops every route above Home, as a player pressing back out of the lobby
+  /// would, so a second join can be typed on the same mounted app.
+  Future<void> backToHome() async {
+    final NavigatorState nav = tester.state<NavigatorState>(
+      find.byType(Navigator).first,
+    );
+    nav.popUntil((Route<dynamic> route) => route.isFirst);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(
+      find.byKey(_codeKey),
+      findsOneWidget,
+      reason: 'expected the Home code field after backing out. $why',
+    );
+  }
+
   Future<Map<String, Object?>> tapJoinAndReadFrame() async {
+    final int before = transports.length;
     expect(
       find.byKey(_joinKey),
       findsOneWidget,
@@ -139,24 +156,29 @@ class _Rig {
     await tester.pump();
     await tester.tap(find.byKey(_joinKey));
     await tester.pump();
-    for (int i = 0; i < 30 && !_sentJoin; i += 1) {
+    for (int i = 0; i < 30 && !_sentJoin(before); i += 1) {
       await tester.runAsync(() => pumpEventQueue());
       await tester.pump(const Duration(milliseconds: 100));
     }
     expect(
-      _sentJoin,
+      _sentJoin(before),
       isTrue,
       reason: 'expected a join_room frame after tapping Join. $why',
     );
-    final String raw = transports.last.sentRaw.firstWhere(
-      (String r) => _typeOf(r) == 'join_room',
-    );
+    final String raw = transports
+        .sublist(before)
+        .expand((FakeTransport t) => t.sentRaw)
+        .firstWhere((String r) => _typeOf(r) == 'join_room');
     return _decode(raw)['d']! as Map<String, Object?>;
   }
 
-  bool get _sentJoin =>
-      transports.isNotEmpty &&
-      transports.last.sentRaw.any((String r) => _typeOf(r) == 'join_room');
+  /// A join_room on a transport opened after the first [before] ones.
+  bool _sentJoin(int before) => transports
+      .sublist(before)
+      .any(
+        (FakeTransport t) =>
+            t.sentRaw.any((String r) => _typeOf(r) == 'join_room'),
+      );
 
   Future<void> finish() async {
     await tester.pump(const Duration(seconds: 12));
@@ -392,9 +414,14 @@ void main() {
       );
       await r.type('Z');
       final Map<String, Object?> first = await r.tapJoinAndReadFrame();
-      await r.finish();
+      await r.backToHome();
       await r.type('Y');
       final Map<String, Object?> second = await r.tapJoinAndReadFrame();
+      expect(
+        r.transports,
+        hasLength(2),
+        reason: 'expected a second transport for the second join. ${r.why}',
+      );
       expect(
         second['install'],
         first['install'],

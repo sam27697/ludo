@@ -68,9 +68,11 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart' show appSupportedLocales;
+import 'package:ludo_client/src/install_id.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/net/transport.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
 
@@ -318,6 +320,13 @@ void _expectConnectedFixture(
 }
 
 void main() {
+  // Section 32 item 6: a typed-code join waits for the install id. A launched
+  // app has read or made it already, so the fixtures do the same once.
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await installId();
+  });
+
   // --- L-H1: host, connected, room not full (2 of 4). ---------------------
   // Amendment, order 263 (run 73, contract C-262 rule 1): the connected
   // body's lobby-leave-button is an IconButton with icon Icons.close and
