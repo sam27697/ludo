@@ -320,5 +320,14 @@
   "endFairGameChecking": "عم نتحقق من الرميات",
   "endFairGameFailed": "الرميات ما طابقت",
   "endFairGameUnavailable": "ما قدرنا نتحقق من الرميات. اكبس لنجرب مرة تانية.",
-  "queueAhead": "{count, plural, =1{قدّامك لاعب واحد} =2{قدّامك لاعبَين} few{قدّامك {count} لاعبين} other{قدّامك {count} لاعب}}"
+  "queueAhead": "{count, plural, =1{قدّامك لاعب واحد} =2{قدّامك لاعبَين} few{قدّامك {count} لاعبين} other{قدّامك {count} لاعب}}",
+  "seatOriginPublic": "انضم من اللاعبين العشوائيين",
+  "seatOriginBot": "كومبيوتر",
+  "botName1": "زوزو",
+  "botName2": "نونو",
+  "botName3": "كيكو",
+  "botName4": "بوبو",
+  "botName5": "توتو",
+  "botName6": "ميمي",
+  "lobbyFillComputer": "كمّل بكومبيوتر"
 }
