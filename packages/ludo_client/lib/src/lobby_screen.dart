@@ -1073,6 +1073,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
         media.size.height - media.padding.top - media.padding.bottom;
     final bool compact = safeHeight < 640;
     final double dieSize = dieMarkSize(compact);
+    // C-688: with knock cards open the host decides on strangers, so the room
+    // code die, the share rows and the door switch fold into one 48 dp code
+    // row and the cards and the seats take the height (doctrine P3). The
+    // layout with no knock is the one it always was.
+    final bool knocksOpen = controller.isHost && room.knocks.isNotEmpty;
     final List<Widget> action = _lobbyAction(
       loc,
       controller,
@@ -1098,115 +1103,121 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 // did not, so every optional compact gap below is trimmed to the
                 // smallest spacing unit. The start and waiting block is docked
                 // below the scroll (C-398), not kept in by these gaps.
-                compact ? kSpace1 : kSpace6,
+                compact || knocksOpen ? kSpace1 : kSpace6,
                 kSpace6,
-                compact ? kSpace4 : kSpace6,
+                compact || knocksOpen ? kSpace4 : kSpace6,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    loc.lobbyRoomCodeLabel,
-                    textAlign: TextAlign.center,
-                    style: textTheme.labelLarge?.copyWith(
-                      color: LudoColors.inkMuted,
+                  if (knocksOpen)
+                    _knockCodeRow(loc, room, textTheme)
+                  else ...[
+                    Text(
+                      loc.lobbyRoomCodeLabel,
+                      textAlign: TextAlign.center,
+                      style: textTheme.labelLarge?.copyWith(
+                        color: LudoColors.inkMuted,
+                      ),
                     ),
-                  ),
-                  SizedBox(height: compact ? kSpace1 : kSpace3),
-                  Center(
-                    child: DieMark(
-                      size: dieSize,
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          room.code,
-                          key: const Key('lobby-room-code'),
-                          textAlign: TextAlign.center,
-                          style: _roomCodeStyle(textTheme, room.code.length)
-                              ?.copyWith(
-                                color: LudoColors.ink,
-                                fontWeight: FontWeight.w700,
-                                height: 1.0,
+                    SizedBox(height: compact ? kSpace1 : kSpace3),
+                    Center(
+                      child: DieMark(
+                        size: dieSize,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            room.code,
+                            key: const Key('lobby-room-code'),
+                            textAlign: TextAlign.center,
+                            style: _roomCodeStyle(textTheme, room.code.length)
+                                ?.copyWith(
+                                  color: LudoColors.ink,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.0,
+                                ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: compact ? kSpace1 : kSpace4),
+                    ElevatedButton.icon(
+                      key: const Key('lobby-share-button'),
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                      ),
+                      onPressed: () => _shareInvite(room, loc),
+                      icon: const Icon(Icons.share),
+                      label: Text(loc.lobbyShareButton),
+                    ),
+                    SizedBox(height: compact ? kSpace1 : kSpace3),
+                    Row(
+                      children: [
+                        Expanded(
+                          // C-340 rule 1-2: an outlined pill, quieter than the filled
+                          // Invite friends button above it -- a visible border and a
+                          // leading icon so the label reads as tappable (doctrine P3,
+                          // P8), never a bare caption. Rule 6: two of these side by
+                          // side at 360dp leaves little room for icon plus label, so
+                          // the pill's own padding is trimmed (never the label's
+                          // text) and the label sits in a FittedBox that shrinks
+                          // before it would ever wrap or ellipsize.
+                          child: OutlinedButton.icon(
+                            key: const Key('lobby-copy-link-button'),
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(48, 48),
+                              padding: const EdgeInsetsDirectional.symmetric(
+                                horizontal: kSpace2,
+                                vertical: kSpace3,
                               ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  SizedBox(height: compact ? kSpace1 : kSpace4),
-                  ElevatedButton.icon(
-                    key: const Key('lobby-share-button'),
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(48),
-                    ),
-                    onPressed: () => _shareInvite(room, loc),
-                    icon: const Icon(Icons.share),
-                    label: Text(loc.lobbyShareButton),
-                  ),
-                  SizedBox(height: compact ? kSpace1 : kSpace3),
-                  Row(
-                    children: [
-                      Expanded(
-                        // C-340 rule 1-2: an outlined pill, quieter than the filled
-                        // Invite friends button above it -- a visible border and a
-                        // leading icon so the label reads as tappable (doctrine P3,
-                        // P8), never a bare caption. Rule 6: two of these side by
-                        // side at 360dp leaves little room for icon plus label, so
-                        // the pill's own padding is trimmed (never the label's
-                        // text) and the label sits in a FittedBox that shrinks
-                        // before it would ever wrap or ellipsize.
-                        child: OutlinedButton.icon(
-                          key: const Key('lobby-copy-link-button'),
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                            padding: const EdgeInsetsDirectional.symmetric(
-                              horizontal: kSpace2,
-                              vertical: kSpace3,
+                            ),
+                            onPressed: () => _copyToClipboard(
+                              kRoomLinkBase +
+                                  (room.linkId.isEmpty
+                                      ? room.code
+                                      : room.linkId),
+                              loc,
+                            ),
+                            icon: const Icon(Icons.link, size: 18),
+                            label: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(loc.lobbyCopyLinkButton, maxLines: 1),
                             ),
                           ),
-                          onPressed: () => _copyToClipboard(
-                            kRoomLinkBase +
-                                (room.linkId.isEmpty ? room.code : room.linkId),
-                            loc,
-                          ),
-                          icon: const Icon(Icons.link, size: 18),
-                          label: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Text(loc.lobbyCopyLinkButton, maxLines: 1),
-                          ),
                         ),
-                      ),
-                      const SizedBox(width: kSpace3),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          key: const Key('lobby-copy-code-button'),
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                            padding: const EdgeInsetsDirectional.symmetric(
-                              horizontal: kSpace2,
-                              vertical: kSpace3,
+                        const SizedBox(width: kSpace3),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            key: const Key('lobby-copy-code-button'),
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(48, 48),
+                              padding: const EdgeInsetsDirectional.symmetric(
+                                horizontal: kSpace2,
+                                vertical: kSpace3,
+                              ),
+                            ),
+                            onPressed: () => _copyToClipboard(room.code, loc),
+                            icon: const Icon(Icons.content_copy, size: 18),
+                            label: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(loc.lobbyCopyCodeButton, maxLines: 1),
                             ),
                           ),
-                          onPressed: () => _copyToClipboard(room.code, loc),
-                          icon: const Icon(Icons.content_copy, size: 18),
-                          label: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Text(loc.lobbyCopyCodeButton, maxLines: 1),
-                          ),
                         ),
+                      ],
+                    ),
+                    // C-682: the host's door control, one switch under the code
+                    // actions; nobody else is shown it.
+                    if (controller.isHost) ...[
+                      SizedBox(height: compact ? kSpace1 : kSpace3),
+                      ApprovalSwitch(
+                        value: room.guestApproval,
+                        onChanged: (bool on) =>
+                            unawaited(controller.setGuestApproval(on)),
                       ),
                     ],
-                  ),
-                  // C-682: the host's door control, one switch under the code
-                  // actions; nobody else is shown it.
-                  if (controller.isHost) ...[
-                    SizedBox(height: compact ? kSpace1 : kSpace3),
-                    ApprovalSwitch(
-                      value: room.guestApproval,
-                      onChanged: (bool on) =>
-                          unawaited(controller.setGuestApproval(on)),
-                    ),
+                    SizedBox(height: compact ? kSpace1 : kSpace6),
                   ],
-                  SizedBox(height: compact ? kSpace1 : kSpace6),
                   // C-682: one card per person waiting at the door, above the
                   // seat cards. The server lists knocks to the host only.
                   if (controller.isHost && room.knocks.isNotEmpty)
@@ -1268,6 +1279,54 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           ),
       ],
+    );
+  }
+
+  /// C-688: the room code while knock cards are open: the code itself, a
+  /// copy target and a share target in one row, each target 48 dp. The row
+  /// follows the ambient direction, so Arabic starts it on the right.
+  Widget _knockCodeRow(
+    AppLocalizations loc,
+    RoomSnapshot room,
+    TextTheme textTheme,
+  ) {
+    return SizedBox(
+      height: 48,
+      child: Row(
+        children: [
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(
+                room.code,
+                key: const Key('lobby-room-code'),
+                maxLines: 1,
+                style: textTheme.titleLarge?.copyWith(
+                  color: LudoColors.ink,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 2,
+                ),
+              ),
+            ),
+          ),
+          const Spacer(),
+          IconButton(
+            key: const Key('lobby-copy-code-button'),
+            style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+            tooltip: loc.lobbyCopyCodeButton,
+            onPressed: () => _copyToClipboard(room.code, loc),
+            icon: const Icon(Icons.content_copy),
+          ),
+          IconButton(
+            key: const Key('lobby-share-button'),
+            style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+            tooltip: loc.lobbyShareButton,
+            onPressed: () => _shareInvite(room, loc),
+            icon: const Icon(Icons.share),
+          ),
+        ],
+      ),
     );
   }
 
