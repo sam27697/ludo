@@ -37,9 +37,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_client/l10n/gen/app_localizations.dart';
 import 'package:ludo_client/src/app.dart';
 import 'package:ludo_client/src/home_screen.dart';
+import 'package:ludo_client/src/install_id.dart';
 import 'package:ludo_client/src/lobby_screen.dart';
 import 'package:ludo_client/src/net/room_controller.dart';
 import 'package:ludo_client/src/server_config.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'net/fake_transport.dart';
 
@@ -283,6 +285,13 @@ Future<void> _flushAnyOutstandingRequestTimeout(WidgetTester tester) async {
 }
 
 void main() {
+  // Section 32 item 6: a typed-code join waits for the install id. A launched
+  // app has read or made it already, so the fixtures do the same once.
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await installId();
+  });
+
   testWidgets('home screen renders and shows both actions', (tester) async {
     await tester.pumpWidget(const LudoApp());
     await tester.pumpAndSettle();
@@ -372,7 +381,7 @@ void main() {
 
       await tester.enterText(
         find.byKey(const Key('room-code-field')),
-        'AB01CD',
+        'AB#1CD',
       );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('join-room-button')));

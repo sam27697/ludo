@@ -206,12 +206,12 @@ class _InvalidCodeLinkCase {
 
 final List<_InvalidCodeLinkCase> _invalidCodeLinkCases = <_InvalidCodeLinkCase>[
   _InvalidCodeLinkCase(
-    'a code containing the excluded character 0',
-    _appLink('AB0234'),
+    'a code containing a symbol outside the alphabet',
+    _appLink('AB_234'),
   ),
   _InvalidCodeLinkCase(
-    'a code one character short of the required length',
-    _appLink('AB23C'),
+    'a code one character over the allowed length',
+    _appLink('AB23CDE'),
   ),
 ];
 
@@ -383,7 +383,7 @@ void main() {
         );
         await tester.pump();
 
-        opener.add(_appLink('AB0234'));
+        opener.add(_appLink('AB_234'));
         await tester.pump();
         await tester.pump();
         expect(
@@ -391,7 +391,7 @@ void main() {
           isNotNull,
           reason:
               'fixture is broken: an invalid room link (uri carrying '
-              'AB0234, which contains the excluded character 0) must have '
+              'AB_234, which contains a symbol outside the alphabet) must have '
               'raised the error before this test can prove typing clears it',
         );
 
@@ -425,7 +425,7 @@ void main() {
         );
         await tester.pump();
 
-        reader.complete(_appLink('AB0234'));
+        reader.complete(_appLink('AB_234'));
         await tester.pump();
         await tester.pump();
         expect(
@@ -464,7 +464,7 @@ void main() {
         );
         await tester.pump();
 
-        opener.add(_appLink('AB0234'));
+        opener.add(_appLink('AB_234'));
         await tester.pump();
         await tester.pump();
         expect(
@@ -475,13 +475,13 @@ void main() {
               'the error before this test can prove typing clears it',
         );
 
-        // Still six characters, still fails isValidRoomCode (0 is
-        // excluded); the point is that clearing is about the player having
+        // Still six characters, still fails isValidRoomCode (# is outside
+        // the alphabet); the point is that clearing is about the player having
         // started to correct the field, not about the new value being
         // right.
         await tester.enterText(
           find.byKey(const Key('room-code-field')),
-          'ZZ0000',
+          'ZZ#000',
         );
         await tester.pump();
 
@@ -490,7 +490,7 @@ void main() {
           isNull,
           reason:
               'typing must clear the error even when the code the player '
-              'has typed so far ("ZZ0000") is itself still invalid; '
+              'has typed so far ("ZZ#000") is itself still invalid; '
               'clearing is not conditioned on the new value passing '
               'isValidRoomCode',
         );
@@ -512,7 +512,7 @@ void main() {
 
       await tester.enterText(
         find.byKey(const Key('room-code-field')),
-        'AB0234',
+        'AB#234',
       );
       await tester.pump();
       // Join's entry is a 200 ms AnimatedSize at most (C-523 D3).

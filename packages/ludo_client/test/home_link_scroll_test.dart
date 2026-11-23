@@ -344,11 +344,12 @@ void main() {
 
       _expectButtonBelowFold(tester, 'LS-BAD');
 
-      // 0O0O0O passes isAppRoomLinkUri (right scheme, right host, right
-      // path shape) but fails isValidRoomCode: both 0 and O are excluded
-      // from roomCodeAlphabet, so roomCodeFromUri returns null for it and
-      // the invalid-code error shows.
-      opener.add(_roomLink('0O0O0O'));
+      // _0_0_0 passes isAppRoomLinkUri (right scheme, right host, right
+      // path shape) but fails isValidRoomCode: _ is outside
+      // roomCodeAlphabet (section 32 item 1; 0 and O are symbols or folded
+      // now), so roomCodeFromUri returns null for it and the invalid-code
+      // error shows.
+      opener.add(_roomLink('_0_0_0'));
       await _settleAfterLink(tester);
 
       final BuildContext context = tester.element(find.byType(HomeScreen));

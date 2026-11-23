@@ -50,7 +50,7 @@ const String _seatPrefsKey = 'session.seat';
 Uri _validLink(String linkId) =>
     Uri.parse('https://ludo.provefair.app/r/$linkId');
 
-Uri _invalidCodeLink() => Uri.parse('https://ludo.provefair.app/r/AB0234');
+Uri _invalidCodeLink() => Uri.parse('https://ludo.provefair.app/r/AB_234');
 
 List<String> _storedSeat(String code) => <String>[
   code,

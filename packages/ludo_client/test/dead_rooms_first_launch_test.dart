@@ -724,8 +724,8 @@ void main() {
     );
 
     testWidgets(
-      'D1c: no code in the field, Go on the name field creates; a code that '
-      'is not six characters long does not make Join primary',
+      'D1c: no code in the field, Go on the name field creates; a code of '
+      'fewer than six symbols is a code to join (section 32 item 1)',
       (tester) async {
         const String scenario = 'D1c no code and partial code, Go on name';
         final _Rig rig = _Rig();
@@ -764,18 +764,22 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 400));
         expect(
-          partial.sent('join_room'),
+          partial.sent('create_room'),
           isEmpty,
           reason:
-              '$scenario: five characters are not a code to join; sent '
-              '${partial.allTypes}',
+              '$scenario: five symbols are a code to join, Go must not '
+              'create; sent ${partial.allTypes}',
+        );
+        final List<String> partialJoins = partial.sent('join_room');
+        expect(
+          partialJoins,
+          hasLength(1),
+          reason: '$scenario: five symbols, Go joins; sent ${partial.allTypes}',
         );
         expect(
-          partial.sent('create_room'),
-          hasLength(1),
-          reason:
-              '$scenario: five characters, Go creates; sent '
-              '${partial.allTypes}',
+          _dataOf(partialJoins.single)['code'],
+          'AB23C',
+          reason: '$scenario: the code on the wire is the five symbols',
         );
         await _finish(tester, partial);
       },
